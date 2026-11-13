@@ -557,4 +557,13 @@ it('recovers standing private work through the public body command without retur
  expect(wakes(f.app.db)).toHaveLength(1);
  expect(JSON.stringify(first)).not.toContain('PRIVATE STANDING');
  expect(await f.post(body,'clock.command',{agent:'art',argv:['in','1h','--approval',card.id,'--standing']})).toMatchObject({ok:true,value:{exit:1}});
+ value(await f.socket('clock.cancel',{id:value<{id:string}>(first).id}));
+ const commandInput={agent:'art',argv:['in','1h','--approval',card.id,'--standing']};
+ const command=f.app.operations.call('http',original,'clock.command',commandInput,'command-standing');
+ expect(command).toMatchObject({ok:true,value:{exit:0,stdout:expect.stringContaining('will wake at')}});
+ f.app.db.prepare("DELETE FROM core_operations WHERE id='command-standing'").run();
+ expect(f.app.operations.call('http',original,'clock.command',commandInput,'command-standing')).toEqual(command);
+ expect(wakes(f.app.db)).toHaveLength(2);
+ expect(f.app.operations.call('http',original,'clock.in',{agent:'art',prompt:'new',note:'',when:'2h'},'command-standing')).toMatchObject({ok:false,code:'conflict'});
+ expect(f.app.operations.call('direct',{...original},'clock.requestLocal',{agent:'art',prompt:'<!-- house: local --> Copy proof',note:''},'copied-local-viewer')).toMatchObject({ok:false});
 });
