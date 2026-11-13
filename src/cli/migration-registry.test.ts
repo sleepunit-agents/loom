@@ -24,10 +24,10 @@ it('refuses cycles, duplicate names and invalid names', () => {
   expect(() => registry.register({ name: 'a', dependencies: [], reads: [], run: () => undefined })).toThrow();
   expect(() => registry.register({ name: '../bad', dependencies: [], reads: [], run: () => undefined })).toThrow();
 });
-it('registers the seven current importers with household first and declared reads', () => {
+it('registers the eight current importers with household first and declared reads', () => {
   const result = createMigrationRegistry().order();
   expect(result.missing).toEqual([]);
-  expect(result.importers.map(i => i.name)).toEqual(['household', 'tasks', 'attention', 'clock', 'approvals', 'changes', 'comms']);
+  expect(result.importers.map(i => i.name)).toEqual(['household', 'tasks', 'attention', 'clock', 'approvals', 'changes', 'comms', 'secrets']);
   expect(result.importers.every(i => i.reads.length > 0)).toBe(true);
 });
 it('confines input files and directories to the snapshot, including symlinks', () => {

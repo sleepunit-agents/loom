@@ -13,15 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Clock: add trusted owner-principal local-wake filing with full executable card words, exact saved prompt/note and project-preserving atomic approval filing; runtime/client recovery remains uncomposed.
+- Capture an explicit external Secrets source with `migrate snapshot --secrets`, using the same private inventory and confinement rules as other roots.
 
 - Add explicit next-mode Slack lifecycle composition with service credentials, staged connection release, startup receipt recovery and awaited shutdown.
 
 - Bridges: add a serialized Slack raw receipt normalizer with fresh metadata, bounded retries and commit-before-consume ordering.
 - Connect next-mode private Comms messages to runtime jobs and authenticated body reads, replies and status, keeping private words out of runner inputs and retry receipts.
 
+- Comms now shows work made in the thread, with live task/change statuses and links to their apps.
+
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
 
 - Give next-mode Home desk-coloured cut cards and the member’s saved Depth, Contours or Wash ground.
+
+- Keep a neighboring next-mode app's narrow reader from taking focus away from the chosen tile.
 
 - Bridges: authenticate Slack workspace/bot/app evidence through service-scoped Web API calls for future receipt composition.
 - Fold eligible private conversation metadata as the signed-in member while Home or Inbox is open, using the existing retention operation.
@@ -38,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
 
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
+- Add atomic offline Secrets metadata import, source-owned pending asks, migration-all discovery and independent destination verification.
 - Add holder-owned age ciphertext storage with atomic, member-bound full-input retry receipts, ready for authenticated mutation composition.
 - Require an explicit independent daemon key for secret value retry fingerprints; database backups no longer expose plain input hashes for new value writes.
 - Add the new runtime runner's bounded, commit-pinned Git snapshot reader for house build inspection.

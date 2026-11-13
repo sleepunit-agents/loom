@@ -61,7 +61,12 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app p
     await a.getByRole('button',{name:'Minimize Live example',exact:true}).click();
     await a.getByRole('button',{name:'Open Live example',exact:true}).click();
     expect(await a.getByRole('textbox',{name:'Title',exact:true}).inputValue()).toBe('An unsent draft');
-    await a.getByRole('button',{name:'Make Live example big',exact:true}).focus();
+    const makeExampleBig=a.getByRole('button',{name:'Make Live example big',exact:true});
+    await makeExampleBig.focus();
+    // The shortcut acts on the shell's focused tile, not just the DOM focus.
+    await expect.poll(()=>makeExampleBig.evaluate(button=>
+      document.activeElement===button && button.closest('[data-tile]')?.hasAttribute('data-focused')===true
+    )).toBe(true);
     await a.keyboard.press('Alt+Shift+Enter');
     await expect.poll(()=>a.locator('[data-tile]').first().getAttribute('data-tile')).toBe('example');
     await a.keyboard.press('Alt+h');await expect.poll(()=>a.locator('[data-tile]').count()).toBe(0);

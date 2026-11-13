@@ -20,7 +20,7 @@ export interface LegacySecretRecordPrincipals extends LegacyRequestPrincipals {
  * independently verify them. These records alone do not complete an import.
  */
 export function planLegacySecretRecords(policyBytes: Buffer, requestBytes: Buffer,
-  principals: LegacySecretRecordPrincipals, names: ReadonlySet<string>, snapshotAt: number) {
+  principals: LegacySecretRecordPrincipals, names: ReadonlySet<string>, snapshotAt: number, options: { pendingAttention?: true } = {}) {
   try {
     const metadata = planLegacySecretMetadata(policyBytes, requestBytes, principals, snapshotAt);
     for (const name of names) if (!secretName.safeParse(name).success) throw new Error();
@@ -33,11 +33,12 @@ export function planLegacySecretRecords(policyBytes: Buffer, requestBytes: Buffe
       resolved.set(old, id); used.add(id); return id;
     };
     const requests: GrantRequest[] = metadata.requests.requests.map(({ source: r, agent }) => {
-      if (r.state === 'pending' || (r.service !== undefined && !secretAgent.safeParse(r.service).success)) throw new Error();
+      if ((r.state === 'pending' && !options.pendingAttention) || (r.service !== undefined && !secretAgent.safeParse(r.service).success)) throw new Error();
       return {
         id: r.id, agent, kind: 'secret', target: r.secret,
         askedBy: { kind: 'agent', id: agent }, why: r.why, minutes: r.minutes,
         scope: { house: r.house, ...(r.service === undefined ? {} : { service: r.service }) },
+        ...(r.state === 'pending' ? { attentionManaged: true as const } : {}),
         createdAt: Date.parse(r.at), state: r.state === 'granted' ? 'allowed' : r.state,
         ...(r.decided === undefined ? {} : { answeredAt: Date.parse(r.decided) }),
         ...(r.who === undefined ? {} : { by: member(r.who) }),

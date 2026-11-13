@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'web/src/shell/**'
+      - 'web/src/kit/split.tsx'
       - 'web/src/pieces/attention/rail*'
       - 'web/src/pieces/attention/home*'
       - 'web/src/apps.ts'

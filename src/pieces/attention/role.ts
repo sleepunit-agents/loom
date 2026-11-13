@@ -1,4 +1,6 @@
 /** The desk's seam. Other pieces raise/resolve asks here, never in their own tables. */
+import { migrate, type Db } from '../../core/index.js';
+import { schema } from './schema/001.js';
 import type { Context, Operations, Result, Scope, Viewer } from '../../core/index.js';
 
 export type WaitsOn = { approval: string } | { task: string };
@@ -74,3 +76,6 @@ export interface HouseholdAskSource {
 export interface AttentionSources {
   register(name: string, answer: (ctx: Context, ask: Ask) => void): HouseholdAskSource;
 }
+
+/** Offline source importers share the caller's transaction; no registry/authentication is installed. */
+export function prepareAttentionImport(db: Db): void { migrate(db, 'attention', schema); }

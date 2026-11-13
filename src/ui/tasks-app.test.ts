@@ -69,3 +69,28 @@ describe('Tasks component on a fake store', () => {
     await act(async()=>tree.unmount());
   });
 });
+
+it('opens imported task ids from encoded links and refuses malformed escapes',async()=>{
+ const id='legacy/task %';f.snapshot={records:[task(id,{description:'Imported task detail'})],status:'live'};
+ await draw(h(TasksApp,{path:`/p/tasks-preview/task/${encodeURIComponent(id)}`}));
+ expect(text()).toContain('Imported task detail');await act(async()=>tree.unmount());
+ await draw(h(TasksApp,{path:'/p/tasks-preview/task/%zz'}));expect(text()).not.toContain('Imported task detail');await act(async()=>tree.unmount());
+});
+
+import { taskId, taskSegment } from '../../web/src/pieces/tasks/route';
+it.each(['.','..','legacy/task %','~id','t-1'])('opens imported %s after browser URL normalization',async id=>{
+ const path=new URL(`/p/tasks-preview/task/${taskSegment(id)}`,'https://fixture.invalid').pathname;
+ expect(taskId(path)).toBe(id);if(id==='t-1')expect(path).toBe('/p/tasks-preview/task/t-1');f.snapshot={records:[task(id,{description:'Exact imported reader'})],status:'live'};
+ await draw(h(TasksApp,{path}));expect(text()).toContain('Exact imported reader');await act(async()=>tree.unmount());
+});
+it('fetches an aged-out task selected by URL and hides details after the live snapshot changes',async()=>{
+ const id='..',loaded=task(id,{status:'closed',description:'Older private detail'});
+ f.snapshot={records:[],status:'live'};
+ const state:CallState<TaskAnswer>={pending:false,status:'done',result:{ok:true,value:{result:{ok:true,task:loaded}}}};
+ f.call.mockReturnValue({subscribe:()=>()=>{},getSnapshot:()=>state});
+ await draw(h(TasksApp,{path:`/p/tasks-preview/task/${taskSegment(id)}`}));
+ expect(f.call).toHaveBeenCalledWith('tasks.show',{id});expect(text()).toContain('Older private detail');
+ f.call.mockReturnValue({subscribe:()=>()=>{},getSnapshot:()=>({pending:false,status:'done',result:{ok:false,code:'denied',message:'Changed access'}})});
+ await act(async()=>{f.snapshot={records:[],status:'denied'};f.listeners.forEach(fn=>fn());});
+ expect(text()).not.toContain('Older private detail');await act(async()=>tree.unmount());
+});
