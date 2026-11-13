@@ -14,9 +14,10 @@ import { listenOperator, firstSignin, prepareOperatorHome } from './core/signin/
 import { ownHome } from './core/daemon-home.js';
 import type { OutsideEffects } from './core/effects.js';
 export { createFoundation } from './core/app.js';
-export async function startLoom({ home, clock, install, authenticate, sharing, listen, next, staging, host, port, webRoot, stdout, changes, bridges, clockDeadmanAgents }: {
+export async function startLoom({ home, clock, install, authenticate, sharing, listen, next, staging, host, port, webRoot, stdout, changes, bridges, secretAuthority, clockDeadmanAgents }: {
   stdout?: (text: string) => void;
   changes?: NextOptions['changes'];
+  secretAuthority?: NextOptions['secretAuthority'];
   bridges?: NextOptions['bridges'];
   clockDeadmanAgents?: NextOptions['clockDeadmanAgents'];
   home: string; clock?: Clock; sharing?: () => Sharing;
@@ -32,7 +33,7 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   try { app = createFoundation({ home, clock }); } catch(e) { await release(); throw e; }
   const closeApp = async () => { try { await closeNext(app); } finally { try { app.close(); } finally { await release(); } } };
   let effects: OutsideEffects | undefined;
-  const nextOptions: NextOptions = { home, staging, host, port, webRoot, authenticate, sharing, changes, bridges, clockDeadmanAgents };
+  const nextOptions: NextOptions = { home, staging, host, port, webRoot, authenticate, sharing, changes, bridges, secretAuthority, clockDeadmanAgents };
   if (next && listen) { await closeApp(); throw new Error("next mode owns its listener"); }
   try {
     install?.(app);

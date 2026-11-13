@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Next-mode runtime releases claimed input once through the staging gate; HTTP supports asynchronous operations with authentication revalidation.
 - Derive the private-app window capability from validated next-mode page sessions, while keeping bearer callers denied.
 - Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
+- Connect the persistent Secrets holder executable to authenticated current household authority over a dedicated private socket.
 
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
 - Add atomic offline Secrets metadata import, source-owned pending asks, migration-all discovery and independent destination verification.

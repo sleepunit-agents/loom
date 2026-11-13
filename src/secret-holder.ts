@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
 import { listenLocalHolder } from './pieces/secrets/local-holder.js';
+import { startPersistentHolder } from './pieces/secrets/holder-lifecycle.js';
 import { ageSecretSource } from './pieces/secrets/age-source.js';
 export async function run(argv: string[], stderr: (text:string)=>void): Promise<number> {
   // A signal can arrive after bind but before the listen promise resumes.
@@ -12,8 +13,14 @@ export async function run(argv: string[], stderr: (text:string)=>void): Promise<
   const stopped = new Promise<void>(resolve => { stop = resolve; });
   process.on('SIGTERM', stop); process.on('SIGINT', stop);
   try {
-    const {values:v} = parseArgs({args:argv, options:{socket:{type:'string'}, ca:{type:'string'}, cert:{type:'string'},
+    const {values:v} = parseArgs({args:argv, options:{config:{type:'string'},socket:{type:'string'}, ca:{type:'string'}, cert:{type:'string'},
       key:{type:'string'}, identity:{type:'string'}, values:{type:'string'}}, strict:true});
+    if (v.config) {
+      if (Object.keys(v).some(k=>k!=='config')) throw Error();
+      const holder=await startPersistentHolder(v.config);
+      try {await stopped;} finally {await holder.close();}
+      return 0;
+    }
     if (!v.socket || !v.ca || !v.cert || !v.key || !v.identity || !v.values) throw Error();
     const source = ageSecretSource(v.values, v.identity);
     const holder = await listenLocalHolder({socket:v.socket, ca:v.ca, cert:v.cert, key:v.key}, source);
