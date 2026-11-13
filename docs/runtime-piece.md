@@ -39,7 +39,7 @@ client, still pending.
 ## Remaining before the final move
 
 The full runtime rebuild is in progress. Enrollment (including stranger join,
-proof and owner decision), token revocation, runner hello/poll/claim/report,
+proof and owner decision), central credential integration, runner hello/poll/claim/report,
 placement and dispatch, houses/services/body hosts, delivery/results/retries,
 model-account metadata and usage, settings, screens, generated command parity,
 background jobs and importer are still to be delivered. No old command is
@@ -53,3 +53,32 @@ refuse another source and roll back interruptions. It must never modify the old
 side. Final cutover requires no live houses and the owner's presence; point the
 separate runner at registry operations only during that move. No deploy or real
 import is part of the changes described here.
+
+## Box revocation
+
+`revoke-box` maps to `runtime.revokeBox {box}` and returns `{box, revoked:true}`.
+A household owner may revoke an enrolled, nonlocal box by live id or unique
+name. Revocation sets `revokedAt`, marks its nonterminal jobs `lost` with an
+`endedAt`, and removes the box from every agent's preferences, preserving their
+order and model settings. Terminal jobs remain unchanged. Credentials for all
+jobs on the box, including terminal jobs, are revoked defensively. No runner or
+container call happens during revocation; the runner loses access and its work
+is recorded as lost.
+
+The central household credential implementation is not yet supplied by next
+mode. `installRuntime` accepts an optional `credentials: RuntimeCredentials`
+role; without it revocation fails `unavailable` before changing anything. The
+role must revoke every runner credential for the box and every body credential
+for the supplied job ids synchronously on the supplied database transaction,
+with no independent commit or outside effect. Absent/already-revoked credentials
+are success. Runtime owns no credential store. Its in-process test fake uses a
+test-only SQL table to prove that credentials roll back with runtime metadata.
+The composition root must wire the central role once household issuance and
+principal binding land, and integration tests must prove real credentials stop
+authenticating. This remains required before enrollment or the final move.
+
+A retry with the same registry id returns the original acknowledgement without
+calling the role again. A new attempt at a revoked box is `not-found`; local
+runners cannot be revoked. The old `pendingRevokes` file retry queue is replaced
+by the shared transaction: a role failure rolls back all changes and leaves no
+successful retry receipt, so the caller can retry the same id.
