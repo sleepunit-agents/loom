@@ -214,7 +214,7 @@ it('offers the live adoption hint only to the current owner for executable eligi
 it('offers a live ask hint only for eligible executable unscoped work under current filing authority', async () => {
   const s = await setup();
   s.change(ids[1],{legacy:{...wake(s.app.db,ids[1])!.legacy,for_why:'steered'}});
-  s.change(ids[2],{project:'pond'});
+  s.change(ids[2],{member:'jonathan'});
   const ws = new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-fixture-agent':'art'}});
   try {
     await once(ws,'open'); const initial = once(ws,'message');
@@ -337,9 +337,9 @@ it('keeps every maximum-size selection id and due time under the owning details 
   }
 });
 
-it('does not copy private or project-scoped saved words into an agent-scoped approval even for an owner', async () => {
+it('does not copy private saved words into an agent-scoped approval even for an owner', async () => {
   const s=await setup(), original=wake(s.app.db,ids[0])!;
-  for(const patch of [{member:'jonathan'},{project:'pond'}]) {
+  for(const patch of [{member:'jonathan'}]) {
     s.change(ids[0],{...original,...patch,note:'private words'});
     expect(s.call('clock.askVouch',{target:`art:${ids[0]}`})).toMatchObject({ok:false,code:'invalid'});
     expect(load(s.app.db).approvals).toHaveLength(0);
@@ -507,4 +507,85 @@ it('keeps grouping direct-only even for an otherwise authorized service', async 
   for(const door of ['http','socket','mcp'] as const)
     expect(s.app.operations.call(door,viewer,'approvals.piece-group-vouch',input,randomUUID())).toMatchObject({ok:false});
   expect(cards(s)).toEqual([]);
+});
+
+
+it('files project work on a project-scoped card visible only to that project and the owner, then adopts atomically', async () => {
+  const s=await setup();
+  s.access.members.observer={owner:false,agents:['art']};
+  const original=wake(s.app.db,ids[0])!;
+  s.change(ids[0],{project:'pond',legacy:{...original.legacy,project:'pond'},note:'Project review words'});
+  const before=wakes(s.app.db), agent: Viewer={kind:'agent',id:'art'};
+  const filed=s.value<{id:string}>('clock.askVouch',{target:`art:${ids[0]}`},agent);
+  expect(cards(s)[0]).toMatchObject({id:filed.id,project:'pond',agent:'art'});
+  expect(cards(s)[0].details).toContain('Project review words');
+  expect(wakes(s.app.db)).toEqual(before);
+  for(const viewer of [owner,agent,{kind:'member',id:'pollock'}] as Viewer[])
+    expect(s.call('approvals.check',{id:filed.id},viewer)).toMatchObject({ok:true,value:{state:'pending'}});
+  expect(s.call('approvals.check',{id:filed.id},{kind:'member',id:'observer'})).toMatchObject({ok:false,code:'denied'});
+  expect(s.call('approvals.answer',{id:filed.id,action:'allow'},{kind:'member',id:'pollock'}).ok).toBe(false);
+  await s.restart();
+  expect(s.value('clock.askVouch',{target:`art:${ids[0]}`},agent)).toMatchObject({id:filed.id});
+  expect(s.call('approvals.answer',{id:filed.id,action:'allow'}).ok).toBe(true);
+  expect(wake(s.app.db,ids[0])).toMatchObject({project:'pond',by:owner,state:'pending'});
+  expect(cards(s)[0].state).toBe('used');
+});
+it('rejects mixed project selections and archived scope mismatches before any card is filed', async () => {
+  const s=await setup(), original=wake(s.app.db,ids[0])!;
+  s.change(ids[0],{project:'pond'});
+  expect(s.call('clock.askVouch',{target:`art:${ids.slice(0,2).join(',')}`}).ok).toBe(false);
+  s.change(ids[0],{project:'pond',legacy:{...original.legacy,project:'other'}});
+  expect(s.call('clock.askVouch',{target:`art:${ids[0]}`}).ok).toBe(false);
+  s.change(ids[0],{project:undefined,legacy:{...original.legacy,project:'pond'}});
+  expect(s.call('clock.askVouch',{target:`art:${ids[0]}`}).ok).toBe(false);
+  expect(cards(s)).toEqual([]);
+});
+it('requires current project access and agent creation policy independently', async () => {
+  const s=await setup(), agent: Viewer={kind:'agent',id:'art'};
+  s.change(ids[0],{project:'pond'});
+  s.access.projects.pond.agents=[];
+  expect(s.call('clock.askVouch',{target:`art:${ids[0]}`},agent).ok).toBe(false);
+  // Owner visibility alone cannot make the owning service file for an excluded agent.
+  expect(s.call('clock.askVouch',{target:`art:${ids[0]}`}).ok).toBe(false);
+  expect(cards(s)).toEqual([]);
+  s.access.projects.pond.agents=['art'];
+  s.access.members.jonathan.agents=[];
+  expect(s.call('clock.askVouch',{target:`art:${ids[0]}`}).ok).toBe(false);
+  expect(cards(s)).toEqual([]);
+});
+it('never mixes project imports into automatic groups or withdraws their explicit cards', async () => {
+  const s=await setup();
+  automatic(s,ids[0]); s.change(ids[0],{project:'pond'});
+  automatic(s,ids[1]);
+  const project=s.value<{id:string}>('clock.askVouch',{target:`art:${ids[0]}`});
+  s.clock.advance(0); await settle();
+  expect(cards(s).find(a=>a.id===project.id)).toMatchObject({state:'pending',project:'pond'});
+  expect(cards(s).filter(a=>!a.project).map(a=>a.target)).toEqual([`art:${ids[1]}`]);
+  s.clock.advance(60_000); await settle();
+  expect(cards(s)).toHaveLength(2);
+  expect(cards(s).find(a=>a.id===project.id)?.state).toBe('pending');
+});
+it('refuses a moved target on Allow and prevents reuse of its old differently scoped card', async () => {
+  const s=await setup(); s.access.services.approvals.operations.push('approvals.piece-withdraw');
+  for(const [from,to] of [[undefined,'pond'],['pond','other'],['other',undefined]] as const) {
+    s.change(ids[0],{project:from});
+    const filed=s.value<{id:string}>('clock.askVouch',{target:`art:${ids[0]}`});
+    s.change(ids[0],{project:to});
+    const before=wakes(s.app.db), approvals=load(s.app.db);
+    expect(s.call('approvals.answer',{id:filed.id,action:'allow'}).ok).toBe(false);
+    expect(wakes(s.app.db)).toEqual(before); expect(load(s.app.db)).toEqual(approvals);
+    expect(s.call('clock.askVouch',{target:`art:${ids[0]}`}).ok).toBe(false);
+    expect(cards(s)).toHaveLength(approvals.approvals.length);
+    const taken=approvalsRole(s.app.operations,'approvals').call('withdraw',{who:{agent:'art',where:"loom's clock"},for:'owner'}, {id:filed.id},randomUUID());
+    expect(taken.ok).toBe(true);
+  }
+});
+it('keeps Deny suppression on project work across restart and later scope changes', async () => {
+  const s=await setup(); s.change(ids[0],{project:'pond'});
+  const filed=s.value<{id:string}>('clock.askVouch',{target:`art:${ids[0]}`});
+  expect(s.call('approvals.answer',{id:filed.id,action:'deny'}).ok).toBe(true);
+  await s.restart();
+  s.change(ids[0],{project:'other'});
+  expect(s.call('clock.askVouch',{target:`art:${ids[0]}`}).ok).toBe(false);
+  expect(cards(s)).toHaveLength(1);
 });

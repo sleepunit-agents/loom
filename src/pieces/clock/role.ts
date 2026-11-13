@@ -21,6 +21,6 @@ export function clockVouchApplication(operations: Pick<Operations, 'call'>): imp
   return { apply(approval, by) {
     if (approval.kind !== 'vouch-wake' || approval.state !== 'allowed' || approval.by !== by)
       return { ok: false, code: 'invalid', message: 'Expected the current owner Allow for wake vouching' };
-    return operations.call('direct', { kind: 'member', id: by }, 'clock.vouch', { target: approval.target }, `clock-vouch:${approval.id}`);
+    return operations.call('direct', { kind: 'member', id: by }, 'clock.vouch', { target: approval.target, expectedScope: {project:approval.project, member:approval.member} }, `clock-vouch:${approval.id}`);
   } };
 }
