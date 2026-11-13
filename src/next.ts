@@ -82,7 +82,11 @@ export interface NextChangesOptions {
 export interface NextBridgesOptions extends Omit<SlackDaemonOptions, 'secrets'> { source: SecretValueSource }
 const bridgeDaemons = new WeakMap<Foundation, ReturnType<typeof installSlackDaemon>>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
-export async function closeNext(app: Foundation) { await bridgeDaemons.get(app)?.close(); }
+const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
+export async function closeNext(app: Foundation) {
+  try { await bridgeDaemons.get(app)?.close(); }
+  finally { await runtimeClosers.get(app)?.(); }
+}
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
@@ -183,7 +187,8 @@ export async function installNext(app: Foundation, options: NextOptions) {
       recipients:()=>{const h=new HouseholdDatabase(app.db).household(options.home);return {agents:h?.agents??[],default:h?.default};},
     });
     conversations.connect(comms);
-    app.onClose(()=>{conversations.close();void comms.close();});
+    runtimeClosers.set(app,async()=>{await conversations.close();await comms.close();});
+    app.onClose(()=>{void conversations.close();void comms.close();});
   }
   if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects,
     {valid:conversations.validInput,issue:(agent,job)=>signin(app).issueBody(agent,job)});
