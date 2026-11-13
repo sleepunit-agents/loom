@@ -68,6 +68,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await activeRow.getByLabel('Thread activity time').textContent()).toContain('CT');
   comms.status('art',place,'working');comms.activity('art',place,{at:clock.now(),tokens:41900});
   await expect.poll(()=>activeRow.getByLabel('Thread working').textContent()).toBe('working…');
+  await expect.poll(()=>b.getByRole('button',{name:'Stop',exact:true}).isEnabled()).toBe(true);
   await expect.poll(()=>b.getByLabel('Body activity').textContent()).toContain('41,900 tokens');
   expect(await b.getByLabel('Body activity').locator('time').getAttribute('datetime')).toBe(new Date(clock.now()).toISOString());
   comms.activity('art',place,{at:clock.now()+1});
@@ -76,6 +77,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>activeRow.getByLabel('Thread working').count()).toBe(0);
   await expect.poll(()=>b.getByLabel('Body activity').count()).toBe(0);
   await expect.poll(()=>b.getByLabel('Working status').count()).toBe(0);
+  await expect.poll(()=>b.getByRole('button',{name:'Stop',exact:true}).count()).toBe(0);
   comms.status('art',place,'working');comms.activity('art',place,{at:clock.now()+2,tokens:0});
   await expect.poll(()=>b.getByLabel('Body activity').textContent()).toContain('0 tokens');
   await expect.poll(()=>b.getByLabel('Working status').getAttribute('data-alive')).toBe('working');
@@ -112,7 +114,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await b.setViewportSize({width:390,height:900});
   await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe('one');
   await b.locator('.loom-split__back').click();
-  await capture('comms-list');
+  await capture('comms-list',true);
   await row(b).click();
   const conversation=JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).conversation;
   const created=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.create',{title:'Work made in this thread',agent:'art',source:`conversation:${conversation}`,actor:'art',at:new Date(clock.now()).toISOString()},'fixture-work');
@@ -300,6 +302,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await b.getByText('Assigned background job',{exact:true}).count()).toBe(0);
   await b.getByRole('navigation',{name:'Comms folders'}).getByRole('button',{name:'Background work',exact:true}).click();
   await expect.poll(()=>b.getByText('Assigned background job',{exact:true}).count()).toBe(1);
+  comms.status('art',jobPlace,'working');
   const startsBeforeJoin=starts.length,endsBeforeWatch=ends.length;
   await b.getByText('Assigned background job',{exact:true}).click();
   await expect.poll(()=>b.getByLabel('Watching job').count()).toBe(1);
