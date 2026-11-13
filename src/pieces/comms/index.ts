@@ -149,7 +149,12 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   } catch(error) { settle(place,seq,error instanceof HeldEffect?'held':'failed'); }
 
  }
- async function reconcileDeliveries() {
+ let recovery:Promise<void>|undefined;
+ function reconcileDeliveries():Promise<void> {
+  if(recovery)return recovery;
+  recovery=recoverDeliveries().finally(()=>{recovery=undefined;});return recovery;
+ }
+ async function recoverDeliveries() {
   if(closed)return;
   const rows=db.prepare("SELECT * FROM comms_messages WHERE kind='message' AND json_extract(record,'$.delivery') IN ('sending','held','failed') ORDER BY thread,seq").all() as MessageRow[];
   for(const row of rows) {
@@ -164,6 +169,19 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     // HeldEffect means the gate refused before invoking runtime. Other states
     // may have crossed the boundary: they need runtime receipt reconciliation.
     await deliver(t.agent,t.id,row.seq);
+   } else if(o.runtime.receipt&&!pending.has(messageId(row.thread,row.seq))) {
+    // Lookup is routing-only. Never decrypt uncertain sends just to inspect a receipt.
+    let receipt:'accepted'|'not-accepted'|'unknown';
+    try {receipt=await o.runtime.receipt({thread:t.id,agent:t.agent,member:t.member,conversation:t.conversation,seq:row.seq,...(t.project?{project:t.project}:{})});}
+    catch {continue;}
+    if(closed)return;
+    const current=thread(db,t.id);
+    const saved=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(t.id,row.seq);
+    // Another delivery/lifecycle owns any changed snapshot while lookup awaited.
+    if(pending.has(messageId(t.id,row.seq))||JSON.stringify(current)!==JSON.stringify(t)||JSON.stringify(saved)!==JSON.stringify(row))continue;
+    if(row.at+days*day<=clock.now()||!see({kind:'member',id:t.member},current)) {settle(t.id,row.seq,'failed');continue;}
+    if(receipt==='accepted')settle(t.id,row.seq,'delivered');
+    else if(receipt==='not-accepted')await deliver(t.agent,t.id,row.seq);
    }
   }
  }
@@ -331,6 +349,6 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   },
   title(agent,place,value) {title.parse(value); const t=requireAgent(agent,place);if(t.titledBy==='member')return fail('conflict','The member named this thread');t.title=value;t.titledBy='agent';saveThread(db,t);touched(t);},
   status(agent,place) {const t=requireAgent(agent,place);const stop=t.stop;t.stop=false;saveThread(db,t);return {stop,archived:t.archived!==null};},
-  async close(){closed=true;cancel();await Promise.all(pending.values());},
+  async close(){closed=true;cancel();await Promise.all([...pending.values(),...(recovery?[recovery]:[])]);},
  };
 }

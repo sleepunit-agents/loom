@@ -1,6 +1,10 @@
 /** Runtime is in-process and holds this capability; tokens never obtain it. */
 export interface Delivery { thread: string; agent: string; member: string; conversation: string; seq: number; text: string; project?: string }
+export type DeliveryReceipt = Omit<Delivery, 'text'>;
 export interface RuntimeDelivery {
+ /** Authoritative lookup by stable routing identity. Unknown/errors never authorize replay.
+  * not-accepted guarantees no earlier attempt can subsequently be accepted. */
+ receipt?(message: DeliveryReceipt): Promise<'accepted' | 'not-accepted' | 'unknown'>;
  deliver(message: Delivery): Promise<void>;
  /** Must tolerate replay after an uncertain crash, scoped to this conversation. */
  end(conversation: string): Promise<void>;

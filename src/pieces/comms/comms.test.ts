@@ -9,16 +9,16 @@ import { FakeClock, type Sharing, type Viewer } from '../../core/index.js';
 import { installComms } from './index.js';
 import { loadKey, type WordsKey } from './crypto.js';
 import { stagingHold } from './role.js';
-import type { Attention, Hold, Comms, Delivery } from './role.js';
+import type { Attention, Hold, Comms, Delivery, RuntimeDelivery } from './role.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
 const member:Viewer={kind:'member',id:'jonathan'};
-async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; end?:(conversation:string)=>Promise<void>}={}) {
+async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; receipt?:RuntimeDelivery['receipt']; end?:(conversation:string)=>Promise<void>}={}) {
  const home=mkdtempSync(join(tmpdir(),'comms-next-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();let sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['other','jonathan'],agents:['art','pond-bot']}},services:{runtime:{types:['message','thread'],operations:[]}}};
  const deliveries:Delivery[]=[];const ends:string[]=[];let comms:Comms & {close():Promise<void>};const base=await loadKey(home),key=overrides.key?.(base)??base;
  const start=()=>startLoom({home,clock,authenticate:req=>({viewer:{kind:'member',id:String(req.headers['x-member']??'jonathan')},window:req.headers['x-window']==='yes',valid:overrides.valid??(()=>true)}),
-  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,runtime:{deliver:async d=>{deliveries.push(d);},end:async cv=>{await overrides.end?.(cv);ends.push(cv);}},days:overrides.days,hold:typeof overrides.hold==='function'?overrides.hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:overrides.attention??{answer:()=>({ok:true,value:{answered:true}})}});},
+  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,runtime:{receipt:overrides.receipt,deliver:async d=>{deliveries.push(d);},end:async cv=>{await overrides.end?.(cv);ends.push(cv);}},days:overrides.days,hold:typeof overrides.hold==='function'?overrides.hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:overrides.attention??{answer:()=>({ok:true,value:{answered:true}})}});},
  });let app=await start();cleanup.push(()=>app.close());cleanup.push(()=>comms.close());
  let n=0;
  const call=(name:string,input:unknown,v:Viewer=member,window=true)=>app.operations.callAsync('socket',v,`comms.${name}`,input,`op-${++n}`,window);
@@ -481,4 +481,29 @@ for(const reason of ['archive','expiry','ownership'] as const)it(`settles stale 
   expect(decrypts).toBe(before);expect(s.deliveries).toEqual([]);
   expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=?').get(place) as {record:string}).record).delivery).toBe('failed');
  }
+});
+for(const result of ['accepted','not-accepted','unknown','error'] as const)it(`reconciles uncertain runtime receipts without blind replay (${result})`,async()=>{
+ let released=false,decrypts=0;const receipts:unknown[]=[];
+ const s=await setup({key:key=>({...key,open:async words=>{decrypts++;return key.open(words);}}),hold:stagingHold({beforeOutside:()=>released,finish:()=>{}}),receipt:async facts=>{receipts.push(facts);if(result==='error')throw new Error('runtime unavailable');return result;}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery:'sending'}),place);
+ const before=decrypts;released=true;await s.restart();await s.comms.reconcileDeliveries();
+ const state=JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=?').get(place) as {record:string}).record).delivery;
+ expect(state).toBe(result==='accepted'||result==='not-accepted'?'delivered':'sending');
+ expect(s.deliveries).toHaveLength(result==='not-accepted'?1:0);
+ expect(decrypts-before).toBe(result==='not-accepted'?1:0);
+ expect(receipts[0]).toMatchObject({thread:place,agent:'art',member:'jonathan',seq:1});
+ expect(JSON.stringify(receipts)).not.toContain('secret member words');
+ if(result==='accepted'||result==='not-accepted'){const count=receipts.length;await s.restart();await s.comms.reconcileDeliveries();expect(receipts).toHaveLength(count);}
+});
+for(const change of ['archive','ownership','receipt'] as const)it(`coalesces receipt recovery and rejects a changed snapshot (${change})`,async()=>{
+ let lookup:((value:'not-accepted')=>void)|undefined,calls=0,released=false;
+ const s=await setup({hold:stagingHold({beforeOutside:()=>released,finish:()=>{}}),receipt:async()=>{calls++;return new Promise(resolve=>{lookup=resolve;});}});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery:'failed'}),place);
+ const first=s.comms.reconcileDeliveries(),second=s.comms.reconcileDeliveries();expect(calls).toBe(1);
+ if(change==='archive')await s.call('change',{thread:place,action:'archive'});
+ if(change==='ownership'){s.getSharing().members.jonathan.agents=[];}
+ if(change==='receipt')s.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=?').run(JSON.stringify({delivery:'delivered'}),place);
+ released=true;lookup!('not-accepted');await Promise.all([first,second]);expect(s.deliveries).toEqual([]);
 });
