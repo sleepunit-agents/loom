@@ -14,7 +14,7 @@ const workInput = z.object({ agent: text, project: text.optional(), member: text
 const idInput = z.object({ id: text });
 const startResult = z.discriminatedUnion('state', [
   z.object({ state: z.literal('started'), body: text }),
-  z.object({ state: z.literal('not-started'), reason: text, retryAt: z.number().int().safe().optional() }),
+  z.object({ state: z.literal('not-started'), reason: text, retryAt: z.number().int().safe().optional(), code: z.literal('quota').optional(), retryAfter: z.unknown().optional() }),
   z.object({ state: z.literal('held'), reason: text }),
   z.object({ state: z.literal('uncertain'), reason: text }),
 ]);
@@ -26,6 +26,12 @@ function work(input: Work): Work {
   return input;
 }
 function calendar<T>(f: () => T): T { try { return f(); } catch (e) { return invalid(e instanceof Error ? e.message : 'Invalid time'); } }
+function quotaDue(reset: unknown, now: number): number {
+  // A reset must name an instant, never the daemon host's wall timezone.
+  const parsed = z.iso.datetime({ offset: true }).safeParse(reset).success ? Date.parse(reset as string) : NaN;
+  const when = Number.isFinite(parsed) ? parsed : now + 60 * 60_000;
+  return Math.min(Math.max(when + 60_000, now + 15 * 60_000), now + 8 * day);
+}
 export interface ClockOptions { runtime?: Runtime; approvals?: Approvals }
 /** Install on the new side only. The composition root must close jobs before its database. */
 export function installClock(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ClockOptions = {}) {
@@ -53,7 +59,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     make({ ...ctx, viewer: s.by }, s, calendar(() => nextOccurrence(s, after)), { schedule: s.id });
   }
   function oneOffRoom(agent: string) {
-    if (wakes(db).filter(w => w.agent === agent && !w.schedule && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
+    if (wakes(db).filter(w => w.agent === agent && (!w.schedule || w.runNow) && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
   }
   const timed = workInput.extend({ when: text });
   for (const name of ['at', 'in'] as const) register(name, timed, true, create, (ctx, i) => {
@@ -118,8 +124,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   });
   register('scheduleRun', idInput, true, (v, i) => { const s = schedule(db, i.id); return !!s && act(v, s, true) && create(v, s); }, (ctx, i) => {
     const s = schedule(db, i.id)!;
-    if (!s.laneDetails) oneOffRoom(s.agent);
-    return make(ctx, s, ctx.now, { bypassPause: true, ...(s.laneDetails ? { schedule: s.id } : {}) });
+    oneOffRoom(s.agent);
+    return make(ctx, s, ctx.now, { bypassPause: true, runNow: true, ...(s.laneDetails ? { schedule: s.id } : {}) });
   });
   const laneName = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
   const laneId = (name: string) => `lane/${name}`;
@@ -181,15 +187,20 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('outcome', idInput.extend({ attempt: text, result: startResult }), true, (v, i) => !!wake(db, i.id) && act(v, get(i.id)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'firing' || w.attempt !== i.attempt) return null;
     const r = i.result;
+    let eventKind: string | undefined;
     if (r.state === 'started') { w.state = 'fired'; w.outcome = r.body; }
     else if (r.state === 'not-started') {
-      w.failures++; w.outcome = r.reason;
+      w.outcome = r.reason;
       if (w.laneVersion && (!w.schedule || schedule(db, w.schedule)?.laneVersion !== w.laneVersion)) { w.state = 'cancelled'; w.outcome = `Superseded lane did not start: ${r.reason}`; }
       else if (w.scheduleRevision && w.schedule && schedule(db, w.schedule)?.scheduleRevision !== w.scheduleRevision) { w.state = 'cancelled'; w.outcome = `Superseded schedule did not start: ${r.reason}`; }
-      else if (w.failures >= 6) w.state = 'failed';
+      else if (r.code === 'quota') {
+        if (w.place === 'alert:runtime-quota') { w.state = 'cancelled'; eventKind = 'quota-notice'; }
+        else { w.state = 'pending'; w.due = quotaDue(r.retryAfter, ctx.now); eventKind = 'quota-wait'; }
+      }
+      else if (++w.failures >= 6) w.state = 'failed';
       else { w.state = 'pending'; w.due = Math.max(ctx.now + 1, r.retryAt ?? ctx.now + 15 * 60_000 * 2 ** (w.failures-1)); }
     } else { w.state = 'held'; w.hold = r.state === 'uncertain' ? 'uncertain' : 'staging'; w.outcome = r.reason; }
-    saveWake(ctx, w); event(ctx, w, w.state); return w;
+    saveWake(ctx, w); event(ctx, w, eventKind ?? w.state); return w;
   }, true);
   register('checkPark', idInput, true, (v, i) => !!wake(db, i.id) && act(v, get(i.id)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'parked' || !w.wait) return null;
