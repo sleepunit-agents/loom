@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Bridges: authenticate Slack workspace/bot/app evidence through service-scoped Web API calls for future receipt composition.
+
 - Bridges: add private, connection-bound Slack raw receipts that commit before Socket Mode ACK and retain restart deduplication.
 
 - Bridges: add unregistered Slack Socket Mode transport with durable-receiver-before-ACK ordering, fresh service credentials, reconnect and heartbeat bounds.
