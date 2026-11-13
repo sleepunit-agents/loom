@@ -630,3 +630,66 @@ blanket piece grant and must not be broadened by this importer. Their exact
 operation/relay mapping remains on t-2208 with the runtime composition. Holder
 lifecycle, generated command client, remaining typed Settings and final move/leak
 ledger also remain required before that task closes.
+
+## Persistent holder lifecycle and current authority
+
+`loom-secret-holder --config /absolute/private/holder.json` now composes the
+persistent age ciphertext store with separate read and mutation sockets. It
+loads the existing explicit identity and independent holder receipt key, refuses
+an occupied socket or changed key, closes both listeners before the store, and
+cleans partially started listeners on failure. It generates no keys and reads no
+legacy store. The previous explicit read-only age-directory flags remain
+available, and cannot be mixed with `--config`.
+
+The strict private JSON config has these fields (all file/socket/directory paths
+absolute):
+
+```json
+{
+  "read": {"socket":"/private/read.sock","ca":"/private/ca.pem","cert":"/private/holder.pem","key":"/private/holder.key"},
+  "mutation": {"socket":"/private/write.sock","ca":"/private/ca.pem","cert":"/private/holder.pem","key":"/private/holder.key"},
+  "authority": {"socket":"/private/authority.sock","ca":"/private/ca.pem","cert":"/private/holder.pem","key":"/private/holder.key","servername":"daemon.example"},
+  "directory":"/private/store",
+  "identity":"/private/age-identity",
+  "fingerprintKey":"/private/holder-receipt-key",
+  "daemonFingerprint":"UPPERCASE:COLON:SEPARATED:SHA256:FINGERPRINT"
+}
+```
+
+The fingerprint above is a placeholder: supply the exact 32-byte X509 SHA256
+fingerprint in Node's uppercase colon-separated form. Each peer certificate needs
+serverAuth and clientAuth when used in both directions, with its own matching DNS
+SAN. Different certificates may be supplied for the read and mutation servers;
+the daemon certificate used by the mutation client must match the authority
+server's pinned fingerprint. Only the holder's read server key can serve reads.
+
+The daemon starts its dedicated authority socket only with
+`loom serve --next --secret-authority /absolute/private/authority.json`. This
+strict private JSON contains `socket`, `ca`, `cert`, `key` (daemon server identity)
+and `holderFingerprint` (the holder authority client's exact certificate SHA256).
+It owns that listener's shutdown, including failed next startup. The endpoint is
+not a registry operation or public HTTP route. It accepts only an empty POST
+from the pinned holder; a member assertion is checked against current household
+ownership in the actual daemon database on every call, independently of injected
+sharing used elsewhere. Missing members, scoped owners, agents, service names,
+missing authority, wrong hostname or a different certificate fail closed. No
+permission snapshot is cached. Socket permissions and the absolute five-second
+connection deadline apply before TLS/headers finish.
+
+The holder pins the daemon before accepting a mutation assertion, then checks
+current authority before consuming value bytes and again before starting the
+store mutation, including receipt replay. Work already started may commit after
+a disconnect or later permission change; a transport failure never promises
+rollback. Stable full-input/member write receipts prevent obsolete retries from
+repeating writes. Read access on this persistent lifecycle also pins the daemon,
+beyond the dedicated CA. The old read-only lifecycle retains its CA contract.
+
+This connects the production holder process and current database authority;
+async registry set/remove plus durable metadata reconciliation are still required
+before normal Settings value forms are enabled. The synchronous fixture installer
+is not used with this async holder. Safe identity/receipt-key rotation, daemon
+retry-key loading/rotation, runtime sinks/house API, final ciphertext migration,
+and full Changes/Bridges deployment acceptance remain on t-2208. No installed
+configuration, credentials, source import or service activation accompanies this
+code. Fixture integration exercises actual TLS, encrypted storage, restart,
+current-member removal, same-CA peer rejection, failed startup and shutdown.

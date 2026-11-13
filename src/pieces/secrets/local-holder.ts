@@ -7,6 +7,7 @@ import { X509Certificate } from 'node:crypto';
 import { createSecureContext } from 'node:tls';
 import { constants, openSync, fstatSync, readFileSync, closeSync, chmodSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
+import type { TLSSocket } from 'node:tls';
 import type { SecretValueSource } from './service.js';
 import { secretName } from './input.js';
 
@@ -94,7 +95,7 @@ export function localSecretSource(config: LocalHolderConfig): SecretValueSource 
 /** Run in the holder process. The provider is crypto-only and returns owned bytes.
  * Refuses existing sockets; restart cleanup is an explicit operator step.
  */
-export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servername'>, source: SecretValueSource) {
+export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servername'>, source: SecretValueSource, daemonFingerprint?: string) {
   if (!isAbsolute(config.socket)) throw failed();
   assertPrivateDirectory(dirname(config.socket));
   const {key, cert, ca} = tlsMaterial(config);
@@ -103,6 +104,8 @@ export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servern
     let bytes: Uint8Array | undefined;
     res.on('error', () => {});
     try {
+      const peer = req.socket as TLSSocket;
+      if (daemonFingerprint && (!peer.authorized || peer.getPeerCertificate().fingerprint256 !== daemonFingerprint)) throw failed();
       const match = /^\/v1\/value\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$/.exec(req.url ?? '');
       if (req.method !== 'GET' || !match || req.headers['transfer-encoding'] || (req.headers['content-length'] && req.headers['content-length'] !== '0')) throw failed();
       bytes = await source.read(match[1]);

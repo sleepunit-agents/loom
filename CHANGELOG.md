@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Connect the persistent Secrets holder executable to authenticated current household authority over a dedicated private socket.
+
 - Show each Comms thread’s agent letter beside its title in the list.
 
 - Add private Discord Gateway receipt/session storage with atomic checkpoints and credential-generation isolation; daemon registration remains pending.
