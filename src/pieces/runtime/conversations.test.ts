@@ -512,6 +512,13 @@ it('composes Clock local filing and approval-only recovery from the exact runnin
  const input={agent:'art',prompt,note};
  for(const secret of [f.owner,f.runner,f.unbound,f.token('agent:art@another')]) expect(await f.post(secret,'clock.requestLocal',input)).toMatchObject({ok:false});
  expect(await f.post(body,'clock.requestLocal',{...input,caller:{for:'owner'},member:'jonathan'})).toMatchObject({ok:false});
+ const before=f.app.db.prepare('SELECT record FROM approvals_approvals').all();
+ for(const extra of [['--standing'],['--model','other'],['--slot','other'],['--continuation','opaque'],['--place','local']]) {
+  const result=await f.post(body,'clock.command',{agent:'art',argv:['in','1h','-p',prompt,...extra]});
+  expect(result).toMatchObject({ok:true,value:{exit:1}});
+  expect(f.app.db.prepare('SELECT record FROM approvals_approvals').all()).toEqual(before);
+  expect(wakes(f.app.db)).toHaveLength(0);
+ }
  const card=value<{id:string;state:string}>(await f.post(body,'clock.requestLocal',input));
  expect(Object.keys(card).sort()).toEqual(['id','state']);
  expect(readApproval(f.app.db,card.id)).toMatchObject({member:'jonathan',people:['jonathan'],conversation:runtimeStore(f.app.db).read('job',job)!.conversation});
@@ -551,6 +558,12 @@ it('recovers standing private work through the public body command without retur
  const card=value<{id:string}>(await f.post(body,'clock.requestLocal',{agent:'art',prompt:'<!-- house: local --> Inspect disk',note:'PRIVATE STANDING'}));
  value(await f.socket('approvals.every-time',{id:card.id}));
  const original=signin(f.app).token(hash(body))!.viewer;
+ const beforeRestrictions=f.app.db.prepare('SELECT record FROM approvals_rules').all();
+ for(const extra of [['--model','other'],['--slot','other'],['--continuation','opaque'],['--place','local'],['-f','routines/host.md']]) {
+  expect(await f.post(body,'clock.command',{agent:'art',argv:['in','1h','--approval',card.id,'--standing',...extra]})).toMatchObject({ok:true,value:{exit:1}});
+  expect(f.app.db.prepare('SELECT record FROM approvals_rules').all()).toEqual(beforeRestrictions);
+  expect(wakes(f.app.db)).toHaveLength(0);
+ }
  const input={agent:'art',approval:card.id,mode:'in',when:'1h',standing:true};
  const first=f.app.operations.call('http',original,'clock.recoverLocal',input,'standing-public');value(first);
  // Expires only the ordinary core receipt; the private owning receipt must remain.

@@ -18,33 +18,9 @@ const moved = 'wake: relays moved to loom\'s runtime: use the relay tool (to, sa
 export function command(ops: Operations, viewer: Viewer, request: ClockCommandInput): CommandAnswer {
   const fail = (message: string, exit = 1): CommandAnswer => ({ exit, stdout:'', stderr: message.startsWith('wake:') ? message+'\n' : `wake: ${message}\n` });
   const success = (text: string): CommandAnswer => ({ exit:0, stdout:text.endsWith('\n') ? text : text+'\n', stderr:'' });
-  const argv = [...request.argv];
-  let agent = request.agent ?? (viewer.kind === 'agent' ? viewer.id : undefined);
-  // The old global --agent precedes the verb; lane's --agent is its assignee.
-  if (argv[0] === '--agent') { agent = argv[1]; argv.splice(0,2); }
-  else if (argv[0]?.startsWith('--agent=')) agent = argv.shift()!.slice(8);
-  if (argv[0] === '--help' || argv[0] === '-h') return success(clockHelp);
-  const head = commandHead(argv), name = head.name; argv.splice(0,argv.length,...head.args);
-  if (name === 'relay' || name === 'relays') return { exit:1, stdout:'', stderr:moved };
-  const spec = clockCommands.find(c => c.name === name);
-  if (!spec) return fail(clockHelp.trimEnd(), 2);
-  const operation = Object.keys(clockOperationCommands).find(key => clockOperationCommands[key] === name);
-  if (!operation) return fail(`${name} is not available on the new clock; ${['vouch','ask-vouch'].includes(name!) ? 'provenance adoption is not implemented yet' : 'use the daemon, runtime, registered Clock app or core migration instead'}`);
-  const flags: Record<string,string | boolean> = Object.create(null), positional: string[] = [];
-  for (let n=0; n<argv.length; n++) {
-    const arg = argv[n];
-    if (arg === '--') { positional.push(...argv.slice(n+1)); break; }
-    if (!arg.startsWith('-')) { positional.push(arg); continue; }
-    const option=clockOption(arg), flag=option?.flag;
-    if (!flag || !Object.hasOwn(spec.flags ?? {}, flag)) return fail(`unrecognized arguments: ${arg}`,2);
-    if (flag === 'local' || flag === 'no-local' || flag === 'standing') { if (option!.attached !== undefined) return fail(`${arg}: does not take a value`,2); flags[flag] = true; continue; }
-    const value = option!.attached ?? argv[++n];
-    if (value === undefined || option!.attached === undefined && value.startsWith('-')) return fail(`argument ${arg}: expected one argument`,2);
-    flags[flag] = value;
-  }
-  const count = spec.positional?.length ?? 0, timed = name === 'at' || name === 'in', variadic = timed || name === 'vouch' || name === 'ask-vouch';
-  if (positional.length < count || !variadic && positional.length > count) return fail(`expected ${timed ? 'a time or duration' : count ? spec.positional!.join(', ') : 'no positional arguments'}`,2);
-  if (!agent && !name?.startsWith('lane ' ) && name !== 'rearm') return fail('select a clock with --agent or WAKE_AGENT');
+  const parsed=parseCommand(viewer,request);
+  if('reply' in parsed)return parsed.reply;
+  const {agent,name,operation,flags,positional,timed}=parsed;
   const input: Record<string,unknown> = {};
   if (name === 'vouch' || name === 'ask-vouch') input.target = `${agent}:${[...new Set(positional)].sort().join(',')}`;
   for (const key of ['note','model','slot','continuation','approval','place','on','days','at']) if (flags[key] !== undefined) input[key] = flags[key];
@@ -155,20 +131,42 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   return success('clock deadlines rearmed');
 }
 
-/** Policy preflight for acknowledgement replay; uses the same option tokenizer.
- * Invalid commands have no successful receipt to replay; execution owns errors.
- */
+/** The same pure parse governs execution and acknowledgement replay policy. */
+function parseCommand(viewer:Viewer,request:ClockCommandInput) {
+  const fail=(message:string,exit=1)=>({reply:{exit,stdout:'',stderr:message.startsWith('wake:')?message+'\n':`wake: ${message}\n`}});
+  const success=(text:string)=>({reply:{exit:0,stdout:text,stderr:''}});
+  const argv = [...request.argv];
+  let agent = request.agent ?? (viewer.kind === 'agent' ? viewer.id : undefined);
+  // The old global --agent precedes the verb; lane's --agent is its assignee.
+  if (argv[0] === '--agent') { agent = argv[1]; argv.splice(0,2); }
+  else if (argv[0]?.startsWith('--agent=')) agent = argv.shift()!.slice(8);
+  if (argv[0] === '--help' || argv[0] === '-h') return success(clockHelp);
+  const head = commandHead(argv), name = head.name; argv.splice(0,argv.length,...head.args);
+  if (name === 'relay' || name === 'relays') return {reply:{ exit:1, stdout:'', stderr:moved }};
+  const spec = clockCommands.find(c => c.name === name);
+  if (!spec) return fail(clockHelp.trimEnd(), 2);
+  const operation = Object.keys(clockOperationCommands).find(key => clockOperationCommands[key] === name);
+  if (!operation) return fail(`${name} is not available on the new clock; ${['vouch','ask-vouch'].includes(name!) ? 'provenance adoption is not implemented yet' : 'use the daemon, runtime, registered Clock app or core migration instead'}`);
+  const flags: Record<string,string | boolean> = Object.create(null), positional: string[] = [];
+  for (let n=0; n<argv.length; n++) {
+    const arg = argv[n];
+    if (arg === '--') { positional.push(...argv.slice(n+1)); break; }
+    if (!arg.startsWith('-')) { positional.push(arg); continue; }
+    const option=clockOption(arg), flag=option?.flag;
+    if (!flag || !Object.hasOwn(spec.flags ?? {}, flag)) return fail(`unrecognized arguments: ${arg}`,2);
+    if (flag === 'local' || flag === 'no-local' || flag === 'standing') { if (option!.attached !== undefined) return fail(`${arg}: does not take a value`,2); flags[flag] = true; continue; }
+    const value = option!.attached ?? argv[++n];
+    if (value === undefined || option!.attached === undefined && value.startsWith('-')) return fail(`argument ${arg}: expected one argument`,2);
+    flags[flag] = value;
+  }
+  const count = spec.positional?.length ?? 0, timed = name === 'at' || name === 'in', variadic = timed || name === 'vouch' || name === 'ask-vouch';
+  if (positional.length < count || !variadic && positional.length > count) return fail(`expected ${timed ? 'a time or duration' : count ? spec.positional!.join(', ') : 'no positional arguments'}`,2);
+  if (!agent && !name?.startsWith('lane ' ) && name !== 'rearm') return fail('select a clock with --agent or WAKE_AGENT');
+  return {agent,name:spec.name,operation,flags,positional,timed};
+}
 export function localCommandInput(viewer:Viewer,request:ClockCommandInput):{agent:string;approval?:string;standing?:boolean}|undefined {
- const argv=[...request.argv];let agent=request.agent??(viewer.kind==='agent'?viewer.id:undefined);
- if(argv[0]==='--agent'){agent=argv[1];argv.splice(0,2);}
- else if(argv[0]?.startsWith('--agent='))agent=argv.shift()!.slice(8);
- const {name,args}=commandHead(argv);if(!['at','in'].includes(name!))return;
- const flags:Record<string,string|boolean>={};
- for(let n=0;n<args.length;n++) {
-  if(args[n]==='--')break;
-  const option=clockOption(args[n]);if(!option)continue;
-  flags[option.flag]=option.flag==='standing'?true:option.attached??args[++n];
- }
+ const parsed=parseCommand(viewer,request);if('reply' in parsed)return;
+ const {agent,name,flags}=parsed;if(!['at','in'].includes(name))return;
  if(!flags.approval&&!String(flags.prompt??'').includes('<!-- house: local -->'))return;
  return {agent:agent??'',...(typeof flags.approval==='string'?{approval:flags.approval}:{}),...(flags.standing?{standing:true}:{})};
 }
