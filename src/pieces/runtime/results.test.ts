@@ -2,6 +2,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import type { IncomingMessage } from 'node:http';
 import { afterEach, expect, it, vi } from 'vitest';
 import { startLoom } from '../../foundation.js';
@@ -130,8 +132,9 @@ it('preserves current output on old receipt replay across restart and signals on
   await f.restart();
   expect(f.call('reportJob', input, undefined, 'old').ok).toBe(true);
   expect(jobResults(f.app.db).read('j')).toEqual({ exit: 0, log: 'new' }); expect(f.store.read('job', 'j')?.state).toBe('waiting');
-  const before = f.app.db.prepare('SELECT count(*) AS n FROM core_operations').get();
-  f.read(); expect(f.app.db.prepare('SELECT count(*) AS n FROM core_operations').get()).toEqual(before);
+  const before = f.app.db.prepare('SELECT count(*) AS n FROM core_operations').get(), readsChanged = vi.spyOn(f.app.live, 'changed');
+  f.read(); f.read('missing'); f.read('j', { kind: 'member', id: 'pollock' });
+  expect(readsChanged).not.toHaveBeenCalled(); expect(f.app.db.prepare('SELECT count(*) AS n FROM core_operations').get()).toEqual(before);
 });
 it('rejects malformed output, unknown authority and invalid progress builds without committing result words', async () => {
   const f = await setup(); f.put('j');
@@ -158,4 +161,30 @@ it('upgrades metadata-only storage, survives interrupted migration and remains i
   expect(f.read()).toMatchObject({ value: { result: null } });
   expect(f.call('finishJob', { job: 'j', state: 'done', log: 'staged' }).ok).toBe(true);
   expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
+});
+
+it('creates no output row for successful progress and completion when both fields are omitted', async () => {
+  const f = await setup(); f.put('j');
+  expect(f.call('reportJob', { job: 'j', state: 'waiting' }).ok).toBe(true);
+  expect(f.read()).toEqual({ ok: true, value: { job: 'j', result: null } });
+  expect(f.app.db.prepare('SELECT * FROM runtime_results').all()).toEqual([]);
+  expect(f.call('finishJob', { job: 'j', state: 'done' }).ok).toBe(true);
+  expect(f.read()).toEqual({ ok: true, value: { job: 'j', result: null } });
+  expect(f.app.db.prepare('SELECT * FROM runtime_results').all()).toEqual([]);
+});
+it('sends metadata-only live updates for output-only changes, and never private job output', async () => {
+  const f = await setup(); f.put('j'); f.put('private', { member: 'jonathan' });
+  const token = f.mint('agent:art');
+  const ws = new WebSocket(f.app.url.replace('http:', 'ws:') + '/live', { headers: { authorization: `Bearer ${token}` } });
+  cleanups.push(() => ws.terminate());
+  const queue: unknown[] = [], waiters: Array<(value: unknown) => void> = [];
+  ws.on('message', raw => { const value = JSON.parse(raw.toString()), waiter = waiters.shift(); if (waiter) waiter(value); else queue.push(value); });
+  const next = () => queue.length ? Promise.resolve(queue.shift()) : new Promise(resolve => waiters.push(resolve));
+  await once(ws, 'open'); ws.send(JSON.stringify({ kind: 'subscribe', type: 'runtime.job', scope: 'art' }));
+  expect(await next()).toMatchObject({ kind: 'set', records: [{ id: 'j' }] });
+  expect(f.call('reportJob', { job: 'j', state: 'running', exit: 0, log: 'not on the socket' }).ok).toBe(true);
+  const message = await next();
+  expect(message).toMatchObject({ kind: 'put', type: 'runtime.job', record: { id: 'j', state: 'running' } });
+  expect(JSON.stringify(message)).not.toContain('not on the socket'); expect((message as { record: unknown }).record).not.toHaveProperty('exit');
+  expect(f.read('j', { kind: 'agent', id: 'art' })).toMatchObject({ value: { result: { exit: 0, log: 'not on the socket' } } });
 });
