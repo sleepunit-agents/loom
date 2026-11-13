@@ -5,6 +5,7 @@ import { act, create } from 'react-test-renderer';
 import type { Ask } from './model';
 import type { OwnedAgent, AgentStatus } from './home-model';
 import type { Call, CallState, Result, Snapshot } from '../../data';
+// Renderer nodes carry arbitrary DOM callbacks; snapshots mix three record types for the hook fake.
 type Node={children:Array<Node|string>;props:Record<string,any>};
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),call:vi.fn()}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]),call:f.call}));
@@ -46,12 +47,12 @@ it('counts every central open ask, shows exactly the first three, and opens thei
 });
 it('shows the full first ask and latest status; checks at display and again before writing through Attention',async()=>{
   const first=ask('first');f.snapshots['attention.ask']=live([first]);
-  f.snapshots['attention.agent']=live<AgentStatus>([{id:'old',agent:'art',state:'idle',work:'Old work',changedAt:1,jobs:[],watched:[]},{id:'new',agent:'art',state:'working',work:'Current work',changedAt:2,jobs:[],watched:[]}]);
+  f.snapshots['attention.agent']=live<AgentStatus>([{id:'old',agent:'art',state:'idle',work:'Old work',changedAt:1,jobs:[],watched:[]},{id:'new',agent:'art',state:'working',work:'Current work',changedAt:Date.parse('2026-11-13T08:00:00Z'),jobs:[],watched:[]}]);
   const shown=request<Ask>(),fresh=request<Ask>(),write=request<Ask>();f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call).mockReturnValueOnce(write.call);
-  await draw();for(const word of ['The whole reason','I continue.','I stop.','t-2205','Current work'])expect(text()).toContain(word);expect(text()).not.toContain('Old work');expect(buttons('Yes')).toHaveLength(0);
+  await draw();for(const word of ['The whole reason','I continue.','I stop.','t-2205','Current work'])expect(text()).toContain(word);expect(text()).not.toContain('Old work');expect(text()).toContain('11/13/2026, 2:00:00 AM');expect(text()).toContain(' CT');expect(buttons('Yes')).toHaveLength(0);
   await click('Check again');await shown.finish({ok:true,value:first});await click('Yes');expect(f.call).toHaveBeenLastCalledWith('attention.get',{id:'first'});
   await fresh.finish({ok:true,value:first});expect(f.call).toHaveBeenLastCalledWith('attention.answer',{id:'first',answer:{kind:'yes'}});
-  const answered={...first,state:'answered' as const};await write.finish({ok:true,value:answered});await publish('attention.ask',live([answered]));expect(buttons('Check again')).toHaveLength(0);expect(text()).toContain('All clear.');expect(text()).toContain('Art card');
+  const answered={...first,state:'answered' as const,answer:{kind:'yes',by:{kind:'member',id:'jonathan'},at:Date.parse('2026-11-13T08:00:00Z')}};await write.finish({ok:true,value:answered});await publish('attention.ask',live([answered]));expect(buttons('Check again')).toHaveLength(0);expect(text()).toContain('All clear.');expect(text()).toContain('Art card');expect(text()).toContain('Art last answer');expect(text()).toContain('jonathan');expect(text()).toContain('11/13/2026, 2:00:00 AM');
 });
 it('keeps one answer guard across cards and invalidates a prewrite check when its first ask is replaced',async()=>{
   const first=ask('first'),second=ask('second',{agent:'mark'});f.snapshots['attention.ask']=live([first,second]);
@@ -73,4 +74,22 @@ it('handles no owned agents and regaining scope without invented agents',async()
 it('keeps source-owned decisions and member-private asks out of central answer controls',async()=>{
   f.snapshots['attention.ask']=live([ask('approval',{source:{kind:'approval',id:'a-12345678'}}),ask('private',{agent:'mark',member:'jonathan'})]);
   const go=await draw();expect(buttons('Check again')).toHaveLength(0);expect(buttons('Yes')).toHaveLength(0);expect(text()).toContain('Private replies stay there.');await click('Open approval');expect(go).toHaveBeenCalledWith('/p/approvals-preview/approval/a-12345678');expect(f.call).not.toHaveBeenCalled();
+});
+
+it('abandons a fresh check on ownership loss even while the same project ask remains visible',async()=>{
+  const first=ask('shared',{project:'pond'});f.snapshots['attention.ask']=live([first]);
+  const shown=request<Ask>(),fresh=request<Ask>();f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call);
+  await draw();await click('Check again');await shown.finish({ok:true,value:first});await click('Yes');
+  await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));await fresh.finish({ok:true,value:first});
+  expect(f.call.mock.calls.filter(([op])=>op==='attention.answer')).toHaveLength(0);expect(text()).not.toContain('Art card');
+  expect(text()).toContain('Question shared');
+});
+it('clears failed asks and statuses independently while retaining idle owned cards',async()=>{
+  const first=ask('first');f.snapshots['attention.ask']=live([first]);
+  const report:AgentStatus={id:'work',agent:'art',state:'working',work:'Current secret work',changedAt:1,jobs:[],watched:[]};
+  f.snapshots['attention.agent']=live([report]);await draw();
+  await publish('attention.agent',{records:[report],status:'offline'});
+  expect(text()).not.toContain('Current secret work');expect(text()).toContain('Question first');expect(text()).toContain('Art card');
+  await publish('attention.ask',{records:[first],status:'denied'});
+  expect(text()).not.toContain('Question first');expect(text()).not.toContain('All clear.');expect(text()).toContain('Art card');expect(buttons('Check again')).toHaveLength(0);
 });

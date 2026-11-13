@@ -45,6 +45,8 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     await yes(a).click();await expect.poll(()=>yes(b).count()).toBe(0);await expect.poll(()=>b.getByRole('heading',{name:'Needs you · 3',exact:true}).count()).toBe(1);
     await expect.poll(()=>b.getByText('Answer this in its private conversation. Private replies stay there.').count()).toBe(1);
     expect(await cards(b).count()).toBe(2);
+    await expect.poll(()=>b.getByRole('region',{name:'art last answer'}).count()).toBe(1);
+    expect(await b.getByText(/yes · jonathan/).count()).toBe(1);
     await b.getByRole('button',{name:'Inbox',exact:true}).click();await expect.poll(()=>b.locator('[data-split-row]').count()).toBe(3);
     await b.goto(`${loom.url}/p/home-preview`);await expect.poll(()=>cards(b).count()).toBe(2);
     const member=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await member.grantPermissions(['local-network-access'],{origin:loom.url});

@@ -17,6 +17,10 @@ function startCheck(guard: Guard, id: string): Call<Ask> | undefined {
   return request;
 }
 type Confirmation = { records: readonly Ask[]; request: Call<Ask> };
+/** A receipt always reads the central answer fact; Home keeps no answer cache. */
+export function AnswerReceipt({ ask }: { ask: Ask }) {
+  return ask.answer ? <section><h3>Answer</h3><p>{ask.answer.kind} · {ask.answer.by.id} · {stamp(ask.answer.at)}</p>{ask.answer.text && <p className="whitespace-pre-wrap">{ask.answer.text}</p>}</section> : null;
+}
 export function AskReader({ ask, snapshot, go, initialConfirmation, guard: sharedGuard, onOpened }: { ask: Ask; snapshot: Snapshot<Ask>; go(path: string): void; initialConfirmation?: Confirmation; guard?: Guard; onOpened?():void }) {
   const [confirmation,setConfirmation] = useState<Confirmation | undefined>(initialConfirmation);
   const [request,setRequest] = useState<Call<Ask>>();
@@ -75,7 +79,7 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
     {saving.pending && <Loading label={saving.status === 'offline' ? 'Waiting for connection…' : 'Recording answer…'} />}
     {saving.result?.ok === false && <Error title="Couldn’t record your answer" text={saving.result.message} />}
     {saving.result?.ok && <p role="status">Answer recorded</p>}
-    {ask.answer && <section><h3>Answer</h3><p>{ask.answer.kind} · {ask.answer.by.id} · {stamp(ask.answer.at)}</p>{ask.answer.text && <p className="whitespace-pre-wrap">{ask.answer.text}</p>}</section>}
+    <AnswerReceipt ask={ask} />
     {ask.resolution && <section><h3>Resolved</h3><p>{ask.resolution}</p></section>}
     {(href || ask.refs?.length) && <section><h3>References</h3>{href && <a href={href} target="_blank" rel="noreferrer">Open reference</a>}{ask.refs?.length ? <ul>{ask.refs.map((ref,n)=><li key={n}>{ref}</li>)}</ul> : null}</section>}
   </article>;
