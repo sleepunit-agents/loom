@@ -732,6 +732,8 @@ const ENTRY_SEP = '\n\n';
 const INVALID_LABEL = '(invalid slug)';
 
 export interface RoomOptions {
+  /** Explicit store composition; the caller owns selection, this reader closes it. */
+  openStore?: () => (Pick<PeopleStore, 'resolve' | 'getRow' | 'close'> & { migrated?: boolean }) | null;
   nowMs?: number;
   /** Called once per failure (store open or one unreadable row). Never throws through. */
   onFailure?: (err: unknown) => void;
@@ -748,16 +750,16 @@ export function roomBlock(contextDir: string, people: readonly string[] | undefi
   const considered = distinct.slice(0, ROOM_MAX_SLUGS);
   const truncated = distinct.slice(ROOM_MAX_SLUGS);
 
-  let store: PeopleStore | null;
+  let store: (Pick<PeopleStore, 'resolve' | 'getRow' | 'close'> & { migrated?: boolean }) | null;
   try {
-    store = openPeopleStore(contextDir, { readonly: true, now: opts.nowMs !== undefined ? () => opts.nowMs! : undefined });
+    store = opts.openStore ? opts.openStore() : openPeopleStore(contextDir, { readonly: true, now: opts.nowMs !== undefined ? () => opts.nowMs! : undefined });
   } catch (e) {
     opts.onFailure?.(e);
     return null;
   }
   if (!store) return null;
   try {
-    if (!store.migrated) return null;
+    if (store.migrated === false) return null;
     const nowMs = opts.nowMs ?? Date.now();
     const entries: string[] = [];
     const skipped: string[] = [];

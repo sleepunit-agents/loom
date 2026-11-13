@@ -79,3 +79,20 @@ This is a composition prerequisite, not the completed stdio cutover. Existing
 as before. The next stdio composition must pass this metadata to identity's
 Owners block, knowledge and people paths, with end-to-end two-agent and
 standalone identity/memory/knowledge/people tests before its entry point ships.
+
+The People/Owners consumers now accept explicit selection too:
+`createLoomServer({contextDir, peopleSelection})` passes a trusted
+`{household, agent}` snapshot to every person tool, the Owners block and the
+identity room cards. `readContinuityHousehold` supplies that shape directly.
+Passing `null` selects only the standalone context; omitting the property
+retains legacy JSON discovery. Selection stays per server, with no global path
+registry or environment changes. Person ensure/merge helpers accept the same
+selection for later new-side route composition. The room reader closes its
+explicit store and keeps its existing rendering limits and failure handling.
+
+This still does not enable a new stdio entry point: knowledge routing and the
+remaining server household consumers must be composed explicitly before that
+entry point is exposed. The new MCP continuity tests cover two simultaneous
+agents' Owners and room cards, shared directory/private relationships,
+standalone override beside legacy JSON, and an agent-scoped merge with the
+other agent's relationship database unchanged.
