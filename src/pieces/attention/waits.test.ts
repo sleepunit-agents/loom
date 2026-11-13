@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startLoom } from '../../foundation.js';
 import { fixture } from '../../fixture.js';
-import { FakeClock, failure, type Viewer } from '../../core/index.js';
+import { FakeClock, failure, type Viewer, type Sharing, operation, OperationError } from '../../core/index.js';
+import { z } from 'zod';
 import { installAttention } from './index.js';
 import type { WaitsOn } from './role.js';
 import type { AttentionWaits } from './waits.js';
@@ -13,19 +14,22 @@ afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanups.splic
 const owner: Viewer = { kind: 'member', id: 'jonathan' }, guest: Viewer = { kind: 'member', id: 'pollock' };
 async function setup(waits?: AttentionWaits) {
   const home = mkdtempSync(join(tmpdir(), 'attention-waits-')); fixture(home);
-  const app = await startLoom({ home, next: true, stdout: () => {}, clock: new FakeClock(), ...(waits ? { install: app => installAttention(app.db, app.operations, app.live, () => ({members:{jonathan:{owner:true,agents:['art']},pollock:{owner:false,agents:['pond-bot']}},projects:{},services:{}}), {}, waits) } : {}) });
+  const access: Sharing = {members:{jonathan:{owner:true,agents:['art']},pollock:{owner:false,agents:['pond-bot']}},projects:{pond:{members:['pollock'],agents:['art']}},services:{}};
+  const app = await startLoom({ home, next: true, stdout: () => {}, clock: new FakeClock(), ...(waits ? { install: app => installAttention(app.db, app.operations, app.live, () => access, {}, waits) } : {}) });
   cleanups.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
   let n = 0;
   const call = (name: string, input: unknown, viewer = owner, id = `wait-${++n}`) => app.operations.call('direct', viewer, name, input, id);
   const raise = (id: string, on: WaitsOn = { task: 't-1' }, extra = {}) => call('attention.raise', { id, agent: 'art', ask: 'Check the work?', source: {kind:'conversation',id:'cv-test'}, waits_on:on, ...extra });
   const check = (id: string, viewer = owner, op?: string) => call('attention.checkWait', {id}, viewer, op);
-  return {app,call,raise,check};
+  return {app,call,raise,check,access};
 }
 it('next mode resolves only closed visible tasks, emits one central change and preserves retry receipts', async () => {
   const {app, call, raise, check} = await setup();
   expect(raise('waiting')).toMatchObject({ok:true});
-  expect(check('waiting')).toMatchObject({ok:true,value:{state:'open'}});
+  const pending = check('waiting',owner,'pending-check');
+  expect(pending).toMatchObject({ok:true,value:{state:'open'}});
   expect(call('tasks.close',{id:'t-1',actor:'jonathan',at:'2026-11-13T12:00:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
+  expect(check('waiting',owner,'pending-check')).toEqual(pending);
   const changes = vi.spyOn(app.live,'changed');
   const first = check('waiting',owner,'stable-check');
   expect(first).toMatchObject({ok:true,value:{state:'resolved',resolution:'t-1 is closed'}});
@@ -86,8 +90,41 @@ it('has no hidden default checker, and source-managed notices cannot be reconcil
   expect(check('unconfigured')).toMatchObject({ok:true,value:{state:'open'}});
   const {attentionSources}=await import('./index.js');
   const source=attentionSources(app.operations)!.register('example',()=>{});
-  const {operation}=await import('../../core/index.js'); const {z}=await import('zod');
   app.operations.register(operation({name:'test.notice',write:true,input:z.object({}),output:z.unknown(),may:()=>true,run(ctx){source.raise(ctx,{id:'notice',ask:'Notice'});}}));
   expect(app.operations.call('direct',owner,'test.notice',{},'notice')).toMatchObject({ok:true});
   expect(check('notice')).toMatchObject({code:'denied'});
+});
+it('rolls back a successful nested check with its outer operation and publishes only after commit',async()=>{
+  const {app,call,raise,check}=await setup({task:()=>({status:'closed'})});
+  raise('outer');
+  const before=app.db.prepare('SELECT * FROM core_operations ORDER BY rowid').all();
+  const published: unknown[]=[];
+  app.live.observe(changes=>{expect(app.db.inTransaction).toBe(false);published.push(changes);});
+  app.operations.register(operation({name:'test.abortCheck',write:true,input:z.object({}),output:z.unknown(),may:()=>true,run(ctx){
+    const nested=app.operations.call('direct',ctx.viewer,'attention.checkWait',{id:'outer'},'nested-check');
+    expect(nested).toMatchObject({ok:true,value:{state:'resolved'}});
+    expect(app.db.inTransaction).toBe(true);
+    expect(published).toEqual([]);
+    throw new OperationError('conflict','Abort outer transaction');
+  }}));
+  expect(call('test.abortCheck',{})).toMatchObject({code:'conflict'});
+  expect(app.db.prepare('SELECT * FROM core_operations ORDER BY rowid').all()).toEqual(before);
+  expect(call('attention.get',{id:'outer'})).toMatchObject({value:{state:'open'}});
+  expect(published).toEqual([]);
+  expect(check('outer',owner,'nested-check')).toMatchObject({value:{state:'resolved'}});
+  expect(published).toEqual([[{type:'attention.ask',id:'outer'}]]);
+});
+it('retains a nonowner nested viewer and requires the real resolve grant separately for services',async()=>{
+  const {app,raise,check,access}=await setup({task:()=>({status:'closed'})});
+  raise('guest',{task:'t-1'},{project:'pond'});
+  const calls=vi.spyOn(app.operations,'call');
+  expect(check('guest',guest)).toMatchObject({value:{state:'resolved'}});
+  expect(calls.mock.calls.filter(c=>c[2]==='attention.resolve').map(c=>c[1])).toEqual([guest]);
+  access.services.checker={types:['attention.ask'],operations:['attention.checkWait']};
+  raise('service'); const service:Viewer={kind:'service',id:'checker'};
+  const before=app.db.prepare('SELECT * FROM core_operations ORDER BY rowid').all();
+  expect(check('service',service,'service-retry')).toMatchObject({code:'denied'});
+  expect(app.db.prepare('SELECT * FROM core_operations ORDER BY rowid').all()).toEqual(before);
+  access.services.checker.operations.push('attention.resolve');
+  expect(check('service',service,'service-retry')).toMatchObject({value:{state:'resolved'}});
 });
