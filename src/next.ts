@@ -66,9 +66,9 @@ import { attentionThreadProject } from './pieces/attention/comms.js';
 import { attentionProjects } from './pieces/attention/projects.js';
 import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
 const mindTransports = new WeakMap<Foundation, TouchSource[]>();
-export type NextSessionResolver = (req: IncomingMessage) => Authentication | undefined;
+export type NextSessionResolver = (req: IncomingMessage, transport?: 'upgrade') => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
-export function nextSessionResolver(app: Foundation): NextSessionResolver { return req => signin(app).resolve(req); }
+export function nextSessionResolver(app: Foundation): NextSessionResolver { return (req,transport) => signin(app).resolve(req,transport); }
 /** Trusted in-process composition only; never accepted from an operation or HTTP input.
  * source must be an authenticated separate holder transport delivering owned buffers.
  * Bindings contain public forge owner names and secret names, never credential values.

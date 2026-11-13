@@ -230,7 +230,7 @@ it('records accepted bearer and browser use with persisted throttles and safe ad
 it('never records rejected credentials, cookie CSRF failures or invalid cookie upgrades',async()=>{
   const f=await setup(),cookie={cookie:`loom_ui=${f.cookie}`};
   expect((await f.post('/api/tasks/list',{input:{}},cookie)).status).toBe(401);
-  expect(f.s.resolve({headers:{...cookie,upgrade:'websocket',origin:'https://evil.invalid'},socket:{},method:'GET'} as unknown as import('node:http').IncomingMessage)).toBeUndefined();
+  expect(f.s.resolve({headers:{...cookie,upgrade:'websocket',origin:'https://evil.invalid'},socket:{},method:'GET'} as unknown as import('node:http').IncomingMessage,'upgrade')).toBeUndefined();
   expect((await f.post('/api/tasks/list',{input:{}},{authorization:'Bearer invalid'})).status).toBe(401);
   expect(f.s.tokens.used()).toEqual({});expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBeUndefined();
   f.s.tokens.change(tokens=>{tokens.find(t=>t.label==='agent')!.revoked=new Date(f.clock.now()).toISOString();tokens.find(t=>t.label==='owner')!.expires=new Date(f.clock.now()).toISOString();});
@@ -279,4 +279,30 @@ it('does not count malformed same-origin cookie upgrades and records accepted lo
   expect(malformed).toBe(400);expect(f.s.tokens.used()).toEqual({});expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBeUndefined();
   expect((await f.post('/logout',{_csrf:f.s.csrf(f.cookie)},cookie)).status).toBe(200);
   expect(f.s.tokens.used()[hash(f.owner)]).toBe(new Date(f.clock.now()).toISOString());expect(f.s.sessions.get('sessions',hash(f.cookie))).toBeUndefined();
+});
+
+it('records cookie HTTP admission and header-only upgrade requests on the actual HTTP path',async()=>{
+  const f=await setup(),cookie={cookie:`loom_ui=${f.cookie}`,'x-loom-csrf':f.s.csrf(f.cookie)};
+  expect((await f.post('/api/tasks/list',{input:{}},cookie)).status).toBe(200);
+  expect(f.s.tokens.used()[hash(f.owner)]).toBe(new Date(f.clock.now()).toISOString());expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBe(f.clock.now()/1000);
+  f.clock.advance(300_000);
+  const httpPost=(headers:Record<string,string>)=>new Promise<number>((ok,fail)=>{
+    const req=request(f.loom.url+'/api/tasks/list',{method:'POST',headers:{...headers,upgrade:'websocket',connection:'close','content-type':'application/json'}},res=>{res.resume();ok(res.statusCode!);});req.on('error',fail);req.end('{"input":{}}');
+  });
+  expect(await httpPost(cookie)).toBe(200);expect(f.s.tokens.used()[hash(f.owner)]).toBe(new Date(f.clock.now()).toISOString());expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBe(f.clock.now()/1000);
+  expect(await httpPost({authorization:`Bearer ${f.agent}`})).toBe(200);expect(f.s.tokens.used()[hash(f.agent)]).toBe(new Date(f.clock.now()).toISOString());
+});
+it('records open-socket calls and unsubscriptions for browser and bearer credentials',async()=>{
+  const f=await setup(),ws=await f.open({cookie:`loom_ui=${f.cookie}`,origin:f.loom.url}),bearer=await f.open({authorization:`Bearer ${f.agent}`});
+  f.clock.advance(300_000);
+  const result=new Promise<void>(resolve=>{const receive=(raw:Buffer)=>{if(JSON.parse(raw.toString()).kind==='result'){ws.off('message',receive);resolve();}};ws.on('message',receive);});
+  ws.send(JSON.stringify({kind:'call',request:'activity',name:'tasks.list',input:{}}));await result;
+  expect(f.s.tokens.used()[hash(f.owner)]).toBe(new Date(f.clock.now()).toISOString());expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBe(f.clock.now()/1000);
+  f.clock.advance(300_000);
+  bearer.send(JSON.stringify({kind:'unsubscribe',type:'task'}));
+  // Condition-based protocol barrier: an invalid-JSON reply follows the unsubscribe without recording activity.
+  bearer.send('invalid JSON');await once(bearer,'message');
+  expect(f.s.tokens.used()[hash(f.agent)]).toBe(new Date(f.clock.now()).toISOString());
+  ws.send(JSON.stringify({kind:'unsubscribe',type:'task'}));ws.send('invalid JSON');await once(ws,'message');
+  expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBe(f.clock.now()/1000);
 });

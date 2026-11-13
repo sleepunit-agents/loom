@@ -113,23 +113,23 @@ export class Signin {
     } catch { /* Busy or unavailable diagnostics must not reject an otherwise valid credential. */ }
     if (changed) queueMicrotask(()=>this.app.live.changed([{type:'signin.admin',id:'household'}]));
   }
-  resolve(req: IncomingMessage): Authentication | undefined {
+  resolve(req: IncomingMessage, transport?: 'upgrade'): Authentication | undefined {
     const bearer=/^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? '');
     if (bearer) {
       const digest=hash(bearer[1]), t=this.token(digest); if (!t) return;
       const valid=()=>{const current=this.token(digest);return !!current && current.viewer.kind===t.viewer.kind && current.viewer.id===t.viewer.id;};
-      if (!req.headers.upgrade) this.used(digest);
+      if (transport!=='upgrade') this.used(digest);
       return {...t,valid,activity:()=>{if(valid())this.used(digest);}};
     }
     const id=cookieId(req); if (!id) return;
     const s=this.session(id); if (!s) return;
     // Cookie socket upgrades always need an Origin, unlike nonbrowser bearer callers.
-    if (req.headers.upgrade && (!req.headers.origin || !sameOrigin(req))) return;
+    if (transport==='upgrade' && (!req.headers.origin || !sameOrigin(req))) return;
     if (!['GET','HEAD','OPTIONS'].includes(req.method ?? 'GET') && !this.checkCsrf(req,String(req.headers['x-loom-csrf'] ?? ''))) return;
     // Only this validated page-session branch confers the socket window capability.
     // Bearer callers never gain it, including when they also send a cookie.
     const valid=()=>{const c=this.session(id);return !!c && c.s.secret===s.s.secret && c.viewer.id===s.viewer.id;};
-    if (!req.headers.upgrade) this.used(s.s.secret,id);
+    if (transport!=='upgrade') this.used(s.s.secret,id);
     return {window:true,viewer:s.viewer,expiresAt:s.expiresAt,valid,activity:()=>{if(valid())this.used(s.s.secret,id);}};
   }
   createSession(secret: string, meta: { label?: string; signedInAt?: number; agent?: true; via?: 'link'|'passkey'; device?: string } = {}) {
