@@ -375,6 +375,21 @@ describe('owner application routing and denial retention',()=>{
     expect(file([overlap],'mixed-denied')).toMatchObject({ok:false,code:'denied'});
     expect(file(['w-fedcba'],'mixed-unrelated')).toMatchObject({ok:true});
   });
+  it.each([
+    ['w-01234567-89ab-4cde-8fab-0123456789ab','w-12345678-9abc-4def-8abc-123456789abc'],
+    ['w-01234567-89ab-4cde-8fab-0123456789ab','w-abcdef'],
+  ])('spends an imported UUID/mixed receipt only for its exact set %j',async(first,second)=>{
+    const a=await setup(),source=dir(),target='art:'+first+','+second;
+    const receipt={id:'a-01234567',kind:'vouch-wake',target,what:'Vouch for the wakes.',why:'Resume them.',who:{agent:'art',where:'h-import'},for:'owner',minutes:60,at:'2026-11-12T22:00:00Z',state:'allowed',decided:'2026-11-12T22:01:00Z',expires:'2026-11-13T00:00:00Z',by:'jonathan'};
+    writeFileSync(join(source,'approvals.json'),JSON.stringify({v:1,approvals:{[receipt.id]:receipt}}));
+    importApprovals(a.db,source,a.clock.now());
+    for(const [i,wrong] of ['art:'+first,target+',w-fedcba','art:'+first+',w-fedcba'].entries()) {
+      expect(a.role.call('use',caller,{id:receipt.id,kind:receipt.kind,target:wrong},'wrong-set-'+i)).toMatchObject({ok:false,code:'denied'});
+      expect(load(a.db).approvals[0].state).toBe('allowed');
+    }
+    expect(a.role.call('use',caller,{id:receipt.id,kind:receipt.kind,target},'exact-set')).toMatchObject({ok:true,value:{state:'used'}});
+    expect(a.role.call('use',caller,{id:receipt.id,kind:receipt.kind,target},'spent-set')).toMatchObject({ok:false,code:'denied'});
+  });
   it('pregrants do not answer conversation cards, and a deny revokes unspent yes without closing that thread',async()=>{
     const a=await setup(),conversation='cv-0123456789ab';a.identity({conversation});
     const card=a.value('request',{...ask,conversation});
