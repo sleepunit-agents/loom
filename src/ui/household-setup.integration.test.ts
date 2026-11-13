@@ -45,7 +45,20 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
     const remove = a.getByRole('form', { name: 'Remove jonathan', exact: true });
     await remove.getByRole('checkbox').check(); await remove.getByRole('button').click();
     await expect.poll(() => a.getByText('invalid: A household owner must remain', { exact: true }).count()).toBe(1);
+    const create = a.getByRole('form', { name: 'Create agent', exact: true });
+    await create.getByRole('textbox', { name: 'Short name', exact: true }).fill('gabe');
+    await create.getByRole('textbox', { name: 'Name', exact: true }).fill('Gabe');
+    await create.getByRole('textbox', { name: 'What it’s for', exact: true }).fill('Help with the garden.');
+    await create.getByRole('textbox', { name: 'How it talks', exact: true }).fill('Warm and direct.');
+    await create.getByRole('textbox', { name: 'Rules', exact: true }).fill('Keep private things private.');
+    await create.getByRole('textbox', { name: 'When to ask first', exact: true }).fill('Before spending money.');
+    await create.getByRole('checkbox').check(); await create.getByRole('button').click();
+    await expect.poll(() => a.getByLabel('Harness configuration', { exact: true }).textContent()).toContain('--next');
+    await expect.poll(() => b.getByRole('form', { name: 'Save accounts for gabe', exact: true }).count()).toBe(1);
     const mint = a.getByRole('form', { name: 'Create token', exact: true });
+    await expect.poll(() => mint.locator('select[name=role]').inputValue()).toBe('agent');
+    expect(await mint.locator('select[name=agent]').inputValue()).toBe('gabe');
+    expect(await mint.getByRole('textbox', { name: 'Token label', exact: true }).inputValue()).toBe('gabe · first token');
     await mint.getByRole('textbox', { name: 'Token label', exact: true }).fill('setup-browser-token');
     await mint.getByRole('button', { name: 'Create token', exact: true }).click();
     await expect.poll(() => a.getByLabel('Token value', { exact: true }).textContent()).toMatch(/^loom_/);
@@ -81,7 +94,7 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
       await expect.poll(() => b.getByRole('form', { name: 'Save accounts for art', exact: true }).getByRole('textbox').inputValue()).toBe('art-bot');
       await expect.poll(() => b.locator('html').getAttribute('data-look')).toBe(look);
       expect(await b.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await b.getByRole('heading', { name: 'Tokens and sessions', exact: true }).scrollIntoViewIfNeeded();
+      await b.getByRole('heading', { name: 'Create an agent', exact: true }).scrollIntoViewIfNeeded();
       await b.screenshot({ path: join(shots, `setup-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
     }
     await revokeToken.getByRole('button').click();

@@ -1,3 +1,4 @@
+import { bootstrapInput, bootstrapHouseholdAgent } from './bootstrap.js';
 import { z } from 'zod';
 import { installHouseholdDisplay } from './display.js';
 import { installHouseholdPreferences } from './preferences.js';
@@ -18,6 +19,10 @@ export function installHouseholdProjects(app: Foundation, home: string): void {
   installHouseholdDisplay(app, home);
   const store = new SharingDatabase(app.db, home);
   const owner = (v: Viewer) => mayAct(v, {}, store.sharing(), 'household');
+  app.operations.register(operation({
+    name: 'household.bootstrapAgent', write: true, input: bootstrapInput, may: owner,
+    run: (ctx, input) => bootstrapHouseholdAgent(ctx, home, input),
+  }));
   app.operations.register(operation({
     name: 'household.show',
     input: z.object({}).strict(),

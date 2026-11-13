@@ -53,7 +53,7 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | Old action or route | Current next replacement or gap |
 | --- | --- |
 | `member-set`, `member-remove` | `household.setMember`, `household.removeMember`; owner operations and Setup member controls are implemented |
-| `add-agent` | `household.addAgent` covers registration only; **pending** context bootstrap, creed/rules, appearance, first token and harness snippet |
+| `add-agent` | `household.addAgent` covers registration only; `household.bootstrapAgent` creates context/creed/rules; Setup selects first-token creation and shows an explicit next-mode harness snippet. Appearance remains **pending** |
 | `create-token`, `revoke-token` on agent Setup | `token.create` / `token.revoke` in `/p/setup-preview`; single-send mint and confirmed optional passkey/device cascade; first-token bootstrap still pending |
 | `face-set`, `mark-set` | **Pending** appearance operations/records and Setup controls |
 | `about-set`, `about-ask` | **Pending** household profile editing and regeneration request. Explicit offline `describe_self` refuses app access |
@@ -62,7 +62,7 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | `person-add` | `mind.personAdd`; People screen handles the new-side form |
 | `fact-add`, `knowledge-verify`, `knowledge-recheck` | `mind.knowledgeAdd`, `mind.knowledgeVerify`, `mind.knowledgeRecheck`; Knowledge screen handles the new-side forms |
 | GET `/a/AGENT/setup` | `/p/setup-preview` now provides member ownership/removal, project lists, account attribution and existing-context registration via Live/call; token/session administration via `signin.admin` and socket calls; **pending** read-only identity, health and full bootstrap coverage |
-| GET `/new-agent`, GET `/members` | Setup member forms and existing-context registration implemented; **pending** fresh context bootstrap |
+| GET `/new-agent`, GET `/members` | Setup member forms and existing-context registration implemented; fresh context bootstrap via `household.bootstrapAgent` and Setup |
 | GET `/account`, GET `/passkeys` | **Pending** complete Account administration screen; the new sign-in shell is not that screen |
 | `passkey-remove` (including descendants), `session-revoke` | **Pending** Account administration operations/records; passkey login/registration and own-session logout already exist |
 | `signin-link`, `member-link` | `signin.link` and the explicit next link client cover owner link issuance; **pending** Account/Setup UI. Browser sessions cannot mint links through its HTTP door |
