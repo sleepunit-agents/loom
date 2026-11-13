@@ -10,7 +10,7 @@ import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
 import { stagingRuntime, type Runtime, type StartResult } from './dependencies/runtime.js';
 import { deskJobs, agentNext } from './desk.js';
 import { unpark } from './unpark.js';
-import { vouchable, askable, automaticVouch, vouchDetails } from './vouch.js';
+import { vouchable, askable, automaticVouch, vouchDetails, vouchWords } from './vouch.js';
 import type { VouchFiling } from './dependencies/filing.js';
 import { vouchOf } from '../approvals/role.js';
 import { deadmanPrompt, deadmanNote } from './deadman.js';
@@ -367,7 +367,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       });
       for (const agent of new Set(wakes(db).map(w=>w.agent))) {
         options.vouchFiling.group(agent,rows.filter(w=>w.agent===agent).map(w=>({
-          id:w.id, automatic:automaticVouch(w), details:vouchDetails([w],12),
+          ...vouchWords(w), automatic:automaticVouch(w),
         })));
       }
     }

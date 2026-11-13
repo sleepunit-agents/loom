@@ -1,3 +1,4 @@
+import { vouchDetails as renderVouchDetails } from '../approvals/role.js';
 import type { Wake } from './store.js';
 /** Import metadata can restrict adoption; it can never confer authority. Only a
  * fresh owner decision supplies a Viewer. Capabilities need their owning recovery.
@@ -26,24 +27,8 @@ export function askable(w: Wake): boolean {
 export function automaticVouch(w: Wake): boolean {
   return askable(w) && w.legacy?.origin === `agent:${w.agent}` && w.legacy?.for_why === 'none';
 }
-/** Every id and due time survives the owning card's 1000-character details cap.
- * Reserve room for executable words even when the saved note is very long.
- * Automatic candidates use twelve slots before Approvals selects its group.
- */
-export function vouchDetails(rows: Wake[], slots = rows.length): string {
-  const room = Math.floor(1000 / slots) - 1;
-  const plain = (words: string) => words.normalize('NFKC').replace(/[\p{C}]/gu, ' ');
-  const clip = (words: string, size: number) => words.length <= size ? words : size >= 3 ? words.slice(0, size - 3) + '...' : words.slice(0, size);
-  return rows.map(w => {
-    const prefix = `${w.id} fires ${new Date(w.due).toISOString()}: `;
-    const available = Math.max(0, room - prefix.length);
-    const executable = plain(w.file ? `file: ${w.file}` : `runs: ${w.prompt ?? ''}`);
-    const note = plain(w.note);
-    if (!note) return prefix + clip(executable, available);
-    const separator = ' | ';
-    const contentRoom = Math.max(0, available - separator.length);
-    const executableRoom = Math.min(executable.length, Math.ceil(contentRoom * 2 / 3));
-    const noteRoom = Math.min(note.length, contentRoom - executableRoom);
-    return prefix + clip(note, noteRoom) + separator + clip(executable, Math.max(0, available - noteRoom - separator.length));
-  }).join('\n');
+/** Shape saved work for the owning card renderer without restoring authority. */
+export function vouchWords(w: Wake) {
+  return {id:w.id,due:w.due,note:w.note,executable:w.file ? `file: ${w.file}` : `runs: ${w.prompt ?? ''}`};
 }
+export function vouchDetails(rows: Wake[]): string { return renderVouchDetails(rows.map(vouchWords)); }

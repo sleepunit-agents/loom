@@ -1,12 +1,14 @@
 import { z } from 'zod';
 import { type State, type Approval, stateOf, forOf } from './model.js';
+import { vouchDetails } from './vouch-details.js';
 import { request, withdraw, type DomainContext } from './domain.js';
 import { denied, vouchOf, covered } from './targets.js';
 
 /** The clock supplies a current, eligible snapshot. This owning transaction alone
  * filters decisions and replaces unanswered cards. No shadow denial ledger. */
 export const vouchCandidates = z.array(z.object({
-  id: z.string(), automatic: z.boolean(), details: z.string().max(83),
+  id: z.string(), automatic: z.boolean(), due: z.number().int().safe().min(-8_640_000_000_000_000).max(8_640_000_000_000_000),
+  note:z.string().max(100_000), executable:z.string().min(1).max(100_010),
 }).strict());
 export function groupVouch(s: State, input: Record<string, unknown>, c: DomainContext): Approval | null {
   const rows = vouchCandidates.parse(input.candidates);
@@ -15,7 +17,7 @@ export function groupVouch(s: State, input: Record<string, unknown>, c: DomainCo
     || c.caller.project || c.caller.people?.length || c.caller.conversation)
     denied('Grouped vouch filing belongs to the clock acting for owner');
   const candidates = new Map(rows.map(row => {
-    if (!vouchOf(`${agent}:${row.id}`) || !row.details.startsWith(`${row.id} fires `))
+    if (!vouchOf(`${agent}:${row.id}`))
       denied('Each candidate lists its exact wake and saved due time');
     return [row.id, row];
   }));
@@ -27,18 +29,23 @@ export function groupVouch(s: State, input: Record<string, unknown>, c: DomainCo
   if (allowed) return c.canRead && !c.canRead(allowed) ? null : allowed;
   const deniedIds = new Set(cards.filter(a => a.state === 'denied').flatMap(covered));
   const occupied = new Set(cards.filter(a => !pending.includes(a) && ['pending','allowed'].includes(stateOf(a,c.now))).flatMap(covered));
+  for (const card of pending) if (c.canRead && !c.canRead(card)) denied('An existing decision prevents this request');
   const previous = new Set(pending.flatMap(covered));
+  const eligible = [...candidates.keys()].sort().filter(id=>!deniedIds.has(id) && !occupied.has(id));
+  const retained = eligible.filter(id=>previous.has(id));
   const ids: string[] = [];
-  for (const id of [...candidates.keys()].sort()) {
-    if (deniedIds.has(id) || occupied.has(id) || !(candidates.get(id)!.automatic || previous.has(id))) continue;
+  // Existing explicit choices cannot fall out of the group at its capacity cap.
+  for (const id of [...retained,...eligible.filter(id=>!previous.has(id) && candidates.get(id)!.automatic)]) {
     if (ids.length === 12 || `${agent}:${[...ids,id].join(',')}`.length > 200) break;
     ids.push(id);
   }
-  // Losing one candidate does not churn a card while other listed work remains.
-  if (pending.length === 1 && ids.length && ids.every(id => previous.has(id))) {
-    if (c.canRead && !c.canRead(pending[0])) denied('An existing decision prevents this request');
-    return pending[0];
+  if (retained.some(id=>!ids.includes(id)) || pending.length && ids.length && ids.every(id=>previous.has(id))) {
+    // Preserve separate explicit cards until new selected work can join all of
+    // their still-eligible ids. Empty cards can be withdrawn independently.
+    for (const card of pending) if (!covered(card).some(id=>retained.includes(id))) withdraw(s,card.id,c);
+    return pending.find(card=>stateOf(card,c.now)==='pending') ?? null;
   }
+  ids.sort();
   for (const card of pending) {
     if (c.canRead && !c.canRead(card)) denied('An existing decision prevents this request');
     withdraw(s,card.id,c);
@@ -50,6 +57,6 @@ export function groupVouch(s: State, input: Record<string, unknown>, c: DomainCo
     why:'These imported jobs have no verified owner and remain held.',
     if_yes:'Eligible jobs become your work with their saved words and due times.',
     if_no:'The jobs remain held and are not asked about again.',
-    details:ids.map(id=>candidates.get(id)!.details).join('\n'),
+    details:vouchDetails(ids.map(id=>candidates.get(id)!)),
   }, c);
 }

@@ -12,11 +12,13 @@ runtime. `loom wake` loads identity and is unrelated to scheduling.
 
 ## Remaining work and evidence
 
-At the documentation audit base `6c5f566`, runtime exposes `queueBody` and role
-bindings for `startBody`/`deliver`, but does not install executable operations for
-the latter. Queue acceptance is not a confirmed body start. Next mode therefore
-keeps Clock's default held runtime. Task t-2201 explicitly depends on t-2209 for
-executable dispatch and authenticated conversation/continuation resolution.
+At base `27a1e59`, runtime installs `runtime.startBody` and next mode composes
+Clock with `src/pieces/runtime/clock.ts`. The bridge accepts plain prompt wakes
+only after agent house configuration and waits for runner-confirmed running or
+waiting state. Queue acceptance alone is never reported as started. Missing
+features (lane files, continuations, slots, approvals, local wakes) remain held;
+private body delivery and account selection are refused. Conversation delivery
+and authenticated continuation resolution remain blocked on t-2209.
 
 Independent work remains: exact local-approval filing/recovery,
 standing-job rechecks and app/client flow; and other imported provenance recovery
@@ -719,8 +721,10 @@ excluded. No Clock-side card or denial ledger exists.
 
 Sorted groups hold up to twelve ids within the existing 200-character target cap
 (fewer UUID ids fit); overflow waits for a later pass after the current card is
-answered. Every candidate line budgets one twelfth of the details cap, retaining
-id, saved due and executable excerpt even on smaller cards. A missing role or
+answered. The owning renderer reserves every id and saved due first, then shares the
+remaining details budget across executable excerpts and notes. Explicitly asked
+ids take priority over new automatic candidates at capacity; separate explicit
+cards remain intact when all their eligible ids cannot fit into one group. A missing role or
 service access fails closed and is retried by the next daemon check. Filing never
 changes the held work; only the existing owner Allow application adopts it. No
 old stores, polling subprocesses or systemd jobs are involved.
