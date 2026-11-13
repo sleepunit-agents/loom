@@ -7,6 +7,7 @@ import type { WordsKey } from './crypto.js';
 import { installConversationSteps, type StepConversation } from './conversation-steps.js';
 import { threadActivity } from './thread-activity.js';
 import { spawnCreator } from './spawn.js';
+import { installCommsWork } from './work.js';
 import { about, aboutPointer, aboutIdentity, attachedText } from './about.js';
 import { HeldEffect, registerCommsMetadata } from './role.js';
 import type { Comms, AgentPost, StartNotice, RuntimeDelivery, Hold, Attention } from './role.js';
@@ -33,6 +34,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  migrate(db,'comms',schema); db.pragma('secure_delete = ON');
  const see = (v: Viewer,t: Thread|undefined) => !!t && mayUseThread(v,t,o.sharing());
  const writable = (v: Viewer,input: {thread:string}) => see(v,thread(db,input.thread));
+ installCommsWork({operations,live,thread:(viewer,id)=>{const t=thread(db,id);return !closed&&see(viewer,t)?t:undefined;}});
  registerCommsMetadata(operations, {
   threadProject(viewer, conversation) {
    if (closed || !conversation.member) return null;

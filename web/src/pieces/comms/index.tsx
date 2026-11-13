@@ -11,6 +11,7 @@ import { useReplyFollow } from './use-follow';
 import { bindComposerViewport } from './viewport';
 import { bindThreadRead } from './read';
 import { folderThreads, watchingJob } from './threads';
+import { Work } from './work';
 import './comms.css';
 interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};job?:false|{joined:boolean};[key:string]:unknown}
 interface Ack {thread:string;seq:number}
@@ -73,6 +74,7 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
    {status==='live'&&thread.working&&thread.alive&&<p aria-label="Body activity">Last body activity <time dateTime={new Date(thread.alive.at).toISOString()}>{new Date(thread.alive.at).toLocaleString('en-US',{timeZone:'America/Chicago'})} CT</time>{thread.alive.tokens!==undefined&&` · ${thread.alive.tokens.toLocaleString('en-US')} tokens`}</p>}
    <div className="flex flex-wrap gap-2"><Button variant="outline" onClick={()=>act(thread.pinned?'unpin':'pin')}>{thread.pinned?'Unpin':'Pin'}</Button><Button variant="outline" onClick={()=>act(thread.archived===null?'archive':'unarchive')}>{thread.archived===null?'Archive':'Unarchive'}</Button>{!watching&&<Button variant="outline" onClick={()=>act('stop')}>Stop</Button>}<Button variant="outline" onClick={()=>setDeleting(true)}>Delete</Button></div>
    <details><summary>Thread settings</summary><form onSubmit={e=>{e.preventDefault();act('title',{title});}}><label>Title<Input value={title} maxLength={60} onChange={e=>setTitle(e.target.value)}/></label><Button type="submit">Save title</Button></form><form onSubmit={e=>{e.preventDefault();act('project',{project:project||null});}}><label>Project<Input value={project} onChange={e=>setProject(e.target.value)}/></label><Button type="submit">File thread</Button></form></details>
+   <Work thread={thread.id}/>
    {deleting&&<section aria-label="Delete thread"><p>Delete this thread and all its words?</p><Button disabled={state.pending} onClick={()=>act('delete')}>Delete thread</Button><Button variant="outline" onClick={()=>setDeleting(false)}>Keep thread</Button></section>}
    <Answer request={request}/>
   </header>

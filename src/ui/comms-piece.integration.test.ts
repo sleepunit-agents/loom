@@ -102,6 +102,19 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
   const capture=async(prefix:string,split=false)=>{for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});}};
   await capture('comms',true);
+  const conversation=JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).conversation;
+  const created=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.create',{title:'Work made in this thread',agent:'art',source:`conversation:${conversation}`,actor:'art',at:new Date(clock.now()).toISOString()},'fixture-work');
+  expect(created).toMatchObject({ok:true,value:{result:{ok:true}}});
+  const task=(created as {ok:true;value:{result:{id:string}}}).value.result.id;
+  for(const page of [a,b])await page.getByText('Work in this thread',{exact:true}).click();
+  await expect.poll(()=>b.getByRole('region',{name:'Work in this thread'}).getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
+  expect(await b.getByRole('region',{name:'Work in this thread'}).getByRole('link').getAttribute('href')).toBe(`/p/tasks-preview/task/${task}`);
+  const closed=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.close',{id:task,actor:'art',at:new Date(clock.now()).toISOString()},'fixture-work-close');
+  expect(closed).toMatchObject({ok:true,value:{result:{ok:true}}});
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Work in this thread'}).textContent()).toContain('Done');
+  await capture('comms-work',true);
+  for(const page of [a,b])await page.getByText('Work in this thread',{exact:true}).click();
+
   await comms.startNotice('art',place,{kind:'start-failed',seq,attempt:3});
   await expect.poll(()=>b.getByRole('button',{name:'Send again',exact:true}).count()).toBe(1);
   await expect.poll(()=>b.getByLabel('Thinking status').count()).toBe(0);
