@@ -13,7 +13,7 @@ import { installApprovals, type ApprovalOptions } from './index.js';
 import { load, persist } from './store.js';
 import { importApprovals } from './importer.js';
 import { approvalsRole } from './role.js';
-import { type Caller } from './model.js';
+import { type Caller, type Approval } from './model.js';
 import type { ApprovalApplications } from './apply.js';
 import { installClock } from '../clock/index.js';
 const owner:Viewer={kind:'member',id:'jonathan'},agent:Viewer={kind:'agent',id:'art'},pollock:Viewer={kind:'member',id:'pollock'},other:Viewer={kind:'agent',id:'pond-bot'};
@@ -29,8 +29,13 @@ async function setup(applications?: ApprovalApplications,resolver?:ApprovalOptio
   const app=await startLoom({home:dir(),clock,sharing,authenticate:req=>{const id=req.headers.authorization?.replace('Bearer ','');return id==='art'?{viewer:{kind:'agent',id},valid:()=>true}:id&&access.members[id]?{viewer:{kind:'member',id},valid:()=>!!access.members[id]}:undefined;},install:app=>installApprovals(app.db,app.operations,app.live,sharing,{applications,localAgent:'art',projects:()=>[{slug:'pond',repos:['github:acme/app']}],caller:resolver??(v=>v.kind==='agent'?{...identity,who:{...identity.who,agent:v.id}}:undefined)})});closes.push(app.close);let seq=0;
   const call=(op:string,input:Record<string,unknown>={},viewer:Viewer=agent,id=`op-${++seq}`)=>app.operations.call('direct',viewer,`approvals.${op}`,input,id);
   const value=(op:string,input:Record<string,unknown>={},viewer:Viewer=agent)=>{const r=call(op,input,viewer);expect(r.ok,JSON.stringify(r)).toBe(true);return r.ok?r.value as any:undefined;};
-  const resetCard=()=>{const r=approvalsRole(app.operations,'runtime').call('request',identity,{...ask,kind:'principal-reset',target:'art:cv-0123456789ab',details:'Reset the conversation cv-0123456789ab.'},`reset-${++seq}`);expect(r.ok,JSON.stringify(r)).toBe(true);return r.ok?r.value as any:undefined;};
-  return {...app,clock,call,value,access,resetCard,identity:(next:Partial<Caller>)=>{identity={...identity,...next};},role:approvalsRole(app.operations,'runtime')};
+  const applicationCard=(kind:'principal-reset'|'box-write-off'='principal-reset')=>{
+    const target=kind==='principal-reset'?'art:cv-0123456789ab':'art:box-one@1762718400';
+    const details=kind==='principal-reset'?'Reset the conversation cv-0123456789ab.':'The box box-one was last heard yesterday.';
+    const r=approvalsRole(app.operations,'runtime').call('request',identity,{...ask,kind,target,details},`application-${++seq}`);
+    expect(r.ok,JSON.stringify(r)).toBe(true);if(!r.ok)throw Error(r.message);return r.value as Approval;
+  };
+  return {...app,clock,call,value,access,applicationCard,identity:(next:Partial<Caller>)=>{identity={...identity,...next};},role:approvalsRole(app.operations,'runtime')};
 }
 describe('approval receipts and central policy',()=>{
   it('allows once, exact kind and raw target, never another agent',async()=>{
@@ -81,17 +86,17 @@ describe('approval receipts and central policy',()=>{
     const a=await setup(),cv='cv-0123456789ab',card=a.value('request',{...ask,conversation:cv});expect(card).not.toHaveProperty('conversation');a.identity({conversation:cv});expect(a.value('request',{...ask,conversation:cv})).toMatchObject({id:card.id,conversation:cv});a.identity({conversation:'cv-abcdef012345'});expect(a.value('request',{...ask,conversation:'cv-abcdef012345'})).toMatchObject({conversation:cv});
   });
   it('uses project sharing for records and denies owner-only answers to agent owners',async()=>{
-    const a=await setup({runtime:{apply:()=>({ok:true,value:null})}});a.identity({project:'pond'});const card=a.resetCard();expect(a.value('check',{id:card.id},pollock)).toMatchObject({state:'pending'});expect(a.call('answer',{id:card.id,action:'allow'},pollock)).toMatchObject({code:'denied'});a.value('answer',{id:card.id,action:'allow'},owner);expect(a.call('use',{id:card.id,kind:'principal-reset',target:'art:cv-0123456789ab'})).toMatchObject({code:'denied'});expect(load(a.db).approvals.find(r=>r.id===card.id)).toMatchObject({state:'used'});expect(a.role.call('use',{who:{agent:'art',where:'a body'},for:'?'},{id:card.id,kind:'principal-reset',target:'art:cv-0123456789ab'},'piece-grant')).toMatchObject({ok:false,code:'denied'});
+    const a=await setup({runtime:{apply:()=>({ok:true,value:null})}});a.identity({project:'pond'});const card=a.applicationCard();expect(a.value('check',{id:card.id},pollock)).toMatchObject({state:'pending'});expect(a.call('answer',{id:card.id,action:'allow'},pollock)).toMatchObject({code:'denied'});a.value('answer',{id:card.id,action:'allow'},owner);expect(a.call('use',{id:card.id,kind:'principal-reset',target:'art:cv-0123456789ab'})).toMatchObject({code:'denied'});expect(load(a.db).approvals.find(r=>r.id===card.id)).toMatchObject({state:'used'});expect(a.role.call('use',{who:{agent:'art',where:'a body'},for:'?'},{id:card.id,kind:'principal-reset',target:'art:cv-0123456789ab'},'piece-grant')).toMatchObject({ok:false,code:'denied'});
   });
 
   it('leaves owner-applied cards pending when their application role is missing',async()=>{
-    const a=await setup(),card=a.resetCard();
+    const a=await setup(),card=a.applicationCard();
     expect(a.call('answer',{id:card.id,action:'allow'},owner)).toMatchObject({ok:false,code:'unavailable'});
     expect(load(a.db).approvals[0]).toMatchObject({state:'pending'});
     expect(load(a.db).audit.map(r=>r.event)).toEqual(['request']);
     expect(a.value('answer',{id:card.id,action:'deny'},owner)).toMatchObject({state:'denied'});
   });
-  it('rolls back application database writes and answer on role failure, and retries once on success',async()=>{
+  it.each(['principal-reset','box-write-off'] as const)('rolls back %s database writes and answer on role failure, and retries once on success',async kind=>{
     let app:Awaited<ReturnType<typeof setup>>, fail=true, calls=0;
     app=await setup({runtime:{apply:card=>{
       calls++;
@@ -99,10 +104,11 @@ describe('approval receipts and central policy',()=>{
       return fail?{ok:false,code:'conflict',message:'Target changed'}:{ok:true,value:null};
     }}});
     app.db.exec('CREATE TABLE application_effects (id TEXT PRIMARY KEY)');
-    const card=app.resetCard(),input={id:card.id,action:'allow'};
+    const card=app.applicationCard(kind),input={id:card.id,action:'allow'};
     expect(app.call('answer',input,owner,'apply')).toMatchObject({ok:false,code:'conflict'});
     expect(app.db.prepare('SELECT * FROM application_effects').all()).toEqual([]);
     expect(load(app.db).approvals[0].state).toBe('pending');
+    expect(load(app.db).audit.map(r=>r.event)).toEqual(['request']);
     fail=false;
     const first=app.call('answer',input,owner,'apply');
     expect(first).toMatchObject({ok:true,value:{state:'used'}});
@@ -492,7 +498,7 @@ describe('cold review authorization regressions',()=>{
     let a:Awaited<ReturnType<typeof setup>>;
     a=await setup({runtime:{apply:((card:any)=>{a.db.prepare('INSERT INTO async_effect VALUES (?)').run(card.id);return Promise.resolve({ok:true,value:null});}) as any}});
     a.db.exec('CREATE TABLE async_effect (id TEXT)');
-    const card=a.resetCard();
+    const card=a.applicationCard();
     expect(a.call('answer',{id:card.id,action:'allow'},owner)).toMatchObject({ok:false,code:'unavailable'});
     expect(a.db.prepare('SELECT * FROM async_effect').all()).toEqual([]);
     expect(load(a.db).approvals[0].state).toBe('pending');
