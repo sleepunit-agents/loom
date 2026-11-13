@@ -1,4 +1,4 @@
-import type { Caller } from '../approvals/model.js';
+import type { Caller } from '../approvals/role.js';
 import { attentionRole } from '../attention/role.js';
 import { controlScope, currentExecution } from './control.js';
 /** Private words remain in Comms. Runtime persists routing and acceptance only. */
