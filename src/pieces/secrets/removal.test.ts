@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startLoom } from '../../foundation.js';
-import { fixtureSharing } from '../../fixture.js';
+import { fixture, fixtureSharing } from '../../fixture.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
 import { grantsRole, installSecrets } from './index.js';
 import { installSecretValues } from './values.js';
@@ -13,17 +13,18 @@ import type { GrantRequest } from './role.js';
 import type { KeyHolder } from './keyholder.js';
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const agent: Viewer = { kind: 'agent', id: 'pond-bot' };
+const snapshot = (db: {prepare(sql: string): {all(): unknown}}) => ['secrets_names', 'secrets_grants', 'secrets_requests', 'secrets_meta', 'core_operations'].map(t => db.prepare(`SELECT * FROM ${t}`).all());
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
 async function setup() {
-  const home = mkdtempSync(join(tmpdir(), 'loom-secret-remove-')); homes.push(home);
+  const home = mkdtempSync(join(tmpdir(), 'loom-secret-remove-')); homes.push(home); fixture(home);
   const removed = new Map<string, string>();
   const holder: KeyHolder = { names: () => [], set() {}, handTo() {}, rotate() {}, remove: vi.fn((name, id) => {
     if (removed.has(id) && removed.get(id) !== name) throw Error('write id conflict');
     removed.set(id, name);
   }) };
   const clock = new FakeClock();
-  const app = await startLoom({ home, clock, sharing: fixtureSharing, install: a => {
+  const app = await startLoom({ home, next: true, staging: true, clock, sharing: fixtureSharing, install: a => {
     installSecrets(a.db, a.operations, a.live, fixtureSharing, { raise: () => ({ raised: true }) });
     installSecretValues(a.db, a.operations, fixtureSharing, holder);
   } }); closes.push(app.close);
@@ -45,6 +46,7 @@ it('removes all secret scopes and pending access without touching another resour
   call('grant', { agent: 'art', kind: 'piece', target: 'api-key' });
   call('grant', { agent: 'art', kind: 'secret', target: 'other-key' });
   call('policy', { default: 'auto', secrets: { 'api-key': { grant: 'auto', agents: [agent.id], houses: ['art'], minutes: 30 }, 'other-key': { grant: 'never' } } });
+  const originals = (app.db.prepare('SELECT record FROM secrets_requests').all() as {record: string}[]).map(r => JSON.parse(r.record));
   const input = { name: 'api-key', writeId: randomUUID() };
   const changed = vi.spyOn(app.live, 'changed');
   expect(call('remove', input)).toEqual({ ok: true, value: { removed: true } });
@@ -53,7 +55,7 @@ it('removes all secret scopes and pending access without touching another resour
   expect(app.db.prepare("SELECT * FROM secrets_grants WHERE kind='secret' AND target='api-key'").all()).toEqual([]);
   expect(app.db.prepare('SELECT * FROM secrets_grants').all()).toHaveLength(2);
   const requests = app.db.prepare('SELECT record FROM secrets_requests').all() as {record: string}[];
-  expect(requests.map(r => JSON.parse(r.record)).map(r => [r.id, r.state]).sort()).toEqual([[first.id, 'revoked'], [carried.id, 'revoked'], [pending.id, 'cancelled']].sort());
+  expect(requests.map(r => JSON.parse(r.record))).toEqual(originals.map(r => ({...r, state: r.state === 'pending' ? 'cancelled' : 'revoked'})));
   expect(readSecretPolicy(app.db)).toEqual({ default: 'auto', secrets: { 'api-key': { grant: 'ask', houses: ['art'], minutes: 30 }, 'other-key': { grant: 'never' } } });
   expect(grantsRole(app.db).mayUse(agent.id, {kind: 'secret', target: 'api-key'}, clock.now(), {house: 'h-2'})).toBe(false);
   expect(changed).toHaveBeenCalledTimes(1);
@@ -94,7 +96,7 @@ it('rolls metadata and Live back after holder success, retries the same write id
   const pending = request('h-4');
   call('grant', { agent: agent.id, kind: 'secret', target: 'api-key' });
   call('policy', { secrets: { 'api-key': {grant: 'never', houses: ['art']} } });
-  const rows = () => ['secrets_names', 'secrets_grants', 'secrets_requests', 'secrets_meta', 'core_operations'].map(t => app.db.prepare(`SELECT * FROM ${t}`).all());
+  const rows = () => snapshot(app.db);
   const before = rows(), changed = vi.spyOn(app.live, 'changed');
   app.db.exec("CREATE TRIGGER reject_remove BEFORE DELETE ON secrets_names BEGIN SELECT RAISE(ABORT, 'failure'); END");
   const input = { name: 'api-key', writeId: randomUUID() };
@@ -131,7 +133,7 @@ it('suppresses successful holder output and rolls back even after removal and au
   call('grant', {agent: agent.id, kind: 'secret', target: 'api-key'});
   call('policy', {secrets: {'api-key': {grant: 'auto', agents: [agent.id]}}});
   vi.mocked(holder.remove).mockImplementation(() => 'HOLDER-OUTPUT-SENTINEL');
-  const rows = () => ['secrets_names', 'secrets_grants', 'secrets_requests', 'secrets_meta', 'core_operations'].map(t => app.db.prepare(`SELECT * FROM ${t}`).all());
+  const rows = () => snapshot(app.db);
   const before = rows(), changed = vi.spyOn(app.live, 'changed');
   // Fail after name/policy/request/grant deletion and the stable write receipt.
   app.db.exec("CREATE TRIGGER reject_remove_receipt BEFORE INSERT ON core_operations WHEN NEW.name='secrets.remove' BEGIN SELECT RAISE(ABORT, 'failure'); END");
