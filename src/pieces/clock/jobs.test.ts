@@ -77,6 +77,51 @@ describe('durable daemon clock', () => {
     access.members.jonathan.owner = false;
     expect(app.value('in', input, agent).state).toBe('pending');
   });
+  it('answers the authoring owner through clock.at and retains the result after restart', async () => {
+    const app = await loom();
+    const s = app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', file: 'routines/upkeep.md', note: 'daily' });
+    const occurrence = wakes(app.db)[0];
+    const input = { agent: 'art', file: 'routines/upkeep.md', note: 'rearm', when: '03:31' };
+    const expected = { alreadyScheduled: true, schedule: s.id, due: occurrence.due };
+    expect(app.value('at', input)).toEqual(expected);
+    await app.close();
+    const restarted = await loom({}, app.dir, app.clock);
+    expect(restarted.value('at', input)).toEqual(expected);
+    expect(wakes(restarted.db)).toEqual([occurrence]);
+  });
+  it.each([
+    'schedule continuation', 'schedule approval', 'schedule place',
+    'occurrence continuation', 'occurrence approval', 'occurrence place',
+    'disabled', 'stale revision', 'stale lane', 'nonfuture', 'held', 'firing', 'run-now', 'bypass pause',
+    'author lost create', 'other owner', 'agent scope', 'member scope',
+  ])('keeps independent work when the candidate has %s', async scenario => {
+    const access = structuredClone(sharing);
+    access.members.jonathan.agents.push('pond-bot');
+    access.members.other = { owner: true, agents: ['art'] };
+    const app = await loom({}, home(), new FakeClock(), access);
+    const s = app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '03:31', file: 'routines/upkeep.md', note: 'daily' });
+    const occurrence = wakes(app.db)[0];
+    let viewer: Viewer = owner;
+    const input = { agent: 'art', file: 'routines/upkeep.md', note: 'rearm', when: '12h', ...(scenario === 'member scope' ? { member: 'jonathan' } : {}) };
+    const [which, field] = scenario.split(' ');
+    if (which === 'schedule' || which === 'occurrence') Object.assign(which === 'schedule' ? s : occurrence, { [field]: 'capability-or-place' });
+    if (scenario === 'disabled') s.enabled = false;
+    if (scenario === 'stale revision') occurrence.scheduleRevision = 'old';
+    if (scenario === 'stale lane') occurrence.laneVersion = 'old';
+    if (scenario === 'nonfuture') occurrence.due = app.clock.now();
+    if (scenario === 'held') { occurrence.state = 'held'; occurrence.hold = 'uncertain'; }
+    if (scenario === 'firing') occurrence.state = 'firing';
+    if (scenario === 'run-now') occurrence.runNow = true;
+    if (scenario === 'bypass pause') occurrence.bypassPause = true;
+    if (scenario === 'author lost create') { access.members.jonathan.agents = []; viewer = { kind: 'agent', id: 'art' }; }
+    if (scenario === 'other owner') viewer = { kind: 'member', id: 'other' };
+    if (scenario === 'agent scope') { s.agent = 'pond-bot'; occurrence.agent = 'pond-bot'; }
+    app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(s), s.id);
+    app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(occurrence), occurrence.id);
+    expect(app.value('in', input, viewer).state).toBe('pending');
+    expect(wakes(app.db)).toHaveLength(2);
+    expect(wake(app.db, occurrence.id)).toEqual(occurrence);
+  });
   it('creates an owner wake now without a lane, preserving attribution and bypassing pause', async () => {
     const startBody = vi.fn(async () => ({ state: 'started', body: 'now-body' } as const));
     const app = await loom({ runtime: { startBody } });
