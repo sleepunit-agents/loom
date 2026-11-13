@@ -19,6 +19,7 @@ beforeEach(() => {
   f.snapshots = {
     'bridges.venue': { status: 'live', records: [{ id: 'art-discord', platform: 'discord', agent: 'art', workspace: 'house', bot: '100', tokenSecret: 'discord-token', appSecret: 'discord-app', only: ['300'], ignore: ['400'], botRoles: ['500'], enabled: true, connection: 'connected', received: 3, delivered: 2, held: 1 }] },
     'bridges.route': { status: 'live', records: [{ id: 'route', platform: 'discord', workspace: 'house', channel: '300', primary: 'art', parent: 'parent-id', pair: 'pair-id', peer: true, guest: false, readers: ['mark'], notes: ['house/rules'], changedAt: 123, connection: 'metadata-only' }] },
+    'bridges.link': { status: 'live', records: [{ id: 'link', platform: 'discord', workspace: 'house', user: '200', person: 'jonathan', changedAt: 123 }] },
     'bridges.send': { status: 'live', records: [{ id: 'reply', venue: 'art-discord', incoming: 'receipt', state: 'pending', created: 0 }] },
     'core.effect': { status: 'live', records: [{ id: 'bridges:reply', kind: 'bridge-send', title: 'Bridge reply via art-discord', state: 'due' }, { id: 'wake', kind: 'wake', title: 'Hidden wake', state: 'due' }] },
   };
@@ -240,4 +241,63 @@ it.each(['Reader agents', 'Note references'])('normalizes modified-and-restored 
   pendingWrite(); await publish('bridges.route', [{ ...f.snapshots['bridges.route'].records[0], readers: ['a\nb'], notes: ['c\nd'] }]);
   await draw('/p/bridges-preview/item/routes/route'); const key = label === 'Reader agents' ? 'readers' : 'notes'; const raw = key === 'readers' ? 'a\nb' : 'c\nd';
   await change(label, 'temporary'); await change(label, raw); await submit(); expect(f.call.mock.calls[0][1]).toMatchObject({ [key]: raw.split('\n') });
+});
+
+it('edits all person-link fields with exact strings and no live metadata', async () => {
+  const answer = pendingWrite(); await draw('/p/bridges-preview/item/links/link');
+  await click('Slack'); await change('Workspace ID', ' T1 '); await change('Platform user ID', ' U1 '); await change('Person ID', ' mark '); await submit();
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.putLinks', { id: 'link', platform: 'slack', workspace: ' T1 ', user: ' U1 ', person: ' mark ' });
+  expect(text()).toContain('Saving person link…'); await submit(); expect(f.call).toHaveBeenCalledTimes(1);
+  await answer({ ok: false, code: 'denied', message: 'Owner required' }); expect(text()).toContain('denied: Owner required');
+  expect(button('Save person link').props.disabled).toBe(false);
+});
+it('creates distinct person links with stable retries and requires every identity field', async () => {
+  const answer = pendingWrite(); const go = vi.fn();
+  await draw('/p/bridges-preview'); await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/links/link', go })); });
+  await click('New person link'); const first = go.mock.calls[0][0] as string;
+  await act(async () => { tree!.update(h(BridgesApp, { path: first, go })); });
+  for (const [label, value] of [['Workspace ID', 'T1'], ['Platform user ID', 'U1'], ['Person ID', 'mark']]) {
+    await submit(); expect(f.call).not.toHaveBeenCalled(); await change(label, value);
+  }
+  await click('Slack'); await submit(); const id = decodeURIComponent(first.split('/').at(-1)!); expect(id).toMatch(/^[a-f0-9-]{36}$/);
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.putLinks', { id, platform: 'slack', workspace: 'T1', user: 'U1', person: 'mark' });
+  await answer({ ok: false, code: 'unavailable', message: 'Try later' }); await submit(); expect(f.call.mock.calls[1][1]).toMatchObject({ id });
+  await click('New person link'); expect(go.mock.calls.at(-1)![0]).not.toBe(first);
+});
+it('whitelists saved person links reopened by their creation URL and preserves untouched identifiers', async () => {
+  pendingWrite(); await publish('bridges.link', [{ ...f.snapshots['bridges.link'].records[0], workspace: ' house ', user: ' 200\n ', person: ' jonathan ' }]);
+  await draw('/p/bridges-preview/item/new-link/link'); await submit();
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.putLinks', { id: 'link', platform: 'discord', workspace: ' house ', user: ' 200\n ', person: ' jonathan ' });
+});
+it('confirms person-link removal and retains its pending request across navigation and tables', async () => {
+  pendingWrite(); await draw('/p/bridges-preview/item/links/link'); await click('Remove person link'); expect(f.call).not.toHaveBeenCalled();
+  await click('Keep person link'); expect(button('Confirm removal')).toBeUndefined(); await click('Remove person link'); await click('Confirm removal');
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.removeLinks', { id: 'link' }); expect(text()).toContain('Removing person link…');
+  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/routes/route' })); }); await submit(); expect(f.call).toHaveBeenCalledTimes(1);
+  expect(text()).toContain('Another setup change is pending…');
+  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/links/link' })); });
+  expect(button('Remove person link').props.disabled).toBe(true); await click('Remove person link'); await submit(); expect(f.call).toHaveBeenCalledTimes(1);
+});
+it('blocks person links while a same-id connection write is pending without mixing request feedback', async () => {
+  const answer = pendingWrite(); await draw('/p/bridges-preview/item/venues/art-discord'); await submit();
+  await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/new-link/art-discord' })); });
+  await change('Workspace ID', 'T1'); await change('Platform user ID', 'U1'); await change('Person ID', 'mark'); await submit(); expect(f.call).toHaveBeenCalledTimes(1);
+  expect(text()).toContain('Another setup change is pending…'); expect(text()).not.toContain('Saving person link…');
+  await answer({ ok: true, value: { id: 'art-discord' } }); await submit(); expect(f.call).toHaveBeenCalledTimes(2);
+});
+it('latches live person-link changes including edit-restore until explicitly reloaded', async () => {
+  pendingWrite(); await draw('/p/bridges-preview/item/links/link'); await click('Remove person link'); const original = f.snapshots['bridges.link'].records[0];
+  await publish('bridges.link', [{ ...original, person: 'mark' }]); await publish('bridges.link', [original]);
+  expect(text()).toContain('This person link changed'); expect(button('Confirm removal')).toBeUndefined();
+  await submit(); expect(f.call).not.toHaveBeenCalled(); expect(button('Remove person link').props.disabled).toBe(true);
+  await click('Try again'); await change('Person ID', 'replacement'); await submit();
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('bridges.putLinks', { id: 'link', platform: 'discord', workspace: 'house', user: '200', person: 'replacement' });
+});
+it.each(['offline', 'denied'] as const)('clears person-link details and creation controls on %s', async status => {
+  await draw('/p/bridges-preview/item/links/link'); await publish('bridges.link', f.snapshots['bridges.link'].records as LiveRecord[], status);
+  expect(button('Save person link')).toBeUndefined(); expect(button('New person link')).toBeUndefined(); expect(text()).not.toContain('jonathan'); expect(f.call).not.toHaveBeenCalled();
+});
+it('clears evicted person-link details', async () => {
+  await draw('/p/bridges-preview/item/links/link'); await publish('bridges.link', []);
+  expect(button('Save person link')).toBeUndefined(); expect(text()).toContain('no longer in view');
 });
