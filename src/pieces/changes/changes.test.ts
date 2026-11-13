@@ -57,7 +57,7 @@ it('answers only a confirmed open exact-head owner ask, rechecks person, and ret
  expect(app.call('answer',{...input,person})).toMatchObject({ok:true});
  expect(answer.mock.calls.at(-1)).toEqual([owner,expect.objectContaining({person:'loren',target:`${c.id}@${c.head.id}`}),expect.any(String)]);
 });
-it('keeps a failed repository snapshot, replaces successful ones, holds staging and resumes durable refresh after restart',async()=>{
+it('keeps a failed repository snapshot, replaces successful ones, holds staging and persists refresh requests',async()=>{
  const app=await setup();const projects={list:()=>[{slug:'pond',name:'Pond',repos:['acme/app','bad/app']}]};const settings=()=>({agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]});
  replaceChanges(app.db,[change({id:'github:bad/app#3',repo:'github:bad/app',project:'pond'}),change({id:'github:gone/app#3',repo:'github:gone/app'})]);
  const read=vi.fn(async(repo:string)=>{if(repo==='github:bad/app') throw new Error('SECRET upstream');return [change()];});
@@ -67,4 +67,29 @@ it('keeps a failed repository snapshot, replaces successful ones, holds staging 
  app.call('refresh');await job.run();expect(read).toHaveBeenCalledTimes(4);job.close();
  const staged=await setup();replaceChanges(staged.db,loadChanges(app.db));const held=startChangesJob(staged,{clock:staged.clock,sharing:fixtureSharing,viewer:owner,projects,attribution:settings,read,staging:true});staged.call('refresh');await held.run();expect(read).toHaveBeenCalledTimes(4);held.close();
  expect(app.db.prepare('SELECT running FROM changes_jobs').get()).toEqual({running:0});
+});
+
+it('resumes a pending refresh after closing and reopening the database, preserving the next due time', async()=>{
+ const home=mkdtempSync(join(tmpdir(),'changes-restart-'));dirs.push(home);
+ const clock=new FakeClock(),projects={list:()=>[{slug:'pond',name:'Pond',repos:['acme/app']}]};
+ const attribution=()=>({agents:{},ownerLogins:[]});
+ const open=()=>startLoom({home,clock,sharing:fixtureSharing,install:app=>installChanges(app.db,app.operations,app.live,fixtureSharing)});
+ const first=await open();
+ const read=vi.fn(async()=>[change({title:'Before restart'})]);
+ const job=startChangesJob(first,{clock,sharing:fixtureSharing,viewer:owner,projects,attribution,read});
+ await job.run();expect(read).toHaveBeenCalledOnce();
+ expect(first.operations.call('direct',owner,'changes.refresh',{},'persisted-refresh')).toMatchObject({ok:true});
+ job.close();await first.close();expect(first.db.open).toBe(false);
+ const second=await open();closes.push(second.close);
+ expect(loadChanges(second.db)).toMatchObject([{title:'Before restart'}]);
+ const resumedRead=vi.fn(async()=>[change({title:'After restart'})]);
+ const resumed=startChangesJob(second,{clock,sharing:fixtureSharing,viewer:owner,projects,attribution,read:resumedRead});
+ try {
+  await resumed.run();expect(resumedRead).toHaveBeenCalledOnce();
+  expect(loadChanges(second.db)).toMatchObject([{title:'After restart'}]);
+ } finally {resumed.close();}
+ await second.close();closes.pop();expect(second.db.open).toBe(false);
+ const third=await open();closes.push(third.close);
+ const future=startChangesJob(third,{clock,sharing:fixtureSharing,viewer:owner,projects,attribution,read:resumedRead});
+ try {await future.run();expect(resumedRead).toHaveBeenCalledOnce();}finally{future.close();}
 });
