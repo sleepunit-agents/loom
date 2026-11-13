@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Next Runtime retries definitively unstarted nonconversation manual/spawn jobs at most three times, retaining original intent, deadlines and current-policy checks across restarts.
 
 - Import explicit Runtime snapshots with complete private source retention, scoped metadata, held old work and independent migration verification.
+- Exclude source-owned Runtime repository mirrors under a named cache rule while retaining durable delivery and house working data.
 
 ### Fixed
 

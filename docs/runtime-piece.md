@@ -934,11 +934,38 @@ The standalone mapping file is the Runtime options object, not the whole plan.
 | `seq`, `pendingRevokes`, `writeOffAsks`, unknown future state fields | Exact state archive; no reset of sequence, loss of retry metadata, or manufactured owner approval |
 | `delivery/conversations/*.json` | Same conversation/agent/venue/place and explicit audience in `runtime_bindings`; no old body/job/home/run-key pointer is activated |
 | Old conversation principal history / signed reset / queued words | Exact private source archive; imported live provenance is unknown, never a new owner attestation; delivery reconciliation must consume the actual source before release |
-| `delivery/seen/*.json`, `slots/*.age`, `*.home.age`, notices/fallbacks/continuation-policy, discarding/files, principal key/wake handovers | Exact private byte archive; no dedup receipt, sealed session or signed handover becomes executable authority |
-| `bodies/*.json`, native launch admissions and every other regular file in the supplied data roots | Exact private byte archive, including otherwise unknown names and directories called `runs`, `current`, etc.; no automatic native-history adoption |
+| `repos/<agent>.git` in the data root | Excluded by named `runtime-rebuildable-repo-mirror` rule: source-created remote mirrors, rebuilt with `clone --mirror` / `fetch --prune`, mounted read-only into houses; no house worktree or delivery state is excluded |
+| `delivery/seen/*.json`, `slots/*.age`, `*.home.age`, notices/fallbacks/continuation-policy, discarding/files, principal key/wake handovers | Exact private byte archive streamed into bounded BLOB parts; these queues, dedup receipts and sealed sessions can be only copies, and no signed handover becomes executable authority |
+| `bodies/*.json`, native launch admissions and every other regular file in the supplied data roots except named cache/login exclusions | Exact private byte archive, including otherwise unknown names and directories called `runs`, `current`, etc.; no automatic native-history adoption |
 | `LOOM_BOX_DATA/logins/` | Runner-owned credential values stay on the runner; the snapshot manifest names this explicit exclusion without reading the values |
 | `.git`, `node_modules`, lock/SQLite coordination files, special files and out-of-root aliases | Existing collector exclusions, recorded in the snapshot manifest; committed SQLite WAL contents use the backup API |
 | `LOOM_RUNTIME_KEYS_DIR` (default `~/.local/state/loom-runtime/keys`), per-house native-history mounts, runner-local harness logins | Separately inventory on the workers before the final move; old bearer keys are not new credentials and host history is not silently adopted |
+
+### Source basis for the repository and delivery disposition
+
+The installed Runtime source and catalog pin inspected for this decision is
+[`a2c33d724e1d64964cde1d65298c793ef8e86551`](https://github.com/sleepunit-agents/loom-box/tree/a2c33d724e1d64964cde1d65298c793ef8e86551).
+[`src/box.mjs` checkout/syncMirror](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/box.mjs#L214-L250)
+creates `data/repos/<agent>.git` with `clone --mirror`, sets the remote and fetches
+with `--prune`, then clones a separate working tree for each house. Other mirror
+uses only inspect commits/build trees; the house receives the mirror through
+[`dirs.mirror`](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/box.mjs#L605-L624),
+whose mount is explicitly
+[`read-only`](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/house.mjs#L307).
+This source has no writer of house work into those mirrors. The directory-only
+root rule is based on that ownership, never its size. A regular file named
+`repos`, nested unrelated `repos` directories and house workdirs remain archived.
+The offline direct reader applies the same root rule before enumerating it.
+
+By contrast,
+[`src/delivery.mjs`](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/delivery.mjs#L1-L31)
+keeps durable conversation queues, delivery receipts and sealed continuity slots;
+[slot publication and restoration](https://github.com/sleepunit-agents/loom-box/blob/a2c33d724e1d64964cde1d65298c793ef8e86551/src/delivery.mjs#L3240)
+is not a remote cache. Retain **all** delivery bytes privately by streaming,
+including unknown files, without activating old queues or principal evidence.
+Worker-local unpushed work/history still requires its separate final-move
+inventory; dropping the fetched mirror does not waive that obligation.
+No Runtime data or credentials were read to make this decision.
 
 All imported jobs carry an import fence: assigned runners get `stop:true` and
 `history:unknown`, or `history:discard` for an old written-off job. No fake new
@@ -948,7 +975,11 @@ lifecycle reconciliation must explicitly settle old jobs, services, revocations,
 queued delivery, gates and account state before any replacement body can run.
 This importer does not make general delivery, models/accounts or services usable.
 
-Private `runtime_import_sources` holds exact base64 source bytes, including sealed
+The following archive layout requires
+[streaming migration PR1100](https://github.com/sleepunit-agents/loom/pull/1100)
+to merge first; ship this cache disposition only in a release containing that fix.
+Private `runtime_import_sources` holds per-file SHA-256/size descriptors; ordered
+`runtime_import_chunks` holds exact source bytes in at most 1 MiB BLOB parts, including sealed
 slots, words and inert old keys; it has no live collection or read operation.
 Never put this archive, its contents or raw source errors on the page or in logs.
 CLI login values are refused even by the direct reader. The migration transaction
@@ -962,6 +993,7 @@ Imported change timestamps are source-derived (box/job creation time) or zero
 destination timestamp supplies an expected value to Runtime verification. Runtime
 archive namespaces are excluded from other pieces' discovery, so an opaque file
 called `comms.salt`, `memories.db` or `changes.json` remains a Runtime archive file.
+
 
 ## Bounded nonconversation start attempts
 

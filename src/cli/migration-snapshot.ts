@@ -1,3 +1,4 @@
+import { runtimeRepositoryCacheRule } from '../pieces/runtime/import-source.js';
 import { copyMigrationFile, fileDigest } from '../core/migration-files.js';
 import { randomUUID } from 'node:crypto';
 import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -96,6 +97,7 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
   };
   const skipRule = (path: string, directory: boolean, input: string): string | undefined => {
     const parts = path.split('/');
+    if(prefix==='runtime-data' && path==='repos' && directory)return runtimeRepositoryCacheRule;
     if(prefix==='runtime-data' && parts[0]==='logins')return 'runner-owned CLI login material (credential values are not imported)';
     const omitted = prefix === 'runtime' || prefix === 'runtime-data' ? new Set(['.git','node_modules']) : excluded;
     if (parts.slice(0, directory ? undefined : -1).some(p => omitted.has(p)) || (prefix==='home' && ((path === 'pieces/bin' && directory) || path.startsWith('pieces/bin/')))) return 'installed program or runtime directory';
