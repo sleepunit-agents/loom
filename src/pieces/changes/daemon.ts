@@ -1,6 +1,6 @@
-/** New-mode composition seam. The root owns close(), before closing the foundation. */
+/** New-mode composition seam. The foundation owns job shutdown. */
 import type { Foundation } from '../../core/app.js';
-import type { Clock, Sharing, Viewer } from '../../core/index.js';
+import type { Clock, Sharing } from '../../core/index.js';
 import { HouseholdAccounts } from '../../core/household/accounts.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
@@ -26,7 +26,7 @@ export function householdAttribution(db: Foundation['db'], home: string): Attrib
 
 /** Secrets remain injected; installation never discovers credentials or old stores. */
 export function installChangesDaemon(app: Foundation, options: {
- home: string; clock: Clock; sharing:()=>Sharing; viewer: Viewer;
+ home: string; clock: Clock; sharing:()=>Sharing;
  attribution:()=>Attribution; secrets: Secrets; approvals?: Approvals;
  staging?: boolean; interval?: number; request?: typeof fetch;
 }) {

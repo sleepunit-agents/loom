@@ -1,16 +1,16 @@
 /** Daemon-owned job. Durable refresh requests; safe to repeat after a crash because every forge call is a read. */
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { operation, mayAct, type Clock, type Sharing, type Viewer } from '../../core/index.js';
+import { operation, mayAct, type Clock, type Sharing } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
 import { currentAttribution, changeSchema, repoId, type Attribution, type Change } from './model.js';
 import { projectChange } from './projection.js';
 import { loadChanges, replaceChanges } from './store.js';
 import type { Projects } from './roles.js';
-export function startChangesJob(app:Foundation,options:{clock:Clock;sharing:()=>Sharing;viewer:Viewer;projects:Projects;attribution:()=>Attribution;knownAgents:()=>string[];read(repo:string,now:number):Promise<Change[]>;interval?:number;staging?:boolean}) {
+export function startChangesJob(app:Foundation,options:{clock:Clock;sharing:()=>Sharing;projects:Projects;attribution:()=>Attribution;knownAgents:()=>string[];read(repo:string,now:number):Promise<Change[]>;interval?:number;staging?:boolean}) {
  const {clock}=options;const interval=Math.max(60000,Math.min(3600000,options.interval??180000));let stopped=false,busy=false,retryAt=0,cancel:(()=>void)|undefined;
  app.operations.register(operation({name:'changes.commit-sync',write:true,doors:['direct'],input:z.object({records:z.array(changeSchema.extend({project:z.string().optional(),agent:z.string().optional(),mine:z.boolean().optional(),syncError:z.string().optional()})),due:z.number(),requested:z.number().int().nonnegative(),error:z.boolean()}),output:z.null(),
-  may:v=>mayAct(v,{type:'change'},options.sharing(),'household','changes.commit-sync'),
+  may:v=>!stopped&&v.kind==='service'&&v.id==='changes'&&mayAct(v,{type:'change'},options.sharing(),'act','changes.commit-sync'),
   run(ctx,input){
    // Only this job calls this operation; no external door offers a snapshot write.
    // Recheck destination mappings after network waits, inside the commit transaction.
@@ -43,9 +43,11 @@ export function startChangesJob(app:Foundation,options:{clock:Clock;sharing:()=>
      records.push(...retained.values());
     } catch {error=true;for(const c of before.filter(c=>c.repo===repo)) {records.push({...c,syncError:'GitHub read unavailable'});}}
    }
-   if(!stopped){const answer=app.operations.call('direct',options.viewer,'changes.commit-sync',{records,due:clock.now()+interval,requested:row.requested,error},randomUUID());committed=answer.ok;if(!answer.ok) error=true;}
+   if(!stopped){const answer=app.operations.call('direct',{kind:'service',id:'changes'},'changes.commit-sync',{records,due:clock.now()+interval,requested:row.requested,error},randomUUID());committed=answer.ok;if(!answer.ok) error=true;}
   } catch {error=true;} finally {busy=false;retryAt=committed?0:clock.now()+interval;schedule();}
  };
+ const close=()=>{stopped=true;cancel?.();};
+ app.onClose(close);
  schedule();
- return {run:tick,wake(){schedule(true);},close(){stopped=true;cancel?.();}};
+ return {run:tick,wake(){schedule(true);},close};
 }

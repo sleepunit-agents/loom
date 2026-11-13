@@ -46,8 +46,11 @@ Both transports reject redirects. The client validates HTTP status and command
 response shape before printing, and redacts credentials from its output. Closed
 pagination continues past recently updated old closures to retain newer closures.
 A failed repository keeps its last successful snapshot. Staging holds external
-reads. The root must authorize the job viewer centrally and call the job's
-`close()` before closing the foundation; a late response cannot commit afterward.
+reads. The job commits as the installed `changes` service, through central policy
+for the exact `changes.commit-sync` operation and `change` record type. Members,
+agents, runners and other services cannot commit snapshots, including household
+owners. The operation is direct-only. The foundation stops the job before its
+database closes; manual job close is idempotent and also refuses later commits.
 
 Approval rules and answers use the injected synchronous Approvals role. Changes
 never manufactures a trusted principal or grants itself service access. A visible
@@ -93,9 +96,9 @@ does not start a forge read in this read-only composition.
 `src/changes-next.test.ts` exercises the real HTTP door with poisoned legacy files,
 current project membership/revocation, and closed approval controls.
 
-Cutover still requires daemon startup/shutdown in the next root, a centrally authorized job
-viewer, the real Approvals adapter, and an injected Secrets role (fake secrets
-until that piece lands). Those integrations remain open. No production import,
+Cutover still requires daemon startup in the next root, the real Approvals
+adapter, and authenticated Secrets composition. The daemon installer now owns
+its service viewer and registers shutdown with the foundation. Those integrations remain open. No production import,
 deployment, old-service shutdown or live-home modification is part of this branch.
 
 ## Evidence
@@ -154,8 +157,8 @@ The registry is rebuilt on installation after restart; household metadata cannot
 create a service, and another home cannot inherit one. Private member records,
 household setup and person answers retain their central policy restrictions.
 No cross-piece permission is implied: Changes still needs an explicit grant when
-calling another piece. This supplies the authority source; daemon composition and
-the job's action check are separate follow-ups.
+calling another piece. The job uses this authority for its own snapshot operation; daemon startup
+in the next root remains a separate follow-up.
 
 ## GitHub service credentials
 

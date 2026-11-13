@@ -23,7 +23,7 @@ function setup(staging=false, request:typeof fetch=vi.fn() as unknown as typeof 
  const project={slug:'pond',name:'Pond',repositories:['acme/app'],members:[],agents:['art']};
  app.db.transaction(()=>store.create(project))();
  const secrets={resolveGitHub:vi.fn(async()=>'github-acme'),withValue:async<T>(_ref:string,use:(token:string)=>Promise<T>)=>use('fake-test-token')};
- const job=installChangesDaemon(app,{home,clock,sharing:()=>store.sharing(),viewer:{kind:'member',id:'jonathan'},attribution:()=>({agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}),secrets,staging,request});closes.push(job.close);
+ const job=installChangesDaemon(app,{home,clock,sharing:()=>store.sharing(),attribution:()=>({agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}),secrets,staging,request});closes.push(job.close);
  return {app,clock,store,job,secrets,home};
 }
 it('reads destination household projects dynamically and holds all credential and forge access in staging',async()=>{
@@ -44,7 +44,7 @@ it('stops scheduling and discards an in-flight read before the foundation closes
  const {app,job,clock,secrets}=setup(false,request);
  const running=job.run();
  await vi.waitFor(()=>expect(request).toHaveBeenCalledOnce());
- job.close();app.close();
+ app.close();
  release(Response.json({data:{repository:{pullRequests:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}}}));
  await running;
  clock.advance(3600000);
@@ -63,7 +63,7 @@ it('does not start another repository read when an in-flight request fails after
  const {app,store,job,secrets}=setup(false,request);
  app.db.transaction(()=>store.create({slug:'second',name:'Second',repositories:['else/app'],members:[],agents:[]}))();
  const running=job.run();await vi.waitFor(()=>expect(request).toHaveBeenCalledOnce());
- job.close();app.close();reject(Error('unavailable'));await running;
+ app.close();reject(Error('unavailable'));await running;
  expect(secrets.resolveGitHub).toHaveBeenCalledOnce();expect(request).toHaveBeenCalledOnce();
 });
 it('discards a late response after closing only the job with the foundation still open',async()=>{
@@ -80,4 +80,13 @@ it('projects current destination mappings and agent membership before another fo
  expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'changes.show',{id:change().id})).toMatchObject({ok:true,value:{project:'private',agent:'art'}});
  app.db.transaction(()=>new HouseholdDatabase(app.db).replace(home,{v:1,agents:['other'],members:[{person:'jonathan',role:'owner',agents:'*'}]}))();
  const result=app.operations.call('direct',{kind:'member',id:'jonathan'},'changes.show',{id:change().id});expect(result).toMatchObject({ok:true});if(result.ok)expect((result.value as {agent?:string}).agent).toBeUndefined();
+});
+
+it('commits with the installed service even after the original household owner is replaced',async()=>{
+ const {app,job,home,clock}=setup(true);
+ replaceChanges(app.db,[change({project:'pond'})]);
+ app.db.transaction(()=>new HouseholdDatabase(app.db).replace(home,{v:1,agents:['art'],members:[{person:'replacement',role:'owner',agents:'*'}]}))();
+ await job.run();
+ expect(app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get()).toBeDefined();
+ expect(app.db.prepare('SELECT due FROM changes_jobs').get()).toEqual({due:clock.now()+180000});
 });
