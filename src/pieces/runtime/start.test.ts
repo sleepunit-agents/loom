@@ -34,7 +34,7 @@ async function setup(staging=false,sharing?:()=>Sharing){
   const post=async(token:string,op:string,input:unknown)=> (await fetch(`${app.url}/api/runtime/${op}`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({input,id:`http-${++n}`})})).json();
   const input={agent:'art',title:'Fixture start',brief:'PRIVATE start words',source:{kind:'manual',id:'fixture'}};
   const jobOf=(r:ReturnType<typeof call>):string=>{expect(r.ok).toBe(true);return (r as {ok:true;value:{job:string}}).value.job;};
-  const schedule=async()=>{const r=call('clock.in',{agent:'art',prompt:'PRIVATE wake words',note:'fixture',when:'1s'});expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id;clock.advance(1000);await settle();return id;};
+  const schedule=async(viewer=owner)=>{const r=call('clock.in',{agent:'art',prompt:'PRIVATE wake words',note:'fixture',when:'1s'},viewer);expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id;clock.advance(1000);await settle();return id;};
   return {get app(){return app;},clock,call,post,input,jobOf,runner,other,member,schedule,
     get store(){return runtimeStore(app.db);},async restart(){await app.close();app=await startLoom({home,clock,next:true,staging,sharing,stdout:()=>{}});}};
 }
@@ -197,4 +197,21 @@ it('updates a late-confirmed job without unholding its wake or creating another 
   expect(wake(f.app.db,id)).toMatchObject({state:'held',hold:'uncertain'});
   expect(f.call('clock.now',{id})).toMatchObject({ok:false,code:'invalid'});
   expect(f.store.ids('job')).toEqual([job]);
+});
+it('isolates the same source between two member ids and between two authorized agents',async()=>{
+  const access=fixtureSharing();access.members.second={owner:true,agents:['art','mark']};
+  const f=await setup(false,()=>access);
+  f.app.db.transaction(()=>f.store.put('settings',{id:'mark',agent:'mark',boxes:['a'],house:{repo:'/fixture/mark',houseFile:'house/house.json'}},f.clock.now()))();
+  const first=f.jobOf(f.call('runtime.startBody',f.input));
+  const second=f.jobOf(f.call('runtime.startBody',f.input,{kind:'member',id:'second'}));
+  const mark=f.jobOf(f.call('runtime.startBody',{...f.input,agent:'mark'}));
+  expect(new Set([first,second,mark]).size).toBe(3);
+});
+it('keeps the original agent viewer in the installed Clock start path',async()=>{
+  const f=await setup(),id=await f.schedule({kind:'agent',id:'art'}),job=f.store.ids('job')[0];
+  const member=f.jobOf(f.call('runtime.startBody',{agent:'art',title:'Scheduled work',brief:'PRIVATE wake words',source:{kind:'wake',id}}));
+  expect(member).not.toBe(job);
+  expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+  expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+  expect(wake(f.app.db,id)).toMatchObject({state:'fired',outcome:job,by:{kind:'agent',id:'art'}});
 });
