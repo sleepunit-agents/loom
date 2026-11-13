@@ -41,12 +41,12 @@ export function assertSeparateAttentionSources(from: string[], destination: stri
 }
 
 /** A whole migration batch (one or more per-agent memories.db copies). Caller owns stopped-home lock. */
-export function importAttention(db: Db, from: string[], scopesInput: ImportScopes, options: { interrupt?: () => void; afterSourceConversations?: () => void } = {}) {
+export function importAttention(db: Db, from: string[], scopesInput: ImportScopes, options: { interrupt?: () => void; afterSourceConversations?: () => void } = {}, openSource: (path: string) => Db = (path: string) => new Database(path, { readonly: true, fileMustExist: true })) {
   check(from.length > 0, 'at least one source required');
   const scopes = scopesSchema.parse(scopesInput);
   if (db.name && db.name !== ':memory:') assertSeparateAttentionSources(from,db.name);
   const snapshots = from.map(path => {
-    const source = new Database(path, { readonly: true, fileMustExist: true });
+    const source = openSource(path);
     try {
       return source.transaction(() => {
         const held = new Set((source.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(r => r.name));

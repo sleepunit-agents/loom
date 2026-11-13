@@ -1,9 +1,45 @@
 # Offline migration plan preparation
 
-`prepareMigrationPlan(snapshot, supplied?)` in `src/cli/migration-plan.ts`
-prepares data for the upcoming `loom migrate all` and independent `verify`
-commands. This PR adds no CLI dispatch and opens no destination. It does not
-run an importer. The existing individual migration commands remain available.
+`loom migrate plan --snapshot DIR` prints a raw JSON plan for editing. Save it
+outside the snapshot and destination, then validate it with
+`loom migrate plan --snapshot DIR --plan FILE`. Ambiguous source layouts require
+an explicit plan as described below. Plan preparation opens no destination.
+
+`loom migrate all --snapshot DIR --home NEW [--plan FILE]` runs registered
+importers directly in dependency order under the destination's stopped-daemon
+lock. Use a fresh home, then keep that home stopped through import and independent
+verification. Exit 0 means every planned piece completed; exit 3 and an
+`incomplete` report mean missing or blocked registrations, never success. Exit 1
+means refusal/failure, and 2 means invalid arguments. Output is one report without
+source values or importer error text. This command does not start any daemon.
+
+The home stores a private `.migration-all.json` receipt containing the full plan,
+its checksum, stable import time and per-piece completion. A different snapshot
+or any changed plan is refused, even when an individual importer's checksum does
+not cover its attribution. Interrupted importers roll back their own transaction;
+if an importer committed before the coordinator saved completion, its own receipt
+makes retry safe. The coordinator publishes each receipt by fsync and rename.
+A leftover `.migration-all.pending` file never counts as completion. Completed
+pieces are skipped on repeat, but newly available supported registrations still
+run; unknown registrations without matching discovery and schema stay missing.
+Repeat is not independent verification of destination contents.
+
+Before any writable destination open, the coordinator rejects overlapping
+canonical ancestors, inode aliases, hard links, symlinks or special entries and
+nonempty homes without the matching receipt. Only leftover lock files and an
+unpublished pending receipt are tolerated in an otherwise fresh home. The sole
+hardlink exception is the household importer's interrupted key publication:
+exactly its final key and UUID temporary name, with matching snapshot bytes and
+migration receipt. Under the lock the coordinator removes that temporary name
+and retries the importer. Any external alias, wrong bytes or missing ownership
+receipt is refused. All snapshot hashes and inventory are revalidated on every
+invocation. SQLite imports
+read private deserialized backup buffers, preserving snapshot bytes and directory
+entries. Individual live-source commands retain their existing SQLite readers.
+Changes projects come from imported household sharing records, never plan JSON.
+
+`prepareMigrationPlan(snapshot, supplied?)` in `src/cli/migration-plan.ts` is also
+the preparation API for the runner and the upcoming independent `verify` command.
 
 The result contains the canonical snapshot root, validated manifest, editable
 JSON `plan`, and `missing`/`blocked` registrations. A plan has this shape:

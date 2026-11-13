@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Bind runtime job claims to configured house identity and record validated, immutable per-job build tags.
 
 - Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
+- Add offline `migrate plan` and resumable `migrate all` with snapshot-bound receipts and stopped-home destination checks.
 - Add centrally authorized runtime house build configuration in next mode, preserving box and model preferences without granting execution capabilities.
 
 - Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.

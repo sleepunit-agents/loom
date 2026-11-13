@@ -2,7 +2,8 @@
 import { createHash } from 'node:crypto';
 import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, realpathSync } from 'node:fs';
 import { basename, join, posix } from 'node:path';
-import Database from 'better-sqlite3';
+import type Database from 'better-sqlite3';
+import { openSnapshotSqlite } from './migration-sqlite.js';
 import { z } from 'zod';
 import { parseHouseholdDocument } from '../household.js';
 import { readSnapshot, type SnapshotManifest } from './migration-snapshot.js';
@@ -23,6 +24,7 @@ const options = {
   approvals: z.object({ projects: z.record(z.string(), slug) }).strict(),
   changes: z.object({ attribution }).strict(),
 };
+export const supportedMigrationImporters: readonly string[] = Object.keys(options);
 const inputSchema = z.object({ paths: z.array(z.string().min(1)).min(1), options: z.json() }).strict();
 const planSchema = z.object({ version: z.literal(1), snapshot: z.string().regex(/^[a-f0-9]{64}$/), importers: z.record(z.string().regex(/^[a-z][a-z0-9-]*$/), inputSchema) }).strict();
 export type MigrationPlan = z.infer<typeof planSchema>;
@@ -38,13 +40,7 @@ export const migrationSnapshotChecksum = (manifest: SnapshotManifest): string =>
 type TaskSource = { id: string; type?: string; project?: string };
 /** Deserialize the verified main-file bytes: discovery never creates sidecars or consumes an unlisted WAL. */
 function sqlite<T>(path: string, read: (db: Database.Database) => T): T {
-  const bytes = readFileSync(path);
-  // A SQLite backup is complete in its main file, but can retain the WAL-format
-  // header. Deserialization has no filesystem WAL; normalize only this private
-  // buffer's read/write format bytes to rollback mode. Snapshot bytes stay intact.
-  if (bytes.subarray(0, 16).toString() !== 'SQLite format 3\0') throw Error('Invalid SQLite snapshot');
-  bytes[18] = 1; bytes[19] = 1;
-  const db = new Database(bytes, { readonly: true });
+  const db = openSnapshotSqlite(path);
   try { return read(db); } finally { db.close(); }
 }
 /** Check types before readSnapshot can hash a FIFO or other live handle. */

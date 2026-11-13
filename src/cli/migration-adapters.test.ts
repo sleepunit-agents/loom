@@ -8,6 +8,7 @@ vi.mock('../pieces/attention/importer.js', () => ({ importAttention: vi.fn(() =>
 vi.mock('../pieces/clock/importer.js', () => ({ importClock: vi.fn(() => 'clock-result') }));
 vi.mock('../pieces/approvals/importer.js', () => ({ importApprovals: vi.fn(() => 'approvals-result') }));
 vi.mock('../pieces/changes/importer.js', () => ({ importChanges: vi.fn(() => 'changes-result') }));
+import { openSnapshotSqlite } from './migration-sqlite.js';
 import { importHousehold } from './household-importer.js';
 import { importTasks } from '../pieces/tasks/importer.js';
 import { importAttention } from '../pieces/attention/importer.js';
@@ -31,8 +32,8 @@ it('forwards destination, resolved inputs, options and results to all six import
   }
   const input = join(root, 'input');
   expect(importHousehold).toHaveBeenCalledExactlyOnceWith(db, context.home, input, 123);
-  expect(importTasks).toHaveBeenCalledExactlyOnceWith(db, input, 123, options);
-  expect(importAttention).toHaveBeenCalledExactlyOnceWith(db, [input, join(root, 'second')], options);
+  expect(importTasks).toHaveBeenCalledExactlyOnceWith(db, input, 123, options, openSnapshotSqlite);
+  expect(importAttention).toHaveBeenCalledExactlyOnceWith(db, [input, join(root, 'second')], options, {}, openSnapshotSqlite);
   expect(importClock).toHaveBeenCalledExactlyOnceWith(db, input, 123);
   expect(importApprovals).toHaveBeenCalledExactlyOnceWith(db, input, 123, options);
   expect(importChanges).toHaveBeenCalledExactlyOnceWith(db, input, options);

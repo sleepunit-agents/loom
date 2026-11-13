@@ -11,8 +11,8 @@ const canonical = (value: unknown): string => {
   return JSON.stringify(value);
 };
 /** Checksum is of the SQLite read snapshot, including WAL-visible committed records. */
-export function importTasks(db: Db, from: string, now: number, options: { interrupt?: () => void; afterSourceTasks?: () => void; projects?: Record<string, string>; agent?: string } = {}) {
-  const source = new Database(from, { readonly: true, fileMustExist: true });
+export function importTasks(db: Db, from: string, now: number, options: { interrupt?: () => void; afterSourceTasks?: () => void; projects?: Record<string, string>; agent?: string } = {}, openSource: (path: string) => Db = (path: string) => new Database(path, { readonly: true, fileMustExist: true })) {
+  const source = openSource(from);
   let original: StoreState;
   try {
     original = source.transaction(() => {
