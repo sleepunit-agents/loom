@@ -23,7 +23,7 @@ const cleanups:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const f of cleanups.splice(0).reverse())await f();});
 const value=<T>(r:Result)=>{expect(r.ok,JSON.stringify(r)).toBe(true);return (r as {ok:true;value:T}).value;};
 async function until(condition:()=>boolean){for(let i=0;i<5000;i++){if(condition())return;await Promise.resolve();}throw Error('condition not reached');}
-async function setup(staging=false,platform:'slack'|'discord'='slack'){
+async function setup(staging=false,platform:'slack'|'discord'='slack',prepareInput?:()=>Promise<void>){
  const home=mkdtempSync(join(tmpdir(),'runtime-bridge-'));fixture(home);const clock=new FakeClock();
  const posts:unknown[]=[];
  const source={generation:async()=> '00000000-0000-4000-8000-000000000000',read:async()=>Buffer.from('BRIDGE-TOKEN')};
@@ -47,6 +47,10 @@ async function setup(staging=false,platform:'slack'|'discord'='slack'){
  let foundation!:import('../../core/app.js').Foundation;
  let app=await startLoom({home,next:true,staging,clock,stdout:()=>{},bridges:{source,request,socket,discordSocket:socket},install(a){
   foundation=a;
+  if(prepareInput){const register=a.operations.register.bind(a.operations);vi.spyOn(a.operations,'register').mockImplementation(op=>{
+   if(op.name==='runtime.takeInput'){const prepare=op.prepare!;register({...op,async prepare(...args){const result=await prepare(...args);await prepareInput();return result;}});}
+   else register(op);
+  });}
   const sharing=()=>new SharingDatabase(a.db,home).sharing();installSecrets(a.db,a.operations,a.live,sharing);installSecretServices(a.db,a.operations,sharing);installBridges(a,sharing);
   for(const name of ['bot','app'])for(const [verb,input] of [['describe',{name,description:name}],['grantService',{service:'bridges',name}]] as const)value(a.operations.call('direct',{kind:'member',id:'jonathan'},`secrets.${verb}`,input,`${verb}-${name}`));
   put(a.db,'venues',venue);put(a.db,'links',{id:'person',platform,workspace:venue.workspace,user:platform==='slack'?'U200':'200',person:'jonathan'});
@@ -229,4 +233,49 @@ it.each([{guest:true},{pair:'paired'},{peer:true},{readers:['jonathan']}] as con
  value(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'bridges.putRoutes',{id:'blocked-route',platform:'slack',workspace:'T123',channel:'D123',...flags},'unsupported-route'));
  await f.receive('stop','1794503534.000000');await until(()=>!!f.app.db.prepare("SELECT id FROM bridges_inbox WHERE state='pending' AND retry_since IS NOT NULL").get());
  expect(runtimeStore(f.app.db).read('job',job)?.state).toBe('running');expect(f.app.db.prepare('SELECT * FROM runtime_bridge_stops').all()).toEqual([]);expect(runtimeStore(f.app.db).ids('job')).toHaveLength(1);expect(f.posts).toEqual([]);
+});
+
+it('holds archived gates and proposals before admission, including after exact adoption',async()=>{
+ const f=await setup();
+ const insert=(collection:string,key:string,doc:unknown)=>f.app.db.prepare('INSERT INTO runtime_import_documents VALUES (?,?,?)').run(collection,key,JSON.stringify({collection,key,doc:JSON.stringify(doc),rev:4,updated:'original',by:'owner'}));
+ insert('gates','art',{people:{jonathan:{tier:3,restrict:'Original owner restriction'}}});
+ insert('policy','art',{deny:['Read']});insert('gate-proposals','art.p-original',{agent:'art',entry:{tier:1},why:'Original question'});
+ await f.receive();await until(()=>!!f.app.db.prepare('SELECT id FROM bridges_inbox WHERE retry_since IS NOT NULL').get());
+ expect(runtimeStore(f.app.db).ids('job')).toEqual([]);expect(f.posts).toEqual([]);
+ const read=value<{archive:string}>(await f.post(f.owner,'runtime.readBodyPolicy',{agent:'art'}));
+ value(await f.post(f.owner,'runtime.adoptBodyPolicy',{agent:'art',archive:read.archive}));
+ f.clock.advance(5000);await until(()=>!!f.app.db.prepare('SELECT id FROM bridges_inbox WHERE retry_since IS NOT NULL').get());
+ expect(runtimeStore(f.app.db).ids('job')).toEqual([]);
+ // Even valid adopted documents cannot enter the DM path before its runner
+ // enforces the compiled deny list and standing restriction.
+ expect(await f.post(f.runner,'runtime.claimableJobs',{})).toMatchObject({ok:true,value:{jobs:[]}});
+});
+it('new policy fences existing body input/read/reply and stops its runner without reusing native history',async()=>{
+ const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);const running=await f.running();
+ value(await f.post(f.owner,'runtime.configureBodyPolicy',{agent:'art',revision:0,gates:{people:{jonathan:{tier:3,restrict:'New restriction'}}},policy:{deny:['Read']}}));
+ expect(await f.post(running.body,'runtime.readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(running.body,'runtime.reply',{id:'late',text:'NO'})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(f.runner,'runtime.takeInput',{job:running.job})).toMatchObject({ok:false});
+ expect(await f.post(f.runner,'runtime.jobControl',{job:running.job})).toMatchObject({ok:true,value:{stop:true,history:'discard'}});
+ expect(f.posts).toEqual([]);
+});
+it.each(['art.p-original','unrelated-key'])('a proposal-only archive holds execution through key or agent association: %s',async key=>{
+ const f=await setup();const doc={agent:'art',id:'p-original',entry:{tier:1},why:'Original question'};
+ f.app.db.prepare('INSERT INTO runtime_import_documents VALUES (?,?,?)').run('gate-proposals',key,JSON.stringify({collection:'gate-proposals',key,doc:JSON.stringify(doc),rev:2,updated:'original',by:'body'}));
+ await f.receive();await until(()=>!!f.app.db.prepare('SELECT id FROM bridges_inbox WHERE retry_since IS NOT NULL').get());
+ expect(runtimeStore(f.app.db).ids('job')).toEqual([]);expect(f.posts).toEqual([]);
+});
+it.each(['before','during'] as const)('does not release first claimed input when owner policy changes %s preparation',async phase=>{
+ const started=Promise.withResolvers<void>(),finish=Promise.withResolvers<void>();
+ const f=await setup(false,'slack',phase==='during'?async()=>{started.resolve();await finish.promise;}:undefined);
+ await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);
+ const job=runtimeStore(f.app.db).ids('job')[0];value(await f.post(f.runner,'runtime.claimJob',{job}));
+ expect(runtimeStore(f.app.db).read('job',job)?.state).toBe('starting');
+ let pending:Promise<Result>|undefined;
+ if(phase==='during'){pending=f.post(f.runner,'runtime.takeInput',{job});await started.promise;}
+ value(await f.post(f.owner,'runtime.configureBodyPolicy',{agent:'art',revision:0,gates:{people:{jonathan:{tier:3,restrict:'New restriction'}}},policy:{deny:['Read']}}));
+ finish.resolve();const answer=await(pending??f.post(f.runner,'runtime.takeInput',{job}));
+ expect(answer).toMatchObject({ok:false,code:'denied'});expect(JSON.stringify(answer)).not.toContain('credential');
+ if(phase==='before')expect(f.app.db.prepare('SELECT id FROM core_effects WHERE id=?').get(`runtime:input:${job}`)).toBeUndefined();
+ expect(await f.post(f.runner,'runtime.jobControl',{job})).toMatchObject({ok:true,value:{stop:true,history:'discard'}});
 });

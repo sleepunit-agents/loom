@@ -1,3 +1,4 @@
+import { bodyPolicyExecutionHeld } from './policy-store.js';
 /** Trusted venue handoff. Public bodies only read/reply through their bound job. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -28,7 +29,7 @@ export function bridgeRuntime(app:Foundation,sharing:()=>Sharing,proof:(v:Viewer
  const valid=(jobId:string)=>{
   const job=store.read('job',jobId),b=job?.conversation?store.read('binding',job.conversation):undefined;
   const incoming=job?.conversation?db.prepare("SELECT id FROM runtime_bridge_turns WHERE conversation=? AND direction='in' ORDER BY seq DESC LIMIT 1").get(job.conversation) as {id:string}|undefined:undefined;
-  return !!incoming&&!!job?.member&&!!sink?.currentIncoming(incoming.id,job.member)&&!closed&&!!sink&&!!job&&!!b&&b.venue.startsWith('bridge:')&&b.id===job.conversation&&b.job===job.id
+  return !bodyPolicyExecutionHeld(db,job?.agent??'')&&!!incoming&&!!job?.member&&!!sink?.currentIncoming(incoming.id,job.member)&&!closed&&!!sink&&!!job&&!!b&&b.venue.startsWith('bridge:')&&b.id===job.conversation&&b.job===job.id
    &&b.agent===job.agent&&!!job.member&&b.member===job.member&&permitted(job.agent,job.member)&&currentExecution(store,job,sharing());
  };
  const bound=(v:Viewer)=>{
@@ -40,7 +41,7 @@ export function bridgeRuntime(app:Foundation,sharing:()=>Sharing,proof:(v:Viewer
  // Registry still owns the outer transaction; no registry receipt cache hashes
  // mutable route metadata or retains a fingerprint of private words.
  operations.register(operation({name:'runtime.acceptBridge',doors:['direct'],input,output:z.object({job:id}),
-  may:(v,m)=>accepting&&v.kind==='member'&&v.id===m.person&&dm(m)&&supportedRoute(m.route)&&permitted(m.key.agent,m.person),
+  may:(v,m)=>accepting&&!bodyPolicyExecutionHeld(db,m.key.agent)&&v.kind==='member'&&v.id===m.person&&dm(m)&&supportedRoute(m.route)&&permitted(m.key.agent,m.person),
   run(ctx,m){
    const cv=conversation(m),old=db.prepare('SELECT * FROM runtime_bridge_turns WHERE id=?').get(m.id) as Turn|undefined;
    if(old){if(old.conversation!==cv||receiptContent(JSON.parse(old.record) as z.infer<typeof input>)!==receiptContent(m))throw new OperationError('conflict','Bridge receipt already has different work');return {job:store.read('binding',cv)!.job!};}
@@ -62,8 +63,9 @@ export function bridgeRuntime(app:Foundation,sharing:()=>Sharing,proof:(v:Viewer
   },
  }));
  const runtime:BridgeRuntime={
+  current:agent=>!closed&&!bodyPolicyExecutionHeld(db,agent),
   async admit(m){
-   if(closed||!sink)return 'wait';
+   if(closed||!sink||bodyPolicyExecutionHeld(db,m.agent))return 'wait';
    // Other venue forms require their own runtime admission contract; no fallback
    // from an unresolved peer/group/guest to a private household conversation.
    if(!m.dm||m.group||m.peer||m.guest||m.pair!==undefined||m.readers.length)return 'wait';
@@ -72,7 +74,7 @@ export function bridgeRuntime(app:Foundation,sharing:()=>Sharing,proof:(v:Viewer
   async deliver(raw){
    if(closed||!sink)return 'retry';
    const parsed=input.safeParse(raw);if(!parsed.success)return 'held';const m=parsed.data;
-   if(!dm(m)||!supportedRoute(m.route))return 'held';if(!permitted(m.key.agent,m.person))return 'refused';
+   if(bodyPolicyExecutionHeld(db,m.key.agent)||!dm(m)||!supportedRoute(m.route))return 'held';if(!permitted(m.key.agent,m.person))return 'refused';
    accepting=true;
    try{const result=operations.call('direct',{kind:'member',id:m.person},'runtime.acceptBridge',m,`bridge-accept:${m.id}`);
     return result.ok?'delivered':result.code==='denied'?'refused':'retry';
@@ -97,7 +99,7 @@ export function bridgeRuntime(app:Foundation,sharing:()=>Sharing,proof:(v:Viewer
  return {runtime,connect(role:BridgesRole){sink=role;},valid,bound,
   privateStart(m:{agent:string;member?:string;conversation?:string;brief:string}){
    const b=m.conversation?store.read('binding',m.conversation):undefined;
-   return accepting&&m.brief===BRIDGE_BRIEF&&!!m.member&&!!b&&b.agent===m.agent&&b.member===m.member&&b.venue.startsWith('bridge:')&&permitted(m.agent,m.member);
+   return accepting&&!bodyPolicyExecutionHeld(db,m.agent)&&m.brief===BRIDGE_BRIEF&&!!m.member&&!!b&&b.agent===m.agent&&b.member===m.member&&b.venue.startsWith('bridge:')&&permitted(m.agent,m.member);
   },
   read(v:Viewer,before?:number){
    const job=bound(v);if(!job)throw new OperationError('denied','Body binding ended');

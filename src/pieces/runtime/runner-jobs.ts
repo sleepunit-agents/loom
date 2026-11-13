@@ -1,3 +1,4 @@
+import { bodyPolicyExecutionHeld } from './policy-store.js';
 import { finishStartAttempt } from './start-retries.js';
 import { hearJob } from './heartbeat.js';
 import { provenanceStore } from './provenance-store.js';
@@ -27,6 +28,7 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
     run(_ctx,{job:id}){
       const job=store.read('job',id)!;
       if(job.writtenOff||job.principalReset)return {stop:true,history:'discard' as const};
+      if(job.conversation&&store.read('binding',job.conversation)?.venue.startsWith('bridge:')&&bodyPolicyExecutionHeld(db,job.agent))return {stop:true,history:'discard' as const};
       if(job.imported)return {stop:true,history:job.imported.history};
       if(job.state==='uncertain'||job.state==='lost')return {stop:false,history:'unknown' as const};
       return {stop:['done','failed','stopped'].includes(job.state),history:'retain' as const};

@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add a daemon-owned Secrets receipt reconciliation job that recovers confirmed writes without caller plaintext, retaining locks on uncertain writes and rechecking current authority.
 - Bridges: bind household DMs to real runtime jobs and central body credentials, with private durable transcripts, stable reply outbox receipts, staging and stop/revocation checks.
+- Persist Runtime owner gates and policy with revision-bound edits and exact archived proposal adoption, refusing unreconciled source restrictions.
+
 - Retain encrypted-holder age identities and receipt keys across explicit key rotation without rewriting values or retry receipts.
 
 - Prepare Runtime body policy rules for trusted external delivery, with complete guest rosters, standing restrictions and effective session keys.

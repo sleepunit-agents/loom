@@ -1093,3 +1093,60 @@ Bridges intake, body feed/reseat/history, runner file composition and actual
 reply integration remain required on t-2209 before external delivery is usable.
 The existing Bridges missing-role hold remains installed. This compiler alone
 activates no archived restrictions or authority and starts no bodies.
+
+## Persistent owner permission documents
+
+The private `runtime_body_policy` table stores paired gates/policy documents and
+original pending proposal rows. Only household owners can call
+`runtime.readBodyPolicy`, `runtime.adoptBodyPolicy` or
+`runtime.configureBodyPolicy`; agents, runners and services cannot read or edit
+these documents through the registry. There is no live collection of permission
+words. The read returns the exact source rows alongside current documents so an
+owner can see what is being adopted. Sources over 1 MiB refuse whole review,
+never a truncated approval surface.
+
+For a fresh home, configure both complete documents with `revision: 0`.
+For an imported agent, read first and adopt using the returned `archive` digest.
+Adoption copies the exact gates, policy and original proposal rows, including
+source revisions, before/entry, relay words and original question metadata. It
+never creates or answers an approval. Missing or invalid logical documents stay
+blocked; repair requires an explicit paired configuration edit at the current
+revision. Original proposal rows survive every configuration edit. Decision,
+People merge and pending-request reconciliation remain later owning work; these
+operations do not offer Allow or Deny for an imported proposal.
+
+Configuration edits require the current revision. An operation receipt replay
+returns its original acknowledgement without restoring older documents. Adoption,
+edits and receipts commit together. The immutable import archive remains intact;
+a changed source digest fences active reads and edits rather than dropping a
+late proposal or bypassing an older restriction. Import verification expects
+this new table empty: imported bytes alone never become active permissions.
+
+`currentBodyPolicy` is a private owning accessor for later delivery composition.
+It refuses missing configuration, unreconciled archives and malformed documents,
+returning exact owner documents and a version key only after those checks. Its
+caller must re-read after awaits and check authenticated binding/current policy
+before release. The accessor grants no registry permission and launches no work.
+
+| Old source / command | New behavior in this unit |
+| --- | --- |
+| `gates/<agent>`, `policy/<agent>` | Exact paired owner configuration; whole-document validation without inserting schema defaults |
+| Archived `gate-proposals` | Exact original rows copied with adoption, preserved through edits; no manufactured approval |
+| Gates export/import review | Owner read plus digest-bound adoption from the already imported private archive |
+| Owner policy replacement | Revision-bound `runtime.configureBodyPolicy`, blocked until original archive adoption |
+
+The household-DM path merged in #1104 is now guarded by
+`bodyPolicyExecutionHeld`: any active owner configuration or associated imported
+permission/proposal source holds admission, delivery, input and body reads/replies
+until that path enforces compiled body rules. Adoption alone never removes this
+hold. Existing bound runners receive stop/discard; delayed outbox sends also
+recheck owning policy synchronously after asynchronous admission and at final
+outbound authorization and at the adapter’s actual POST boundary, after its
+last await. Fresh household DMs without owner configuration or
+archived permission sources keep #1104's central member binding contract.
+
+General external delivery, compiled-policy enforcement by the separate runner,
+proposal decisions, lifecycle/history, source queues and original pending owner
+requests, accounts/models, Clock/Comms retry integration, Runtime Kit screens,
+generated client and complete old-command parity remain on t-2209. No running
+home, worker or real import is changed by this code unit.

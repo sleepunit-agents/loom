@@ -1,3 +1,4 @@
+import { installBodyPolicyStore } from './policy-store.js';
 import { installRuntimeOwnerApplication } from './owner-application.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
@@ -22,6 +23,7 @@ export function installRuntime(db: Db, operations: Operations, live: Live, shari
   registerBuiltinService(operations, 'runtime', ['runtime.box', 'runtime.job', 'runtime.settings', 'runtime.binding']);
   migrate(db, 'runtime', schema);
   const store = runtimeStore(db);
+  installBodyPolicyStore(db, operations, sharing);
   installRuntimeOwnerApplication(db, operations, sharing, options.credentials);
   installBoxOperations(db, operations, sharing);
   installQueueBody(db, operations, sharing);

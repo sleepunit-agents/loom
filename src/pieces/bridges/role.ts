@@ -10,6 +10,9 @@ export interface Incoming {
 }
 export type DeliveryOutcome = 'delivered' | 'refused' | 'retry' | 'held';
 export interface BridgeRuntime {
+  /** Synchronous final owning-policy check after asynchronous admission/IO.
+   * Implemented by the installed Runtime; test roles may omit this hook. */
+  current?(agent: string): boolean;
   /** Gate by the current owner-written runtime policy, never by a People card. */
   admit(input: { agent: string; person: string; venue: string; channel: string; dm: boolean; group?: boolean; readers: string[]; peer: boolean; guest?: boolean; pair?: string }): Promise<'allow' | 'drop' | 'wait'>;
   /** Atomically deduplicate id, append ONE turn and arrange body delivery. */
@@ -32,7 +35,7 @@ export interface VenueAdapter {
   }): Promise<VenueConnection>;
   /** Slack workspace/guest/group checks. A failure is wait, never allow. */
   inspect(venue: Venue, message: Message): Promise<Inspection>;
-  send(venue: Venue, address: Address, text: string, operationId: string, authorize: () => Promise<boolean>): Promise<{ id: string }>;
+  send(venue: Venue, address: Address, text: string, operationId: string, authorize: () => Promise<boolean>, currentPolicy?: () => boolean): Promise<{ id: string }>;
 }
 export interface BridgesRole {
   /** Current delivered source still belongs to this linked household person. */
