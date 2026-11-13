@@ -18,6 +18,7 @@ export function slackApi(secrets: SecretUse, beforeRead: () => boolean, request:
     if (!beforeRead()) throw Error('Read held');
     // secretUseRole normalizes callback exceptions; classify the response afterwards.
     const result = await secrets.withValue(venue.tokenSecret, async token => {
+      if (!beforeRead()) throw Error('Read held');
       const response = await request(`https://slack.com/api/${method}`, {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -40,6 +41,7 @@ export function slackApi(secrets: SecretUse, beforeRead: () => boolean, request:
       if (!object(parsed)) throw Error('Slack unavailable');
       return parsed;
     });
+    if (!beforeRead()) throw Error('Read held');
     if (result.ok !== true) {
       if (result.ok === false && typeof result.error === 'string' && denied.has(result.error)) throw new Refused();
       throw Error('Slack unavailable');

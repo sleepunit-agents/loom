@@ -1,6 +1,6 @@
 import { maySee, type Db, type Sharing, type Operations, type Result, type Viewer } from '../../core/index.js';
 export { secretName } from './input.js';
-export type { SecretUse } from './service.js';
+export type { SecretUse, SecretUseAuthority } from './service.js';
 export type { HolderGeneration } from './local-holder.js';
 /** The single authority for agent use. No cache: revocation applies to the next call. */
 export type ResourceKind = 'secret' | 'runner' | 'piece' | 'tailnet';

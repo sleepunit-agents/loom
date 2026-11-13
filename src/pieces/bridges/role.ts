@@ -16,11 +16,6 @@ export interface BridgeRuntime {
   deliver(input: Incoming): Promise<DeliveryOutcome>; // Refusal consumes; malformed input holds; transient failure retries.
   stop(input: { agent: string; venue: string; person: string; id: string }): Promise<void>;
 }
-/** The grant check happens before obtaining a value. No file fallback. */
-export interface BridgeSecrets {
-  may(agent: string, name: string): Promise<boolean>;
-  get(agent: string, name: string): Promise<string>;
-}
 export interface VenueConnection { close(): void }
 /** Slack allows only after authenticated platform checks. Group members are the
  * complete fresh conversations.members set (including the receiving bot); each
@@ -29,13 +24,15 @@ export interface VenueConnection { close(): void }
 export type Inspection = 'allow' | 'drop' | 'wait' | { kind: 'allow'; members: string[] };
 export interface VenueAdapter {
   platform: Venue['platform'];
-  connect(venue: Venue, credentials: { token: string; appToken?: string }, callbacks: {
+  /** Capture a lifetime predicate before awaits; loss/recovery invalidates it. */
+  current(venue: Venue): () => boolean;
+  connect(venue: Venue, callbacks: {
     /** A gateway acknowledges only after this resolves (durably received). */
     message(message: Message): Promise<void>; dropped(): void;
   }): Promise<VenueConnection>;
   /** Slack workspace/guest/group checks. A failure is wait, never allow. */
-  inspect(venue: Venue, token: string, message: Message): Promise<Inspection>;
-  send(venue: Venue, token: string, address: Address, text: string, operationId: string): Promise<{ id: string }>;
+  inspect(venue: Venue, message: Message): Promise<Inspection>;
+  send(venue: Venue, address: Address, text: string, operationId: string, authorize: () => Promise<boolean>): Promise<{ id: string }>;
 }
 export interface BridgesRole {
   /** Stable id from runtime's reply operation. Replay returns the original state.

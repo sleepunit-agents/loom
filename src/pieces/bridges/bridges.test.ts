@@ -9,7 +9,7 @@ import { installBridges } from './index.js';
 import { schema as foundationSchema } from './schema/001.js';
 import { schema as retrySchema } from './schema/002.js';
 import { Bridges } from './engine.js';
-import type { BridgeRuntime, BridgeSecrets, VenueAdapter, Incoming, DeliveryOutcome, Inspection } from './role.js';
+import type { BridgeRuntime, VenueAdapter, Incoming, DeliveryOutcome, Inspection } from './role.js';
 import { z } from 'zod';
 import type { RecordType } from '../../core/live/index.js';
 import { OperationError } from '../../core/index.js';
@@ -24,10 +24,12 @@ const roots: string[] = [], closes: (()=>Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const root of roots.splice(0)) rmSync(root,{recursive:true,force:true}); });
 class FakeVenue implements VenueAdapter {
   platform: Venue['platform'];
-  callbacks?: Parameters<VenueAdapter['connect']>[2]; connections=0; closed=0; posts: unknown[][]=[]; uncertain=false; inspection: Inspection='allow';
+  callbacks?: Parameters<VenueAdapter['connect']>[1]; connections=0; closed=0; posts: unknown[][]=[]; uncertain=false; inspection: Inspection='allow';
   constructor(platform: Venue['platform']) {this.platform=platform;}
-  async connect(_v: Venue,_c: unknown,callbacks: Parameters<VenueAdapter['connect']>[2]) { this.connections++; this.callbacks=callbacks; return {close:()=>{this.closed++;}}; }
-  async inspect() { return this.inspection; }
+  current(){return ()=>true;}
+  async connect(_v: Venue,callbacks: Parameters<VenueAdapter['connect']>[1]) { await this.acquire(_v); this.connections++; this.callbacks=callbacks; return {close:()=>{this.closed++;}}; }
+  acquire: (v: Venue) => Promise<void> = async()=>{};
+  async inspect(v: Venue) { await this.acquire(v); return this.inspection; }
   async send(...args: Parameters<VenueAdapter['send']>) { this.posts.push(args); if (this.uncertain) throw new Error('token-value-do-not-store'); return {id:`post-${this.posts.length}`}; }
 }
 async function fixture(platform: Venue['platform']='discord', staging=false, existingHome?: string, now?: number) {
@@ -40,8 +42,8 @@ async function fixture(platform: Venue['platform']='discord', staging=false, exi
   let gate: 'allow'|'drop'|'wait'='allow', failAfterDelivery=false, secretAllowed=true; const secretGets: string[]=[];
   const admitted: string[]=[];
   const runtime: BridgeRuntime={async admit(input){admitted.push(input.person);return gate;},async deliver(input){deliveries.set(input.id,input);if(failAfterDelivery)throw Error('body unavailable');return 'delivered';},async stop(i){stops.push(i);}};
-  const secrets: BridgeSecrets={async may(){return secretAllowed;},async get(_agent,name){secretGets.push(name);return 'token-value-do-not-store';}};
-  const engine=new Bridges(app,clock,runtime,secrets,[adapter],effects);
+  adapter.acquire=async v=>{if(!secretAllowed) throw Error('Credential unavailable'); secretGets.push(v.tokenSecret);};
+  const engine=new Bridges(app,clock,runtime,[adapter],effects);
   const close=async()=>{await engine.close();await app.close();}; closes.push(close);
   const op=(name:string,input:unknown,id=crypto.randomUUID())=>app.operations.call('direct',owner,`bridges.${name}`,input,id);
   const venue=venueSchema.parse({id:'art-'+platform,platform,agent:'art',workspace:'house',bot:'100',tokenSecret:'art-token'});
@@ -266,7 +268,7 @@ describe('in-process bridge delivery',()=>{
     expect(incoming.address).toMatchObject({group:true,dm:false});
     expect(f.admitted).toEqual(['jonathan','mark']);
     f.engine.reply({id:'reply',incomingId:incoming.id,text:'hello'}); await f.engine.flush();
-    expect(f.adapter.posts[0][2]).toMatchObject({group:true,dm:false});
+    expect(f.adapter.posts[0][1]).toMatchObject({group:true,dm:false});
   });
   it('reclassifies pre-fix pending receipts and replies before admission and posting',async()=>{
     const f=await groupFixture(); f.setGate('wait');
@@ -394,7 +396,7 @@ describe('in-process bridge delivery',()=>{
     expect(f.app.db.prepare('SELECT state,text FROM bridges_outbox').get()).toEqual({state:'pending',text:'reply after a long outage'});
     expect(f.adapter.posts).toEqual([]);
     f.adapter.inspection={kind:'allow',members:['100','200','201']}; await f.engine.flush();
-    expect(f.adapter.posts).toHaveLength(1); expect(f.adapter.posts[0][3]).toBe('reply after a long outage');
+    expect(f.adapter.posts).toHaveLength(1); expect(f.adapter.posts[0][2]).toBe('reply after a long outage');
     expect(f.app.db.prepare('SELECT state FROM bridges_outbox').get()).toEqual({state:'sent'});
     await f.engine.flush(); expect(f.adapter.posts).toHaveLength(1);
   });
@@ -541,7 +543,7 @@ describe('in-process bridge delivery',()=>{
     const incomingId=[...f.deliveries.keys()][0];
     f.engine.reply({id:'reply',incomingId,text:'hello'}); await f.engine.flush();
     f.engine.reply({id:'reply',incomingId,text:'hello'}); await f.engine.flush();
-    expect(f.adapter.posts).toHaveLength(1); expect(f.adapter.posts[0][4]).toBe('reply');
+    expect(f.adapter.posts).toHaveLength(1); expect(f.adapter.posts[0][3]).toBe('reply');
     expect(()=>f.engine.reply({id:'reply',incomingId,text:'changed'})).toThrow('reused');
   });
   it('uses explicit resolved mentions, inherits thread routes and keeps DMs separate', async()=>{
@@ -585,7 +587,7 @@ describe('in-process bridge delivery',()=>{
     const address=platform==='slack'?{channel:'D300',thread:'1794503533.000001',dm:true}:{channel:'400',parent:'300',thread:'400'};
     await f.engine.receive(f.venue.id,f.message(address)); await f.engine.flush();
     const posts: {text:string;channel:string;thread?:string}[]=[];
-    f.adapter.send=async(v,_token,address,text)=>postReply(v.platform,text,async part=>{
+    f.adapter.send=async(v,address,text)=>postReply(v.platform,text,async part=>{
       posts.push({text:part,channel:address.channel,thread:address.thread}); return {id:`part-${posts.length}`};
     });
     const text='line\n'.repeat(1800), incomingId=[...f.deliveries.keys()][0];
@@ -604,7 +606,7 @@ describe('in-process bridge delivery',()=>{
     const f=await fixture(platform);
     await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
     const posts:string[]=[];
-    f.adapter.send=async(v,_token,_address,text)=>postReply(v.platform,text,async part=>{
+    f.adapter.send=async(v,_address,text)=>postReply(v.platform,text,async part=>{
       posts.push(part); if(posts.length===2)throw new Error('token-value-do-not-store'); return {id:'first-part'};
     });
     f.engine.reply({id:'partial',incomingId:[...f.deliveries.keys()][0],text:'x'.repeat(9000)}); await f.engine.flush();
@@ -819,4 +821,30 @@ describe('platform event timestamps',()=>{
     for (const id of ['','-1','1.5','18446744073709551616']) expect(eventTime('discord',id)).toBeUndefined();
     expect(eventTime('slack','not-a-ts')).toBeUndefined();
   });
+});
+
+it('does not deliver an inspection lifetime invalidated during runtime admission',async()=>{
+  const f=await fixture(),started=Promise.withResolvers<void>(),finish=Promise.withResolvers<void>();let generation=0;
+  f.adapter.current=()=>{const captured=generation;return ()=>captured===generation;};
+  let calls=0;f.runtime.admit=async()=>{if(calls++)return 'wait';started.resolve();await finish.promise;return 'allow';};
+  await f.engine.receive(f.venue.id,f.message());await started.promise;generation++;finish.resolve();await f.engine.flush();
+  expect(f.deliveries.size).toBe(0);expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'pending'});
+  f.runtime.admit=async()=> 'allow';f.clock.advance(5000);await f.engine.flush();expect(f.deliveries.size).toBe(1);
+});
+
+it.each(['deliver','stop'] as const)('does not consume a deferred runtime %s result after lifetime/setup/shutdown invalidation',async phase=>{
+  for(const change of ['lifetime','setup','shutdown'] as const) {
+    const f=await fixture(),started=Promise.withResolvers<void>(),finish=Promise.withResolvers<void>();let active=true;
+    f.adapter.current=()=>()=>active;
+    f.runtime.deliver=async input=>{started.resolve();await finish.promise;f.deliveries.set(input.id,input);return 'delivered';};
+    f.runtime.stop=async input=>{started.resolve();await finish.promise;f.stops.push(input);};
+    await f.engine.receive(f.venue.id,f.message({text:phase==='stop'?'cancel':'hello'}));await started.promise;
+    let closing:Promise<void>|undefined;
+    if(change==='lifetime')active=false;
+    else if(change==='setup')expect(f.op('putVenues',{...f.venue,ignore:['400']}).ok).toBe(true);
+    else closing=f.engine.close();
+    finish.resolve();if(closing)await closing;else for(let n=0;n<100;n++)await Promise.resolve();
+    expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'pending'});expect(f.app.db.prepare('SELECT * FROM bridges_conversations').all()).toEqual([]);
+    if(change!=='shutdown') {active=true;f.clock.advance(5000);await f.engine.flush();expect(f.app.db.prepare('SELECT state FROM bridges_inbox').get()).toEqual({state:'delivered'});if(phase==='deliver')expect(f.deliveries.size).toBe(1);}
+  }
 });
