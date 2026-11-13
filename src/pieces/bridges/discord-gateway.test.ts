@@ -126,6 +126,10 @@ describe('Discord gateway session transport',()=>{
     const gate=vi.fn(()=>false); const f=fixture({beforeConnect:gate}); await settled(); expect(f.socket).not.toHaveBeenCalled(); expect(f.withValue).not.toHaveBeenCalled();
     gate.mockReturnValue(true); const s=await retry(f); gate.mockReturnValue(false); s.hello(); await settled(); expect(s.send).not.toHaveBeenCalled();
   });
+  it('constructs the resume endpoint from a checked hostname with a fixed path and protocol query',async()=>{
+    const f=fixture({load:()=>({session:'private',seq:1,url:'wss://gateway-us-east1-b.discord.gg/?v=6&encoding=etf&ticket=PRIVATE'})});
+    await settled(); expect(f.socket.mock.calls[0][0]).toBe('wss://gateway-us-east1-b.discord.gg/?v=10&encoding=json');
+  });
   it.each(['wss://evil.example/','wss://gateway.discord.gg.evil.example/','https://gateway.discord.gg/','wss://user:pass@gateway.discord.gg/','wss://gateway.discord.gg:443/','wss://gateway.discord.gg:8443/','wss://gateway.discord.gg/private','wss://gateway.discord.gg/#private'])('rejects unsafe persisted host %s before dial',async url=>{
     const f=fixture({load:()=>({session:'private',seq:1,url})}); await settled(); expect(f.socket).not.toHaveBeenCalled(); expect(f.withValue).not.toHaveBeenCalled();
   });

@@ -32,10 +32,11 @@ function gateway(value: string): string {
   // Validate the entire input before URL parsing as well as its parsed parts.
   if (!/^wss:\/\/gateway(?:-[a-z0-9-]+)?\.discord\.gg\/?(?:\?[^#\r\n]*)?$/.test(value)) throw Error();
   const url = new URL(value);
-  url.search = '?v=10&encoding=json';
   if (url.protocol !== 'wss:' || !/^gateway(?:-[a-z0-9-]+)?\.discord\.gg$/.test(url.hostname)
     || url.username || url.password || url.port || url.hash || url.pathname !== '/') throw Error();
-  return url.href;
+  // Construct only from the checked hostname: upstream path/query/userinfo
+  // never flow into the network target, and separators are escaped defensively.
+  return `wss://${encodeURIComponent(url.hostname)}/?v=10&encoding=json`;
 }
 const sequence = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0;
 const checkpointValid = (c: DiscordCheckpoint) => typeof c.session === 'string' && /^[\w-]{1,256}$/.test(c.session) && sequence(c.seq);
