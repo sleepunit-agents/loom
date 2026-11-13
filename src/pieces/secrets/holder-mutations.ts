@@ -115,6 +115,13 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
       if (!req.complete) res.once('finish',()=>req.destroy());
     } finally {clearTimeout(deadline);bytes?.fill(0);for (const b of chunks) b.fill(0);}
   });
+  // Enforce the absolute bound from Unix connection acceptance, before TLS or
+  // HTTP headers complete. Node's headersTimeout is checked on a coarse timer.
+  // Clients use a fresh connection per request; keep-alive never extends this.
+  server.on('connection',socket=>{
+    const deadline=setTimeout(()=>socket.destroy(),5000);
+    socket.once('close',()=>clearTimeout(deadline));
+  });
   server.requestTimeout=5000;server.headersTimeout=5000;
   try {
     await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(config.socket,resolve);});

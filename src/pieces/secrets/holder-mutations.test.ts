@@ -5,6 +5,9 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {X509Certificate,randomUUID,randomBytes} from 'node:crypto';
 import https from 'node:https';
+import {IncomingMessage} from 'node:http';
+import {connect as tlsConnect} from 'node:tls';
+import {connect as netConnect} from 'node:net';
 import {generateIdentity} from 'age-encryption';
 import {listenHolderMutations,localHolderMutations} from './holder-mutations.js';
 import {openHolderStore} from './holder-store.js';
@@ -120,6 +123,44 @@ it('client deadline also bounds an already started mutation and erases both copi
     const pending=expect(localHolderMutations(client).set(who,'github',Buffer.from('LATE-VALUE'),'add')).rejects.toThrow(/^Local secret mutation unavailable$/);
     await vi.waitFor(()=>expect(set).toHaveBeenCalledOnce());await vi.advanceTimersByTimeAsync(5000);await pending;
     // Storage owns an in-flight copy until the awaited operation has settled.
+    expect(Buffer.from(provider!).toString()).toBe('LATE-VALUE');
     finish();await vi.waitFor(()=>expect(provider!.every(v=>v===0)).toBe(true));
   }finally{vi.useRealTimers();}
+});
+
+it('rejects changed actual identity at the second authority check',async()=>{
+  const {client,server,authority,who}=setup();authority.mockResolvedValueOnce('actual-owner').mockResolvedValue('different-owner');
+  const set=vi.fn(async()=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove},authority);closes.push(holder.close);
+  await expect(localHolderMutations(client).remove(who,'github')).rejects.toThrow();expect(authority).toHaveBeenCalledTimes(2);expect(remove).not.toHaveBeenCalled();
+});
+it('does not consume request input while admission authority is pending',async()=>{
+  const {client,server,authority,who}=setup();let admit!:(member:string)=>void;
+  authority.mockImplementationOnce(()=>new Promise(resolve=>{admit=resolve;}));
+  const reads=vi.spyOn(IncomingMessage.prototype,'read');
+  const set=vi.fn(async()=>{}),remove=vi.fn();const holder=await listenHolderMutations(server,{set,remove},authority);closes.push(holder.close);
+  const pending=localHolderMutations(client).set(who,'github',Buffer.alloc(65536,65),'add');
+  await vi.waitFor(()=>expect(authority).toHaveBeenCalledOnce());
+  const bodyReads=()=>reads.mock.contexts.filter(req=>req.url==='/v1/mutation/add/github');
+  expect(bodyReads()).toHaveLength(0);expect(set).not.toHaveBeenCalled();
+  admit('actual-owner');await pending;expect(bodyReads().length).toBeGreaterThan(0);expect(set).toHaveBeenCalledOnce();
+});
+it('refuses an occupied socket and leaves its original listener reachable',async()=>{
+  const {client,server,authority,who}=setup();const original=vi.fn(async()=>{}),impostor=vi.fn(async()=>{});
+  const holder=await listenHolderMutations(server,{set:original,remove:()=>{}},authority);closes.push(holder.close);
+  await expect(listenHolderMutations(server,{set:impostor,remove:()=>{}},authority)).rejects.toThrow(/^Local secret mutation unavailable$/);
+  await localHolderMutations(client).set(who,'github',Buffer.from('VALUE'),'add');expect(original).toHaveBeenCalledOnce();expect(impostor).not.toHaveBeenCalled();
+});
+it('bounds connections before TLS completion or complete HTTP headers arrive',async()=>{
+  const {client,server,authority}=setup();const set=vi.fn(async()=>{}),remove=vi.fn();
+  const holder=await listenHolderMutations(server,{set,remove},authority);closes.push(holder.close);
+  for(const tls of [false,true]) {
+    vi.useFakeTimers();let connected=false,closed=false;
+    const peer=tls?tlsConnect({path:client.socket,servername:client.servername,ca:privateBytes(client.ca),cert:privateBytes(client.cert),key:privateBytes(client.key),minVersion:'TLSv1.3'},()=>{connected=true;peer.write('POST /v1/mutation/add/github HTTP/1.1\r\nHost: holder.test\r\n');})
+      :netConnect(client.socket,()=>{connected=true;});
+    peer.on('error',()=>{});peer.on('close',()=>{closed=true;});
+    try {
+      await vi.waitFor(()=>expect(connected).toBe(true));await vi.advanceTimersByTimeAsync(5000);
+      await vi.waitFor(()=>expect(closed).toBe(true));expect(authority).not.toHaveBeenCalled();expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
+    } finally {peer.destroy();vi.useRealTimers();}
+  }
 });

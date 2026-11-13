@@ -402,7 +402,9 @@ POSTs for add, replace and remove, and empty 204 acknowledgements only after the
 holder store completes. The client snapshots input before awaiting, owns and
 erases its copy, uses a five-second absolute deadline and never exposes response
 bodies or provider errors. The server bounds input at 64 KiB, erases owned bytes
-after store settlement, and has no read endpoint. It shares only TLS/private-path
+after store settlement, and has no read endpoint. The five-second server bound
+starts at connection acceptance, before TLS or HTTP headers complete; clients
+use one fresh connection per request and keep-alive cannot extend the bound. It shares only TLS/private-path
 helpers with the existing read listener; the read channel and executable stay as
 before. No automatic retries or stale-socket cleanup are introduced.
 
