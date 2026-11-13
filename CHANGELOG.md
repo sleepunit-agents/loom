@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Clock’s owning local-request reader now reviews explicit timing and schedules saved private words with one-time or existing every-time authority; Runtime delivery remains held.
+
 - Add an authenticated owner-window recovery operation for saved private Clock local requests, retaining their exact scope and durable retry acknowledgement. App scheduling controls and Runtime delivery remain unfinished.
 - Next Runtime retries definitively unstarted nonconversation manual/spawn jobs at most three times, retaining original intent, deadlines and current-policy checks across restarts.
 

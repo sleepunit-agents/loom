@@ -5,6 +5,7 @@ import { useRecords } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
 import { active, time, title, state, type Wake, type Schedule, type Clock } from './model';
 import { WorkForm } from './forms';
+import { LocalScheduling } from './local-scheduling';
 import { send, useRequest } from './request';
 const isWake = (w: Wake | Schedule): w is Wake => typeof w.due === 'number';
 type Action = { operation: string; input: object; label: string; why: string };
@@ -41,7 +42,7 @@ export default function ClockApp({ path: shellPath, go }: { path?: string; go?: 
   const ask = (operation: string, input: object, label: string, why: string) => setConfirm({operation,input,label,why});
   const action = (operation: string, input: object, label: string, why: string) => <Button variant="outline" size="sm" disabled={!enabled} onClick={() => ask(operation,input,label,why)}>{label}</Button>;
   let reader = null;
-  if (approval) reader = <><div className="grid gap-2 p-5 pb-0"><p>This decision starts nothing. Your agent still needs to schedule the saved words after you allow them.</p><a href="/p/approvals-preview">Manage standing jobs in Approvals → Rules</a></div><ApprovalReader key={approval.id} approval={approval} snapshot={approvals} /></>;
+  if (approval) reader = <><div className="grid gap-2 p-5 pb-0"><p>This decision starts nothing. After allowing, choose timing below to schedule the saved words.</p><a href="/p/approvals-preview">Manage standing jobs in Approvals → Rules</a></div><ApprovalReader key={approval.id} approval={approval} snapshot={approvals} /><LocalScheduling key={`timing:${approval.id}`} approval={approval} snapshot={approvals} /></>;
   else if (form) reader = <WorkForm key={`${form}:${editing ? id : 'new'}`} kind={form} schedule={editing ? schedule : undefined} enabled={enabled} back={back} />;
   else if (wake) reader = <article className="grid gap-4 p-5">
     <header><h1 className="text-2xl font-semibold">{title(wake)}</h1><p>{state(wake,isPaused(wake.agent))} · {wake.agent}</p></header>
@@ -74,10 +75,11 @@ export default function ClockApp({ path: shellPath, go }: { path?: string; go?: 
     <section><h2>{schedule.file ? 'Repository file' : 'Text'}</h2><p className="whitespace-pre-wrap break-words">{schedule.laneDetails?.text ?? schedule.file ?? schedule.prompt}</p></section>
   </article>;
   else if (id) reader = <Empty title="This work is no longer in view" text="It may have aged out, been removed or become unavailable." />;
-  const saved = receipt?.result?.ok ? receipt.result.value as { alreadyScheduled?: boolean; schedule?: string; due?: number; done?: string[]; gone?: string[]; id?: string; state?: string; target?: string } : undefined;
+  const generalReceipt = receipt?.operation === 'scheduleLocalFromWindow' ? undefined : receipt;
+  const saved = generalReceipt?.result?.ok ? generalReceipt.result.value as { alreadyScheduled?: boolean; schedule?: string; due?: number; done?: string[]; gone?: string[]; id?: string; state?: string; target?: string } : undefined;
   const feedback = <div className="grid gap-2">
-      {receipt?.pending && <Loading label={receipt.status === 'offline' ? 'Waiting for connection…' : 'Saving…'} />}
-      {receipt?.result && (receipt.result.ok ? <p role="status">{saved?.alreadyScheduled && typeof saved.due === 'number' ? `Already scheduled: ${saved.schedule}, next at ${time(saved.due)} (nothing armed)` : saved?.done ? `Counted ${saved.done.length} as your work; ${saved.gone?.length ?? 0} unchanged` : saved?.target && saved.id ? `Owner request ${saved.id}: ${saved.state}. Work stays held until allowed.` : 'Saved'}</p> : <Error title="Couldn’t save" text={`${receipt.result.code}: ${receipt.result.message}`} />)}
+      {generalReceipt?.pending && <Loading label={generalReceipt.status === 'offline' ? 'Waiting for connection…' : 'Saving…'} />}
+      {generalReceipt?.result && (generalReceipt.result.ok ? <p role="status">{saved?.alreadyScheduled && typeof saved.due === 'number' ? `Already scheduled: ${saved.schedule}, next at ${time(saved.due)} (nothing armed)` : saved?.done ? `Counted ${saved.done.length} as your work; ${saved.gone?.length ?? 0} unchanged` : saved?.target && saved.id ? `Owner request ${saved.id}: ${saved.state}. Work stays held until allowed.` : 'Saved'}</p> : <Error title="Couldn’t save" text={`${generalReceipt.result.code}: ${generalReceipt.result.message}`} />)}
       {confirm && <section aria-label="Confirm clock action" className="grid gap-2"><p>{confirm.why}</p><Button variant="outline" disabled={!enabled} onClick={() => {if(enabled){send(confirm.operation,confirm.input);setConfirm(undefined);}}}>{confirm.label}</Button><Button variant="outline" onClick={() => setConfirm(undefined)}>Keep unchanged</Button></section>}
   </div>;
   return <Split label="Clock" className="h-full" folders={[{id:'wakes',label:'Wakes'},{id:'schedules',label:'Schedules'},{id:'lanes',label:'Household lanes'},{id:'history',label:'Recent history'},{id:'local',label:'Local requests'}]} folder={folder} onFolder={f => {setFolder(f);back();}}
