@@ -55,7 +55,7 @@ The audience file maps **every** conversation id to `{project?, member?}`. An ex
 | `conversations` | Same ids, metadata and `last_seq` high-water mark (`turns`), normalized UTC dates with reconciled bounds; project reference union recomputed |
 | `conversation_turns` | Same seq, sender, time, kind, run/model/harness/outcome and recorded latency; stable `conversation:seq` ids; original writer retained as `{kind: 'legacy', id: <old writer>}` |
 | `conversation_days` | Same counts, median and model outcomes; stable `conversation:day` ids; no replay/recomputation |
-| `conversation_digests` | Same ids and authored content; revision starts at 1, order follows old `at,rowid`; stored pre-lint question wording is retained |
+| `conversation_digests` | Same ids and authored content; revision starts at 1, order follows old raw timestamp `at,rowid` (SQLite BINARY); stored pre-lint question wording is retained |
 | Digest Needs you | Ask id `digest:1`; only newest digest can remain open, including same-clock rowid ties; a newest null resolves older asks |
 | `conversation_needs_answers` | Current answers close their asks; done/dismissed/replied/yes/no become done/dismiss/replied/yes/no; resolved retains its reason; actual reply words were never in the source |
 | Old answer predating a same-run rewrite | Current ask stays open; original answer metadata retained as digest `legacyAnswer`, without claiming the rewritten wording was what the person answered |

@@ -115,7 +115,11 @@ export function importAttention(db: Db, from: string[], scopesInput: ImportScope
     const { _rowid, ...raw } = r;
     const a = legacyAnswer.parse(raw); parent(a); check(!answers.has(a.digest), 'duplicate answer'); answers.set(a.digest,a);
   }
-  const digests = rows('conversation_digests').sort((a,b) => time(a.at).localeCompare(time(b.at)) || Number(a._rowid) - Number(b._rowid));
+  // Preserve SQLite's old BINARY at,rowid order even for mixed precision.
+  const digests = rows('conversation_digests').sort((a,b) => {
+    const left = iso.parse(a.at), right = iso.parse(b.at);
+    return (left < right ? -1 : left > right ? 1 : 0) || Number(a._rowid) - Number(b._rowid);
+  });
   const latest = new Map<string, string>();
   for (const r of digests) latest.set(String(r.conversation),String(r.id));
   const orders = new Map<string, number>();

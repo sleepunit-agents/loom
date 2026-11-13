@@ -198,3 +198,16 @@ it('same snapshot under a different filename repeats with identical checksum',as
   writeFileSync(renamed,f.source.serialize());
   expect(importAttention(f.app.db,[renamed],f.scopes)).toEqual({...result,imported:false});
 });
+it('preserves old raw timestamp ordering before normalizing digest dates',async()=>{
+  const f=await setup(true);
+  f.source.prepare('UPDATE conversation_digests SET at=? WHERE id=?').run('2026-11-01T00:00:01Z',f.first);
+  f.source.prepare('UPDATE conversation_digests SET at=? WHERE id=?').run('2026-11-01T00:00:01.100Z',f.latest);
+  // SQLite orders the Z spelling after .100Z despite its earlier real time.
+  expect(f.source.prepare('SELECT id FROM conversation_digests ORDER BY at DESC,rowid DESC LIMIT 1').get()).toEqual({id:f.first});
+  importAttention(f.app.db,[f.path],f.scopes);
+  const result=f.app.operations.call('direct',{kind:'member',id:'alice'},'attention.digests',{conversation:f.id});
+  expect(result).toMatchObject({ok:true});if(!result.ok)throw Error('read refused');
+  expect((result.value as {id:string}[]).map(d=>d.id)).toEqual([f.first,f.latest]);
+  expect(f.load('attention_asks').find(a=>a.id===`${f.first}:1`).state).toBe('open');
+  expect(f.load('attention_asks').find(a=>a.id===`${f.latest}:1`).state).toBe('resolved');
+});
