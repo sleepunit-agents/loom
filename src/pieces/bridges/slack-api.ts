@@ -1,6 +1,6 @@
 /** Slack Web API reads. Composition supplies the bridges SERVICE's SecretUse.
  * No token is retained, returned or included in errors. No intake cache. */
-import type { SecretUse } from '../secrets/service.js';
+import type { SecretUse } from '../secrets/role.js';
 import type { Venue, Message } from './model.js';
 import type { Inspection } from './role.js';
 
