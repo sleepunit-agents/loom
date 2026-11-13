@@ -24,7 +24,7 @@ async function setup() {
   expect(call('describe', {name:'github', description:'GitHub'}).ok).toBe(true);
   const buffers: Uint8Array[] = [];
   const source = {read: vi.fn(async () => {const b=Buffer.from('CREDENTIAL-SENTINEL'); buffers.push(b); return b;})};
-  const role = (viewer: Viewer = {kind:'service', id:'changes'}) => secretUseRole(app.db, source, sharing, viewer, ()=>clock.now());
+  const role = (viewer: Viewer = {kind:'service', id:'changes'}) => secretUseRole(app.db, source, sharing, viewer, ()=>clock.now(), app.live);
   return {app, call, clock, source, role, config, buffers};
 }
 it('requires an owner service grant, distinguishes agent identity and rereads revoke, expiry and never', async () => {
@@ -55,7 +55,7 @@ it('requires an owner service grant, distinguishes agent identity and rereads re
   await expect(bound.withValue('github',use)).rejects.toMatchObject({code:'denied'});
   expect(use).toHaveBeenCalledTimes(1);
 });
-it('never stores value bytes, emits Live changes or propagates holder/callback errors; erases the leased buffer', async () => {
+it('never stores or broadcasts value bytes or propagates holder/callback errors; erases the leased buffer', async () => {
   const {app, call, source, role, buffers} = await setup();
   call('grantService', {service:'changes',name:'github'});
   const changed = vi.spyOn(app.live,'changed');
@@ -66,7 +66,7 @@ it('never stores value bytes, emits Live changes or propagates holder/callback e
   source.read.mockRejectedValueOnce(Error('CREDENTIAL-SENTINEL'));
   await expect(role().withValue('github', async()=>true)).rejects.toMatchObject({message:'Secret use failed'});
   expect(buffers.every(b=>b.every(v=>v===0))).toBe(true);
-  expect(changed).not.toHaveBeenCalled(); expect(logs.every(s=>s.mock.calls.length===0)).toBe(true);
+  expect(changed.mock.calls.flatMap(c=>c[0]).every(c=>c.type==='secret.use')).toBe(true); expect(logs.every(s=>s.mock.calls.length===0)).toBe(true);
   expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
   const tables = app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[];
   const dump=tables.map(t=>app.db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all());
