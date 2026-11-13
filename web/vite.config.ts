@@ -2,6 +2,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { defineConfig, type Plugin } from 'vite';
+import type { ChunkingContext } from 'rolldown';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { accessMedia } from './access-media.ts';
@@ -40,11 +41,35 @@ function looks(): Plugin {
   };
 }
 
+/** Co-locate the synchronous kit shared by both shells. App screens stay in their
+ * own dynamic chunks; splitting this same kit across many tiny chunks repeats
+ * gzip dictionaries and preload wrappers on the first page. */
+function sharedInitialKit() {
+  let shared: Set<string> | undefined;
+  return (id: string, ctx: ChunkingContext) => {
+    if (!shared) {
+      const reach = (entry: string) => {
+        const seen = new Set<string>();
+        const visit = (id: string) => {
+          if (seen.has(id)) return;
+          seen.add(id);
+          for (const dependency of ctx.getModuleInfo(id)?.importedIds ?? []) visit(dependency);
+        };
+        visit(path.resolve(import.meta.dirname, entry));
+        return seen;
+      };
+      const classic = reach('src/main.tsx'), next = reach('src/shell/main.tsx');
+      shared = new Set([...classic].filter(id => next.has(id)));
+    }
+    return shared.has(id) ? 'shell-kit' : null;
+  };
+}
+
 // loom serves the built app at /app/ (docs/specs/ui-app.md); the page itself is any of loom's paths.
 export default defineConfig({
   base: '/app/',
   plugins: [react(), tailwindcss(), looks()],
   css: { postcss: { plugins: [accessMedia()] } },
   resolve: { alias: { '@': path.resolve(import.meta.dirname, './src') } },
-  build: { rolldownOptions: { input: { index: path.resolve(import.meta.dirname, 'index.html'), next: path.resolve(import.meta.dirname, 'next.html') } }, outDir: '../dist/web', emptyOutDir: true },
+  build: { manifest: true, rolldownOptions: { output: { codeSplitting: { groups: [{ name: sharedInitialKit(), tags: ['$initial'] }] } }, input: { index: path.resolve(import.meta.dirname, 'index.html'), next: path.resolve(import.meta.dirname, 'next.html') } }, outDir: '../dist/web', emptyOutDir: true },
 });

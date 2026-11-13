@@ -37,7 +37,7 @@ export function Empty({ title, text, children }: { title: string; text?: string;
     <EmptyTitle className="text-base">{title}</EmptyTitle>{text && <EmptyDescription className="text-sm">{text}</EmptyDescription>}{children}
   </PrimitiveEmpty>;
 }
-export function Loading({ label = 'Loading…' }: { label?: string }) { return <p className="loom-kit-state" role="status" aria-live="polite">{label}</p>; }
+export { Loading } from './loading';
 export function Error({ title = 'Couldn’t load this', text, retry }: { title?: string; text?: string; retry?: () => void }) {
   return <div role="alert"><Empty title={title} text={text}>{retry && <Button variant="outline" onClick={retry}>Try again</Button>}</Empty></div>;
 }

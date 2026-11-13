@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { assertPrivateDirectory, privateSocket, tlsMaterial, type LocalHolderConfig } from './local-holder.js';
 import type { HolderStore, HolderWrite } from './holder-store.js';
 import { secretName } from './input.js';
+import { synchronousHolderAcknowledgement } from './keyholder.js';
 
 const failed = () => new Error('Local secret mutation unavailable');
 const whoSchema = z.object({member:z.string().min(1).max(256),writeId:z.uuid()}).strict();
@@ -22,32 +23,32 @@ export type HolderMutationAuthority = (peerFingerprint: string, assertedMember: 
 export function localHolderMutations(config: LocalHolderConfig) {
   const material = tlsMaterial(config);
   if (!config.servername || !isAbsolute(config.socket)) throw failed();
-  async function send(who: HolderWrite, name: string, mode: 'add' | 'replace' | 'remove', value?: Uint8Array) {
+  async function send(who: HolderWrite, name: string | undefined, mode: 'add' | 'replace' | 'remove' | 'receipt', value?: Uint8Array) {
     let bytes: Buffer | undefined;
     try {
-      who = whoSchema.parse(who); secretName.parse(name);
-      if (!['add','replace','remove'].includes(mode)) throw failed();
-      if (mode !== 'remove') {
+      who = whoSchema.parse(who); if (mode !== 'receipt') secretName.parse(name);
+      if (!['add','replace','remove','receipt'].includes(mode)) throw failed();
+      if (mode !== 'remove' && mode !== 'receipt') {
         if (!(value instanceof Uint8Array) || !value.length || value.length > limit) throw failed();
         bytes = Buffer.from(value); // Own a snapshot before any await.
       }
       privateSocket(config.socket);
-      await new Promise<void>((resolve,reject) => {
+      return await new Promise<boolean>((resolve,reject) => {
         let settled = false;
         const fail = () => { if (!settled) { settled=true; reject(failed()); } };
         const request = https.request({socketPath:config.socket,servername:config.servername,...material,
           rejectUnauthorized:true,agent:false,minVersion:'TLSv1.3',maxHeaderSize:8192,
-          method:'POST',path:`/v1/mutation/${mode}/${name}`,
+          method:'POST',path:mode === 'receipt' ? '/v1/receipt' : `/v1/mutation/${mode}/${name}`,
           headers:{'content-type':'application/octet-stream','content-length':bytes?.length ?? 0,
             'x-holder-member':Buffer.from(who.member).toString('base64url'),'x-holder-write-id':who.writeId},
         },response=>{
           // No holder-controlled output, including an error body, crosses this seam.
-          if (response.statusCode!==204 || response.headers['content-length']!=='0' || response.headers['transfer-encoding']) {
+          if ((response.statusCode!==204 && !(mode==='receipt' && response.statusCode===404)) || response.headers['content-length']!=='0' || response.headers['transfer-encoding']) {
             fail();response.destroy();return;
           }
           response.on('data', (chunk:Buffer)=>{chunk.fill(0);fail();response.destroy();});
           response.on('error',fail);response.on('aborted',fail);
-          response.on('end',()=>{if (!settled) {settled=true;resolve();}});
+          response.on('end',()=>{if (!settled) {settled=true;resolve(response.statusCode===204);}});
         });
         const deadline=setTimeout(()=>{fail();request.destroy();},5000);
         request.on('error',fail);request.on('close',()=>clearTimeout(deadline));
@@ -57,19 +58,22 @@ export function localHolderMutations(config: LocalHolderConfig) {
     finally { bytes?.fill(0); }
   }
   return {
-    set:(who:HolderWrite,name:string,value:Uint8Array,mode:'add'|'replace')=>send(who,name,mode,value),
-    remove:(who:HolderWrite,name:string)=>send(who,name,'remove'),
+    set:async(who:HolderWrite,name:string,value:Uint8Array,mode:'add'|'replace')=>{await send(who,name,mode,value);},
+    remove:async(who:HolderWrite,name:string)=>{await send(who,name,'remove');},
+    /** A positive answer confirms a committed member/id, not the caller's input.
+     * A negative answer must never release a reservation or trigger another id. */
+    hasReceipt:(who:HolderWrite)=>send(who,undefined,'receipt'),
   };
 }
 
-/** Separate private socket, no read endpoint. The caller owns store lifetime.
+/** Separate private socket, no value read endpoint. The caller owns store lifetime.
  * Current authorization runs before reading and again immediately before a
  * mutation (including receipt replay). Store work already started may commit
  * after disconnect: retry with the SAME member/writeId/input, never assume a
  * transport failure means rollback. No automatic retries or socket unlinking.
  */
 export async function listenHolderMutations(config: Omit<LocalHolderConfig,'servername'>,
-  store: Pick<HolderStore,'set'|'remove'>, authority: HolderMutationAuthority) {
+  store: Pick<HolderStore,'set'|'remove'|'hasReceipt'>, authority: HolderMutationAuthority) {
   try {
     if (!isAbsolute(config.socket) || typeof authority !== 'function') throw failed();
     assertPrivateDirectory(dirname(config.socket));
@@ -82,17 +86,18 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
       try {
         const peer=req.socket as TLSSocket;
         const fingerprint=peer.getPeerCertificate().fingerprint256;
+        const receipt=req.url==='/v1/receipt';
         const match=/^\/v1\/mutation\/(add|replace|remove)\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$/.exec(req.url??'');
         const member=req.headers['x-holder-member'],writeId=req.headers['x-holder-write-id'];
         const length=req.headers['content-length'];
-        if (!peer.authorized || !fingerprint || req.method!=='POST' || !match
+        if (!peer.authorized || !fingerprint || req.method!=='POST' || (!match && !receipt)
           || req.headers['content-type']!=='application/octet-stream' || req.headers['transfer-encoding']
           || typeof member!=='string' || !/^[A-Za-z0-9_-]{1,1366}$/.test(member)
           || typeof writeId!=='string' || typeof length!=='string' || !/^(0|[1-9][0-9]{0,4})$/.test(length)) throw failed();
         const asserted=Buffer.from(member,'base64url').toString('utf8');
         if (Buffer.from(asserted).toString('base64url')!==member || asserted.length>256) throw failed();
-        const expected=Number(length),mode=match[1] as 'add'|'replace'|'remove',name=match[2];
-        if (expected>limit || (mode==='remove' ? expected!==0 : expected===0)) throw failed();
+        const expected=Number(length),mode=receipt ? 'receipt' : match![1] as 'add'|'replace'|'remove',name=match?.[2];
+        if (expected>limit || (mode==='remove' || mode==='receipt' ? expected!==0 : expected===0)) throw failed();
         const memberId=await authority(fingerprint,asserted);
         const who=whoSchema.parse({member:memberId,writeId});
         if (expired || req.destroyed) throw failed();
@@ -105,10 +110,18 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
         if (size!==expected || expired || res.destroyed) throw failed();
         bytes=Buffer.concat(chunks);
         if (await authority(fingerprint,asserted)!==who.member || expired || res.destroyed) throw failed();
-        if (mode==='remove') await store.remove(who,name);
-        else await store.set(who,name,bytes,mode);
+        let committed=true;
+        if (mode==='receipt') {
+          const found:unknown=store.hasReceipt(who);
+          // Consume accidental async rejection as well as refusing its evidence.
+          synchronousHolderAcknowledgement(found);
+          if (typeof found!=='boolean') throw failed();
+          committed=found;
+          if (await authority(fingerprint,asserted)!==who.member) throw failed();
+        } else if (mode==='remove') await store.remove(who,name!);
+        else await store.set(who,name!,bytes,mode);
         if (expired || res.destroyed) throw failed();
-        res.writeHead(204,{'content-length':0,'cache-control':'no-store'});res.end();
+        res.writeHead(committed?204:404,{'content-length':0,'cache-control':'no-store'});res.end();
       } catch {
         if (!res.headersSent && !res.destroyed) res.writeHead(503,{'content-length':0,'cache-control':'no-store'});
         res.end();

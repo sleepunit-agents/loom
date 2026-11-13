@@ -815,7 +815,34 @@ so retries still deduplicate after the core receipt expires at 30 days. Mode `ch
 separately granted read-only `approvals.piece-standing-local-check`: it always
 reads current authority even if an operation id is reused, and never increments
 use or audit. No original words or full standing record is returned. This is the
-owning seam for legacy standing consumption and fire-time rechecks; Clock's
-single-outstanding-target scheduling, private wake binding, dispatch-time call,
-public recovery and authenticated local runtime dispatch still require composition.
+owning seam for legacy standing consumption and fire-time rechecks; Clock now composes single-outstanding-target scheduling, private wake binding and
+fire-time checks through the trusted role below. Public recovery and authenticated
+local runtime dispatch still require composition.
 The existing generic standing operation and one-shot recovery are unchanged.
+
+### Trusted standing-local scheduling
+
+`clockLocalStanding(operations).schedule(authenticCaller, {approval, mode, when,
+prompt?, note?}, receipt)` recovers the immutable saved prompt and entire note.
+The direct-only `clock.localStandingSchedule` requires the exact Clock service,
+explicit grants, current central wake and approval policy, and original owner
+principal, assignee, project and service. Optional retyping must match exactly.
+Time and shared 50-one-off capacity checks precede owning standing use. At most
+one active wake with the same filed target may be outstanding, including held
+and firing work and one-shot recovery. Cancellation or terminal work releases
+the target; uncertain work keeps it occupied. Shared insertion and failed-wake
+reactivation paths enforce the same exclusion, including ordinary at/in and
+schedule creation. Use, audit, wake, private binding
+and durable scheduling receipt commit in one transaction with no migration.
+A receipt reserves its viewer/id across all write operations through the registry
+recovery hook and retains its exact result beyond the core 30-day retry lifetime; replay
+is an acknowledgement and rechecks current central policy, never fresh authority.
+
+The binding in private `clock_meta` retains the original filing, authentic caller
+and exact executable/scope fields. Dispatch checks them against the wake, then
+calls the owning read-only live standing check before committing intent and again
+immediately before runtime invocation. Off, later Deny, changed card/full digest,
+changed words/scope or revoked policy holds the wake without invoking runtime.
+These checks never increment standing use. No public Caller, client command or
+app is connected, and the real runtime still holds local work. Trusted fakes
+exercise this boundary; authenticated local host dispatch remains unfinished.

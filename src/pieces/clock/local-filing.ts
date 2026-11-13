@@ -28,6 +28,13 @@ export function filedLocal(db: Db, id: string): LocalFiling | undefined {
   const row = db.prepare('SELECT value FROM clock_meta WHERE key=?').get(key(id)) as {value:string} | undefined;
   return row ? JSON.parse(row.value) : undefined;
 }
+/** Validate the full saved digest and its short target without exposing words. */
+export function localFilingWords(filing: LocalFiling) {
+  const words=localWords(filing.prompt,filing.note);
+  if(words.digest!==filing.digest || filing.target!==`${filing.caller.who.agent}:${words.digest.slice(0,16)}`)
+    denied('Local filing digest differs');
+  return words;
+}
 export function installLocalFiling(db: Db, operations: Operations, sharing: () => Sharing) {
   const input = z.object({caller:callerSchema.strict(),prompt:z.string().min(1).max(100_000),note:z.string().max(100_000)}).strict();
   const role = approvalsRole(operations, 'clock');

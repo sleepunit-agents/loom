@@ -21,6 +21,9 @@ export interface HolderWrite { member: string; writeId: string }
 export interface HolderStore {
   set(who: HolderWrite, name: string, value: Uint8Array, mode: 'add' | 'replace'): Promise<void>;
   remove(who: HolderWrite, name: string): void;
+  /** Positive evidence only: false does not exclude an in-flight commit. The
+   * caller must durably bind this id to full input before using it to reconcile. */
+  hasReceipt(who: HolderWrite): boolean;
   read(name: string): Promise<Uint8Array>;
   close(): void;
 }
@@ -123,6 +126,12 @@ export async function openHolderStore(directory: string, identityFile: string, f
             if (!store.prepare('DELETE FROM holder_values WHERE name=?').run(name).changes) throw unavailable();
             receipt(who, hash);
           }).immediate();
+        } catch { throw unavailable(); }
+      },
+      hasReceipt(who) {
+        try {
+          check(); who = context.parse(who);
+          return !!store.prepare('SELECT 1 FROM holder_receipts WHERE member=? AND write_id=?').get(who.member, who.writeId);
         } catch { throw unavailable(); }
       },
       async read(name) {

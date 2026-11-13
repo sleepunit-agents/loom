@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Compose Discord Gateway intake with authenticated service credentials, durable receipts and staging-gated lifecycle in the opt-in next-mode bridge root.
+### Added
+
+- Comms thread rows pin on a stationary touch or pen long press, without opening the thread; scrolling and cancelled holds leave it unchanged.
+- Reduce first-page JavaScript while keeping app screens loaded on demand.
+
 - Add keyboard-accessible Pin and Archive actions to Comms list rows, including right-click entry.
 
 - Add a private Discord raw receipt drain with fresh metadata, bounded retries and durable normalized handoff; production activation remains pending.
@@ -64,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Next-mode runtime releases claimed input once through the staging gate; HTTP supports asynchronous operations with authentication revalidation.
 - Derive the private-app window capability from validated next-mode page sessions, while keeping bearer callers denied.
 - Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
+- Add authenticated, value-free committed holder receipt lookup for uncertain write recovery; durable registry admission and metadata reconciliation remain required before enabling Settings values.
 - Connect the persistent Secrets holder executable to authenticated current household authority over a dedicated private socket.
 
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
@@ -91,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Request owner review of an eligible imported wake in the Clock app, preserving saved words and due time while leaving work held.
 - Show executable prompt or file excerpts alongside saved notes on Clock owner-vouch request cards, preserving every id and due time within the details limit.
 - Automatically group eligible unsteered unknown Clock imports on one owner-vouch card, atomically refresh unanswered groups, retain Deny suppression and hold overflow.
+- Clock: schedule exact filed local work through trusted standing authority, with a single outstanding target, durable atomic receipt and private binding checked against live authority before dispatch; public/runtime host composition remains unfinished.
 - Clock: add a trusted owning standing-local approval use/check seam with exact receipt, full-digest, principal, service and project checks; Clock scheduling and fire-time composition remain pending.
 - Clock: recover exact filed local words and notes through a trusted one-shot scheduling role, with current receipt checks and atomic capacity-before-spend scheduling; public runtime/client wiring remains uncomposed.
 - Clock: add trusted owner-principal local-wake filing with full executable card words, exact saved prompt/note and project-preserving atomic approval filing; runtime/client recovery remains uncomposed.

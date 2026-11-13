@@ -29,9 +29,17 @@ export function clockVouchApplication(operations: Pick<Operations, 'call'>): imp
 export { clockLocalFiling } from './local-filing.js';
 
 /** Runtime supplies its authenticated Caller; never forward caller from a body. */
-export function clockLocalRecovery(operations: Pick<Operations,'call'>) {
-  return {schedule(caller: import('../approvals/role.js').Caller,
-    input: {approval:string;when:string;mode:'in'|'at';prompt?:string;note?:string}, receipt=randomUUID()) {
-    return operations.call('direct',{kind:'service',id:'clock'},'clock.localSchedule',{...input,caller},receipt);
+type LocalScheduleInput = {approval:string;when:string;mode:'in'|'at';prompt?:string;note?:string};
+function localScheduler(operations: Pick<Operations,'call'>, name: string) {
+  return {schedule(caller: import('../approvals/role.js').Caller, input: LocalScheduleInput, receipt=randomUUID()) {
+    return operations.call('direct',{kind:'service',id:'clock'},name,{...input,caller},receipt);
   }};
+}
+export function clockLocalRecovery(operations: Pick<Operations,'call'>) {
+  return localScheduler(operations,'clock.localSchedule');
+}
+
+/** Trusted runtime only; no public Caller or host dispatch is supplied here. */
+export function clockLocalStanding(operations: Pick<Operations,'call'>) {
+  return localScheduler(operations,'clock.localStandingSchedule');
 }
