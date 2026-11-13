@@ -1,4 +1,4 @@
-import { describe,it,expect } from 'vitest';
+import { describe,it,expect,vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { mkdtempSync,writeFileSync,rmSync } from 'node:fs';
@@ -109,6 +109,24 @@ describe('worker-owned Claude session',()=>{
 
   it.each(['--resume','--permission-mode',' -p','   '])('refuses deny values parsed as harness options (%j)',async deny=>{
     const f=fixture();await expect(f.session.turn({...f.turn,rules:{...rules,deny:[deny]}})).rejects.toThrow('deny');expect(f.calls).toHaveLength(0);
+  });
+
+  it('captures the effective checkout even when the caller omits it',async()=>{
+    const cwd=vi.spyOn(process,'cwd').mockReturnValue('/worker/first');
+    try {
+      const f=fixture(),p=f.session.turn(f.turn);expect(f.calls[0].options).toMatchObject({cwd:'/worker/first'});f.finish();await p;
+      cwd.mockReturnValue('/worker/second');const q=f.session.turn(f.turn);
+      expect(f.calls[1].args).not.toContain('--resume');expect(f.calls[1].options).toMatchObject({cwd:'/worker/second'});f.finish();await q;
+    } finally {cwd.mockRestore();}
+  });
+  it.each(['relative','',String.fromCharCode(47,0)])('refuses unsafe checkout %j before spawning',async checkout=>{
+    const f=fixture();await expect(f.session.turn({...f.turn,checkout})).rejects.toThrow('absolute');expect(f.calls).toHaveLength(0);
+  });
+  it('sanitizes synchronous launch failures and permanently fences the session',async()=>{
+    const session=new ClaudeWorkerSession('/worker/claude',{},()=>{throw Error('PRIVATE ENVIRONMENT');});
+    const f=fixture(),error=await session.turn(f.turn).catch(e=>e as Error);
+    expect(error.message).toBe('Claude launch failed');expect(error.stack).not.toContain('PRIVATE');
+    await expect(session.turn(f.turn)).rejects.toThrow('closed');
   });
 
 });

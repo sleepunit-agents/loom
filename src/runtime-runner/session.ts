@@ -1,6 +1,7 @@
 /** Worker-only Claude execution. No daemon registration or old-store access. */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { prepareRunnerBrief } from './brief.js';
 
@@ -56,12 +57,14 @@ export class ClaudeWorkerSession {
         if(!valid||this.#closed){this.close();throw new WorkerSessionError('Worker policy or binding is no longer current');}
       };
       check();
-      const prepared=prepareRunnerBrief(raw.rules,raw.checkout);
+      const checkout=raw.checkout??process.cwd();
+      if(!isAbsolute(checkout)||checkout.includes('\0'))throw new WorkerSessionError('Worker checkout must be absolute');
+      const prepared=prepareRunnerBrief(raw.rules,checkout);
       if(prepared.deny.some(tool=>!tool.trim()||tool.trim().startsWith('-')))
         throw new WorkerSessionError('Tool deny cannot be a harness option');
       if(typeof raw.message!=='string'||!raw.message.trim()||raw.message.includes('\0')||Buffer.byteLength(raw.message)>MAX_OUTPUT)
         throw new WorkerSessionError('Invalid worker message');
-      const message=raw.message,checkout=raw.checkout;
+      const message=raw.message;
       const retained=this.#history?.key===prepared.key&&this.#history.checkout===checkout?this.#history:undefined;
       // An attempted turn consumes the history lease. Any uncertain failure
       // leaves no resumable authority, including a lost/invalid harness result.
@@ -71,7 +74,9 @@ export class ClaudeWorkerSession {
         ...(prepared.deny.length?['--disallowedTools',...prepared.deny]:[])];
       // No caller args, shell, arbitrary resume id or message words in argv.
       check();
-      const child=this.#spawn(this.command,args,{cwd:checkout,env:{...this.#env},shell:false,stdio:['pipe','pipe','pipe']});
+      let child:ChildProcessWithoutNullStreams;
+      try {child=this.#spawn(this.command,args,{cwd:checkout,env:{...this.#env},shell:false,stdio:['pipe','pipe','pipe']});}
+      catch {this.close();throw new WorkerSessionError('Claude launch failed');}
       this.#active=child;
       const result=await new Promise<string>((resolve,reject)=>{
         const chunks:Buffer[]=[];let bytes=0,settled=false;
