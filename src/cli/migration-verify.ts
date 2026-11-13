@@ -56,15 +56,12 @@ function householdTables(from: string, now: number): Tables {
     {id:'session-envelope',body:json(envelope)},
   ];
   const pieces = join(from,'pieces');
-  if (existsSync(pieces)) for (const name of readdirSync(pieces).sort()) {
-    const path = join(pieces,name,'settings.json');
-    if (existsSync(path)) tables.household_piece_settings.push({id:name,body:json(document(path,{}))});
-  }
-  // Match the import receipt independently, without trusting it as evidence of content.
   const files = new Map(['household.json','tokens.json','tokens.used.json','ui-sessions.json','ui-cookie.key'].map(name=>[name,optional(join(from,name))]));
   if (existsSync(pieces)) for (const name of readdirSync(pieces).sort()) {
-    const path = `pieces/${name}/settings.json`, body = optional(join(from,path)); if (body !== undefined) files.set(path,body);
+    const path = `pieces/${name}/settings.json`, body = optional(join(from,path));
+    if (body !== undefined) { files.set(path,body); tables.household_piece_settings.push({id:name,body:json(JSON.parse(body.toString('utf8')))}); }
   }
+  // Match the import receipt independently, without trusting it as evidence of content.
   tables.household_imports = [{id:'legacy-home',body:json({checksum:hash(JSON.stringify([...files].map(([p,b])=>[p,b?.toString('base64')??null]))),at:now})}];
   return tables;
 }
@@ -87,7 +84,7 @@ function expectedTables(piece: string, paths: string[], options: unknown, now: n
     }
     case 'approvals': {
       const {expected:s,checksum} = readApprovalsImport(paths[0],options as Parameters<typeof readApprovalsImport>[1]);
-      return {approvals_approvals:s.approvals.map(a=>({id:a.id,record:json(a),changed_at:now})),approvals_rules:[...s.rules,...s.grants,...s.standing].map(r=>({id:ruleId(r),record:json(r)})),approvals_notices:s.notices.map((r,id)=>({id,record:json(r)})),approvals_audit:s.audit.map((r,i)=>({id:i+1,record:json(r)})),approvals_meta:[{key:'source-checksum',value:checksum}]};
+      return {approvals_approvals:s.approvals.map((a,i)=>({migration_order:i+1,id:a.id,record:json(a),changed_at:now})),approvals_rules:[...s.rules,...s.grants,...s.standing].map((r,i)=>({migration_order:i+1,id:ruleId(r),record:json(r)})),approvals_notices:s.notices.map((r,id)=>({id,record:json(r)})),approvals_audit:s.audit.map((r,i)=>({id:i+1,record:json(r)})),approvals_meta:[{key:'source-checksum',value:checksum}]};
     }
     case 'changes': {
       // Household import creates no sharing projects. Post-import changes are differences too.
@@ -118,7 +115,10 @@ export function verifyMigration(snapshot: string, destination: string, supplied?
     const checked = prepareMigrationPlan(snapshot,plan), current = readReceipt(home,plan);
     if (canonicalPlanValue(current)!==canonicalPlanValue(receipt)) throw Error('Receipt changed');
     const path = join(home,'loom.db');
-    for (const suffix of ['-wal','-journal']) if (existsSync(path+suffix) && statSync(path+suffix).size) throw Error('Destination must be stopped and checkpointed');
+    const assertCheckpointed = () => {
+      for (const suffix of ['-wal','-journal']) if (existsSync(path+suffix) && statSync(path+suffix).size) throw Error('Destination must be stopped and checkpointed');
+    };
+    assertCheckpointed();
     const before = readFileSync(path), db = openSnapshotSqlite(path);
     const report: VerificationReport = {status:'verified',snapshot:plan.snapshot,plan:migrationPlanChecksum(plan),pieces:[],missing:[],differences:[]};
     try {
@@ -128,7 +128,10 @@ export function verifyMigration(snapshot: string, destination: string, supplied?
         report.pieces.push(piece);
         for (const [table,rows] of Object.entries(expected)) {
           let actual: Row[] | null = null;
-          try { actual = db.prepare(`SELECT * FROM ${table}`).all() as Row[]; } catch { /* missing schema is a difference */ }
+          try {
+            const columns = table==='approvals_approvals'||table==='approvals_rules' ? 'rowid AS migration_order, *' : '*';
+            actual = db.prepare(`SELECT ${columns} FROM ${table}`).all() as Row[];
+          } catch { /* missing schema is a difference */ }
           let equal = false; try { equal = actual!==null && normalize(actual)===normalize(rows); } catch { /* corrupt record is a difference */ }
           if (!equal) report.differences.push({piece,table,expected:rows.length,actual:actual?.length??null});
         }
@@ -138,8 +141,14 @@ export function verifyMigration(snapshot: string, destination: string, supplied?
           if ((sourceKey || targetKey) && !sourceKey?.equals(targetKey??Buffer.alloc(0))) report.differences.push({piece,table:'cookie-key',expected:sourceKey?1:0,actual:targetKey?1:0});
         }
       }
-      if (!before.equals(readFileSync(path))) throw Error('Destination changed');
       prepareMigrationPlan(snapshot,plan); // detect source mutation during projection
+      assertCheckpointed(); // a direct writer can bypass the daemon gate
+      if (!before.equals(readFileSync(path))) throw Error('Destination changed');
+      if (canonicalPlanValue(readReceipt(home,plan))!==canonicalPlanValue(receipt)) throw Error('Receipt changed');
+      const expectedKey = optional(join(checked.root,'home/ui-cookie.key')), finalKey = optional(join(home,'ui-cookie.key'));
+      if ((expectedKey || finalKey) && !expectedKey?.equals(finalKey??Buffer.alloc(0))) {
+        if (!report.differences.some(d=>d.table==='cookie-key')) report.differences.push({piece:'household',table:'cookie-key',expected:expectedKey?1:0,actual:finalKey?1:0});
+      }
       report.missing.sort();
       report.status = report.differences.length ? 'different' : report.missing.length ? 'incomplete' : 'verified';
       return report;

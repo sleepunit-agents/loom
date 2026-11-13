@@ -71,7 +71,7 @@ async function fixture(full = false, matchingChange = false) {
     put('clock/art/paused',{since:'2026-11-12 00:00:00'});
     const who={agent:'art',where:'h-fixture'}, approval={id:'a-01234567',kind:'relay',target:'art->mark',what:'Ask Mark',why:'Fixture',who,for:'?',people:['jonathan'],minutes:60,at,state:'used',decided:at,expires:'2026-11-12T01:00:00Z',used:at,by:'jonathan'};
     put('approvals/approvals.json',{v:1,approvals:{[approval.id]:approval},notices:[{at,agent:'art',kind:'merge',target:'github:acme/app',what:'Merged',for:'owner'}]});
-    put('approvals/rules.json',{v:1,rules:[{kind:'merge',scope:'github:acme/*',tier:'do',by:'jonathan',at}],grants:[],standing:[]});
+    put('approvals/rules.json',{v:1,rules:[{kind:'merge',scope:'github:acme/*',tier:'do',by:'jonathan',at}],grants:[],standing:['s-01234567','s-01234568'].map(id=>({id,kind:'local-wake',agent:'art',target:`art:${'a'.repeat(16)}`,digest:'a'.repeat(64),who,for:'owner',from:approval.id,what:'Run fixture',at,by:'jonathan',uses:2,used:at}))});
     writeFileSync(join(old,'approvals/audit.jsonl'),JSON.stringify({at,event:'use',id:approval.id,kind:approval.kind,target:approval.target,who})+'\n');
   }
   await createSnapshot(old,root,tasks);
@@ -183,4 +183,22 @@ it('returns CLI exit 3 for content differences with equal row counts and never e
   expect(await run(['verify','--snapshot',f.root,'--home',f.home],io)).toBe(3);expect(io.stdout).toHaveBeenCalledOnce();
   expect(JSON.parse(io.stdout.mock.calls[0][0])).toMatchObject({status:'different',differences:[{piece:'tasks',table:'tasks_tasks',expected:1,actual:1}]});
   expect(io.stdout.mock.calls.flat().join('')).not.toContain('PRIVATE_DIFFERENCE_CANARY');expect(io.stderr).not.toHaveBeenCalled();
+});
+it('detects changes solely to approval or rule SQLite row ordering',async()=>{
+  const f=await fixture(true);runMigrationAll(f.root,f.home);
+  const db=new Database(join(f.home,'loom.db'));
+  db.exec("UPDATE approvals_approvals SET rowid=100; UPDATE approvals_rules SET rowid=-rowid; UPDATE approvals_rules SET rowid=4+rowid");db.close();
+  expect(verifyMigration(f.root,f.home).differences.map(d=>d.table)).toEqual(expect.arrayContaining(['approvals_approvals','approvals_rules']));
+});
+it.each(['wal','journal'])('refuses a direct writer creating a nonempty %s during source projection',async kind=>{
+  const f=await fixture(true);runMigrationAll(f.root,f.home);
+  const original=taskImporter.readTasksImport;let writer:Database.Database|undefined;
+  vi.spyOn(taskImporter,'readTasksImport').mockImplementation((...args)=>{
+    writer=new Database(join(f.home,'loom.db'));
+    writer.pragma(kind==='wal'?'journal_mode = WAL':'journal_mode = DELETE');
+    if(kind==='journal')writer.exec('BEGIN IMMEDIATE');
+    writer.exec("UPDATE tasks_tasks SET record=json_set(record,'$.title','concurrent difference')");
+    return original(...args);
+  });
+  try {expect(()=>verifyMigration(f.root,f.home)).toThrow('checkpointed');}finally{writer?.close();}
 });
