@@ -49,9 +49,17 @@ function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|
     }
   }
   for(const [cid,agents]of claims){if(agents.length!==1)throw Error();channels[cid]={...(channels[cid]??{}),primary:agents[0]};}
-  for(const [cid,f]of Object.entries(object.parse(own.flags??{}))){
-    channels[cid]??={primary:null};
-    for(const [k,v]of Object.entries(object.parse(f)))if(['peer','pair','guest_venue','readers'].includes(k))channels[cid][k]=v;
+  // A global new-side route cannot represent different per-agent accepted rules.
+  const flagKeys=['peer','pair','guest_venue','readers'];
+  const flags=(p:Record<string,unknown>,cid:string)=>{
+    const raw=object.parse(object.parse(p.flags??{})[cid]??{});
+    return {peer:raw.peer??false,pair:raw.pair??null,guest_venue:raw.guest_venue??false,readers:raw.readers??[]};
+  };
+  const saved=[...parts.values()].map(parse);
+  for(const p of saved)for(const cid of Object.keys(object.parse(p.flags??{})))channels[cid]??={primary:null};
+  for(const [cid,c]of Object.entries(channels)){
+    const f=flags(own,cid);if(saved.some(p=>canonical(flags(p,cid))!==canonical(f)))throw Error();
+    for(const k of flagKeys)c[k]=f[k as keyof typeof f];
   }
   Object.assign(out,{bots,bot_roles:roles,channels,threads});
   // Extras never override the assembled accepted map. Unknown fields remain in private store evidence.
@@ -103,7 +111,12 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
       if(!venues.some(v=>v.platform==='discord'&&v.workspace===r.guild))throw Error();
       for(const c of r.channels){
         if(c.primary&&!household.agents.includes(c.primary)||c.readers.some(p=>!household.members.includes(p)))throw Error();
-        const {thread: _thread,...fields}=c;
+        const {thread,...fields}=c;
+        if(thread){
+          const parent=r.channels.find(p=>!p.thread&&p.channel===c.parent);
+          if(!parent)throw Error();
+          Object.assign(fields,{peer:parent.peer,pair:parent.pair,guest:parent.guest,readers:parent.readers});
+        }
         const record=routeSchema.parse({id:`legacy:discord:${r.guild}:${c.channel}`,platform:'discord',workspace:r.guild,...fields,notes:[]});
         // thread is source classification, not a setup field.
         routes.push(record);
@@ -111,7 +124,7 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     }
     for(const a of effective.accounts){
       if(a.kind!=='person')continue;
-      if(effective.accounts.some(b=>b.kind==='agent'&&b.platform===a.platform&&b.user===a.user&&(a.platform==='discord'||b.workspace===a.workspace)))throw Error();
+      if(venues.some(v=>v.platform===a.platform&&v.bot===a.user&&(a.platform==='discord'||v.workspace===a.workspace))||effective.routes.some(r=>a.platform==='discord'&&Object.values(r.bots).includes(a.user))||effective.accounts.some(b=>b.kind==='agent'&&b.platform===a.platform&&b.user===a.user&&(a.platform==='discord'||b.workspace===a.workspace)))throw Error();
       if(!household.members.includes(a.owner)||a.user==='0')throw Error();
       const workspaces=a.platform==='slack'?[a.workspace!]:[...new Set(venues.filter(v=>v.platform==='discord').map(v=>v.workspace))];
       for(const workspace of workspaces)links.push(linkSchema.parse({id:`legacy:${a.platform}:${workspace}:${a.user}`,platform:a.platform,workspace,user:a.user,person:a.owner}));

@@ -46,3 +46,16 @@ it('standalone imports only from the completed snapshot with explicit mapping an
 it('refuses plans omitting any selected store and incomplete instance mappings',async()=>{
  const f=await fixture();f.plan.importers.bridges.paths.pop();expect(()=>prepareMigrationPlan(f.snapshot,f.plan)).toThrow('every discovered source');
 });
+
+it('both verifiers detect adapter receipt/session rows independently of import receipts',async()=>{
+ const f=await fixture();await runMigrationAll(f.snapshot,f.home,f.plan);
+ for(const [table,sql]of [
+  ['bridges_discord_sessions',"INSERT INTO bridges_discord_sessions VALUES ('binding','checkpoint')"],
+  ['bridges_discord_receipts',"INSERT INTO bridges_discord_receipts VALUES ('r','v','b','m','private','pending',1)"],
+  ['bridges_slack_receipts',"INSERT INTO bridges_slack_receipts VALUES ('r','v','b','e','private','pending',1)"],
+ ]){
+  const d=new Database(join(f.home,'loom.db'));d.exec(sql);d.close();
+  for(const report of [await verifyMigration(f.snapshot,f.home,f.plan),await verifyBridgesMigration(f.snapshot,f.home,f.plan.importers.bridges.options)])expect(report.differences).toContainEqual(expect.objectContaining({piece:'bridges',table,expected:0,actual:1}));
+  const clean=new Database(join(f.home,'loom.db'));clean.exec(`DELETE FROM ${table}`);clean.close();
+ }
+});

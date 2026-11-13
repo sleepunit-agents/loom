@@ -49,7 +49,7 @@ it('refuses moved-without-Runtime rather than falling back to stale people',()=>
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('Invalid offline');
 });
 it('assembles all accepted agent parts and flags, never proposal flags',()=>{
- const f=fixture();f.store('shuttle',[['routes','household',{guild:'789',channel_names:{'300':'work'}}],['channels','art',{bot:'100',answers:{'300':'work'},flags:{'300':{guest_venue:true,readers:['jonathan']}}}],['channels','mark',{bot:'200',answers:{'400':'mark'},threads:{'500':{primary:'mark',parent:'400',peer:true}}}],['route-offers','art',{doc:{bots:{art:'100',mark:'200'},channels:{'300':{peer:true}}}}]]);
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789',channel_names:{'300':'work'}}],['channels','art',{bot:'100',answers:{'300':'work'},flags:{'300':{guest_venue:true,readers:['jonathan']}}}],['channels','mark',{bot:'200',flags:{'300':{guest_venue:true,readers:['jonathan']}},answers:{'400':'mark'},threads:{'500':{primary:'mark',parent:'400',peer:true}}}],['route-offers','art',{doc:{bots:{art:'100',mark:'200'},channels:{'300':{peer:true}}}}]]);
  const s=readBridgeImport(f.sources,f.options,h,f.open);expect(s.expected.routes).toEqual(expect.arrayContaining([expect.objectContaining({channel:'300',guest:true,peer:false,readers:['jonathan']}),expect.objectContaining({channel:'400',primary:'mark'}),expect.objectContaining({channel:'500',parent:'400',peer:false})]));
 });
 it('falls back to files when accepted routes lack an offered agent part',()=>{
@@ -62,4 +62,31 @@ it('refuses contradictory identities, route claims and incomplete mapping',()=>{
  writeFileSync(f.sources.files[1].path,'{}');f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',answers:{'300':'a'}}],['channels','mark',{bot:'200',answers:{'300':'b'}}]]);
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
  expect(()=>readBridgeImport(f.sources,{...f.options,connections:[]},h,f.open)).toThrow();
+});
+
+it('refuses agent bot/person collisions, including route bots without a connection',()=>{
+ const f=fixture();for(const bot of ['100','200']){
+  writeFileSync(f.sources.files[1].path,JSON.stringify({people:{jonathan:{discord:[bot]}}}));
+  writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100',mark:'200'}}));
+  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+ }
+});
+it('refuses unrepresentable flags from another accepted agent and inherits parent rules for threads',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',answers:{'300':'a'},threads:{'500':{parent:'300',primary:'art',peer:false}},flags:{'300':{peer:true}}}]]);
+ expect(readBridgeImport(f.sources,f.options,h,f.open).expected.routes.find(r=>r.channel==='500')?.peer).toBe(true);
+ const d=new Database(f.sources.stores[0].path);d.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('channels','mark',JSON.stringify({bot:'200',answers:{'400':'b'},flags:{'400':{guest_venue:true}}}),'now','owner');d.close();
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+});
+it('requires explicit Slack team/bot/app and token secret names without opening a whole bundle',()=>{
+ const f=fixture();writeFileSync(f.sources.files[0].path,JSON.stringify({agent:{slug:'art'},slack:{secrets_env:'/never-open-bundle'}}));writeFileSync(f.sources.files[2].path,'{}');
+ const connection={agent:'art',platform:'slack',workspace:'T1',bot:'B1',tokenSecret:'art-slack-token',appSecret:'art-slack-app'};
+ const options={...f.options,connections:[connection]};
+ expect(readBridgeImport(f.sources,options,h,f.open).expected.venues[0]).toMatchObject({...connection,enabled:false});
+ for(const key of ['workspace','bot','tokenSecret','appSecret']){const c={...connection} as Record<string,unknown>;delete c[key];expect(()=>readBridgeImport(f.sources,{...options,connections:[c]},h,f.open)).toThrow();}
+});
+it('checks private adapter tables for emptiness and comparison',()=>{
+ const f=fixture(),{db,close}=openDb(join(f.root,'new'));try{
+ importBridges(db,f.sources,f.options,h,f.open);db.prepare("DELETE FROM bridges_meta WHERE key='source-checksum'").run();db.prepare("INSERT INTO bridges_discord_sessions VALUES ('old','private cursor')").run();
+ expect(()=>importBridges(db,f.sources,f.options,h,f.open)).toThrow('must be empty');
+ }finally{close();}
 });
