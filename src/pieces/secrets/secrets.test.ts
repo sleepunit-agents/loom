@@ -15,10 +15,10 @@ const agent: Viewer = { kind: 'agent', id: 'pond-bot' };
 const agentOwner: Viewer = { kind: 'member', id: 'pollock' };
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
-async function setup(raise: GrantAttention['raise'] = () => ({ raised: true })) {
+async function setup(raise: GrantAttention['raise'] = () => ({ raised: true }), withAttention = true) {
   const home = mkdtempSync(join(tmpdir(), 'loom-secrets-')); homes.push(home);
   const clock = new FakeClock();
-  const app = await startLoom({ home, clock, sharing: fixtureSharing, install: a => installSecrets(a.db, a.operations, a.live, fixtureSharing, { raise }) });
+  const app = await startLoom({ home, clock, sharing: fixtureSharing, install: a => installSecrets(a.db, a.operations, a.live, fixtureSharing, withAttention ? { raise } : undefined) });
   closes.push(app.close);
   let seq = 0;
   return { app, clock, call: (viewer: Viewer, name: string, input: unknown, id = `op-${++seq}`) => app.operations.call('direct', viewer, `secrets.${name}`, input, id) };
@@ -59,7 +59,7 @@ describe('one grants authority', () => {
   });
   it('rolls a failed attention raise back and rejects value fields before any persistence', async () => {
     const { app, call } = await setup(() => { throw new Error('attention unavailable'); });
-    expect(call(agent, 'request', { agent: agent.id, kind: 'secret', target: 'api-key', why: 'deploy' })).toMatchObject({ ok: false, code: 'unavailable' });
+    expect(call(agent, 'request', { agent: agent.id, kind: 'secret', target: 'api-key', why: 'deploy' })).toMatchObject({ ok: false, code: 'denied' });
     expect(app.db.prepare('SELECT * FROM secrets_requests').all()).toEqual([]);
     const sentinel = 'VALUE-MUST-NOT-BE-RECORDED';
     expect(call(owner, 'describe', { name: 'api-key', description: '', value: sentinel })).toMatchObject({ ok: false, code: 'invalid' });
@@ -135,4 +135,106 @@ it('upgrades the initial table without changing existing grant identity, content
     expect(grants.mayUse('art', { kind: 'piece', target: 'tasks' }, 99)).toBe(true);
     expect(grants.mayUse('art', { kind: 'piece', target: 'tasks' }, 100)).toBe(false);
   } finally { close(); }
+});
+
+it('accepts secret requests only through the authenticated runtime seam and answers with a bounded exact grant', async () => {
+  const raised: GrantRequest[] = [];
+  const { app, call, clock } = await setup(r => { raised.push(r); return { raised: true }; });
+  const input = { agent: agent.id, target: 'api-key', scope: { house: 'h-71', service: 'discord' }, why: 'deploy' };
+  const publicInput = { agent: agent.id, kind: 'secret', target: input.target, why: input.why };
+  expect(call(agent, 'request', publicInput)).toMatchObject({ ok: false, code: 'denied' });
+  expect(call(agent, 'request', { ...publicInput, scope: input.scope })).toMatchObject({ ok: false, code: 'invalid' });
+  for (const door of ['http', 'socket', 'mcp'] as const) {
+    expect(app.operations.call(door, agent, 'secrets.requestHouse', input, `spoof-${door}`)).toMatchObject({ ok: false, code: 'denied' });
+    expect(app.operations.offered(door).some(o => o.name === 'secrets.requestHouse')).toBe(false);
+  }
+  expect(call(agent, 'requestHouse', input)).toMatchObject({ ok: false, code: 'not-found' });
+  expect(call(owner, 'describe', { name: input.target, description: '' }).ok).toBe(true);
+  for (const viewer of [owner, agentOwner, { kind: 'agent', id: 'art' } as Viewer]) {
+    expect(call(viewer, 'requestHouse', input)).toMatchObject({ ok: false, code: 'denied' });
+  }
+  for (const minutes of [0, -1, 481, 1.5]) expect(call(agent, 'requestHouse', { ...input, minutes })).toMatchObject({ ok: false, code: 'invalid' });
+  const result = call(agent, 'requestHouse', input);
+  expect(result).toMatchObject({ ok: true, value: { scope: input.scope, minutes: 60 } });
+  expect(call(agent, 'requestHouse', input)).toEqual(result);
+  expect(raised).toHaveLength(1);
+  const otherService = call(agent, 'requestHouse', { ...input, scope: { house: 'h-71' }, minutes: 480 });
+  const otherHouse = call(agent, 'requestHouse', { ...input, scope: { house: 'h-72', service: 'discord' } });
+  expect(otherService).toMatchObject({ ok: true, value: { minutes: 480 } });
+  expect(otherHouse.ok).toBe(true);
+  expect(raised).toHaveLength(3);
+  const request = result.ok ? result.value as GrantRequest : undefined;
+  expect(call(agentOwner, 'answer', { id: request!.id, allow: true })).toMatchObject({ ok: false, code: 'denied' });
+  clock.advance(500);
+  expect(call(owner, 'answer', { id: request!.id, allow: true })).toMatchObject({ ok: true, value: { by: owner.id } });
+  const grants = grantsRole(app.db), resource = { kind: 'secret' as const, target: input.target };
+  expect(grants.mayUse(agent.id, resource, clock.now(), input.scope)).toBe(true);
+  expect(call(agent, 'requestHouse', input)).toMatchObject({ ok: true, value: { id: request!.id, state: 'allowed' } });
+  expect(raised).toHaveLength(3);
+  for (const scope of [undefined, { house: 'h-71' }, { house: 'h-72', service: 'discord' }]) expect(grants.mayUse(agent.id, resource, clock.now(), scope)).toBe(false);
+  clock.advance(60 * 60_000 - 1);
+  expect(grants.mayUse(agent.id, resource, clock.now(), input.scope)).toBe(true);
+  clock.advance(1);
+  expect(grants.mayUse(agent.id, resource, clock.now(), input.scope)).toBe(false);
+  expect(call(owner, 'answer', { id: request!.id, allow: true })).toMatchObject({ ok: false, code: 'conflict' });
+});
+
+it('rolls back a house request when attention fails and refuses legacy unscoped secret approvals', async () => {
+  const { app, call } = await setup(() => { throw new Error('attention unavailable'); });
+  expect(call(owner, 'describe', { name: 'api-key', description: '' }).ok).toBe(true);
+  expect(call(agent, 'requestHouse', { agent: agent.id, target: 'api-key', scope: { house: 'h-12' }, why: 'deploy' })).toMatchObject({ ok: false, code: 'unavailable' });
+  expect(app.db.prepare('SELECT * FROM secrets_requests').all()).toEqual([]);
+  const legacy: GrantRequest = { id: 'q-legacy', agent: agent.id, kind: 'secret', target: 'api-key', why: 'old', state: 'pending', askedBy: agent, createdAt: 1 };
+  app.db.prepare('INSERT INTO secrets_requests VALUES (?,?)').run(legacy.id, JSON.stringify(legacy));
+  expect(call(owner, 'answer', { id: legacy.id, allow: true })).toMatchObject({ ok: false, code: 'invalid' });
+  expect(app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
+  expect(call(owner, 'answer', { id: legacy.id, allow: false })).toMatchObject({ ok: true, value: { state: 'denied' } });
+});
+
+
+it('fails closed on missing, invalid and asynchronous house attention acknowledgments', async () => {
+  const cases: Array<{ raise: GrantAttention['raise']; installed?: boolean }> = [
+    { raise: () => ({ raised: true }), installed: false },
+    { raise: (() => ({ raised: false })) as unknown as GrantAttention['raise'] },
+    { raise: (async () => { throw new Error('async failure'); }) as unknown as GrantAttention['raise'] },
+  ];
+  for (const { raise, installed } of cases) {
+    const { app, call } = await setup(raise, installed);
+    expect(call(owner, 'describe', { name: 'api-key', description: '' }).ok).toBe(true);
+    expect(call(agent, 'requestHouse', { agent: agent.id, target: 'api-key', scope: { house: 'h-12' }, why: 'deploy' })).toMatchObject({ ok: false, code: 'unavailable' });
+    expect(app.db.prepare('SELECT * FROM secrets_requests').all()).toEqual([]);
+    expect(app.db.prepare('SELECT * FROM core_operations WHERE name=?').all('secrets.requestHouse')).toEqual([]);
+  }
+});
+
+
+it('reuses only the request own live scoped grant, never a global or replacement grant', async () => {
+  const { app, call, clock } = await setup();
+  const input = { agent: agent.id, target: 'api-key', scope: { house: 'h-81' }, why: 'deploy', minutes: 2 };
+  expect(call(owner, 'describe', { name: input.target, description: '' }).ok).toBe(true);
+  const first = call(agent, 'requestHouse', input);
+  const id = first.ok ? (first.value as GrantRequest).id : '';
+  expect(call(owner, 'answer', { id, allow: true }).ok).toBe(true);
+  const resource = { agent: agent.id, kind: 'secret' as const, target: input.target };
+  clock.advance(2 * 60_000 - 1);
+  expect(grantsRole(app.db).mayUse(agent.id, resource, clock.now(), input.scope)).toBe(true);
+  expect(call(agent, 'requestHouse', input)).toMatchObject({ ok: true, value: { id } });
+  clock.advance(1);
+  expect(grantsRole(app.db).mayUse(agent.id, resource, clock.now(), input.scope)).toBe(false);
+  expect(call(owner, 'grant', resource).ok).toBe(true);
+  const second = call(agent, 'requestHouse', input);
+  const secondId = second.ok ? (second.value as GrantRequest).id : '';
+  expect(second).toMatchObject({ ok: true, value: { state: 'pending' } });
+  expect(secondId).not.toBe(id);
+  expect(call(owner, 'answer', { id: secondId, allow: true }).ok).toBe(true);
+  expect(call(owner, 'revoke', { ...resource, scope: input.scope }).ok).toBe(true);
+  const third = call(agent, 'requestHouse', input);
+  const thirdId = third.ok ? (third.value as GrantRequest).id : '';
+  expect(third).toMatchObject({ ok: true, value: { state: 'pending' } });
+  expect(thirdId).not.toBe(secondId);
+  expect(call(owner, 'answer', { id: thirdId, allow: true }).ok).toBe(true);
+  expect(call(owner, 'grant', { ...resource, scope: input.scope, expiresAt: clock.now() + 1000 }).ok).toBe(true);
+  const fourth = call(agent, 'requestHouse', input);
+  expect(fourth).toMatchObject({ ok: true, value: { state: 'pending' } });
+  expect(fourth.ok && (fourth.value as GrantRequest).id).not.toBe(thirdId);
 });

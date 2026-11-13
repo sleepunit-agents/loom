@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { migrate, operation, failure, mayAct, maySee, type Db, type Operations, type Live, type Sharing, type Viewer, type LiveRecord } from '../../core/index.js';
+import { migrate, operation, failure, mayAct, maySee, type Context, type Db, type Operations, type Live, type Sharing, type Viewer, type LiveRecord } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import type { GrantContext, Grant, GrantRequest, Grants, Resource, SecretName } from './role.js';
 
@@ -36,6 +36,18 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
   const canAsk = (v: Viewer, a: string) => v.kind === 'agent' ? v.id === a && maySee(v, { agent: a }, sharing()) : owner(v, 'secrets.request') || mayAct(v, { agent: a }, sharing(), 'agent-setup', 'secrets.request');
   const saveGrant = (record: Grant) => db.prepare('INSERT INTO secrets_grants VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, record.agent, record.kind, record.target, JSON.stringify(record));
   const saveRequest = (r: GrantRequest) => db.prepare('INSERT INTO secrets_requests VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(r.id, JSON.stringify(r));
+  function raiseRequest(ctx: Context, record: GrantRequest) {
+      if (!attention) return failure('unavailable', 'Grant requests need the attention role');
+      saveRequest(record);
+      const acknowledgement: unknown = attention.raise(record);
+      if (acknowledgement instanceof Promise) {
+        // A miswired async role must neither commit nor leave an unhandled rejection.
+        void acknowledgement.catch(() => {});
+        return failure('unavailable', 'Attention must acknowledge synchronously');
+      }
+      if (!acknowledgement || typeof acknowledgement !== 'object' || !('raised' in acknowledgement) || acknowledgement.raised !== true) return failure('unavailable', 'Attention did not acknowledge the ask');
+      ctx.changed('secret.request', record.id); return record;
+  }
   operations.register(operation({ name: 'secrets.list', input: z.object({}).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.list'), run: () => ({ names: all<SecretName>(db, 'secrets_names'), grants: all<Grant>(db, 'secrets_grants'), requests: all<GrantRequest>(db, 'secrets_requests') }),
   }));
@@ -65,19 +77,28 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
   }));
   operations.register(operation({ name: 'secrets.request', write: true, input: z.object({ agent, ...resource, why: z.string().trim().min(1).max(2000) }).strict(), output: z.unknown(),
     may: (v, i) => canAsk(v, i.agent), run(ctx, input) {
+      if (input.kind === 'secret') return failure('denied', 'Secret requests need authenticated house context');
       const old = all<GrantRequest>(db, 'secrets_requests').find(r => r.agent === input.agent && r.kind === input.kind && r.target === input.target && r.state === 'pending');
       if (old) return old;
-      if (!attention) return failure('unavailable', 'Grant requests need the attention role');
       const record: GrantRequest = { ...input, id: `q-${randomUUID()}`, state: 'pending', askedBy: { kind: ctx.viewer.kind, id: ctx.viewer.id }, createdAt: ctx.now };
-      saveRequest(record);
-      const acknowledgement: unknown = attention.raise(record);
-      if (acknowledgement instanceof Promise) {
-        // A miswired async role must neither commit nor leave an unhandled rejection.
-        void acknowledgement.catch(() => {});
-        return failure('unavailable', 'Attention must acknowledge synchronously');
-      }
-      if (!acknowledgement || typeof acknowledgement !== 'object' || !('raised' in acknowledgement) || acknowledgement.raised !== true) return failure('unavailable', 'Attention did not acknowledge the ask');
-      ctx.changed('secret.request', record.id); return record;
+      return raiseRequest(ctx, record);
+    },
+  }));
+  // This door is only for an in-process runtime adapter after authenticating its job/token.
+  // House/service are never accepted by the public request operation.
+  operations.register(operation({ name: 'secrets.requestHouse', doors: ['direct'], write: true,
+    input: z.object({ agent, target: name, scope: grantScope, why: z.string().trim().min(1).max(2000), minutes: z.number().int().positive().max(480).default(60) }).strict(), output: z.unknown(),
+    may: (v, i) => v.kind === 'agent' && v.id === i.agent && canAsk(v, i.agent), run(ctx, input) {
+      if (!read<SecretName>(db, 'secrets_names', input.target)) return failure('not-found', 'Secret name not found');
+      const old = all<GrantRequest>(db, 'secrets_requests').find(r => r.agent === input.agent && r.kind === 'secret' && r.target === input.target
+        && r.scope?.house === input.scope.house && r.scope?.service === input.scope.service
+        && (r.state === 'pending' || r.state === 'allowed' && (() => {
+          const grant = read<Grant>(db, 'secrets_grants', grantId(r.agent, r, input.scope));
+          return grant?.requestId === r.id && grant.expiresAt !== undefined && grant.expiresAt > ctx.now;
+        })()));
+      if (old) return old;
+      const record: GrantRequest = { ...input, kind: 'secret', id: `q-${randomUUID()}`, state: 'pending', askedBy: { kind: ctx.viewer.kind, id: ctx.viewer.id }, createdAt: ctx.now };
+      return raiseRequest(ctx, record);
     },
   }));
   operations.register(operation({ name: 'secrets.answer', write: true, input: z.object({ id: z.string().min(1).max(200), allow: z.boolean() }).strict(), output: z.unknown(),
@@ -85,9 +106,10 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
       const record = read<GrantRequest>(db, 'secrets_requests', input.id);
       if (!record) return failure('not-found', 'Request not found');
       if (record.state !== 'pending') return failure('conflict', 'Request already answered');
+      if (input.allow && record.kind === 'secret' && (!record.scope || !record.minutes)) return failure('invalid', 'Secret request has no house or duration');
       record.state = input.allow ? 'allowed' : 'denied'; record.by = ctx.viewer.id; record.answeredAt = ctx.now; saveRequest(record);
       if (input.allow) {
-        const grant: Grant = { id: grantId(record.agent, record), agent: record.agent, kind: record.kind, target: record.target, createdAt: ctx.now, by: ctx.viewer.id };
+        const grant: Grant = { id: grantId(record.agent, record, record.scope), ...(record.scope ? { scope: record.scope, requestId: record.id, expiresAt: ctx.now + record.minutes! * 60_000 } : {}), agent: record.agent, kind: record.kind, target: record.target, createdAt: ctx.now, by: ctx.viewer.id };
         saveGrant(grant); ctx.changed('secret.grant', grant.id);
       }
       ctx.changed('secret.request', record.id); return record;
