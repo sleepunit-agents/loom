@@ -231,12 +231,31 @@ evidence workflow uploads them with the exact PR head in the artifact name.
 | Staging-held reply | Pending sends and staged effects, one-item release |
 | Partial or interrupted send | Uncertain state, review guidance and no replay control; explicit disposition pending |
 
+## Terminal send disposition
+
+`bridges.dismissSend` takes `{id, state: 'held' | 'uncertain'}` under the existing
+central household-owner policy. After checking the platform, an owner can dismiss
+that reply from pending sends. The operation requires the observed state to match;
+a missing id returns not-found and any active, completed or changed state conflicts.
+Already dismissed ids acknowledge without another change. The transition and live
+notification commit together through the registry. It performs no platform IO.
+
+Dismissal does not assert that delivery succeeded. It is terminal and never retries
+or clears the permanent reply id. The original payload and receipt stay private in
+the outbox so a later runtime retry of that same reply cannot create another send.
+A stale staging release cannot send a dismissed row. The core effect remains an
+independent staging record; dismissal does not mark it delivered or release it.
+The generated `loom-bridges dismissSend '{"id":"reply-id","state":"uncertain"}'`
+command returns the usual id acknowledgement and exit codes. The preview dismissal
+control and held-intake repair remain separate completion requirements.
+
 ## Opt-in setup commands
 
 `loom-bridges <operation> '<json-object>'` targets the explicit `LOOM_URL` of a
 next-mode daemon using `LOOM_TOKEN_FILE`. It never chooses a local store or reads
-legacy bridge configuration. `--help` works offline. The six operation names are
-`putVenues`, `removeVenues`, `putRoutes`, `removeRoutes`, `putLinks`, `removeLinks`.
+legacy bridge configuration. `--help` works offline. The setup operation names are
+`putVenues`, `removeVenues`, `putRoutes`, `removeRoutes`, `putLinks`, `removeLinks`;
+`dismissSend` provides terminal send disposition as described above.
 The same declarations attach CLI metadata to the registry and generate help;
 `BridgesInputs` exposes input types derived from the piece's schemas.
 

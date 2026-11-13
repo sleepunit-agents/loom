@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add route creation, editing and confirmed removal to the next-mode Bridges preview, with pending-write and stale-draft guards.
 - Add person-link creation, editing and confirmed removal to the next-mode Bridges preview with shared pending and stale-draft guards.
+- Add owner-only terminal Bridges send dismissal through the registry and typed CLI, without replaying held or uncertain replies.
 - Add connection creation, editing and confirmed removal to the Bridges preview, with secret-name references and shared pending setup guards.
 - Add assigned runner completion acknowledgements with atomic, exact job credential revocation in next mode.
 - Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.

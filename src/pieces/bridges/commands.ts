@@ -9,9 +9,10 @@ export interface BridgesInputs {
   removeVenues: { id: string };
   removeRoutes: { id: string };
   removeLinks: { id: string };
+  dismissSend: { id: string; state: 'held' | 'uncertain' };
 }
 export const bridgeCommands: readonly CliCommand[] = [
-  'putVenues', 'removeVenues', 'putRoutes', 'removeRoutes', 'putLinks', 'removeLinks',
+  'putVenues', 'removeVenues', 'putRoutes', 'removeRoutes', 'putLinks', 'removeLinks', 'dismissSend',
 ].map(name => ({ name, write: true, positional: ['json'] }));
 export function operation<I>(op: Operation<I>): Operation<I> {
   const cli = bridgeCommands.find(command => `bridges.${command.name}` === op.name);
