@@ -8,4 +8,6 @@ import type { Db } from '../../core/index.js';
  */
 export interface RuntimeCredentials {
   revokeBox(db: Db, input: { box: string; jobs: readonly string[]; now: number }): void;
+  /** Revoke only this job's body credentials; retain its runner and other jobs. */
+  revokeJob(db: Db, input: { job: string; now: number }): void;
 }
