@@ -6,13 +6,14 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { bodyHouseConversation, createLoomServer, houseWriteProblem, type LoomServerConfig } from './server.js';
 import { bindHouseConversation } from './household-store.js';
-import { recordTurn, writeDigest, writeFinding } from './backends/conversations.js';
+import { digestsOf, recordTurn, writeDigest, writeFinding } from './backends/conversations.js';
 import { closeAllBackends } from './backends/index.js';
 import { openProjectsStore } from './backends/projects.js';
 import type { ConversationSelection } from './conversations.js';
 import * as conversations from './conversations.js';
 import * as households from './household.js';
 import * as registry from './household-store.js';
+import * as pulls from './collections/pull.js';
 
 vi.mock('./backends/fastembed.js', () => ({ FastEmbedProvider: class {
   readonly dimensions = 384;
@@ -136,10 +137,33 @@ it('offline app tools and local digest never discover or mutate legacy app state
       const digest = await call('conversation_digest', { summary: 'Offline work recorded', needs_owner: null });
       expect(digest.isError).not.toBe(true);
       expect(JSON.stringify(digest.content)).toContain('Offline work recorded');
+      expect(digestsOf(contextDir, conversation).find(d => d.run === 'run-offline')?.summary).toBe('Offline work recorded');
       expect(discovery).not.toHaveBeenCalled();
       expect(appHome).not.toHaveBeenCalled();
     } finally { await client.close(); await server.close(); }
   }
   expect(readFileSync(join(home, 'household.db'))).toEqual(legacy);
   expect(existsSync(join(home, 'loom.db'))).toBe(false);
+}, 30_000);
+
+
+it('omitted selection still notifies old attention after persisting a local digest', async () => {
+  const { home, contextDir } = fixture();
+  writeFileSync(join(contextDir, 'IDENTITY.md'), '# Art');
+  const { conversation } = recordTurn(contextDir, 'art', {
+    venue: 'session', place: 'legacy', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'reply',
+  }, 'test');
+  const nudge = vi.spyOn(pulls, 'nudge').mockImplementation(() => {});
+  const { server } = createLoomServer({ contextDir });
+  const client = new Client({ name: 'legacy-digest', version: '1' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a); await client.connect(b);
+  try {
+    await client.callTool({ name: 'identity', arguments: { client: 'claude-code', piece: 'last-24h', conversation, run: 'run-legacy' } });
+    nudge.mockClear();
+    const result = await client.callTool({ name: 'conversation_digest', arguments: { summary: 'Legacy work recorded' } });
+    expect(result.isError).not.toBe(true);
+    expect(digestsOf(contextDir, conversation).find(d => d.run === 'run-legacy')?.summary).toBe('Legacy work recorded');
+    expect(nudge).toHaveBeenCalledExactlyOnceWith(home, 'loom/attention');
+  } finally { await client.close(); await server.close(); }
 }, 30_000);
