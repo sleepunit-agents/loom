@@ -1223,15 +1223,27 @@ else if (process.argv[2] === 'api' && process.argv[3] === '--json') {
       const odd = await refs(tok.jonathan, t, ['evil:x', 'note:a/../b', 't-1"x', 'agent:art']);
       expect(Object.keys(odd.refs)).toEqual(['agent:art']);
     });
-    it('a task: the tasks piece\'s card for the household owner, at most 20 a read; for an agent owner, only what his thread\'s work knows', async () => {
+    it('a task: the foundation role card, at most 20 a read, with member visibility', async () => {
+      const call = async (verb: string, input: Record<string, unknown>, id: string) => {
+        const response = await fetch(`${base}/api/tasks/${verb}`, {method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${tok.jonathan}`},body:JSON.stringify({input,id})});
+        const body = await response.json() as any;
+        expect(response.status,JSON.stringify(body)).toBe(200);expect(body.ok).toBe(true);expect(body.value.result.ok).toBe(true);
+        return body.value.result;
+      };
+      const ids: string[] = [];
+      for (let i=0;i<30;i++) {
+        const created=await call('create',{title:`Native task ${i}`,goal:'Show the current task card',why:'Comms reads the Tasks role',cli:true},`chips-create-${i}`);
+        ids.push(created.id);
+      }
+      await call('close',{id:ids[0],reason:'Complete',cli:true},'chips-close');
       const t = await open();
-      const r = await refs(tok.jonathan, t, ['t-7', 't-5000']);
-      expect(r.refs['t-7']).toMatchObject({ kind: 'task', title: 'Task t-7', status: 'Closed', page: 'p/tasks/task/t-7' });
+      const r = await refs(tok.jonathan, t, [ids[0], 't-5000']);
+      expect(r.refs[ids[0]]).toMatchObject({ kind: 'task', title: 'Native task 0', status: 'Done', page: `p/tasks/task/${ids[0]}` });
       expect(r.refs['t-5000']).toBeNull();
-      const many = await refs(tok.jonathan, t, Array.from({ length: 30 }, (_, i) => `t-${100 + i}`));
+      const many = await refs(tok.jonathan, t, ids);
       expect(Object.values(many.refs).filter((x) => x !== null)).toHaveLength(20);
       const sams = await open(tok.sam, 'art', 'tasks?');
-      expect((await refs(tok.sam, sams, ['t-7'])).refs['t-7']).toBeNull();
+      expect((await refs(tok.sam, sams, [ids[0]])).refs[ids[0]]).toBeNull();
     });
     it('an approval is a chip in its own thread, with its state', async () => {
       const t = await open();

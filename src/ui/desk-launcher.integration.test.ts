@@ -65,7 +65,7 @@ describe.runIf(built && chrome)('the launcher', () => {
       members: [{ person: 'jonathan', role: 'owner', agents: '*' }] }));
     const bin = join(home, 'bin');
     mkdirSync(bin);
-    for (const [name, label, kind, value] of [['work', 'Tasks', 'place', '9 open'], ['vault', 'Secrets', 'setting', '1 request']]) {
+    for (const [name, label, kind, value] of [['work', 'Work items', 'place', '9 open'], ['vault', 'Secrets', 'setting', '1 request']]) {
       writeFileSync(join(bin, `loom-${name}`), piece(label, kind, value)); chmodSync(join(bin, `loom-${name}`), 0o755);
     }
     for (const k of ['LOOM_HOME', 'XDG_CONFIG_HOME', 'PATH']) saved[k] = process.env[k];

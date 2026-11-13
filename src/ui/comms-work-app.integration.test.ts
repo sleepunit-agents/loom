@@ -77,7 +77,7 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
     process.env.LOOM_HOME = home;
     process.env.XDG_CONFIG_HOME = join(home, 'xdg');
     clearPieceCache();
-    piece(home, 'tasks', 'Tasks', ITEMS);
+    piece(home, 'workitems', 'Work items', ITEMS);
     piece(home, 'changes', 'Changes', CHANGES);
     h = loadHousehold(home)!;
     token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'jonathan' }).token;
@@ -133,7 +133,7 @@ describe.runIf(built && chrome && hasAge)('Work in this thread, in the app', () 
         ['In progress', 't-1882 · made here'],
         ['Done', 't-12'],
       ]);
-      expect(await tile.locator('.comms-work__row a').first().getAttribute('href')).toBe('/p/tasks/task/t-1881');
+      expect(await tile.locator('.comms-work__row a').first().getAttribute('href')).toBe('/p/workitems/task/t-1881');
       // Its rows inside the tile: nothing past its edge.
       const t = (await tile.boundingBox())!;
       expect(await widest(page)).toBeLessThanOrEqual(t.x + t.width + 1);

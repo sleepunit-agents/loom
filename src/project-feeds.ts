@@ -86,7 +86,10 @@ export function managedPieceSections(env: NodeJS.ProcessEnv = process.env, nativ
     const legacyTasks = native ? pieceWithRole(env,'tasks')?.name ?? 'tasks' : undefined;
     const sections = await runFeeds(env, feedArgs(card, since, nowMs ?? Date.now()), undefined, contextDir && !noThreads ? threadFeedArgs(contextDir, card.slug, env) : [],legacyTasks);
     if (native) {
-      try { sections.push(projectTasks(native.tasks,native.member,card.slug,card.links?.epic,since)); }
+      try {
+        const section = projectTasks(native.tasks,native.member,card.slug,card.links?.epic,since);
+        if (section.groups.length) sections.push(section);
+      }
       catch { sections.push({key:'piece:tasks',error:'Tasks unavailable'}); }
     }
     return sections.sort(byKey);

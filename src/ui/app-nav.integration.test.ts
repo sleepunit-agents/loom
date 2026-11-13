@@ -142,7 +142,7 @@ describe.runIf(built && chrome)('an app\'s tile: Back, Forward, its crumb and it
   const titled = (p: Page, title: string) => expect.poll(() => tile(p).locator('.loom-tile__bar h2').textContent(), { timeout: 8000 }).toBe(title);
   const bodyOf = (p: Page) => tile(p).locator('.loom-tile__body');
   const step = (p: Page, which: 'Back' | 'Forward') => tile(p).locator(`.loom-tile__btn[aria-label^="${which}"]`);
-  const key = (p: Page, label: string) => p.locator(`.loom-dock-bar [data-part="item"][aria-label="${label}"]`);
+  const key = (p: Page, label: string) => p.locator(`.loom-dock-bar [data-part="item"][aria-label="${label}"]${label === 'Tasks' ? '[data-value="/p/work"]' : ''}`);
   const side = (p: Page) => tile(p).locator('aside[aria-label="More on this page"]');
 
   it('1280: Back from a task is the list it came from, at its query and its scroll; Forward goes again; the browser\'s Back agrees', async () => {

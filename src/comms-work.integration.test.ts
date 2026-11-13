@@ -30,7 +30,7 @@ process.stdin.on('end', () => {
 });
 `;
 
-/** A fake piece with a thread feed: it records its argv and stdin, and answers the file `<name>-answer.json`. */
+/** A generic fake piece (not the first-party Tasks app) with a thread feed: it records its argv and stdin, and answers the file `<name>-answer.json`. */
 const feedPiece = (name: string, owners: boolean) => `#!${process.execPath}
 const fs = require('node:fs');
 const home = process.env.LOOM_HOME;
@@ -129,7 +129,7 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
     h = household();
     process.env.LOOM_HOME = h.home;
     piece(h.home, 'runtime', { role: 'runtime', delivery: ['loom-runtime', 'deliver', '--json'] }, RUNTIME_BIN);
-    piece(h.home, 'tasks', { sections: { project: { label: 'Tasks', argv: ['loom-tasks', 'project-feed'] }, thread: { label: 'Tasks', argv: ['loom-tasks', 'thread-feed', '--json'] } } }, feedPiece('tasks', true));
+    piece(h.home, 'workitems', { sections: { project: { label: 'Work items', argv: ['loom-workitems', 'project-feed'] }, thread: { label: 'Work items', argv: ['loom-workitems', 'thread-feed', '--json'] } } }, feedPiece('workitems', true));
     piece(h.home, 'changes', { sections: { thread: { label: 'Changes', argv: ['loom-changes', 'thread-feed', '--json'] } } }, feedPiece('changes', false));
     piece(h.home, 'old', { sections: { project: { label: 'Old', argv: ['loom-old', 'project-feed'] } } }, feedPiece('old', true));
     for (const m of ['jonathan', 'sam', 'loren']) tok[m] = createToken(h, { role: { kind: 'owner', member: m }, label: m }).token;
@@ -218,7 +218,7 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
     it('asks each piece with the conversation, the refs newest first and the caller; merges, dedupes and orders', async () => {
       const t = await open('look at t-1');
       await reply(t.id, 'and acme/app#3');
-      writeFileSync(join(h.home, 'tasks-answer.json'), JSON.stringify({ items: [
+      writeFileSync(join(h.home, 'workitems-answer.json'), JSON.stringify({ items: [
         { title: 'Old task', ref: 't-1', status: 'Open', when: '2026-11-01T00:00:00Z', page: 'task/t-1' },
         { title: 'Blocked task', ref: 't-2', status: 'Blocked', tone: 'bad', when: '2026-11-02T00:00:00Z', page: 'task/t-2', made: true },
         { title: 'Same change', ref: 'github:acme/app#3', status: 'Open', page: 'task/t-3' },
@@ -232,9 +232,9 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
       const items = r.body.items as Array<{ ref: string; status: string; url?: string; made?: true; from: string }>;
       expect(items.map((i) => i.ref)).toEqual(['t-2', 'github:acme/app#3', 'github:acme/app#9', 't-1']);
       expect(items[1]).toMatchObject({ status: 'Waiting on you', made: true, from: 'changes', url: '/p/changes/c/github/acme/app/3' });
-      expect(items[0].url).toBe('/p/tasks/task/t-2');
+      expect(items[0].url).toBe('/p/workitems/task/t-2');
       expect(r.body.failed).toEqual([]);
-      const c = calls('tasks').at(-1)!;
+      const c = calls('workitems').at(-1)!;
       expect(c.argv).toEqual(['thread-feed', '--json', '--conversation', t.conversation, '--ref', 'github:acme/app#3', '--ref', 't-1']);
       expect(JSON.parse(c.stdin)).toEqual({ caller: { kind: 'owner', who: 'jonathan', agents: '*' } });
     });
@@ -245,10 +245,10 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
       const r = await req(tok.jonathan, 'GET', `/comms/${t.id}/work`);
       expect(r.body.failed).toEqual(['Changes']);
       expect((r.body.items as unknown[]).length).toBeGreaterThan(0);
-      writeFileSync(join(h.home, 'tasks-fail'), '');
+      writeFileSync(join(h.home, 'workitems-fail'), '');
       const r2 = await req(tok.jonathan, 'GET', `/comms/${t.id}/work`);
-      expect(r2.body.failed).toEqual(['Changes', 'Tasks']);
-      rmSync(join(h.home, 'tasks-fail'));
+      expect(r2.body.failed).toEqual(['Changes', 'Work items']);
+      rmSync(join(h.home, 'workitems-fail'));
     });
 
     it('is a 403 for a member who doesn\'t own the agent and for a second owner; a partial owner asks only owners: 2 pieces', async () => {
@@ -263,7 +263,7 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
       const r = await req(tok.sam, 'GET', `/comms/${ts.id}/work`);
       expect(r.status).toBe(200);
       expect(calls('changes').length).toBe(before); // changes has no owners: 2: never asked for sam
-      expect(JSON.parse(calls('tasks').at(-1)!.stdin).caller).toEqual({ kind: 'owner', who: 'sam', agents: ['art'] });
+      expect(JSON.parse(calls('workitems').at(-1)!.stdin).caller).toEqual({ kind: 'owner', who: 'sam', agents: ['art'] });
       expect(calls('quiet').length).toBe(1);
       rmSync(join(h.home, 'pieces', 'bin', 'loom-quiet'));
       rmSync(join(h.home, 'pieces', 'quiet'), { recursive: true });
@@ -286,14 +286,14 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
     it('draws the block per viewer: a link for the thread\'s member, words for anyone else, nothing of the thread', async () => {
       const t = await open('the frame');
       expect((await req(tok.jonathan, 'POST', `/comms/${t.id}/title`, { title: 'Comm screen frame' })).status).toBe(200);
-      writeFileSync(join(h.home, 'tasks-page.json'), JSON.stringify({ title: 'A task', changes: { groups: [], rows: [], selected: '', reader: { title: 'A change', sections: [{ id: 'from', blocks: [{ type: 'from', conversation: t.conversation }] }] } }, sections: [
+      writeFileSync(join(h.home, 'workitems-page.json'), JSON.stringify({ title: 'A task', changes: { groups: [], rows: [], selected: '', reader: { title: 'A change', sections: [{ id: 'from', blocks: [{ type: 'from', conversation: t.conversation }] }] } }, sections: [
         { id: 'from', place: 'side', blocks: [{ type: 'from', conversation: t.conversation }] },
         { id: 'other', blocks: [{ type: 'from', conversation: 'cv-ffffffffffff' }] },
         { id: 'sheet', blocks: [{ type: 'panel', rows: [{ label: 'Where', value: 'see', sheet: { blocks: [{ type: 'from', conversation: t.conversation }] } }] }] },
       ] }));
       clearPieceCache();
       const blocks = async (who: string) => {
-        const r = await req(tok[who], 'GET', '/p/tasks/task/t-1');
+        const r = await req(tok[who], 'GET', '/p/workitems/task/t-1');
         expect(r.status, r.text).toBe(200);
         const nested = (r.body as { page: { changes: { reader: { sections: { blocks: unknown[] }[] } } } }).page.changes.reader.sections[0].blocks[0];
         return { nested, json: r.text, blocks: ((r.body as { page: { sections: Array<{ blocks: Array<Record<string, unknown>> }> } }).page.sections).map((s) => s.blocks[0]) };
@@ -315,7 +315,7 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
         expect(x.json).not.toContain(t.id);
         expect(x.json).not.toContain(t.conversation);
       }
-      const html = await req(tok.sam, 'GET', '/p/tasks/task/t-1', undefined, 'text/html');
+      const html = await req(tok.sam, 'GET', '/p/workitems/task/t-1', undefined, 'text/html');
       expect(html.text).not.toContain('Comm screen frame');
     });
   });
@@ -329,7 +329,7 @@ describe.skipIf(!hasAge)('Work in this thread', () => {
       expect(threadFeedArgs(agentDir(h, 'art'), 'pond', { ...process.env, LOOM_HOME: h.home })).toEqual(['--conversation', any.conversation]);
       const env = { ...process.env, LOOM_HOME: h.home };
       await managedPieceSections(env)({ card: { slug: 'pond', name: 'Pond', status: 'active', links: {} } as never, since: new Date().toISOString(), contextDir: agentDir(h, 'art') });
-      expect(calls('tasks').at(-1)!.argv.slice(-2)).toEqual(['--conversation', any.conversation]);
+      expect(calls('workitems').at(-1)!.argv.slice(-2)).toEqual(['--conversation', any.conversation]);
       expect(calls('old').at(-1)!.argv).not.toContain('--conversation');
     });
   });
