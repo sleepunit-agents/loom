@@ -320,8 +320,9 @@ runners and services cannot configure houses. The acknowledgement is `{agent}`.
 
 `runtime.settings.house` stores the build identity, visible through the existing
 centrally scoped settings collection/live type. Only credential-free HTTPS
-URLs (no userinfo, query or fragment), `git@host:path` locators and absolute
-repository paths are accepted. The structured API deliberately refuses old
+URLs (no userinfo or query/fragment delimiters, including empty ones), `git@host:path` locators and absolute
+repository paths are accepted. Git hostnames contain only letters, digits, dot,
+underscore or hyphen and start with a letter or digit. The structured API deliberately refuses old
 HTTPS locators containing credentials or query/fragment material: repositories
 are metadata, never a credential carrier. Private repository access must use
 the future secret-reference grant path. Nothing opens or checks the repository.

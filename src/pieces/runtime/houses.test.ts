@@ -51,10 +51,10 @@ it('replaces only house identity, clears omitted branch and supports legacy repo
 it('rejects path traversal, credentials, unsupported locators and injected capabilities or authority', async () => {
   const f = await setup();
   const houses = [
-    ...['/house.json', '../house.json', 'a/../b', './house.json', 'a//b', 'a/', 'a b', ''].map(houseFile => ({ ...f.input.house, houseFile })),
-    ...['http://host/repo', 'https:host/repo', 'https://host/a b', 'relative/path', 'https://user:password@host/repo', 'https://user@host/repo', 'https://host/repo?token=x', 'https://host/repo#key', 'git@host:repo?key=x', '', 'x'.repeat(401)].map(repo => ({ repo })),
+    ...['/house.json', '../house.json', 'a/../b', './house.json', 'a//b', 'a/', 'a b', '', 'x'.repeat(201)].map(houseFile => ({ ...f.input.house, houseFile })),
+    ...['http://host/repo', 'https:host/repo', 'https://host/a b', 'relative/path', 'https://user:password@host/repo', 'https://user@host/repo', 'https://host/repo?token=x', 'https://host/repo#key', 'git@host:repo?key=x', 'git@host?token=secret:repo', 'git@host#fragment:repo', 'https://@host/repo', 'https://host/repo?', 'https://host/repo#', '', 'x'.repeat(401)].map(repo => ({ repo })),
     ...['nested', 'gpu', 'secrets', 'repoSecret', 'ports', 'tailnets', 'logins', 'scopes', 'steers', 'token'].map(key => ({ ...f.input.house, [key]: true })),
-    { ...f.input.house, branch: 'main;cmd' }, { ...f.input.house, branch: '' },
+    { ...f.input.house, branch: 'main;cmd' }, { ...f.input.house, branch: '' }, { ...f.input.house, branch: 'x'.repeat(101) },
   ];
   for (const house of houses) expect(f.call({ agent: 'art', house })).toMatchObject({ ok: false, code: 'invalid' });
   for (const field of ['project', 'member', 'owner', 'changedAt', 'box', 'job']) expect(f.call({ ...f.input, [field]: 'injected' })).toMatchObject({ ok: false, code: 'invalid' });

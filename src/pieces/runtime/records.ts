@@ -4,9 +4,9 @@ const id = z.string().min(1).max(200);
 /** Build identity only; capabilities and credential references are separate grants. */
 export const houseConfig = z.object({
   repo: z.string().min(1).max(400).refine(value => {
-    if (/^git@[^\s:]+:[^\s?#]+$/.test(value)) return true;
+    if (/^git@[A-Za-z0-9][A-Za-z0-9._-]*:[^\s?#]+$/.test(value)) return true;
     if (/^\/[^\s]+$/.test(value)) return true;
-    if (!/^https:\/\/[^\s]+$/.test(value)) return false;
+    if (!/^https:\/\/[^\s]+$/.test(value) || /[?#]/.test(value) || value.slice(8).split('/')[0].includes('@')) return false;
     try { const url = new URL(value); return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password && !url.search && !url.hash; }
     catch { return false; }
   }, 'Use a credential-free HTTPS or git@ repository, or an absolute path'),
