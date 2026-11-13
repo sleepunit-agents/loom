@@ -1,3 +1,5 @@
+import { installPrivateExport } from './store.js';
+import { localOwner, sameLocalCaller } from '../approvals/role.js';
 import { standingBinding, bindStandingWake, checkStandingWake } from './local-standing.js';
 import { filedLocal, localFilingWords, installLocalFiling } from './local-filing.js';
 import { clockCommands, clockOperationCommands } from './commands.js';
@@ -62,20 +64,23 @@ export interface ClockOptions {
 export function installClock(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ClockOptions = {}) {
   registerBuiltinService(operations, 'clock', ['wake', 'schedule', 'clock']);
   migrate(db, 'clock', schema);
+  installPrivateExport(db);
   installLocalFiling(db, operations, sharing);
   const clock = operations.clock, runtime = options.runtime ?? stagingRuntime();
   const deadmanAgents = new Set(z.array(text).parse(options.deadmanAgents ?? []));
   let parksChanged = false;
   let closed = false, cancelTimer: (() => void) | undefined;
   const see = (v: Viewer, w: Work, type = 'wake') => maySee(v, scope(w, type), sharing());
+  const readSee=(ctx:Context,w:Work,type='wake')=>(!w.member||ctx.window)&&see(ctx.viewer,w,type);
   const act = (v: Viewer, w: Work, household = false) => mayAct(v, scope(w), sharing(), household ? 'household' : 'act');
   const create = (v: Viewer, w: Work) => mayCreate(v, scope(w), sharing()) && (v.kind !== 'member' || mayAct(v, scope(w), sharing(), 'give-work'));
+  const privateLocal=(w:Wake)=>w.member!==undefined && !!w.approval && !!filedLocal(db,w.approval);
   const get = (id: string) => wake(db, id) ?? (() => { throw new OperationError('not-found', 'Wake not found'); })();
   const disarm = () => { cancelTimer?.(); cancelTimer = undefined; };
   const queue = () => { if (!closed) { cancelTimer?.(); cancelTimer = clock.at(clock.now(), pump); } };
   const output = z.unknown();
   function register<I>(name: string, input: z.ZodType<I>, write: boolean, may: (v: Viewer, i: I) => boolean, run: (ctx: Context, i: I) => unknown, internal = false) {
-    operations.register(operation({ name: `clock.${name}`, input, output, write, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
+    operations.register(operation({ name: `clock.${name}`, input, output, write, requiresWindow: internal ? undefined : (i)=>{const input=i as {id?:string;member?:string};return input.member!==undefined || !!(input.id && (wake(db,input.id)??schedule(db,input.id))?.member);}, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
       run(ctx, i) {
         if (closed) throw new OperationError('unavailable', 'Clock stopped');
         const result = run(ctx, i);
@@ -86,7 +91,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   function make(ctx: Context, w: Work, due: number, extra: Partial<Wake> = {}) {
     work(w);
     const filing=w.approval && filedLocal(db,w.approval);
-    if(filing) localTargetRoom(filing.target,false);
+    if(filing) localTargetRoom(filing.target,false,undefined,w.member);
     if (!extra.deadman) for (const old of wakes(db).filter(row => row.agent === w.agent && row.deadman && active(row)
       && row.state !== 'firing' && row.hold !== 'uncertain')) {
       old.state = 'cancelled'; old.outcome = 'Replaced by real work'; saveWake(ctx, old); event(ctx, old, 'deadman-cleared');
@@ -110,13 +115,13 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const oneOff = (w: Wake) => !w.deadman && (!w.schedule || w.runNow || (w.runNow === undefined && w.laneVersion && w.bypassPause));
     if (wakes(db).filter(w => w.agent === agent && oneOff(w) && active(w)).length >= 50) invalid('At most 50 pending one-off wakes');
   }
-  function localTargetRoom(target:string,standing:boolean,except?:string) {
-    if(wakes(db).some(w=>w.id!==except && active(w) && w.approval && filedLocal(db,w.approval)?.target===target
+  function localTargetRoom(target:string,standing:boolean,except?:string,member?:string) {
+    if(wakes(db).some(w=>w.id!==except && w.member===member && active(w) && w.approval && filedLocal(db,w.approval)?.target===target
       && (standing || standingBinding(db,w.id)))) invalid('A standing local target already has outstanding work');
   }
   function existingLocalTargetRoom(w:Wake) {
     const filing=w.approval && filedLocal(db,w.approval);
-    if(filing) localTargetRoom(filing.target,!!standingBinding(db,w.id),w.id);
+    if(filing) localTargetRoom(filing.target,!!standingBinding(db,w.id),w.id,w.member);
   }
   // Only authenticated runtime composition may recover an approval's words.
   // No public input can claim Caller. Public client wiring waits for that seam.
@@ -134,9 +139,9 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   };
   for (const standing of [false,true]) {
   const name=standing?'clock.localStandingSchedule':'clock.localSchedule';
-  operations.register(operation({name,input:localInput,output,write:true,doors:['direct'],recheckPolicy:standing,recover:standing?recoverStandingSchedule:undefined,
+  operations.register(operation({name,input:localInput,output,write:true,doors:['direct'],recheckPolicy:true,recover:standing?recoverStandingSchedule:undefined,
     may(v,i) {
-      return v.kind==='service' && v.id==='clock' && mayAct(v,{type:'clock'},sharing(),'act',name)
+      return localOwner(i.caller,sharing()) && v.kind==='service' && v.id==='clock' && mayAct(v,{type:'clock'},sharing(),'act',name)
         && create({kind:'agent',id:i.caller.who.agent},{agent:i.caller.who.agent,project:i.caller.project,note:''})
         && (!standing || mayAct(v,{type:'approval',agent:i.caller.who.agent,project:i.caller.project},sharing(),'act','approvals.piece-standing-local')
           && mayCreate({kind:'agent',id:i.caller.who.agent},{type:'approval',agent:i.caller.who.agent,project:i.caller.project},sharing()));
@@ -147,7 +152,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       const receipt=ctx.receipt!, receiptKey=`local-standing-receipt:${receipt.viewer}:${receipt.id}`;
       const filing=filedLocal(db,i.approval);
       if(!filing) throw new OperationError('not-found','No trusted local filing');
-      if(i.caller.for!=='owner' || i.caller.people?.length || filing.caller.for!=='owner' || filing.caller.people?.length
+      if(!localOwner(i.caller,sharing()) || !localOwner(filing.caller,sharing()) || !sameLocalCaller(i.caller,filing.caller)
         || i.caller.project!==filing.caller.project || i.caller.who.agent!==filing.caller.who.agent
         || serviceOf(i.caller.who)!==serviceOf(filing.caller.who)
         || i.prompt!==undefined && i.prompt!==filing.prompt || i.note!==undefined && i.note!==filing.note)
@@ -156,14 +161,14 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       const due=calendar(()=>i.mode==='at'?parseAt(i.when,ctx.now):parseIn(i.when,ctx.now));
       if(due<=ctx.now) invalid('Wake must be in the future');
       oneOffRoom(i.caller.who.agent);
-      localTargetRoom(filing.target,standing);
+      localTargetRoom(filing.target,standing,undefined,i.caller.member);
       const owning=approvalsRole(operations,'clock');
       const expected={target:filing.target,digest:words.digest,details:words.details,caller:{...filing.caller,who:{...filing.caller.who}}};
       const result=standing ? owning.localStanding(i.caller,{approval:i.approval,mode:'use',expected},randomUUID()) : approvalsRole(operations,'clock').call('use-local',i.caller,{id:i.approval,
         expected:{target:filing.target,digest:words.digest,details:words.details,caller:filing.caller}},randomUUID());
       if(!result.ok) throw new OperationError(result.code,result.message);
       const row=make({...ctx,viewer:{kind:'agent',id:i.caller.who.agent}},
-        {agent:i.caller.who.agent,project:i.caller.project,prompt:filing.prompt,note:filing.note,approval:i.approval},due);
+        {agent:i.caller.who.agent,project:i.caller.project,member:i.caller.member,prompt:filing.prompt,note:filing.note,approval:i.approval},due);
       if(standing) {
         bindStandingWake(db,row,filing,i.caller);
         db.prepare('INSERT INTO clock_meta(key,value) VALUES (?,?)').run(receiptKey,JSON.stringify({name:receipt.name,hash:receipt.inputHash,result:row}));
@@ -182,7 +187,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     if (i.file && !i.continuation && !i.approval && !i.place && !paused(db, i.agent)) {
       for (const s of schedules(db)) {
         if (!s.enabled || s.continuation || s.approval || s.place || s.agent !== i.agent || s.project !== i.project || s.member !== i.member
-          || (s.laneDetails?.source ?? s.file) !== i.file || !see(ctx.viewer, s, 'schedule')
+          || (s.laneDetails?.source ?? s.file) !== i.file || !readSee(ctx, s, 'schedule')
           || s.by.kind !== 'member' || !mayAct(s.by, {}, sharing(), 'household') || !create(s.by, s)
           || !(ctx.viewer.kind === 'agent' && ctx.viewer.id === i.agent || ctx.viewer.kind === 'member' && ctx.viewer.id === s.by.id)) continue;
         const occurrence = wakes(db).filter(w => w.schedule === s.id && w.state === 'pending' && !w.runNow && !w.bypassPause
@@ -203,9 +208,9 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const a = options.approvals!.check(i.on, ctx.viewer)!;
     return make(ctx, i, ctx.now, { state: 'parked', wait: { id: i.on, until: ctx.now + day, kind: a.kind, target: a.target } });
   });
-  register('list', z.object({ agent: text.optional() }), false, () => true, (ctx, i) => wakes(db).filter(w => see(ctx.viewer, w) && (!i.agent || w.agent === i.agent) && (active(w) || w.changedAt + day > ctx.now)));
+  register('list', z.object({ agent: text.optional() }), false, () => true, (ctx, i) => wakes(db).filter(w => readSee(ctx, w) && (!i.agent || w.agent === i.agent) && (active(w) || w.changedAt + day > ctx.now)));
   register('log', z.object({ since: z.number().optional(), grep: z.string().optional() }), false, () => true, (ctx, i) => {
-    const ids = new Set(wakes(db).filter(w => see(ctx.viewer, w)).map(w => w.id));
+    const ids = new Set(wakes(db).filter(w => readSee(ctx, w)).map(w => w.id));
     return (db.prepare('SELECT wake,record FROM clock_events ORDER BY seq').all() as { wake: string; record: string }[]).filter(r => ids.has(r.wake)).map(r => JSON.parse(r.record)).filter(r => (i.since === undefined || r.at >= i.since) && (!i.grep || JSON.stringify(r).includes(i.grep)));
   });
   register('cancel', idInput, true, (v, i) => !wake(db, i.id) || act(v, get(i.id)), (ctx, i) => {
@@ -289,9 +294,9 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     ctx.changed('clock', i.agent); return { agent: i.agent, paused: false, released: n };
   });
   register('status', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (_ctx, i) => ({ id: i.agent, paused: paused(db, i.agent) }));
-  const deskWakes = (v: Viewer, agent: string) => wakes(db).filter(w => w.agent === agent && active(w) && see(v, w));
-  register('jobs', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (ctx, i) => deskJobs(deskWakes(ctx.viewer, i.agent), paused(db, i.agent)));
-  register('agentNext', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (ctx, i) => agentNext(i.agent, deskWakes(ctx.viewer, i.agent), paused(db, i.agent)));
+  const deskWakes = (ctx: Context, agent: string) => wakes(db).filter(w => w.agent === agent && active(w) && readSee(ctx, w));
+  register('jobs', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (ctx, i) => deskJobs(deskWakes(ctx, i.agent), paused(db, i.agent)));
+  register('agentNext', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (ctx, i) => agentNext(i.agent, deskWakes(ctx, i.agent), paused(db, i.agent)));
 
   const scheduleInput = workInput.extend({ id: text, at: z.union([text, z.array(text)]), days: z.string().default(''), lane: text.optional() });
   register('scheduleSet', scheduleInput, true, (v, i) => create(v, i) && (!schedule(db, i.id) || act(v, schedule(db, i.id)!, !!schedule(db, i.id)!.laneDetails)), (ctx, i) => {
@@ -303,7 +308,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     cancelOccurrences(ctx, s.id, 'Schedule changed');
     saveSchedule(ctx, s); next(ctx, s, ctx.now); return s;
   });
-  register('schedules', z.object({}), false, () => true, ctx => schedules(db).filter(s => see(ctx.viewer, s, 'schedule')));
+  register('schedules', z.object({}), false, () => true, ctx => schedules(db).filter(s => readSee(ctx, s, 'schedule')));
   register('scheduleRemove', idInput, true, (v, i) => { const s = schedule(db, i.id); return !s || act(v, s, !!s.laneDetails) && (!s.laneDetails || create(v, s)); }, (ctx, i) => {
     const s = schedule(db, i.id); if (!s) throw new OperationError('not-found', 'Schedule not found');
     removeSchedule(ctx, s); return { id: s.id };
@@ -356,7 +361,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('laneRemove', laneInput, true, (v, i) => { const s = schedule(db, laneId(i.name)); return mayAct(v, {}, sharing(), 'household') && (!s || create(v, s)); }, (ctx, i) => {
     const s = getLane(i.name); removeSchedule(ctx, s); return { name: i.name };
   });
-  register('lanes', z.object({}), false, () => true, ctx => schedules(db).filter(s => s.laneDetails && see(ctx.viewer, s, 'schedule')));
+  register('lanes', z.object({}), false, () => true, ctx => schedules(db).filter(s => s.laneDetails && readSee(ctx, s, 'schedule')));
   register('laneText', laneInput, false, (v, i) => { const s = schedule(db, laneId(i.name)); return !s || see(v, s, 'schedule'); }, (_ctx, i) => ({ text: getLane(i.name).laneDetails!.text }));
   register('rearm', z.object({}), true, (v) => mayAct(v, {}, sharing(), 'household'), () => ({ rearmed: true }));
   register('deadman', agentInput, true, (v, i) => deadmanAgents.has(i.agent) && v.kind === 'agent' && v.id === i.agent
@@ -368,7 +373,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     run: (ctx,input) => command(operations,ctx.viewer,input),
   }));
   // Intent and outcome use the registry too: all state and live changes commit together.
-  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && create(v, get(i.id))
+  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && !privateLocal(get(i.id)) && create(v, get(i.id))
     && (!get(i.id).deadman || deadmanAgents.has(get(i.id).agent)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'pending' || w.due > ctx.now) return null;
     if (paused(db, w.agent) && !w.bypassPause) { w.state = 'held'; w.hold = 'paused'; saveWake(ctx, w); return null; }
@@ -460,6 +465,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         // Recheck after the intent commit, immediately before the external call.
         try {
           const current=wake(db,w.id)!;
+          if(privateLocal(current)) throw new OperationError('denied','Private local delivery is not composed');
           if(!create(current.by,current)) throw new OperationError('denied','Dispatch policy changed');
           checkStandingWake(db,operations,current);
         }
@@ -482,7 +488,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   db.transaction(() => {
     for (const w of wakes(db).filter(w => w.state === 'firing')) { w.state = 'held'; w.hold = 'uncertain'; w.outcome = 'Restart interrupted dispatch; reconcile with runtime before retrying'; w.changedAt = clock.now(); db.prepare('UPDATE clock_wakes SET record=?,changed_at=? WHERE id=?').run(JSON.stringify(w), w.changedAt, w.id); }
   })();
-  for (const type of ['wake', 'schedule'] as const) live.register({ name: type,
+  for (const type of ['wake', 'schedule'] as const) live.register({ name: type, privateWindowOnly:true,
     ids: () => (type === 'wake' ? wakes(db) : schedules(db)).map(w => w.id),
     read(id, v) {
       const w = type === 'wake' ? wake(db, id) : schedule(db, id);

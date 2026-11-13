@@ -1,3 +1,4 @@
+import { readApproval } from '../approvals/store.js';
 import * as commsCrypto from '../comms/crypto.js';
 import { runtimeRole } from './role.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
@@ -385,9 +386,11 @@ it('derives Approval caller only from the live authenticated body and database m
   const cv=runtimeStore(f.app.db).read('job',job)!.conversation!;
   const ask={kind:'github-write',target:'repo:exact',what:'Write this change',why:'A bounded fixture',conversation:cv,
    principal:'owner',for:'owner',who:{agent:'mark',where:'forged (owner)'},caller:{who:{agent:'art',where:'forged'},for:'owner'},project:'other',people:['jonathan']};
-  const expected={for:member==='jonathan'?'owner':member,people:[member],conversation:cv,who:{agent:'art',where:job}};
+  const expected={for:member==='jonathan'?'owner':member,member,people:[member],conversation:cv,who:{agent:'art',where:job}};
   const receipt=value<{id:string}>(await f.post(body,'approvals.request',ask));
-  expect(receipt).toMatchObject(expected);
+  expect(receipt).toMatchObject({id:expect.any(String),state:'pending'});
+  expect(JSON.stringify(receipt)).not.toContain('repo:exact');
+  expect(readApproval(f.app.db,receipt.id)).toMatchObject(expected);
   expect(receipt).not.toHaveProperty('project');
   // Shared agent credentials, another job, and a copied Viewer have no principal.
   for(const secret of [f.unbound,f.token('agent:art@another')]){
@@ -398,10 +401,10 @@ it('derives Approval caller only from the live authenticated body and database m
   const copied=value<{for:string}>(f.app.operations.call('direct',{...original},'approvals.request',{...ask,target:'copy:viewer'},'copy-viewer'));
   expect(copied.for).toBe('?');
   await f.restart();
-  expect(await f.post(body,'approvals.request',{...ask,target:'after:restart'})).toMatchObject({ok:true,value:expected});
+  expect(await f.post(body,'approvals.request',{...ask,target:'after:restart'})).toMatchObject({ok:true,value:{id:expect.any(String),state:'pending'}});
   // Filing propagates scope from the actual current binding; input cannot choose it.
   expect(await f.socket('comms.change',{thread,action:'project',project:'pond'})).toMatchObject({ok:true});
-  expect(await f.post(body,'approvals.request',{...ask,target:'after:filing'})).toMatchObject({ok:true,value:{...expected,project:'pond'}});
+  expect(await f.post(body,'approvals.request',{...ask,target:'after:filing'})).toMatchObject({ok:true,value:{id:expect.any(String),state:'pending'}});
   // Authority remains tied to current household membership, never saved request data.
   f.app.db.transaction(()=>new HouseholdDatabase(f.app.db).change(f.home,raw=>{
    const members=raw.members as Array<{person:string;role:string;agents:string[]|string}>;const m=members.find(m=>m.person===member)!;m.agents=[];m.role='member';if(member==='jonathan'){const other=members.find(m=>m.person==='pollock')!;other.role='owner';other.agents='*';}
@@ -417,10 +420,14 @@ it('retains centrally authenticated service-house spend identity and fences stal
  const service=f.token(`agent:art/discord@${job}`),other=f.token(`agent:art/slack@${job}`);
  const ask={kind:'github-write',target:'service:exact',what:'Write a fixture',why:'Exercise exact service binding'};
  const receipt=value<{id:string}>(await f.post(service,'approvals.request',ask));
- expect(receipt).toMatchObject({for:'owner',who:{agent:'art',where:`${job} (discord)`}});
+ expect(readApproval(f.app.db,receipt.id)).toMatchObject({for:'owner',member:'jonathan',who:{agent:'art',where:`${job} (discord)`}});
  expect(await f.socket('approvals.answer',{id:receipt.id,action:'allow'})).toMatchObject({ok:true,value:{state:'allowed'}});
+ const ack=await f.post(service,'approvals.command',{argv:['request','--kind',ask.kind,'--target',ask.target,'--what',ask.what,'--why',ask.why]});
+ expect(ack).toMatchObject({ok:true,value:{exit:0,stdout:`${receipt.id}: allowed; open the decision in your signed-in window\n`}});
+ expect(JSON.stringify(ack)).not.toContain(ask.target);
  expect(await f.post(other,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false,code:'denied'});
- expect(await f.post(service,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:true,value:{state:'used'}});
+ expect(await f.post(service,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false,code:'denied'});
+ expect(readApproval(f.app.db,receipt.id)?.state).toBe('allowed');
  expect(await f.post(service,'approvals.use',{id:receipt.id,kind:ask.kind,target:ask.target})).toMatchObject({ok:false});
  // An archived thread no longer proves a person, even before asynchronous end work settles.
  await f.socket('comms.change',{thread,action:'archive'});
@@ -463,7 +470,7 @@ it('removes archived conversation authority while staging retains a live job and
  expect(await f.socket('comms.change',{thread,action:'project',project:'pond'})).toMatchObject({ok:true});
  const conversation=runtimeStore(f.app.db).read('job',job)!.conversation!;
  const ask={kind:'github-write',target:'before:archive',what:'Check current conversation',why:'Prove archived thread fencing',conversation};
- expect(await f.post(body,'approvals.request',ask)).toMatchObject({ok:true,value:{for:'owner',project:'pond',conversation}});
+ expect(await f.post(body,'approvals.request',ask)).toMatchObject({ok:true,value:{id:expect.any(String),state:'pending'}});
  expect(await f.socket('comms.change',{thread,action:'archive'})).toMatchObject({ok:true});
  expect(runtimeStore(f.app.db).read('job',job)).toMatchObject({state:'running'});
  expect(signin(f.app).token(hash(body))).toBeDefined();
@@ -479,7 +486,7 @@ it('removes terminal job principal authority even when its credential and privat
  await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
  const store=runtimeStore(f.app.db),conversation=store.read('job',job)!.conversation!;
  const ask={kind:'github-write',target:'running:principal',what:'Check a current job',why:'Test terminal job attribution',conversation};
- expect(await f.post(body,'approvals.request',ask)).toMatchObject({ok:true,value:{for:'owner',conversation,people:['jonathan']}});
+ expect(await f.post(body,'approvals.request',ask)).toMatchObject({ok:true,value:{id:expect.any(String),state:'pending'}});
  for(const state of ['done','failed','stopped','lost','uncertain','queued','starting'] as const){
   // Model durable state ahead of credential cleanup. Calling finishJob would
   // revoke the token as well and could conceal a missing resolver state check.

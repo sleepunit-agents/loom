@@ -40,7 +40,8 @@ export function command(operations:Operations,viewer:Viewer,argv:string[]):Comma
   let out='';let stderr='';
   if(verb==='request'){
     const a=value as Approval;
-    out=a.state==='denied'?`${a.id}: the owner said not yet for this exact change and head; a new push asks again`
+    out=!a.kind?`${a.id}: ${a.state}; open the decision in your signed-in window`
+      :a.state==='denied'?`${a.id}: the owner said not yet for this exact change and head; a new push asks again`
       :a.state==='allowed'&&['grant','vouch-wake','principal-reset','box-write-off'].includes(a.kind)?`${a.id}: the owner allowed it; the piece that filed it applies it (use it there: --kind ${a.kind})`
       :a.state==='allowed'?`${a.id}: already allowed (until ${a.expires}); use it: approvals use ${a.id} --kind ${a.kind} --target '${a.target}'`
       :`${a.id}: asked the owner (a card on loom's Home); check it: approvals check ${a.id}`;

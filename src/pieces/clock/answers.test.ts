@@ -128,7 +128,7 @@ it('keeps missing Secrets unavailable and unsubscribes the answer observer', asy
 
 it('observes an expired approval rather than handing out stale Allow instructions', async () => {
   const s = await setup(); const card = s.request();
-  s.value('approvals.answer',{id:card.id,action:'allow'});
+  expect(await s.app.operations.callAsync('socket',owner,'approvals.answer',{id:card.id,action:'allow'},randomUUID(),true)).toMatchObject({ok:true});
   const approval = s.value<{approvals:{id:string;expires:string}[]}>('approvals.list').approvals.find(a=>a.id===card.id)!;
   s.clock.advance(Date.parse(approval.expires)-s.clock.now());
   const parked = s.park(card.id); await s.flush();
@@ -153,7 +153,7 @@ it('keeps wake authority while answer visibility differs from a privileged viewe
   // work is still agent-visible; the answer is now only visible to its member.
   const row = s.app.db.prepare('SELECT record FROM approvals_approvals WHERE id=?').get(card.id) as {record:string};
   s.app.db.prepare('UPDATE approvals_approvals SET record=? WHERE id=?').run(JSON.stringify({...JSON.parse(row.record),member:'jonathan'}),card.id);
-  s.value('approvals.answer',{id:card.id,action:'allow'});
+  expect(await s.app.operations.callAsync('socket',owner,'approvals.answer',{id:card.id,action:'allow'},randomUUID(),true)).toMatchObject({ok:true});
   const answers = clockAnswers(s.app.db,s.app.operations,s.app.live,()=>s.access);
   expect(answers.check(card.id,agent)).toBeUndefined();
   expect(answers.check(card.id,owner)?.state).toBe('allowed');

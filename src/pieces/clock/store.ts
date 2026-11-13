@@ -1,4 +1,4 @@
-import type { Db, Scope, Viewer, Context } from '../../core/index.js';
+import { registerExportFilter, privateExportCopy, type Db, type Scope, type Viewer, type Context } from '../../core/index.js';
 export type WakeState = 'pending' | 'parked' | 'firing' | 'held' | 'fired' | 'cancelled' | 'failed';
 export interface Work extends Scope {
   agent: string; prompt?: string; file?: string; note: string; model?: string;
@@ -33,6 +33,7 @@ export function wake(db: Db, id: string): Wake | undefined { const r = db.prepar
 export function schedule(db: Db, id: string): Schedule | undefined { const r = db.prepare('SELECT record FROM clock_schedules WHERE id=?').get(id) as { record: string } | undefined; return r && JSON.parse(r.record); }
 export function saveWake(ctx: Context, w: Wake) {
   w.changedAt = ctx.now;
+  if(w.member)ctx.db.prepare("INSERT OR IGNORE INTO clock_meta(key,value) VALUES (?,?)").run("private-id:"+w.id,JSON.stringify({member:w.member}));
   ctx.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record, changed_at=excluded.changed_at').run(w.id, JSON.stringify(w), ctx.now);
   ctx.changed('wake', w.id);
 }
@@ -42,7 +43,16 @@ export function saveSchedule(ctx: Context, s: Schedule) {
   ctx.changed('schedule', s.id);
 }
 export function event(ctx: Context, w: Wake, kind: string) {
-  ctx.db.prepare('INSERT INTO clock_events(wake,record) VALUES (?,?)').run(w.id, JSON.stringify({ at: ctx.now, kind, outcome: w.outcome, note: w.note, agent: w.agent }));
+  ctx.db.prepare('INSERT INTO clock_events(wake,record) VALUES (?,?)').run(w.id, JSON.stringify({ at: ctx.now, kind, outcome: w.outcome, note: w.note, agent: w.agent, ...(w.member?{member:w.member}:{}) }));
 }
 export const paused = (db: Db, agent: string) => !!db.prepare('SELECT 1 FROM clock_pauses WHERE agent=?').get(agent);
 export const active = (w: Wake) => ['pending', 'parked', 'firing', 'held'].includes(w.state);
+
+export function installPrivateExport(db:Db) {
+ registerExportFilter(db,'clock',(table,row)=>{
+  if(!table.startsWith('clock_') && table!=='core_operations')return true;
+  const ids=new Set((db.prepare("SELECT key FROM clock_meta WHERE key LIKE 'private-id:%'").all() as {key:string}[]).map(r=>r.key.slice(11)));
+  for(const w of [...wakes(db),...schedules(db)])if(w.member)ids.add(w.id);
+  return !(table==='core_operations' && row.name==='clock.command') && !privateExportCopy(row,ids);
+ });
+}
