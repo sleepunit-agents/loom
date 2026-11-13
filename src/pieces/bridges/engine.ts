@@ -24,6 +24,9 @@ export class Bridges implements BridgesRole {
   constructor(private app: Foundation, private clock: Clock, private runtime: BridgeRuntime, private secrets: BridgeSecrets,
     private adapters: VenueAdapter[], private effects: OutsideEffects) {
     this.unsubscribeRelease = effects.onReleased(id => { if (id.startsWith('bridges:')) void this.flush(); });
+    // A fixed runtime/adapter may accept a previously malformed delivery after restart.
+    // Administrative and identity holds stay held; ordinary drains never retry a hold.
+    app.db.prepare("UPDATE bridges_inbox SET state='pending',reason=NULL WHERE state='held' AND reason='runtime delivery held'").run();
     // A crash can happen after the venue accepted a send but before we recorded its receipt.
     app.db.prepare("UPDATE bridges_outbox SET state='uncertain' WHERE state='sending'").run();
   }
