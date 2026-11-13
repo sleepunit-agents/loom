@@ -101,3 +101,16 @@ classifier. Author-tested: provisional/web citations, attribution, duplicate and
 invalid refusal, partial-member denial, source rollback, core failure/restart
 recovery, namespace conflict and a two-window create path. This addition is after
 the frozen review bytes and is not claimed cold-clear. No fourth review was run.
+
+## Final author validation
+
+Second rebase was required by GitHub CONFLICTING after next-mode sign-in merged
+at e9d5760. The conflict was adjacent imports in src/next.ts; retained both
+sign-in and Mind imports/composition. No sign-in/session rule was changed.
+At 40bc72f022bc6057e8e2e03d91e0915b840f65dc: 93 affected tests across 17 files pass,
+including the post-bind cleanup fault, all Mind/touch cases, UI retained-request
+cases, architecture/registration, daemon home ownership and next-mode routes.
+TypeScript and web production build pass; web lint passes with existing App
+warnings. Chrome is CI-only. Final acceptance still requires the exact head's
+browser proof/six screenshots and green checks; no owner decision or host action
+is part of this merge.
