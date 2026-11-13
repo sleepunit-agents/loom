@@ -145,8 +145,10 @@ it('fails closed with preinstalled uncomposed approvals and rejects malformed ap
 
 it('rejects malformed, unordered, repeated or oversized targets without altering rows', async () => {
   const s = await setup(), before = wakes(s.app.db);
+  const oversized = 'art:' + [ids[0], ...Array.from({length:5}, (_,i) => `w-${String(i).padStart(8,'0')}-0000-0000-0000-000000000000`)].sort().join(',');
+  expect(oversized.length).toBeGreaterThan(200);
   for (const target of ['art:', 'art:w-AAAAAA', 'art:w-zzzzzz', `art:${ids[1]},${ids[0]}`, `art:${ids[0]},${ids[0]}`,
-    `art:${ids[0]},w-${randomUUID()},w-${randomUUID()},w-${randomUUID()},w-${randomUUID()},w-${randomUUID()}`])
+    oversized])
     expect(s.call('clock.vouch',{target}).ok).toBe(false);
   expect(wakes(s.app.db)).toEqual(before);
 });
