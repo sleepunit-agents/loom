@@ -13,6 +13,7 @@ import { SharingDatabase } from '../../core/household/sharing.js';
 import { installRuntime } from './index.js';
 import type { RuntimeCredentials } from './credentials.js';
 import { runtimeStore } from './store.js';
+import { runtimeOwnerApplication } from './owner-application.js';
 import { owningApprovalCards } from '../approvals/role.js';
 const closes:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
@@ -219,4 +220,23 @@ it('preserves unrelated agents and boxes and their central body credentials',asy
  auth.tokens.replace({v:1,tokens:[['other-agent','mark'],['other-box','art']].map(([id,agent])=>({role:`agent:${agent}@${id}`,sha256:hash(id),label:id,created:new Date(f.clock.now()).toISOString()}))},{});})();
  const approval=f.ask();expect(f.call('approvals.answer',{id:approval,action:'allow'})).toMatchObject({ok:true});
  for(const id of ['other-agent','other-box'])expect(f.store.read('job',id)?.state).toBe('running');for(const t of auth.tokens.document()!.tokens)expect(t.revoked).toBeUndefined();
+});
+
+it('rejects forged exported application-role calls even inside the correct database transaction',async()=>{
+ const f=await resetSetup(),approval=f.ask(),request=JSON.parse((f.app.db.prepare('SELECT record FROM runtime_owner_requests').get() as {record:string}).record);
+ const forged={...request.card,state:'allowed',by:'jonathan'};
+ const role=runtimeOwnerApplication(f.app.operations);
+ expect(f.app.db.transaction(()=>role.apply(forged,'jonathan'))()).toMatchObject({ok:false});
+ expect(f.store.read('job','covered')?.state).toBe('running');expect(f.p.read(f.conversation)?.reset).toBeUndefined();
+ expect(owningApprovalCards(f.app.db,'principal-reset',request.target,'art')[0]?.state).toBe('pending');
+ expect(f.call('approvals.answer',{id:approval,action:'allow'})).toMatchObject({ok:true});
+ expect(f.app.db.transaction(()=>role.apply(forged,'jonathan'))()).toMatchObject({ok:false});
+});
+it('preserves full box configuration, ordered preferences and central runner credentials',async()=>{
+ const f=await setup(),auth=signin(f.app);
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=f.store.read('box','r1')!;f.store.put('box',{...b,labels:['keep'],alwaysOn:true,lentTo:['mark'],facts:['arch:arm64']},1);
+ f.store.put('settings',{id:'art',agent:'art',boxes:['r1'],model:'chosen-model',house:{repo:'/fixture/art',houseFile:'house/house.json'}},1);
+ auth.tokens.replace({v:1,tokens:[{role:'runner:r1',sha256:hash('runner-fixture'),label:'runner',created:new Date(f.clock.now()).toISOString()}]},{});})();
+ const b=f.store.read('box','r1'),settings=f.store.read('settings','art'),tokens=auth.tokens.document();const approval=f.ask();
+ expect(f.call('approvals.answer',{id:approval,action:'allow'})).toMatchObject({ok:true});expect(f.store.read('box','r1')).toEqual(b);expect(f.store.read('settings','art')).toEqual(settings);expect(auth.tokens.document()).toEqual(tokens);
 });

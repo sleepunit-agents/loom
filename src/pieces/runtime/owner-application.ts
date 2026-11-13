@@ -6,7 +6,7 @@ import { jobHeard } from './heartbeat.js';
  */
 import { z } from 'zod';
 import { operation, OperationError, mayAct, type Db, type Operations, type Sharing } from '../../core/index.js';
-import { approvalsRole, owningApprovalCards, type Approval, type ApprovalApplication } from '../approvals/role.js';
+import { approvalsRole, owningApprovalCards, isApplyingOwnerAnswer, type Approval, type ApprovalApplication } from '../approvals/role.js';
 import { runtimeStore } from './store.js';
 import { provenanceStore } from './provenance-store.js';
 import { principalFromHistory, resetEligible, resetProvenance } from './provenance.js';
@@ -133,7 +133,7 @@ export function installRuntimeOwnerApplication(db:Db, operations:Operations, sha
   },
  }));
  const application:ApprovalApplication={apply(a,by){
-  if(!db.inTransaction||applying||!['box-write-off','principal-reset'].includes(a.kind)||a.state!=='allowed'||a.by!==by)return {ok:false,code:'unavailable',message:'Expected an owning runtime answer in the approval transaction'};
+  if(!isApplyingOwnerAnswer(db,a,by)||applying||!['box-write-off','principal-reset'].includes(a.kind)||a.state!=='allowed'||a.by!==by)return {ok:false,code:'unavailable',message:'Expected an owning runtime answer in the approval transaction'};
   applying=a;
   try{return operations.call('direct',{kind:'member',id:by},'runtime.applyOwnerAnswer',{target:a.target,approval:a.id},`runtime-apply:${a.id}`);}finally{applying=undefined;}
  }};

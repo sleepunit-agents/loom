@@ -1,4 +1,4 @@
-import { OperationError, type Result } from '../../core/index.js';
+import { OperationError, type Result, type Db } from '../../core/index.js';
 import { type Approval, type State, ownerApplied } from './model.js';
 import { answer, use, type DomainContext } from './domain.js';
 
@@ -14,7 +14,16 @@ export interface ApprovalApplications {
   clock?: ApprovalApplication;
 }
 
+/** A read-only proof for trusted owning applications. Only the exact object
+ * dispatched by this module on this connection is live; copied fields, another
+ * connection and calls after the synchronous callback confer no authority.
+ */
+const dispatched=new WeakMap<object,{db:Db;by:string}>();
+export function isApplyingOwnerAnswer(db:Db,approval:Readonly<Approval>,by:string):boolean {
+  const proof=dispatched.get(approval);return proof?.db===db&&proof.by===by&&db.inTransaction;
+}
 export function answerAndApply(
+  db: Db,
   state: State,
   id: string,
   action: string,
@@ -26,7 +35,10 @@ export function answerAndApply(
   if (action !== 'allow' || !ownerApplied.has(approval.kind)) return approval;
   const role = approval.kind === 'vouch-wake' ? applications.clock : applications.runtime;
   if (!role) throw new OperationError('unavailable', `The ${approval.kind} application role is unavailable`);
-  const result = role.apply(Object.freeze(structuredClone(approval)), by);
+  const current=Object.freeze(structuredClone(approval));
+  dispatched.set(current,{db,by});
+  let result:Result;
+  try { result=role.apply(current,by); } finally { dispatched.delete(current); }
   if (!result || result instanceof Promise || typeof result.ok !== 'boolean') {
     throw new OperationError('unavailable', 'The application role must return a synchronous result');
   }

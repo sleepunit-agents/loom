@@ -840,7 +840,9 @@ therefore gains no authority from this retirement.
 ## Owner recovery applications
 
 Next mode composes Runtime's synchronous ApprovalApplication on the same database
-as Approvals. A body cannot invoke the application operation or supply a card.
+as Approvals. A body cannot invoke the application operation or supply a card. Approvals
+marks the exact callback object with a private, database-bound in-flight proof;
+the exported Runtime role rejects copied Allow fields even inside a transaction.
 Every request saves the exact original card and its owning snapshot. Allow
 rechecks the original card and current state before any change; Deny changes
 no runtime state. Answer, application, credential revocation, registry receipt
