@@ -72,9 +72,16 @@ it('rolls back ciphertext and receipt together on storage failure, then permits 
 });
 it('snapshots caller input before awaiting and resolves concurrent identical writes only once across handles', async () => {
   const f = await setup(), other = await f.open(), id = who(), input = value();
+  const original=Encrypter.prototype.encrypt;
+  let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+  vi.spyOn(Encrypter.prototype,'encrypt')
+    .mockImplementationOnce(function(this:Encrypter,bytes:Uint8Array|string){return original.call(this,bytes);})
+    .mockImplementationOnce(async function(this:Encrypter,bytes:Uint8Array|string){await gate;return original.call(this,bytes);});
   const caller = {...id}; const first = f.s.set(caller, 'api-key', input, 'add');
   input.fill(0); caller.member = 'changed'; caller.writeId = randomUUID();
-  await Promise.all([first, other.set(id, 'api-key', value(), 'add')]);
+  const second=other.set(id,'api-key',value(),'add');
+  await first;const committed=f.s.generation();release();await second;
+  expect(other.generation()).toBe(committed);
   expect(await text(f.s)).toBe(value().toString());
   const db = new Database(join(f.home, 'holder.db'));
   try {expect(db.prepare('SELECT member,write_id FROM holder_receipts').all()).toEqual([{member:id.member,write_id:id.writeId}]);}
