@@ -14,6 +14,8 @@ export interface Wake extends Work {
   failures: number; bypassPause?: boolean;
   /** Explicit lane run-now keeps its schedule link but consumes one-off capacity. */
   runNow?: boolean;
+  /** Fixed-word safety wake from explicit composition configuration, never caller input. */
+  deadman?: true;
   wait?: { id: string; until: number; kind?: string; target?: string; answer?: string };
   /** Imported provenance is data, never a Viewer or a grant. */
   legacy?: Record<string, unknown>;

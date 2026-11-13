@@ -70,6 +70,8 @@ export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
   changes?: NextChangesOptions;
+  /** Explicit opt-in for fixed 24-hour safety wakes, acting as the named agents. */
+  clockDeadmanAgents?: readonly string[];
 }
 export function installNext(app: Foundation, options: NextOptions) {
   migrateHouseholdTables(app.db);
@@ -145,7 +147,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   mindTransports.set(app, sources);
   if (!app.operations.has('clock.list')) {
     // The runtime dispatch role is still unavailable: Clock's default holds starts.
-    const jobs = installClock(app.db, app.operations, app.live, sharing, { approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
+    const jobs = installClock(app.db, app.operations, app.live, sharing, { deadmanAgents: options.clockDeadmanAgents, approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
   installAttentionMaintenance(app);
