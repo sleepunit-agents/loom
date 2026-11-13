@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add keyboard-accessible Pin and Archive actions to Comms list rows, including right-click entry.
+
 - Add a private Discord raw receipt drain with fresh metadata, bounded retries and durable normalized handoff; production activation remains pending.
 - Show Stop only for active joined Comms threads, disabling it while disconnected or saving.
 - Next mode retires per-agent piece/path grant approvals in favour of record scope and withdraws pending legacy grant imports.
