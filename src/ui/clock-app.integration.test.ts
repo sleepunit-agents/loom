@@ -133,7 +133,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     clock.advance(0);
     await expect.poll(()=>{const r=loom.operations.call('direct',{kind:'member',id:'jonathan'},'clock.list',{});return r.ok&&(r.value as Array<{hold?:string}>).some(w=>w.hold==='staging');}).toBe(true);
     await b.getByRole('button',{name:/Local requests/}).click();
-    await expect.poll(()=>b.getByRole('list',{name:'Local requests'}).locator('[data-split-row]').count()).toBe(3);
+    await expect.poll(()=>b.getByRole('group',{name:'Local requests'}).locator('[data-split-row]').count()).toBe(3);
     const openLocal=async(p:typeof a,index:number)=>{await p.goto(`${loom.url}/p/clock-preview/item/${localCards[index]}`);await expect.poll(()=>p.getByRole('group',{name:'Answer approval'}).count()).toBe(1);};
     await openLocal(b,0);
     await expect.poll(()=>b.getByText('Report host disk usage: Allow once.',{exact:false}).count()).toBe(1);
