@@ -1,7 +1,6 @@
 /** A small post-success hook for the existing store mutation boundaries. */
-import { existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { touched } from './index.js';
+import { dirname } from 'node:path';
+import { touched, hasTouchedListener } from './index.js';
 type Mutation = (...args: any[]) => any; // heterogeneous existing backend signatures
 /** Only named identity fields, never body text, can become notifications. */
 export function identities(value: unknown, fields: ReadonlySet<string>): string[] {
@@ -23,7 +22,7 @@ export function notifyWrites<T extends object>(store: T, dbPath: string, type: s
     (store as Record<keyof T, unknown>)[method] = (...args: unknown[]) => {
       const done = (result: unknown) => {
         // No daemon means no traversal of the result, either. Failed mutations never reach here.
-        if (existsSync(join(directory, '.loom-touched.sock'))) {
+        if (hasTouchedListener(directory)) {
           const ids = method === 'addCitations' ? [args[0] as string] : identities(result, keys);
           if (!(method === 'prune' && (args[0] as { dryRun?: boolean } | undefined)?.dryRun))
             for (const id of ids) touched(directory, type, id);

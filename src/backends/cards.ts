@@ -346,6 +346,7 @@ export class CardTable<R extends CardRowBase> {
   /** One BEGIN IMMEDIATE transaction around `fn`, retried as a whole on SQLITE_BUSY. */
   mutate<T>(fn: () => T): T {
     const parent = this.changes;
+    if (this.db.inTransaction && !parent) throw new Error('Card mutations must own the outer transaction');
     const changes = new Set<string>();
     this.changes = changes;
     try {

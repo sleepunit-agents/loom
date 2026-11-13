@@ -1,12 +1,14 @@
 /** Outside writers announce committed identities, never content. No watcher or retry queue. */
-import { existsSync, chmodSync } from 'node:fs';
+import { existsSync, chmodSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createConnection, createServer, type Socket } from 'node:net';
+import { clock as realClock, type Clock } from '../clock.js';
 import { z } from 'zod';
 import type { Viewer } from '../../policy.js';
 import { operation, type Operations, type Change } from '../operations/index.js';
 const change = z.object({ type: z.string().min(1).max(80), id: z.string().min(1).max(2048) }).strict();
-const socketPath = (directory: string) => join(directory, '.loom-touched.sock');
+export const touchSocketPath = (directory: string) => join(directory, '.loom-live', 'touched.sock');
+export const hasTouchedListener = (directory: string) => existsSync(touchSocketPath(directory));
 export interface TouchSource {
   /** Directory containing an existing agent/commons store. */
   directory: string;
@@ -43,19 +45,23 @@ export async function listenForTouches(operations: Operations, source: TouchSour
       } catch { socket.destroy(); }
     });
   });
-  const path = socketPath(source.directory);
+  const privateDir = join(source.directory, '.loom-live');
+  mkdirSync(privateDir, { recursive: true, mode: 0o700 });
+  chmodSync(privateDir, 0o700);
+  const path = touchSocketPath(source.directory);
   // Never steal an existing listener. A stale endpoint is handled by daemon startup's home lock.
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(path, resolve); });
   chmodSync(path, 0o600);
   return async () => { for (const client of clients) client.destroy(); await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); };
 }
 /** Absent daemon: one existence check, no connection, timer, promise or waiting. Errors never undo a write. */
-export function touched(directory: string, type: string, id: string): void {
+export function touched(directory: string, type: string, id: string, clock: Clock = realClock): void {
   try {
-    const path = socketPath(directory);
+    const path = touchSocketPath(directory);
     if (!existsSync(path)) return;
     const socket = createConnection(path);
-    socket.setTimeout(250, () => socket.destroy());
+    const stopDeadline = clock.at(clock.now() + 250, () => socket.destroy());
+    socket.once('close', stopDeadline);
     socket.on('error', () => socket.destroy());
     socket.on('connect', () => socket.write(JSON.stringify({ type, id }) + '\n'));
     socket.on('data', () => socket.destroy());

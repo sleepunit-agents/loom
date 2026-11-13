@@ -15,7 +15,7 @@ import { PeopleStore } from '../../backends/people.js';
 import { ProjectsStore } from '../../backends/projects.js';
 import { SqliteKnowledgeBackend } from '../../backends/sqlite-knowledge.js';
 import { createBackend, closeAllBackends } from '../../backends/index.js';
-import { installTouched, listenForTouches, touched } from './index.js';
+import { installTouched, listenForTouches, touched, touchSocketPath } from './index.js';
 import { identities } from './writes.js';
 const dirs: string[] = [], closes: (() => void | Promise<void>)[] = [];
 const home = () => { const p = mkdtempSync(join(tmpdir(), 'touch-')); dirs.push(p); return p; };
@@ -40,7 +40,7 @@ it('a real MCP write over stdio reaches two windows, reread with each viewer pol
     });
   } }); closes.push(() => app.close());
   closes.push(await listenForTouches(app.operations, { directory: dir, viewer: agent, resolve: c => c.type === 'person' ? c : undefined }));
-  expect(statSync(join(dir, '.loom-touched.sock')).mode & 0o777).toBe(0o600);
+  expect(statSync(touchSocketPath(dir)).mode & 0o777).toBe(0o600);
   const a = await window(app.url), b = await window(app.url), denied = await window(app.url, 'other');
   for (const w of [a, b, denied]) { w.ws.send(JSON.stringify({ kind: 'subscribe', type: 'person' })); expect(await w.next()).toMatchObject({ kind: 'set', records: [] }); }
   const input = new PassThrough(), output = new PassThrough();
@@ -92,6 +92,8 @@ it('card commit hooks emit actual written slugs only after commit, and discard a
   const committed = vi.fn();
   const table = new CardTable(store.database, { table: 'people', revisions: 'person_revisions', noun: store.cardTable.noun }, null, committed);
   const row = store.rawRow('jonathan')!;
+  expect(() => store.database.transaction(() => store.write({ slug: 'jonathan', name: 'Unsafe' }))()).toThrow('must own the outer transaction');
+  expect(store.rawRow('jonathan')?.name).toBe('Jonathan');
   expect(() => table.mutate(() => { table.store({ ...row, name: 'Wrong' }); throw new Error('rollback'); })).toThrow('rollback');
   expect(committed).not.toHaveBeenCalled();
   expect(store.rawRow('jonathan')?.name).toBe('Jonathan');

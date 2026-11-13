@@ -13,7 +13,8 @@ They name no content and cannot change a record. The ordinary live record reader
 loads the committed record separately for every subscribed viewer, using policy.
 
 The daemon calls `listenForTouches` for each existing agent/commons store
-directory. Each socket is `.loom-touched.sock`, mode 0600. The daemon binds its
+directory. Each socket is `.loom-live/touched.sock`, mode 0600, inside a directory restricted to
+0700 before binding (including with a permissive umask). The daemon binds its
 source's viewer and maps local ids to globally unique live ids; the writer cannot
 claim a viewer. The operation resolver validates those canonical ids. A second
 listener fails rather than stealing a socket. Daemon startup must remove stale
@@ -23,7 +24,7 @@ listener creation and shutdown; these helpers alone do not start a listener.
 
 After a successful mutation, a store checks for the local socket. When absent,
 it opens no connection, starts no timer, and never traverses mutation results.
-When present it sends only `{type, id}` and waits at most 250 ms for an answer.
+When present it sends only `{type, id}` and has an absolute 250 ms deadline, including connection setup.
 Errors are swallowed; there is no retry or delivery ledger. A missed notification
 costs a stale tile until a later update or reconnect. No store is watched or polled.
 
@@ -37,7 +38,8 @@ costs a stale tile until a later update or reconnect. No store is watched or pol
 Memory and knowledge hooks wrap their existing successful mutation boundary;
 only declared identity fields and the result's pages/losers are inspected. Card
 hooks collect actual stored slugs in the existing transaction, discard them on
-rollback, and send after its outer commit. Hooks introduce no schema changes.
+rollback, and send after its owned outer commit. Card APIs reject a caller-owned outer
+transaction before writing; callers use the store mutation boundary instead. Hooks introduce no schema changes.
 Direct raw SQL outside those APIs is not an announced store mutation.
 
 ## Evidence
