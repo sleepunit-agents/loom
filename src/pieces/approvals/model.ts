@@ -1,3 +1,4 @@
+import type { RecordScope } from '../../core/index.js';
 /** The old program's receipts, kept losslessly; authority comes only from authenticated context. */
 export interface Who { agent: string; where: string }
 export interface Principal { for: string; people?: string[] }
@@ -27,3 +28,5 @@ export const pieceKinds = new Set(['local-wake', 'vouch-wake', 'principal-reset'
 export const ownerApplied = new Set(['grant', 'vouch-wake', 'principal-reset', 'box-write-off']);
 export const pieceSpent = new Set([...ownerApplied, 'host', 'local-wake']);
 export const ownerAnswered = new Set([...ownerApplied, 'host']);
+
+export const approvalScope = (a: Approval): RecordScope => ({ type:'approval', ...(a.project ? {project:a.project}:{}), ...(a.agent ?? a.who.agent ? {agent:a.agent ?? a.who.agent}:{}), ...(a.member ? {member:a.member}:{}) });

@@ -25,7 +25,9 @@ export function unpark(w: Wake, answer: Answer) {
   let head: string;
   if (state === 'allowed' || state === 'granted') {
     const how = id.startsWith('q-')
-      ? "Pick up where you left off. A secret: request it again (the secrets piece's `request <name> --why …`), and it's granted to this house at once; then get it."
+      ? ['piece', 'runner', 'tailnet'].includes(answer.kind ?? '')
+        ? "The piece that filed this resource request applies the owner's answer. Check the requested access is available and pick up where you left off; there is no approval receipt for you to spend."
+        : "Pick up where you left off. A secret: request it again (the secrets piece's `request <name> --why …`), and it's granted to this house at once; then get it."
       : spendWords(id, answer);
     head = `The owner allowed ${id}. ${how}`;
   } else if (state === 'pending') {
