@@ -138,6 +138,34 @@ The setup and traffic projections contain secret references, never token values 
 upstream exception text. Current setup operations are household-owner actions through
 src/policy.ts, preventing bodies from changing person links or connections.
 
+## Outbound reply attempt
+
+`replyParts` preserves every character (including blank lines), prefers newline cuts,
+and never separates a Unicode surrogate pair. It uses the legacy conservative caps:
+2000 UTF16 units for Discord, 3900 for Slack. This intentionally preserves boundary
+newlines that the old Python chunkers stripped; there is no markup rewriting.
+`postReply` posts those parts sequentially, validates each nonempty receipt id and
+returns the final id, like the old send commands. It never retries. Any callback failure
+or malformed receipt stops the attempt with a fixed error without upstream details.
+
+This is an adapter building block, still unregistered. Its post callback must use the
+bound channel/thread, suppress automatic platform mentions and repeat fresh authorization
+immediately before **each** post, including every chunk of a group reply. The helper
+does not implement those platform checks or confer permission. The engine holds the
+whole reply as uncertain after any partial failure, including across restart; it never
+replays already sent parts or attempts the remainder. One staging release authorizes
+one whole attempt. Fake adapter/engine tests prove this behavior for both venues, with
+thread addresses preserved. Production Web API, first outbound DM and per-chunk
+platform membership checks remain required integration work.
+
+| Old send case | New coverage / remaining integration |
+| --- | --- |
+| Discord test_send long reply; Slack test_send long group reply | replyParts/postReply + outbound.test.ts; caps and lossless text tested |
+| Sequential chunk receipt, final send id | postReply receipt/order tests |
+| Part posted then failure | Fake postReply adapter + durable engine uncertainty/restart tests |
+| Thread reply address and staging release | Fake postReply adapter + engine tests for both venues |
+| Slack first outbound DM, fresh group checks for each post | Pending real adapter; no production support claimed |
+
 ## Final move
 
 The [replacement inventory](bridges-contract-inventory.md) pins the legacy source
