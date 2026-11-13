@@ -109,9 +109,10 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
         await details.focus();
         const before=await heading.boundingBox();
         await b.keyboard.press('End');
-        await expect.poll(()=>details.evaluate(node=>node.scrollTop)).toBeGreaterThan(0);
+        await expect.poll(()=>details.evaluate(node=>node.scrollHeight-node.clientHeight-node.scrollTop)).toBeLessThanOrEqual(1);
         expect(await heading.boundingBox()).toEqual(before);
         await details.evaluate(node=>{node.scrollTop=0;});
+        await expect.poll(()=>details.evaluate(node=>node.scrollTop)).toBe(0);
         await b.locator('[data-attention-home]').evaluate(node=>{node.scrollTop=0;});
       }else{
         expect(scrolling.overflow).toBe('visible');expect(scrolling.content).toBe(scrolling.height);
