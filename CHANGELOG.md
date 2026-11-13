@@ -1004,6 +1004,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add the opt-in generated `loom-household` API client for next-mode member, agent and project administration.
 
+- Add owner-only next-mode `household.show` and generated `loom-household show` JSON summary.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
