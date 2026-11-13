@@ -1,3 +1,4 @@
+import { resolveGrantAttention } from './attention-resolution.js';
 import type { GrantAttention } from './index.js';
 import type { Context } from '../../core/index.js';
 import { readSecretPolicy } from './policy.js';
@@ -18,7 +19,7 @@ export function removeSecretMetadata(ctx: Context, name: string, attention?: Gra
     if (request.kind !== 'secret' || request.target !== name || !['pending', 'allowed'].includes(request.state)) continue;
     request.state = request.state === 'pending' ? 'cancelled' : 'revoked';
     db.prepare('UPDATE secrets_requests SET record=? WHERE id=?').run(JSON.stringify(request), request.id);
-    attention?.resolve?.(request, ctx);
+    resolveGrantAttention(attention, request, ctx);
     ctx.changed('secret.request', request.id);
   }
   const policy = readSecretPolicy(db);

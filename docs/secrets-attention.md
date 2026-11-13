@@ -17,7 +17,9 @@ transaction. Failure rolls back the request, ask, grants and retry receipts.
 
 The source owns its asks: public raise and resolve cannot forge, overwrite or
 detach them. A persisted `sourceManaged` marker makes answers fail closed after a
-restart without the source installed. The source callback must run synchronously
+restart without the source installed. Requests also persist `attentionManaged`,
+so direct grant answers and removal require synchronous resolution acknowledgment
+even if secrets is later installed without the connector. The source callback must run synchronously
 and throw if it cannot apply the answer. An asynchronous callback is rejected.
 Source writers require the enclosing transaction on the same database and cannot
 widen an ask to agent, project or private scope.

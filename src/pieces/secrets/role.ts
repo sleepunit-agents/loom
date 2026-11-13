@@ -21,6 +21,8 @@ export interface SecretName { id: string; description: string; changedAt: number
 export interface GrantRequest extends Resource {
   id: string; agent: string; askedBy: { kind: string; id: string }; why: string;
   state: 'pending' | 'allowed' | 'denied' | 'cancelled' | 'revoked'; createdAt: number;
+  /** This request must resolve its capability-owned household ask before commit. */
+  attentionManaged?: true;
   carriedFrom?: string; claimedBy?: string;
   always?: true; answeredAt?: number; by?: string; decision?: 'policy';
   scope?: GrantContext; minutes?: number;

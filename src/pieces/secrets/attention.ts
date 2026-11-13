@@ -14,8 +14,8 @@ export function secretGrantAttention(sources: AttentionSources, operations: Pick
       source.raise(ctx, { id: request.id, ask: `Allow ${request.agent} to use ${request.target}?`,
         why: request.why, if_yes: 'I grant this request.', if_no: 'I deny this request.',
         answers: 'yes-no', refs: [request.id], href: '/p/settings-preview' });
-      return { raised: true };
+      return { raised: true, managed: true };
     },
-    resolve(request, ctx) { source.resolve(ctx, request.id, `Grant request ${request.state}`); },
+    resolve(request, ctx) { source.resolve(ctx, request.id, `Grant request ${request.state}`); return { resolved: true }; },
   };
 }
