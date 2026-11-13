@@ -37,7 +37,11 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     const yes=(p:typeof a)=>p.getByRole('button',{name:'Yes',exact:true});await expect.poll(()=>yes(a).isEnabled()).toBe(true);await expect.poll(()=>yes(b).isEnabled()).toBe(true);
     const shots=resolve('artifacts/attention-home');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
-      await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await b.setViewportSize({width,height:900});
+      // Shell choice is made at boot: open at each size so 390 exercises the actual phone shell.
+      await b.goto(loom.url);await expect.poll(()=>cards(b).count()).toBe(2);
+      await b.getByRole('button',{name:'Check again',exact:true}).click();await expect.poll(()=>yes(b).isEnabled()).toBe(true);
+      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       expect(await b.locator('[data-attention-home]').evaluate(node=>node.scrollWidth<=node.clientWidth)).toBe(true);
       await b.screenshot({path:join(shots,`home-${look}-${width}.png`),fullPage:true,animations:'disabled'});

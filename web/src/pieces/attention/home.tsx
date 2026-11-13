@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useRecords, type Snapshot } from '../../data';
 import { AppFrame, Button, Empty, Error, List, Loading, Row } from '../../kit';
-import { AskReader, AnswerReceipt, type Guard } from './index';
+import { AskReader, AnswerReceipt, stamp, type Guard } from './index';
 import type { Ask } from './model';
 import { inboxPath, latestStatus, openAsks, orderedAgents, type AgentStatus, type OwnedAgent } from './home-model';
 function Unavailable({ status, label }: { status: Snapshot['status']; label: string }) {
@@ -36,7 +36,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
               {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} /> : <p>Nothing needs you from {agent.name}.</p>}
               {ownAsks.length > 1 && <Button variant="outline" onClick={()=>go(inboxPath(ownAsks[1]))}>Next ask · {ownAsks.length-1} more</Button>}
               {receipt && <section aria-label={`${agent.name} last answer`}><h3>Last answer</h3><p>{receipt.ask}</p><AnswerReceipt ask={receipt} /></section>}
-              <section><h3>Now</h3>{statuses.status !== 'live' ? <Unavailable status={statuses.status} label="agent status" /> : <><p className="whitespace-pre-wrap">{status?.work || 'Nothing right now'}</p>{status && <p>Reported <time dateTime={new Date(status.changedAt).toISOString()}>{new Date(status.changedAt).toLocaleString('en-US',{timeZone:'America/Chicago'})} CT</time></p>}</>}</section>
+              <section><h3>Now</h3>{statuses.status !== 'live' ? <Unavailable status={statuses.status} label="agent status" /> : <><p className="whitespace-pre-wrap">{status?.work || 'Nothing right now'}</p>{status && <p>Reported <time dateTime={new Date(status.changedAt).toISOString()}>{stamp(status.changedAt)}</time></p>}</>}</section>
             </section>;
           })}
         </div>}

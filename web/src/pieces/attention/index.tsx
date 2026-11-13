@@ -7,7 +7,7 @@ const noop = () => () => {};
 function useCall<T>(request?: Call<T>) {
   return useSyncExternalStore(request?.subscribe ?? noop, request?.getSnapshot ?? (() => idle as CallState<T>));
 }
-const stamp = (at: number) => `${new Date(at).toLocaleString('en-US', { timeZone:'America/Chicago' })} CT`;
+export const stamp = (at: number) => `${new Date(at).toLocaleString('en-US', { timeZone:'America/Chicago' })} CT`;
 export interface Guard { lock: {current:boolean}; busy: boolean; setBusy(busy:boolean):void }
 function startCheck(guard: Guard, id: string): Call<Ask> | undefined {
   if (guard.lock.current) return;

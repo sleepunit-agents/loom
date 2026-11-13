@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { once } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,4 +37,20 @@ it('refreshes an already subscribed roster on ownership changes, deleting remove
   await expect.poll(()=>JSON.stringify(messages)).toContain('mark');
   expect(messages).toContainEqual(expect.objectContaining({kind:'set',records:[{id:'mark',name:'mark'}]}));
   expect(JSON.stringify(messages)).not.toContain('pond-bot');
+});
+
+it('installs only records in next mode: no scheduled Attention work, retention or outside effects',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'attention-home-startup-'));homes.push(home);fixture(home);
+  const clock=new FakeClock(Date.parse('2026-11-13T08:00:00Z'));
+  const network=vi.spyOn(globalThis,'fetch');
+  try {
+    const app=await startLoom({home,next:true,staging:true,clock,sharing:fixtureSharing,install:installFixture});closes.push(app.close);
+    const old=app.operations.call('direct',{kind:'agent',id:'art'},'attention.recordTurn',{agent:'art',turn:{venue:'relay',place:'old',at:'2026-01-01T00:00:00Z',kind:'message',from:{kind:'person',slug:'jonathan'}}},'old-turn');
+    expect(old.ok).toBe(true);
+    clock.advance(2*86_400_000);
+    expect(network).not.toHaveBeenCalled();
+    expect(app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(1);
+    expect(app.db.prepare('SELECT * FROM attention_days').all()).toEqual([]);
+    expect(app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
+  }finally{network.mockRestore();}
 });
