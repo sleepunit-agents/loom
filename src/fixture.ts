@@ -5,6 +5,7 @@ import { installSharing } from './pieces/sharing/index.js';
 import { mkdirSync, readdirSync } from 'node:fs';
 import { migrate, type Sharing } from './core/index.js';
 import { createFoundation, type Foundation } from './core/app.js';
+import { installChanges } from './pieces/changes/index.js';
 import { installTasks } from './pieces/tasks/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import { installExample } from './pieces/example/index.js';
@@ -32,6 +33,7 @@ export function installFixture(app: Foundation, sharing: () => Sharing = fixture
     sharing = () => ({ ...store.sharing(), services: fixtureSharing().services });
   }
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
+  if (!app.operations.has('changes.list')) installChanges(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing);
   installExample(app.db, app.operations, app.live, sharing);
 }

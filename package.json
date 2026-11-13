@@ -7,6 +7,7 @@
   "bin": {
     "loom": "dist/index.js",
     "loom-taskstore": "dist/taskstore-client.js",
+    "loom-changes": "dist/changes-client.js",
     "loom-approvals-client": "dist/approvals-client.js"
   },
   "files": [

@@ -14,6 +14,7 @@ import type { Sharing } from './core/index.js';
 import { installSharing } from './pieces/sharing/index.js';
 import { installTasks } from './pieces/tasks/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
+import { installRuntime } from './pieces/runtime/index.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { installEffects } from './core/effects.js';
@@ -30,6 +31,7 @@ export function installNext(app: Foundation, options: NextOptions) {
   const sharing = options.sharing ?? (() => new SharingDatabase(app.db, options.home).sharing());
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing);
+  if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing);
   return installEffects(app, sharing, !!options.staging);
 }
 export async function listenNext(app: Foundation, options: NextOptions) {

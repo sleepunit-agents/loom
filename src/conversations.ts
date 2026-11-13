@@ -117,9 +117,18 @@ export function turnHash(agent: string, turn: TurnInput): string {
 
 // ─── Showing a conversation ─────────────────────────────────────────────────
 
+/** Explicit continuity metadata. Null is standalone; omitted keeps legacy discovery.
+ * Explicit readers use core's generic render and never consult installed pieces.
+ */
+export type ConversationSelection = { household: Household; agent: string } | null;
+
+function selectedVenueLabel(home: string | undefined, name: string, selection: ConversationSelection | undefined): string {
+  return selection === undefined ? venueLabel(home, name) : coreVenue(name)?.label ?? name;
+}
+
 /** The household home a context dir's venues registry is under. */
-export function homeFor(contextDir: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  return householdOf(contextDir)?.household.home ?? storeHome(env);
+export function homeFor(contextDir: string, env: NodeJS.ProcessEnv = process.env, selection?: ConversationSelection): string | undefined {
+  return selection === undefined ? householdOf(contextDir)?.household.home ?? storeHome(env) : selection?.household.home;
 }
 
 const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
@@ -170,17 +179,17 @@ export interface ConversationView {
  * its venue is installed (not orphaned) with a `render`, run through the section-feed runner
  * (`--conversation <id>`, 3 s, the feed schema); else, or when that fails, core's generic one.
  */
-export async function conversationView(contextDir: string, agent: string, id: string, env: NodeJS.ProcessEnv = process.env): Promise<ConversationView | undefined> {
+export async function conversationView(contextDir: string, agent: string, id: string, env: NodeJS.ProcessEnv = process.env, selection?: ConversationSelection): Promise<ConversationView | undefined> {
   const c = isConversationId(id) ? getConversation(contextDir, id) : undefined;
   if (!c) return undefined;
-  const home = homeFor(contextDir, env);
+  const home = homeFor(contextDir, env, selection);
   const digests = digestsOf(contextDir, id);
   const stats = turnStats(contextDir, id);
   const total = Object.values(stats.counts).reduce((a, b) => a + b, 0);
-  const label = venueLabel(home, c.venue);
+  const label = selectedVenueLabel(home, c.venue, selection);
   let render: ConversationView['render'] = { by: 'core', feed: genericRender(c, digests, stats, label, openNeedDigest(contextDir, id)) };
   let v;
-  try { v = coreVenue(c.venue) ? undefined : venueOf(home, c.venue); } catch { v = undefined; }
+  try { v = selection !== undefined || coreVenue(c.venue) ? undefined : venueOf(home, c.venue); } catch { v = undefined; }
   if (v && !v.orphaned && v.render) {
     // The render runs as the agent (its store grant), so the grants authority decides first, as for any
     // agent's call to a piece (src/grants.ts, path `render`); a no, or one it can't give, is core's render.
@@ -200,9 +209,9 @@ export async function conversationView(contextDir: string, agent: string, id: st
 }
 
 /** `conversations(...)`, with each venue's label. */
-export function conversationsList(contextDir: string, f: ListFilter = {}, env: NodeJS.ProcessEnv = process.env): Array<ConversationListItem & { venue_label: string }> {
-  const home = homeFor(contextDir, env);
-  return listConversations(contextDir, f).map((c) => ({ ...c, venue_label: venueLabel(home, c.venue) }));
+export function conversationsList(contextDir: string, f: ListFilter = {}, env: NodeJS.ProcessEnv = process.env, selection?: ConversationSelection): Array<ConversationListItem & { venue_label: string }> {
+  const home = homeFor(contextDir, env, selection);
+  return listConversations(contextDir, f).map((c) => ({ ...c, venue_label: selectedVenueLabel(home, c.venue, selection) }));
 }
 
 
