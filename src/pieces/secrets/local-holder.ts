@@ -31,7 +31,7 @@ export function assertPrivateDirectory(path: string) {
   const s = fs.lstatSync(path);
   if (!s.isDirectory() || s.isSymbolicLink() || s.uid !== process.getuid?.() || (s.mode & 0o077)) throw failed();
 }
-function privateSocket(socket: string) {
+export function privateSocket(socket: string) {
   if (!isAbsolute(socket)) throw failed();
   assertPrivateDirectory(dirname(socket));
   const s = fs.lstatSync(socket);
@@ -44,7 +44,7 @@ export interface LocalHolderConfig {
   /** Holder certificate DNS identity, verified by Node TLS. */
   servername: string;
 }
-function tlsMaterial(config: Omit<LocalHolderConfig, 'servername'>) {
+export function tlsMaterial(config: Omit<LocalHolderConfig, 'servername'>) {
   try {
     const ca = privateBytes(config.ca), cert = privateBytes(config.cert), key = privateBytes(config.key);
     // Node's TLS context silently ignores malformed CA input. Require exactly

@@ -160,3 +160,19 @@ it.each(['yes-no','words'] as const)('keeps a source-managed %s ask in its decla
   expect(buttons('Yes')).toHaveLength(answers==='words'?0:1);
   expect(tree!.root.findAllByType('textarea')).toHaveLength(answers==='words'?1:0);
 });
+
+it('automatically checks visible waits on Inbox arrival, each minute and reconnect, and stops on unmount',async()=>{
+  vi.useFakeTimers();
+  try {
+    f.snapshot={records:[ask('wait',{waits_on:{task:'t-1'}})],status:'live'};
+    f.call.mockImplementation(()=>({result:Promise.resolve({ok:false,code:'denied',message:'Held'})}));
+    await act(async()=>{tree=create(h(InboxApp));});
+    expect(f.call).toHaveBeenCalledExactlyOnceWith('attention.checkWait',{id:'wait'});
+    await act(async()=>{await vi.advanceTimersByTimeAsync(60_000);});expect(f.call).toHaveBeenCalledTimes(2);
+    await publish({records:[],status:'offline'});
+    await act(async()=>{await vi.advanceTimersByTimeAsync(60_000);});expect(f.call).toHaveBeenCalledTimes(2);
+    await publish({records:[ask('wait',{waits_on:{task:'t-1'}})],status:'live'});expect(f.call).toHaveBeenCalledTimes(3);
+    await act(async()=>tree!.unmount());tree=undefined;
+    await act(async()=>{await vi.advanceTimersByTimeAsync(120_000);});expect(f.call).toHaveBeenCalledTimes(3);
+  } finally {vi.useRealTimers();}
+});

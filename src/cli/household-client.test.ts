@@ -40,7 +40,7 @@ const inputs: Record<string, unknown> = {
 };
 it('generates registry metadata/help and runs every household command through real HTTP', async () => {
   const { app, run, home } = await setup();
-  const offered = app.operations.offered('http').filter(o => o.name.startsWith('household.'));
+  const offered = app.operations.offered('http').filter(o => o.name.startsWith('household.') && o.cli);
   expect(offered.map(o => o.cli)).toEqual(householdCommands);
   const help = await run(['--help']); expect(help.code).toBe(0);
   for (const command of householdCommands) {

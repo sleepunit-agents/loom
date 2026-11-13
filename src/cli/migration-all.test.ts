@@ -18,6 +18,8 @@ import { run } from './migrate.js';
 import { acquireHttpLock } from '../transport/http-lock.js';
 import { importHousehold } from './household-importer.js';
 import { importTasks } from '../pieces/tasks/importer.js';
+import { publishMigrationCommsKey } from './migration-comms-key.js';
+import { loadKey } from '../pieces/comms/crypto.js';
 import { openSnapshotSqlite } from './migration-sqlite.js';
 import { createMigrationRegistry, MigrationRegistry } from './migration-registry.js';
 import { conversationId } from '../pieces/attention/conversations.js';
@@ -304,4 +306,51 @@ it('returns the generic CLI refusal for an asynchronous importer rejection witho
   expect(io.stderr.mock.calls.flat().join('')).not.toContain(secret);
   expect(JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8')).completed).toEqual([]);
   const unlock=acquireHttpLock(f.home); unlock();
+});
+
+it('recovers only the source-identical root Comms publication pair under a matching migration receipt', async () => {
+  for (const kind of ['valid', 'external', 'bytes', 'receipt', 'nested', 'extra', 'malformed', 'cookie-malformed']) {
+    const f = await fixture();
+    await loadKey(f.old);
+    const root = join(f.dir, 'key-snapshot'); await createSnapshot(f.old, root);
+    await runMigrationAll(root, f.home);
+    const name = kind === 'cookie-malformed' ? 'ui-cookie.key' : 'comms.key';
+    const key = join(f.home, name);
+    writeFileSync(key, readFileSync(join(root, 'home', name)), { mode: 0o600 });
+    const suffix = kind.endsWith('malformed') ? '-'.repeat(36) : randomUUID();
+    const temp = join(f.home, `.${name}-import-${suffix}`); linkSync(key, temp);
+    if (kind === 'external') linkSync(key, join(f.dir, 'outside'));
+    if (kind === 'bytes') writeFileSync(key, 'different');
+    if (kind === 'receipt') rmSync(join(f.home, '.migration-all.json'));
+    if (kind === 'nested') { mkdirSync(join(f.home, 'nested')); fs.renameSync(temp, join(f.home, 'nested', temp.split('/').at(-1)!)); }
+    if (kind === 'extra') { writeFileSync(join(f.home, 'extra'), 'x'); linkSync(join(f.home, 'extra'), join(f.home, 'extra-alias')); }
+    if (kind === 'valid') {
+      expect((await runMigrationAll(root, f.home)).status).toBe('complete');
+      expect(statSync(key).nlink).toBe(1); expect(fs.existsSync(temp)).toBe(false);
+    } else {
+      const before = bytes(f.home);
+      await expect(runMigrationAll(root, f.home)).rejects.toThrow(); expect(bytes(f.home)).toEqual(before);
+    }
+  }
+});
+
+it('resumes key publication through receipt-bound coordinator recovery before the helper retries', async () => {
+  const f = await fixture(); await loadKey(f.old);
+  const root = join(f.dir, 'key-snapshot'); await createSnapshot(f.old, root);
+  const registry = new MigrationRegistry();
+  let calls = 0;
+  registry.register({ name: 'household', dependencies: [], reads: [], run: context => {
+    calls++; expect(() => acquireHttpLock(f.home)).toThrow('already running');
+    const result = importHousehold(context.db, context.home, join(root, 'home'), context.now);
+    publishMigrationCommsKey(join(root, 'home/comms.key'), context.home);
+    return result;
+  } });
+  await expect(runMigrationAll(root, f.home, undefined, { registry, afterPiece: () => { throw Error('death before receipt'); } })).rejects.toThrow('death before receipt');
+  const key = join(f.home, 'comms.key'), before = readFileSync(key);
+  // Actual process death skips finally; reconstruct the exact post-link state.
+  const temp = join(f.home, `.comms.key-import-${randomUUID()}`); linkSync(key, temp);
+  expect(() => publishMigrationCommsKey(join(root, 'home/comms.key'), f.home)).toThrow('Unsafe');
+  expect((await runMigrationAll(root, f.home, undefined, { registry })).status).toBe('complete');
+  expect(calls).toBe(2); expect(fs.existsSync(temp)).toBe(false);
+  expect(statSync(key).nlink).toBe(1); expect(readFileSync(key)).toEqual(before);
 });
