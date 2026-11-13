@@ -266,3 +266,40 @@ Input delivery and execution still require the outside-effect staging gate;
 this endpoint releases no work and performs no outside effect, even in staging.
 Earlier text describing terminal reports as future work now refers to those
 remaining result and lifecycle portions, rather than done/failed metadata.
+
+
+## Durable body requests
+
+`runtime.queueBody {agent, title, brief, project?, member?, box?, needs?}`
+creates a queued job and its private input in one registry transaction. It
+returns only `{job, state:"queued"}`. The caller must satisfy central
+`give-work` and `mayCreate` for every supplied scope. An owner may give work
+only to an agent they own; project membership alone cannot give work to an
+agent. Private requests must name the calling member. Agents, runners and
+services cannot queue through this operation under the current central rule.
+
+Placement uses `placeBody`, including canonical box references, ordered
+preferences, ownership/lending, hosting permission and capability needs. An
+explicit silent box can receive queued work. The server chooses the job id,
+runner/box, state and timestamps. There is no caller-supplied conversation,
+source authority, credential, model or account selection in this operation.
+A registry retry returns the original acknowledgement without re-placement,
+even after the selected box is revoked; a changed request with the same id
+conflicts. Independent request ids create independent jobs.
+
+`runtime_inputs` stores the brief and capability needs separately from live
+job metadata. It is not a registry collection; no input-read operation is
+provided yet. Job, input and retry receipt commit together, and only committed
+job changes publish. Words never enter acknowledgement/retry results. The
+additive second runtime migration preserves existing metadata.
+
+This replaces only the durable request/placement portion of old `up`, not its
+house configuration validation, slots, sessions or trusted body-host creation.
+A queued request is not executable: house configuration, model/account
+resolution, input-fetch authorization, credential issuance and daemon release
+through `OutsideEffects.beforeOutside` must land before any runner receives
+its inputs. Queueing performs no outside effect in either mode and does not
+claim a body started. `runtime.startBody` and the Clock adapter remain
+unimplemented until they can honor their started/held/uncertain contract.
+Input retention/cleanup must be part of the final job lifecycle; this slice
+retains inputs and provides no deletion operation. No old route is retired.

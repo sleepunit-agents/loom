@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
+- Next runtime: atomically queue scoped body requests and private inputs with canonical box placement, without releasing executable work.
+
 - Add explicit `loom mcp --next` stdio composition for row-backed household metadata and offline per-agent continuity.
 
 - Add route creation, editing and confirmed removal to the next-mode Bridges preview, with pending-write and stale-draft guards.
