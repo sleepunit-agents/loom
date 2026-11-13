@@ -1,9 +1,11 @@
+import { saveLocalReceipt } from './local-receipt.js';
+import { installLocalPublic, localPublicPolicy } from './local-public.js';
 import { installPrivateExport } from './store.js';
 import { localOwner, sameLocalCaller } from '../approvals/role.js';
 import { standingBinding, bindStandingWake, checkStandingWake } from './local-standing.js';
 import { filedLocal, localFilingWords, installLocalFiling } from './local-filing.js';
 import { clockCommands, clockOperationCommands } from './commands.js';
-import { command } from './binding.js';
+import { command, localCommandInput } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -56,16 +58,19 @@ function quotaDue(reset: unknown, now: number): number {
   return Math.min(Math.max(when + 60_000, now + 15 * 60_000), now + 8 * day);
 }
 export interface ClockOptions {
+  caller?(viewer: Viewer): import('../approvals/role.js').Caller | undefined;
   runtime?: Runtime; approvals?: Approvals; notices?: HouseholdAskSource; vouchFiling?: VouchFiling;
   /** Trusted composition opt-in. Safety work acts as each named agent, never an owner. */
   deadmanAgents?: readonly string[];
 }
 /** Install on the new side only. The composition root must close jobs before its database. */
 export function installClock(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ClockOptions = {}) {
-  registerBuiltinService(operations, 'clock', ['wake', 'schedule', 'clock']);
+  registerBuiltinService(operations, 'clock', ['wake', 'schedule', 'clock', 'approval'], 'clock',
+    ['approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check']);
   migrate(db, 'clock', schema);
   installPrivateExport(db);
   installLocalFiling(db, operations, sharing);
+  installLocalPublic(operations, sharing, options.caller);
   const clock = operations.clock, runtime = options.runtime ?? stagingRuntime();
   const deadmanAgents = new Set(z.array(text).parse(options.deadmanAgents ?? []));
   let parksChanged = false;
@@ -366,11 +371,18 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('rearm', z.object({}), true, (v) => mayAct(v, {}, sharing(), 'household'), () => ({ rearmed: true }));
   register('deadman', agentInput, true, (v, i) => deadmanAgents.has(i.agent) && v.kind === 'agent' && v.id === i.agent
     && create(v, { agent: i.agent, note: '' }), (ctx, i) => ensureDeadman(ctx, i.agent), true);
-  operations.register(operation({ name: 'clock.command', write: true,
+  operations.register(operation({ name: 'clock.command', write: true, recheckPolicy:true,
     input: z.object({ argv: z.array(z.string()).max(100), agent: text.optional(), laneFile: z.object({path:text,text:z.string().max(100_000)}).optional() }),
     output: z.object({ exit:z.number().int(), stdout:z.string(), stderr:z.string() }),
-    may: viewer => viewer.kind === 'member' || viewer.kind === 'agent',
-    run: (ctx,input) => command(operations,ctx.viewer,input),
+    may: (viewer,input) => {
+      const local=localCommandInput(viewer,input);
+      return local ? localPublicPolicy(operations,sharing,options.caller,viewer,local) : viewer.kind === 'member' || viewer.kind === 'agent';
+    },
+    run: (ctx,input) => {
+      const result=command(operations,ctx.viewer,input);
+      if(result.exit===0 && input.argv.includes('--standing'))saveLocalReceipt(ctx,result);
+      return result;
+    },
   }));
   // Intent and outcome use the registry too: all state and live changes commit together.
   register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && !privateLocal(get(i.id)) && create(v, get(i.id))

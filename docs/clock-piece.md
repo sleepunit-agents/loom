@@ -761,7 +761,8 @@ runtime's authenticated caller provenance and is not implemented by this unit.
 in-process role. It calls direct-only `clock.localRequest` as the Clock service;
 HTTP, MCP, members, runners and agent tokens cannot supply its Caller. The runtime
 must obtain that Caller from authenticated body provenance before composing this
-role. Next mode does not yet connect a public command or runtime body to it.
+role. Next mode connects authenticated body requests through the public operations
+described below; no public input may supply Caller.
 
 For owner-principal work without private people, Clock files `local-wake` through
 the owning Approvals service. The card shows all executable words (at most 270
@@ -775,7 +776,7 @@ must match the full digest and displayed details, and an existing filing's exact
 prompt and note cannot be replaced. Card creation and filing commit together.
 
 This ports the filing/`remember_filed` portion of legacy `cmd_add` and
-`local_wake_card`/`shown_as_run`. Private and steered principals fail closed;
+`local_wake_card`/`shown_as_run`. Non-owner private and unbound principals fail closed;
 this filing role does not infer owner provenance from an agent token or marker.
 
 ### Trusted one-shot local recovery
@@ -791,11 +792,12 @@ spending its current Allow, including expiry and later Deny checks. Consumption,
 audit, wake and operation receipt commit in one foundation transaction.
 
 Legacy `wake in/at --approval` maps to this recovery role's approval-only input;
-public command/client wiring awaits authenticated runtime composition. Ordinary
-agent tokens cannot call it. The scheduled row keeps the local marker and receipt;
+public command/client wiring now uses Runtime caller composition as described
+below. Unbound agent tokens cannot call it. The scheduled row keeps the local marker and receipt;
 the runtime bridge continues to hold such work, so this unit grants no host dispatch.
 No legacy stores or installed pieces are read. Standing single-target/fire-time
-rechecks, app/client recovery and final authenticated local dispatch remain unfinished.
+rechecks are composed through the standing role below; app recovery controls and
+final authenticated local dispatch remain unfinished.
 
 
 ### Owning standing-local approval seam
@@ -805,7 +807,8 @@ expected}, receipt)` validates a trusted Clock filing against the owning origina
 receipt and its standing job. `expected` contains the exact target, entire SHA-256,
 displayed details and original Caller. Only the Clock service with an explicit
 central operation grant can call it; the authenticated assignee/project must also
-retain central approval-creation policy. Owner work without private people only.
+retain central approval-creation policy. Private owner work retains its member and conversation;
+owner work without private people keeps its original path.
 Original and current principal, project, agent and service must match exactly.
 The standing record must name that original receipt and retain its full digest,
 details, owner decision and caller. Turning it off or a later target Deny refuses.
@@ -821,8 +824,8 @@ separately granted read-only `approvals.piece-standing-local-check`: it always
 reads current authority even if an operation id is reused, and never increments
 use or audit. No original words or full standing record is returned. This is the
 owning seam for legacy standing consumption and fire-time rechecks; Clock now composes single-outstanding-target scheduling, private wake binding and
-fire-time checks through the trusted role below. Public recovery and authenticated
-local runtime dispatch still require composition.
+fire-time checks through the trusted role below. Public body recovery is composed
+as described below; authenticated local runtime dispatch remains unfinished.
 The existing generic standing operation and one-shot recovery are unchanged.
 
 ### Trusted standing-local scheduling
@@ -848,8 +851,9 @@ and exact executable/scope fields. Dispatch checks them against the wake, then
 calls the owning read-only live standing check before committing intent and again
 immediately before runtime invocation. Off, later Deny, changed card/full digest,
 changed words/scope or revoked policy holds the wake without invoking runtime.
-These checks never increment standing use. No public Caller, client command or
-app is connected, and the real runtime still holds local work. Trusted fakes
+These checks never increment standing use. Public body operations and commands
+connect through authenticated Runtime proof below. The app has no local recovery
+controls, and the real runtime still holds local work. Trusted fakes
 exercise this boundary; authenticated local host dispatch remains unfinished.
 
 ## Private owner-conversation local requests
@@ -878,3 +882,28 @@ markers outlive standing-history trimming. Rendered Clock/Approvals command retr
 receipts are omitted because text output may lose structured scope; public work
 records remain. Restoring a snapshot does not restore private local authority.
 No old row is promoted or widened, and no real import or rollout runs here.
+
+
+### Public body filing and recovery
+
+Next composition now passes the exact Signin Viewer to Runtime's existing
+approvalCaller proof for `clock.requestLocal` and `clock.recoverLocal`.
+Neither operation accepts Caller, member, people or project overrides. Unbound,
+non-owner, other-agent, member-token, service and runner requests fail closed.
+Private successful responses contain only approval id/state or wake id/due;
+words remain visible only in the member's signed-in window. Clock declares only
+four exact cross-piece local Approvals calls in central builtin Sharing.
+
+The generated wake command uses these operations for an explicit local prompt
+and for `wake in 1h --approval <id>` without retyping the saved prompt or note.
+`--standing` selects the saved Allow-every-time authority and requires an approval.
+Unsupported model, file, slot, continuation or place overrides are refused;
+optional retyped prompt/note must match the original exactly. Standing public and
+command receipts remain reserved beyond core receipt expiry. Private words and
+public wrapper receipts are omitted from export. Local recovery starts no body;
+private local dispatch remains held pending the real Runtime delivery unit.
+
+Remaining in this workflow: the Clock app's owner-facing local filing/recovery
+controls and screenshot evidence. A member window never manufactures a body
+Caller. The current app can see the member's private approval and wake, but this
+unit exposes the new writes only to an authentically bound agent body.

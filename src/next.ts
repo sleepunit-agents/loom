@@ -114,6 +114,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   const conversations=conversationRuntime(app,sharing,v=>signin(app).agent(v));
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
     caller: conversations.approvalCaller,
+    localAgent:()=>new HouseholdDatabase(app.db).household(options.home)?.default ?? 'agent',
     applications: { clock: clockVouchApplication(app.operations), runtime: runtimeOwnerApplication(app.operations) },
     projects: () => {
       try {
@@ -179,7 +180,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   mindTransports.set(app, sources);
   const effects = installEffects(app, sharing, !!options.staging);
   if (!app.operations.has('clock.list')) {
-    const jobs = installClock(app.db, app.operations, app.live, sharing, { runtime: clockRuntime(app, effects), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
+    const jobs = installClock(app.db, app.operations, app.live, sharing, { caller: conversations.approvalCaller, runtime: clockRuntime(app, effects), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
   if (options.bridges && !bridgeDaemons.has(app)) {

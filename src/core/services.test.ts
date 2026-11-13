@@ -104,19 +104,19 @@ it('registers the own types and exact namespace operations for every in-repo ins
     example: ['example.record'], runtime: ['runtime.box', 'runtime.job', 'runtime.settings', 'runtime.binding'],
     secrets: ['secret.name', 'secret.grant', 'secret.request', 'secret.policy', 'secret.change'],
     bridges: ['bridges.venue', 'bridges.route', 'bridges.link', 'bridges.send'],
-    clock: ['wake', 'schedule', 'clock'], mind: ['knowledge'], sharing: ['household.project', 'household.sharing'],
+    clock: ['wake', 'schedule', 'clock', 'approval'], mind: ['knowledge'], sharing: ['household.project', 'household.sharing'],
   };
   const snapshot = sharing();
   expect(Object.keys(snapshot.services).sort()).toEqual(Object.keys(types).sort());
   for (const [id, ownTypes] of Object.entries(types)) {
     expect(snapshot.services[id].types).toEqual(ownTypes);
     const namespace = id === 'sharing' ? 'household' : id;
-    const ownOperations = app.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(namespace + '.'));
+    const ownOperations = app.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(namespace + '.') || id==='clock' && ['approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check'].includes(name));
     expect(ownOperations.length).toBeGreaterThan(0);
     expect(snapshot.services[id].operations).toEqual(ownOperations);
     for (const type of ownTypes) expect(maySee({ kind: 'service', id }, { type }, snapshot)).toBe(true);
     for (const [other, otherTypes] of Object.entries(types)) if (other !== id) {
-      for (const type of otherTypes) expect(maySee({ kind: 'service', id }, { type }, snapshot)).toBe(false);
+      for (const type of otherTypes.filter(type=>!ownTypes.includes(type))) expect(maySee({ kind: 'service', id }, { type }, snapshot)).toBe(false);
     }
   }
 });
@@ -130,4 +130,16 @@ it('supports multiple operation registries leasing one database and removes only
   expect(second.store.sharing().services.changes.operations).toContain('changes.list');
   second.app.operations.close();
   expect(second.store.sharing().services).toEqual({});
+});
+
+it('composes only the exact Clock local lifecycle calls across the Approvals boundary',()=>{
+ const {app,store}=fixture(),sharing=()=>store.sharing();
+ installApprovals(app.db,app.operations,app.live,sharing);
+ const jobs=installClock(app.db,app.operations,app.live,sharing);app.onClose(jobs.close);
+ const v={kind:'service' as const,id:'clock'},s=sharing();
+ for(const name of ['approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check'])
+  expect(mayAct(v,{type:'approval'},s,'act',name)).toBe(true);
+ for(const name of ['approvals.answer','approvals.grant','approvals.piece-use','approvals.standing','approvals.piece-withdraw'])
+  expect(mayAct(v,{type:'approval'},s,'act',name)).toBe(false);
+ expect(maySee(v,{type:'approval',member:'jonathan'},s)).toBe(false);
 });

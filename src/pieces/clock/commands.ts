@@ -3,7 +3,7 @@ import type { CliCommand } from '../../core/index.js';
 const fields = (...names: string[]) => Object.fromEntries(names.map(name => [name, name]));
 const work = fields('prompt', 'prompt-file', 'note', 'model', 'slot');
 export const clockCommands: CliCommand[] = [
-  ...['at','in'].map(name => ({ name, write: true, positional: ['time'], flags: { ...work, ...fields('continuation','approval','place') } })),
+  ...['at','in'].map(name => ({ name, write: true, positional: ['time'], flags: { ...work, ...fields('continuation','approval','place','standing') } })),
   { name: 'park', write: true, flags: { ...fields('on','prompt','note','model','slot') } },
   { name: 'list' }, { name: 'log', flags: fields('since','grep') },
   { name: 'cancel', write: true, positional: ['id'] },
