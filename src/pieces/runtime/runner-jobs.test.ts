@@ -115,18 +115,20 @@ it('never reports unclaimed/terminal work or accepts state, identity and timesta
 });
 it('rolls back claims/reports and receipts on failure; only committed state changes notify', async () => {
   const f = await setup(), changed = vi.spyOn(f.app.live, 'changed');
+  // Other installed daemons also publish on the shared foundation clock.
+  const runtimeChanges = () => changed.mock.calls.flatMap(([refs]) => refs.filter(ref => ref.type === 'runtime.job'));
   for (const [op, input, state] of [['claimJob', { job: 'j' }, 'queued'], ['reportJob', { job: 'j', state: 'running' }, 'starting']] as const) {
     changed.mockClear();
     f.app.db.exec("CREATE TRIGGER abort_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT, 'abort'); END");
     expect(f.call(op, input, undefined, op)).toMatchObject({ ok: false });
-    expect(f.store.read('job', 'j')?.state).toBe(state); expect(changed).not.toHaveBeenCalled();
+    expect(f.store.read('job', 'j')?.state).toBe(state); expect(runtimeChanges()).toEqual([]);
     f.app.db.exec('DROP TRIGGER abort_receipt');
     expect(f.call(op, input, undefined, op)).toMatchObject({ ok: true });
-    expect(changed).toHaveBeenCalledExactlyOnceWith([{ type: 'runtime.job', id: 'j' }]);
+    expect(runtimeChanges()).toEqual([{ type: 'runtime.job', id: 'j' }]);
     changed.mockClear(); f.clock.advance(1);
-    expect(f.call(op, input, undefined, op)).toMatchObject({ ok: true }); expect(changed).not.toHaveBeenCalled();
+    expect(f.call(op, input, undefined, op)).toMatchObject({ ok: true }); expect(runtimeChanges()).toEqual([]);
   }
-  expect(f.call('reportJob', { job: 'j', state: 'running' })).toMatchObject({ ok: true }); expect(changed).not.toHaveBeenCalled();
+  expect(f.call('reportJob', { job: 'j', state: 'running' })).toMatchObject({ ok: true }); expect(runtimeChanges()).toEqual([]);
 });
 it('performs metadata handshake in staging without releasing an outside effect', async () => {
   const f = await setup(true), token = f.bearer('a');
