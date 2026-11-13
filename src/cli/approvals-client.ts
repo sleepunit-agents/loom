@@ -47,12 +47,19 @@ export async function runApprovalsClient(argv: string[], io: IOStreams, runtime:
       continue;
     }
     if (response.status === 503 && attempt < 3) {
-      await response.body?.cancel();
+      await response.body?.cancel().catch(() => {});
+      await runtime.retry(100 * (attempt + 1));
+      continue;
+    }
+    let text: string;
+    try { text = await response.text(); }
+    catch {
+      if (attempt === 3) return fail('loom daemon is unavailable');
       await runtime.retry(100 * (attempt + 1));
       continue;
     }
     let envelope: unknown;
-    try { envelope = await response.json(); }
+    try { envelope = JSON.parse(text); }
     catch { return fail('Invalid daemon response'); }
     const answer = answerSchema.safeParse(envelope);
     if (!response.ok || !answer.success) {

@@ -9,7 +9,7 @@ const dirs:string[]=[],closes:(()=>void)[]=[];
 const dir=()=>{const path=mkdtempSync(join(tmpdir(),'approvals-import-'));dirs.push(path);return path;};
 afterEach(()=>{for(const close of closes.splice(0))close();for(const path of dirs.splice(0))rmSync(path,{recursive:true,force:true});});
 const at='2026-11-12T00:00:00Z',now=Date.parse(at),who={agent:'art',where:'h-1'};
-const receipt={id:'a-01234567',kind:'relay',target:'art->mark',what:'Ask Mark.',why:'He knows.',who,for:'?',people:['loren'],minutes:60,at,state:'used',decided:at,expires:'2026-11-12T01:00:00Z',used:at,by:'jonathan',conversation:'cv-0123456789ab'};
+const receipt={id:'a-01234567',kind:'relay',target:'art->mark',what:'pond: Ask Mark about the pond project.',why:'He knows.',who,for:'?',people:['loren'],minutes:60,at,state:'used',decided:at,expires:'2026-11-12T01:00:00Z',used:at,by:'jonathan',conversation:'cv-0123456789ab'};
 const rule={kind:'merge',scope:'github:acme/*',tier:'do',by:'jonathan',at};
 const standing={id:'s-01234567',kind:'local-wake',agent:'art',target:`art:${'a'.repeat(16)}`,digest:'a'.repeat(64),who,for:'owner',from:receipt.id,what:'Run job',at,by:'jonathan',uses:2,used:at,off:{at,by:'jonathan'}};
 const notice={at,agent:'art',kind:'merge',target:'github:acme/app',what:'Merged it',for:'owner'};

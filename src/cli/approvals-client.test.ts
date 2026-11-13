@@ -44,3 +44,20 @@ it.each(['','/missing'])('does not contact daemon when token is unavailable: %s'
 it('does not contact daemon with an empty token',async()=>{
   const a=setup();writeFileSync(a.io.env.LOOM_TOKEN_FILE,'\n');expect(await a.run()).toBe(1);expect(a.request).not.toHaveBeenCalled();
 });
+it('retries a response body interrupted after headers using the same committed operation',async()=>{
+  const a=setup();
+  const broken=()=>new Response(new ReadableStream({start(controller){controller.enqueue(new TextEncoder().encode('{"ok":'));controller.error(Error('connection reset'));}}));
+  a.request.mockResolvedValueOnce(broken()).mockResolvedValueOnce(new Response(JSON.stringify({ok:true,value:{stdout:'done\n',stderr:'',exit:0}})));
+  expect(await a.run()).toBe(0);expect(a.output().stdout).toBe('done\n');expect(a.request).toHaveBeenCalledTimes(2);
+  expect(a.request.mock.calls[0][1]?.body).toBe(a.request.mock.calls[1][1]?.body);expect(a.retry.mock.calls).toEqual([[100]]);
+});
+it('bounds body transport retries and does not retry malformed JSON',async()=>{
+  const a=setup();a.request.mockImplementation(async()=>new Response(new ReadableStream({start(controller){controller.error(Error('connection reset'));}})));
+  expect(await a.run()).toBe(1);expect(a.request).toHaveBeenCalledTimes(4);expect(new Set(a.request.mock.calls.map(c=>c[1]?.body)).size).toBe(1);
+  const b=setup();b.request.mockResolvedValue(new Response('{"ok":'));
+  expect(await b.run()).toBe(1);expect(b.request).toHaveBeenCalledTimes(1);expect(b.output().stderr).toContain('Invalid daemon response');
+});
+it('retries a 503 even when its response body has already failed',async()=>{
+  const a=setup();a.request.mockResolvedValueOnce(new Response(new ReadableStream({start(controller){controller.error(Error('reset'));}}),{status:503})).mockResolvedValueOnce(new Response(JSON.stringify({ok:true,value:{stdout:'done',stderr:'',exit:0}})));
+  expect(await a.run()).toBe(0);expect(a.request).toHaveBeenCalledTimes(2);
+});
