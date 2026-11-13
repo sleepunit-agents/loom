@@ -3,11 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { startLoom } from '../../foundation.js';
-import { FakeClock, type Sharing } from '../../core/index.js';
-import { installBridges } from './index.js';
-import { bridgeCommands, type BridgesInputs } from './commands.js';
-import { runBridgesClient } from '../../cli/bridges-client.js';
+import { startLoom } from '../foundation.js';
+import { FakeClock, type Sharing } from '../core/index.js';
+import { installBridges } from '../pieces/bridges/index.js';
+import { bridgeCommands, type BridgesInputs } from '../pieces/bridges/commands.js';
+import { runBridgesClient } from './bridges-client.js';
 const sharing: Sharing = { members: { jonathan: { owner: true, agents: ['art'] }, reader: { owner: false, agents: [] } }, projects: {}, services: {} };
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
@@ -75,7 +75,7 @@ it('retries the identical write after a committed response is lost', async () =>
 it('rejects malformed usage before networking and leaves overflowing numbers for daemon rejection', async () => {
   const app = await setup(); let requests = 0;
   const unavailable: typeof fetch = async () => { requests++; throw Error('fixture-token'); };
-  for (const args of [['send'], ['putVenues','[]'], ['putVenues','null'], ['putVenues','{'], ['putVenues','{}','extra']]) expect(await app.run(args, unavailable)).toMatchObject({ code: 2, stdout: '' });
+  for (const args of [['send'], ['putVenues'], ['putVenues','[]'], ['putVenues','null'], ['putVenues','{'], ['putVenues','{}','extra']]) expect(await app.run(args, unavailable)).toMatchObject({ code: 2, stdout: '' });
   expect(requests).toBe(0);
   const raw = JSON.stringify(venue).replace('"v1"', '1e400');
   const result = await app.run(['putVenues', raw]); expect(result).toMatchObject({ code: 1, stdout: '' }); expect(result.bodies[0]).toContain('1e400');
@@ -92,10 +92,13 @@ it('requires an explicit origin and token, refuses redirects, and never prints s
     const result = await app.run(['removeVenues','{}'], async () => Response.json(value)); expect(result).toMatchObject({ code: 1, stdout: '' }); expect(result.stderr).not.toContain('fixture-token');
   }
 });
-it('retries 503 with the same id and offers offline help without any transport', async () => {
+it('retries server errors with the same id and offers offline help without any transport', async () => {
   const app = await setup(); let calls = 0;
-  const result = await app.run(['removeVenues','{"id":"v1"}'], async () => ++calls < 4 ? Response.json({}, { status: 503 }) : Response.json({ ok: true, value: { id: 'v1' } }));
-  expect(result).toMatchObject({ code: 0 }); expect(calls).toBe(4); expect(new Set(result.bodies).size).toBe(1);
+  for (const status of [500, 502, 503, 504]) {
+    calls = 0;
+    const result = await app.run(['removeVenues','{"id":"v1"}'], async () => ++calls < 4 ? Response.json({}, { status }) : Response.json({ ok: true, value: { id: 'v1' } }));
+    expect(result).toMatchObject({ code: 0 }); expect(calls).toBe(4); expect(new Set(result.bodies).size).toBe(1);
+  }
   for (const args of [[], ['--help'], ['-h']]) {
     let stdout = '';
     expect(await runBridgesClient(args, { stdout: s => stdout += s, stderr: () => {}, stdin: Readable.from([]), stdinIsTTY: false, env: {} }, { request: async () => { throw Error('must not request'); }, retry: async () => { throw Error('must not retry'); } })).toBe(0);

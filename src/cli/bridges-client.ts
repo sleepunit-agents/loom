@@ -10,7 +10,7 @@ export async function runBridgesClient(argv: string[], io: IOStreams, runtime: C
   const help = `usage: loom-bridges <${bridgeCommands.map(c => c.name).join('|')}> [json-object]\n`;
   if (!argv.length || argv[0] === '--help' || argv[0] === '-h') { io.stdout(help); return 0; }
   const command = bridgeCommands.find(c => c.name === argv[0]);
-  if (!command || argv.length > 2) { io.stderr(help); return 2; }
+  if (!command || argv.length !== 2) { io.stderr(help); return 2; }
   const inputText = argv[1] ?? '{}';
   let input: unknown;
   try {
@@ -34,7 +34,7 @@ export async function runBridgesClient(argv: string[], io: IOStreams, runtime: C
       const response = await runtime.request(new URL(`/api/bridges/${command.name}`, base), {
         method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body, signal: AbortSignal.timeout(1500),
       });
-      if (response.status === 503 && attempt < 3) { await response.body?.cancel().catch(() => {}); await runtime.retry(100 * (attempt + 1)); continue; }
+      if (response.status >= 500 && attempt < 3) { await response.body?.cancel().catch(() => {}); await runtime.retry(100 * (attempt + 1)); continue; }
       if (!response.ok) return fail('Request refused');
       const answer: unknown = await response.json();
       if (!answer || typeof answer !== 'object' || !('ok' in answer)) return fail('Invalid daemon response');

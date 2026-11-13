@@ -215,7 +215,7 @@ Put operations take the existing venue, route or link JSON; remove operations ta
 `{"id":"record-id"}`. The daemon applies schemas and household policy. The client
 adds no actor or authority fields. It prints the daemon's `{ "id": "record-id" }`
 acknowledgement as JSON, with exit 0; refusal/unavailability exits 1 and malformed
-command/JSON usage exits 2. A failed response retries at most four times with the
+command/JSON usage exits 2. Transport failures and HTTP 5xx responses retry at most four times with the
 same write id and original JSON, including after a lost commit acknowledgement.
 Redirects are refused and diagnostics are fixed strings. Only secret references
 belong in venue setup; this command never obtains venue credentials.
