@@ -11,8 +11,8 @@ afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await 
 async function setup(staging = false) {
   const home = mkdtempSync(join(tmpdir(), 'runtime-queue-'));
   cleanups.push(() => rmSync(home, { recursive: true, force: true })); fixture(home);
-  const clock = new FakeClock();
-  let app = await startLoom({ home, clock, next: true, staging, sharing: fixtureSharing });
+  const clock = new FakeClock(), sharing = fixtureSharing();
+  let app = await startLoom({ home, clock, next: true, staging, sharing: () => sharing });
   cleanups.push(() => app.close());
   const store = runtimeStore(app.db);
   app.db.transaction(() => {
@@ -25,8 +25,8 @@ async function setup(staging = false) {
   const call = (extra: object = {}, viewer: Viewer = { kind: 'member', id: 'jonathan' }, id = `queue-${++seq}`) =>
     app.operations.call('direct', viewer, 'runtime.queueBody', { ...input, ...extra }, id);
   const jobOf = (result: ReturnType<typeof call>) => { expect(result.ok).toBe(true); return (result as { ok: true; value: { job: string } }).value.job; };
-  return { get app() { return app; }, get store() { return runtimeStore(app.db); }, clock, call, input, jobOf,
-    restart: async () => { await app.close(); app = await startLoom({ home, clock, next: true, staging, sharing: fixtureSharing }); },
+  return { get app() { return app; }, get store() { return runtimeStore(app.db); }, sharing, clock, call, input, jobOf,
+    restart: async () => { await app.close(); app = await startLoom({ home, clock, next: true, staging, sharing: () => sharing }); },
   };
 }
 it('queues durable input and canonical placement, then an assigned runner can claim the real request', async () => {
@@ -114,4 +114,16 @@ it('upgrades version-one runtime storage without changing existing job/box metad
   expect(f.app.db.prepare('SELECT * FROM runtime_boxes ORDER BY id').all()).toEqual(boxes);
   expect(f.app.db.prepare('SELECT * FROM runtime_inputs').all()).toEqual([]);
   expect(f.call()).toMatchObject({ ok: true });
+});
+
+it('independently checks project scope even with private visibility and never grants service give-work', async () => {
+  const f = await setup(), pollock = { kind: 'member', id: 'pollock' } as const;
+  f.sharing.services.keyholder = { types: ['runtime.job'], operations: ['runtime.queueBody'] };
+  expect(f.call({}, { kind: 'service', id: 'keyholder' })).toMatchObject({ ok: false, code: 'denied' });
+  // Private visibility lets give-work succeed: mayCreate must independently check Other.
+  expect(f.call({ agent: 'pond-bot', member: 'pollock', project: 'other' }, pollock)).toMatchObject({ ok: false, code: 'denied' });
+  expect(f.store.ids('job')).toEqual([]);
+  f.app.db.transaction(() => { const { changedAt: _, ...box } = f.store.read('box', 'a')!; f.store.put('box', { ...box, lentTo: ['pond-bot'] }, 1); })();
+  const job = f.jobOf(f.call({ agent: 'pond-bot', member: 'pollock', project: 'pond', box: 'a' }, pollock));
+  expect(f.store.read('job', job)).toMatchObject({ agent: 'pond-bot', member: 'pollock', project: 'pond', box: 'a' });
 });
