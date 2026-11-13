@@ -81,8 +81,10 @@ export function resolveRepoRoot(): string {
   return resolve(dirname(thisFile), '..');
 }
 
-export function resolveSqliteDbPath(contextDir: string): string {
-  return process.env.LOOM_SQLITE_DB_PATH ?? resolve(contextDir, 'memories.db');
+// Explicit composition always uses the selected context's private store.
+// Undefined keeps the legacy process-wide override for existing callers.
+export function resolveSqliteDbPath(contextDir: string, selection?: { agent?: string } | null): string {
+  return (selection === undefined ? process.env.LOOM_SQLITE_DB_PATH : undefined) ?? resolve(contextDir, 'memories.db');
 }
 
 /** Null explicitly selects a standalone store; undefined preserves legacy discovery. */

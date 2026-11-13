@@ -21,7 +21,7 @@ import { dirname } from 'node:path';
  */
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveSqliteDbPath } from '../config.js';
+import { resolveIdentityName, resolveSqliteDbPath } from '../config.js';
 import { MIGRATIONS } from './migrations.js';
 import {
   CardTable, fail, isPlainObject, assertNoNull, checkString, checkFieldName, checkVerifiedAt,
@@ -709,11 +709,12 @@ export class PeopleStore {
  */
 export function openPeopleStore(
   contextDir: string,
-  opts: { readonly?: boolean; now?: () => number; actor?: string } = {},
+  opts: { readonly?: boolean; now?: () => number; actor?: string; selection?: { agent?: string } | null } = {},
 ): PeopleStore | null {
-  const dbPath = resolveSqliteDbPath(contextDir);
+  const dbPath = resolveSqliteDbPath(contextDir, opts.selection);
   if (opts.readonly && !existsSync(dbPath)) return null;
-  return new PeopleStore({ dbPath, readonly: opts.readonly, now: opts.now, actor: opts.actor });
+  const actor = opts.actor ?? (opts.selection === undefined ? undefined : resolveIdentityName(contextDir, opts.selection));
+  return new PeopleStore({ dbPath, readonly: opts.readonly, now: opts.now, actor });
 }
 
 // ─── The room (identity's `people` param) ────────────────────────────────────
