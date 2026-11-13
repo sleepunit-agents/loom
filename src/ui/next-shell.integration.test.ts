@@ -43,6 +43,16 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app p
     await expect.poll(()=>a.getByRole('heading',{name:'Pond work',exact:true}).count()).toBe(1);
     await b.goto(a.url());
     await expect.poll(()=>b.getByRole('button',{name:'Add record',exact:true}).isEnabled()).toBe(true);
+    await a.locator('.next-preferences > summary').click();
+    await a.getByRole('combobox',{name:'Look',exact:true}).selectOption('daylight');
+    await expect.poll(()=>b.locator('html').getAttribute('data-look')).toBe('daylight');
+    await expect.poll(()=>a.getByRole('combobox',{name:'Reduce motion',exact:true}).isEnabled()).toBe(true);
+    await a.getByRole('combobox',{name:'Reduce motion',exact:true}).selectOption('on');
+    await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('reduce');
+    await expect.poll(()=>a.getByRole('checkbox',{name:'Allow zoom',exact:true}).isEnabled()).toBe(true);
+    await a.getByRole('checkbox',{name:'Allow zoom',exact:true}).check();
+    await expect.poll(()=>b.locator('meta[name=viewport]').getAttribute('content')).not.toContain('user-scalable=no');
+    await a.locator('.next-preferences > summary').click();
     await a.getByRole('textbox',{name:'Title',exact:true}).fill('Two windows on the next desk');
     await a.getByRole('button',{name:'Add record',exact:true}).click();
     await expect.poll(()=>b.getByText('Two windows on the next desk',{exact:true}).count()).toBe(1);
@@ -62,7 +72,10 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app p
       await expect.poll(()=>b.locator('.next-shell').getAttribute('data-shell')).toBe(width<1024?'phone':'desk');
       await expect.poll(()=>b.getByText('Two windows on the next desk',{exact:true}).count()).toBe(1);
       expect(await b.locator('[data-tile]').count()).toBe(width<1024?1:2);
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await b.locator('.next-preferences > summary').click();
+      await expect.poll(()=>b.getByRole('combobox',{name:'Look',exact:true}).isEnabled()).toBe(true);
+      await b.getByRole('combobox',{name:'Look',exact:true}).selectOption(look);
+      await expect.poll(()=>b.locator('html').getAttribute('data-look')).toBe(look);
       await b.screenshot({path:join(shots,`next-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     expect(errors).toEqual([]);
