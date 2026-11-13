@@ -1,3 +1,5 @@
+import { fileDigest } from './migration-files.js';
+import { compareRuntimeArchive } from '../pieces/runtime/import-archive.js';
 /** Offline comparison only. No foundation, migrations, importer calls or writable opens. */
 import Database from 'better-sqlite3';
 import { existsSync, readFileSync, statSync } from 'node:fs';
@@ -56,11 +58,18 @@ export async function verifyMigration(snapshot: string, destination: string, sup
     };
     assertCheckpointed();
     const commsKeyBefore = plan.importers.comms ? optional(join(home,'comms.key')) : undefined;
-    const before = readFileSync(path), db = openSnapshotSqlite(path);
+    const before = fileDigest(path), db = openSnapshotSqlite(path);
     const report: VerificationReport = {status:'verified',snapshot:plan.snapshot,plan:migrationPlanChecksum(plan),pieces:[],missing:[],differences:[]};
     try {
       for (const [piece,input] of Object.entries(plan.importers)) {
         if (!verifiers.includes(piece)) { report.missing.push(piece); continue; }
+        if (piece === 'runtime') {
+          const sourceHome=join(checked.root,'home');
+          const h=parseHouseholdDocument(sourceHome,JSON.parse(readFileSync(join(sourceHome,'household.json'),'utf8')));
+          const source=readRuntimeImport(runtimeMigrationSources(input.paths.map(p=>join(checked.root,p))),input.options,
+            {agents:h.agents,members:h.members.map(m=>m.person),projects:[]},openSnapshotSqlite);
+          if(!compareRuntimeArchive(db,source))report.differences.push({piece,table:'runtime_import_chunks',expected:Object.keys(source.files).length,actual:null});
+        }
         if (piece === 'comms') {
           report.pieces.push(piece);
           const differences = await compareComms(db,input.paths.map(p => snapshotPath({snapshot:{root:checked.root,manifest:checked.manifest}},p)),home);
@@ -86,7 +95,7 @@ export async function verifyMigration(snapshot: string, destination: string, sup
       }
       prepareMigrationPlan(snapshot,plan); // detect source mutation during projection
       assertCheckpointed(); // a direct writer can bypass the daemon gate
-      if (!before.equals(readFileSync(path))) throw Error('Destination changed');
+      if (canonicalPlanValue(before)!==canonicalPlanValue(fileDigest(path))) throw Error('Destination changed');
       if (canonicalPlanValue(readReceipt(home,plan))!==canonicalPlanValue(receipt)) throw Error('Receipt changed');
       const expectedKey = optional(join(checked.root,'home/ui-cookie.key')), finalKey = optional(join(home,'ui-cookie.key'));
       if ((expectedKey || finalKey) && !expectedKey?.equals(finalKey??Buffer.alloc(0))) {
@@ -112,7 +121,7 @@ export async function verifyRuntimeMigration(snapshot:string,home:string,options
   try {
     lock.exec('BEGIN EXCLUSIVE');
     const path=join(home,'loom.db');assertRuntimeCheckpointed(path);
-    const before=readFileSync(path),db=openSnapshotSqlite(path);
+    const before=fileDigest(path),db=openSnapshotSqlite(path);
     try {
       const sourceHome=join(prepared.root,'home');
       const h=parseHouseholdDocument(sourceHome,JSON.parse(readFileSync(join(sourceHome,'household.json'),'utf8')));
@@ -126,8 +135,9 @@ export async function verifyRuntimeMigration(snapshot:string,home:string,options
         const difference=compareTable(db,table,expected);
         if(difference)report.differences.push({piece:'runtime',...difference});
       }
+      if(!compareRuntimeArchive(db,source))report.differences.push({piece:'runtime',table:'runtime_import_chunks',expected:Object.keys(source.files).length,actual:null});
       prepareMigrationPlan(snapshot,prepared.plan);assertRuntimeCheckpointed(path);
-      if(!before.equals(readFileSync(path)))throw Error('Runtime destination changed');
+      if(canonicalPlanValue(before)!==canonicalPlanValue(fileDigest(path)))throw Error('Runtime destination changed');
       report.status=report.differences.length?'different':'verified';return report;
     } finally {db.close();}
   } finally {lock.close();}

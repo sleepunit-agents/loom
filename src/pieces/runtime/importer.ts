@@ -1,3 +1,4 @@
+import { writeRuntimeArchive, compareRuntimeArchive } from './import-archive.js';
 /** Explicit offline import only. The daemon never reads old runtime files. */
 import type Database from 'better-sqlite3';
 import { migrate, type Db } from '../../core/index.js';
@@ -24,13 +25,14 @@ export function importRuntime(db: Db, sources: RuntimeImportSources, options: un
       if (before.value!==source.checksum || mapping?.value!==source.options) throw Error('A different runtime source or mapping was already imported');
       return {ok:true,imported:false,checksum:source.checksum};
     }
-    for (const table of Object.keys(expected)) if (db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get()) throw Error('Runtime destination must be empty');
+    for (const table of [...Object.keys(expected),'runtime_import_chunks']) if (db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get()) throw Error('Runtime destination must be empty');
     for (const [table,rows] of Object.entries(expected)) for (const row of rows) {
       const keys = Object.keys(row);
       db.prepare(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...Object.values(row) as (string|number)[]);
     }
+    writeRuntimeArchive(db,source);
     controls.interrupt?.();
-    if (!compareRuntimeImport(db,expected)) throw Error('Runtime import ids, counts or content differ');
+    if (!compareRuntimeImport(db,expected) || !compareRuntimeArchive(db,source)) throw Error('Runtime import ids, counts or content differ');
     return {ok:true,imported:true,checksum:source.checksum};
   })();
 }

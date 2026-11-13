@@ -104,3 +104,26 @@ Never use a copy without a valid completion manifest. Directories are private
 home because it includes keys. Manifest checks detect changed contents, duplicate
 paths and paths or links escaping the snapshot. The manifest is an integrity
 inventory, not a signature against somebody who can rewrite the snapshot itself.
+
+### Bounded file IO
+
+Snapshot copying, alias copies and integrity hashing use 1 MiB buffers. Runtime
+inventory binds root-relative paths to byte counts and SHA-256 digests, rather
+than putting base64 files into a single canonical string. Runtime's private
+archive stores those descriptors in `runtime_import_sources` and exact 1 MiB
+BLOB parts in `runtime_import_chunks` (ordered by path and part). Empty files
+have a descriptor and zero parts. No reader of live Runtime records uses these
+tables. Both independent verifiers compare every physical part with source
+bytes and reject extra, missing, reordered or changed parts; a receipt alone is
+never evidence. The source checksum now binds descriptors and logical records.
+A destination imported with the earlier base64 archive format must be rebuilt
+from its retained snapshot into a fresh home; an existing receipt is refused,
+not silently upgraded or overwritten.
+
+Completed SQLite images are copied with bounded IO into private disposable
+0700 temporary directories, normalized there, and opened read-only. Closing the
+connection removes its image. Source files and sidecars are never modified.
+SIGKILL can leave a private temporary image; the coordinator may remove such
+images only after confirming no migration process owns them and under the same
+backup-retention authorization as other migration artifacts. Structured JSON
+records still require parsing; opaque archives are never parsed as JSON.
