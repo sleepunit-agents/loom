@@ -57,6 +57,9 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   const sentRetry=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.send',{thread:place,id:'retrystartaaaaaa',text:'A queued start'},'fixture-retry',true);
   if(!sentRetry.ok)throw new Error('retry fixture failed');
   const seq=(sentRetry.value as {seq:number}).seq;
+  // Retry notices follow runtime acceptance; do not race the delivery receipt write.
+  await comms.deliver('art',place,seq);
+  expect(comms.trace('art',place).messages.find(m=>m.seq===seq)?.delivery).toBe('delivered');
   const retryAt=new Date(clock.now()+60000).toISOString();
   await comms.startNotice('art',place,{kind:'start-retry',seq,attempt:2,retryAt,reason:'private fixture host reason'});
   await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(1);
