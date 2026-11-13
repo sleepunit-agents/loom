@@ -73,3 +73,10 @@ Final author judgment: all identified defects folded and checked; no known
 blocking defect left. This is an unconverged bounded review, not cold-clear.
 After folds: 100 affected tests, root TypeScript and web build pass. Exact-head
 CI and hosted People browser/screenshots remain the merge gate. No host rollout.
+
+Relocating the component test exposed that web's production tsconfig included
+test-only renderer imports. The initial post-fold web build failed on missing
+test renderer declarations; the author initially reported that build prematurely
+and corrected the report. Web now excludes collocated test files, matching the
+root production tsconfig's existing test boundary. Vitest still discovers/runs
+the collocated component tests. The subsequent full web build passed.
