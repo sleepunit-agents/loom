@@ -56,17 +56,17 @@ it('uses registration order to break ties regardless of requested order', () => 
 });
 it('rejects child symlinks inside a directory input', () => {
   const root = mkdtempSync(join(tmpdir(), 'migration-child-')); roots.push(root);
-  mkdirSync(join(root, 'home')); writeFileSync(join(root, 'outside'), 'private');
-  symlinkSync(join(root, 'outside'), join(root, 'home', 'household.json'));
+  mkdirSync(join(root, 'home', 'nested'), { recursive: true }); writeFileSync(join(root, 'outside'), 'private');
+  symlinkSync(join(root, 'outside'), join(root, 'home', 'nested', 'household.json'));
   const context = { snapshot: { root } } as MigrationContext;
   expect(() => snapshotPath(context, 'home')).toThrow('symlink');
 });
 
 it('rejects a socket inside a directory input', async () => {
   const root = mkdtempSync(join(tmpdir(), 'migration-socket-')); roots.push(root);
-  mkdirSync(join(root, 'home'));
+  mkdirSync(join(root, 'home', 'nested'), { recursive: true });
   const server = createServer();
-  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(join(root, 'home', 'socket'), resolve); });
+  await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(join(root, 'home', 'nested', 'socket'), resolve); });
   try {
     expect(() => snapshotPath({ snapshot: { root } } as MigrationContext, 'home')).toThrow('special file');
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }

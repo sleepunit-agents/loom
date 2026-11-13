@@ -95,16 +95,16 @@ function single(context: MigrationContext, input: MigrationInput): string {
 export function createMigrationRegistry(): MigrationRegistry {
   const registry = new MigrationRegistry();
   registry.register({ name: 'household', dependencies: [], reads: ['home/ (household metadata, identity files and keys)'],
-    run: (c, i) => importHousehold(c.db, c.home, single(c, i), c.now) });
+    run: (context, input) => importHousehold(context.db, context.home, single(context, input), context.now) });
   registry.register<Parameters<typeof importTasks>[3]>({ name: 'tasks', dependencies: ['household'], reads: ['tasks/store.db'],
-    run: (c, i) => importTasks(c.db, single(c, i), c.now, i.options) });
+    run: (context, input) => importTasks(context.db, single(context, input), context.now, input.options) });
   registry.register<ImportScopes>({ name: 'attention', dependencies: ['household'], reads: ['home/**/memories.db (conversation tables)'],
-    run: (c, i) => importAttention(c.db, i.paths.map(path => snapshotPath(c, path)), i.options) });
+    run: (context, input) => importAttention(context.db, input.paths.map(path => snapshotPath(context, path)), input.options) });
   registry.register({ name: 'clock', dependencies: ['household'], reads: ['home/<old WAKE_DATA>/'],
-    run: (c, i) => importClock(c.db, single(c, i), c.now) });
+    run: (context, input) => importClock(context.db, single(context, input), context.now) });
   registry.register<Parameters<typeof importApprovals>[3]>({ name: 'approvals', dependencies: ['household'], reads: ['home/<old approvals directory>/'],
-    run: (c, i) => importApprovals(c.db, single(c, i), c.now, i.options) });
+    run: (context, input) => importApprovals(context.db, single(context, input), context.now, input.options) });
   registry.register<Parameters<typeof importChanges>[2]>({ name: 'changes', dependencies: ['household'], reads: ['home/<Changes snapshot JSON>'],
-    run: (c, i) => importChanges(c.db, single(c, i), i.options) });
+    run: (context, input) => importChanges(context.db, single(context, input), input.options) });
   return registry;
 }
