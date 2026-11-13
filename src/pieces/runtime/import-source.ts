@@ -4,6 +4,7 @@ import { lstatSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type Database from 'better-sqlite3';
 import { z } from 'zod';
+import { fileDigest } from '../../core/migration-files.js';
 import { records, type RuntimeRecords } from './records.js';
 
 const identity = z.string().min(1).max(200);
@@ -42,14 +43,15 @@ const text = (value: unknown): string => identity.parse(value);
  */
 export function readRuntimeInventory(sources: RuntimeImportSources, open: (path: string) => Database.Database) {
   if (!sources.store && !sources.state && !sources.data) throw Error('No runtime source');
-  const files: Record<string,string> = {};
+  const files: Record<string,{bytes:number;sha256:string}> = {};
+  const filePaths: Record<string,string> = {};
   function walk(path: string, key: string, directory: boolean): void {
     if(key==='data/logins' || key.startsWith('data/logins/'))throw Error('Runner login values must remain outside the runtime import');
     const stat = lstatSync(path);
     if (stat.isSymbolicLink()) throw Error('Runtime source contains a symlink');
     if (directory && !stat.isDirectory()) throw Error('Runtime source root must be a directory');
     if (stat.isDirectory()) for (const name of readdirSync(path).sort()) walk(join(path,name),`${key}/${name}`,false);
-    else if (stat.isFile()) files[key] = readFileSync(path).toString('base64');
+    else if (stat.isFile()) { files[key] = fileDigest(path); filePaths[key]=path; }
     else throw Error('Runtime source contains a special file');
   }
   if (sources.store) {
@@ -62,7 +64,7 @@ export function readRuntimeInventory(sources: RuntimeImportSources, open: (path:
     if(!lstatSync(sources.household).isFile())throw Error('Runtime Comms source must be a regular file');
     walk(sources.household,'comms-household.db',false);
   }
-  const json = (key: string): unknown => JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.from(files[key],'base64')));
+  const json = (key: string): unknown => JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(readFileSync(filePaths[key])));
   const state = files['state/state.json'] === undefined ? undefined : object(json('state/state.json'));
   // An explicitly inventoried empty root supplies no state; never invent a local box.
   if (state && state.v !== 1) throw Error('Unknown runtime state version');
@@ -93,7 +95,7 @@ export function readRuntimeInventory(sources: RuntimeImportSources, open: (path:
     } finally { db.close(); }
   }
   const source = canonicalRuntimeSource({roots:Object.keys(sources).filter(key=>sources[key as keyof RuntimeImportSources]!==undefined).sort(),files,documents,revisions,privateThreads});
-  return {files,state,conversations,documents,revisions,privateThreads,source,checksum:createHash('sha256').update(source).digest('hex')};
+  return {files,filePaths,state,conversations,documents,revisions,privateThreads,source,checksum:createHash('sha256').update(source).digest('hex')};
 }
 
 /** Explicit mappings prevent guessing a job's audience from prose or old bearer keys. */

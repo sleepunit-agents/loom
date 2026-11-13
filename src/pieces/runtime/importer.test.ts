@@ -1,8 +1,9 @@
+import { compareRuntimeArchive } from './import-archive.js';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createFoundation } from '../../core/app.js';
 import { openSnapshotSqlite } from '../../cli/migration-sqlite.js';
 import { readRuntimeImport, readRuntimeInventory } from './import-source.js';
@@ -108,6 +109,47 @@ it('refuses unknown host/loan agents and duplicate preferences',()=>{
   f.state.boxes.r1.mayHost=['art'];f.state.boxes.r1.lentTo=['stranger'];f.save();expect(f.read).toThrow('Unknown runtime agent');
   f.state.boxes.r1.lentTo=['art'];f.state.primaries.art=['r1','r1'];f.save();expect(f.read).toThrow('Duplicate runtime preference');
 });
+
+it.each(['missing','extra','changed','wrong-part','empty-file'])('independently detects %s private archive corruption',kind=>{
+  const f=fixture();writeFileSync(join(f.sources.data,'empty.bin'),'');const source=f.read();f.run();
+  expect(compareRuntimeArchive(f.app.db,source)).toBe(true);
+  if(kind==='missing')f.app.db.prepare("DELETE FROM runtime_import_chunks WHERE path='data/future.bin'").run();
+  if(kind==='extra')f.app.db.prepare("INSERT INTO runtime_import_chunks VALUES ('data/future.bin',1,?)").run(Buffer.from([1]));
+  if(kind==='changed')f.app.db.prepare("UPDATE runtime_import_chunks SET bytes=? WHERE path='data/future.bin'").run(Buffer.from([3,0,254]));
+  if(kind==='wrong-part')f.app.db.prepare("UPDATE runtime_import_chunks SET part=1 WHERE path='data/future.bin'").run();
+  if(kind==='empty-file')f.app.db.prepare("INSERT INTO runtime_import_chunks VALUES ('data/empty.bin',0,?)").run(Buffer.alloc(0));
+  expect(compareRuntimeArchive(f.app.db,source)).toBe(false);
+});
+
+it('rolls back new source files added after archival and before commit',()=>{
+  const f=fixture();expect(()=>f.run({interrupt:()=>writeFileSync(join(f.sources.data,'new-file.bin'),'late')})).toThrow('changed during import');
+  expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'runtime_%'").all()).toEqual([]);
+  expect(f.run()).toMatchObject({imported:true});
+});
+
+it('refuses an oversized corrupt BLOB before SQLite materializes its bytes',()=>{
+  const f=fixture(),source=f.read();f.run();
+  f.app.db.prepare("UPDATE runtime_import_chunks SET bytes=zeroblob(2*1024*1024) WHERE path='data/future.bin'").run();
+  const prepare=f.app.db.prepare.bind(f.app.db);
+  const guard=vi.spyOn(f.app.db,'prepare').mockImplementation(sql=>{
+    const statement=prepare(sql);
+    // Observe raw-BLOB reads, including iterator-based reads, without allocating
+    // the malicious value first. typeof/length metadata is safe to inspect.
+    if(/^SELECT /i.test(sql)&&/\bbytes\b/.test(sql)&&!/(?:length|typeof)\(bytes\)/.test(sql)) {
+      for(const method of ['get','all','iterate'] as const) {
+        const original=statement[method].bind(statement);
+        vi.spyOn(statement,method).mockImplementation((...args:unknown[])=>{
+          const path=args[0];
+          if(typeof path==='string'&&(prepare('SELECT count(*) AS n FROM runtime_import_chunks WHERE path=? AND length(bytes)>1048576').get(path) as {n:number}).n)throw Error('Unbounded archive BLOB read');
+          return original(...args);
+        });
+      }
+    }
+    return statement;
+  });
+  try{expect(compareRuntimeArchive(f.app.db,source)).toBe(false);}finally{guard.mockRestore();}
+});
+
 it('never imports or verifies automatic start authority from old source archives',()=>{
  const f=fixture();f.run();expect(f.app.db.prepare('SELECT * FROM runtime_start_attempts').all()).toEqual([]);
  f.app.db.prepare('INSERT INTO runtime_start_attempts VALUES (?,?)').run('h-1','{}');
