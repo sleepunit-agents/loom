@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Add confirmed dismissal of held and uncertain sends in the next-mode Bridges preview, with pending and error feedback across navigation.
+- Compose parked Clock wakes with current scoped Approvals and Secrets answers in next mode, without spending receipts or carrying grants.
 
 - Start the next-mode Changes daemon with durable refresh and explicit, owner-granted Secrets composition.
 - Bind runtime job claims to configured house identity and record validated, immutable per-job build tags.

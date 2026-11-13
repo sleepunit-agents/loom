@@ -236,7 +236,7 @@ the command inventory above, the source has these domain obligations:
 | `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Lane creation replaces pending self-chains conservatively; the rearm response and six-hour suppression are not implemented. |
 | `inspect_continuation`: authenticated issuer, valid opaque handle and runtime deadline before commit; no file/slot/place/approval/standing/local combination | Current continuation field is opaque data only; validation and runtime capability inspection remain unfinished. It must not convey authority by its presence. |
 | `wake_place` / `house_may_join`: a house's named lane joins an existing conversation only with runtime-verified same-conversation provenance | Runtime owns delivery; caller-supplied place must not let work join an arbitrary existing body. The current field has no such validation yet. |
-| `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note is implemented below; question-role composition remains unfinished. |
+| `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note and scoped next-mode approval/secret-answer composition are implemented below. |
 | Local wake: whole prompt and note retained, exact digest, one approval spend, standing job checked again at fire; one pending occurrence per standing target | Approvals integration remains unfinished; a local marker or free approval id is not a grant. |
 | Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Provenance adoption, explicit asks and grouped automatic asks remain unfinished. Imported metadata never authorizes them. |
 | Empty spool plants a fixed 24-hour dead-man, replaced by real work; initial unconfigured service arms nothing | Dead-man job and explicit configured-agent behavior remain unfinished. Do not synthesize an owner Viewer from a local machine default. |
@@ -416,8 +416,7 @@ imported provenance. Those workflows remain part of later server slices.
 
 Next mode owns Clock's lifecycle and stops its timer before database shutdown.
 Until runtime dispatch composition exists, every start remains held by Clock's
-default runtime even outside staging; nothing calls the old program. Next-mode
-approval parking composition still remains.
+default runtime even outside staging; nothing calls the old program. Next mode composes scoped approval and secret answers as described below.
 
 One in-process browser test exercises two windows, live creation/cancellation,
 pause, lane text edits/reassignment, direct-link reload, phone confirmations,
@@ -506,3 +505,25 @@ stream clears stale values; losing ownership removes the card. The existing Home
 browser proof checks two-window create/pause/cancel updates and captures the
 composed panels in its six-size/look evidence. No caller authority or dispatch
 capability is added by these read-only panels.
+
+## Parked-answer composition
+
+Next mode supplies Clock with read-only owning roles for Approvals and, when
+installed in the same foundation, Secrets requests. Each read retains the wake's
+original viewer and checks the owning piece's current central visibility. Missing
+or invisible requests remain unreadable; saved kind/target fields cannot stand
+in for a current answer. Approval expiry is computed at the current clock time.
+Secret revocation is reported as cancellation. No secret names, house scope,
+values or request details enter this answer projection.
+
+Committed approval, secret-request and access changes notify parked work through
+the live observer; Clock removes its observer on close. Restart uses the same
+roles and persisted park deadlines. Existing unpark messages distinguish Allow,
+Deny, expiry and the unanswered deadline. A secret Allow tells the new body to
+request again; it never carries a house grant forward. Other resource questions
+report that their piece applied the access and ask the body to check it; they
+never give secret-house recovery instructions or spend an approval receipt. No answer read spends an
+approval or grants access, and runtime dispatch remains held until its owning
+implementation is composed. Local-wake filing/recovery/standing and vouch
+applications remain separate unfinished flows. This composition replaces the
+previously missing next-mode approval parking seam.

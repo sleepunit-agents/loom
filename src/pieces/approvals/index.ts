@@ -1,9 +1,9 @@
 import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
-import { migrate, operation, maySee, mayAct, mayCreate, OperationError, type Viewer, type Sharing, type Db, type Operations, type Live, type RecordScope, type LiveRecord } from '../../core/index.js';
+import { migrate, operation, maySee, mayAct, mayCreate, OperationError, type Viewer, type Sharing, type Db, type Operations, type Live, type LiveRecord } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { load, persist, readApproval, ruleId } from './store.js';
-import { type Caller, type Approval, type State, stateOf, ownerAnswered, iso, maySpend, forOf, type Rule, type Standing } from './model.js';
+import { approvalScope as scope, type Caller, type Approval, type State, stateOf, ownerAnswered, iso, maySpend, forOf, type Rule, type Standing } from './model.js';
 import { request, use, withdraw, answer, grant, find, allowEveryTime, standingMatch, always, alwaysScope, everyTimeOk, recordNotice, type DomainContext } from './domain.js';
 import { rulesFor, setRule, type Project } from './rules.js';
 import { denied, invalid, person } from './targets.js';
@@ -14,7 +14,6 @@ import { callerSchema } from './validation.js';
 import { auditRefusedUse } from './refusal.js';
 import { answerAndApply, type ApprovalApplications } from './apply.js';
 const week = 7 * 86400_000;
-const scope = (a: Approval): RecordScope => ({ type:'approval', ...(a.project ? {project:a.project}:{}), ...(a.agent ?? a.who.agent ? {agent:a.agent ?? a.who.agent}:{}), ...(a.member ? {member:a.member}:{}) });
 /** Implemented by the in-repo runtime, never by shelling out or reading the old stores. */
 export interface ApprovalOptions {
   applications?: ApprovalApplications;
