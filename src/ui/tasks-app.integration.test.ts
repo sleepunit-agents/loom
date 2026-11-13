@@ -33,7 +33,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Tasks updates two wind
     };
     await context.route('**/*',staticFiles);
     const a=await context.newPage(),b=await context.newPage();
-    await Promise.all([a.goto(`${loom.url}/_dev/tasks-preview`),b.goto(`${loom.url}/_dev/tasks-preview`)]);
+    await Promise.all([a.goto(`${loom.url}/p/tasks-preview`),b.goto(`${loom.url}/p/tasks-preview`)]);
     const row=(page:typeof a,title:string)=>page.locator('[data-split-row]').filter({hasText:title});
     await expect.poll(()=>row(b,'Pond work').count()).toBe(1);
     await row(a,'Pond work').click(); await row(b,'Pond work').click();
@@ -42,7 +42,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Tasks updates two wind
     await a.getByRole('button',{name:'Comment',exact:true}).last().click();
     await expect.poll(()=>b.getByText('A comment shared between windows',{exact:true}).count()).toBe(1);
     await a.getByRole('button',{name:'Back to task',exact:true}).click();
-    expect(new URL(b.url()).pathname).toBe('/_dev/tasks-preview/task/t-1');
+    expect(new URL(b.url()).pathname).toBe('/p/tasks-preview/task/t-1');
     await b.reload();
     await expect.poll(()=>b.getByText('A comment shared between windows',{exact:true}).count()).toBe(1);
     const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/tasks-app');mkdirSync(shots,{recursive:true});
@@ -59,7 +59,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Tasks updates two wind
     const pollock=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
     await pollock.grantPermissions(['local-network-access'],{origin:loom.url});
     await pollock.addCookies([{name:'fixture',value:'pollock',url:loom.url}]);await pollock.route('**/*',staticFiles);
-    const p=await pollock.newPage();await p.goto(`${loom.url}/_dev/tasks-preview`);
+    const p=await pollock.newPage();await p.goto(`${loom.url}/p/tasks-preview`);
     await expect.poll(()=>p.getByRole('button',{name:'Create task',exact:true}).isEnabled()).toBe(true);
     await p.getByRole('button',{name:/All open/}).click();
     await expect.poll(()=>row(p,'Pond-bot own work').count()).toBe(1);
