@@ -152,3 +152,10 @@ it('sends empty Live snapshots to nonowners and removes retained records after o
   const {HouseholdDatabase}=await import('../household/document.js');f.app.db.transaction(()=>new HouseholdDatabase(f.app.db).change('',raw=>{raw.members=[{person:'jonathan',role:'member',agents:['art']},{person:'pollock',role:'owner',agents:'*'}];}))();
   const removed=once(ws,'message');f.app.live.changed([{type:'core.access',id:'household'}]);expect(JSON.parse((await removed)[0].toString()).records).toEqual([]);
 });
+it('refuses empty normalized labels without signing out unlabeled agent sessions or removing their devices',async()=>{
+  const f=await setup(),secret=hash('operator-bearer'),a=f.s.createSession(secret,{agent:true}),b=f.s.createSession(secret,{device:'HeadlessChrome'});
+  f.s.sessions.change(x=>{x.push={subs:{a:{session:hash(a),token:secret,at:0,sub:{endpoint:'a',keys:{auth:'a',p256dh:'a'}}}}};});
+  const before=f.s.sessions.read();
+  for(const label of [' ','\t','\u200b','\u202e','\u2060','\ufeff'])expect(f.call('sessions.revoke',{label},'blank-'+label)).toMatchObject({ok:false,code:'invalid'});
+  expect(f.s.sessions.read()).toEqual(before);expect(f.s.session(a)).toBeDefined();expect(f.s.session(b)).toBeDefined();
+});

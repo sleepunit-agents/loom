@@ -7,6 +7,7 @@ import { HouseholdRows } from '../household/rows.js';
 import { hash, signin } from './index.js';
 import { cleanLabel } from '../../ui/sessions.js';
 const label=z.string().trim().min(1).max(120).regex(/^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u);
+const isAgentSession=(s:{agent?:true;device?:string})=>s.agent===true||/^HeadlessChrome\b/.test(s.device??'');
 const slug=z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/);
 import { accessResponses, accessCommands } from './commands.js';
 export function installAccessAdmin(app:Foundation) {
@@ -24,7 +25,7 @@ export function installAccessAdmin(app:Foundation) {
   const listSessions=()=>{
     const tokens=s.tokens.list(),now=s.now();
     return Object.entries(s.sessions.read().sessions).map(([id,x])=>{
-      const t=tokens.find(t=>t.sha256===x.secret),resolved=s.token(x.secret),agent=x.agent===true||/^HeadlessChrome\b/.test(x.device??'');
+      const t=tokens.find(t=>t.sha256===x.secret),resolved=s.token(x.secret),agent=isAgentSession(x);
       return {ref:id.slice(0,16),issuedAt:x.issuedAt,expiresAt:Math.min((x.issuedAt+(agent?6*3600:30*86400))*1000,t?.expires?Date.parse(t.expires):Infinity),...(x.seenAt!==undefined?{seenAt:x.seenAt}:{}),...(x.device?{device:x.device}:{}),...(x.label?{label:x.label}:{}),...(x.via?{via:x.via}:{}),agent,...(t?{token:t.label}:{}),...(resolved?.viewer.kind==='member'?{member:resolved.viewer.id}:{}),ended:!resolved||resolved.viewer.kind!=='member'||now>=x.issuedAt+(agent?6*3600:30*86400)};
     }).sort((a,b)=>(b.seenAt??b.issuedAt)-(a.seenAt??a.issuedAt));
   };
@@ -52,8 +53,10 @@ export function installAccessAdmin(app:Foundation) {
   }});
   register('sessions',{name:'sessions.revoke',write:true,input:z.union([z.object({ref:z.string().regex(/^[0-9a-f]{16}$/)}).strict(),z.object({label:z.string().min(1).max(60)}).strict()]),run:(ctx,i)=>{
     let revoked=0,devices=0;
+    const wanted='label'in i?cleanLabel(i.label):undefined;
+    if('label'in i&&!wanted)throw new OperationError('invalid','A nonempty session label is required');
     s.sessions.change(f=>{
-      const keys=Object.keys(f.sessions).filter(k=>'ref'in i?k.startsWith(i.ref):((f.sessions[k].agent||/^HeadlessChrome\b/.test(f.sessions[k].device??''))&&f.sessions[k].label===cleanLabel(i.label)));
+      const keys=Object.keys(f.sessions).filter(k=>'ref'in i?k.startsWith(i.ref):(isAgentSession(f.sessions[k])&&f.sessions[k].label===wanted));
       if(!keys.length||('ref'in i&&keys.length!==1))throw new OperationError('not-found','No unique matching session');
       const gone=new Set(keys);for(const k of keys)delete f.sessions[k];revoked=keys.length;
       for(const [ep,d]of Object.entries(f.push?.subs??{}))if(d.session&&gone.has(d.session)){delete f.push!.subs![ep];devices++;}
