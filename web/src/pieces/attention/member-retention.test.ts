@@ -8,6 +8,7 @@ const f = vi.hoisted(() => ({ snapshot: { status: 'loading', records: [] } as Sn
 vi.mock('../../data', () => ({
   useRecords: () => useSyncExternalStore(fn => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.snapshot),
   call: f.call,
+  callOnce: () => ({ result: Promise.resolve({ ok: true, value: { member: 'owner', agents: [], summaries: [] } }) }),
 }));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion', () => ({ useReducedMotion: () => true }));
 import Home from './home';
