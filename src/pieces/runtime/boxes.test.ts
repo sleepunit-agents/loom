@@ -92,6 +92,7 @@ it('checks agent setup centrally and requires both host permission and ownership
   const pollock: Viewer = { kind: 'member', id: 'pollock' };
   expect(call('setBoxes', { agent: 'pond-bot', boxes: ['pond'] }, pollock).ok).toBe(true);
   expect(call('setBoxes', { agent: 'art', boxes: [] }, pollock)).toMatchObject({ ok: false, code: 'denied' });
+  expect(call('setBoxes', { agent: 'pond-bot', boxes: [] }, owner)).toMatchObject({ ok: false, code: 'denied' });
   for (const viewer of [{ kind: 'agent', id: 'art' }, { kind: 'runner', id: 'r1' }, { kind: 'service', id: 'keyholder' }] as Viewer[]) expect(call('setBoxes', { agent: 'art', boxes: [] }, viewer)).toMatchObject({ ok: false, code: 'denied' });
   expect(call('setBoxes', { agent: 'pond-bot', boxes: ['one'] }, pollock)).toMatchObject({ ok: false, code: 'conflict' });
   expect(call('configureBox', { box: 'one', set: { lentTo: ['pond-bot'], mayHost: ['art'] } }).ok).toBe(true);
@@ -101,7 +102,7 @@ it('checks agent setup centrally and requires both host permission and ownership
   expect(store.read('settings', 'pond-bot')?.boxes).toEqual(['r1']);
 });
 it('deduplicates retries, rejects changed retry input and preserves timestamps on no-op writes', async () => {
-  const { call, clock, store } = await setup();
+  const { app, call, clock, store } = await setup();
   const input = { box: 'one', set: { labels: ['gpu'] } };
   expect(call('configureBox', input, owner, 'stable').ok).toBe(true);
   const at = store.read('box', 'r1')?.changedAt;
@@ -110,6 +111,12 @@ it('deduplicates retries, rejects changed retry input and preserves timestamps o
   expect(call('configureBox', input).ok).toBe(true);
   expect(store.read('box', 'r1')?.changedAt).toBe(at);
   expect(call('configureBox', { box: 'one', set: { labels: [] } }, owner, 'stable')).toMatchObject({ ok: false, code: 'conflict' });
+  const changed = vi.spyOn(app.live, 'changed');
+  expect(call('configureBox', { box: 'one', set: { labels: ['newer'] } }).ok).toBe(true);
+  changed.mockClear();
+  expect(call('configureBox', input, owner, 'stable')).toEqual({ ok: true, value: { box: 'r1' } });
+  expect(store.read('box', 'r1')?.labels).toEqual(['newer']);
+  expect(changed).not.toHaveBeenCalled();
 });
 
 it('publishes committed metadata changes and stays silent for no-ops and rejected writes', async () => {
