@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import type { IOStreams } from './io.js';
 import type { ClientRuntime } from './api-client.js';
-import { clockHelp } from '../pieces/clock/commands.js';
+import { clockHelp, commandHead } from '../pieces/clock/commands.js';
 const answerSchema = z.object({
   ok: z.literal(true),
   value: z.object({ stdout: z.string(), stderr: z.string(), exit: z.number().int().min(0).max(255) }),
@@ -35,12 +35,13 @@ export async function runWakeClient(argv: string[], io: IOStreams, runtime: Clie
   const input: { argv: string[]; agent?: string; laneFile?: {path:string;text:string} } = { argv, agent: io.env.WAKE_AGENT };
   // Only lane set reads a caller-local file; timed -f stays a repository path.
   const offset = argv[0] === '--agent' ? 2 : argv[0]?.startsWith('--agent=') ? 1 : 0;
-  if (argv[offset] === 'lane' && argv[offset+1] === 'set') {
-    for (let n=offset+2;n<argv.length;n++) {
-      const arg = argv[n];
+  const head = commandHead(argv.slice(offset)), args = head.args;
+  if (head.name === 'lane set') {
+    for (let n=0;n<args.length;n++) {
+      const arg = args[n];
       if (arg === '--') break;
       if (arg === '-f' || arg === '--prompt-file' || arg.startsWith('--prompt-file=')) {
-        const path = arg.startsWith('--prompt-file=') ? arg.slice(14) : argv[++n];
+        const path = arg.startsWith('--prompt-file=') ? arg.slice(14) : args[++n];
         if (!path) return fail('lane --prompt-file needs a path');
         try { input.laneFile = { path, text: await readFile(path, 'utf8') }; }
         catch { return fail('Cannot read lane file'); }

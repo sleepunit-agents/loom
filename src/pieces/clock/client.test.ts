@@ -42,7 +42,7 @@ it('ports schedule create, list, run, remove and lane text input without daemon 
   expect(s.id).toBe('art/nightly');expect(created.stdout).toBe(`schedule nightly: next at ${clockTime(w.due)} (${w.id})\n`);
   expect(a.run(['schedule','list']).stdout).toBe(`${'nightly'.padEnd(22)} ${'Weekdays 3:31 AM'.padEnd(18)} next ${clockTime(w.due)}  routines/upkeep.md  — care\n`);
   const run=a.run(['schedule','run','nightly']);const extra=wakes(a.db).find(e=>e.id!==w.id)!;
-  expect(run.stdout).toBe(`${extra.id}: nightly runs within a minute\n`);
+  expect(run.stdout).toBe(`${extra.id}: nightly runs within a minute\n`);expect(extra.note).toBe('nightly run now');
   expect(a.run(['schedule','rm','nightly']).stdout).toBe('removed schedule nightly\n');
   expect(a.run(['lane','set','upkeep','--agent','art','--at','08:31','-f','routines/upkeep.md'],owner,randomUUID(),{path:'routines/upkeep.md',text:'Whole lane\n'}).exit).toBe(0);
   expect(a.run(['lane','text','upkeep']).stdout).toBe('Whole lane\n');
@@ -92,4 +92,37 @@ it('crosses the real HTTP door and retries a lost committed response without ano
   },retry:async()=>{}});
   expect(code).toBe(0);expect(stderr).toBe('');expect(bodies).toHaveLength(2);expect(bodies[0]).toBe(bodies[1]);
   const rows=wakes(a.db);expect(rows).toHaveLength(1);expect(stdout).toBe(`${rows[0].id} will wake at 2026-11-13 10:00:00\n`);
+});
+
+it('accepts nested options before the action and filters the actual displayed log lines',async()=>{
+  const a=await setup();
+  expect(a.run(['schedule','--at','03:31','-p','Work','set','nightly']).exit).toBe(0);
+  const run=a.run(['schedule','--note','extra','run','nightly']);expect(run.exit).toBe(0);
+  expect(wakes(a.db).find(w=>w.runNow)?.note).toBe('nightly run now: extra');
+  expect(a.run(['log','--grep','2026-11-13']).stdout).toContain('2026-11-13 09:00:00 set');
+  expect(a.run(['log','--grep','agent']).stdout).toBe('\n');
+  expect(a.run(['lane','--at','08:31','--agent','art','-p','Words','set','care']).exit).toBe(0);
+});
+it('defaults authenticated agents to themselves and requires member clock selection',async()=>{
+  const a=await setup();
+  const call=(viewer:Viewer)=>a.operations.call('http',viewer,'clock.command',{argv:['in','1h','-p','Work']},randomUUID());
+  expect(call({kind:'agent',id:'art'})).toMatchObject({ok:true,value:{exit:0}});
+  expect(wakes(a.db)[0].agent).toBe('art');
+  expect(call(owner)).toMatchObject({ok:true,value:{exit:1,stderr:'wake: select a clock with --agent or WAKE_AGENT\n'}});
+});
+it('resolves raw schedule ids only on their own clock',async()=>{
+  const a=await setup();
+  expect(a.operations.call('direct',owner,'clock.scheduleSet',{id:'care',agent:'other',at:'08:31',prompt:'Other work',note:''},randomUUID()).ok).toBe(true);
+  expect(a.run(['schedule','rm','care']).exit).toBe(1);
+  expect(schedules(a.db).find(s=>s.id==='care')?.agent).toBe('other');
+  expect(a.run(['--agent','other','schedule','rm','care']).exit).toBe(0);
+});
+it('prints actual firing and held states without inspecting transient units',async()=>{
+  const a=await setup();a.run(['in','1m','-p','Words']);
+  const w=wakes(a.db)[0];a.clock.advance(60000);
+  // Dispatch intent commits synchronously; its asynchronous runtime result follows.
+  expect(a.run(['list']).stdout).toContain('[firing]');
+  for(let n=0;n<10 && wakes(a.db).find(e=>e.id===w.id)?.state==='firing';n++) await Promise.resolve();
+  expect(wakes(a.db).find(e=>e.id===w.id)?.state).toBe('held');
+  expect(a.run(['list']).stdout).toContain('[held]');
 });

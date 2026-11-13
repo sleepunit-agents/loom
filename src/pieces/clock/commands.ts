@@ -18,3 +18,15 @@ export const clockOperationCommands: Record<string,string> = {
   laneSet:'lane set', laneAssign:'lane assign', laneRemove:'lane rm', lanes:'lane list', laneText:'lane text',
 };
 export const clockHelp = `usage: wake [--agent AGENT] <${[...new Set(clockCommands.map(c => c.name.split(' ')[0]))].join('|')}> ...\n`;
+/** argparse accepts nested options before or after the action. Preserve their order. */
+export function commandHead(argv: readonly string[]): { name: string | undefined; args: string[] } {
+  const args = [...argv], group = args.shift();
+  if (group !== 'schedule' && group !== 'lane') return { name:group, args };
+  for (let n=0;n<args.length;n++) {
+    const arg=args[n];
+    if (!arg.startsWith('-')) { const action=args.splice(n,1)[0]; return {name:`${group} ${action}`,args}; }
+    if (arg === '--') break;
+    if (!arg.includes('=') && !['--local','--no-local'].includes(arg)) n++;
+  }
+  return {name:group,args};
+}

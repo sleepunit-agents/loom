@@ -72,7 +72,7 @@ it('reads only lane set file text on the caller and leaves timed file paths unto
   expect(await a.run(['in','1h','-f',path])).toBe(0);
   expect(JSON.parse(String(a.request.mock.calls[0][1]?.body)).input).toEqual({argv:['in','1h','-f',path],agent:'art'});
   const file=join(dirs.at(-1)!,'lane.md');writeFileSync(file,'Whole lane\n');
-  expect(await a.run(['lane','set','care','--at','08:31',`--prompt-file=${file}`])).toBe(0);
+  expect(await a.run(['lane','--at','08:31',`--prompt-file=${file}`,'set','care'])).toBe(0);
   expect(JSON.parse(String(a.request.mock.calls[1][1]?.body)).input.laneFile).toEqual({path:file,text:'Whole lane\n'});
 });
 it('does not treat option values mentioning a file flag as instructions to open it',async()=>{
