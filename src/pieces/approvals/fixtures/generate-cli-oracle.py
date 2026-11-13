@@ -47,6 +47,8 @@ with tempfile.TemporaryDirectory() as root:
     case('rule allowed',['rule','merge',target],[allowed])
     do={'kind':'merge','scope':'github:acme/*','tier':'do','by':'jonathan','at':receipt['at']}
     case('rule do',['rule','merge',target],rules=[do])
+    case('owner rule for agent',['rule','merge',target,'--for','art','--json'],rules=[do],member=True)
+    case('owner rule asked for',['rule','merge',target,'--for','art','--json'],[{**receipt,'for':'loren'},{**allowed,'id':'a-89abcdef','for':'dan'}],rules=[do],member=True)
     case('tell',['tell','--kind','merge','--target',target,'--what','Fixed the page.'],rules=[do])
     case('owner list',['list'],[allowed],member=True)
     case('owner grant',['grant','--kind','merge','--target',target,'--for','art'],member=True)

@@ -94,7 +94,28 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('list',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)).map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
   register('history',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>visible(v,a)&&stateOf(a,c.now)!=='pending').map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
   register('rules',false,(s,i,c,v)=>({rules:owner(v,'approvals.rules')?[...s.rules,...s.grants,...s.standing]:[],mayEdit:owner(v,'approvals.set-rule')}));
-  const readRules = (s:State,i:Record<string,unknown>,c:DomainContext,v:Viewer) => rulesFor({...s,approvals:s.approvals.filter(a=>visible(v,a))},c.caller,String(i.kind),Array.isArray(i.targets)?i.targets.map(String):[],c.projects,c.now);
+  const readRules = (s:State,i:Record<string,unknown>,c:DomainContext,v:Viewer) => {
+    const approvals = s.approvals.filter(a=>visible(v,a));
+    let caller = c.caller;
+    if (i.for !== undefined) {
+      if (v.kind !== 'member' || !owner(v,'approvals.rules')) denied('--for is the owner’s view of an agent’s changes');
+      const parsed = callerSchema.shape.who.shape.agent.safeParse(i.for);
+      if (!parsed.success) throw new OperationError('invalid','--for is the agent whose change it is');
+      caller = {who:{agent:parsed.data,where:'owner view'},for:'owner'};
+    }
+    const result = rulesFor({...s,approvals},caller,String(i.kind),Array.isArray(i.targets)?i.targets.map(String):[],c.projects,c.now);
+    if (i.for !== undefined) {
+      const pending = approvals.filter(a=>a.kind===i.kind&&a.who.agent===caller.who.agent&&Object.hasOwn(result,a.target)
+        && ['pending','allowed'].includes(stateOf(a,c.now))&&!['owner','?'].includes(forOf(a)))
+        .sort((a,b)=>Number(stateOf(b,c.now)==='pending')-Number(stateOf(a,c.now)==='pending')||b.at.localeCompare(a.at));
+      for (const a of pending) {
+        const row = result[a.target] as typeof result[string] & {asked_for?:{for:string;name:string;id:string;state:string}[]};
+        const asked = row.asked_for ??= [];
+        if (!asked.some(p=>p.for===forOf(a))) asked.push({for:forOf(a),name:forOf(a).split('-').map(w=>w[0].toUpperCase()+w.slice(1)).join(' ').slice(0,40),id:a.id,state:stateOf(a,c.now)});
+      }
+    }
+    return result;
+  };
   register('rule',false,readRules);
   register('set-rule',true,(s,i,c,v)=>setRule(s,String(i.kind),String(i.scope),String(i.tier),v.id,c.now,typeof i.person==='string'?i.person:undefined),{owner:true});
   register('always',true,(s,i,c,v)=>always(s,String(i.id),v.id,c,typeof i.scope==='string'?i.scope:undefined),{owner:true});

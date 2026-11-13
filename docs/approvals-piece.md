@@ -17,7 +17,7 @@ Upstream contract audited: sleepunit-agents/loom-approvals at
 | `check ID`, `check ID --json` | `approvals.check` |
 | `use ID --kind K --target T` | `approvals.use` |
 | `withdraw ID` | `approvals.withdraw` |
-| `rule merge/host TARGET… [--json]` | `approvals.rule` |
+| `rule merge/host TARGET… [--json]` | `approvals.rule`; owner-only `--for AGENT` uses owner rules and includes visible `asked_for` cards |
 | `tell` | `approvals.tell`, `approvals.notices` |
 | `list` | `approvals.list`, `approvals.history` |
 | `grant --kind merge --for AGENT [--person P] [--deny]` | owner `approvals.grant` |
@@ -38,6 +38,11 @@ Upstream contract audited: sleepunit-agents/loom-approvals at
 No independent background poller exists in the old program; expiry was evaluated
 on read. New live records refresh at receipt expiry and leave the live set one
 week after the last receipt change. Pending receipts remain live indefinitely.
+
+The owner rule view retains the old pending-first, newest-first list of named
+principals, one card per person. Central household authority and record visibility
+apply to this view; being a signed-in member alone grants no owner access. The
+independent frozen CLI oracle includes both empty and populated owner views.
 
 ## Data and authority
 

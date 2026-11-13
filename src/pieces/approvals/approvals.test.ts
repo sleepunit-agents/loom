@@ -104,6 +104,33 @@ describe('approval receipts and central policy',()=>{
     const a=await setup(),card=a.value('request',ask);expect(a.value('withdraw',{id:card.id})).toMatchObject({state:'withdrawn'});expect(a.call('answer',{id:card.id,action:'allow'},owner)).toMatchObject({code:'denied'});expect(a.call('request',{...ask,kind:'local-wake',target:`art:${'a'.repeat(16)}`})).toMatchObject({code:'denied'});
   });
 });
+describe('owner view of another agent’s rules',()=>{
+  it('uses owner rules and lists each named principal pending before allowed',async()=>{
+    const a=await setup();
+    a.value('set-rule',{kind:'merge',scope:'github:acme/*',tier:'do'},owner);
+    a.identity({for:'loren'});const allowed=a.value('request',ask);
+    a.value('answer',{id:allowed.id,action:'allow'},owner);
+    a.clock.advance(1000);a.identity({for:'dan'});const pending=a.value('request',ask);
+    const result=a.value('rule',{kind:'merge',targets:[target],for:'art'},owner);
+    expect(result[target]).toEqual({tier:'do',for:'owner',scope:'github:acme/*',asked_for:[
+      {for:'dan',name:'Dan',id:pending.id,state:'pending'},
+      {for:'loren',name:'Loren',id:allowed.id,state:'allowed'},
+    ]});
+    const cli=a.value('command',{argv:['rule','merge',target,'--for','art','--json']},owner);
+    expect(cli.exit).toBe(0);expect(JSON.parse(cli.stdout)).toEqual(result);
+    expect(a.call('rule',{kind:'merge',targets:[target],for:'art'})).toMatchObject({ok:false,code:'denied'});
+    expect(a.call('rule',{kind:'merge',targets:[target],for:'art'},pollock)).toMatchObject({ok:false,code:'denied'});
+    expect(a.call('rule',{kind:'merge',targets:[target],for:{agent:'art'}},owner)).toMatchObject({ok:false,code:'invalid'});
+    expect(a.value('rule',{kind:'merge',targets:[target],for:'pond-bot'},owner)[target]).not.toHaveProperty('asked_for');
+  });
+  it('never exposes another member’s private cards in the owner rule view',async()=>{
+    const a=await setup();a.identity({for:'loren'});const card=a.value('request',ask);
+    const state=load(a.db);state.approvals[0].member='pollock';persist(a.db,state,a.clock.now());
+    expect(a.value('rule',{kind:'merge',targets:[target],for:'art'},owner)[target]).not.toHaveProperty('asked_for');
+    expect(a.value('command',{argv:['rule','merge',target,'--for','art','--json']},owner).stdout).not.toContain(card.id);
+  });
+});
+
 describe('standing merge and host rules',()=>{
   it('only owner edits rules, most specific wins then strictest',async()=>{
     const a=await setup();expect(a.call('set-rule',{kind:'merge',scope:'github:acme/*',tier:'do'})).toMatchObject({code:'denied'});a.value('set-rule',{kind:'merge',scope:'github:acme/*',tier:'do'},owner);expect(a.value('rule',{kind:'merge',targets:[target]})[target]).toMatchObject({tier:'do'});a.value('set-rule',{kind:'merge',scope:'project:pond',tier:'tell'},owner);expect(a.value('rule',{kind:'merge',targets:[target]})[target]).toMatchObject({tier:'tell'});a.value('set-rule',{kind:'merge',scope:'github:acme/app',tier:'ask'},owner);expect(a.value('rule',{kind:'merge',targets:[target]})[target]).toMatchObject({tier:'ask'});

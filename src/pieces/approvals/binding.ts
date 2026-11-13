@@ -27,7 +27,7 @@ export function command(operations:Operations,viewer:Viewer,argv:string[]):Comma
   }
   if(input.as!==undefined)return fail('--as is for a piece acting for a body, not over the API');
   if(input.on_behalf!==undefined)return fail('--on-behalf is for a piece acting for a body (--as)');
-  if(input.for!==undefined&&verb==='rule')return fail('--for is for the Changes piece, not over the API');
+  if(input.for!==undefined&&verb==='rule'&&viewer.kind!=='member')return fail('--for is for the Changes piece, not over the API');
   if(verb==='grant'&&viewer.kind!=='member')return fail("grant is the owner's, on loom's machine; a body asks with request");
   if(verb==='list'&&viewer.kind!=='member')return fail("the list is the owner's, on loom's machine");
   if(verb==='standing')return fail("standing is for the clock on loom's machine, acting for a body (--as)");
