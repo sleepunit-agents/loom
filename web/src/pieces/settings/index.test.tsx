@@ -115,7 +115,7 @@ it('shows startup membership, delivery uncertainty and change history without tr
 it('renders inherited auto as checked without offering a toggle that cannot change it',async()=>{
  feeds();f.feeds['secret.policy'].records=[{id:'policy',default:'auto',secrets:{}}];
  await draw(h(SettingsApp,{path:'/p/settings-preview/secrets/API'}));
- const box=tree.root.findAllByType('input').find((n:any)=>n.props.type==='checkbox');expect(box.props.checked).toBe(true);expect(box.props.disabled).toBe(true);
+ const box=tree.root.findAllByType('label').find((n:any)=>n.children.includes('Always allow ')).findByType('input');expect(box.props.checked).toBe(true);expect(box.props.disabled).toBe(true);
  expect(text()).toContain('Automatic access comes from the default request policy');
 });
 it('renders exact service scope and revokes a service grant through its own operation',async()=>{
@@ -128,4 +128,28 @@ it('renders exact service scope and revokes a service grant through its own oper
  f.feeds['secret.grant'].records=[{...g,agent:'art',scope:{house:'h-1',service:'slack'}},{...g,id:'absent',agent:'art',scope:{house:'h-1'}}];
  await act(async()=>{tree.update(h(SettingsApp,{path:'/p/settings-preview/secrets/API'}));f.listeners.forEach(fn=>fn());});
  expect(text()).toContain('h-1 · slack');expect(text()).toContain('h-1 · No service');
+});
+
+it('edits startup separately from Always and keeps its mutation locked across readers',async()=>{
+ feeds();const write=pending();f.call.mockReturnValue(write.request);
+ await draw(h(SettingsApp,{path:'/p/settings-preview/secrets/API'}));
+ const startup=tree.root.findAllByType('label').find((n:any)=>n.children.includes('Allow ')).findByType('input');
+ expect(startup.props.checked).toBe(false);expect(startup.props.disabled).toBe(false);
+ await act(async()=>startup.props.onChange({target:{checked:true}}));
+ expect(f.call).toHaveBeenCalledWith('secrets.startup',{name:'API',agent:'art',on:true});
+ expect(tree.root.findAllByType('input').filter((n:any)=>n.props.type==='checkbox').every((n:any)=>n.props.disabled)).toBe(true);
+ await write.finish({ok:false,code:'unavailable',message:'Uncertain'});
+ await act(async()=>tree.update(h(SettingsApp,{path:'/p/settings-preview/grants/art'})));
+ expect(tree.root.findByType('fieldset').props.disabled).toBe(true);expect(f.call).toHaveBeenCalledTimes(1);
+});
+it('Never blocks enabling startup but allows removal of retired startup membership',async()=>{
+ feeds();f.feeds['secret.policy'].records=[{id:'policy',default:'ask',secrets:{API:{grant:'never',houses:['retired']}}}];
+ const write=pending();f.call.mockReturnValue(write.request);await draw(h(SettingsApp,{path:'/p/settings-preview/secrets/API'}));
+ const labels=tree.root.findAllByType('label').filter((n:any)=>n.children.includes('Allow '));
+ const art=labels.find((n:any)=>n.children.includes('art')).findByType('input');
+ const retired=labels.find((n:any)=>n.children.includes('retired')).findByType('input');
+ expect(art.props.checked).toBe(false);expect(art.props.disabled).toBe(true);
+ expect(retired.props.checked).toBe(true);expect(retired.props.disabled).toBe(false);expect(text()).toContain('no longer registered');
+ await act(async()=>retired.props.onChange({target:{checked:false}}));
+ expect(f.call).toHaveBeenCalledWith('secrets.startup',{name:'API',agent:'retired',on:false});
 });
