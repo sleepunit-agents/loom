@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { parseRedactedJSON } from '../pieces/changes/redact.js';
 import { changesCommands } from '../pieces/changes/commands.js';
 import type { IOStreams } from './io.js';
 import type { ClientRuntime } from './api-client.js';
@@ -39,7 +40,7 @@ export async function runChangesClient(argv:string[],io:IOStreams,runtime:Client
   try {
    const response=await runtime.request(new URL(`/api/changes/${command.name}`,base),{method:'POST',redirect:'error',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body,signal:AbortSignal.timeout(1500)});
    if(response.status===503&&attempt<3){await response.body?.cancel().catch(()=>{});await runtime.retry(100*(attempt+1));continue;}
-   const answer=await response.json() as unknown;
+   const answer=parseRedactedJSON(await response.text(),token);
    if(!response.ok) return fail('Request refused');
    const envelope=z.object({ok:z.literal(true),value:z.unknown()}).safeParse(answer);
    if(!envelope.success) return fail('Invalid daemon response');
@@ -47,7 +48,7 @@ export async function runChangesClient(argv:string[],io:IOStreams,runtime:Client
    if(!parsed.success) return fail('Invalid daemon response');
    const value=parsed.data;
    const output=command.name==='list'?(value as {stdout:string}).stdout:command.name==='refresh'?(value as {message:string}).message+'\n':JSON.stringify(value)+'\n';
-   io.stdout(output.replaceAll(token,'[redacted]').replace(/(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)/g,'[redacted]'));
+   io.stdout(output);
    return 0;
   } catch {if(attempt===3) return fail('loom daemon is unavailable');}
   await runtime.retry(100*(attempt+1));

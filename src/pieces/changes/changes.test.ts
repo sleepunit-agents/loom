@@ -1,3 +1,4 @@
+import { syncBuiltinESMExports } from 'node:module';
 import { afterEach, it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -162,4 +163,20 @@ it('rejects a GitHub redirect without reading its body',async()=>{
  const secrets={resolveGitHub:async()=> 'github-acme',withValue:async<T>(_ref:string,use:(token:string)=>Promise<T>)=>use('secret')};
  let calls=0;
  await expect(githubReader(secrets,(async(_url,init)=>{calls++;expect(init?.redirect).toBe('error');return new Response('secret upstream',{status:307,headers:{location:'https://api.github.com/other'}});}) as typeof fetch)('acme/app',0)).rejects.toThrow('GitHub read unavailable');expect(calls).toBe(1);
+});
+
+it('refuses malformed GitHub pagination rather than returning an empty successful snapshot',async()=>{
+ const secrets={resolveGitHub:async()=> 'github-acme',withValue:async<T>(_ref:string,use:(token:string)=>Promise<T>)=>use('secret')};
+ for(const pageInfo of [undefined,null,{}, {hasNextPage:'false',endCursor:null},{hasNextPage:false},{hasNextPage:true,endCursor:null},{hasNextPage:true,endCursor:''}]) {
+  await expect(githubReader(secrets,async()=>Response.json({data:{repository:{pullRequests:{nodes:[],pageInfo}}}}))('acme/app',0)).rejects.toThrow('GitHub read unavailable');
+ }
+});
+it('uses the injected secret role without filesystem discovery',async()=>{
+ const fsPromises=(await import('node:fs/promises')).default,fsSync=(await import('node:fs')).default;
+ const reads=vi.spyOn(fsPromises,'readFile'),syncReads=vi.spyOn(fsSync,'readFileSync');syncBuiltinESMExports();
+ try {
+  const secrets={resolveGitHub:vi.fn(async()=> 'explicit-reference'),withValue:vi.fn(async<T>(_ref:string,use:(token:string)=>Promise<T>)=>use('explicit-secret'))};
+  expect(await githubReader(secrets,async()=>Response.json({data:{repository:{pullRequests:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}}}))('acme/app',0)).toEqual([]);
+  expect(secrets.resolveGitHub).toHaveBeenCalledExactlyOnceWith('acme');expect(secrets.withValue).toHaveBeenCalledExactlyOnceWith('explicit-reference',expect.any(Function));expect(reads).not.toHaveBeenCalled();expect(syncReads).not.toHaveBeenCalled();
+ } finally {reads.mockRestore();syncReads.mockRestore();syncBuiltinESMExports();}
 });

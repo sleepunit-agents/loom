@@ -1,5 +1,6 @@
 /** The only forge boundary. A fixed query and URL: no caller can supply a mutation or destination. */
 import { changeSchema, repoId, active, type Change } from './model.js';
+import { parseRedactedJSON } from './redact.js';
 import { withGitHub, type Secrets } from './roles.js';
 const fields=`number title url state isDraft createdAt updatedAt closedAt mergedAt author { login ... on User { name } } headRefName headRefOid baseRefName bodyText mergeable reviewDecision
  reviewRequests(first:10){nodes{requestedReviewer{... on User{login name} ... on Team{slug name}}}}
@@ -37,11 +38,13 @@ export function githubReader(secrets:Secrets, request:typeof fetch=fetch) {
      const response=await request('https://api.github.com/graphql',{method:'POST',redirect:'error',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({query,variables:{owner,name,states,after}}),signal:AbortSignal.timeout(20000)});
      if(!response.ok) throw new Error('GitHub read failed');
      // Even an upstream error or malicious PR text cannot smuggle the supplied token into app data.
-     const data=JSON.parse(await response.text(),(_key,value:unknown)=>typeof value==='string'?value.split(token).join('[redacted]').replace(/(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)/g,'[redacted]'):value);const page=data.data?.repository?.pullRequests;
+     const data=parseRedactedJSON(await response.text(),token) as {data?:{repository?:{pullRequests?:{nodes:unknown[];pageInfo?:{hasNextPage?:unknown;endCursor?:unknown}}}};errors?:unknown[]};const page=data.data?.repository?.pullRequests;
      if(data.errors?.length||!page||!Array.isArray(page.nodes)) throw new Error('GitHub read failed');
      const rows=page.nodes.filter(Boolean).map((n:unknown)=>normalize(repo,n));out.push(...rows.filter((c:Change)=>active(c,now)));
-     if(!page.pageInfo?.hasNextPage) break;
-     const cursor=page.pageInfo.endCursor;if(typeof cursor!=='string'||seen.has(cursor)) throw new Error('Invalid GitHub pagination');seen.add(cursor);after=cursor;
+     const info=page.pageInfo;
+     if(!info||typeof info.hasNextPage!=='boolean'||!(info.endCursor===null||typeof info.endCursor==='string')) throw new Error('Invalid GitHub pagination');
+     if(!info.hasNextPage) break;
+     const cursor=info.endCursor;if(typeof cursor!=='string'||!cursor||seen.has(cursor)) throw new Error('Invalid GitHub pagination');seen.add(cursor);after=cursor;
     }
    }
    return [...new Map(out.map(c=>[c.id,c])).values()];

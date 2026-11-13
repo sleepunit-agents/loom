@@ -1,4 +1,7 @@
-import { it,expect,afterEach } from 'vitest';
+import { syncBuiltinESMExports } from 'node:module';
+import fsPromises from 'node:fs/promises';
+import fsSync from 'node:fs';
+import { it,expect,afterEach,vi } from 'vitest';
 import { mkdtempSync,writeFileSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,10 +15,10 @@ import { replaceChanges } from '../pieces/changes/store.js';
 import { runCli, runCliLocal } from './index.js';
 import { runChangesClient } from './changes-client.js';
 const dirs:string[]=[],close:(()=>Promise<void>)[]=[];
-afterEach(async()=>{for(const fn of close.splice(0)) await fn();for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true});});
+afterEach(async()=>{vi.restoreAllMocks();syncBuiltinESMExports();for(const fn of close.splice(0)) await fn();for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true});});
 async function setup(){
  const home=mkdtempSync(join(tmpdir(),'changes-client-'));dirs.push(home);const clock=new FakeClock();const owner:Viewer={kind:'member',id:'jonathan'};
- const app=await startLoom({home,clock,sharing:fixtureSharing,authenticate:()=>({viewer:owner,valid:()=>true}),install:app=>installChanges(app.db,app.operations,app.live,fixtureSharing)});close.push(app.close);
+ const app=await startLoom({home,clock,sharing:fixtureSharing,authenticate:req=>req.headers.authorization==='Bearer fixture-token'?{viewer:owner,valid:()=>true}:req.headers.authorization==='Bearer restricted-token'?{viewer:{kind:'member',id:'pollock'},valid:()=>true}:undefined,install:app=>installChanges(app.db,app.operations,app.live,fixtureSharing)});close.push(app.close);
  const token=join(home,'token');writeFileSync(token,'fixture-token');
  const run=async(args:string[],request:typeof fetch=fetch)=>{let stdout='',stderr='';const bodies:string[]=[];const code=await runChangesClient(args,{stdout:s=>stdout+=s,stderr:s=>stderr+=s,stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:app.url,LOOM_TOKEN_FILE:token}},{request:async(url,init)=>{bodies.push(String(init?.body));return request(url,init);},retry:async()=>{}});return {code,stdout,stderr,bodies};};
  return {...app,home,clock,owner,run};
@@ -118,4 +121,25 @@ it('refuses a same-origin redirect before it can receive the bearer at another p
  const app=await setup();let stdout='';
  const code=await runChangesClient(['list'],{stdout:s=>stdout+=s,stderr:()=>{},stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:`http://127.0.0.1:${address.port}`,LOOM_TOKEN_FILE:join(app.home,'token')}},{request:fetch,retry:async()=>{}});
  expect(code).toBe(1);expect(stdout).toBe('');expect(redirected).toBe(0);
+});
+
+it('redacts token characters before JSON serialization can escape them',async()=>{
+ const app=await setup();const token='abc"def\\ghi';writeFileSync(join(app.home,'token'),token);
+ const result=await app.run(['project-feed'],async()=>Response.json({ok:true,value:{groups:[{title:token,items:[]}]}}));
+ expect(result.code).toBe(0);expect(JSON.parse(result.stdout).groups[0].title).toBe('[redacted]');expect(result.stdout).not.toContain('abc');
+});
+it('authenticates the actual token and restricts reads and refreshes through server policy',async()=>{
+ const app=await setup();replaceChanges(app.db,[change({project:'pond'}),change({id:'github:other/app#4',repo:'github:other/app',number:4,project:'private'})]);
+ expect((await app.run(['list'])).stdout).toContain('other/app#4');
+ writeFileSync(join(app.home,'token'),'restricted-token');
+ const restricted=await app.run(['list']);expect(restricted.code).toBe(0);expect(restricted.stdout).toContain('acme/app#3');expect(restricted.stdout).not.toContain('other/app#4');
+ expect(await app.run(['refresh'])).toMatchObject({code:1,stdout:''});expect(app.db.prepare('SELECT * FROM changes_jobs').get()).toBeUndefined();
+ writeFileSync(join(app.home,'token'),'unknown-token');expect(await app.run(['list'])).toMatchObject({code:1,stdout:''});
+ expect(await app.run(['refresh'])).toMatchObject({code:1,stdout:''});
+ writeFileSync(join(app.home,'token'),'fixture-token');expect(await app.run(['refresh'])).toMatchObject({code:0});
+});
+it('reads only the explicitly supplied token file and never discovers legacy files',async()=>{
+ const app=await setup();const asyncReads=vi.spyOn(fsPromises,'readFile'),syncReads=vi.spyOn(fsSync,'readFileSync');syncBuiltinESMExports();
+ expect(await app.run(['list'])).toMatchObject({code:0});
+ expect(asyncReads.mock.calls.map(args=>String(args[0]))).toEqual([join(app.home,'token')]);expect(syncReads).not.toHaveBeenCalled();
 });
