@@ -891,8 +891,8 @@ repeating effects. Completed writes remain recoverable after core receipt expiry
 Old-to-new lifecycle: silent key-file replacement stays refused; explicit retained
 key-ring startup replaces the former rotation refusal. The synchronous fixture
 value installer retains its single-key contract and is not production composition.
-Holder identity/receipt-key rotation and automatic daemon reconciliation without
-caller plaintext still remain, followed by normal-root composition. Normal next
+Holder identity/receipt-key rotation and daemon receipt reconciliation are described
+below; normal-root composition remains. Normal next
 mode and Settings value forms stay disabled until those prerequisites are delivered.
 
 
@@ -933,7 +933,45 @@ key compromise is not repaired by selecting a new active pair. Operate one holde
 lifetime at a time and restart all holder handles when changing the configuration.
 
 The new holder operations replace no old CLI command; this is explicit configuration
-of the separate holder. Automatic daemon retry/reconciliation, normal root mutation
+of the separate holder. Normal root mutation
 composition (Settings values remain disabled), authenticated house flows/trusted
 sinks, Changes/Bridges accounting, remaining Settings parity and the final migration,
 leak and staging ledger remain task obligations.
+
+
+### Daemon receipt reconciliation without caller values
+
+Explicit daemon composition starts `startSecretReconciliation(app, recovery)` with
+the controller returned by `installAsyncSecretValues` or its private-file loader.
+The foundation owns shutdown. Startup schedules one check immediately; further
+checks run every minute, coalescing overlapping runs and large clock advances.
+Normal next mode does not install the mutation transport or this job yet, and
+Settings values remain disabled. A staging composition must supply a fixture
+holder, never a real credential endpoint.
+
+The job reads the oldest unfinished admission and asks the authenticated holder
+only for the original member/unique-holder-id receipt. It never reads a value or
+resends set/remove. Only boolean true changes pending to committed. False, malformed
+results and failures retain the global lock indefinitely: absence cannot fence a
+write already in flight. An uncommitted set therefore still requires the original
+caller input to retry; the daemon cannot recreate plaintext. Shutdown after a
+lookup prevents late database access. Concurrent caller work and completed rows
+are not repeated.
+
+Positive evidence records durable observation time and commit order. Core's
+in-process `recoverWrite` runs registered global recovery guards with the journal's
+original viewer/id/operation/keyed full-input hash, without admission, preparation
+or run. The Secrets hook rechecks the original member's actual current household
+authority after the last await. A revoked member cannot be replaced by another
+owner; the committed row remains locked until authority is restored. Metadata,
+removal cleanup, attribution/history, journal completion and the core acknowledgement
+commit in one transaction, with live changes published only afterwards. Failed
+metadata or core acknowledgement persistence rolls all those effects back and is
+retried later. No operation or external door accepts a forged recovery receipt.
+Core acknowledgement expiry does not expire the journal's full-input identity.
+
+Old-to-new jobs: daemon receipt checks replace caller-only lost-acknowledgement
+recovery for confirmed mutations. Caller retry remains necessary for unconfirmed
+writes; no cancellation, timeout release or negative-receipt fence is introduced.
+Normal root composition, authenticated house flows/trusted sinks, Changes/Bridges
+accounting, full typed Settings parity and final move/staging evidence remain.

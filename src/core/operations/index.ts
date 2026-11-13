@@ -85,6 +85,42 @@ export class Operations {
     this.ops.set(op.name, op);
     if (op.write && op.recover) this.recoveries.add(op.recover);
   }
+  /** Trusted in-process recovery from a piece's durable journal, without the
+   * original input. No door exposes this method. The registered recovery hook
+   * must bind the complete identity and recheck the original caller's CURRENT
+   * authority; neither admission, preparation nor run is invoked here. */
+  recoverWrite(viewer: Viewer, receipt: Readonly<WriteReceipt>): Result {
+    if (this.db.inTransaction || this.frames.length) return failure('unavailable', 'Recovery must own the outer transaction');
+    const op = this.ops.get(receipt.name);
+    if (!op?.write || !op.recover || canonical(viewer) !== receipt.viewer || !receipt.id || receipt.id.length > 200)
+      return failure('unavailable', 'Recovery identity unavailable');
+    const changes: Change[] = [];
+    this.frames.push(changes);
+    let result: Result;
+    try {
+      result = this.db.transaction((): Result => {
+        const now = this.clock.now();
+        const ctx: Context = {db:this.db, viewer, now, receipt, changed:(type,id)=>changes.push({type,id})};
+        const old = this.db.prepare('SELECT name,input_hash FROM core_operations WHERE viewer=? AND id=?').get(receipt.viewer,receipt.id) as {name:string;input_hash:string}|undefined;
+        if (old && (old.name !== receipt.name || old.input_hash !== receipt.inputHash)) throw new OperationError('conflict','Operation id already used for different input');
+        let recovered: RecoveredWrite | undefined;
+        for (const recover of this.recoveries) { recovered = recover(ctx); if (recovered) break; }
+        if (!(recovered instanceof RecoveredWrite) || !Number.isFinite(recovered.expires) || recovered.expires <= now || recovered.expires > now + 30 * 86400_000)
+          throw new Error('Recovery unavailable');
+        const answer: Result = {ok:true,value:op.output.parse(recovered.value ?? null)};
+        const serialized = JSON.stringify(answer);
+        this.db.prepare('INSERT INTO core_operations VALUES (?,?,?,?,?,?) ON CONFLICT(viewer,id) DO UPDATE SET result=excluded.result,expires=excluded.expires')
+          .run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,serialized,recovered.expires);
+        return JSON.parse(serialized) as Result;
+      })();
+    } catch (e) { result = e instanceof OperationError ? failure(e.code,e.message) : failure('unavailable','Recovery could not complete'); }
+    finally { this.frames.pop(); }
+    if (result.ok) {
+      if (changes.length) { try { this.committed(changes); } catch { /* committed recovery remains durable */ } }
+      this.expire();
+    }
+    return result;
+  }
   has(name: string) { return this.ops.has(name); }
   offered(door: Door) { return [...this.ops.values()].filter(o => !o.doors || o.doors.includes(door)).map(o => ({ name: o.name, input: o.input, output: o.output, write: !!o.write, cli: o.cli })); }
   /** MCP registration is a hook; it dispatches exactly like the other doors. */

@@ -146,3 +146,40 @@ it('checks recovery again after preparation when an external receipt becomes ava
   expect(publish).toHaveBeenCalledExactlyOnceWith([{ type: 'example.saved', id: 'after-prepare' }]);
   expect(publicationTransactions).toEqual([false]);
 });
+
+it('recovers journal identity without input, validating authority, output, conflicts and atomic publication',()=>{
+  const {app,clock}=setup();let permitted=true,malformed=false;
+  app.db.exec('CREATE TABLE recovered_without_input(id TEXT)');
+  const spies=install(app,{recover(ctx){
+    if(!permitted)throw new OperationError('denied','Permission denied');
+    app.db.prepare('INSERT INTO recovered_without_input VALUES (?)').run(ctx.receipt!.id);ctx.changed('example.saved',ctx.receipt!.id);
+    return new RecoveredWrite(malformed ? {saved:false} : {saved:true},ctx.receipt!.expires);
+  }});
+  const receipt={viewer:'{"id":"owner","kind":"member"}',id:'journal',name:'example.save',inputHash:'keyed-identity',expires:clock.now()+1000};
+  const publish=vi.spyOn(app.live,'changed');
+  expect(app.operations.recoverWrite({kind:'member',id:'other'},receipt)).toMatchObject({code:'unavailable'});
+  app.db.transaction(()=>{expect(app.operations.recoverWrite(owner,receipt)).toMatchObject({code:'unavailable'});})();
+  permitted=false;expect(app.operations.recoverWrite(owner,receipt)).toMatchObject({code:'denied'});
+  permitted=true;malformed=true;expect(app.operations.recoverWrite(owner,receipt)).toMatchObject({code:'unavailable'});
+  malformed=false;
+  app.db.exec("CREATE TRIGGER fail_recovered BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT,'private'); END");
+  expect(app.operations.recoverWrite(owner,receipt)).toMatchObject({code:'unavailable'});
+  expect(app.db.prepare('SELECT * FROM recovered_without_input').all()).toEqual([]);expect(publish).not.toHaveBeenCalled();
+  app.db.exec('DROP TRIGGER fail_recovered');
+  expect(app.operations.recoverWrite(owner,receipt)).toEqual({ok:true,value:{saved:true}});
+  expect(app.db.prepare('SELECT * FROM recovered_without_input').all()).toEqual([{id:'journal'}]);expect(publish).toHaveBeenCalledTimes(1);
+  expect(app.operations.recoverWrite(owner,{...receipt,inputHash:'other'})).toMatchObject({code:'conflict'});
+  permitted=false;expect(app.operations.recoverWrite(owner,receipt)).toMatchObject({code:'denied'});
+  expect(spies.prepare).not.toHaveBeenCalled();expect(spies.run).not.toHaveBeenCalled();
+  expect(app.operations.offered('http').some(op=>op.name.includes('recover'))).toBe(false);
+});
+it('journal recovery runs global reservation guards and rejects missing receipts and invalid deadlines',()=>{
+  const {app,clock}=setup();let expires=clock.now()+1,found=false,guard=false;
+  app.operations.register({name:'guard.global',write:true,input:z.object({}),output:z.null(),may:()=>false,run:()=>null,recover(){if(guard)throw new OperationError('conflict','Reserved');}});
+  install(app,{recover(){return found ? new RecoveredWrite({saved:true},expires) : undefined;}});
+  const r={viewer:'{"id":"owner","kind":"member"}',id:'reserved',name:'example.save',inputHash:'hash',expires:clock.now()+1};
+  expect(app.operations.recoverWrite(owner,r)).toMatchObject({code:'unavailable'});
+  found=true;guard=true;expect(app.operations.recoverWrite(owner,r)).toMatchObject({code:'conflict'});guard=false;
+  for(const value of [NaN,Infinity,clock.now(),clock.now()+31*86400_000]) {expires=value;expect(app.operations.recoverWrite(owner,r)).toMatchObject({code:'unavailable'});}
+  expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual([]);
+});

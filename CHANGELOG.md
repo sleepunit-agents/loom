@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add a daemon-owned Secrets receipt reconciliation job that recovers confirmed writes without caller plaintext, retaining locks on uncertain writes and rechecking current authority.
+
 - Retain encrypted-holder age identities and receipt keys across explicit key rotation without rewriting values or retry receipts.
 
 

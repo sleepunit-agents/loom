@@ -120,4 +120,35 @@ export function installAsyncSecretValues(db: Db, operations: Operations, sharing
     may:v=>v.kind==='member' && mayAct(v,{type:'secret.name'},sharing(),'household','secrets.remove'),
     input:z.object({name:secretName,writeId:z.uuid()}).strict(),output:z.object({removed:z.literal(true)}),
   }));
+  let stopped = false;
+  return {
+    close() { stopped = true; },
+    async reconcilePending(): Promise<void> {
+      if (stopped || db.inTransaction) return;
+      const row = db.prepare("SELECT * FROM secrets_write_intents WHERE state <> 'complete' ORDER BY sequence LIMIT 1").get() as Intent|undefined;
+      if (!row || running.has(row.sequence)) return;
+      const viewer = {kind:'member' as const,id:row.member};
+      // Admission writes canonical member viewers only. Refuse damaged identity
+      // rather than allowing recovery to attribute work to a different member.
+      if (row.viewer !== JSON.stringify({id:row.member,kind:'member'}) ||
+        !mayAct(viewer,{type:'secret.name'},sharing(),'household',row.operation)) return;
+      if (row.state === 'pending') {
+        let found: unknown;
+        try { found = await holder.hasReceipt({member:row.member,writeId:row.holder_id}); }
+        catch { return; }
+        if (stopped || found !== true) return;
+        // No mutation is sent, and absence is never a fence. A concurrent caller
+        // may have completed this row while the receipt lookup was awaiting.
+        db.transaction(() => {
+          db.prepare("UPDATE secrets_write_intents SET state='committed',committed_at=?,commit_order=(SELECT coalesce(max(commit_order),0)+1 FROM secrets_write_intents) WHERE sequence=? AND state='pending'")
+            .run(operations.clock.now(),row.sequence);
+        })();
+      }
+      if (stopped) return;
+      // Core owns rollback and live publication; its hook rechecks current
+      // authority after the last await, with the original full-input hash.
+      operations.recoverWrite(viewer,{viewer:row.viewer,id:row.id,name:row.operation,inputHash:row.input_hash,expires:operations.clock.now()+30*86400_000});
+    },
+  };
+
 }

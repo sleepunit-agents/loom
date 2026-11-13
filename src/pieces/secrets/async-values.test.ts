@@ -10,6 +10,7 @@ import {startLoom} from '../../foundation.js';
 import {fixture,fixtureSharing} from '../../fixture.js';
 import {FakeClock,type Viewer} from '../../core/index.js';
 import {installAsyncSecretValues,type AsyncSecretMutations} from './async-values.js';
+import {startSecretReconciliation} from './reconciliation.js';
 const owner:Viewer={kind:'member',id:'jonathan'};
 const key=Buffer.alloc(32,7),sentinel='ASYNC-SECRET-SENTINEL';
 const closes:(()=>Promise<void>)[]=[],homes:string[]=[];
@@ -22,12 +23,13 @@ async function setup(holder:AsyncSecretMutations=fake(),home?:string,clock=new F
   if(!home){home=mkdtempSync(join(tmpdir(),'secrets-intents-'));homes.push(home);fixture(home);}
   const app=await startLoom({home,next:true,staging:true,clock,stdout:()=>{}});closes.push(app.close);
   let sharing=fixtureSharing();
-  installAsyncSecretValues(app.db,app.operations,()=>sharing,holder,retryKey);
+  const recovery=installAsyncSecretValues(app.db,app.operations,()=>sharing,holder,retryKey);
+  app.onClose(recovery.close);
   app.operations.register({name:'test.other',write:true,input:z.object({}).strict(),output:z.null(),may:()=>true,run:()=>null});
   const call=(name:string,input:unknown,id:string,v=owner,valid=()=>true)=>app.operations.callAsync('http',v,name,input,id,false,valid);
   const input={name:'API',mode:'add' as const,value:sentinel,writeId:randomUUID()};
   const rows=()=>app.db.prepare('SELECT * FROM secrets_write_intents ORDER BY sequence').all() as Array<{sequence:number;state:string;holder_id:string;committed_at:number}>;
-  return {app,home,clock,call,input,rows,addOwner(){sharing.members.dana={owner:true,agents:['art','mark']};},deny(){sharing={members:{},projects:{},services:{}};}};
+  return {app,home,clock,call,input,rows,recovery,addOwner(){sharing.members.dana={owner:true,agents:['art','mark']};},deny(){sharing={members:{},projects:{},services:{}};}};
 }
 it('durably reserves before holder work and binds global core ids and unique holder ids without values',async()=>{
   const holder=fake(),s=await setup(holder);let release!:()=>void;
@@ -157,6 +159,8 @@ it('recovers actual encrypted holder success after a lost reply and restart with
   expect(await s.call('secrets.set',input,'actual')).toMatchObject({code:'unavailable'});
   await s.app.close();store.close();store=await openHolderStore(directory,identity,receiptKey);
   s=await setup(holder,home,clock);
+  await startSecretReconciliation(s.app,s.recovery).run();
+  expect(s.rows()[0].state).toBe('complete');
   expect(await s.call('secrets.set',input,'actual')).toEqual({ok:true,value:{saved:true}});
   expect(holder.set).toHaveBeenCalledTimes(1);
   const bytes=await store.read('API');expect(Buffer.from(bytes).toString()).toBe(sentinel);bytes.fill(0);
@@ -167,6 +171,8 @@ it('recovers actual encrypted holder success after a lost reply and restart with
   expect(holder.set).toHaveBeenLastCalledWith({member:'jonathan',writeId:row.holder_id},'API',expect.any(Buffer),'replace');
   await s.app.close();store.close();store=await openHolderStore(directory,identity,receiptKey);
   s=await setup(holder,home,clock);
+  await startSecretReconciliation(s.app,s.recovery).run();
+  expect(s.rows()[1].state).toBe('complete');
   expect(await s.call('secrets.set',replace,'actual-replace')).toEqual({ok:true,value:{saved:true}});
   expect(holder.set).toHaveBeenCalledTimes(2);
   const replaced=await store.read('API');expect(Buffer.from(replaced).toString()).toBe(replace.value);replaced.fill(0);
@@ -242,4 +248,76 @@ it('separates global viewer/id and holder identity for two current authorized ow
   expect(await next.call('secrets.set',s.input,'shared')).toMatchObject({ok:true});
   expect(holder.set).toHaveBeenCalledTimes(3);
   expect(await next.call('secrets.set',s.input,'shared',dana)).toMatchObject({code:'conflict'});
+});
+
+it('automatically reconciles a durable positive receipt after restart without caller plaintext',async()=>{
+  const holder=fake();holder.set.mockImplementationOnce(async who=>{holder.receipts.add(who.writeId);throw Error(sentinel);});
+  let s=await setup(holder);const {home,clock,input}=s;
+  expect(await s.call('secrets.set',input,'lost-auto')).toMatchObject({code:'unavailable'});
+  await s.app.close();clock.advance(31*86400_000);s=await setup(holder,home,clock);
+  const publish=vi.spyOn(s.app.live,'changed'),job=startSecretReconciliation(s.app,s.recovery);
+  clock.advance(0);await job.run();
+  expect(s.rows()[0].state).toBe('complete');expect(holder.set).toHaveBeenCalledTimes(1);expect(holder.remove).not.toHaveBeenCalled();
+  expect(s.app.db.prepare('SELECT name FROM core_operations WHERE id=?').get('lost-auto')).toEqual({name:'secrets.set'});
+  expect(s.app.db.prepare('SELECT * FROM secrets_changes').all()).toHaveLength(1);expect(publish).toHaveBeenCalledTimes(1);
+  expect(await s.call('secrets.set',{...input,value:'different'},'lost-auto')).toMatchObject({code:'conflict'});
+  expect(await s.call('secrets.set',input,'lost-auto')).toMatchObject({ok:true});
+  for(const {name} of s.app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])
+    expect(JSON.stringify(s.app.db.prepare(`SELECT * FROM "${name}"`).all())).not.toContain(sentinel);
+});
+it('automatic negative, malformed and failed receipt lookups never resend or release an uncertain write',async()=>{
+  const holder=fake();holder.set.mockRejectedValueOnce(Error(sentinel));const s=await setup(holder);
+  expect(await s.call('secrets.set',s.input,'uncertain')).toMatchObject({code:'unavailable'});
+  const job=startSecretReconciliation(s.app,s.recovery);
+  for(const mode of ['negative','malformed','failure']) {
+    if(mode==='malformed')holder.hasReceipt.mockResolvedValueOnce('true' as never);
+    if(mode==='failure')holder.hasReceipt.mockRejectedValueOnce(Error(sentinel));
+    await job.run();expect(s.rows()[0].state).toBe('pending');
+    expect(await s.call('secrets.set',{...s.input,writeId:randomUUID()},'blocked')).toMatchObject({code:'unavailable'});
+  }
+  expect(holder.set).toHaveBeenCalledTimes(1);expect(holder.remove).not.toHaveBeenCalled();
+  // A late commit is still possible after false evidence; later positive evidence recovers it.
+  holder.receipts.add(s.rows()[0].holder_id);s.clock.advance(60_000);await job.run();expect(s.rows()[0].state).toBe('complete');
+});
+it('rechecks actual original owner after an awaited receipt and resumes after authority returns',async()=>{
+  const holder=fake();holder.set.mockImplementationOnce(async who=>{holder.receipts.add(who.writeId);throw Error('lost');});
+  const s=await setup(holder);expect(await s.call('secrets.set',s.input,'authority')).toMatchObject({code:'unavailable'});
+  const job=startSecretReconciliation(s.app,s.recovery);let release!:(v:boolean)=>void;
+  holder.hasReceipt.mockImplementationOnce(()=>new Promise(r=>{release=r;}));
+  const work=job.run();s.deny();release(true);await work;
+  expect(s.rows()[0].state).toBe('committed');expect(s.app.db.prepare('SELECT * FROM secrets_names').all()).toEqual([]);
+  expect(s.app.db.prepare('SELECT * FROM core_operations WHERE id=?').all('authority')).toEqual([]);
+  s.addOwner();await job.run();expect(s.rows()[0].state).toBe('committed'); // Dana cannot stand in for Jonathan.
+  await s.app.close();const next=await setup(holder,s.home,s.clock);const resumed=startSecretReconciliation(next.app,next.recovery);
+  await resumed.run();expect(next.rows()[0].state).toBe('complete');expect(holder.set).toHaveBeenCalledTimes(1);
+});
+it('automatic reconciliation rolls metadata/history/live/completion back when core receipt persistence fails',async()=>{
+  const holder=fake();holder.set.mockImplementationOnce(async who=>{holder.receipts.add(who.writeId);throw Error('lost');});
+  const s=await setup(holder);expect(await s.call('secrets.set',s.input,'rollback-auto')).toMatchObject({code:'unavailable'});
+  const job=startSecretReconciliation(s.app,s.recovery),publish=vi.spyOn(s.app.live,'changed');
+  s.app.db.exec("CREATE TRIGGER fail_auto BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT,'private'); END");
+  await job.run();expect(s.rows()[0].state).toBe('committed');
+  expect(s.app.db.prepare('SELECT * FROM secrets_names').all()).toEqual([]);expect(s.app.db.prepare('SELECT * FROM secrets_changes').all()).toEqual([]);expect(publish).not.toHaveBeenCalled();
+  s.app.db.exec('DROP TRIGGER fail_auto');await job.run();expect(s.rows()[0].state).toBe('complete');expect(publish).toHaveBeenCalledTimes(1);expect(holder.set).toHaveBeenCalledTimes(1);
+});
+it('shutdown during lookup prevents late database access and job runs coalesce',async()=>{
+  const holder=fake();holder.set.mockRejectedValueOnce(Error('lost'));const s=await setup(holder);
+  expect(await s.call('secrets.set',s.input,'closing')).toMatchObject({code:'unavailable'});
+  let release!:(v:boolean)=>void;holder.hasReceipt.mockImplementationOnce(()=>new Promise(r=>{release=r;}));
+  const job=startSecretReconciliation(s.app,s.recovery),work=job.run();expect(job.run()).toBe(work);
+  await s.app.close();release(true);await expect(work).resolves.toBeUndefined();await job.run();
+  const next=await setup(holder,s.home,s.clock);expect(next.rows()[0].state).toBe('pending');
+});
+
+it('automatic remove clears grants once and never overwrites later edits on a retry',async()=>{
+  const holder=fake(),s=await setup(holder);expect(await s.call('secrets.set',s.input,'add-auto-remove')).toMatchObject({ok:true});
+  expect(s.app.operations.call('direct',owner,'secrets.grant',{agent:'art',kind:'secret',target:'API'},'grant-auto')).toMatchObject({ok:true});
+  holder.remove.mockImplementationOnce(async who=>{holder.receipts.add(who.writeId);throw Error('lost');});
+  const input={name:'API',writeId:randomUUID()};expect(await s.call('secrets.remove',input,'auto-remove')).toMatchObject({code:'unavailable'});
+  const job=startSecretReconciliation(s.app,s.recovery);await job.run();
+  expect(s.rows()[1].state).toBe('complete');expect(s.app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);expect(s.app.db.prepare('SELECT * FROM secrets_names').all()).toEqual([]);
+  expect(s.app.operations.call('direct',owner,'secrets.describe',{name:'API',description:'later'},'later-auto')).toMatchObject({ok:true});
+  await s.app.close();s.clock.advance(31*86400_000);const next=await setup(holder,s.home,s.clock);await startSecretReconciliation(next.app,next.recovery).run();
+  expect(await next.call('secrets.remove',input,'auto-remove')).toMatchObject({ok:true});
+  expect(JSON.parse((next.app.db.prepare('SELECT record FROM secrets_names').get() as {record:string}).record).description).toBe('later');expect(holder.remove).toHaveBeenCalledTimes(1);
 });
