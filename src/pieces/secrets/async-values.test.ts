@@ -27,7 +27,7 @@ async function setup(holder:AsyncSecretMutations=fake(),home?:string,clock=new F
   const call=(name:string,input:unknown,id:string,v=owner,valid=()=>true)=>app.operations.callAsync('http',v,name,input,id,false,valid);
   const input={name:'API',mode:'add' as const,value:sentinel,writeId:randomUUID()};
   const rows=()=>app.db.prepare('SELECT * FROM secrets_write_intents ORDER BY sequence').all() as Array<{sequence:number;state:string;holder_id:string;committed_at:number}>;
-  return {app,home,clock,call,input,rows,deny(){sharing={members:{},projects:{},services:{}};}};
+  return {app,home,clock,call,input,rows,addOwner(){sharing.members.dana={owner:true,agents:['art','mark']};},deny(){sharing={members:{},projects:{},services:{}};}};
 }
 it('durably reserves before holder work and binds global core ids and unique holder ids without values',async()=>{
   const holder=fake(),s=await setup(holder);let release!:()=>void;
@@ -119,6 +119,7 @@ it('keeps global id protection when restarted with no async holder installer',as
   expect(app.operations.has('secrets.set')).toBe(false);
   expect(app.operations.call('direct',owner,'secrets.describe',{name:'OTHER',description:''},'reserved')).toMatchObject({code:'conflict'});
   expect(app.db.prepare('SELECT state FROM secrets_write_intents').get()).toEqual({state:'pending'});
+  expect(app.operations.call('direct',owner,'secrets.describe',{name:'OTHER',description:''},'fresh-metadata')).toMatchObject({code:'unavailable'});
 });
 it('rolls metadata, history, completion and publication back on late core receipt failure',async()=>{
   const holder=fake(),s=await setup(holder),publish=vi.spyOn(s.app.live,'changed');
@@ -205,4 +206,40 @@ it.each(['set','remove'] as const)('rechecks current owner permission before cac
   expect(s.app.db.prepare('SELECT id FROM core_operations WHERE id=?').get(id)).toEqual({id});
   s.deny();expect(await s.call(`secrets.${action}`,input,id)).toMatchObject({code:'denied'});
   expect(holder.set).toHaveBeenCalledTimes(1);expect(holder.remove).toHaveBeenCalledTimes(action==='remove'?1:0);
+});
+it('blocks later metadata edits while removal is uncertain and preserves edits made after reconciliation',async()=>{
+  const holder=fake(),s=await setup(holder);
+  expect(await s.call('secrets.set',s.input,'add')).toMatchObject({ok:true});
+  let release!:()=>void;
+  holder.remove.mockImplementationOnce(who=>new Promise<void>(r=>{release=()=>{holder.receipts.add(who.writeId);r();};}));
+  const removal={name:'API',writeId:randomUUID()},pending=s.call('secrets.remove',removal,'removing');
+  await Promise.resolve();await Promise.resolve();expect(holder.remove).toHaveBeenCalledTimes(1);
+  const describe={name:'API',description:'Later description'};
+  expect(s.app.operations.call('direct',owner,'secrets.describe',describe,'later-description')).toMatchObject({code:'unavailable'});
+  expect(s.app.operations.call('direct',owner,'secrets.describe',{...describe,name:'OTHER'},'different-name')).toMatchObject({code:'unavailable'});
+  expect(s.app.operations.call('direct',owner,'secrets.grant',{agent:'art',kind:'secret',target:'API'},'later-grant')).toMatchObject({code:'unavailable'});
+  expect(s.app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
+  expect(JSON.parse((s.app.db.prepare('SELECT record FROM secrets_names').get() as {record:string}).record).description).toBe('');
+  release();expect(await pending).toMatchObject({ok:true});
+  expect(s.app.operations.call('direct',owner,'secrets.describe',describe,'later-description')).toMatchObject({ok:true});
+  expect(await s.call('secrets.remove',removal,'removing')).toMatchObject({ok:true});
+  expect(JSON.parse((s.app.db.prepare('SELECT record FROM secrets_names').get() as {record:string}).record).description).toBe('Later description');
+});
+it('separates global viewer/id and holder identity for two current authorized owners using the same core id',async()=>{
+  const holder=fake();holder.set.mockRejectedValueOnce(Error('uncertain'));
+  const s=await setup(holder),dana:Viewer={kind:'member',id:'dana'};s.addOwner();
+  expect(await s.call('secrets.set',s.input,'shared')).toMatchObject({code:'unavailable'});
+  const second={...s.input,name:'OTHER'}; // Deliberately reuse both core id and caller UUID in another member's namespace.
+  expect(await s.call('secrets.set',second,'shared',dana)).toMatchObject({code:'unavailable'});
+  expect(await s.call('secrets.set',s.input,'shared')).toMatchObject({ok:true});
+  expect(await s.call('secrets.set',second,'shared',dana)).toMatchObject({ok:true});
+  const rows=s.app.db.prepare('SELECT viewer,id,member,write_id,holder_id FROM secrets_write_intents ORDER BY sequence').all() as {viewer:string;id:string;member:string;write_id:string;holder_id:string}[];
+  expect(rows.map(r=>({viewer:JSON.parse(r.viewer),id:r.id,member:r.member,writeId:r.write_id})))
+    .toEqual([{viewer:owner,id:'shared',member:'jonathan',writeId:s.input.writeId},{viewer:dana,id:'shared',member:'dana',writeId:s.input.writeId}]);
+  expect(rows[0].holder_id).not.toBe(rows[1].holder_id);
+  const {home,clock}=s;await s.app.close();clock.advance(31*86400_000);const next=await setup(holder,home,clock);next.addOwner();
+  expect(await next.call('secrets.set',second,'shared',dana)).toMatchObject({ok:true});
+  expect(await next.call('secrets.set',s.input,'shared')).toMatchObject({ok:true});
+  expect(holder.set).toHaveBeenCalledTimes(3);
+  expect(await next.call('secrets.set',s.input,'shared',dana)).toMatchObject({code:'conflict'});
 });

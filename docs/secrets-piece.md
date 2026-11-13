@@ -784,7 +784,9 @@ guard prevents another operation from borrowing a reserved core id, even when
 a restart has no configured holder. A caller's UUID cannot borrow an existing
 holder receipt. No value or unkeyed value hash is stored. Pending and committed
 writes hold one global durable lock; a later write cannot overtake unreconciled
-metadata, even for another name. This deliberately serializes rare owner writes
+metadata, even for another name. Other Secrets metadata writes (including
+descriptions, grants and policy) wait on the same lock so reconciliation cannot
+erase an edit accepted later. This deliberately serializes rare owner writes
 so uncertain holder commits cannot be reordered by receipt observation. Identical concurrent calls share preparation within the daemon; holder
 idempotency handles overlap across daemon lifetimes.
 

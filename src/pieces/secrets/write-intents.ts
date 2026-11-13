@@ -7,4 +7,10 @@ export function guardSecretWriteIntent(ctx: Context): undefined {
     .get(ctx.receipt.viewer,ctx.receipt.id) as {operation:string;input_hash:string}|undefined;
   if (row && (row.operation !== ctx.receipt.name || row.input_hash !== ctx.receipt.inputHash))
     throw new OperationError('conflict','Secret write identity already reserved');
+  // Set/remove check UUID reuse before admission's global lock. All other
+  // Secrets writes must also wait: a later description/grant/policy edit cannot
+  // be silently overtaken by recovery of an earlier holder mutation.
+  if (!row && ctx.receipt.name.startsWith('secrets.') && !['secrets.set','secrets.remove'].includes(ctx.receipt.name)
+    && ctx.db.prepare("SELECT sequence FROM secrets_write_intents WHERE state <> 'complete'").get())
+    throw new OperationError('unavailable','Secret write awaits reconciliation');
 }
