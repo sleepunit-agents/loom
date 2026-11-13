@@ -26,7 +26,7 @@ import { dirname } from 'node:path';
  */
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveSqliteDbPath } from '../config.js';
+import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
 import { NOTE_PATH } from '../notes.js';
 import { MIGRATIONS } from './migrations.js';
 import {
@@ -807,9 +807,9 @@ export function projectNameSet(db: Database, name: string): Set<string> | null {
  */
 export function openProjectsStore(
   contextDir: string,
-  opts: { readonly?: boolean; now?: () => number; actor?: string } = {},
+  opts: { readonly?: boolean; now?: () => number; actor?: string; selection?: MemorySelection } = {},
 ): ProjectsStore | null {
-  const dbPath = resolveSqliteDbPath(contextDir);
+  const dbPath = resolveSqliteDbPath(contextDir, opts.selection);
   if (opts.readonly && !existsSync(dbPath)) return null;
   return new ProjectsStore({ dbPath, readonly: opts.readonly, now: opts.now, actor: opts.actor });
 }
@@ -826,14 +826,14 @@ const ECHO_MAX = MAX_PROJECT_SLUG;
  * truncating). Best-effort as person cards: a missing, archived or
  * unreadable card gives its placeholder line, never a failure.
  */
-export function projectBlock(contextDir: string, name: string | undefined, opts: { nowMs?: number; onFailure?: (err: unknown) => void } = {}): string | null {
+export function projectBlock(contextDir: string, name: string | undefined, opts: { nowMs?: number; onFailure?: (err: unknown) => void; selection?: MemorySelection } = {}): string | null {
   if (!name) return null;
   const echo = name.length > ECHO_MAX ? `${name.slice(0, ECHO_MAX)}…` : name;
   const line = (text: string) => `${PROJECT_HEADING}\n${text}`;
   if (projectNameError(name)) return line(`_(no project ${echo})_`);
   let store: ProjectsStore | null;
   try {
-    store = openProjectsStore(contextDir, { readonly: true });
+    store = openProjectsStore(contextDir, { readonly: true, selection: opts.selection });
   } catch (e) {
     opts.onFailure?.(e);
     return line(`_(project ${echo} is unreadable)_`);

@@ -23,7 +23,7 @@
  */
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { resolveSqliteDbPath } from '../config.js';
+import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
 import { EPISODE_CATEGORY } from '../categories.js';
 import { tapeDigests, type TapeDigest } from './conversations.js';
 
@@ -36,6 +36,8 @@ export interface EpisodeRow {
 }
 
 export interface TapeOptions {
+  /** Trusted private-store selection; omitted keeps the legacy override. */
+  memorySelection?: MemorySelection;
   /** Look-back window in hours (default 24). */
   hours?: number;
   /** Approximate token budget for the block (default 1500). Oldest are dropped first. */
@@ -147,8 +149,8 @@ export function assembleTape(rows: EpisodeRow[], opts: TapeOptions = {}, digests
   return head + kept.join('\n');
 }
 
-function openMemoriesDb(contextDir: string): Database | null {
-  const dbPath = resolveSqliteDbPath(contextDir);
+function openMemoriesDb(contextDir: string, selection?: MemorySelection): Database | null {
+  const dbPath = resolveSqliteDbPath(contextDir, selection);
   if (!existsSync(dbPath)) return null;
   const db = new BetterSqlite3(dbPath, { readonly: true });
   db.pragma('busy_timeout = 5000');
@@ -157,7 +159,7 @@ function openMemoriesDb(contextDir: string): Database | null {
 
 /** Raw episode rows in the window, oldest first. Empty when there is no store. */
 export function episodeRows(contextDir: string, opts: TapeOptions = {}): EpisodeRow[] {
-  const db = openMemoriesDb(contextDir);
+  const db = openMemoriesDb(contextDir, opts.memorySelection);
   if (!db) return [];
   try {
     const now = opts.nowMs ?? Date.now();
@@ -192,5 +194,5 @@ export function digestRows(contextDir: string, opts: TapeOptions = {}): TapeDige
   const now = opts.nowMs ?? Date.now();
   const since = new Date(now - (opts.hours ?? DEFAULT_HOURS) * HOUR_MS).toISOString();
   if (opts.onlyConversation === null) return [];
-  return tapeDigests(contextDir, since, new Date(now).toISOString(), opts.onlyConversation);
+  return tapeDigests(contextDir, since, new Date(now).toISOString(), opts.onlyConversation, opts.memorySelection);
 }
