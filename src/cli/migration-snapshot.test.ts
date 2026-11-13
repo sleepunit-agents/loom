@@ -346,3 +346,18 @@ test('identical physical clock inputs still collide across roots and invalid exp
   const {prepareMigrationPlan} = await import('./migration-plan.js');
   expect(()=>prepareMigrationPlan(to)).toThrow('Invalid explicit Changes');
 });
+
+test('plan refuses explicit clock metadata without agent files and malformed Changes records before all', async () => {
+  const {root,home,to} = fixture();
+  writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['art'],default:'art',owner:'jonathan'}));
+  const clock=join(root,'clock');mkdirSync(clock);writeFileSync(join(clock,'lanes.json'),'{"preserve":"archive"}');
+  await createSnapshot(home,to,undefined,{clock});
+  const {prepareMigrationPlan} = await import('./migration-plan.js');
+  expect(()=>prepareMigrationPlan(to)).toThrow('no agent files');rmSync(to,{recursive:true});
+  const changes=join(root,'export.json');const {change}=await import('../pieces/changes/fixture.js');
+  for (const records of [[{}], [change({id:'wrong'})], [change(),change()]]) {
+    writeFileSync(changes,JSON.stringify({v:1,changes:records}));await createSnapshot(home,to,undefined,{changes});
+    expect(()=>prepareMigrationPlan(to)).toThrow();rmSync(to,{recursive:true});
+  }
+  expect(existsSync(join(root,'new-home'))).toBe(false);
+});

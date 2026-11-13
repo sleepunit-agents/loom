@@ -4,6 +4,7 @@ import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, re
 import { basename, join, posix } from 'node:path';
 import type Database from 'better-sqlite3';
 import { openSnapshotSqlite } from './migration-sqlite.js';
+import { readChangesImport } from '../pieces/changes/importer.js';
 import { legacyClockAgentFiles } from '../pieces/clock/importer.js';
 import { z } from 'zod';
 import { parseHouseholdDocument } from '../household.js';
@@ -130,11 +131,16 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     (db.prepare('SELECT record FROM tasks ORDER BY ord').all() as { record: string }[]).map(r => JSON.parse(r.record) as TaskSource)) : [];
   const epics = tasks.filter(t => t.type === 'epic');
   const clock = [...new Set([...files].filter(p => (legacyClockAgentFiles as readonly string[]).includes(basename(p)) && agent.safeParse(posix.basename(posix.dirname(p))).success).map(p => posix.dirname(posix.dirname(p))))].sort();
+  if ((files.has('clock/lanes.json') || files.has('clock/fire')) && !clock.includes('clock')) throw Error('Explicit clock source has no agent files');
   const approvals = [...files].filter(p => basename(p) === 'approvals.json').map(p => posix.dirname(p)).sort();
   const changes = [...files].filter(p => basename(p) === 'changes.json' || /(?:^|\/)changes\/.*\.json$/.test(p)).filter(p => {
     const value = json(p);
     const valid = value?.v === 1 && Array.isArray(value.changes);
-    if (p === 'changes/changes.json' && !valid) throw Error('Invalid explicit Changes snapshot');
+    if (p === 'changes/changes.json') {
+      if (!valid) throw Error('Invalid explicit Changes snapshot');
+      // Source-only projection validates records, identities and duplicate ids before any destination opens.
+      readChangesImport(path(p), {projects: [], attribution: {agents: {}, ownerLogins: []}});
+    }
     return valid;
   }).sort();
   const commsDirectories = new Set([...files].filter(p => basename(p) === 'comms.db' || basename(p) === 'comms.salt').map(p => posix.dirname(p)));
