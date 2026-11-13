@@ -33,12 +33,20 @@ export function installSlackDaemon(app: Foundation, effects: OutsideEffects, opt
   function invalidate() {
     generation++; signature = undefined;
     for (const session of sessions.values()) session.stop();
-    schedule(0);
+    void sync();
   }
   function key() { return JSON.stringify([setupRevision(app.db), options.credentialEpoch()]); }
-  function schedule(delay = 5000) {
+  function schedule() {
     if (closed || cancel) return;
-    cancel = clock.at(clock.now() + delay, () => { cancel = undefined; void sync(); });
+    cancel = clock.at(clock.now() + 5000, () => {
+      cancel = undefined;
+      try {
+        // Detection must run even while serialized metadata/handoff IO is pending.
+        if (signature !== undefined && key() !== signature) invalidate();
+        else void sync();
+      } catch { invalidate(); }
+      schedule();
+    });
   }
   async function retire() {
     const old = [...sessions.values()]; sessions.clear();
@@ -88,7 +96,7 @@ export function installSlackDaemon(app: Foundation, effects: OutsideEffects, opt
       let closing: Promise<void> | undefined;
       const session: Session = {
         stop() { if (!stopped) { stopped=true; socket.close(); } },
-        close() { session.stop(); return closing ??= drain.close().finally(()=>effects.finish(effect.id)); },
+        close() { session.stop(); return closing ??= Promise.all([socket.close(),drain.close()]).then(()=>{}).finally(()=>effects.finish(effect.id)); },
         flush:()=>drain.flush(),
       };
       sessions.set(venue.id,session);
@@ -109,7 +117,7 @@ export function installSlackDaemon(app: Foundation, effects: OutsideEffects, opt
       || (changes.some(c=>c.type.startsWith('bridges.')) && key() !== signature)) invalidate();
   });
   const unrelease=effects.onReleased(id=>{if(id.startsWith('bridges:slack:')) void sync();});
-  void sync();
+  schedule(); void sync();
   let closing: Promise<void> | undefined;
   return { sync, close(): Promise<void> {
     if (closing) return closing;
