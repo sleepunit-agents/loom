@@ -21,7 +21,10 @@ export interface AgentPost {
  run?: string; tool?: string; state?: 'running' | 'done' | 'failed';
  ref?: string; step?: Record<string, unknown>;
 }
+/** Body record movement, distinct from the working heartbeat. Times are epoch milliseconds. */
+export interface BodyAlive { at: number; tokens?: number }
 export interface DeliveryTrace {
+ alive?: BodyAlive;
  thread: string; conversation: string; archived: number | null; working: boolean;
  messages: {seq:number;at:number;kind:string;from:string;delivery?: 'sending'|'held'|'failed'|'delivered'}[];
 }
@@ -39,6 +42,8 @@ export interface Comms {
  post(agent: string, thread: string, message: AgentPost): Promise<{ seq: number }>;
  deliver(agent: string, thread: string, seq: number): Promise<void>;
  title(agent: string, thread: string, title: string): void;
+ /** Monotonic body movement; never starts or extends a working turn. */
+ activity(agent: string, thread: string, alive: BodyAlive): void;
  /** Optional heartbeat updates working state; omitted state only consumes stop. */
  status(agent: string, thread: string, state?: 'working' | 'done'): { stop: boolean; archived: boolean };
 }

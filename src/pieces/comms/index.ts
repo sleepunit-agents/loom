@@ -40,10 +40,12 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  };
  const retainedPage = (rows:MessageRow[],records:LiveRecord[]) => records.map((record,n)=>rows[n].at+days*day>clock.now()?record:{id:record.id,thread:rows[n].thread,seq:rows[n].seq,at:rows[n].at,kind:rows[n].kind,from:rows[n].sender,text:null});
  const sealedRecord = (r: MessageRow): LiveRecord => ({id:messageId(r.thread,r.seq),thread:r.thread,row:r});
+ const bodyAlive = (t:Thread) => t.working && typeof t.aliveAt==='number' && t.aliveAt >= (t.workingSince??t.last)-60_000 && t.aliveAt <= clock.now()+60_000
+  ? {at:t.aliveAt,...(typeof t.aliveTokens==='number'?{tokens:t.aliveTokens}:{})} : undefined;
  const visibleThread = (t: Thread) => {
   const reply = db.prepare("SELECT max(seq) AS seq FROM comms_messages WHERE thread=? AND kind='reply'").get(t.id) as {seq:number|null};
-  const {firstHash, firstId, ...record} = t;
-  return {...record,unread:(reply.seq ?? 0)>t.readSeq};
+  const {firstHash, firstId, aliveAt, aliveTokens, ...record} = t;
+  return {...record,...(bodyAlive(t)?{alive:bodyAlive(t)}:{}),unread:(reply.seq ?? 0)>t.readSeq};
  };
  live.register({name:'thread',windowOnly:true,
   ids:()=> (db.prepare('SELECT id FROM comms_threads').all() as {id:string}[]).map(r=>r.id),
@@ -348,7 +350,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
      ...(r.kind==='message'&&['sending','held','failed','delivered'].includes(delivery)?{delivery}:{}),
     };
    });
-   return {thread:t.id,conversation:t.conversation,archived:t.archived,working:t.working,messages};
+   return {thread:t.id,conversation:t.conversation,archived:t.archived,working:t.working,...(bodyAlive(t)?{alive:bodyAlive(t)}:{}),messages};
   },
   reader(binding) {
    // Snapshot trusted routing facts so later caller mutation cannot widen this capability.
@@ -371,6 +373,14 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    }};
   },
   title(agent,place,value) {title.parse(value); const t=requireAgent(agent,place);if(t.titledBy==='member')return fail('conflict','The member named this thread');t.title=value;t.titledBy='agent';saveThread(db,t);touched(t);},
+  activity(agent,place,alive) {
+   const value=z.object({at:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),tokens:z.number().int().min(0).max(1e12).optional()}).strict().parse(alive);
+   const t=requireAgent(agent,place);
+   if(closed||t.archived!==null||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');
+   if(value.at>clock.now()+60_000||value.at<=(t.aliveAt??-1))return;
+   t.aliveAt=value.at;t.aliveTokens=value.tokens??null;
+   saveThread(db,t);touched(t);
+  },
   status(agent,place,state) {
    if(state!==undefined)z.enum(['working','done']).parse(state);
    const t=requireAgent(agent,place);

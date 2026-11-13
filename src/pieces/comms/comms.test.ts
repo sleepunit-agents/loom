@@ -599,3 +599,41 @@ it('settles persisted working state without a beat using its start or last activ
  s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(row),place);
  await s.restart();expect(s.comms.trace('art',place).working).toBe(false);
 });
+it('records monotonic body liveness and tokens without extending working or moving activity',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ const row=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ const messages=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all()),last=row().last;
+ s.comms.status('art',place,'working');const since=row().workingSince;
+ s.clock.advance(15_000);const at=s.clock.now();
+ s.comms.activity('art',place,{at,tokens:500});
+ expect(row()).toMatchObject({aliveAt:at,aliveTokens:500,workingSince:since,workingBeat:since,last});
+ expect(s.comms.trace('art',place)).toMatchObject({alive:{at,tokens:500}});
+ s.comms.activity('art',place,{at:at-1,tokens:999});
+ s.comms.activity('art',place,{at,tokens:999});
+ s.comms.activity('art',place,{at:at+60_001,tokens:999});
+ expect(row()).toMatchObject({aliveAt:at,aliveTokens:500});
+ await s.restart();expect(s.comms.trace('art',place)).toMatchObject({alive:{at,tokens:500}});
+ s.clock.advance(1);s.comms.activity('art',place,{at:s.clock.now()});
+ expect(row()).toMatchObject({aliveTokens:null});expect(s.comms.trace('art',place).alive).toEqual({at:s.clock.now()});
+ s.clock.advance(74_999);expect(row().working).toBe(false);expect(s.comms.trace('art',place).alive).toBeUndefined();
+ s.clock.advance(60_001);s.comms.status('art',place,'working');
+ expect(s.comms.trace('art',place).alive).toBeUndefined();
+ s.comms.status('art',place,'done');s.comms.activity('art',place,{at:s.clock.now(),tokens:0});
+ expect(row().working).toBe(false);expect(s.comms.trace('art',place).alive).toBeUndefined();
+ expect(row().last).toBe(last);expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(messages);
+});
+it('rejects malformed and unauthorized body liveness without mutation',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ const snapshot=()=>JSON.stringify(s.app.db.prepare('SELECT * FROM comms_threads').all());const before=snapshot();
+ for(const input of [{at:NaN},{at:Infinity},{at:-1},{at:1.5},{at:'now'},{at:s.clock.now(),tokens:-1},{at:s.clock.now(),tokens:0.5},{at:s.clock.now(),tokens:1e12+1},{at:s.clock.now(),tokens:Infinity},{at:s.clock.now(),text:'private'}]) {
+  expect(()=>s.comms.activity('art',place,input as {at:number})).toThrow();expect(snapshot()).toBe(before);
+ }
+ expect(()=>s.comms.activity('other',place,{at:s.clock.now()})).toThrow();
+ expect(()=>s.comms.activity('art','missing',{at:s.clock.now()})).toThrow();
+ const sharing=s.getSharing();s.setSharing({...sharing,members:{...sharing.members,jonathan:{...sharing.members.jonathan,agents:[]}}});
+ expect(()=>s.comms.activity('art',place,{at:s.clock.now()})).toThrow();expect(snapshot()).toBe(before);
+ s.setSharing(sharing);await s.call('change',{thread:place,action:'archive'});const archived=snapshot();
+ expect(()=>s.comms.activity('art',place,{at:s.clock.now()})).toThrow();expect(snapshot()).toBe(archived);
+ await s.call('change',{thread:place,action:'unarchive'});await s.comms.close();const closed=snapshot();
+ expect(()=>s.comms.activity('art',place,{at:s.clock.now()})).toThrow();expect(snapshot()).toBe(closed);
+});
