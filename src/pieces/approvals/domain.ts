@@ -75,6 +75,10 @@ export function request(s: State, input: Record<string,unknown>, c: DomainContex
   for (const a of s.approvals) if ((!c.canRead || c.canRead(a)) && a.kind === kind && a.target === target && maySpend(a.who,caller.who) && samePrincipal(a,caller) && ['pending','allowed'].includes(stateOf(a,now))) {
     const last = newest(s,a);
     if (stateOf(a,now) === 'allowed' && last?.state === 'denied' && last.decided! > (a.decided ?? '')) continue;
+    // Clock's exact local words cannot be attached to a different old card,
+    // including a legacy card that request() would otherwise enrich in place.
+    if (kind === 'local-wake' && digest && (a.digest !== digest || a.details !== words.details || a.project !== caller.project))
+      denied('An existing local decision covers different words or scope');
     if (stateOf(a,now) === 'pending') {
       if (words.ask && !a.ask && JSON.stringify(a.who) === JSON.stringify(caller.who)) Object.assign(a,words,{ why });
       if (conversation && !a.conversation) a.conversation = conversation;

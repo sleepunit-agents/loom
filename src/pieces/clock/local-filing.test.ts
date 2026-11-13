@@ -19,7 +19,7 @@ const closes: (()=>Promise<void>)[] = [];
 afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
 async function setup() {
   const home=mkdtempSync(join(tmpdir(),'clock-local-')), access=fixtureSharing(), clock=new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  access.services.clock={types:['clock'],operations:['clock.localRequest']};
+  access.services.clock={types:['clock','approval'],operations:['clock.localRequest','approvals.piece-request']};
   access.services.approvals={types:['approval'],operations:['approvals.piece-request']};
   const options={home,clock,sharing:()=>access,authenticate:()=>({viewer:owner,valid:()=>true}),install(app:Parameters<NonNullable<Parameters<typeof startLoom>[0]['install']>>[0]) {
     installApprovals(app.db,app.operations,app.live,()=>access);
@@ -61,7 +61,7 @@ it('refuses changed notes before mutating existing filing, cards or audit',async
 });
 it('refuses invalid and undisplayable executable words before creating a card',async()=>{
   const s=await setup();
-  for(const p of ['no marker',localMarker,localMarker+'\n'+ 'a'.repeat(271),localMarker+'\nＡ',localMarker+'\ntext\tmore',localMarker+'\ntext\u200bmore',localMarker+'\ntext\rmore'])
+  for(const p of ['no marker',localMarker,localMarker+'\n'+ 'a'.repeat(271),localMarker+'\nＡ',localMarker+'\ntext\tmore',localMarker+'\ntext\u200bmore',localMarker+'\ntext\rmore',localMarker+'\nInspect\u034f disk',localMarker+'\nInspect\ufe0f disk'])
     expect(s.request(p)).toMatchObject({ok:false,code:'invalid'});
   expect(load(s.app.db).approvals).toEqual([]);
   expect(s.app.db.prepare("SELECT * FROM clock_meta WHERE key LIKE 'local-filing:%'").all()).toEqual([]);
@@ -102,12 +102,15 @@ it('refuses attaching saved words to a preexisting card with different displayed
   const s=await setup(),card=value<{id:string}>(s.request());
   s.app.db.prepare("DELETE FROM clock_meta WHERE key=?").run(`local-filing:${card.id}`);
   const row=load(s.app.db).approvals[0];
-  s.app.db.prepare('UPDATE approvals_approvals SET record=? WHERE id=?').run(JSON.stringify({...row,details:'Other displayed words'}),card.id);
-  expect(s.request()).toMatchObject({ok:false,code:'denied'});expect(filedLocal(s.app.db,card.id)).toBeUndefined();
+  s.app.db.prepare('UPDATE approvals_approvals SET record=? WHERE id=?').run(JSON.stringify({...row,ask:undefined,details:'Other displayed words'}),card.id);
+  const before=load(s.app.db);
+  expect(s.request()).toMatchObject({ok:false,code:'denied'});expect(filedLocal(s.app.db,card.id)).toBeUndefined();expect(load(s.app.db)).toEqual(before);
 });
 it('requires both trusted Clock operation access and independent owning Approvals access',async()=>{
   const s=await setup();
   s.access.services.clock.operations=[]; expect(s.request()).toMatchObject({ok:false,code:'denied'});
-  s.access.services.clock.operations=['clock.localRequest'];s.access.services.approvals.operations=[];
+  s.access.services.clock.operations=['clock.localRequest'];
   expect(s.request()).toMatchObject({ok:false,code:'denied'});expect(load(s.app.db).approvals).toEqual([]);
+  s.access.services.clock.operations.push('approvals.piece-request');s.access.services.approvals.operations=[];
+  expect(s.request().ok).toBe(true);
 });
