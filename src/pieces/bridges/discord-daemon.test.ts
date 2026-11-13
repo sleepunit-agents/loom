@@ -31,14 +31,16 @@ const checkpoint=(seq:number)=>({session:'SESSION',url:'wss://gateway.discord.gg
 async function until(fn:()=>boolean){for(let i=0;i<2000;i++){if(fn())return;await Promise.resolve();}throw Error('condition not reached');}
 async function settle(){for(let i=0;i<150;i++)await Promise.resolve();}
 function deferred<T>(){let resolve!:(v:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};}
-async function setup({staging=false,grant=true,pending=false,receive=vi.fn(async()=>{})}: {staging?:boolean;grant?:boolean;pending?:boolean;receive?: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof startLoom>[0]['bridges']>['receive']>>}={}){
+async function setup({staging=false,grant=true,pending=false,secondAuth,receive=vi.fn(async()=>{})}: {staging?:boolean;grant?:boolean;pending?:boolean;secondAuth?:Promise<Response>;receive?: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof startLoom>[0]['bridges']>['receive']>>}={}){
   const home=mkdtempSync(join(tmpdir(),'discord-root-'));fixture(home);
   const clock=new FakeClock();let epoch='0';
   const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue','bridges.route','bridges.link','bridges.send'],operations:[]}}});
   const sockets:FakeSocket[]=[];const buffers:Uint8Array[]=[];
   const source={read:vi.fn(async(name:string)=>{const b=Buffer.from(`PRIVATE-${name}`);buffers.push(b);return b;})};
+  let authReads=0;
   const request=vi.fn<typeof fetch>(async url=>{
     const path=String(url);
+    if(path.endsWith('users/@me') && ++authReads===2 && secondAuth)return secondAuth;
     if(path.endsWith('users/@me'))return Response.json({id:'200',bot:true});
     if(path.endsWith('guilds/100'))return Response.json({id:'100'});
     return Response.json({id:'400',guild_id:'100',type:0,name:'general'});
@@ -51,7 +53,7 @@ async function setup({staging=false,grant=true,pending=false,receive=vi.fn(async
         expect(a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name,description:name},`d${n++}`).ok).toBe(true);
         if(grant)expect(a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.grantService',{service:'bridges',name},`g${n++}`).ok).toBe(true);
       }
-      put(a.db,'venues',venue);
+      put(a.db,'venues',venue);if(secondAuth)put(a.db,'venues',{...venue,id:'discord-second'});
       if(pending){const inbox=discordInbox(a.db,clock,{venue,credentialEpoch:epoch},()=>epoch);void inbox.commit({type:'READY',seq:1,data:{user:{id:'200'},session_id:'SESSION'}},checkpoint(1));void inbox.commit({type:'MESSAGE_CREATE',seq:2,data:payload},checkpoint(2));}
     }};
   const app=await startLoom(startOptions);
@@ -202,4 +204,16 @@ it('retains a staging release through temporary authentication failure',async()=
   f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:row.id},'release-auth-retry');f.clock.advance(0);await settle();
   expect(f.sockets).toHaveLength(0);f.clock.advance(5000);await until(()=>f.sockets.length===1);
   expect(f.app.db.prepare("SELECT id,state FROM core_effects WHERE kind='bridge-send'").all()).toEqual([{id:row.id,state:'started'}]);
+});
+
+it('independently retires an active socket on epoch change while another venue authentication stays pending',async()=>{
+ const held=deferred<Response>();const f=await setup({secondAuth:held.promise});
+ try {
+   await until(()=>f.sockets.length===1 && f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me')).length===2);
+   f.rotate();f.clock.advance(5000);
+   // Authentication is still blocked: only the independent detector can retire this socket.
+   expect(f.sockets[0].terminate).toHaveBeenCalledOnce();
+   expect(f.sockets).toHaveLength(1);
+ } finally {held.resolve(Response.json({id:'200',bot:true}));}
+ await until(()=>f.sockets.length===3);
 });
