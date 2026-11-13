@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
 - Add the Projects preview app with private agent cards, Tasks-first computed hubs, independent role sections and live outside-write updates.
 - Run next-mode Attention metadata retention daily as its registered service, respecting private scope and daemon shutdown.
+- Add explicit Attention wait checks through visible Approvals and Tasks roles, preserving the caller and central ask history.
 - Activity preview on the new desk: live episode timeline, three-day windows, filters and full readers, with a synchronous seam for the new Conversations owner.
 
 - Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
