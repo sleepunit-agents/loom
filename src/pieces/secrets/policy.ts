@@ -31,3 +31,15 @@ export function secretStartPermission(db: Db, agent: string, name: string): 'all
   if (rule?.grant === 'never') return 'denied';
   return rule?.houses?.includes(agent) ? 'allowed' : 'ask';
 }
+
+/** Pure edit shared by the standing toggle and Always answer. Never overrides never. */
+export function withAlways(policy: SecretPolicy, name: string, agent: string, on: boolean): SecretPolicy | undefined {
+  const rule = ruleFor(policy, name) ?? {};
+  if (!on && (rule.grant !== 'auto' || !rule.agents?.includes(agent))) return policy;
+  if (rule.grant === 'never') return undefined;
+  const agents = new Set(rule.grant === 'auto' ? rule.agents ?? [] : []);
+  if (on) agents.add(agent); else agents.delete(agent);
+  const next = { ...rule, grant: agents.size ? 'auto' as const : 'ask' as const, ...(on ? { minutes: 480 } : {}) };
+  if (agents.size) next.agents = [...agents].sort(); else delete next.agents;
+  return { ...policy, secrets: { ...policy.secrets, [name]: next } };
+}

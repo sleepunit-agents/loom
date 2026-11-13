@@ -238,3 +238,57 @@ it('reuses only the request own live scoped grant, never a global or replacement
   expect(fourth).toMatchObject({ ok: true, value: { state: 'pending' } });
   expect(fourth.ok && (fourth.value as GrantRequest).id).not.toBe(thirdId);
 });
+
+it('Always answers grant eight hours, auto only the named agent, and Stop preserves current access and start policy', async () => {
+  const raised: GrantRequest[] = [];
+  const { app, call, clock } = await setup(r => { raised.push(r); return { raised: true }; });
+  call(owner, 'describe', { name: 'api-key', description: '' });
+  call(owner, 'policy', { secrets: { 'api-key': { houses: ['art'], minutes: 10 } } });
+  const input = { agent: agent.id, target: 'api-key', scope: { house: 'h-20', service: 'discord' }, why: '\n<deploy>\u202e [now]　please' };
+  const request = call(agent, 'requestHouse', input);
+  expect(request).toMatchObject({ ok: true, value: { why: 'deploy now please', minutes: 10 } });
+  const id = request.ok ? (request.value as GrantRequest).id : '';
+  for (const viewer of [agent, agentOwner, { kind: 'service', id: 'keyholder' } as Viewer]) {
+    expect(call(viewer, 'always', { name: 'api-key', agent: agent.id, on: true })).toMatchObject({ ok: false, code: 'denied' });
+    expect(call(viewer, 'answer', { id, allow: true, always: true })).toMatchObject({ ok: false, code: 'denied' });
+  }
+  expect(call(owner, 'answer', { id, allow: false, always: true })).toMatchObject({ ok: false, code: 'invalid' });
+  const answer = { id, allow: true, always: true };
+  const allowed = call(owner, 'answer', answer, 'always-answer');
+  expect(allowed).toMatchObject({ ok: true, value: { always: true, minutes: 480 } });
+  const policy = () => JSON.parse((app.db.prepare("SELECT value FROM secrets_meta WHERE key='policy'").get() as {value: string}).value);
+  expect(policy().secrets['api-key']).toEqual({ grant: 'auto', agents: [agent.id], houses: ['art'], minutes: 480 });
+  const auto = call(agent, 'requestHouse', { ...input, scope: { house: 'h-21' } });
+  expect(auto).toMatchObject({ ok: true, value: { state: 'allowed', decision: 'policy', minutes: 480 } });
+  expect(raised).toHaveLength(1);
+  expect(call({kind: 'agent', id: 'art'}, 'requestHouse', { ...input, agent: 'art', scope: { house: 'h-22' } })).toMatchObject({ ok: true, value: { state: 'pending' } });
+  expect(call(owner, 'always', { name: 'api-key', agent: agent.id, on: false }).ok).toBe(true);
+  expect(policy().secrets['api-key']).toEqual({ grant: 'ask', houses: ['art'], minutes: 480 });
+  expect(call(owner, 'answer', answer, 'always-answer')).toEqual(allowed);
+  expect(policy().secrets['api-key'].grant).toBe('ask');
+  const resource = {kind: 'secret' as const, target: 'api-key'};
+  const grants = grantsRole(app.db);
+  expect(grants.mayUse(agent.id, resource, clock.now(), input.scope)).toBe(true);
+  expect(grants.mayUse(agent.id, resource, clock.now(), { house: 'h-21' })).toBe(true);
+  expect(grants.mayUse(agent.id, resource, clock.now(), { house: 'h-20' })).toBe(false);
+  expect(call(agent, 'requestHouse', { ...input, scope: { house: 'h-23' } })).toMatchObject({ ok: true, value: { state: 'pending' } });
+  clock.advance(480 * 60_000);
+  expect(grants.mayUse(agent.id, resource, clock.now(), input.scope)).toBe(false);
+  expect(call(agent, 'requestHouse', { ...input, why: '<>[]{}\u0000' })).toMatchObject({ ok: false, code: 'invalid' });
+});
+
+it('standing toggles preserve other agents and never cannot be bypassed by a toggle or pending Always answer', async () => {
+  const { app, call } = await setup();
+  expect(call(owner, 'always', { name: 'missing', agent: agent.id, on: true })).toMatchObject({ ok: false, code: 'not-found' });
+  call(owner, 'describe', { name: 'api-key', description: '' });
+  for (const a of [agent.id, 'art']) expect(call(owner, 'always', { name: 'api-key', agent: a, on: true }).ok).toBe(true);
+  expect(call(owner, 'always', { name: 'api-key', agent: agent.id, on: false })).toMatchObject({ ok: true, value: { secrets: { 'api-key': { grant: 'auto', agents: ['art'], minutes: 480 } } } });
+  const result = call(agent, 'requestHouse', { agent: agent.id, target: 'api-key', scope: { house: 'h-24' }, why: 'work' });
+  const id = result.ok ? (result.value as GrantRequest).id : '';
+  call(owner, 'policy', { secrets: { 'api-key': { grant: 'never' } } });
+  expect(call(owner, 'always', { name: 'api-key', agent: agent.id, on: true })).toMatchObject({ ok: false, code: 'conflict' });
+  expect(call(owner, 'always', { name: 'api-key', agent: agent.id, on: false })).toMatchObject({ ok: true, value: { secrets: { 'api-key': { grant: 'never' } } } });
+  expect(call(owner, 'answer', { id, allow: true, always: true })).toMatchObject({ ok: false, code: 'conflict' });
+  expect(app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
+  expect(call(owner, 'answer', { id, allow: false }).ok).toBe(true);
+});

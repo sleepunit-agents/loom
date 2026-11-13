@@ -4,8 +4,8 @@ import { migrate, operation, failure, mayAct, maySee, type Context, type Db, typ
 import { schema } from './schema/001.js';
 import type { GrantContext, Grant, GrantRequest, Grants, Resource, SecretName } from './role.js';
 
-import { readSecretPolicy, requestDecision, secretPolicy } from './policy.js';
-import { secretName as name, secretAgent as agent } from './input.js';
+import { readSecretPolicy, requestDecision, secretPolicy, withAlways } from './policy.js';
+import { secretName as name, secretAgent as agent, requestReason } from './input.js';
 const grantScope = z.object({ house: z.string().regex(/^h-[0-9]{1,9}$/), service: agent.optional() }).strict();
 const resource = { kind: z.enum(['secret', 'runner', 'piece', 'tailnet']), target: name };
 /** Trusted in-process attention seam. Implementations must raise a household ask and
@@ -52,10 +52,23 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
   operations.register(operation({ name: 'secrets.list', input: z.object({}).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.list'), run: () => ({ names: all<SecretName>(db, 'secrets_names'), grants: all<Grant>(db, 'secrets_grants'), requests: all<GrantRequest>(db, 'secrets_requests') }),
   }));
+  const savePolicy = (ctx: Context, policy: ReturnType<typeof readSecretPolicy>) => {
+    db.prepare("INSERT INTO secrets_meta VALUES ('policy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(policy));
+    ctx.changed('secret.policy', 'policy');
+  };
+  operations.register(operation({ name: 'secrets.always', write: true,
+    input: z.object({ name, agent, on: z.boolean() }).strict(), output: secretPolicy,
+    may: v => owner(v, 'secrets.always'), run(ctx, input) {
+      if (!read<SecretName>(db, 'secrets_names', input.name)) return failure('not-found', 'Secret name not found');
+      const current = readSecretPolicy(db);
+      const policy = withAlways(current, input.name, input.agent, input.on);
+      if (!policy) return failure('conflict', 'Policy never gives this secret out');
+      savePolicy(ctx, policy); return policy;
+    },
+  }));
   operations.register(operation({ name: 'secrets.policy', write: true, input: secretPolicy, output: secretPolicy,
     may: v => owner(v, 'secrets.policy'), run(ctx, input) {
-      db.prepare("INSERT INTO secrets_meta VALUES ('policy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(input));
-      ctx.changed('secret.policy', 'policy'); return input;
+      savePolicy(ctx, input); return input;
     },
   }));
   live.register({ name: 'secret.policy', ids: () => ['policy'], inScope: () => true,
@@ -85,7 +98,7 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
     may: (v, i) => owner(v, 'secrets.may') || v.kind === 'agent' && v.id === i.agent,
     run: (ctx, input) => ({ allow: grantsRole(db).mayUse(input.agent, input, ctx.now) }),
   }));
-  operations.register(operation({ name: 'secrets.request', write: true, input: z.object({ agent, ...resource, why: z.string().trim().min(1).max(2000) }).strict(), output: z.unknown(),
+  operations.register(operation({ name: 'secrets.request', write: true, input: z.object({ agent, ...resource, why: requestReason }).strict(), output: z.unknown(),
     may: (v, i) => canAsk(v, i.agent), run(ctx, input) {
       if (input.kind === 'secret') return failure('denied', 'Secret requests need authenticated house context');
       const old = all<GrantRequest>(db, 'secrets_requests').find(r => r.agent === input.agent && r.kind === input.kind && r.target === input.target && r.state === 'pending');
@@ -97,7 +110,7 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
   // This door is only for an in-process runtime adapter after authenticating its job/token.
   // House/service are never accepted by the public request operation.
   operations.register(operation({ name: 'secrets.requestHouse', doors: ['direct'], write: true,
-    input: z.object({ agent, target: name, scope: grantScope, why: z.string().trim().min(1).max(2000), minutes: z.number().int().positive().optional() }).strict(), output: z.unknown(),
+    input: z.object({ agent, target: name, scope: grantScope, why: requestReason, minutes: z.number().int().positive().optional() }).strict(), output: z.unknown(),
     may: (v, i) => v.kind === 'agent' && v.id === i.agent && canAsk(v, i.agent), run(ctx, input) {
       if (!read<SecretName>(db, 'secrets_names', input.target)) return failure('not-found', 'Secret name not found');
       const old = all<GrantRequest>(db, 'secrets_requests').find(r => r.agent === input.agent && r.kind === 'secret' && r.target === input.target
@@ -124,13 +137,19 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
       return raiseRequest(ctx, record);
     },
   }));
-  operations.register(operation({ name: 'secrets.answer', write: true, input: z.object({ id: z.string().min(1).max(200), allow: z.boolean() }).strict(), output: z.unknown(),
+  operations.register(operation({ name: 'secrets.answer', write: true, input: z.object({ id: z.string().min(1).max(200), allow: z.boolean(), always: z.literal(true).optional() }).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.answer'), run(ctx, input) {
       const record = read<GrantRequest>(db, 'secrets_requests', input.id);
       if (!record) return failure('not-found', 'Request not found');
+      if (input.always && (!input.allow || record.kind !== 'secret')) return failure('invalid', 'Always requires allowing a secret request');
       if (record.state !== 'pending') return failure('conflict', 'Request already answered');
       if (input.allow && record.kind === 'secret' && (!record.scope || !record.minutes)) return failure('invalid', 'Secret request has no house or duration');
       if (input.allow && record.kind === 'secret' && requestDecision(readSecretPolicy(db), record.agent, record.target).level === 'never') return failure('conflict', 'Policy never gives this secret out');
+      if (input.always) {
+        const policy = withAlways(readSecretPolicy(db), record.target, record.agent, true);
+        if (!policy) return failure('conflict', 'Policy never gives this secret out');
+        savePolicy(ctx, policy); record.always = true; record.minutes = 480;
+      }
       record.state = input.allow ? 'allowed' : 'denied'; record.by = ctx.viewer.id; record.answeredAt = ctx.now; saveRequest(record);
       if (input.allow) {
         const grant: Grant = { id: grantId(record.agent, record, record.scope), ...(record.scope ? { scope: record.scope, requestId: record.id, expiresAt: ctx.now + record.minutes! * 60_000 } : {}), agent: record.agent, kind: record.kind, target: record.target, createdAt: ctx.now, by: ctx.viewer.id };
