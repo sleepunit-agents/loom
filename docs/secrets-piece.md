@@ -184,6 +184,9 @@ adds explicit principal resolution and effective-grant planning to the validated
 source model. It performs no IO, DB writes or current-clock lookup, and is not
 registered with the migration CLI or daemon. The caller supplies snapshot time
 and exact legacy-string bindings to a set of registered new-side agent IDs.
+Any source creation or decision after snapshot time refuses, including pending,
+denied and revoked history: the planner cannot rewind a later stored state.
+Events exactly at snapshot time are accepted.
 There is no same-name fallback or normalization; two distinct source principals
 cannot map to the same new principal, including historical/pending rows.
 

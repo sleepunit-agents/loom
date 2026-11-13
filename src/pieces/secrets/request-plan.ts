@@ -43,6 +43,8 @@ export function planLegacySecretRequests(bytes: Buffer, principals: LegacyReques
     const mapped = new Map<string, string>();
     const used = new Set<string>();
     for (const row of source) {
+      // A stored snapshot cannot be rewound through later decisions/revocations.
+      if (Date.parse(row.at) > snapshotAt || (row.decided !== undefined && Date.parse(row.decided) > snapshotAt)) throw new Error();
       if (mapped.has(row.agent)) continue;
       const agent = principals.bindings.get(row.agent);
       if (!principals.bindings.has(row.agent) || !secretAgent.safeParse(agent).success

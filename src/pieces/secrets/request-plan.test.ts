@@ -62,7 +62,7 @@ it('refuses live carried authority without its surviving original; retains expir
   invalid(bytes(carried));
   const expired = planLegacySecretRequests(bytes(carried), principals(), Date.parse(expires));
   expect(expired.grants).toEqual([]); expect(expired.requests[0].source.carriedFrom).toBe(original.id);
-  expect(plan({ ...carried, state: 'revoked', decided: expires }).grants).toEqual([]);
+  expect(plan({ ...carried, state: 'revoked', decided: later }).grants).toEqual([]);
 });
 it('refuses a live carry predating the original authorization', () => {
   invalid(bytes({ ...original, decided: later, expires: '2020-01-01T01:30:00.000Z' },
@@ -108,4 +108,18 @@ it('uses no database, filesystem, subprocess or implicit current clock', () => {
     expect(clock).not.toHaveBeenCalled();
     for (const call of [...reads, ...processes]) expect(call).not.toHaveBeenCalled();
   } finally { vi.unstubAllGlobals(); vi.restoreAllMocks(); syncBuiltinESMExports(); }
+});
+
+it('refuses future source events instead of authorizing early or reconstructing past revocations', () => {
+  invalid(bytes(plain), principals(), 0);
+  invalid(bytes(original, carried), principals(), Date.parse(at));
+  // Even a future denied/revoked/pending event makes this an inconsistent snapshot.
+  for (const row of [
+    { ...plain, at: expires },
+    { ...plain, state: 'denied', expires: undefined, decided: expires },
+    { ...plain, state: 'revoked', decided: expires },
+    { id: original.id, secret: 'API', agent: 'art-', house: 'h-123', why: 'pending', minutes: 60, at: expires, state: 'pending' },
+  ]) invalid(bytes(row));
+  expect(planLegacySecretRequests(bytes(plain), principals(), Date.parse(at)).grants).toHaveLength(1);
+  expect(planLegacySecretRequests(bytes(original, carried), principals(), now).grants).toHaveLength(1);
 });
