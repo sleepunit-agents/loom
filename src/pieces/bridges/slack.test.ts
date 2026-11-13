@@ -43,9 +43,11 @@ describe('Slack intake contract',()=>{
     expect(convert({thread_ts:ts})).toBeNull();
   });
   it('keeps DM/group continuity while preserving the reply thread address',()=>{
-    const reply=convert({thread_ts:'1793828000.000001',parent_user_id:'UK1T'})!;
-    expect(reply.thread).toBe('1793828000.000001');
-    expect(keyFor(venue,reply,'robin')).toEqual(keyFor(venue,convert()!,'robin'));
+    for (const parent_user_id of ['UK1T','U2']) {
+      const reply=convert({thread_ts:'1793828000.000001',parent_user_id})!;
+      expect(reply.thread).toBe('1793828000.000001');
+      expect(keyFor(venue,reply,'robin')).toEqual(keyFor(venue,convert()!,'robin'));
+    }
     expect(convert({thread_ts:raw().ts})!.thread).toBeUndefined();
     const group: SlackConversation={...dm,id:'G1',kind:'group'};
     const m=convert({channel:'G1',thread_ts:'1793828000.000001'},group)!;
