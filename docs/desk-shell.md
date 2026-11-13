@@ -23,3 +23,21 @@ Every unavailable live feed drops its old content immediately. Roster loss remov
 The shell's one evidence scenario runs against an isolated next `startLoom` home and an isolated **old-format fixture** only. It captures Home, work and launcher old/new boards at 390, 1280 and 1920 in Neon Noir, Low Light and Daylight, in the Desk shell evidence CI artifact. The old reference uses the existing legacy fixture harness (including its fake executable); next code never reads it. This evidence does not claim the remaining Home/phone/app slices are finished.
 
 For the final move, use Household's existing appearance import as part of the coordinator's offline import. No real data import, installed piece change or rollout is part of this task. Keep t-2214 in progress until all slices are merged and Jonathan says it looks like his loom.
+
+## Agent display metadata
+
+`household.agentDisplay` is a read-only Live projection of `loom.db` household
+metadata: agent id, palette mark, shape and eyes only. It uses the existing
+central agent visibility rule; it exposes neither the raw household document
+nor paths, account metadata or credentials. Roster order supplies the same
+palette/shape defaults as the present desk. Imported palette choices retain the
+present desk's palette selection behavior. Missing/offline display data falls
+back to a neutral initial immediately.
+
+Home and the rail reuse the lazy drawn Face component: an open ask means
+waiting on you, a working report means working, a waiting report means thinking,
+and an offline report means needs a look. Unavailable status is neutral. This
+slice adds no write operation, schema, job or importer: Household's existing
+lossless importer already retains `marks` and `faces`. Pixel sprite metadata,
+safe new-home asset serving/import and the Pixel faces preference remain the
+next slice; drawn faces here do not claim to replace Jonathan's supplied sheets.
