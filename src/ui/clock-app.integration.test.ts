@@ -139,6 +139,8 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     let openMode: 'pass' | 'hold' | 'denied' | 'closed' = 'hold';
     let releaseOpen: ((result: Awaited<ReturnType<typeof loom.operations.callAsync>>) => void) | undefined;
     const opened=(open:boolean,mayAnswer:boolean)=>({ok:true as const,value:{open,mayAnswer,mayEveryTime:true,mayAlways:false}});
+    let holdClock=false;
+    let releaseClock: ((result: Awaited<ReturnType<typeof loom.operations.callAsync>>) => void) | undefined;
     const actualCall=loom.operations.callAsync.bind(loom.operations);
     const calls=vi.spyOn(loom.operations,'callAsync').mockImplementation((...args)=>{
       if(args[2]==='approvals.open') {
@@ -146,6 +148,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
         if(openMode==='denied')return Promise.resolve(opened(true,false));
         if(openMode==='closed')return Promise.resolve(opened(false,true));
       }
+      if(holdClock && ['clock.pause','clock.resume'].includes(args[2]))return new Promise(resolve=>{releaseClock=resolve;});
       return actualCall(...args);
     });
     const decisions=()=>calls.mock.calls.filter(args=>['approvals.answer','approvals.every-time'].includes(args[2])).length;
@@ -186,7 +189,35 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
       await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
       await b.screenshot({path:join(shots,`clock-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
-    await openLocal(a,0);
+    // Delay one feed's snapshots without changing authentication, records or the
+    // other feeds. Each page still connects to the real signed-in Live socket.
+    let maskedFeed: 'approval' | 'clock' | undefined;
+    await a.routeWebSocket('**/live',ws=>{
+      const server=ws.connectToServer();
+      server.onMessage(message=>{
+        const packet=JSON.parse(String(message));
+        if(['set','put','del'].includes(packet.kind) && (maskedFeed==='approval' ? packet.type==='approval' : maskedFeed==='clock' && ['wake','schedule','clock'].includes(packet.type)))return;
+        ws.send(message);
+      });
+    });
+    maskedFeed='approval';await a.goto(`${loom.url}/p/clock-preview`);
+    await expect.poll(()=>a.getByRole('button',{name:'Create wake',exact:true}).isEnabled()).toBe(true);
+    await a.getByRole('button',{name:/Local requests/}).click();
+    await expect.poll(()=>a.getByText('Opening local requests…',{exact:true}).count()).toBe(1);
+    expect(await a.getByRole('group',{name:'Answer approval'}).count()).toBe(0);
+    maskedFeed='clock';await openLocal(a,0);
+    expect(await a.getByRole('button',{name:'Allow',exact:true}).isEnabled()).toBe(true);
+    maskedFeed=undefined;await a.goto(`${loom.url}/p/clock-preview`);
+    await expect.poll(()=>a.getByRole('button',{name:'Resume art',exact:true}).isEnabled()).toBe(true);
+    holdClock=true;await a.getByRole('button',{name:'Resume art',exact:true}).click();
+    await a.getByRole('region',{name:'Confirm clock action'}).getByRole('button',{name:'Resume art',exact:true}).click();
+    await expect.poll(()=>!!releaseClock).toBe(true);
+    expect(await a.getByRole('button',{name:'Create wake',exact:true}).isEnabled()).toBe(false);
+    await a.getByRole('button',{name:/Local requests/}).click();await row(a,'Allow once').click();
+    await expect.poll(()=>a.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
+    expect(await a.getByRole('button',{name:'Allow',exact:true}).isEnabled()).toBe(true);
+    holdClock=false;releaseClock!({ok:false,code:'unavailable',message:'Fixture released held ordinary write'});
+
     const beforeLocal=wakes(loom.db).length;
     await b.getByRole('group',{name:'Answer approval'}).getByRole('button',{name:'Allow',exact:true}).click();
     await expect.poll(()=>load(loom.db).approvals.find(card=>card.id===localCards[0])?.state).toBe('allowed');
