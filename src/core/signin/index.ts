@@ -41,14 +41,15 @@ export function sameOrigin(req: IncomingMessage): boolean {
   const local = `${'encrypted' in req.socket && req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`;
   return !origin || origin === (publicOrigin && new URL(publicOrigin).host === req.headers.host ? publicOrigin : local);
 }
-const stores = new WeakMap<Foundation, Signin>();
+const stores = new WeakMap<Foundation['db'], Signin>();
 export function signin(app: Foundation): Signin {
-  let store = stores.get(app); if (!store) { store=new Signin(app); stores.set(app,store); } return store;
+  let store = stores.get(app.db); if (!store) { store=new Signin(app); stores.set(app.db,store); } return store;
 }
 export class Signin {
   readonly sessions: SessionDatabase;
   readonly tokens: TokenDatabase;
   private readonly key: Buffer;
+  private readonly bodies = new WeakMap<Viewer, {agent: string; job: string; valid(): boolean}>();
   constructor(private app: Foundation) {
     this.sessions=new SessionDatabase(app.db); this.tokens=new TokenDatabase(app.db);
     const rows=new HouseholdRows<string>(app.db,'settings');
@@ -62,11 +63,27 @@ export class Signin {
     const t=this.tokens.records(digest).find(t=>!t.revoked && (!t.expires || Date.parse(t.expires)>now)); if (!t) return;
     let viewer: Viewer | undefined;
     if (t.role==='owner') { const id=t.member ?? h.members.find(m=>m.agents==='*')?.person; if (id && h.members.some(m=>m.person===id)) viewer={kind:'member',id}; }
-    const a=/^agent:([a-z0-9-]+)(?:\/[a-z0-9-]+)?(?:@[a-z0-9-]+)?$/.exec(t.role);
+    const a=/^agent:([a-z0-9-]+)(?:\/[a-z0-9-]+)?(?:@([a-z0-9-]+))?$/.exec(t.role);
     if (a && h.agents.includes(a[1])) viewer={kind:'agent',id:a[1]};
+    if (viewer && a?.[2]) {
+      const agent=a[1], job=a[2], role=t.role;
+      this.bodies.set(viewer,{agent,job,valid:()=>this.tokens.records(digest).some(current=>current.role===role && !current.revoked && (!current.expires || Date.parse(current.expires)>this.app.operations.clock.now()))});
+    }
     const r=/^(runner|service):([a-z0-9-]+)$/.exec(t.role);
     if (r && new HouseholdRows<{active:boolean}>(this.app.db,'settings').get(`signin-principal:${r[1]}:${r[2]}`)?.active) viewer={kind:r[1] as 'runner'|'service',id:r[2]};
     return viewer ? {viewer,...(t.expires?{expiresAt:Date.parse(t.expires)}:{})} : undefined;
+  }
+  /** Only a viewer actually resolved from a current job-bearing credential has proof. */
+  body(viewer: Viewer) {
+    const proof=this.bodies.get(viewer);
+    return proof?.valid() ? proof : undefined;
+  }
+  /** Trusted composition role. Caller owns the same database transaction. */
+  issueBody(agent: string, job: string): string {
+    if (!this.app.db.inTransaction || !/^[a-z0-9-]+$/.test(agent) || !/^[a-z0-9-]+$/.test(job) || !this.household()?.agents.includes(agent)) throw new Error('Body credential unavailable');
+    const secret=random(), now=this.app.operations.clock.now();
+    this.tokens.change(tokens=>tokens.push({role:`agent:${agent}@${job}`,sha256:hash(secret),label:`Body ${job}`,created:new Date(now).toISOString(),expires:new Date(now+24*3600_000).toISOString()}));
+    return secret;
   }
   csrf(id: string) { return createHmac('sha256',this.key).update(`loom-next-csrf|${id}`).digest('hex'); }
   checkCsrf(req: IncomingMessage, value: string) { const id=cookieId(req); return !!id && eq(value,this.csrf(id)); }

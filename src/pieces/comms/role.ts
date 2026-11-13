@@ -30,7 +30,7 @@ export type StartNotice = {seq: number; generation?: number; attempt: number; re
  ({kind: 'start-retry'; retryAt: string} | {kind: 'start-failed'});
 export interface DeliveryTrace {
  alive?: BodyAlive;
- thread: string; conversation: string; archived: number | null; working: boolean;
+ thread: string; conversation: string; project?: string; archived: number | null; working: boolean;
  messages: {seq:number;at:number;kind:string;from:string;delivery?: 'sending'|'held'|'failed'|'delivered'}[];
 }
 /** Supplied by the runtime, never by tool arguments. run is unique per body and
@@ -49,6 +49,10 @@ export interface ReplyAnnouncement {
 }
 export interface SpawnThread { conversation: string; text: string; parent?: string; run?: string }
 export interface Comms {
+ /** Assigned runner confirmed this accepted message generation started. */
+ confirmStart(agent: string, thread: string, seq: number, generation: number): void;
+ /** Runtime proof is checked again inside the encrypted write transaction. */
+ bodyPost(binding: ReadBinding, thread: string, message: AgentPost): Promise<{seq: number}>;
  /** Trusted runtime creation only; supplied authoritative spawn conversation is preserved. */
  spawn(agent: string, input: SpawnThread): Promise<{thread: string}>;
  /** Trusted frame role only. Recompute immediately before push; do not cache across awaits.

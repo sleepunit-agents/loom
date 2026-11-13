@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add explicit next-mode Slack lifecycle composition with service credentials, staged connection release, startup receipt recovery and awaited shutdown.
 
 - Bridges: add a serialized Slack raw receipt normalizer with fresh metadata, bounded retries and commit-before-consume ordering.
+- Connect next-mode private Comms messages to runtime jobs and authenticated body reads, replies and status, keeping private words out of runner inputs and retry receipts.
+
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
 
 - Give next-mode Home desk-coloured cut cards and the member’s saved Depth, Contours or Wash ground.

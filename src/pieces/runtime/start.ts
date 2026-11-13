@@ -14,7 +14,7 @@ export const startInput = z.object({
 export function startJobId(viewer: Viewer, agent: string, source: {kind:string;id:string}): string {
   return 'start-'+createHash('sha256').update(JSON.stringify([viewer.kind,viewer.id,agent,source])).digest('hex').slice(0,40);
 }
-export function installStartBody(db: Db, operations: Operations, sharing: () => Sharing) {
+export function installStartBody(db: Db, operations: Operations, sharing: () => Sharing, privateStart?: (input: z.infer<typeof startInput>) => boolean) {
   const store = runtimeStore(db);
   operations.register(operation({name:'runtime.startBody',write:true,input:startInput,
     output:z.object({job:id,state:z.string()}),
@@ -29,7 +29,7 @@ export function installStartBody(db: Db, operations: Operations, sharing: () => 
     },
     run(ctx,input) {
       if(input.account!==undefined) throw new OperationError('unavailable','Model account selection is not installed');
-      if(input.member!==undefined) throw new OperationError('unavailable','Private body delivery is not installed');
+      if(input.member!==undefined && !privateStart?.(input)) throw new OperationError('unavailable','Private body delivery is not installed');
       // Stable beyond registry receipt expiry and scoped to the actual caller.
       const job=startJobId(ctx.viewer,input.agent,input.source ?? {kind:'manual',id:ctx.receipt!.id});
       const old=store.read('job',job);
