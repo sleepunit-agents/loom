@@ -318,6 +318,7 @@ describe('owner application routing and denial retention',()=>{
     ['grant','tasks:mark','runtime','Access to Tasks.'],
     ['vouch-wake','art:w-000001,w-000002','clock','w-000001 fires at ten\nw-000002 fires at eleven'],
     ['vouch-wake','art:w-01234567-89ab-4cde-8fab-0123456789ab','clock','w-01234567-89ab-4cde-8fab-0123456789ab fires at ten'],
+    ['vouch-wake','art:w-01234567-89ab-4cde-8fab-0123456789ab,w-abcdef','clock','w-01234567-89ab-4cde-8fab-0123456789ab fires at ten\nw-abcdef fires at eleven'],
     ['principal-reset','art:cv-0123456789ab','runtime','The conversation cv-0123456789ab.'],
     ['box-write-off','art:box-one@1762718400','runtime','The box box-one was last heard yesterday.'],
   ])('applies %s through %s exactly once at Allow',async(kind,target,route,details)=>{
@@ -361,6 +362,18 @@ describe('owner application routing and denial retention',()=>{
     a.clock.advance(30*86400_000);
     expect(file([ids[1]],'actual-denied')).toMatchObject({ok:false,code:'denied'});
     expect(file([ids[2]],'actual-unrelated')).toMatchObject({ok:true});
+  });
+  it.each(['w-01234567-89ab-4cde-8fab-0123456789ab','w-abcdef'])('retains mixed-set denial over a single %s id',async(overlap)=>{
+    const a=await setup();
+    const ids=['w-01234567-89ab-4cde-8fab-0123456789ab','w-abcdef'];
+    const file=(ids:string[],id:string)=>a.role.call('request',caller,{...ask,kind:'vouch-wake',target:'art:'+ids.join(','),details:ids.map(id=>id+' fires at ten').join('\n')},id);
+    const first=file(ids,'mixed');expect(first.ok).toBe(true);if(!first.ok)return;
+    const card=first.value as {id:string};
+    expect(file([overlap],'mixed-pending')).toMatchObject({ok:false,code:'denied'});
+    a.value('answer',{id:card.id,action:'deny'},owner);
+    a.clock.advance(30*86400_000);
+    expect(file([overlap],'mixed-denied')).toMatchObject({ok:false,code:'denied'});
+    expect(file(['w-fedcba'],'mixed-unrelated')).toMatchObject({ok:true});
   });
   it('pregrants do not answer conversation cards, and a deny revokes unspent yes without closing that thread',async()=>{
     const a=await setup(),conversation='cv-0123456789ab';a.identity({conversation});
