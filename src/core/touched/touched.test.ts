@@ -100,3 +100,21 @@ it('card commit hooks emit actual written slugs only after commit, and discard a
   table.mutate(() => { table.store({ ...row, name: 'Right' }); expect(committed).not.toHaveBeenCalled(); });
   expect(committed).toHaveBeenCalledExactlyOnceWith('jonathan');
 });
+it('binds two source-local ids to separate canonical records and offers the same operation on MCP', async () => {
+  const app = createFoundation({ home: home(), clock: new FakeClock() }); closes.push(() => app.close());
+  installTouched(app.operations, (viewer, c) => viewer.kind === 'agent' && c.type === 'memory' && c.id.startsWith(viewer.id + '/') ? c : undefined);
+  const changed = vi.spyOn(app.live, 'changed');
+  const art = home(), mark = home();
+  for (const [directory, id] of [[art, 'art'], [mark, 'mark']]) closes.push(await listenForTouches(app.operations, {
+    directory, viewer: { kind: 'agent', id }, resolve: c => c.type === 'memory' ? { ...c, id: id + '/' + c.id } : undefined,
+  }));
+  touched(art, 'memory', 'same-local-id'); touched(mark, 'memory', 'same-local-id');
+  await vi.waitFor(() => {
+    expect(changed.mock.calls.flatMap(call => call[0])).toEqual(expect.arrayContaining([{ type: 'memory', id: 'art/same-local-id' }, { type: 'memory', id: 'mark/same-local-id' }]));
+  });
+  const mcp = new Map<string, (viewer: Viewer, input: unknown) => unknown>();
+  app.operations.registerMcp((name, _schema, call) => mcp.set(name, call));
+  expect(mcp.get('core.touched')!(agent, { type: 'memory', id: 'art/direct' })).toEqual({ ok: true, value: null });
+  expect(mcp.get('core.touched')!(agent, { type: 'memory', id: 'mark/hidden' })).toMatchObject({ code: 'denied' });
+  expect(changed.mock.lastCall?.[0]).toEqual([{ type: 'memory', id: 'art/direct' }]);
+});

@@ -66,3 +66,11 @@ it.each(memoryVerbs)('memory %s announces affected refs after success', async ve
   expect(sent.mock.calls.map(c => c[2]).sort()).toEqual(expected.sort());
   expect(sent.mock.calls.every(c => c[0] === dir && c[1] === 'memory')).toBe(true);
 });
+it('does not inspect a mutation result without a daemon', async () => {
+  const { notifyWrites } = await import('./writes.js');
+  const dir = mkdtempSync(join(tmpdir(), 'touch-offline-')); dirs.push(dir);
+  const result = Object.defineProperty({}, 'ref', { enumerable: true, get() { throw new Error('result inspected'); } });
+  const store = { write: () => result };
+  notifyWrites(store, join(dir, 'memories.db'), 'memory', ['write'], ['ref']);
+  expect(store.write()).toBe(result);
+});
