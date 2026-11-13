@@ -499,5 +499,21 @@ Other windows see only metadata. Token revocation confirms the label and optiona
 passkey/device cascade; session revocation confirms a safe unique session ref.
 Token revocation includes an opaque stable ref, so an old row or confirmation cannot revoke a replacement that reused its label. Expired rows lose their revoke action at the server-clock deadline. Only a nonsecret attempted-label recovery breadcrumb survives a lost mint or navigation.
 Those revocations retain the shared same-id retry handle across navigation.
-No clipboard or local-storage copy is made. Last-use recording, first-token
-bootstrap and own-person Account controls remain separate inventory entries.
+No clipboard or local-storage copy is made. First-token bootstrap and own-person
+Account controls remain separate inventory entries.
+
+### Last use
+
+Next sign-in records accepted bearer requests and browser requests in the row
+stores. The session-status route also records browser use; accepted incoming
+Live messages refresh use for an already open socket. Token `last_used` uses
+server ISO time, throttled to once a minute per digest; session `seenAt` uses
+server seconds, throttled to five minutes. Persisted timestamps preserve the
+throttle across restarts. Neither timestamp extends credential expiry.
+
+Pure credential checks, admin-list reads, idle sockets and background access
+refreshes do not record use. Failed credentials, failed cookie CSRF and rejected
+socket upgrades do not record use. Diagnostic writes are best effort and atomic;
+a busy store does not reject a valid credential. Changed usage publishes the
+existing safe owner-only `signin.admin` snapshot, without `core.access` churn or
+new records, commands, jobs or schema changes.

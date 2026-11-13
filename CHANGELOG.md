@@ -1066,6 +1066,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Household Setup now manages tokens and sessions, with single-send browser token creation and private one-time bearer display.
 
+- Record token and session last use on the new side, including activity in open windows.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
