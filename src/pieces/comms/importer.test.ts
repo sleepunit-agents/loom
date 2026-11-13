@@ -7,6 +7,7 @@ import { createFoundation } from '../../foundation.js';
 import { loadKey } from './crypto.js';
 import { importComms } from './importer.js';
 import { installComms } from './index.js';
+import { messageView, type Message } from '../../../web/src/pieces/comms/message.js';
 import { FakeClock } from '../../core/index.js';
 const cleanup:(()=>void)[]=[];afterEach(()=>{for(const f of cleanup.splice(0).reverse())f();});
 function home(){const path=mkdtempSync(join(tmpdir(),'comms-import-'));cleanup.push(()=>rmSync(path,{recursive:true,force:true}));return path;}
@@ -83,8 +84,14 @@ for(const sameKey of [true,false])it(`seals imported work and answer metadata an
  expect((result.value as unknown[])[1]).toMatchObject({text:'step label',card:{tool:'private tool',label:'private card'},run:'private run',step:{body:'private output'}});
  expect((result.value as unknown[])[2]).toMatchObject({ask:{ask:'Private ask?'},answer:{text:'private answer'}});
  expect(JSON.stringify(result)).not.toContain('Cipher');
+ const views=(result.value as Message[]).map(messageView);
+ expect(views[1]).toMatchObject({text:'step label',tool:'private tool',state:'done',step:{body:'private output'}});
+ expect(views[2].ask).toMatchObject({question:'Private ask?',answered:true,canAnswer:false});
  clock.advance(14*86400_000);
- const expired=JSON.stringify(await messages());
+ const expiredResult=await messages();
+ if(!expiredResult.ok)throw new Error('expired read failed');
+ for(const message of expiredResult.value as Message[])expect(messageView(message)).toEqual({text:null,tool:undefined,state:undefined,step:undefined,ask:undefined});
+ const expired=JSON.stringify(expiredResult);
  for(const secret of ['private tool','private card','private run','private answer','private output','Private ask?','step label'])expect(expired).not.toContain(secret);
  for(const row of app.db.prepare('SELECT words,record FROM comms_messages').all() as {words:Buffer|null;record:string}[]){expect(row.words).toBeNull();expect(row.record).not.toContain('Cipher');}
 });

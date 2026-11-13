@@ -99,8 +99,9 @@ words never enter returned diagnostics. A checksum makes exact repeats a no-op;
 a changed source or populated destination is refused. A failed first import
 rolls back its schema as well as its rows.
 
-Before release, map old card/step/ask shapes into the app and import conversation
-steps. Imported metadata encryption and same-key ciphertext preservation now have
+The app maps imported nested card tool/state and step details, ask question/reason/outcome
+lines, and kept answer verdicts. Answered, expired, freeform and unreferenced asks do not
+offer boolean answer buttons. Conversation steps still need importing before release. Imported metadata encryption and same-key ciphertext preservation now have
 focused tests for both matching and different destination keys.
 Source preservation includes the old files and their WAL snapshots; no live
 host import has been attempted by this work.
