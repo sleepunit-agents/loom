@@ -25,7 +25,7 @@ async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Ho
  const open=async()=>{const r=await call('open',{agent:'art',id:n.toString(2).replaceAll('0','a').replaceAll('1','b').padStart(16,'a'),text:'secret member words',project:'pond'});expect(r.ok).toBe(true);return (r as {ok:true;value:{thread:string;seq:number}}).value.thread;};
  return {get app(){return app;},clock,home,call,open,deliveries,ends,get comms(){return comms;},async restart(){await comms.close();await app.close();app=await start();},setSharing:(value:Sharing)=>{sharing=value;app.live.refreshAccess();},getSharing:()=>sharing};
 }
-for(const kind of ['reply','card'] as const)for(const boundary of ['revoked','closed','archived','deleted','member','conversation'] as const)it(`refuses a runtime post changed during encryption (${kind}, ${boundary})`,async()=>{
+for(const kind of ['reply','card'] as const)for(const boundary of ['revoked','closed','archived','deleted','member','conversation','project'] as const)it(`refuses a runtime post changed during encryption (${kind}, ${boundary})`,async()=>{
  let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};
  const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
  const s=await setup({key:k=>({...k,seal:async words=>{if(pause){started();await waiting;}return k.seal(words);}})});
@@ -53,6 +53,22 @@ it('refuses every runtime post kind before encryption when ownership or the inst
  s.setSharing(sharing);await s.comms.close();
  await expect(s.comms.post('art',place,{id:'closed',kind:'reply',text:'refused private words'})).rejects.toThrow();
  expect(seals).toBe(before);
+});
+for(const boundary of ['revoked','closed','archived','deleted','wrong-agent'] as const)it(`refuses unavailable runtime title writes (${boundary})`,async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ if(boundary==='revoked')s.setSharing({...s.getSharing(),members:{jonathan:{agents:[]}}});
+ else if(boundary==='closed')await s.comms.close();
+ else if(boundary==='archived'||boundary==='deleted')await s.call('change',{thread:place,action:boundary==='archived'?'archive':'delete'});
+ const before=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_threads').all());
+ expect(()=>s.comms.title(boundary==='wrong-agent'?'pond-bot':'art',place,'Unavailable title')).toThrow();
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_threads').all())).toBe(before);
+});
+it('lets the runtime name a live owned thread until the member names it',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ s.comms.title('art',place,'Runtime title');
+ expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record)).toMatchObject({title:'Runtime title',titledBy:'agent'});
+ await s.call('change',{thread:place,action:'title',title:'Member title'});
+ expect(()=>s.comms.title('art',place,'Replacement')).toThrow('member');
 });
 it('keeps one encrypted start notice through retries, restart and final failure',async()=>{
  const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);

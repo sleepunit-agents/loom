@@ -185,3 +185,11 @@ the same identity. No notice details enter plaintext records. Production
 binding, queued/busy timers, changing an existing retry headline to “couldn't
 start at first” after progress, and app retry-time/Send again rendering remain
 required. This unit supplies the internal persistence role only.
+
+Runtime write guard follow-up: `post` also snapshots the original project across
+sealing; a change to a different permitted project cannot redirect either a new
+reply or an existing card update. `title` now refuses revoked ownership, closed
+instances and archived threads, alongside wrong-agent/deleted denial and the
+existing member-title precedence. Before the fix five cases failed (two project
+races and three unavailable title writes). All 188 focused tests and TypeScript
+checking pass afterward. No production binding or web change is included.

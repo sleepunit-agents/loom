@@ -319,7 +319,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const words=await key.seal(JSON.stringify({text:m.text,run:m.run,tool:m.tool,state:m.state,step:m.step,ref:m.kind==='ask'?(m.ref??m.id):m.ref}));
   const result=db.transaction(()=> {
    const t=available();
-   if(t.member!==before.member||t.conversation!==before.conversation)return fail('denied','Thread unavailable');
+   if(t.member!==before.member||t.conversation!==before.conversation||t.project!==before.project)return fail('denied','Thread unavailable');
    const meta=m.kind==='ask'?{ref:m.ref??m.id}:{};
    const old=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND kind=? AND id=?').get(place,m.kind,m.id) as MessageRow|undefined;
    if(old && m.kind==='card') {
@@ -465,7 +465,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     return {thread:{id:current.id,title:current.title,archived:current.archived,working:current.working},messages};
    }};
   },
-  title(agent,place,value) {title.parse(value); const t=requireAgent(agent,place);if(t.titledBy==='member')return fail('conflict','The member named this thread');t.title=value;t.titledBy='agent';saveThread(db,t);touched(t);},
+  title(agent,place,value) {title.parse(value); const t=requireAgent(agent,place);if(closed||t.archived!==null||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');if(t.titledBy==='member')return fail('conflict','The member named this thread');t.title=value;t.titledBy='agent';saveThread(db,t);touched(t);},
   activity(agent,place,alive) {
    const value=z.object({at:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),tokens:z.number().int().min(0).max(1e12).optional()}).strict().parse(alive);
    const t=requireAgent(agent,place);
