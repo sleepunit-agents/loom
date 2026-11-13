@@ -27,6 +27,8 @@ jobs:
           nice -n 19 npm run build
           npx playwright-core install --with-deps chromium
       - name: Prove the Bridges preview only
+        env:
+          CI: 'true'
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           export LOOM_TEST_SHOTS="$PWD/artifacts/bridges-preview"

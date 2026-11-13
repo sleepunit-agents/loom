@@ -13,7 +13,7 @@ import { venueSchema } from '../pieces/bridges/model.js';
 import type { Incoming, VenueAdapter } from '../pieces/bridges/role.js';
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
-it.runIf(chrome && existsSync(join(root, 'next.html')))('Bridges shares status and staging release between windows without replaying an uncertain send', async () => {
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'next.html')))('Bridges shares status and staging release between windows without replaying an uncertain send', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-bridges-browser-'));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   const loom = await startLoom({ home, clock, next: true, staging: true, webRoot: root, sharing: fixtureSharing, install: app => {
