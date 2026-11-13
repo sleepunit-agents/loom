@@ -8,6 +8,7 @@ import { WebSocket } from 'ws';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Sharing, type Viewer } from '../../core/index.js';
 import { SqliteKnowledgeBackend } from '../../backends/sqlite-knowledge.js';
+import { migrateMindReceipts } from './receipt-schema.js';
 import { installMindKnowledge } from './index.js';
 import { verifyKnowledgePages } from '../../backends/knowledge-verification.js';
 import { installMindKnowledgeActions } from './actions.js';
@@ -24,17 +25,18 @@ async function fixture(missing = false) {
   const db = missing ? undefined : new BetterSqlite3(path);
   if (db) cleanups.push(() => db.close());
   const clock = new FakeClock(Date.UTC(2026, 10, 12));
+  const access = structuredClone(sharing);
   async function start() {
-    const app = await startLoom({ home: join(home, 'daemon'), clock, authenticate: () => ({ viewer: owner, valid: () => true }), install(app) {
-      const reader = installMindKnowledge(app.operations, app.live, { path, sharing: () => sharing }); app.onClose(() => reader.close());
-      const actions = installMindKnowledgeActions(app.operations, { path, sharing: () => sharing, verify: verifyKnowledgePages }); app.onClose(() => actions.close());
+    const app = await startLoom({ home: join(home, 'daemon'), clock, next: true, sharing: () => access, authenticate: () => ({ viewer: owner, valid: () => true }), install(app) {
+      const reader = installMindKnowledge(app.operations, app.live, { path, sharing: () => access }); app.onClose(() => reader.close());
+      const actions = installMindKnowledgeActions(app.operations, { path, sharing: () => access, verify: verifyKnowledgePages }); app.onClose(() => actions.close());
     } });
     let stopped = false;
     const close = async () => { if (stopped) return; stopped = true; await app.close(); };
     cleanups.push(close);
     return { ...app, close };
   }
-  return { app: await start(), start, db, backend, clock, path };
+  return { app: await start(), start, db, backend, clock, path, access };
 }
 it('confirms and requests a recheck with original notes, attribution and clock; retry acts once', async () => {
   const { app, backend, clock } = await fixture();
@@ -50,12 +52,12 @@ it('confirms and requests a recheck with original notes, attribution and clock; 
   expect(await backend!.getVerifications('fact')).toEqual(expect.arrayContaining([expect.objectContaining({ verifier: 'owner', outcome: 'stale' })]));
   expect(app.operations.call('direct', owner, 'mind.knowledgeRead', { slug: 'fact' })).toMatchObject({ value: { fresh: 'due' } });
 });
-it('denies partial members, agents, runners and read-only services without creating receipt metadata', async () => {
+it('denies partial members, agents, runners and read-only services without recording a receipt', async () => {
   const { app, db, backend } = await fixture();
   for (const viewer of [{ kind: 'member', id: 'partial' }, { kind: 'agent', id: 'art' }, { kind: 'runner', id: 'one' }, { kind: 'service', id: 'reader' }] as Viewer[]) {
     for (const verb of ['knowledgeVerify', 'knowledgeRecheck']) expect(app.operations.call('direct', viewer, `mind.${verb}`, { slug: 'fact' }, 'denied')).toMatchObject({ code: 'denied' });
   }
-  expect(db!.prepare("SELECT name FROM sqlite_master WHERE name = 'mind_operation_receipts'").get()).toBeUndefined();
+  expect(db!.prepare('SELECT count(*) AS n FROM mind_operation_receipts').get()).toEqual({ n: 0 });
   expect(await backend!.getVerifications('fact')).toEqual([]);
   expect(app.operations.call('direct', owner, 'mind.knowledgeVerify', { slug: 'fact' })).toMatchObject({ code: 'invalid' });
 });
@@ -67,7 +69,7 @@ it('does not create a missing source, and refuses missing or archived pages with
   expect(app.operations.call('direct', owner, 'mind.knowledgeVerify', { slug: 'absent' }, 'absent')).toMatchObject({ code: 'not-found' });
   await backend!.archivePage({ slug: 'fact' });
   expect(app.operations.call('direct', owner, 'mind.knowledgeRecheck', { slug: 'fact' }, 'archived')).toMatchObject({ code: 'conflict' });
-  expect(db!.prepare("SELECT name FROM sqlite_master WHERE name = 'mind_operation_receipts'").get()).toBeUndefined();
+  expect(db!.prepare('SELECT count(*) AS n FROM mind_operation_receipts').get()).toEqual({ n: 0 });
 });
 it('replays the source receipt after a core receipt failure and restart, without another note or audit', async () => {
   const { app, start, backend, db, clock } = await fixture();
@@ -104,6 +106,7 @@ it('publishes committed checks to two live windows and repairs publication after
   const { app } = await fixture();
   const windows = await Promise.all([1, 2].map(async () => {
     const socket = new WebSocket(app.url.replace('http:', 'ws:') + '/live');
+    // Erased socket frames are checked structurally by the assertions below.
     const queued: any[] = [], waiting: Array<(v: any) => void> = [];
     socket.on('message', raw => { const frame = JSON.parse(raw.toString()); const next = waiting.shift(); if (next) next(frame); else queued.push(frame); });
     const next = () => queued.length ? Promise.resolve(queued.shift()) : new Promise<any>(resolve => waiting.push(resolve));
@@ -136,11 +139,52 @@ it('refuses a locked source before effects and permits reuse only after the thir
   expect(await backend!.getVerifications('fact')).toHaveLength(2);
   expect(db!.prepare('SELECT count(*) AS n FROM mind_operation_receipts').get()).toEqual({ n: 1 });
 });
-it('rolls first-use receipt DDL and verification back when the original note would exceed the body cap', async () => {
+it('rolls verification back without a receipt when the original note would exceed the body cap', async () => {
   const { app, backend, db } = await fixture();
   await backend!.writePage({ slug: 'fact', title: 'Fact', domain: 'systems', body: 'a'.repeat(65536), mode: 'replace' });
   expect(app.operations.call('direct', owner, 'mind.knowledgeVerify', { slug: 'fact' }, 'cap')).toMatchObject({ code: 'unavailable' });
   expect(await backend!.getVerifications('fact')).toEqual([]);
   expect((await backend!.getPage('fact'))!.body).toHaveLength(65536);
-  expect(db!.prepare("SELECT name FROM sqlite_master WHERE name = 'mind_operation_receipts'").get()).toBeUndefined();
+  expect(db!.prepare('SELECT count(*) AS n FROM mind_operation_receipts').get()).toEqual({ n: 0 });
+});
+it('replays a committed external result after permission loss, but refuses a fresh effect', async () => {
+  const { app, access, backend } = await fixture();
+  app.db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT, 'injected failure'); END");
+  expect(app.operations.call('direct', owner, 'mind.knowledgeVerify', { slug: 'fact' }, 'revoked')).toMatchObject({ code: 'unavailable' });
+  app.db.exec('DROP TRIGGER fail_receipt');
+  access.members.owner.owner = false;
+  expect(app.operations.call('direct', owner, 'mind.knowledgeVerify', { slug: 'fact' }, 'revoked')).toMatchObject({ ok: true });
+  expect(app.operations.call('direct', owner, 'mind.knowledgeVerify', { slug: 'fact' }, 'new')).toMatchObject({ code: 'denied' });
+  expect(await backend!.getVerifications('fact')).toHaveLength(1);
+});
+it('keeps the original thirty-day expiry when a source receipt is recovered on day twenty-nine', async () => {
+  const { app, start, clock, backend } = await fixture();
+  const expiry = clock.now() + 30 * 86400_000;
+  app.db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT, 'injected failure'); END");
+  expect(app.operations.call('direct', owner, 'mind.knowledgeVerify', { slug: 'fact' }, 'deadline')).toMatchObject({ code: 'unavailable' });
+  app.db.exec('DROP TRIGGER fail_receipt'); await app.close(); clock.advance(29 * 86400_000);
+  const restarted = await start();
+  expect(restarted.operations.call('direct', owner, 'mind.knowledgeVerify', { slug: 'fact' }, 'deadline')).toMatchObject({ ok: true });
+  expect(restarted.db.prepare('SELECT expires FROM core_operations').get()).toEqual({ expires: expiry });
+  clock.advance(86400_000);
+  expect(restarted.operations.call('direct', owner, 'mind.knowledgeRecheck', { slug: 'fact' }, 'deadline')).toMatchObject({ ok: true });
+  expect(await backend!.getVerifications('fact')).toHaveLength(2);
+});
+it('versions source retry schema, refuses changed/newer history, and rolls failed installation back', () => {
+  const db = new BetterSqlite3(':memory:');
+  try {
+    migrateMindReceipts(db); migrateMindReceipts(db);
+    expect(db.prepare('SELECT number FROM mind_source_migrations').all()).toEqual([{ number: 1 }]);
+    db.prepare('UPDATE mind_source_migrations SET sql = ?').run('changed');
+    expect(() => migrateMindReceipts(db)).toThrow('Unknown or changed');
+    db.prepare('UPDATE mind_source_migrations SET number = 2').run();
+    expect(() => migrateMindReceipts(db)).toThrow('Unknown or changed');
+  } finally { db.close(); }
+  const conflict = new BetterSqlite3(':memory:');
+  try {
+    conflict.exec('CREATE TABLE mind_operation_receipts (sentinel TEXT)');
+    expect(() => migrateMindReceipts(conflict)).toThrow('already exists');
+    expect(conflict.prepare("SELECT name FROM sqlite_master WHERE name = 'mind_source_migrations'").get()).toBeUndefined();
+    expect(conflict.prepare('PRAGMA table_info(mind_operation_receipts)').all()).toMatchObject([{ name: 'sentinel' }]);
+  } finally { conflict.close(); }
 });

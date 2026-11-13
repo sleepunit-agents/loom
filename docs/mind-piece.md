@@ -162,18 +162,26 @@ clock. Missing pages return not-found; archived pages require restoration. The
 installer remains additive and is not yet registered in next mode.
 
 A write's `Context.receipt` carries the registry's canonical viewer, operation
-id/name, parsed-input hash and thirty-day expiry. The source transaction creates
-`mind_operation_receipts` if absent, then commits verification and the receipt
-together. This is retry metadata, not a content table or a pending intent: only
-identity, hash, expiry and the small verification result are retained. Failed
-verification rolls the new table back too. No page body or note is copied into
-loom.db or the receipt table. Existing content table definitions and old callers are unchanged.
+id/name, parsed-input hash and thirty-day expiry. The action installer applies
+numbered source metadata migrations, recorded in `mind_source_migrations`;
+unknown or changed migration history refuses startup. Each migration is atomic.
+The separate source transaction commits verification and
+`mind_operation_receipts` together. These are retry metadata, not content tables
+or pending intents: only migration SQL, identity, hash, expiry and the small
+verification result are retained. No page body or note is copied into loom.db or
+the receipt table. Existing content table definitions and old callers are unchanged.
 
 The content transaction and the core receipt are **not** one atomic transaction.
 If content commits but the core receipt fails, the caller gets unavailable;
 that must never be interpreted as an unchanged content store. Retrying the same
 id, including after restart, finds the source receipt, returns the original
 result and republishes the changed slug without another audit, note or stamp.
+The registry's optional `recover` hook runs before `may`, like its own receipt
+lookup: replay acknowledges an already-committed effect even after permission
+loss. Fresh effects still require authorization. A `RecoveredWrite` carries the
+original expiry into the core receipt, so delayed recovery never renews the
+thirty-day window. Source lookup is checked again under its immediate write lock
+to handle another daemon committing between lookup and mutation.
 Different input or either action with that id conflicts. Source receipts expire
 at thirty days and are pruned on the next action, matching the core retry window;
 a new request after that window may act again. Source receipt failures roll back
