@@ -34,7 +34,7 @@ export const jobRecord = z.object({
   /** Owner ended exact silent work; no returned body may resume its history. */
   principalReset: z.object({approval:id,by:id,at:z.number().int()}).strict().optional(),
   writtenOff: z.object({approval:id,by:id,at:z.number().int()}).strict().optional(),
-  startRequest: z.object({box:id.optional()}).strict().optional(),
+  startRequest: z.object({box:id.optional(),house:buildIdentity.optional()}).strict().optional(),
   made: buildIdentity.optional(), claimedAt: z.number().int().optional(),
   build: z.string().regex(/^loom-house-[a-z][a-z0-9-]{0,39}:[0-9a-f]{20}$/).optional(),
   buildAt: z.number().int().optional(),

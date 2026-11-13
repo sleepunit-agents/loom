@@ -116,3 +116,20 @@ it('retains explicit placement, project and title after restart and changed pref
  expect(await f.post('claimJob',{job})).toMatchObject({ok:true});
  expect(await f.post('takeInput',{job})).toMatchObject({ok:true,value:{brief:'PRIVATE retry words',model:'test-model'}});
 });
+it('pins the retry house across the queued-to-claimed interval and settles a successful replacement',async()=>{
+ const f=await setup(),root=f.start();await f.fail(root);f.clock.advance(60_000);const job=f.progress(root).current;
+ const settings=f.store.read('settings','art')!;
+ f.app.db.transaction(()=>{const {changedAt:_,...value}=settings;f.store.put('settings',{...value,house:{repo:'/different',houseFile:'new.json'}},f.clock.now());})();
+ expect(await f.post('claimJob',{job})).toMatchObject({ok:false,code:'conflict'});expect(await f.post('takeInput',{job})).toMatchObject({ok:false});
+ expect(f.store.read('job',job)?.state).toBe('queued');
+ f.app.db.transaction(()=>{const {changedAt:_,...value}=settings;f.store.put('settings',value,f.clock.now());})();
+ expect(await f.post('claimJob',{job})).toMatchObject({ok:true});
+ // Configuration can also change while runner input release awaits the async door.
+ f.app.db.transaction(()=>{const {changedAt:_,...value}=settings;f.store.put('settings',{...value,house:{repo:'/different',houseFile:'new.json'}},f.clock.now());})();
+ expect(await f.post('takeInput',{job})).toMatchObject({ok:false});
+ f.app.db.transaction(()=>{const {changedAt:_,...value}=settings;f.store.put('settings',value,f.clock.now());})();
+ expect(await f.post('takeInput',{job})).toMatchObject({ok:true,value:{house:settings.house}});
+ expect(await f.post('reportJob',{job,state:'running'})).toMatchObject({ok:true});
+ expect(await f.post('finishJob',{job,state:'done'})).toMatchObject({ok:true});
+ expect(f.progress(root)).toMatchObject({state:'settled',current:job,attempt:2});f.clock.advance(1_000_000);expect(f.store.ids('job')).toHaveLength(2);
+});

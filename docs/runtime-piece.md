@@ -989,7 +989,9 @@ Local storage failure rolls back and backs off five seconds rather than spinning
 
 Before retrying, Runtime rechecks the original caller with central `mayCreate`
 and `give-work` policy, the exact failed attempt's configured house, and current
-placement ownership, lending and host eligibility. A withdrawn permission, changed
+placement ownership, lending and host eligibility. The replacement retains its
+expected house in startRequest; a later setup change blocks claim, and input
+release rechecks the claimed house again. A withdrawn permission, changed
 house, recovery/import fence or unavailable placement holds the chain. No owner
 approval is fabricated and there is no release/revival operation in this unit.
 A held or exhausted chain remains inspectable and cannot silently restart.

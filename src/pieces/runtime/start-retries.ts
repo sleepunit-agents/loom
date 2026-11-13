@@ -4,9 +4,9 @@
  */
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
-import { operation, mayAct, mayCreate, OperationError, type Context, type Db, type Sharing } from '../../core/index.js';
+import { operation, mayAct, OperationError, type Context, type Db, type Sharing } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
-import { startInput } from './start.js';
+import { startInput, mayStart } from './start.js';
 import { runtimeStore } from './store.js';
 import { enqueueBody } from './queue.js';
 import { configuredHouse, sameHouse } from './builds.js';
@@ -66,7 +66,7 @@ export function installStartRetries(app:Foundation,sharing:()=>Sharing) {
         if(!previous||!original||previous.state!=='failed'||!previous.startFailed||previous.imported||previous.writtenOff||previous.principalReset
           ||previous.member!==undefined||previous.service!==undefined||previous.conversation!==undefined
           ||input.member!==undefined||input.conversation!==undefined||!house||!sameHouse(previous.made,house)
-          ||!mayCreate(row.by,scope,access,'runtime.startBody')||(row.by.kind==='member'&&!mayAct(row.by,scope,access,'give-work'))) {
+          ||!mayStart(row.by,scope,access)) {
           put(db,root,{...row,state:'held',due:undefined});changes.push({type:'runtime.job',id:root});continue;
         }
         const job='retry-'+createHash('sha256').update(JSON.stringify([root,row.count+1])).digest('hex').slice(0,40);
@@ -74,7 +74,7 @@ export function installStartRetries(app:Foundation,sharing:()=>Sharing) {
         const ctx:Context={db,viewer:row.by,now:clock.now(),changed:(type,id)=>changes.push({type,id})};
         try {
           // Selection rechecks current ownership, host policy, facts and lending.
-          enqueueBody(ctx,access,{id:job,agent:input.agent,project:input.project,title:input.title,model:input.model,account:input.account,startRequest:{box:input.box}},input);
+          enqueueBody(ctx,access,{id:job,agent:input.agent,project:input.project,title:input.title,model:input.model,account:input.account,startRequest:{box:input.box,house}},input);
         } catch(error) {
           if(!(error instanceof OperationError))throw error;
           put(db,root,{...row,state:'held',due:undefined});changes.push({type:'runtime.job',id:root});continue;
