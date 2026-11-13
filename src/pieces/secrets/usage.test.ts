@@ -38,7 +38,11 @@ it('records exact runtime read/issue scope and service acquisition; callback fai
   call('grant',{agent:'art',kind:'secret',target:'github',scope,expiresAt:clock.now()+1000});
   const firstAt=clock.now(); expect(hand('issue')).toBe(true); clock.advance(10); expect(hand()).toBe(true);
   call('grantService',{service:'changes',name:'github'}); clock.advance(10);
-  await expect(role.withValue('github',async token=>{throw Error(token);})).rejects.toMatchObject({message:'Secret use failed'});
+  await expect(role.withValue('github',async token=>{
+    expect(call('usage',{name:'github'})).toMatchObject({ok:true,value:{count:3,lastUsedAt:clock.now()}});
+    expect(rows().map(r=>JSON.parse(r.record)).filter(r=>r.action==='service-use')).toMatchObject([{state:'released'}]);
+    throw Error(token);
+  })).rejects.toMatchObject({message:'Secret use failed'});
   const result=call('usage',{name:'github'});
   expect(result).toMatchObject({ok:true,value:{count:3,lastUsedAt:clock.now(),events:[
     {action:'issue',by:{kind:'agent',id:'art'},house:'h-123',service:'bridge',at:firstAt,state:'released'},
@@ -52,6 +56,10 @@ it('records exact runtime read/issue scope and service acquisition; callback fai
   // Retained history is independent of name removal/re-add, matching change history.
   app.db.prepare('DELETE FROM secrets_names WHERE id=?').run('github'); call('describe',{name:'github',description:''});
   expect(call('usage',{name:'github'})).toEqual(result);
+  call('describe',{name:'second',description:''}); call('grantService',{service:'changes',name:'second'}); clock.advance(10);
+  await role.withValue('second',async()=>true);
+  expect(call('usage',{name:'github'})).toEqual(result);
+  expect(call('usage',{name:'second'})).toMatchObject({ok:true,value:{count:1,lastUsedAt:clock.now(),events:[{name:'second'}]}});
   const tables=app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[];
   const dump=JSON.stringify(tables.map(t=>app.db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all()));
   expect(dump).not.toContain('USAGE-VALUE-SENTINEL'); expect(dump).not.toContain('SINK-MUST-NOT-BE-STORED');
@@ -109,4 +117,15 @@ it('adds usage to a populated prior schema without changing existing records; re
     expect(lease.db.prepare('SELECT * FROM secrets_meta').all()).toEqual([{key:'policy',value:'{"default":"never"}'}]);
     expect(lease.db.prepare('SELECT * FROM secrets_uses').all()).toEqual([]);
   } finally {lease.close();}
+});
+
+it('refuses service callback and erases bytes when release auditing fails before delivery',async()=>{
+  const {app,call,source,role,rows}=await setup(); call('grantService',{service:'changes',name:'github'});
+  const bytes=Buffer.from('USAGE-VALUE-SENTINEL'), use=vi.fn(async()=>true);
+  source.read.mockResolvedValueOnce(bytes);
+  app.db.exec("CREATE TRIGGER fail_service_finish BEFORE UPDATE ON secrets_uses BEGIN SELECT RAISE(ABORT,'USAGE-VALUE-SENTINEL'); END");
+  await expect(role.withValue('github',use)).rejects.toMatchObject({code:'unavailable',message:'Secret use failed'});
+  expect(source.read).toHaveBeenCalledOnce(); expect(use).not.toHaveBeenCalled(); expect(bytes.every(v=>v===0)).toBe(true);
+  expect(rows().map(r=>JSON.parse(r.record).state)).toEqual(['started']);
+  expect(call('usage',{name:'github'})).toMatchObject({ok:true,value:{count:0,lastUsedAt:null}});
 });
