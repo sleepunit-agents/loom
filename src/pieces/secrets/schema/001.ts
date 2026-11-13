@@ -11,4 +11,6 @@ CREATE TABLE secrets_grants (id TEXT PRIMARY KEY, agent TEXT NOT NULL, kind TEXT
 INSERT INTO secrets_grants SELECT * FROM secrets_grants_v1;
 DROP TABLE secrets_grants_v1;
 CREATE INDEX secrets_grants_resource ON secrets_grants(agent,kind,target);
+` }, { number: 3, sql: `
+CREATE TABLE secrets_changes (id TEXT PRIMARY KEY, record TEXT NOT NULL);
 ` }];
