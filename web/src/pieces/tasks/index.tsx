@@ -32,9 +32,23 @@ function TaskRow({ task, selected, open, act }: { task: Task; selected: boolean;
     onClick={() => open(task.id)} data-row-menu={['open:Open', ...actionsFor(task).map(a => `${a}:${actionLabel[a]}`)].join('|')} data-row-menu-title={task.title}
     actions={<details><summary aria-label={`Actions for ${task.title}`}>Actions</summary>{actionsFor(task).map(a => <Button variant="outline" size="sm" key={a} onClick={() => act(a,task.id)}>{actionLabel[a]}</Button>)}</details>} />;
 }
-export default function TasksApp() {
+export default function TasksApp({ path: shellPath, go }: { path?: string; go?: (path: string) => void } = {}) {
+  const [localPath,setLocalPath] = useState(() => typeof location === 'undefined' ? '/_dev/tasks' : location.pathname);
+  const path = (shellPath ?? localPath).split('?')[0];
+  const base = path.split('/task/')[0];
+  const selected = /\/task\/(t-\d+)$/.exec(path)?.[1];
+  const navigate = (id?: string) => {
+    const next = id ? `${base}/task/${id}` : base;
+    if (go) go(next);
+    else { if (typeof history !== 'undefined') history.pushState(null,'',next); setLocalPath(next); }
+  };
+  useEffect(() => {
+    if (go || typeof window === 'undefined') return;
+    const pop = () => { setLocalPath(location.pathname); setAction(undefined); };
+    window.addEventListener('popstate',pop); return () => window.removeEventListener('popstate',pop);
+  },[go]);
   const { records, status } = useRecords<Task>('task');
-  const [folder,setFolder] = useState('ready'), [query,setQuery] = useState(''), [selected,setSelected] = useState<string>();
+  const [folder,setFolder] = useState('ready'), [query,setQuery] = useState('');
   const [action,setAction] = useState<{ action: Action; id?: string }>();
   const [olderAt,setOlderAt] = useState<readonly Task[]>();
   const [archiveAt,setArchiveAt] = useState<readonly Task[]>();
@@ -54,10 +68,10 @@ export default function TasksApp() {
     { heading:'Epics' }, ...records.filter(t => t.type === 'epic' && records.some(child => child.parent === t.id && child.status !== 'closed')).map(t => ({ id:`epic:${t.id}`,label:t.title,count:records.filter(child => inFolder(child,`epic:${t.id}`)).length })),
   ];
   const open = (id: string) => {
-    setSelected(id); setAction(undefined);
+    navigate(id); setAction(undefined);
     if (!records.some(t => t.id === id)) { setOlderAt(records); setOlderTask(call<TaskAnswer>('tasks.show',{id})); }
   };
-  const act = (a: Action, id = selected) => { const target = a === 'create' ? undefined : id; setSelected(target); setAction({ action:a,id:target }); };
+  const act = (a: Action, id = selected) => { const target = a === 'create' ? undefined : id; navigate(target); setAction({ action:a,id:target }); };
   const activeForm = action && (action.action === 'create' || (current && action.id === current.id));
   return <Split className="h-full" label="Tasks" folders={folders} folder={folder} onFolder={id => { setFolder(id); setAction(undefined); }}
     search={<label className="grid gap-1">Search tasks<Input type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>}
@@ -71,5 +85,5 @@ export default function TasksApp() {
       {folder === 'closed' && old.length > 0 && <List label="Older closed tasks">{old.filter(t => !records.some(r => r.id === t.id) && matches(t,query)).map(t => <Row key={t.id} title={t.title} status={`${t.id} · Closed`} onClick={() => open(t.id)} />)}</List>}
     </>}
     reader={activeForm ? <div className="p-5"><ActionForm key={`${action.action}:${action.id ?? ''}`} action={action.action} task={current} enabled={status === 'live'} onCancel={() => setAction(undefined)} /></div> : current ? <Reader task={current} records={all} open={open} act={act} /> : olderState.pending ? <Loading label="Opening task…" /> : olderState.result?.ok === false ? <Error text={`${olderState.result.code}: ${olderState.result.message}`} /> : selected ? <Empty title="This task is no longer in view" text="It may have moved, aged out or become unavailable." /> : null}
-    open={!!selected || !!activeForm} onBack={() => { setSelected(undefined); setAction(undefined); }} backLabel="Tasks" blank={<Empty title="Open a task" text="Choose work from the list to read it here." />} />;
+    open={!!selected || !!activeForm} onBack={() => { navigate(); setAction(undefined); }} backLabel="Tasks" blank={<Empty title="Open a task" text="Choose work from the list to read it here." />} />;
 }

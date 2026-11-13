@@ -42,6 +42,9 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Tasks updates two wind
     await a.getByRole('button',{name:'Comment',exact:true}).last().click();
     await expect.poll(()=>b.getByText('A comment shared between windows',{exact:true}).count()).toBe(1);
     await a.getByRole('button',{name:'Back to task',exact:true}).click();
+    expect(new URL(b.url()).pathname).toBe('/_dev/tasks/task/t-1');
+    await b.reload();
+    await expect.poll(()=>b.getByText('A comment shared between windows',{exact:true}).count()).toBe(1);
     const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/tasks-app');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
       await b.setViewportSize({width,height:900});

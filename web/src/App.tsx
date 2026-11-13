@@ -512,9 +512,9 @@ export default function App() {
     : (shownTitle || error) && icon(tileLabel || "") !== "circle" ? <AppTile label={tileLabel || "loom"} icon={icon(tileLabel || "")} /> : undefined;
 
   /** A page's body (its state, its error, its view), in the screen's page or a tile's. */
-  const pageBody = (pg: PageState, env: Env | null, side: SideAt, arr: Arrivals, inTile = false) => {
+  const pageBody = (pg: PageState, env: Env | null, side: SideAt, arr: Arrivals, inTile = false, appGo = go) => {
     const registered = appAt(new URL(pg.url, 'http://loom').pathname);
-    if (registered) return <Suspense fallback={<Skeleton />}><registered.Screen /></Suspense>;
+    if (registered) return <Suspense fallback={<Skeleton />}><registered.Screen path={pg.url} go={appGo} /></Suspense>;
     const data = withAgentCards(withThreads(withAttention(pg.data, attention), threads), cards);
     // An agent's page is its window (t-1925 D): its header, and in a tile its sections down the side.
     const agentHead = data?.view === 'page' ? data.head : data?.view === 'dashboard' ? (data.dashboard as { agent?: AgentHead }).agent : undefined;
@@ -702,7 +702,7 @@ export default function App() {
             <main className="loom-desk-main loom-tiles-main">
               <D.TileDesk api={tilesApi} appOf={tileOf} byName={tileNamed} say={say} onFocus={setTileFocus} onOpen={setTileOpen} outerGo={go}
                 shell={chrome.shell} homeData={deskHome} deskEnv={(g) => pageEnv(mainPage, g)}
-                oneWindow={oneWindow} render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() }, true)}
+                oneWindow={oneWindow} render={(pg, g, roomy) => pageBody(pg, pageEnv(pg, g), roomy ? 'column' : 'fold', { before: null, now: new Set() }, true, g)}
                 home={pageBody(mainPage, env, sideAt, arrivals)}
                 // An agent's window wears its letter in the corner (t-1925 D): a cropped pixel head there read wrong.
                 lead={(o) => o.key.startsWith('/a/') && agentOf(o.key) ? <span className="loom-letter" aria-hidden style={{ '--c': markColor(agentOf(o.key)!.bg), '--ls': '22px' } as React.CSSProperties}>{agentOf(o.key)!.label[0]}</span> : <AppIcon label={o.label} name={iconFor(icon(o.label))} size="sm" lit />}
