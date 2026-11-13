@@ -1,5 +1,6 @@
 import { runtimeRepositoryCacheRule } from '../pieces/runtime/import-source.js';
-import { createHash, randomUUID } from 'node:crypto';
+import { copyMigrationFile, fileDigest } from '../core/migration-files.js';
+import { randomUUID } from 'node:crypto';
 import { closeSync, constants, existsSync, fchmodSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -17,7 +18,7 @@ export interface SnapshotManifest {
   runtimeRoots?: ('runtime'|'runtime-data')[];
   files: { path: string; sha256: string; bytes: number; kind: 'sqlite' | 'file' }[];
 }
-const hash = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
+
 function isSqlite(input: string): boolean {
   if (!lstatSync(input).isFile()) return false;
   const fd = openSync(input, 'r');
@@ -196,7 +197,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
   const manifest: SnapshotManifest = { version: 1, consistency: 'per-database', files: [], skipped: inventory.skipped, followed: inventory.followed };
   const runtimeRoots = (['runtime','runtime-data'] as const).filter(name=>roots[name]!==undefined);
   if(runtimeRoots.length)manifest.runtimeRoots=runtimeRoots;
-  const copied = new Map<string, Buffer>();
+  const copied = new Map<string, string>();
   try {
     destinationPath(join(target, 'home'));
     guarded('.', 'cannot create copied home', () => mkdirSync(join(target, 'home'), { mode: 0o700 }));
@@ -216,7 +217,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
       const sqlite = guarded(path, 'cannot read data header', () => isSqlite(file.source));
       try {
         const previous = copied.get(file.source);
-        if (previous) writeFileSync(output, previous, {mode:0o600,flag:'wx'});
+        if (previous) copyMigrationFile(previous, output);
         else if (sqlite) {
           const db = new Database(file.source, { readonly: true, fileMustExist: true });
           // Linux descriptor-relative path keeps the backup in our reserved inode
@@ -232,10 +233,10 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
           destinationPath(output);
           const out = openSync(output, 'r');
           try { fchmodSync(out, 0o600); } finally { closeSync(out); }
-        } else writeFileSync(output, readFileSync(file.source), { mode: 0o600, flag: 'wx' });
-        const bytes = readFileSync(output);
-        copied.set(file.source, bytes);
-        manifest.files.push({ path: file.path, sha256: hash(bytes), bytes: bytes.length, kind: sqlite ? 'sqlite' : 'file' });
+        } else copyMigrationFile(file.source, output);
+        const digest = fileDigest(output);
+        copied.set(file.source, output);
+        manifest.files.push({ path: file.path, ...digest, kind: sqlite ? 'sqlite' : 'file' });
       } catch { refusal(path, sqlite ? 'SQLite backup failed' : 'data copy failed'); }
     }
     checkTarget();
@@ -260,8 +261,8 @@ export function readSnapshot(dir: string): SnapshotManifest {
     const path = resolve(root, file.path);
     if (!within(path, root) || path === root || relative(root, path).startsWith('..')) throw new Error('Invalid snapshot path');
     if (!within(realpathSync(path), root)) throw new Error('Invalid snapshot link');
-    const bytes = readFileSync(path);
-    if (bytes.length !== file.bytes || hash(bytes) !== file.sha256) throw new Error('Snapshot integrity check failed');
+    const digest = fileDigest(path);
+    if (digest.bytes !== file.bytes || digest.sha256 !== file.sha256) throw new Error('Snapshot integrity check failed');
   }
   return manifest;
 }
