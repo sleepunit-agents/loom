@@ -1,8 +1,9 @@
 import { z } from 'zod';
-import { migrate, operation, maySee, type Db, type Operations, type Live, type Sharing, type RecordScope } from '../../core/index.js';
+import { migrate, operation, maySee, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import { records, type RecordKind } from './records.js';
 import { schema } from './schema/001.js';
 import { runtimeStore } from './store.js';
+const inScope = (record: LiveRecord, scope: string | undefined) => scope === undefined || record.agent === scope;
 /** Metadata reads only. Mutating operations are installed with their runner/delivery implementations. */
 export function installRuntime(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
   migrate(db, 'runtime', schema);
@@ -22,12 +23,12 @@ export function installRuntime(db: Db, operations: Operations, live: Live, shari
       run(ctx, input) {
         return { records: store.ids(kind).flatMap(id => {
           const record = read(id, ctx.viewer);
-          return record && (input.scope === undefined || ('agent' in record && record.agent === input.scope)) ? [record] : [];
+          return record && inScope(record, input.scope) ? [record] : [];
         }) };
       },
     }));
     live.register({ name: type, ids: () => store.ids(kind), read,
-      inScope: (record, scope) => scope === undefined || record.agent === scope,
+      inScope,
     });
   }
 }

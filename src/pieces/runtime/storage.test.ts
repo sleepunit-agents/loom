@@ -14,10 +14,10 @@ const art: Viewer = { kind: 'agent', id: 'art' };
 const runner: Viewer = { kind: 'runner', id: 'r1' };
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
-async function setup(home?: string) {
+async function setup(home?: string, nextMode = true) {
   if (!home) { home = mkdtempSync(join(tmpdir(), 'runtime-storage-')); const dir = home; cleanups.push(() => rmSync(dir, { recursive: true, force: true })); }
   const clock = new FakeClock();
-  const app = await startLoom({ home, clock, next: true, sharing: fixtureSharing, authenticate: () => ({ viewer: art, valid: () => true }) });
+  const app = await startLoom({ home, clock, next: nextMode, sharing: fixtureSharing, authenticate: () => ({ viewer: art, valid: () => true }) });
   cleanups.push(app.close);
   const call = (op: string, viewer = owner, scope?: string) => app.operations.call('direct', viewer, `runtime.${op}`, scope === undefined ? {} : { scope });
   return { app, clock, home, store: runtimeStore(app.db), call };
@@ -29,6 +29,11 @@ it('installs empty metadata collections in next mode without pretending executio
   for (const name of ['listBoxes', 'listJobs', 'listSettings', 'listBindings']) expect(call(name)).toEqual({ ok: true, value: { records: [] } });
   expect(app.operations.call('direct', owner, 'runtime.startBody', {}, 'start')).toMatchObject({ ok: false, code: 'not-found' });
   expect(app.db.prepare("SELECT count(*) AS n FROM core_migrations WHERE piece='runtime'").get()).toEqual({ n: 1 });
+});
+it('does not install runtime tables or operations in legacy mode', async () => {
+  const { app, call } = await setup(undefined, false);
+  expect(call('listBoxes')).toMatchObject({ ok: false, code: 'not-found' });
+  expect(app.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'runtime_%'").all()).toEqual([]);
 });
 it('checks each record with central policy, including private and exact runner jobs', async () => {
   const { app, store, call } = await setup();
@@ -75,6 +80,8 @@ it('rejects extra words/credentials, mismatched settings ids and duplicate conve
   expect(() => app.db.transaction(() => store.put('job', { ...job('j'), brief: 'Private words' } as RuntimeRecords['job'], 1))()).toThrow();
   expect(() => app.db.transaction(() => store.put('box', { ...box, token: 'credential' } as RuntimeRecords['box'], 1))()).toThrow();
   expect(() => app.db.transaction(() => store.put('settings', { id: 'wrong', agent: 'art', boxes: [] }, 1))()).toThrow('Settings id');
+  expect(() => app.db.transaction(() => store.put('settings', { id: 'art', agent: 'art', boxes: [], token: 'credential' } as RuntimeRecords['settings'], 1))()).toThrow();
+  expect(() => app.db.transaction(() => store.put('binding', { id: 'bad', agent: 'art', venue: 'loom', place: 'bad', text: 'private words' } as RuntimeRecords['binding'], 1))()).toThrow();
   const binding = { id: 'one', agent: 'art', venue: 'loom', place: 'thread' };
   app.db.transaction(() => store.put('binding', binding, 1))();
   expect(() => app.db.transaction(() => store.put('binding', { ...binding, id: 'two' }, 1))()).toThrow();
@@ -82,7 +89,7 @@ it('rejects extra words/credentials, mismatched settings ids and duplicate conve
 });
 it('uses the same policy for live sets and removes records after access changes', async () => {
   const { app, store } = await setup();
-  app.db.transaction(() => { store.put('job', job('live'), 1); store.put('job', job('private', { member: 'jonathan' }), 1); })();
+  app.db.transaction(() => { store.put('job', job('live'), 1); store.put('job', job('private', { member: 'jonathan' }), 1); store.put('job', job('visible-off-scope', { agent: 'pond-bot', project: 'pond' }), 1); })();
   const ws = new WebSocket(app.url.replace('http:', 'ws:') + '/live');
   const queue: unknown[] = [], waiters: Array<(v: unknown) => void> = [];
   ws.on('message', raw => { const value = JSON.parse(raw.toString()); const next = waiters.shift(); if (next) next(value); else queue.push(value); });
