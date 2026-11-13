@@ -71,7 +71,7 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | POST `/passkeys/options`, `/passkeys` | Existing fresh-session, CSRF-protected registration |
 | POST `/login/passkey/options`, `/login/passkey` | Existing expiring challenge, signature, verification and counter checks |
 | GET `/faces/AGENT/…`, `/pixel-icons/APP.png` | **Pending** new-side asset serving with appropriate household/agent access; file import alone does not mount these routes |
-| Appearance/accessibility preferences and per-member saved settings | **Pending** settings operations/records and shell integration; imported reader/settings rows alone do not apply preferences |
+| Appearance/accessibility preferences and per-member saved settings | `household.preferences`, `household.setPreferences` and member-private `household.preferences` Live records preserve imported choices; **pending** shell application and editing controls |
 | Push subscription/device controls, `push-test`, `push-remove` | **Pending** next notification/device administration; retained push rows alone do not send notifications |
 | Piece `settings.json` reads/writes | Rows are imported into `household_piece_settings`; **pending** settings operation/record/client coverage. Built-in service registration is an in-process authority seam, not a settings editor |
 

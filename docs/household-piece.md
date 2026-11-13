@@ -358,3 +358,23 @@ adds no job and performs no installation, import or host rollout.
 projects only the legacy summary fields; arbitrary imported metadata, membership,
 settings and credentials are never part of its response. The home is the daemon
 home, independent of the client environment. No retry receipt is written.
+
+## Member preferences on the new side
+
+`household.preferences({})` reads the calling member's Appearance and Accessibility
+choices. `household.setPreferences({...choices})` patches them and publishes a
+member-private `household.preferences` record (`id`, `member`, `prefs`). Neither
+operation takes a member argument. The existing central member policy also
+excludes household owners from other members' preferences. There was no old CLI
+for these choices; the shell controls and applying the record in the new shell
+remain pending.
+
+The row keeps the old look/mode and tiling spelling; responses normalize `000h`
+to Daylight or Low Light and `tiling: false` to `oneWindow: true` unless the latter
+was explicitly chosen. Updates preserve other choices and unrelated reader state;
+`at` is a strictly increasing server millisecond version. Imported first-owner
+choices remain in the session envelope, other members use their reader rows.
+When the first owner changes, only preferences rotate between those locations
+in the same membership transaction, keeping each person's choices private.
+Core's ordinary same-id retry returns the original receipt without applying an
+older choice again; after removal, fresh reads and writes are denied.
