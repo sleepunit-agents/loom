@@ -190,3 +190,17 @@ it('preserves the prior snapshot when an upstream change has a missing or invali
   try {await job.run();expect(loadChanges(app.db)).toMatchObject([{title:'Keep this snapshot',syncError:'GitHub read unavailable'}]);expect(loadChanges(app.db)).toHaveLength(1);}finally{job.close();}
  }
 });
+
+it('rejects every unavailable or no-longer-pending answer eligibility without calling Approvals',async()=>{
+ const answer=vi.fn(()=>({ok:true as const,value:{}}));let rule:ReturnType<Approvals['rule']>={tier:'ask'};
+ const app=await setup({rule:()=>rule,answer}),c=change({project:'pond'});
+ for(const record of [{...c,state:'closed' as const},{...c,agent:undefined}]){
+  replaceChanges(app.db,[record]);expect(app.call('answer',{id:c.id,head:c.head.id,action:'yes'})).toMatchObject({ok:false,code:'invalid'});
+ }
+ replaceChanges(app.db,[c]);
+ for(const current of [undefined,{tier:'do' as const},{tier:'ask' as const,approval:{state:'allowed'}},{tier:'ask' as const,for:{slug:'loren',name:'Loren',state:'denied'}}]){
+  rule=current;expect(app.call('answer',{id:c.id,head:c.head.id,action:'yes',...(current?.for?{person:'loren'}:{})})).toMatchObject({ok:false});
+ }
+ expect(answer).not.toHaveBeenCalled();
+ const missing=await setup();replaceChanges(missing.db,[c]);expect(missing.call('answer',{id:c.id,head:c.head.id,action:'yes'})).toMatchObject({ok:false,code:'unavailable'});
+});

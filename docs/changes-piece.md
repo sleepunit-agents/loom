@@ -110,3 +110,9 @@ The injected secret helper remains as an intentional paired boundary. Ledger
 and full transcripts are retained in loom note
 `loom/2026-11-12-changes-credential-review`. Permission/daemon review and actual
 root/Approvals integration remain required; this does not claim a CLEAR verdict.
+
+The daemon rechecks project mappings and agent attribution inside the snapshot
+commit transaction, including preserved rows from failed reads. A refresh request
+increments a durable generation; an older in-flight read cannot consume it.
+Concurrent runs share one read, and configuration or commit failures back off
+rather than retrying continuously. Permission/daemon review evidence is pending.

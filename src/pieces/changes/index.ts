@@ -13,6 +13,7 @@ export function installChanges(db:Db, operations:Operations, live:Live, sharing:
  migrate(db,'changes',schema);
  const scope=(c:Change)=>({type:'change',...(c.project?{project:c.project}:{}),...(c.agent?{agent:c.agent}:{})});
 
+ const find=(id:string|undefined)=>loadChanges(db).find(c=>c.id===id);
  const see=(v:Viewer,c:Change)=>maySee(v,scope(c),sharing());
  const access=(v:Viewer,op:string)=>v.kind!=='service'||mayAct(v,{type:'change'},sharing(),'act',op);
  const all=(v:Viewer)=>loadChanges(db).filter(c=>see(v,c));
@@ -28,7 +29,7 @@ export function installChanges(db:Db, operations:Operations, live:Live, sharing:
  for(const verb of ['list','references','cited-by','project-feed','thread-feed','show'] as const) operations.register(operation({
   name:`changes.${verb}`,cli:changesCommands.find(c=>c.name===verb),
   input:z.object({cli:z.boolean().optional(),id:z.string().optional(),task:z.string().regex(/^t-[0-9]+$/).optional(),project:z.string().optional(),since:z.string().optional(),conversation:z.string().optional(),references:z.array(z.string()).max(200).optional()}).passthrough(),output:z.unknown(),
-  may:(v,input)=>access(v,`changes.${verb}`)&&(verb!=='show'||!loadChanges(db).find(c=>c.id===input.id)||see(v,loadChanges(db).find(c=>c.id===input.id)!)),
+  may:(v,input)=>{const c=verb==='show'?find(input.id):undefined;return access(v,`changes.${verb}`)&&(!c||see(v,c));},
   run(ctx,input){
    let changes=all(ctx.viewer).filter(c=>active(c,ctx.now)).map(c=>decorate(c,ctx.viewer));
    if(verb==='show') { const c=all(ctx.viewer).find(c=>c.id===input.id); if(!c) throw new OperationError('not-found','Change not found');return decorate(c,ctx.viewer); }
@@ -43,17 +44,17 @@ export function installChanges(db:Db, operations:Operations, live:Live, sharing:
  }));
  operations.register(operation({name:'changes.refresh',write:true,cli:changesCommands.find(c=>c.name==='refresh'),input:z.object({}).passthrough(),output:z.object({message:z.string()}),
   may:v=>mayAct(v,{type:'change'},sharing(),'household','changes.refresh'),
-  run(ctx){db.prepare('INSERT INTO changes_jobs(id,due) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET due=excluded.due').run(ctx.now);ctx.changed('change-sync','status');options.onRefresh?.();return {message:'asked for a read'};}
+  run(ctx){db.prepare('INSERT INTO changes_jobs(id,due,requested) VALUES(1,?,1) ON CONFLICT(id) DO UPDATE SET due=excluded.due,requested=requested+1').run(ctx.now);ctx.changed('change-sync','status');options.onRefresh?.();return {message:'asked for a read'};}
  }));
  operations.register(operation({name:'changes.confirm',input:z.object({id:z.string(),head:z.string()}),output:z.object({open:z.boolean(),person:z.string().optional()}),
-  may:(v,input)=>{const c=loadChanges(db).find(c=>c.id===input.id);return !!c&&mayAct(v,scope(c),sharing(),'household','changes.confirm');},
-  run(ctx,input){const c=loadChanges(db).find(c=>c.id===input.id)!;const rule=c.agent?options.approvals?.rule(ctx.viewer,c.agent,targetOf(c)):undefined;return {open:!!rule&&c.head.id===input.head&&/^[0-9a-f]{40}$/.test(c.head.id)&&waitsOn(c,rule).group==='you',...(rule?.for?{person:rule.for.slug}:{})};}
+  may:(v,input)=>{const c=find(input.id);return !!c&&mayAct(v,scope(c),sharing(),'household','changes.confirm');},
+  run(ctx,input){const c=find(input.id)!;const rule=c.agent?options.approvals?.rule(ctx.viewer,c.agent,targetOf(c)):undefined;return {open:!!rule&&c.head.id===input.head&&/^[0-9a-f]{40}$/.test(c.head.id)&&waitsOn(c,rule).group==='you',...(rule?.for?{person:rule.for.slug}:{})};}
  }));
  live.register({name:'change-sync',ids:()=>['status'],read(_id,v){if(!maySee(v,{type:'change'},sharing())) return;const row=db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get() as {value:string}|undefined;return {id:'status',...(row?JSON.parse(row.value):{at:null,error:false}),available:!!row};},inScope:()=>true});
  operations.register(operation({name:'changes.answer',write:true,input:z.object({id:z.string(),head:z.string().regex(/^[0-9a-f]{40}$/),action:z.enum(['yes','not-yet','always']),person:z.string().optional()}),output:z.unknown(),
-  may:(v,input)=>{const c=loadChanges(db).find(c=>c.id===input.id);return !!c&&mayAct(v,scope(c),sharing(),'household','changes.answer')&&mayAct(v,scope(c),sharing(),'answer-person','changes.answer');},
+  may:(v,input)=>{const c=find(input.id);return !!c&&mayAct(v,scope(c),sharing(),'household','changes.answer')&&mayAct(v,scope(c),sharing(),'answer-person','changes.answer');},
   run(ctx,input){
-   const c=loadChanges(db).find(c=>c.id===input.id)!;
+   const c=find(input.id)!;
    if(c.head.id!==input.head) throw new OperationError('conflict','A new commit arrived; look again.');
    if(c.state!=='open'||!c.agent) throw new OperationError('invalid',"That is not an open agent's change.");
    if(!options.approvals) throw new OperationError('unavailable','Approvals is unavailable');
