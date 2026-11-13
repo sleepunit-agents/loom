@@ -106,12 +106,13 @@ it('close removes the socket, destroys idle connections and permits a restart', 
   expect(existsSync(join(f.path, 'operator.sock'))).toBe(false);
 });
 it('replaces a stale socket, refuses other files, and releases listeners and the home lock on failure', async () => {
-  const path = home(), endpoint = join(path, 'operator.sock');
+  const path = home(), endpoint = join(path, 'operator.sock'); chmodSync(path, 0o755);
   // Move a listening path away before closing it, leaving a real unbound socket inode.
   const { renameSync } = await import('node:fs'); const stale = createServer(); const original = join(path, 'stale.sock');
-  await new Promise<void>(ok => stale.listen(original, ok)); renameSync(original, endpoint); chmodSync(endpoint, 0o600);
+  await new Promise<void>(ok => stale.listen(original, ok)); renameSync(original, endpoint); chmodSync(endpoint, 0o755);
   await new Promise<void>(ok => stale.close(() => ok()));
-  const app = await startLoom({ home: path, next: true, stdout: () => {} }); await app.close();
+  const app = await startLoom({ home: path, next: true, stdout: () => {} });
+  expect(lstatSync(path).mode & 0o777).toBe(0o700); expect(lstatSync(endpoint).mode & 0o777).toBe(0o600); await app.close();
   writeFileSync(endpoint, 'preserve');
   await expect(startLoom({ home: path, next: true, stdout: () => {} })).rejects.toThrow('Unsafe operator path');
   expect(existsSync(endpoint)).toBe(true); rmSync(endpoint);

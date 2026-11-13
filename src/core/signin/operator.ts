@@ -13,9 +13,9 @@ export const operatorRequest = z.strictObject({
   label: z.string().max(200).default('Local sign-in'), ttl: z.number().int().min(1).max(900).default(300),
 });
 const LIMIT = 4096;
-function owned(path: string, mode: number, directory: boolean) {
+function owned(path: string, mode: number | undefined, directory: boolean) {
   const st = lstatSync(path);
-  if (process.getuid === undefined || st.uid !== process.getuid() || (st.mode & 0o7777) !== mode || (directory ? !st.isDirectory() : !st.isSocket())) throw new Error('Unsafe operator path');
+  if (process.getuid === undefined || st.uid !== process.getuid() || (mode !== undefined && (st.mode & 0o7777) !== mode) || (directory ? !st.isDirectory() : !st.isSocket())) throw new Error('Unsafe operator path');
 }
 export function checkOperatorHome(home: string) { owned(home, 0o700, true); }
 export function prepareOperatorHome(home: string) {
@@ -29,7 +29,7 @@ function checkSocket(home: string) { checkOperatorHome(home); owned(join(home, '
 export async function listenOperator(app: Foundation, home: string, url: string) {
   const dir = resolve(home), path = join(dir, 'operator.sock');
   checkOperatorHome(dir);
-  try { owned(path, 0o600, false); unlinkSync(path); }
+  try { owned(path, undefined, false); unlinkSync(path); }
   catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
   const sockets = new Set<Socket>();
   const server = createServer(socket => {
