@@ -25,12 +25,13 @@ export interface HolderStore {
   close(): void;
 }
 
+function assertPrivateFile(fd: number) {
+  const s = fstatSync(fd);
+  if (!s.isFile() || s.uid !== process.getuid?.() || (s.mode & 0o077) || s.nlink !== 1) throw unavailable();
+}
 function privateDatabase(path: string) {
   const fd = openSync(path, constants.O_CREAT | constants.O_RDWR | constants.O_NOFOLLOW, 0o600);
-  try {
-    const s = fstatSync(fd);
-    if (!s.isFile() || s.uid !== process.getuid?.() || (s.mode & 0o077) || s.nlink !== 1) throw unavailable();
-  } finally { closeSync(fd); }
+  try { assertPrivateFile(fd); } finally { closeSync(fd); }
 }
 
 /** Explicit private directory and independent identity/fingerprint key files.
@@ -58,10 +59,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
       let fd: number;
       try { fd = openSync(path + suffix, constants.O_RDONLY | constants.O_NOFOLLOW); }
       catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') continue; throw e; }
-      try {
-        const s = fstatSync(fd);
-        if (!s.isFile() || s.uid !== process.getuid?.() || (s.mode & 0o077) || s.nlink !== 1) throw unavailable();
-      } finally { closeSync(fd); }
+      try { assertPrivateFile(fd); } finally { closeSync(fd); }
     }
     db = new Database(path, {timeout: 0});
     db.pragma('journal_mode = WAL'); db.pragma('synchronous = FULL');

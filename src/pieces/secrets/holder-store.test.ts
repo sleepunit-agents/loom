@@ -3,7 +3,7 @@ import Database from 'better-sqlite3';
 import { mkdtempSync, writeFileSync, readFileSync, readdirSync, rmSync, chmodSync, linkSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { generateIdentity, Encrypter, Decrypter, identityToRecipient } from 'age-encryption';
 import { openHolderStore, type HolderStore } from './holder-store.js';
 
@@ -128,4 +128,48 @@ it('refuses public, symlinked or hardlinked database files and public key or dir
   await expect(f.open()).rejects.toThrow();rmSync(path);writeFileSync(path,saved,{mode:0o600});
   chmodSync(f.key,0o644);await expect(f.open()).rejects.toThrow();chmodSync(f.key,0o600);
   chmodSync(f.home,0o755);await expect(f.open()).rejects.toThrow();chmodSync(f.home,0o700);
+});
+it('sets effective FULL durability even if the connection starts at NORMAL', async () => {
+  const original=Database.prototype.pragma;
+  let connection:Database.Database|undefined;
+  vi.spyOn(Database.prototype,'pragma').mockImplementation(function(this:Database.Database,source:string,options?:Database.PragmaOptions) {
+    const result=original.call(this,source,options); connection=this;
+    // Emulate a different connection default; the holder must explicitly reset it.
+    if(source==='journal_mode = WAL') original.call(this,'synchronous = NORMAL');
+    return result;
+  });
+  await setup();
+  expect(connection).toBeDefined();expect(original.call(connection!,'synchronous',{simple:true})).toBe(2);
+});
+it('stores a keyed full-input fingerprint, independently calculated from the separate key', async () => {
+  const f=await setup(), id=who();await f.s.set(id,'api-key',value(),'add');
+  const expected=createHmac('sha256',readFileSync(f.key))
+    .update(JSON.stringify([1,id.member,id.writeId,'set','api-key','add'])).update(value()).digest('hex');
+  const db=new Database(join(f.home,'holder.db'));
+  try {expect(db.prepare('SELECT fingerprint FROM holder_receipts').get()).toEqual({fingerprint:expected});}
+  finally {db.close();}
+});
+it.each(['-wal','-shm','-journal'])('refuses unsafe existing %s sidecars before SQLite opens them', async suffix => {
+  const f=await setup();f.s.close();const side=join(f.home,'holder.db'+suffix), target=join(f.home,'side-target');
+  writeFileSync(side,'UNSAFE',{mode:0o644});await expect(f.open()).rejects.toThrow();rmSync(side);
+  writeFileSync(target,'UNSAFE',{mode:0o600});symlinkSync(target,side);await expect(f.open()).rejects.toThrow();rmSync(side);
+  linkSync(target,side);await expect(f.open()).rejects.toThrow();rmSync(side);rmSync(target);
+  const reopened=await f.open();await reopened.set(who(),'api-key',value(),'add');expect(await text(reopened)).toBe(value().toString());
+});
+it('checks add/replace existence inside the transaction after gated encryption races', async () => {
+  const f=await setup(), other=await f.open();const original=Encrypter.prototype.encrypt;
+  let release!:()=>void; const gate=new Promise<void>(resolve=>{release=resolve;});
+  vi.spyOn(Encrypter.prototype,'encrypt').mockImplementationOnce(async function(this:Encrypter,bytes:Uint8Array|string){
+    await gate;return original.call(this,bytes);
+  });
+  const delayed=f.s.set(who(),'api-key',value('late'),'add');
+  await other.set(who(),'api-key',value('first'),'add');release();
+  await expect(delayed).rejects.toThrow();expect(await text(f.s)).toBe('first');
+  let resume!:()=>void;const next=new Promise<void>(resolve=>{resume=resolve;});
+  vi.spyOn(Encrypter.prototype,'encrypt').mockImplementationOnce(async function(this:Encrypter,bytes:Uint8Array|string){
+    await next;return original.call(this,bytes);
+  });
+  const replacement=f.s.set(who(),'api-key',value('late-replace'),'replace');
+  other.remove(who(),'api-key');resume();await expect(replacement).rejects.toThrow();
+  await expect(f.s.read('api-key')).rejects.toThrow();
 });
