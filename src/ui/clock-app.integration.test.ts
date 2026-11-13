@@ -271,6 +271,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await timing.getByRole('button',{name:'Review timing',exact:true}).click();
     console.info('Clock browser: timing reviewed');
     const confirmation=b.getByRole('region',{name:'Confirm local timing'});
+    expect(await b.getByText('Couldn’t schedule local work',{exact:true}).count()).toBe(0);
     expect(await confirmation.getByText(exactDetails!,{exact:true}).count()).toBe(1);
     expect(await confirmation.getByText('At (CT): 2026-11-13 09:31',{exact:true}).count()).toBe(1);
     expect(await confirmation.getByText('Spend one-time Allow',{exact:true}).count()).toBe(1);

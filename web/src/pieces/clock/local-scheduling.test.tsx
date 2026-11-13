@@ -46,6 +46,7 @@ it('honors the shared pending lock and scopes result to this exact operation/car
  f.receipt={pending:true,status:'pending',operation:'pause',input:{agent:'art'}};await render(snapshot);
  expect(button('Schedule these saved words').props.disabled).toBe(true);
  await act(async()=>button('Schedule these saved words').props.onClick());expect(f.send).not.toHaveBeenCalled();
+ await act(async()=>button('Keep unscheduled').props.onClick());
  f.receipt={pending:false,status:'done',operation:'scheduleLocalFromWindow',input:{approval:'a-other'},result:{ok:true,value:{id:'w-other',due:1}}};await render(snapshot);
  expect(tree.root.findAllByProps({role:'status'})).toHaveLength(0);
  f.receipt={...f.receipt,input:{approval:approval.id}};await render(snapshot);
@@ -60,4 +61,11 @@ it.each([['','once'],['at','']])('requires explicit timing mode %j and authority
 it.each(['','   '])('requires nonblank time %j before confirmation',async when=>{
  await render();await review(false,'in','once',when);
  expect(button('Schedule these saved words')).toBeUndefined();expect(f.send).not.toHaveBeenCalled();
+});
+
+it('hides the prior failed attempt while reviewing corrected timing',async()=>{
+ f.receipt={operation:'scheduleLocalFromWindow',input:{approval:approval.id},pending:false,status:'done',result:{ok:false,code:'invalid',message:'Prior invalid time'}};
+ await render();expect(tree.root.findAllByType('Error')).toHaveLength(1);
+ await review();expect(tree.root.findAllByType('Error')).toHaveLength(0);
+ expect(button('Schedule these saved words')).toBeTruthy();
 });

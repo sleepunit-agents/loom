@@ -13,7 +13,7 @@ export function LocalScheduling({ approval, snapshot }: { approval: Approval; sn
   const eligible = snapshot.status === 'live' && ['allowed','used'].includes(approval.state);
   const enabled = eligible && !receipt?.pending;
   const currentReview = review?.records === snapshot.records ? review : undefined;
-  const ownReceipt = receipt?.operation === 'scheduleLocalFromWindow' && (receipt.input as Timing)?.approval === approval.id ? receipt : undefined;
+  const ownReceipt = !currentReview && receipt?.operation === 'scheduleLocalFromWindow' && (receipt.input as Timing)?.approval === approval.id ? receipt : undefined;
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!enabled) return;
     const values = new FormData(event.currentTarget);
