@@ -670,3 +670,7 @@ Old stores, running homes and deployed services are untouched.
 | Process-local receipt progress | Atomic raw/checkpoint commit, independent normalized drain, startup recovery |
 | Adapter shutdown | Invalidation and awaited Gateway/drain close before database shutdown |
 | Credential replacement | Trusted public generation plus setup/access invalidation; real holder-generation source remains required |
+
+The Discord and Slack daemon lifecycle loops remain separate in this slice. This
+keeps each transport binding explicit while their authentication, cursor and
+receipt contracts differ; lifecycle fixes must be checked against both daemons.

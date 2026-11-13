@@ -79,8 +79,14 @@ it('staging holds authentication and dial, then releases one stable connection a
 it('Commits raw dispatches while normalization waits, and root close waits before closing SQLite',async()=>{
   const handoff=deferred<void>();const receive=vi.fn(async()=>handoff.promise);const f=await setup({receive});await until(()=>f.sockets.length===1);
   const socket=f.sockets[0];socket.hello();await until(()=>socket.send.mock.calls.length===1);socket.ready();socket.message();await until(()=>socket.send.mock.calls.length===1 && receive.mock.calls.length===1);
+  let closed=false;let closing:Promise<void>|undefined;try {
   expect(f.app.db.prepare('SELECT state FROM bridges_discord_receipts').get()).toEqual({state:'pending'});
-  let closed=false;const closing=f.app.close().then(()=>{closed=true;});try {
+  // A blocked normalized commit must not occupy the Gateway's raw commit queue.
+  socket.frame({op:0,t:'MESSAGE_CREATE',s:3,d:{...payload,id:'301'}});
+  await until(()=> (f.app.db.prepare('SELECT count(*) n FROM bridges_discord_receipts').get() as {n:number}).n===2);
+  expect(discordInbox(f.app.db,f.clock,{venue,credentialEpoch:'0'},()=> '0').load()?.seq).toBe(3);
+  expect(receive).toHaveBeenCalledOnce();
+  closing=f.app.close().then(()=>{closed=true;});
     await vi.waitFor(()=>expect(socket.terminate).toHaveBeenCalledOnce());
     expect(closed).toBe(false);expect(f.app.db.open).toBe(true);
   } finally { handoff.resolve(); await closing; }
