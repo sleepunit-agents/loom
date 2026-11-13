@@ -5,7 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 vi.mock('./household-importer.js', () => ({ importHousehold: vi.fn(() => 'household-result') }));
 vi.mock('../pieces/tasks/importer.js', () => ({ importTasks: vi.fn(() => 'tasks-result') }));
 vi.mock('../pieces/attention/importer.js', () => ({ importAttention: vi.fn(() => 'attention-result') }));
-vi.mock('../pieces/clock/importer.js', () => ({ importClock: vi.fn(() => 'clock-result') }));
+vi.mock(import('../pieces/clock/importer.js'), async original => ({ ...await original(), importClock: vi.fn(() => 'clock-result') }));
 vi.mock('../pieces/approvals/importer.js', () => ({ importApprovals: vi.fn(() => 'approvals-result') }));
 vi.mock('../pieces/changes/importer.js', () => ({ importChanges: vi.fn(() => 'changes-result') }));
 vi.mock('../pieces/comms/importer.js', () => ({ importComms: vi.fn(async () => 'comms-result') }));
