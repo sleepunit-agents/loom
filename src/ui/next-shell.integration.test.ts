@@ -23,7 +23,10 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app p
     const link=loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.link',{member:'jonathan'});
     expect(link.ok).toBe(true);if(!link.ok)throw new Error('fixture sign-in failed');
     await a.goto(loom.url+(link.value as {path:string}).path);
+    const signingIn=a.waitForResponse(r=>r.request().method()==='POST');
     await a.getByRole('button',{name:'Sign in',exact:true}).click();
+    expect((await signingIn).status()).toBe(303);
+    expect((await (await context.request.get(loom.url+'/auth/session')).json()).viewer).toEqual({kind:'member',id:'jonathan'});
     await expect.poll(()=>a.getByRole('button',{name:'Open Project sharing',exact:true}).count()).toBe(1);
     await a.getByRole('button',{name:'Open Tasks',exact:true}).click();
     await expect.poll(()=>a.locator('[data-split-row]').filter({hasText:'Pond work'}).count()).toBe(1);

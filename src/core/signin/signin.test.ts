@@ -46,7 +46,7 @@ it('imports an old home and serves its existing browser cookie and agent bearer 
 it('CLI links are member-bound, GET-safe, single-use, expiring, and absent from retry storage',async()=>{
   const f=await setup();writeFileSync(join(f.root,'token'),f.owner);let stdout='';
   expect(await runSigninLink(['--member','pollock','--label','Tablet'],{stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:f.loom.url,LOOM_TOKEN_FILE:join(f.root,'token')},stdout:s=>{stdout+=s;},stderr:()=>{}})).toBe(0);
-  const url=stdout.trim();const confirmation=await fetch(url);expect(confirmation.status).toBe(200);expect(await confirmation.text()).not.toContain(url.split('/').pop());expect((await fetch(url)).status).toBe(200);
+  const url=stdout.trim();const confirmation=await fetch(url);expect(confirmation.status).toBe(200);expect(confirmation.headers.get('referrer-policy')).toBe('strict-origin');expect(await confirmation.text()).not.toContain(url.split('/').pop());expect((await fetch(url)).status).toBe(200);
   const res=await fetch(url,{method:'POST',redirect:'manual',headers:{origin:f.loom.url}});expect(res.status).toBe(303);const cookie=res.headers.get('set-cookie')!.split(';')[0];
   expect((await(await f.get('/auth/session',{cookie})).json()).viewer).toEqual({kind:'member',id:'pollock'});
   expect((await fetch(url,{method:'POST'})).status).toBe(401);

@@ -6,7 +6,7 @@ import { cookieId, relyingParty, sameOrigin, signin } from './index.js';
 export function signinRoutes(app: Foundation) {
   const s=signin(app), routes=new Hono<{Bindings:{incoming:IncomingMessage}}>();
   routes.use('*',bodyLimit({maxSize:32768}));
-  routes.use('*',async(c,next)=>{c.header('cache-control','no-store');c.header('referrer-policy','no-referrer');c.header('x-content-type-options','nosniff');if(c.req.method==='POST'&&!sameOrigin(c.env.incoming))return c.json({error:'Cross-site request'},403);await next();});
+  routes.use('*',async(c,next)=>{c.header('cache-control','no-store');c.header('referrer-policy','strict-origin');c.header('x-content-type-options','nosniff');if(c.req.method==='POST'&&!sameOrigin(c.env.incoming))return c.json({error:'Cross-site request'},403);await next();});
   routes.onError(()=>Response.json({error:'Sign-in could not complete'},{status:400,headers:{'cache-control':'no-store'}}));
   routes.post('/api/signin/link',async c=>{
     const req=c.env.incoming;
