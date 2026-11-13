@@ -830,9 +830,12 @@ principal, assignee, project and service. Optional retyping must match exactly.
 Time and shared 50-one-off capacity checks precede owning standing use. At most
 one active wake with the same filed target may be outstanding, including held
 and firing work and one-shot recovery. Cancellation or terminal work releases
-the target; uncertain work keeps it occupied. Use, audit, wake, private binding
+the target; uncertain work keeps it occupied. Shared insertion and failed-wake
+reactivation paths enforce the same exclusion, including ordinary at/in and
+schedule creation. Use, audit, wake, private binding
 and durable scheduling receipt commit in one transaction with no migration.
-A receipt retains its exact result beyond the core 30-day retry lifetime; replay
+A receipt reserves its viewer/id across all write operations through the registry
+recovery hook and retains its exact result beyond the core 30-day retry lifetime; replay
 is an acknowledgement and rechecks current central policy, never fresh authority.
 
 The binding in private `clock_meta` retains the original filing, authentic caller

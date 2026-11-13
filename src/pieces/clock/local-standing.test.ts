@@ -1,40 +1,13 @@
+import { setupLocal, owner, caller, prompt, value } from '../../__fixtures__/clock-local.js';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, expect, it, vi } from 'vitest';
-import { startLoom } from '../../foundation.js';
-import { FakeClock, type Viewer } from '../../core/index.js';
-import { fixtureSharing } from '../../fixture.js';
-import { installApprovals } from '../approvals/index.js';
+import { expect, it, vi } from 'vitest';
+import { type Viewer } from '../../core/index.js';
 import { load } from '../approvals/store.js';
-import type { Caller } from '../approvals/model.js';
-import { installClock } from './index.js';
-import { clockLocalFiling, localMarker } from './local-filing.js';
+import { clockLocalFiling } from './local-filing.js';
 import { clockLocalRecovery, clockLocalStanding } from './role.js';
 import { wakes } from './store.js';
-const owner: Viewer = {kind:'member',id:'jonathan'};
-const caller: Caller = {who:{agent:'art',where:'house (queue)'},for:'owner',conversation:'cv-123456789abc'};
-const prompt = localMarker + '\nInspect the host disk usage and report it.';
-const closes: (()=>Promise<void>)[] = [];
-afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
-async function setup(runtime?: import('./role.js').Runtime) {
-  const home=mkdtempSync(join(tmpdir(),'clock-local-')), access=fixtureSharing(), clock=new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  access.services.clock={types:['clock','approval'],operations:['clock.localRequest','clock.localStandingSchedule','approvals.piece-request','approvals.piece-standing-local','approvals.piece-standing-local-check']};
-  access.services.approvals={types:['approval'],operations:['approvals.piece-request']};
-  const options={home,clock,sharing:()=>access,authenticate:()=>({viewer:owner,valid:()=>true}),install(app:Parameters<NonNullable<Parameters<typeof startLoom>[0]['install']>>[0]) {
-    installApprovals(app.db,app.operations,app.live,()=>access,{localAgent:'art'});
-    const jobs=installClock(app.db,app.operations,app.live,()=>access,{runtime}); app.onClose(jobs.close);
-  }};
-  let app=await startLoom(options);
-  closes.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
-  return {get app(){return app;},access,clock,
-    request(p=prompt,n='disk report',c=caller){return clockLocalFiling(app.operations).request(c,p,n);},
-    async restart(){await app.close();app=await startLoom(options);},
-  };
-}
-const value = <T>(r: import('../../core/index.js').Result): T => {if(!r.ok)throw Error(JSON.stringify(r));return r.value as T;};
-
+// Mode-specific assertions keep the distinct one-shot/standing authority contract visible.
+const setup=(runtime?:import('./role.js').Runtime)=>setupLocal('standing',runtime);
 const idOf = (s: Awaited<ReturnType<typeof setup>>) => value<{id:string}>(s.request()).id;
 function allow(s:Awaited<ReturnType<typeof setup>>,id:string) {
   value(s.app.operations.call('direct',owner,'approvals.every-time',{id},randomUUID()));
@@ -139,6 +112,7 @@ it('holds revoked standing work before runtime, including revocation between int
     } else off();
     s.clock.advance(3600000);await settle();expect(startBody).not.toHaveBeenCalled();
     expect(wakes(s.app.db)[0]).toMatchObject({state:'held',hold:'permission'});
+    if(!afterIntent) expect(s.app.db.prepare("SELECT count(*) AS n FROM clock_events WHERE json_extract(record,'$.kind')='intent'").get()).toEqual({n:0});
   }
 });
 it('holds modified work, changed original cards and revoked current project policy at fire time',async()=>{
@@ -154,6 +128,7 @@ it('holds modified work, changed original cards and revoked current project poli
     }
     s.clock.advance(3600000);await settle();expect(startBody).not.toHaveBeenCalled();
     expect(wakes(s.app.db)[0]).toMatchObject({state:'held',hold:'permission'});
+    expect(s.app.db.prepare("SELECT count(*) AS n FROM clock_events WHERE json_extract(record,'$.kind')='intent'").get()).toEqual({n:0});
   }
 });
 it('rolls back use, audit, binding and scheduling receipt together when private binding persistence fails',async()=>{
@@ -217,4 +192,22 @@ it('refuses rearming failed standing work while its replacement owns the active 
   value(s.app.operations.call('direct',owner,'clock.cancel',{id:next.id},randomUUID()));
   expect(s.app.operations.call('direct',owner,'clock.now',{id:old.id},randomUUID()).ok).toBe(true);
   expect(recover(s,id).ok).toBe(false);
+});
+
+it('reserves durable standing receipt ids across other operations after core expiry',async()=>{
+  const s=await setup(),id=idOf(s);allow(s,id);const receipt=randomUUID(),r=recover(s,id,{},caller,receipt);
+  value(s.app.operations.call('direct',owner,'clock.cancel',{id:value<{id:string}>(r).id},randomUUID()));
+  s.clock.advance(31*86400_000);await s.restart();
+  s.access.services.clock.operations.push('clock.localSchedule','approvals.piece-use-local');
+  expect(clockLocalFiling(s.app.operations).request(caller,prompt+'changed','changed',receipt)).toMatchObject({ok:false,code:'conflict'});
+  expect(clockLocalRecovery(s.app.operations).schedule(caller,{approval:id,when:'1h',mode:'in'},receipt)).toMatchObject({ok:false,code:'conflict'});
+  expect(recover(s,id,{},caller,receipt)).toEqual(r);expect(wakes(s.app.db)).toHaveLength(1);
+});
+it('ordinary at/in/schedule insertions cannot duplicate an outstanding standing target',async()=>{
+  const s=await setup(),id=idOf(s);allow(s,id);recover(s,id);
+  for(const name of ['in','at','scheduleSet']) {
+    const input={agent:'art',prompt,note:'disk report',approval:id,when:name==='at'?'2099-01-01T00:00:00Z':'1h',id:'ordinary',at:'14:00'};
+    expect(s.app.operations.call('direct',owner,`clock.${name}`,input,randomUUID()).ok).toBe(false);
+  }
+  expect(wakes(s.app.db)).toHaveLength(1);
 });

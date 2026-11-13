@@ -5,7 +5,7 @@ import { command } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { migrate, operation, OperationError, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
+import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { wakes, schedules, wake, schedule, saveWake, saveSchedule, event, paused, active, type Wake, type Work, type Schedule } from './store.js';
 import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
@@ -85,6 +85,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   }
   function make(ctx: Context, w: Work, due: number, extra: Partial<Wake> = {}) {
     work(w);
+    const filing=w.approval && filedLocal(db,w.approval);
+    if(filing) localTargetRoom(filing.target,false);
     if (!extra.deadman) for (const old of wakes(db).filter(row => row.agent === w.agent && row.deadman && active(row)
       && row.state !== 'firing' && row.hold !== 'uncertain')) {
       old.state = 'cancelled'; old.outcome = 'Replaced by real work'; saveWake(ctx, old); event(ctx, old, 'deadman-cleared');
@@ -120,9 +122,19 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   // No public input can claim Caller. Public client wiring waits for that seam.
   const localInput = z.object({caller:callerSchema.strict(),approval:z.string().regex(/^a-[0-9a-f]{8}$/),
     when:text,mode:z.enum(['in','at']),prompt:text.optional(),note:z.string().max(100_000).optional()}).strict();
+  // Reserve viewer/id across every write, even when core's cache expires.
+  const recoverStandingSchedule=(ctx:Context)=>{
+    const receipt=ctx.receipt!;
+    const old=db.prepare('SELECT value FROM clock_meta WHERE key=?').get(`local-standing-receipt:${receipt.viewer}:${receipt.id}`) as {value:string}|undefined;
+    if(!old) return;
+    const saved=JSON.parse(old.value);
+    if(saved.hash!==receipt.inputHash || saved.name!==receipt.name)
+      throw new OperationError('conflict','Operation id already used for different input');
+    return new RecoveredWrite(saved.result,receipt.expires);
+  };
   for (const standing of [false,true]) {
   const name=standing?'clock.localStandingSchedule':'clock.localSchedule';
-  operations.register(operation({name,input:localInput,output,write:true,doors:['direct'],recheckPolicy:standing,
+  operations.register(operation({name,input:localInput,output,write:true,doors:['direct'],recheckPolicy:standing,recover:standing?recoverStandingSchedule:undefined,
     may(v,i) {
       return v.kind==='service' && v.id==='clock' && mayAct(v,{type:'clock'},sharing(),'act',name)
         && create({kind:'agent',id:i.caller.who.agent},{agent:i.caller.who.agent,project:i.caller.project,note:''})
@@ -133,14 +145,6 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       if(closed) throw new OperationError('unavailable','Clock stopped');
       // Keep the standing schedule result beyond core's 30-day retry window.
       const receipt=ctx.receipt!, receiptKey=`local-standing-receipt:${receipt.viewer}:${receipt.id}`;
-      if(standing) {
-        const old=db.prepare('SELECT value FROM clock_meta WHERE key=?').get(receiptKey) as {value:string}|undefined;
-        if(old) {
-          const saved=JSON.parse(old.value);
-          if(saved.hash!==receipt.inputHash || saved.name!==receipt.name) throw new OperationError('conflict','Operation id already used for different input');
-          return saved.result;
-        }
-      }
       const filing=filedLocal(db,i.approval);
       if(!filing) throw new OperationError('not-found','No trusted local filing');
       if(i.caller.for!=='owner' || i.caller.people?.length || filing.caller.for!=='owner' || filing.caller.people?.length

@@ -1,40 +1,13 @@
+import { setupLocal, owner, caller, prompt, value } from '../../__fixtures__/clock-local.js';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, expect, it, vi } from 'vitest';
-import { startLoom } from '../../foundation.js';
-import { FakeClock, type Viewer } from '../../core/index.js';
-import { fixtureSharing } from '../../fixture.js';
-import { installApprovals } from '../approvals/index.js';
+import { expect, it, vi } from 'vitest';
+import { type Viewer } from '../../core/index.js';
 import { load } from '../approvals/store.js';
-import type { Caller } from '../approvals/model.js';
-import { installClock } from './index.js';
-import { clockLocalFiling, localMarker } from './local-filing.js';
+import { clockLocalFiling } from './local-filing.js';
 import { clockLocalRecovery } from './role.js';
 import { wakes } from './store.js';
-const owner: Viewer = {kind:'member',id:'jonathan'};
-const caller: Caller = {who:{agent:'art',where:'house (queue)'},for:'owner',conversation:'cv-123456789abc'};
-const prompt = localMarker + '\nInspect the host disk usage and report it.';
-const closes: (()=>Promise<void>)[] = [];
-afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
-async function setup() {
-  const home=mkdtempSync(join(tmpdir(),'clock-local-')), access=fixtureSharing(), clock=new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  access.services.clock={types:['clock','approval'],operations:['clock.localRequest','clock.localSchedule','approvals.piece-request','approvals.piece-use-local']};
-  access.services.approvals={types:['approval'],operations:['approvals.piece-request']};
-  const options={home,clock,sharing:()=>access,authenticate:()=>({viewer:owner,valid:()=>true}),install(app:Parameters<NonNullable<Parameters<typeof startLoom>[0]['install']>>[0]) {
-    installApprovals(app.db,app.operations,app.live,()=>access);
-    const jobs=installClock(app.db,app.operations,app.live,()=>access); app.onClose(jobs.close);
-  }};
-  let app=await startLoom(options);
-  closes.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
-  return {get app(){return app;},access,clock,
-    request(p=prompt,n='disk report',c=caller){return clockLocalFiling(app.operations).request(c,p,n);},
-    async restart(){await app.close();app=await startLoom(options);},
-  };
-}
-const value = <T>(r: import('../../core/index.js').Result): T => {if(!r.ok)throw Error(JSON.stringify(r));return r.value as T;};
-
+// Mode-specific assertions keep the distinct one-shot/standing authority contract visible.
+const setup=()=>setupLocal('once');
 const idOf = (s: Awaited<ReturnType<typeof setup>>) => value<{id:string}>(s.request()).id;
 function allow(s:Awaited<ReturnType<typeof setup>>,id:string) {
   value(s.app.operations.call('direct',owner,'approvals.answer',{id,action:'allow'},randomUUID()));
