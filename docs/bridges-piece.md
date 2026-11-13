@@ -75,6 +75,43 @@ effects remain unfinished on t-2210. No live connection uses this helper yet.
 | Guest/reader admission and tiers | runtime admission, unchanged; not inferred by intake |
 | Paired webhook and webhook-peer identity | Pending adapter identity work; no new support claimed |
 
+## Slack intake
+
+`slackMessage` validates a raw message event against connection-bound conversation
+metadata. Only DM/group metadata is accepted; a non-D id is conservatively a group
+even when its DM flag was lost. Own/bot posts, edits, joins and deletes are discarded.
+The message ts remains its id (the durable inbox key also includes channel and agent),
+so the engine derives the original event time without floating-point timestamp loss.
+Thread replies retain thread_ts as their reply address but keep DM/person or group/room
+conversation continuity. A root's own thread_ts does not turn it into a reply.
+
+Text replaces actual mentions and HTTP links before decoding lt/gt/amp once. Encoded
+mentions stay literal; unknown people become @someone, and Slack's supplied mention
+label never supplies a person's name. Labels use resolved human display names, omit
+the receiving bot and fit 80 UTF16 units; groups use whole names and count the rest.
+File names remain textual descriptions only. No credential, URL download or file
+storage is used here. Safe bounded fetch, runtime-bound file access and retention are
+still required before production file support.
+
+This pure helper is unregistered and grants no admission. Conversation metadata must
+come from the authenticated bot's API, with human names resolved through unambiguous
+People links. Real Slack integration must still check users.info (same team, not guest,
+stranger, deleted or bot), inspect every member and admit each with runtime, and check
+fresh group membership/admission before EVERY post. The existing engine's boolean
+inspect seam and group recipient selection still need reconciliation. Socket durable
+ACK, outbound threads/splitting, stop/presence and named secret sinks remain unfinished.
+
+| Old Slack case | This slice / remaining owner |
+| --- | --- |
+| DM and MPIM message filtering | slackMessage + slack.test.ts |
+| Thread under a human or bot post, same conversation | slackMessage + keyFor tests |
+| Markup/escape order, readable mentions/links | slackMessage/slackText tests |
+| Human-only short labels with whole group names | slackMessage label tests |
+| File name descriptions | Pure text only; secure runtime-bound fetch pending |
+| users.info, all-member admission, fresh pre-post checks | Pending real adapter/runtime integration; never inferred here |
+| Socket ACK after durable receipt, send/presence staging | Pending transport integration |
+| Poll/lookback/shadow compare/check-gone | Retired on the new side: staged sockets replace concurrent shadow polling; preserve live thread/dedup semantics in adapter tests |
+
 Reply text is kept in the outbox, never exposed as traffic metadata. A send exception
 is treated as uncertain, even if a venue might have rejected it before posting.
 Inbox and outbox records retain their receiving bot identity; changing a venue
