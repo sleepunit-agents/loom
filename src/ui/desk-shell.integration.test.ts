@@ -9,6 +9,9 @@ import { FakeClock } from '../core/clock.js';
 import { HouseholdDatabase } from '../core/household/document.js';
 import { migrateHouseholdTables } from '../core/household/schema.js';
 import { deskHome } from './agent-desk.fixture.js';
+import { HouseholdRows } from '../core/household/rows.js';
+import { manifestFromPixelLab } from '../household.js';
+import { sheet } from './pixel-sheet.fixture.js';
 import { TokenDatabase } from '../core/household/tokens.js';
 const enabled = process.env.LOOM_DESK_EVIDENCE === '1';
 const chrome = process.env.LOOM_TEST_CHROME;
@@ -21,6 +24,9 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     app.db.transaction(() => {
       new HouseholdDatabase(app.db).replace(home,{v:1,agents:['art'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]});
       new TokenDatabase(app.db).replace({v:1,tokens:[]},{});
+      // Existing technical test sheet, never supplied artwork or screenshot evidence.
+      const sample = sheet(), manifest = manifestFromPixelLab(JSON.parse(sample.json.toString()));
+      new HouseholdRows(app.db,'settings').put('agent-sprite:art',{manifest,rawManifest:Buffer.from(JSON.stringify(manifest)).toString('base64'),sheets:{'sheet.png':sample.png.toString('base64')},v:'browser-fixture'});
     })();
   }});
   const old = await deskHome({art:'art'},[{person:'owner',agents:'*'}]);
@@ -65,6 +71,31 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         await expect.poll(() => page.locator('.loom-ground').count()).toBe(ground==='wash'?0:1);
       }
     }
+    // Exercise the real renderer through the database-backed display feed on both surfaces.
+    const painted = async (page: typeof a, selector: string) => page.locator(selector).evaluateAll(nodes => nodes.some(node => {
+      const cv = node as HTMLCanvasElement, data = cv.getContext('2d')?.getImageData(0,0,cv.width,cv.height).data;
+      return data && data.some((n,i) => i % 4 === 3 && n > 0);
+    }));
+    await expect.poll(()=>painted(b,'.desk-home-card .loom-pixel-face canvas')).toBe(true);
+    await a.getByRole('button',{name:'Open Inbox',exact:true}).click();
+    await expect.poll(()=>painted(a,'.desk-rail-card .loom-pixel-face canvas')).toBe(true);
+    set({pixel:false},'pixel-off');
+    await expect.poll(()=>a.locator('.desk-rail-card [data-slot=agent-face]').count()).toBe(1);
+    await expect.poll(()=>b.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(1);
+    set({pixel:true},'pixel-on');
+    await expect.poll(()=>painted(a,'.desk-rail-card .loom-pixel-face canvas')).toBe(true);
+    await expect.poll(()=>painted(b,'.desk-home-card .loom-pixel-face canvas')).toBe(true);
+    // A refused manifest and an undecodable sheet both recover to the drawn face.
+    await a.route('**/faces/art/manifest.json*',route=>route.fulfill({status:404,body:'not found'}));
+    await a.reload();
+    await expect.poll(()=>a.locator('.desk-rail-card [data-slot=agent-face]').count()).toBe(1);
+    await b.route('**/faces/art/sheet.png*',route=>route.fulfill({status:200,contentType:'image/png',body:'not a PNG'}));
+    await b.reload();
+    await expect.poll(()=>b.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(1);
+    await a.unroute('**/faces/art/manifest.json*'); await b.unroute('**/faces/art/sheet.png*');
+    new HouseholdRows(app.db,'settings').remove('agent-sprite:art');
+    await a.getByRole('button',{name:'Home',exact:true}).click();
+    // Comparison boards intentionally retain the fixture's ordinary drawn identity.
     expect((await context.request.get(app.url+'/manifest.webmanifest')).headers()['content-type']).toBe('application/manifest+json');
     await expect.poll(() => a.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL)).toBe(app.url+'/sw.js');
     const shots = resolve('artifacts/desk-shell'); mkdirSync(shots,{recursive:true});
