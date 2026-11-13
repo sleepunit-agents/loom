@@ -542,3 +542,35 @@ it('refuses runtime description for another agent, inactive threads, revoked own
  await s.call('change',{thread:place,action:'delete'});expect(()=>s.comms.describe('art',place)).toThrow('Thread unavailable');
  const live=await s.open();await s.comms.close();expect(()=>s.comms.describe('art',live)).toThrow('Thread unavailable');
 });
+it('records working/done heartbeats without moving thread activity and consumes stop once',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ const row=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ const last=row().last;s.clock.advance(1000);
+ expect(s.comms.status('art',place,'working')).toEqual({stop:false,archived:false});
+ expect(row()).toMatchObject({working:true,workingSince:s.clock.now(),workingBeat:s.clock.now(),last});
+ const since=row().workingSince;s.clock.advance(15000);s.comms.status('art',place,'working');
+ expect(row()).toMatchObject({working:true,workingSince:since,workingBeat:s.clock.now(),last});
+ await s.restart();expect(row()).toMatchObject({working:true,workingSince:since,workingBeat:s.clock.now(),last});
+ await s.call('change',{thread:place,action:'stop'});
+ expect(s.comms.status('art',place)).toEqual({stop:true,archived:false});
+ expect(row().working).toBe(true);
+ expect(s.comms.status('art',place,'done')).toEqual({stop:false,archived:false});
+ expect(row()).toMatchObject({working:false,workingSince:null,workingBeat:null,last});
+ expect(s.app.db.prepare('SELECT * FROM comms_messages').all()).toHaveLength(1);
+});
+it('refuses invalid, foreign, revoked and closed heartbeat writes and cannot start archived threads',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ const snapshot=()=>JSON.stringify(s.app.db.prepare('SELECT * FROM comms_threads').all());
+ const before=snapshot();
+ expect(()=>s.comms.status('other',place,'working')).toThrow();
+ expect(()=>s.comms.status('art','missing','working')).toThrow();
+ expect(()=>s.comms.status('art',place,'invalid' as 'working')).toThrow();
+ expect(snapshot()).toBe(before);
+ const sharing=s.getSharing();s.setSharing({...sharing,members:{...sharing.members,jonathan:{...sharing.members.jonathan,agents:[]}}});
+ expect(()=>s.comms.status('art',place,'working')).toThrow();expect(snapshot()).toBe(before);
+ s.setSharing(sharing);s.comms.status('art',place,'working');await s.call('change',{thread:place,action:'archive'});
+ expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads').get() as {record:string}).record)).toMatchObject({working:false,workingSince:null,workingBeat:null});
+ expect(s.comms.status('art',place,'working')).toEqual({stop:false,archived:true});
+ expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads').get() as {record:string}).record).working).toBe(false);
+ await s.comms.close();const closed=snapshot();expect(()=>s.comms.status('art',place,'working')).toThrow();expect(snapshot()).toBe(closed);
+});

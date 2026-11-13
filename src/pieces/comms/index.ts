@@ -247,7 +247,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
      if(!t.pinned && pins>=8)return fail('conflict','At most eight pinned threads');t.pinned=true;break;
     }
     case 'unpin':t.pinned=false;break;
-    case 'archive':if(t.archived===null){t.endGeneration=(t.endGeneration??0)+1;t.archived=ctx.now;queueEnd(t,'archive',t.endGeneration);}break;
+    case 'archive':if(t.archived===null){t.endGeneration=(t.endGeneration??0)+1;t.archived=ctx.now;t.working=false;t.workingSince=null;t.workingBeat=null;queueEnd(t,'archive',t.endGeneration);}break;
     case 'unarchive':t.archived=null;db.prepare('DELETE FROM comms_meta WHERE key=?').run(endKey(t.id));break;
     case 'read': if(i.seq===undefined)return fail('invalid','A message number is required'); t.readSeq=Math.max(t.readSeq,Math.min(i.seq,t.nextSeq-1));break;
     case 'stop':t.stop=true;break;
@@ -362,7 +362,18 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    }};
   },
   title(agent,place,value) {title.parse(value); const t=requireAgent(agent,place);if(t.titledBy==='member')return fail('conflict','The member named this thread');t.title=value;t.titledBy='agent';saveThread(db,t);touched(t);},
-  status(agent,place) {const t=requireAgent(agent,place);const stop=t.stop;t.stop=false;saveThread(db,t);return {stop,archived:t.archived!==null};},
+  status(agent,place,state) {
+   if(state!==undefined)z.enum(['working','done']).parse(state);
+   const t=requireAgent(agent,place);
+   if(closed||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');
+   const stop=t.stop;t.stop=false;
+   if(state!==undefined) {
+    const working=state==='working'&&t.archived===null;
+    t.workingSince=working?(t.working?t.workingSince??clock.now():clock.now()):null;
+    t.workingBeat=working?clock.now():null;t.working=working;
+   }
+   saveThread(db,t);touched(t);return {stop,archived:t.archived!==null};
+  },
   async close(){closed=true;cancel();await Promise.all([...pending.values(),...(recovery?[recovery]:[])]);},
  };
 }

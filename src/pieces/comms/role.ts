@@ -39,7 +39,8 @@ export interface Comms {
  post(agent: string, thread: string, message: AgentPost): Promise<{ seq: number }>;
  deliver(agent: string, thread: string, seq: number): Promise<void>;
  title(agent: string, thread: string, title: string): void;
- status(agent: string, thread: string): { stop: boolean; archived: boolean };
+ /** Optional heartbeat updates working state; omitted state only consumes stop. */
+ status(agent: string, thread: string, state?: 'working' | 'done'): { stop: boolean; archived: boolean };
 }
 export interface ReadBinding {
  agent: string; conversation?: string;
