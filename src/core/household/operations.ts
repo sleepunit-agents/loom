@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { changeHouseholdMember, memberAgents, memberPerson, memberSchema } from './members.js';
 import { AGENT_NAME } from '../../household.js';
 import { addHouseholdAgent } from './agents.js';
 import { HouseholdAccounts, agentAccountsSchema } from './accounts.js';
@@ -11,6 +12,26 @@ import { SharingDatabase, projectSchema, projectSlug } from './sharing.js';
 export function installHouseholdProjects(app: Foundation, home: string): void {
   const store = new SharingDatabase(app.db, home);
   const owner = (v: Viewer) => mayAct(v, {}, store.sharing(), 'household');
+  app.operations.register(operation({
+    name: 'household.setMember', write: true,
+    input: z.object({ person: memberPerson, agents: memberAgents }).strict(),
+    output: z.array(memberSchema), may: owner,
+    run(ctx, input) {
+      const members = changeHouseholdMember(app.db, home, input.person, input.agents);
+      ctx.changed('household.sharing', 'household'); ctx.changed('core.access', 'household');
+      return members;
+    },
+  }));
+  app.operations.register(operation({
+    name: 'household.removeMember', write: true,
+    input: z.object({ person: memberPerson }).strict(),
+    output: z.array(memberSchema), may: owner,
+    run(ctx, input) {
+      const members = changeHouseholdMember(app.db, home, input.person);
+      ctx.changed('household.sharing', 'household'); ctx.changed('core.access', 'household');
+      return members;
+    },
+  }));
   app.operations.register(operation({
     name: 'household.addAgent', write: true,
     input: z.object({ agent: z.string().regex(AGENT_NAME) }).strict(),
