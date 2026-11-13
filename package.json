@@ -6,6 +6,7 @@
   "main": "dist/index.js",
   "bin": {
     "loom": "dist/index.js",
+    "loom-secret-holder": "dist/secret-holder.js",
     "loom-bridges": "dist/bridges-client.js",
     "loom-attention": "dist/attention-client.js",
     "loom-taskstore": "dist/taskstore-client.js",

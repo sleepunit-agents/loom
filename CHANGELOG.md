@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an explicit next-mode mutual-TLS Unix socket holder source and separate age decryption process for owner-granted service use.
 - Discover visible reported runtime builds for the current house configuration without treating later progress as a newer image.
 
 - Add confirmed dismissal of held and uncertain sends in the next-mode Bridges preview, with pending and error feedback across navigation.
