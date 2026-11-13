@@ -6,6 +6,8 @@ import type Database from 'better-sqlite3';
 import { z } from 'zod';
 import { records, type RuntimeRecords } from './records.js';
 
+export const runtimeRepositoryCacheRule = 'runtime-rebuildable-repo-mirror';
+
 const identity = z.string().min(1).max(200);
 const audience = z.object({ member: identity.optional(), project: identity.optional() }).strict();
 /** Nulls in a derived plan require a deliberate mapping before any import. */
@@ -47,6 +49,9 @@ export function readRuntimeInventory(sources: RuntimeImportSources, open: (path:
     if(key==='data/logins' || key.startsWith('data/logins/'))throw Error('Runner login values must remain outside the runtime import');
     const stat = lstatSync(path);
     if (stat.isSymbolicLink()) throw Error('Runtime source contains a symlink');
+    // Source-owned mirrors are rebuilt by clone --mirror / fetch --prune and
+    // mounted read-only in houses. House working trees and delivery are not caches.
+    if(key==='data/repos' && stat.isDirectory())return;
     if (directory && !stat.isDirectory()) throw Error('Runtime source root must be a directory');
     if (stat.isDirectory()) for (const name of readdirSync(path).sort()) walk(join(path,name),`${key}/${name}`,false);
     else if (stat.isFile()) files[key] = readFileSync(path).toString('base64');
