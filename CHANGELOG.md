@@ -12,10 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Add an authenticated owner-window recovery operation for saved private Clock local requests, retaining their exact scope and durable retry acknowledgement. App scheduling controls and Runtime delivery remain unfinished.
-
+- Secrets: allow explicit daemon retry-key rotation while retaining all historical keys and preserving old write identities across restart and receipt expiry.
 
 ### Added
+
+- Add an authenticated owner-window recovery operation for saved private Clock local requests, retaining their exact scope and durable retry acknowledgement. App scheduling controls and Runtime delivery remain unfinished.
 
 - Import explicit Runtime snapshots with complete private source retention, scoped metadata, held old work and independent migration verification.
 
