@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Home shows each owned agent's Clock Next and live jobs, including paused and held work.
+- Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
 
 - Compose next-mode Changes with authenticated owner Approvals for exact-head answers and lasting project rules.
 - Next runtime: atomically queue scoped body requests and private inputs with canonical box placement, without releasing executable work.
@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add the new Clock preview for live wakes, schedules, household lanes and pause/run/cancel actions; next-mode dispatch remains safely held pending runtime composition.
 
+- Home shows each owned agent's Clock Next and live jobs, including paused and held work.
 - Clock exposes scoped next-wake and complete scheduled/waiting/running job reads for the new desk.
 - Add next-mode People with policy-scoped directory/relationships, evidence, agent filters and resumable person creation.
 
@@ -960,6 +961,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   rollback or new settings, and removed with the piece. `keepChildren: true`
   is `KillMode=process`. Without a user systemd, install says how to start it
   by hand.
+
+- Add an owner-only next-mode operation to change scoped member agent ownership, refreshing open windows immediately.
 
 ## [0.16.1] - 2026-10-25
 

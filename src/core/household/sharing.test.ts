@@ -241,3 +241,110 @@ it('uses database sharing over HTTP and evicts project records on member/agent c
   expect(store!.sharing().projects.pond).toEqual({ members: [], agents: [] });
   expect(readdirSync(h).filter(n => n.endsWith('.json'))).toEqual([]);
 });
+
+
+it('changes scoped ownership only for household owners, preserving metadata and project membership', async () => {
+  const { app, h, store } = await fixture();
+  const doc = { ...raw(), extra: { keep: true } };
+  const members = doc.members.map(m => ({ ...m, note: 'retained' }));
+  app.db.transaction(() => {
+    new HouseholdDatabase(app.db).replace(h, { ...doc, members });
+    store.create(pond);
+  })();
+  const input = { person: 'pollock', agents: ['mark', 'mark'] };
+  for (const door of ['http', 'socket', 'mcp', 'direct'] as const) {
+    for (const viewer of [pollock, bot, { kind: 'member', id: 'missing' }, { kind: 'runner', id: 'box' }, { kind: 'service', id: 'sharing' }] as Viewer[]) {
+      expect(app.operations.call(door, viewer, 'household.setOwnedAgents', input, `${door}:${viewer.id}`)).toMatchObject({ code: 'denied' });
+    }
+  }
+  for (const [person, agents, code] of [
+    ['missing', [], 'not-found'], ['pollock', ['missing'], 'invalid'],
+    ['jonathan', [], 'invalid'], ['pollock', '*', 'invalid'],
+  ] as const) expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person, agents }, 'bad')).toMatchObject({ code });
+  expect(new HouseholdDatabase(app.db).document()).toEqual({ ...doc, members });
+  expect(() => store.setOwnedAgents('pollock', [])).toThrow('transaction');
+  const result = app.operations.call('http', owner, 'household.setOwnedAgents', input, 'owned');
+  expect(result).toEqual({ ok: true, value: ['mark'] });
+  expect(app.operations.call('mcp', owner, 'household.setOwnedAgents', input, 'owned')).toEqual(result);
+  expect(store.sharing().members.pollock).toEqual({ owner: false, agents: ['mark'] });
+  expect(store.project('pond')).toEqual(pond);
+  expect(mayAct(pollock, { agent: 'pond-bot' }, store.sharing(), 'give-work')).toBe(false);
+  expect(mayAct(pollock, { agent: 'mark' }, store.sharing(), 'give-work')).toBe(true);
+  expect(maySee(pollock, { project: 'pond' }, store.sharing())).toBe(true);
+  expect(new HouseholdDatabase(app.db).document()).toEqual({ ...doc, members: members.map(m => m.person === 'pollock' ? { ...m, agents: ['mark'] } : m) });
+  expect(app.operations.call('socket', owner, 'household.setOwnedAgents', { person: 'pollock', agents: [] }, 'empty')).toEqual({ ok: true, value: [] });
+  app.db.transaction(() => new HouseholdDatabase(app.db).change(h, raw => {
+    (raw.members as Array<{ person: string; role: string }>).find(m => m.person === 'pollock')!.role = 'owner';
+    (raw.members as Array<{ person: string; agents: unknown }>).find(m => m.person === 'pollock')!.agents = ['mark'];
+  }))();
+  expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person: 'pollock', agents: ['art'] }, 'scoped-change')).toEqual({ ok: true, value: ['art'] });
+  expect(new HouseholdDatabase(app.db).household(h)?.members.find(m => m.person === 'pollock')).toEqual({ person: 'pollock', role: 'owner', agents: ['art'] });
+  expect(app.operations.call('direct', pollock, 'household.setOwnedAgents', input, 'scoped')).toMatchObject({ code: 'denied' });
+  expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person: 'pollock', agents: [] }, 'scoped-empty')).toMatchObject({ code: 'invalid' });
+});
+
+it('rolls back ownership, retries and access events together and persists the committed result', async () => {
+  const h = home(), clock = new FakeClock();
+  const app = await startLoom({ home: h, clock, install(app) { seed(app, h); } });
+  const changes: unknown[] = [];
+  app.live.observe(events => changes.push(events));
+  app.db.exec(`CREATE TRIGGER fail_ownership BEFORE INSERT ON core_operations WHEN NEW.id='owned' BEGIN SELECT RAISE(ABORT, 'retry failed'); END`);
+  const input = { person: 'pollock', agents: ['mark'] };
+  expect(app.operations.call('direct', owner, 'household.setOwnedAgents', input, 'owned')).toMatchObject({ code: 'unavailable' });
+  expect(new SharingDatabase(app.db, h).sharing().members.pollock.agents).toEqual(['pond-bot']);
+  expect(changes).toEqual([]);
+  expect(app.db.prepare("SELECT * FROM core_operations WHERE id='owned'").get()).toBeUndefined();
+  app.db.exec('DROP TRIGGER fail_ownership');
+  const result = app.operations.call('direct', owner, 'household.setOwnedAgents', input, 'owned');
+  expect(result).toEqual({ ok: true, value: ['mark'] });
+  expect(changes).toEqual([[{ type: 'household.sharing', id: 'household' }, { type: 'core.access', id: 'household' }]]);
+  await app.close();
+  const reopened = await startLoom({ home: h, clock, install: app => installHouseholdProjects(app, h) }); closes.push(reopened.close);
+  expect(new SharingDatabase(reopened.db, h).sharing().members.pollock.agents).toEqual(['mark']);
+  const reopenedChanges: unknown[] = [];
+  reopened.live.observe(events => reopenedChanges.push(events));
+  expect(reopened.operations.call('direct', owner, 'household.setOwnedAgents', { person: 'pollock', agents: [] }, 'newer')).toEqual({ ok: true, value: [] });
+  reopenedChanges.length = 0;
+  expect(reopened.operations.call('http', owner, 'household.setOwnedAgents', input, 'owned')).toEqual(result);
+  expect(new SharingDatabase(reopened.db, h).sharing().members.pollock.agents).toEqual([]);
+  expect(reopenedChanges).toEqual([]);
+});
+
+it('evicts an already visible agent record when scoped ownership is removed', async () => {
+  const h = home(), clock = new FakeClock();
+  let store!: SharingDatabase;
+  const app = await startLoom({ home: h, clock, install(app) {
+    store = seed(app, h);
+    installExample(app.db, app.operations, app.live, () => store.sharing());
+  }, authenticate() { return { viewer: pollock, valid: () => true }; } }); closes.push(app.close);
+  expect(app.operations.call('direct', owner, 'example.put', { id: 'private-bot-task', title: 'Bot task', agent: 'pond-bot' }, 'task')).toMatchObject({ ok: true });
+  const ws = new WebSocket(app.url.replace('http:', 'ws:') + '/live');
+  closes.push(() => ws.terminate());
+  const messages: unknown[] = [], pending: ((v: unknown) => void)[] = [];
+  ws.on('message', raw => { const v: unknown = JSON.parse(raw.toString()); const receive = pending.shift(); if (receive) receive(v); else messages.push(v); });
+  const next = () => messages.length ? Promise.resolve(messages.shift()) : new Promise<unknown>(resolve => pending.push(resolve));
+  await once(ws, 'open');
+  ws.send(JSON.stringify({ kind: 'subscribe', type: 'example.record' }));
+  expect(await next()).toMatchObject({ kind: 'set', records: [{ id: 'private-bot-task' }] });
+  const refreshes: boolean[] = [];
+  const refreshAccess = app.live.refreshAccess.bind(app.live);
+  app.live.refreshAccess = () => { refreshes.push(app.db.inTransaction); refreshAccess(); };
+  expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person: 'pollock', agents: [] }, 'remove')).toMatchObject({ ok: true });
+  expect(refreshes).toEqual([false]);
+  expect(await next()).toMatchObject({ kind: 'set', records: [] });
+  expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person: 'pollock', agents: ['pond-bot'] }, 'restore')).toMatchObject({ ok: true });
+  expect(refreshes).toEqual([false, false]);
+  expect(await next()).toMatchObject({ kind: 'set', records: [{ id: 'private-bot-task' }] });
+});
+
+
+it('accepts imported member names and ownership lists beyond project schema limits', async () => {
+  const { app, h } = await fixture();
+  const person = 'a'.repeat(101);
+  const agents = Array.from({ length: 101 }, (_, i) => `agent-${i}`);
+  app.db.transaction(() => new HouseholdDatabase(app.db).replace(h, {
+    v: 1, agents, members: [{ person: 'jonathan', role: 'owner', agents: '*' }, { person, role: 'member', agents: [] }],
+  }))();
+  expect(app.operations.call('direct', owner, 'household.setOwnedAgents', { person, agents }, 'large')).toEqual({ ok: true, value: agents });
+  expect(new HouseholdDatabase(app.db).household(h)?.members.find(m => m.person === person)?.agents).toEqual(agents);
+});
