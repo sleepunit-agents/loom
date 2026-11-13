@@ -10,7 +10,8 @@ import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
 import { stagingRuntime, type Runtime, type StartResult } from './dependencies/runtime.js';
 import { deskJobs, agentNext } from './desk.js';
 import { unpark } from './unpark.js';
-import { vouchable } from './vouch.js';
+import { vouchable, askable, vouchDetails } from './vouch.js';
+import type { VouchFiling } from './dependencies/filing.js';
 import { vouchOf } from '../approvals/role.js';
 import { deadmanPrompt, deadmanNote } from './deadman.js';
 import type { HouseholdAskSource } from '../attention/role.js';
@@ -51,7 +52,7 @@ function quotaDue(reset: unknown, now: number): number {
   return Math.min(Math.max(when + 60_000, now + 15 * 60_000), now + 8 * day);
 }
 export interface ClockOptions {
-  runtime?: Runtime; approvals?: Approvals; notices?: HouseholdAskSource;
+  runtime?: Runtime; approvals?: Approvals; notices?: HouseholdAskSource; vouchFiling?: VouchFiling;
   /** Trusted composition opt-in. Safety work acts as each named agent, never an owner. */
   deadmanAgents?: readonly string[];
 }
@@ -145,6 +146,27 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const firing = w.state === 'firing'; w.state = firing ? 'held' : 'cancelled'; if (firing) w.hold = 'uncertain'; w.outcome = firing ? 'Cancellation raced dispatch; a body may have started' : 'Cancelled';
     saveWake(ctx, w); event(ctx, w, 'cancel');
     const s = w.schedule && schedule(db, w.schedule); if (s) next(ctx, s, Math.max(w.due, ctx.now)); return w;
+  });
+  register('askVouch', z.object({ target: text }).strict(), true, (v, i) => {
+    const target = vouchOf(i.target);
+    if (!target || (v.kind !== 'agent' && !mayAct(v, {}, sharing(), 'household'))) return false;
+    if (v.kind === 'agent' && v.id !== target.agent) return false;
+    return target.ids.every(id => {
+      const w = wake(db, id);
+      return !!w && w.agent === target.agent && see(v, w) && create(v, w);
+    });
+  }, (_ctx, i) => {
+    const target = vouchOf(i.target)!;
+    const rows = target.ids.map(get);
+    for (const row of rows) {
+      if (!askable(row)) invalid('Only eligible unknown imports without evidence of another person steering may be asked about');
+      newWork(row);
+    }
+    if (!options.vouchFiling) throw new OperationError('unavailable', 'Clock approval filing is not composed');
+    const result = options.vouchFiling.request(target.agent, i.target, vouchDetails(rows));
+    if (!result.ok) throw new OperationError(result.code, result.message);
+    const card = result.value as { id: string; state: string };
+    return { id: card.id, state: card.state, target: i.target };
   });
   register('vouch', z.object({ target: text }).strict(), true, (v, i) => {
     const target = vouchOf(i.target);

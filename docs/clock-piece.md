@@ -18,8 +18,7 @@ the latter. Queue acceptance is not a confirmed body start. Next mode therefore
 keeps Clock's default held runtime. Task t-2201 explicitly depends on t-2209 for
 executable dispatch and authenticated conversation/continuation resolution.
 
-Independent work remains: ask-vouch filing/grouping/denial suppression and its
-app/client flow; owner-vouch app actions; exact local-approval filing/recovery,
+Independent work remains: automatic ask-vouch grouping and app binding; exact local-approval filing/recovery,
 standing-job rechecks and app/client flow; and other imported provenance recovery
 or explicit deliberate drops. Runtime-dependent work remains: conversation-bound
 mutation/join, original schedule principal narrowing, API 40/conversation 20 and
@@ -96,7 +95,7 @@ an operation does not imply executable runtime dispatch.
 | `wake schedule set/rm/list/run` | `clock.scheduleSet`, `clock.scheduleRemove`, `clock.schedules`, `clock.scheduleRun` |
 | `wake lane set/assign/rm/list/text` | schedule rows carrying lane text and assignment; corresponding `clock.lane*` operations |
 | `wake vouch`, `vouch-approved` action | `clock.vouch`, opt-in owner client, and atomic Approvals application; app action remains unfinished |
-| `wake ask-vouch` | Filing, automatic grouping, denial suppression and app/client flow remain unfinished |
+| `wake ask-vouch` | `clock.askVouch` and the generated client file exact selections; automatic grouping and app binding remain unfinished |
 | `wake relay`, `wake relays` | same refusal directing the caller to runtime; already removed upstream |
 | `wake reap`, legacy session reaper | dropped from Clock: runtime owns body lifecycle; executable runtime dispatch remains blocked |
 | `wake bundle export/import` | coordinated core backup/import, not an independently encrypted child program |
@@ -497,8 +496,7 @@ confirmation line is preserved; partial results add `unchanged: <ids>` rather
 than claiming that every ineligible row fired. `--approval` is deliberately
 refused: Allow is applied and spent by Approvals itself, never by this client.
 The authenticated owner token replaces the old host-terminal identity test and
-interactive typed-id confirmation. Agent tokens cannot vouch. `ask-vouch` remains
-an explicit refusal until its owning filing/grouping workflow lands. Internal fire/run/reap, old UI/API envelopes and piece-local bundles are
+interactive typed-id confirmation. Agent tokens cannot vouch. `ask-vouch <id> [<id> …]` files one exact selected set through the owning Approvals role. Internal fire/run/reap, old UI/API envelopes and piece-local bundles are
 refused in favor of the daemon, runtime, Clock app and core migration. This client
 slice does not claim completion of provenance, local approvals or runtime
 dispatch; those remain on t-2201. Importer-all registration is implemented in #951.
@@ -660,7 +658,30 @@ with target create authority. Its confirmation retains the saved words and due t
 explains overdue dispatch and pause, and sends the existing operation through the
 window’s retained retry receipt. The live `canVouch` hint is advisory; the mutation
 rechecks authority and eligibility. Provenance-held work has no Run now button.
-Ask-vouch filing, automatic grouped asking and
-denial suppression, other imported adoption/recovery, and runtime-authenticated
+Automatic grouped asking and ask-vouch app binding, other imported adoption/recovery, and runtime-authenticated
 provenance remain unfinished on t-2201. No live import, configuration or dispatch
 is enabled by this slice.
+
+## Explicit ask-vouch filing
+
+`clock.askVouch {target}` and `ask-vouch <id> [<id> …]` let the authenticated
+assignee agent or current household owner request adoption of selected eligible
+unknown imports. Every row must remain visible and pass current create policy.
+Known-person, steered, other-agent and capability-bearing imports are refused;
+archived words supply no authority. The target uses the same canonical grammar
+and bounds as owner vouch. Clock generates the question and lists every id and
+saved due time within Approvals' details cap, shortening only the note.
+
+Next mode supplies the owning Approvals filing role; missing composition or
+current central service access fails closed. No caller-supplied principal,
+question, approval or details is accepted. Filing leaves work held and never
+spends. Existing Approvals owns exact-target deduplication, overlapping-card
+refusal and permanent Deny suppression across restarts. Existing owner Allow
+applies and spends atomically through the previously shipped Clock application.
+The command refuses `--approval`. A retained outer request receipt covers retry
+of the command or operation after a lost response.
+
+This unit supports explicit selections only. Automatic candidate grouping,
+replacement of an unanswered grouped card, waiting overflow and the app's ask
+binding remain unfinished. Old service-side delayed filing is replaced for this
+explicit path by a synchronous local transaction; no polling body is needed.
