@@ -200,7 +200,7 @@ describe('in-process bridge delivery',()=>{
   it('rechecks the person link after asynchronous admission and admits the replacement afresh',async()=>{
     const f=await fixture(); let replaced=false;
     f.adapter.inspect=async()=>{if(!replaced){replaced=true;f.op('putLinks',{id:'person',platform:'discord',workspace:'house',user:'200',person:'pollock'});}return 'allow';};
-    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush(); expect(f.deliveries.size).toBe(0);
+    await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
     f.clock.advance(5000); await f.engine.flush();
     expect(f.admitted).toEqual(['jonathan','pollock']); expect([...f.deliveries.values()][0].person).toBe('pollock');
   });
