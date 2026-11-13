@@ -472,12 +472,11 @@ or live connection is introduced here.
 
 ## Next-mode Slack lifecycle composition
 
-`startLoom({next:true, bridges:{source, credentialEpoch, name, receive}})` now
+`startLoom({next:true, bridges:{source, name, receive}})` now
 binds the authenticated bot/workspace/app evidence, service-scoped `SecretUse`,
 raw inbox, serialized drain and Socket Mode transport. The supplied source is the
 public authenticated holder source; no grants or credentials are discovered.
-`credentialEpoch` is a trusted holder generation callback, and must change for
-any replacement of either token. Setup revision and public secret name, grant,
+The source supplies the public asynchronous `generation()` capability described below. Setup revision and public secret name, grant,
 policy and access changes invalidate immediately; a five-second lifecycle check
 also observes holder generations. Traffic/status notifications do not invalidate
 setup. Each new session authenticates again, including after edit-and-restore.
@@ -658,7 +657,7 @@ starts, cancels timers, terminates sockets and awaits holder, metadata and hando
 work before SQLite closes, including root startup failure.
 
 This is trusted programmatic composition with an injected durable `receive` role
-and public `credentialEpoch` callback. It does not claim CLI activation, a real
+and public holder generation source. It does not claim CLI activation, a real
 keyholder generation source, People name composition or a bridge-compatible runtime
 admission/delivery/stop implementation. Those and legacy engine secret-role removal
 remain required on t-2210; the current Comms runtime installer is private to Comms.
@@ -674,3 +673,34 @@ Old stores, running homes and deployed services are untouched.
 The Discord and Slack daemon lifecycle loops remain separate in this slice. This
 keeps each transport binding explicit while their authentication, cursor and
 receipt contracts differ; lifecycle fixes must be checked against both daemons.
+
+
+## Authenticated asynchronous holder generations
+
+The trusted next root now requires `source: SecretValueSource & HolderGeneration`.
+The actual `localSecretSource(config)` returned by `configuredSecretHolder` supplies
+both capabilities over the pinned private mTLS transport. The root no longer accepts
+a separate synchronous credential epoch. A shared `bridgeCredentials` monitor obtains
+the initial UUID before either daemon may acquire a value, authenticate or dial.
+It reads only public metadata, including while staging holds platform IO. No secret
+value, value hash or registry timestamp supplies this marker. A legacy age-file
+holder without the capability remains unavailable.
+
+The monitor polls five seconds after each completed read, with a separate five-second
+absolute read deadline. Rotation or a failed/malformed/timed-out read synchronously
+invalidates both daemons when observed, independently of their pending authentication
+or normalization work. Thus a mutation immediately after a successful poll may take
+up to ten seconds to be detected if the next read stalls. Once invalidated, late
+holder/metadata/handoff results cannot revive or consume for that lifetime. Recovery
+to the same UUID still starts a fresh lifetime and needs a new staging release.
+Only a successful current read can re-enable credential use. Late expired reads
+cannot overwrite newer state. Shutdown cancels the monitor, invalidates its current
+marker and ignores late results before the root awaits existing bridge work and
+closes SQLite.
+
+This unit replaces the injected generation prerequisite. The persistent-holder test
+uses actual household mutation authority and authenticated holder transport, including
+identical-value replacement and holder outage; platform transports remain test fakes.
+CLI activation, People names, real adapter send/inspect and removal of the foundation
+engine's `BridgeSecrets.may/get` interface remain required composition work. Runtime
+handoff remains explicitly injected until that subsequent integration.

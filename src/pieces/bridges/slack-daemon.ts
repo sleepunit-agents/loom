@@ -13,7 +13,8 @@ import type { Venue } from './model.js';
 export interface SlackDaemonOptions {
   secrets: SecretUse;
   /** Public holder generation, changed whenever a credential is replaced. */
-  credentialEpoch(): string;
+  credentialEpoch(): string | undefined;
+  observeCredentials?(changed: () => void): () => void;
   name(venue: Venue, user: string): string | undefined;
   receive: SlackDrainOptions['receive'];
   request?: typeof fetch;
@@ -35,7 +36,7 @@ export function installSlackDaemon(app: Foundation, effects: OutsideEffects, opt
     for (const session of sessions.values()) session.stop();
     void sync();
   }
-  function key() { return JSON.stringify([setupRevision(app.db), options.credentialEpoch()]); }
+  function key() { const epoch=options.credentialEpoch();return epoch === undefined ? undefined : JSON.stringify([setupRevision(app.db),epoch]); }
   function schedule() {
     if (closed || cancel) return;
     cancel = clock.at(clock.now() + 5000, () => {
@@ -56,6 +57,11 @@ export function installSlackDaemon(app: Foundation, effects: OutsideEffects, opt
     if (closed) return;
     if (app.db.inTransaction) { schedule(); return; }
     const next = key();
+    if (next === undefined) {
+      generation++;signature=undefined;await retire();
+      for (const attempt of attempts.values()) effects.finish(attempt.id);
+      attempts.clear();return;
+    }
     if (signature !== next) {
       generation++; await retire();
       for (const attempt of attempts.values()) effects.finish(attempt.id);
@@ -64,7 +70,7 @@ export function installSlackDaemon(app: Foundation, effects: OutsideEffects, opt
       signature = key();
     }
     const epoch = generation, saved = signature;
-    const current = () => !closed && generation === epoch && key() === saved;
+    const current = () => saved !== undefined && !closed && generation === epoch && key() === saved;
     for (const venue of all(app.db, 'venues').filter(v => v.enabled && v.platform === 'slack' && v.appSecret)) {
       if (!current()) { invalidate(); return; }
       if (sessions.has(venue.id)) { await sessions.get(venue.id)!.flush(); continue; }
@@ -116,7 +122,7 @@ export function installSlackDaemon(app: Foundation, effects: OutsideEffects, opt
     if (closed) return Promise.resolve();
     if (running) { again=true; return running; }
     running=(async()=>{ do { again=false; try { await pass(); } catch { schedule(); } } while(again && !closed); })()
-      .finally(()=>{running=undefined;});
+      .finally(()=>{running=undefined;if(again && !closed) void sync();});
     return running;
   }
   const unobserve=app.live.observe(changes=>{
@@ -125,11 +131,12 @@ export function installSlackDaemon(app: Foundation, effects: OutsideEffects, opt
       || (changes.some(c=>c.type.startsWith('bridges.')) && key() !== signature)) invalidate();
   });
   const unrelease=effects.onReleased(id=>{if(id.startsWith('bridges:slack:')) void sync();});
+  const uncredential=options.observeCredentials?.(invalidate);
   schedule(); void sync();
   let closing: Promise<void> | undefined;
   return { sync, close(): Promise<void> {
     if (closing) return closing;
-    closed=true;generation++;cancel?.();unobserve();unrelease();
+    closed=true;generation++;cancel?.();unobserve();unrelease();uncredential?.();
     for(const session of sessions.values()) session.stop();
     return closing=(async()=>{await running;await retire();})();
   }};

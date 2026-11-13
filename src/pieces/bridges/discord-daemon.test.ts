@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,12 +32,12 @@ const checkpoint=(seq:number)=>({session:'SESSION',url:'wss://gateway.discord.gg
 async function until(fn:()=>boolean){for(let i=0;i<2000;i++){if(fn())return;await Promise.resolve();}throw Error('condition not reached');}
 async function settle(){for(let i=0;i<150;i++)await Promise.resolve();}
 function deferred<T>(){let resolve!:(v:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};}
-async function setup({staging=false,grant=true,pending=false,secondAuth,receive=vi.fn(async()=>{})}: {staging?:boolean;grant?:boolean;pending?:boolean;secondAuth?:Promise<Response>;receive?: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof startLoom>[0]['bridges']>['receive']>>}={}){
+async function setup({staging=false,grant=true,pending=false,secondAuth,generation,receive=vi.fn(async()=>{})}: {staging?:boolean;grant?:boolean;pending?:boolean;secondAuth?:Promise<Response>;generation?:()=>Promise<string>;receive?: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof startLoom>[0]['bridges']>['receive']>>}={}){
   const home=mkdtempSync(join(tmpdir(),'discord-root-'));fixture(home);
-  const clock=new FakeClock();let epoch='0';
+  const clock=new FakeClock();let epoch='00000000-0000-4000-8000-000000000000';
   const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue','bridges.route','bridges.link','bridges.send'],operations:[]}}});
   const sockets:FakeSocket[]=[];const buffers:Uint8Array[]=[];
-  const source={read:vi.fn(async(name:string)=>{const b=Buffer.from(`PRIVATE-${name}`);buffers.push(b);return b;})};
+  const source={generation:vi.fn(generation ?? (async()=>epoch)),read:vi.fn(async(name:string)=>{const b=Buffer.from(`PRIVATE-${name}`);buffers.push(b);return b;})};
   let authReads=0;
   const request=vi.fn<typeof fetch>(async url=>{
     const path=String(url);
@@ -46,7 +47,7 @@ async function setup({staging=false,grant=true,pending=false,secondAuth,receive=
     return Response.json({id:'400',guild_id:'100',type:0,name:'general'});
   });
   const startOptions: Parameters<typeof startLoom>[0]={home,next:true,staging,clock,sharing,stdout:()=>{},
-    bridges:{source,credentialEpoch:()=>epoch,name:()=> 'Jonathan',receive,request,discordSocket:()=>{const s=new FakeSocket();sockets.push(s);return s as unknown as ReturnType<NonNullable<DiscordGatewayOptions['socket']>>;}},
+    bridges:{source,name:()=> 'Jonathan',receive,request,discordSocket:()=>{const s=new FakeSocket();sockets.push(s);return s as unknown as ReturnType<NonNullable<DiscordGatewayOptions['socket']>>;}},
     install(a){
       installSecrets(a.db,a.operations,a.live,sharing);installSecretServices(a.db,a.operations,sharing);installBridges(a,sharing);
       let n=0;for(const name of ['bot']){
@@ -58,7 +59,7 @@ async function setup({staging=false,grant=true,pending=false,secondAuth,receive=
     }};
   const app=await startLoom(startOptions);
   cleanups.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
-  return {app,clock,sockets,source,buffers,request,receive,rotate(){epoch=String(Number(epoch)+1);},async restart(){await app.close();const restarted=await startLoom({...startOptions,install:undefined});cleanups.unshift(restarted.close);return restarted;}};
+  return {app,clock,sockets,source,buffers,request,receive,rotate(){epoch=randomUUID();},async restart(){await app.close();const restarted=await startLoom({...startOptions,install:undefined});cleanups.unshift(restarted.close);return restarted;}};
 }
 it('root uses real service grants, authenticates before socket startup, drains saved receipts without new input',async()=>{
   const f=await setup({pending:true});await until(()=>f.receive.mock.calls.length===1 && f.sockets.length===1);await settle();
@@ -86,7 +87,7 @@ it('Commits raw dispatches while normalization waits, and root close waits befor
   // A blocked normalized commit must not occupy the Gateway's raw commit queue.
   socket.frame({op:0,t:'MESSAGE_CREATE',s:3,d:{...payload,id:'301'}});
   await until(()=> (f.app.db.prepare('SELECT count(*) n FROM bridges_discord_receipts').get() as {n:number}).n===2);
-  expect(discordInbox(f.app.db,f.clock,{venue,credentialEpoch:'0'},()=> '0').load()?.seq).toBe(3);
+  expect(discordInbox(f.app.db,f.clock,{venue,credentialEpoch:'00000000-0000-4000-8000-000000000000'},()=> '00000000-0000-4000-8000-000000000000').load()?.seq).toBe(3);
   expect(receive).toHaveBeenCalledOnce();
   closing=f.app.close().then(()=>{closed=true;});
     await vi.waitFor(()=>expect(socket.terminate).toHaveBeenCalledOnce());
@@ -115,7 +116,7 @@ it('shutdown waits for a deferred Identify holder read before SQLite closes',asy
 it('detects credential replacement while handoff is pending and suppresses late consumption',async()=>{
   const held=deferred<void>();const receive=vi.fn(async()=>held.promise);const f=await setup({pending:true,receive});
   await until(()=>receive.mock.calls.length===1 && f.sockets.length===1);
-  f.rotate();f.clock.advance(5000);expect(f.sockets[0].terminate).toHaveBeenCalledOnce();
+  f.rotate();f.clock.advance(5000);await settle();expect(f.sockets[0].terminate).toHaveBeenCalledOnce();
   held.resolve();await until(()=>f.sockets.length===2);await settle();
   // A replacement epoch cannot inherit the old raw receipt; late work cannot consume it.
   expect(receive).toHaveBeenCalledTimes(1);expect(f.app.db.prepare('SELECT state FROM bridges_discord_receipts').get()).toEqual({state:'pending'});
@@ -142,11 +143,11 @@ it('released staging lifetime permits reconnect and metadata, but credential rep
 });
 it('startup failure awaits pending authentication before SQLite closes',async()=>{
   const home=mkdtempSync(join(tmpdir(),'discord-start-failure-'));fixture(home);const clock=new FakeClock();
-  const held=deferred<Uint8Array>();const source={read:vi.fn(()=>held.promise)};
+  const held=deferred<Uint8Array>();const source={generation:async()=>randomUUID(),read:vi.fn(()=>held.promise)};
   const request=vi.fn<typeof fetch>(async()=>Response.json({ok:false}));
   let db!:Parameters<typeof installBridges>[0]['db'];
   const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue'],operations:[]}}});
-  const starting=startLoom({home,next:true,host:[],clock,sharing,stdout:()=>{},bridges:{source,credentialEpoch:()=> '0',name:()=>undefined,receive:async()=>{},request},
+  const starting=startLoom({home,next:true,host:[],clock,sharing,stdout:()=>{},bridges:{source,name:()=>undefined,receive:async()=>{},request},
     install(a){db=a.db;installSecrets(a.db,a.operations,a.live,sharing);installSecretServices(a.db,a.operations,sharing);installBridges(a,sharing);put(a.db,'venues',venue);
       a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name:'bot',description:'bot'},'describe');
       a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.grantService',{service:'bridges',name:'bot'},'grant');
@@ -210,10 +211,38 @@ it('independently retires an active socket on epoch change while another venue a
  const held=deferred<Response>();const f=await setup({secondAuth:held.promise});
  try {
    await until(()=>f.sockets.length===1 && f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me')).length===2);
-   f.rotate();f.clock.advance(5000);
+   f.rotate();f.clock.advance(5000);await settle();
    // Authentication is still blocked: only the independent detector can retire this socket.
    expect(f.sockets[0].terminate).toHaveBeenCalledOnce();
    expect(f.sockets).toHaveLength(1);
  } finally {held.resolve(Response.json({id:'200',bot:true}));}
  await until(()=>f.sockets.length===3);
+});
+it('generation failure retires Discord while another venue authentication is pending',async()=>{
+  const held=deferred<Response>(),f=await setup({secondAuth:held.promise});
+  try {
+    await until(()=>f.sockets.length===1 && f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me')).length===2);
+    f.source.generation.mockRejectedValue(Error('PRIVATE HOLDER FAILURE'));f.clock.advance(5000);await settle();
+    expect(f.sockets[0].terminate).toHaveBeenCalledOnce();expect(f.app.db.open).toBe(true);
+  } finally {held.resolve(Response.json({id:'200',bot:true}));}
+  await settle();const calls=f.request.mock.calls.length;f.clock.advance(5000);await settle();expect(f.request).toHaveBeenCalledTimes(calls);
+});
+
+it('does not acquire Discord credentials until initial asynchronous generation is available',async()=>{
+  const held=deferred<string>(),f=await setup({generation:()=>held.promise});
+  try {
+    await settle();expect(f.source.read).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();expect(f.sockets).toHaveLength(0);
+    held.resolve('00000000-0000-4000-8000-000000000000');await until(()=>f.sockets.length===1);
+  } finally {held.resolve('00000000-0000-4000-8000-000000000000');}
+});
+it('requires a new Discord staging release after holder failure and same-generation recovery',async()=>{
+  const f=await setup({staging:true});await settle();
+  const release=()=>{const row=f.app.db.prepare("SELECT id FROM core_effects WHERE state='due' AND kind='bridge-send'").get() as {id:string};expect(row).toBeDefined();expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:row.id},`release-${row.id}`).ok).toBe(true);return row.id;};
+  const oldRelease=release();f.clock.advance(0);await until(()=>f.sockets.length===1);const epoch=await f.source.generation();
+  f.source.generation.mockRejectedValue(Error('PRIVATE HOLDER FAILURE'));f.clock.advance(5000);await settle();
+  expect(f.sockets[0].terminate).toHaveBeenCalledOnce();const reads=f.source.read.mock.calls.length,calls=f.request.mock.calls.length;
+  f.source.generation.mockResolvedValue(epoch);f.clock.advance(5000);await settle();
+  expect(f.source.read).toHaveBeenCalledTimes(reads);expect(f.request).toHaveBeenCalledTimes(calls);expect(f.sockets).toHaveLength(1);
+  expect(release()).not.toBe(oldRelease);f.clock.advance(0);await until(()=>f.sockets.length===2);
+  expect(f.source.read.mock.calls.length).toBeGreaterThan(reads);expect(f.request.mock.calls.filter(c=>String(c[0]).endsWith('users/@me'))).toHaveLength(2);
 });
