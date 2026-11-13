@@ -17,3 +17,6 @@ export function useRecords<T extends LiveRecord = LiveRecord>(type: string, scop
   );
 }
 export function call<T = unknown>(operation: string, input: unknown) { return store().call<T>(operation, input); }
+
+/** Ephemeral result: no queue, reconnect replay or manual retry. */
+export function callOnce<T = unknown>(operation: string, input: unknown) { return store().call<T>(operation, input, false); }

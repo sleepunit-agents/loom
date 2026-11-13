@@ -25,7 +25,7 @@ export interface Socket {
 interface Subscription {
   type: string; scope?: string; ids: Set<string>; listeners: Set<() => void>; snapshot: Snapshot;
 }
-interface Pending { wire: string; update(state: CallState): void; finish(result: Result): void }
+interface Pending { replay: boolean; wire: string; update(state: CallState): void; finish(result: Result): void }
 const keyOf = (type: string, scope?: string) => JSON.stringify([type, scope]);
 const unavailable: Failure = { ok: false, code: 'unavailable', message: 'Connection closed' };
 
@@ -109,7 +109,10 @@ export class DataStore {
         this.calls.forEach(call => call.finish({ ok: false, code: 'denied', message: 'Session ended' }));
         this.calls.clear();
       } else {
-        this.calls.forEach(call => call.update({ pending: true, status: 'offline' }));
+        this.calls.forEach((call, id) => {
+          if (call.replay) call.update({ pending: true, status: 'offline' });
+          else { this.calls.delete(id); call.finish(unavailable); }
+        });
         this.reconnect();
       }
     };
@@ -159,7 +162,7 @@ export class DataStore {
     // Shared records may also have changed in overlapping scopes.
     this.subscriptions.forEach(s => { if (s.type === sub.type) this.publish(s, s === sub ? 'live' : s.snapshot.status); });
   }
-  call<T = unknown>(name: string, input: unknown): Call<T> {
+  call<T = unknown>(name: string, input: unknown, replay = true): Call<T> {
     const id = this.options.id();
     let state: CallState<T> = { pending: true, status: this.socket?.readyState === 1 ? 'pending' : 'offline' };
     const listeners = new Set<() => void>();
@@ -169,18 +172,20 @@ export class DataStore {
     const finish = (answer: Result) => { update({ pending: false, status: 'done', result: answer }); resolve(answer as Result<T>); };
     let wire: string | undefined;
     const handle = { id, get result() { return result; }, retry: () => {
-      if (state.pending || state.result?.ok !== false || state.result.code !== 'unavailable' || !wire || this.stopped || this.denied) return;
+      if (!replay || state.pending || state.result?.ok !== false || state.result.code !== 'unavailable' || !wire || this.stopped || this.denied) return;
       result = new Promise<Result<T>>(r => { resolve = r; });
       update({ pending: true, status: this.socket?.readyState === 1 ? 'pending' : 'offline' });
-      this.calls.set(id, { wire, update, finish });
+      this.calls.set(id, { replay, wire, update, finish });
       if (this.socket?.readyState === 1) this.send(wire);
       this.connect();
     }, getSnapshot: () => state, subscribe: (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; } };
     if (this.stopped || this.denied) { finish(this.denied ? { ok: false, code: 'denied', message: 'Session ended' } : unavailable); return handle; }
+    // Single-send calls must already have a connection; never queue or replay a credential mint.
+    if (!replay && this.socket?.readyState !== 1) { finish(unavailable); return handle; }
     // Freeze the wire input now: edits to a caller's object cannot change a retry.
     try { wire = JSON.stringify({ kind: 'call', request: id, name, input, id }); }
     catch { finish({ ok: false, code: 'invalid', message: 'Input must be JSON' }); return handle; }
-    this.calls.set(id, { wire, update, finish });
+    this.calls.set(id, { replay, wire, update, finish });
     if (this.socket?.readyState === 1) this.send(wire);
     this.connect();
     return handle;

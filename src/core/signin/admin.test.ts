@@ -178,3 +178,41 @@ it('requires explicit safe client connection settings and a readable nonempty to
   }
   writeFileSync(f.file,' \n');expect(await f.client('sessions',['list','{}'],request,base)).toMatchObject({code:1,stdout:'',calls:0});expect(requests).toBe(0);
 });
+
+it('creates a token over the authenticated browser socket without a credential receipt or Live secret', async () => {
+  const f = await setup(), cookie = f.s.createSession(hash('operator-bearer'));
+  const ws = new WebSocket(f.app.url.replace('http:', 'ws:') + '/live', { headers: { cookie: `loom_ui=${cookie}`, origin: f.app.url } });
+  cleanup.push(() => { ws.terminate(); }); await once(ws, 'open');
+  const messages: unknown[] = []; ws.on('message', raw => messages.push(JSON.parse(String(raw))));
+  const answer = new Promise<{ ok: boolean; value: { token: string } }>(resolve => {
+    ws.on('message', raw => { const m = JSON.parse(String(raw)); if (m.kind === 'result' && m.request === 'mint') resolve(m.result); });
+  });
+  ws.send(JSON.stringify({ kind: 'subscribe', type: 'signin.admin' }));
+  ws.send(JSON.stringify({ kind: 'call', request: 'mint', name: 'token.create', input: { label: 'browser-mint', role: 'owner', member: 'pollock' }, id: 'mint' }));
+  const result = await answer; expect(result.ok).toBe(true);
+  expect(f.s.token(hash(result.value.token))?.viewer).toEqual({ kind: 'member', id: 'pollock' });
+  expect(f.app.db.prepare("SELECT * FROM core_operations WHERE id='mint'").all()).toEqual([]);
+  const metadata = JSON.stringify(messages.filter(m => (m as { kind: string }).kind !== 'result'));
+  expect(metadata).toContain('browser-mint'); expect(metadata).not.toContain(result.value.token); expect(metadata).not.toContain(hash(result.value.token));
+});
+
+it('uses an opaque token ref to refuse stale label reuse without touching the replacement', async () => {
+  const f = await setup();
+  const first = f.call('token.create', { label: 'reusable', role: 'agent', agent: 'art', expires: new Date(f.clock.now() + 1000).toISOString() });
+  if (!first.ok) throw Error();
+  const old = (first.value as { record: { ref: string } }).record.ref;
+  expect(old).not.toContain(hash('operator-bearer'));
+  const ws = new WebSocket(f.app.url.replace('http:', 'ws:') + '/live', { headers: { authorization: 'Bearer operator-bearer' } });
+  cleanup.push(() => { ws.terminate(); }); await once(ws, 'open');
+  ws.send(JSON.stringify({ kind: 'subscribe', type: 'signin.admin' }));
+  const snapshot = JSON.parse(String((await once(ws, 'message'))[0])); expect(snapshot.records[0].at).toBe(f.clock.now());
+  const expired = once(ws, 'message'); f.clock.advance(1000);
+  const update = JSON.parse(String((await expired)[0])); expect(update.record.at).toBe(f.clock.now());
+  const replacement = f.call('token.create', { label: 'reusable', role: 'agent', agent: 'art' });
+  if (!replacement.ok) throw Error();
+  const value = replacement.value as { token: string; record: { ref: string } };
+  expect(f.call('token.revoke', { label: 'reusable', ref: old }, 'stale')).toMatchObject({ ok: false, code: 'not-found' });
+  expect(f.s.token(hash(value.token))).toBeDefined();
+  expect(f.call('token.revoke', { label: 'reusable', ref: value.record.ref }, 'right')).toMatchObject({ ok: true, value: { revoked: 1 } });
+  expect(f.s.token(hash(value.token))).toBeUndefined();
+});
