@@ -112,10 +112,16 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     expect((await context.request.get(app.url+'/manifest.webmanifest')).headers()['content-type']).toBe('application/manifest+json');
     await expect.poll(() => a.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL)).toBe(app.url+'/sw.js');
     // iPad's home-screen app has its own status bar even in a desktop-width layout.
-    await a.evaluate(()=>document.documentElement.classList.add('loom-ios-app'));
+    await a.addInitScript(()=>Object.defineProperty(navigator,'standalone',{value:sessionStorage.getItem('desk-ios')==='1',configurable:true}));
+    await a.evaluate(()=>sessionStorage.setItem('desk-ios','1'));
+    await a.reload();
+    await expect.poll(()=>a.locator('.next-system-clock').count()).toBe(1);
+    expect(await a.locator('html').getAttribute('class')).toContain('loom-ios-app');
     expect(await a.locator('.next-system-clock').isVisible()).toBe(false);
     expect(await a.locator('.next-system-icons').isVisible()).toBe(false);
-    await a.evaluate(()=>document.documentElement.classList.remove('loom-ios-app'));
+    await a.evaluate(()=>sessionStorage.removeItem('desk-ios'));
+    await a.reload();
+    await expect.poll(()=>a.locator('.next-system-clock').isVisible()).toBe(true);
     const shots = resolve('artifacts/desk-shell'); mkdirSync(shots,{recursive:true});
     for (const look of ['neon','lowlight','daylight']) {
       set({look,contrast:'off',motion:'on',sound:false},'look-'+look);
