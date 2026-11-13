@@ -13,13 +13,30 @@ export interface StartBody extends Scope {
   conversation?: string;
   source?: { kind: 'wake' | 'spawn' | 'conversation' | 'manual'; id: string };
 }
+export type Sender =
+  | { kind: 'person'; slug: string }
+  | { kind: 'agent'; id: string }
+  | { kind: 'schedule' | 'unknown' };
+/** A source can address a conversation before it has a runtime binding.
+ * The runtime derives the conversation from agent/venue/place. The authenticated
+ * caller supplies source identity; it is never accepted from this input.
+ */
 export interface Deliver {
-  conversation: string;
-  /** Source-owned message id, unique within the conversation. */
-  message: string;
+  id: string;
+  agent: string;
+  venue: string;
+  place: string;
+  from: Sender;
+  kind: 'message' | 'wake';
+  at: string;
+  label?: string;
   text: string;
+  local?: boolean;
 }
-export interface Reply extends Deliver {
+export interface Reply {
+  conversation: string;
+  id: string;
+  text: string;
   /** The bound runtime job. The operation verifies this binding. */
   job: string;
 }

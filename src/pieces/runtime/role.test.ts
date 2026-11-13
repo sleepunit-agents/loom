@@ -27,8 +27,8 @@ it('retains the caller and retry id through the registry and routes status to at
   expect(runtime.startBody(owner, input, 'start')).toEqual({ ok: true, value: { by: 'owner' } });
   expect(runtime.startBody(owner, input, 'start')).toEqual({ ok: true, value: { by: 'owner' } });
   expect(runtime.startBody(owner, { ...input, title: 'Different' }, 'start')).toMatchObject({ ok: false, code: 'conflict' });
-  expect(runtime.deliver(owner, { conversation: 'cv', message: 'm', text: 'Hello' }, 'in').ok).toBe(true);
-  expect(runtime.reply(owner, { conversation: 'cv', message: 'r', text: 'Hi', job: 'j' }, 'out').ok).toBe(true);
+  expect(runtime.deliver(owner, { id: 'm', agent: 'art', venue: 'loom', place: 'th:1', from: { kind: 'person', slug: 'owner' }, kind: 'message', at: '2026-11-13T03:00:00Z', text: 'Hello' }, 'in').ok).toBe(true);
+  expect(runtime.reply(owner, { conversation: 'cv', id: 'r', text: 'Hi', job: 'j' }, 'out').ok).toBe(true);
   expect(runtime.reportStatus(owner, { id: 'art', agent: 'art', state: 'working', work: 'Work', jobs: [], watched: [] }, 'status').ok).toBe(true);
   expect(seen).toEqual(['runtime.startBody', 'runtime.deliver', 'runtime.reply', 'attention.reportStatus']);
 });
@@ -36,6 +36,6 @@ it('does not claim delivery succeeded when the runtime is not installed', () => 
   const home = mkdtempSync(join(tmpdir(), 'runtime-role-'));
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
   const app = createFoundation({ home }); cleanups.push(() => app.close());
-  expect(runtimeRole(app.operations).deliver({ kind: 'agent', id: 'art' }, { conversation: 'cv', message: 'm', text: 'Hello' }, 'in'))
+  expect(runtimeRole(app.operations).deliver({ kind: 'agent', id: 'art' }, { id: 'm', agent: 'art', venue: 'loom', place: 'th:1', from: { kind: 'person', slug: 'owner' }, kind: 'message', at: '2026-11-13T03:00:00Z', text: 'Hello' }, 'in'))
     .toMatchObject({ ok: false, code: 'not-found' });
 });
