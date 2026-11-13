@@ -134,3 +134,8 @@ it('refuses noncanonical selected store numbers without treating envelope timest
  const f=fixture();f.store('shuttle',[['routes','household',{guild:'789',peer_turns_each:1.5}],['channels','art',{bot:'100'}]]);
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
 });
+
+it('store-only noncanonical bot numbers cannot disappear through a falsy marker',()=>{
+ const f=fixture();f.sources.files=[];f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:1.5}]]);
+ expect(()=>readBridgeImport(f.sources,{instances:[],connections:[]},h,f.open)).toThrow();
+});

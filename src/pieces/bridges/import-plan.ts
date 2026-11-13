@@ -41,7 +41,7 @@ function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|
   const bots:Record<string,unknown>={},roles:Record<string,unknown>={},channels:Record<string,Record<string,unknown>>={},threads:Record<string,unknown>={},claims=new Map<string,string[]>();
   for(const [cid,n]of Object.entries(object.parse(h.channel_names??{})))channels[cid]={name:n,primary:null};
   for(const [a,raw]of [...parts].sort(([a],[b])=>a<b?-1:1)){
-    const p=parse(raw);if(p.bot)bots[a]=p.bot;if(p.bot_role)roles[a]=p.bot_role;
+    const p=parse(raw);if(p.bot!=null&&p.bot!=='')bots[a]=p.bot;if(p.bot_role!=null&&p.bot_role!=='')roles[a]=p.bot_role;
     for(const cid of Object.keys(object.parse(p.answers??{})))claims.set(cid,[...(claims.get(cid)??[]),a]);
     for(const [tid,rawThread]of Object.entries(object.parse(p.threads??{}))){
       const t=Object.fromEntries(Object.entries(object.parse(rawThread)).filter(([k])=>!['peer','pair','guest_venue','readers'].includes(k)));
