@@ -575,3 +575,36 @@ supply the immutable snapshot after fetching. Fetch scheduling, repository
 credential access, trusted body-host build-check/report, daemon staging gates,
 current grant revalidation and actual build/launch still remain. A computed tag
 alone proves neither image availability nor execution authority.
+
+## Full repository house manifest validation
+
+`house-manifest.ts` ports the declarative parsing part of old `house.mjs`'s
+`parseHouseFile` and `runSpec`. `parseHouseManifest` validates the whole house
+and up to 16 services, normalizing command/task defaults, secret destinations,
+static environment, allowed mount kinds, requested harnesses, nested containers,
+hostname, ports, tailnets, attach command and canonical build watches. Unknown
+fields, reserved or conflicting environment variables, duplicate destinations,
+invalid paths/ports and oversized lists reject. Harness-owned environment names
+cannot be supplied when that harness is requested. Services have their own run
+settings and no task field. No task settings are implicitly inherited by a service.
+
+`inspectHouseBuild` composes that validator with `inspectBuild`: one house-file
+read must pass full validation before context/Containerfile/watch object reads,
+all pinned to the original immutable commit. The original `inspectBuild` remains
+build-only for callers explicitly needing that narrower contract. Both are
+internal and uncalled by the daemon or registry.
+
+The structured parser explicitly refuses null and nonobject declaration maps;
+the old parser incidentally treated some null values as omitted and some arrays
+as empty maps. Omit optional fields for defaults. Normalized output matches the
+old run shapes, but errors use Zod diagnostics rather than old CLI prose. The
+4 MiB byte cap applies to standalone parsing too. These choices fail closed on
+malformed declarations without changing an executable consumer.
+
+This validates declarations, not grants or credentials. Secret aliases and login
+names are only requested destinations; no secret value is read or returned. A
+future runner still needs an actual fetched snapshot, filesystem/symlink checks
+for materialized build paths, current central authorization and grants, staging
+and outside-effect gating, and build/launch implementation. No repository fetch,
+process, container, credential issuance, permission rule or live installation
+changes in this slice.
