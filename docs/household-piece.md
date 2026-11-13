@@ -441,3 +441,46 @@ called. The one Setup browser test uses two windows and captures this actual
 screen in Neon Noir/Daylight at 390, 1280 and 1920 pixels under
 `artifacts/household-setup/` in CI; these images document the implemented controls,
 not the remaining agent-bootstrap/credential screens. No live move is performed.
+
+### Token and session administration clients
+
+`loom-token` and `loom-sessions` are explicit new-side API clients, generated
+from the same command/response declarations the daemon registers. Both require
+`LOOM_URL` (an HTTP(S) origin) and `LOOM_TOKEN_FILE`; neither opens local app data.
+They accept a command and a JSON object. Help exits 0, malformed invocation 2,
+refused/unavailable requests 1, and successful commands 0.
+
+```
+loom-token list '{}'
+loom-token create '{"role":"agent","agent":"art","label":"house build","service":"build","house":"house"}'
+loom-token create '{"role":"owner","member":"jonathan","label":"operator"}'
+loom-token revoke '{"label":"house build","withPasskeys":true,"withDevices":true}'
+loom-sessions list '{}'
+loom-sessions revoke '{"ref":"0123456789abcdef"}'
+loom-sessions revoke '{"label":"screenshots"}'
+```
+
+Creation prints the bearer alone, once, for redirection to its destination.
+It never retries or stores its response in the operation journal. If the reply
+is lost, list tokens and revoke the named token before deliberately minting a
+replacement. List/revoke return JSON metadata instead of the legacy aligned
+text; no digest, raw session ID, credential key or push endpoint is returned.
+Revocation uses the normal stable operation ID and can retry a lost response.
+HTTP API replies use `Cache-Control: no-store`.
+
+| Old command behavior | New operation / disposition |
+| --- | --- |
+| token create: agent, service/house suffix, owner | `token.create`; owner requires an explicit member; agent must already belong to the household |
+| old peer, piece, runtime and review token roles | Not minted: next policy has member, agent, runner and service viewers. Old piece/peer gates and runtime token routes belong to the withdrawn architecture. Runner/service minting requires an explicitly active `signin.setPrincipal` entry; minting does not activate or grant it |
+| token list | `token.list`, safe metadata including role, member, lifecycle and passkey origin label |
+| token revoke with optional passkeys/devices | `token.revoke`; plain revoke leaves descendants/devices; compromise follows passkey ancestry and removes affected push rows atomically |
+| sessions list | `sessions.list`, 16-hex refs, labels, device, sign-in method, issued/seen dates and ended status |
+| sessions revoke ref / agent label | `sessions.revoke`; ambiguous refs refuse, labels match agent/headless sessions only; associated push subscriptions stop |
+| token link | Existing explicit next-mode sign-in link command; unchanged |
+
+These operations and the owner-only `signin.admin` Live snapshot use the central
+household-owner policy. They do not implement Account's own-person passkey/device
+screen or Setup's first-token/bootstrap UI; those remain in the inventory.
+The generated clients deliberately use JSON instead of maintaining a second
+legacy flag/parser/formatter contract. Existing unflagged CLI behavior stays on
+the old side until the coordinated move.

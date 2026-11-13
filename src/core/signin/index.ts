@@ -1,4 +1,5 @@
 /** Next-mode credentials. Only loom.db is consulted; no legacy file activation. */
+import { installAccessAdmin } from './admin.js';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { z } from 'zod';
@@ -101,13 +102,13 @@ export class Signin {
       const all=Object.entries(f.sessions).sort((a,b)=>rank(a[1])-rank(b[1])||a[1].issuedAt-b[1].issuedAt);
       for(const [key] of all.slice(0,Math.max(0,all.length-50))) delete f.sessions[key];
     });
-    this.app.live.refreshAccess(); return id;
+    queueMicrotask(() => this.app.live.changed([{type:'core.access',id:'credentials'}])); return id;
   }
   cookie(id: string, req: IncomingMessage) {
     const secure=!!('encrypted' in req.socket && req.socket.encrypted) || !!(process.env.LOOM_PUBLIC_URL?.startsWith('https://'));
     return `loom_ui=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${id?MONTH:0}${secure?'; Secure':''}`;
   }
-  end(id: string) { this.sessions.change(f=>{delete f.sessions[hash(id)];}); this.app.live.refreshAccess(); }
+  end(id: string) { this.sessions.change(f=>{delete f.sessions[hash(id)];}); queueMicrotask(() => this.app.live.changed([{type:'core.access',id:'credentials'}])); }
   link(member: string, label?: string, agent?: boolean, signedInAt?: number, ttl=300) {
     const h=this.household(); if (!h?.members.some(m=>m.person===member)) throw new OperationError('invalid','Unknown member');
     const code=random();
@@ -150,6 +151,7 @@ export class Signin {
       this.tokens.change(tokens=>{tokens.push({role:'owner',member:s.viewer.id,label:tokenLabel,sha256:secret,passkey:hash(registration.id),from_sha256:s.s.secret,created:new Date(this.app.operations.clock.now()).toISOString()});});
       this.sessions.change(f=>{delete f.challenges![hash(registration.challenge)];f.passkeys ??={};f.passkeys[registration.id]={id:registration.id,publicKey:registration.publicKey,alg:registration.alg,counter:registration.counter,label,secret,tokenLabel,created:this.now()};});
     }).immediate();
+    queueMicrotask(() => this.app.live.changed([{type:'core.access',id:'credentials'}]));
   }
   login(body: Record<string,unknown>, rp: {origin:string;rpId:string}, device?: string) {
     return this.app.db.transaction(()=>{
@@ -169,6 +171,7 @@ export function installSignin(app: Foundation) {
     );
   ` }]);
   const s=signin(app);
+  installAccessAdmin(app);
   // Deliberately ephemeral: no write retry journal may retain a sign-in URL or its input hash.
   app.operations.register({name:'signin.link',input:z.object({member:z.string(),label:z.string().optional(),agent:z.boolean().optional(),ttl:z.number().int().min(1).max(3600).optional()}),output:z.object({path:z.string()}),doors:['direct'],may:v=>v.kind==='member'&&s.owner(v.id),run:(_ctx,i)=>({path:s.link(i.member,i.label,i.agent,undefined,i.ttl)})});
   app.operations.register({name:'signin.setPrincipal',write:true,input:z.object({kind:z.enum(['runner','service']),id:z.string().regex(/^[a-z0-9-]+$/),active:z.boolean()}),output:z.object({ok:z.literal(true)}),may:v=>v.kind==='member'&&s.owner(v.id),run:(ctx,i)=>{new HouseholdRows(ctx.db,'settings').put(`signin-principal:${i.kind}:${i.id}`,{active:i.active});ctx.changed('core.access','credentials');return {ok:true as const};}});
