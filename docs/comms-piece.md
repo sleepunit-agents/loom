@@ -10,11 +10,44 @@ runtime role. `web/src/pieces/comms` renders records through the shared data
 client and kit. The importer is an offline command, not a second running data
 path. Neither running piece nor browser reads the old stores.
 
-Runtime integration update: main now includes the runtime owner's
-[private Comms/body composition](https://github.com/sleepunit-agents/loom/pull/1043).
-Its current contract is in [runtime-piece.md](runtime-piece.md). Earlier missing-binding
-statements below record prior checkpoints; final integration/parity acceptance
-is still required before this whole rebuild is complete.
+## Runtime integration checkpoint
+
+Reconciled against main `628a7d7` after [#1043](https://github.com/sleepunit-agents/loom/pull/1043)
+and [#1041](https://github.com/sleepunit-agents/loom/pull/1041). This checkpoint
+supersedes the older production-binding gaps in the inventory below; those rows
+still describe the remaining behavior of each surface. It does not close the
+whole Comms rebuild. The runtime contract lives in [runtime-piece.md](runtime-piece.md).
+
+| Capability | Installed path / remaining boundary |
+| --- | --- |
+| Private delivery and authoritative acceptance | `next.ts` installs Comms with `conversationRuntime.delivery`. `runtime.acceptConversation` binds the original member, agent, thread, conversation, project, sequence and generation, and queues the generic private reference in the same transaction as its routing receipt. Private message words remain in Comms ciphertext. |
+| Body read and reply | One-time `runtime.takeInput` returns the central job credential to the assigned runner. `runtime.readConversation` and `runtime.reply` use proof attached to the exact authenticated body viewer; current execution, binding and member access are rechecked. Comms rechecks proof after crypto. Shared agent tokens and caller-supplied job ids confer no private access. |
+| Start and control | Assigned runner running/waiting reports call `Comms.confirmStart` with the persisted delivery generation. `runtime.conversationStatus` supplies working/done heartbeats and consumes stop. Archive/delete ends the bound active job and revokes its central credentials. Model/account selection, resume and complete interrupt behavior remain unfinished. |
+| Recovery and staging | `conversationRuntime` observes `core.effect` changes and calls both `reconcileDeliveries` and `reconcileEnds`; startup connects delivery reconciliation, and Comms also recovers its end journal. Runner input has its own one-time staging gate. Unknown acceptance and lost input never authorize automatic replay. |
+| Filing and recipients | `next.ts` supplies the current household agent list/default and central sharing; `conversations.refile` moves the private job and binding with the thread transaction under central move policy. Attachment UI and project navigation remain unfinished. |
+| Made-here work | `installComms` installs Tasks/Changes work feeds and the scoped live panel. Referenced work, notes, chips and reverse source links remain unfinished. |
+
+At this checkpoint Runtime's [#1054](https://github.com/sleepunit-agents/loom/pull/1054)
+is **open**, owning authoritative runner-fenced final-start failure notices and
+member-requested generation retry. Do not treat it as landed or duplicate its
+implementation. Ordinary failure/unknown must remain held. Reconcile its eventual
+merged head before final acceptance.
+
+The production composition does **not** yet supply Comms's authoritative
+`conversation` lookup. Spawn classification, trusted spawned-thread creation and
+ordinary conversation-step reads/navigation therefore remain integration work.
+The bound runtime body currently exposes read/reply/status; it does not yet bind
+`describe`, title, private activity batches, body activity samples, terminal
+notices, spawn or ordinary conversation writers as complete runtime tools.
+
+Private Attention remains separate unfinished work: the composed role forwards
+original-member boolean answers to opaque asks, but freeform answers are refused.
+Ask wording and typed answers must stay out of Attention rows and generic retry
+receipts. Private creation, state/history and Inbox synchronization still need
+the encrypted reference seam. Push subscription/member matching, dedupe, rate
+limits, staging dispatch, desk summaries, expired-word digest fallback and the
+remaining UI inventory below also remain required. No installed state, real
+import or rollout was exercised for this checkpoint.
 
 ## Current operations and records
 
