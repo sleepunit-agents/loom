@@ -4,7 +4,7 @@ export interface Work extends LiveRecord {
 }
 export interface Wake extends Work {
   due: number; state: 'pending' | 'parked' | 'held' | 'firing' | 'fired' | 'failed' | 'cancelled';
-  hold?: string; outcome?: string; schedule?: string; failures: number; wait?: { id: string; until: number };
+  canVouch?: boolean; hold?: string; outcome?: string; schedule?: string; failures: number; wait?: { id: string; until: number };
 }
 export interface Schedule extends Work {
   at: string[]; days: string; enabled: boolean; lane?: string;

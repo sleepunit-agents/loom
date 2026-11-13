@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import { afterEach, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -25,7 +27,7 @@ async function setup(preinstalled = false) {
   const access = fixtureSharing();
   access.services.clock = {types:['approval'],operations:['approvals.piece-request']};
   let first = true;
-  const options = {home, clock, next:true, sharing:()=>access, stdout:()=>{}, install(app: Parameters<NonNullable<Parameters<typeof startLoom>[0]['install']>>[0]) {
+  const options = {home, clock, next:true, authenticate: (req: import('node:http').IncomingMessage) => ({viewer:req.headers['x-fixture-agent'] ? {kind:'agent' as const,id:'art'} : owner, valid:()=>true}), sharing:()=>access, stdout:()=>{}, install(app: Parameters<NonNullable<Parameters<typeof startLoom>[0]['install']>>[0]) {
     if (first) { importClock(app.db, source, clock.now()); first = false; }
     if (preinstalled) installApprovals(app.db, app.operations, app.live, ()=>access);
   }};
@@ -174,4 +176,27 @@ it('reports invalid executable imports as gone without rolling back other eligib
   const receipt = s.app.db.prepare("SELECT result FROM core_operations WHERE name='clock.vouch'").get() as {result:string};
   expect(JSON.parse(receipt.result)).toEqual({ok:true,value:{done:[ids[0]],gone:[ids[1]]}});
   expect(load(s.app.db).approvals.find(a=>a.id===card.id)?.state).toBe('used');
+});
+
+it('offers the live adoption hint only to the current owner for executable eligible work and refreshes it on access loss', async () => {
+  const s = await setup();
+  s.change(ids[1],{continuation:'unverified-handle'});
+  s.change(ids[2],{prompt:undefined,file:'../outside'});
+  const sockets: WebSocket[] = [];
+  try {
+    for (const agent of [false,true]) {
+      const ws = new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:agent ? {'x-fixture-agent':'art'} : {}}); sockets.push(ws);
+      await once(ws,'open');
+      const initial = once(ws,'message'); ws.send(JSON.stringify({kind:'subscribe',type:'wake'}));
+      const [raw] = await initial;
+      const records = JSON.parse(raw.toString()).records as Array<{id:string;canVouch:boolean}>;
+      expect(records.find(w=>w.id===ids[0])?.canVouch).toBe(!agent);
+      expect(records.filter(w=>w.id!==ids[0]).every(w=>w.canVouch===false)).toBe(true);
+    }
+    const changed = once(sockets[0],'message');
+    s.access.members.jonathan.owner = false; s.app.live.refreshAccess();
+    const [raw] = await changed;
+    expect(JSON.parse(raw.toString()).records.every((w:{canVouch:boolean})=>!w.canVouch)).toBe(true);
+    expect(s.call('clock.vouch',{target:`art:${ids[0]}`}).ok).toBe(false);
+  } finally { for (const ws of sockets) { const closed = once(ws,'close'); ws.terminate(); await closed; } }
 });

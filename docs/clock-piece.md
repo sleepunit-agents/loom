@@ -276,7 +276,7 @@ the command inventory above, the source has these domain obligations:
 | `wake_place` / `house_may_join`: a house's named lane joins an existing conversation only with runtime-verified same-conversation provenance | Runtime owns delivery; caller-supplied place must not let work join an arbitrary existing body. The current field has no such validation yet. |
 | `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note and scoped next-mode approval/secret-answer composition are implemented below. |
 | Local wake: whole prompt and note retained, exact digest, one approval spend, standing job checked again at fire; one pending occurrence per standing target | Local filing/recovery/standing integration remains unfinished; a local marker or free approval id is not a grant. |
-| Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Owner adoption of eligible unknown plain imports and atomic owner-applied Allow are implemented, with an owner client. Ask filing, grouping, denial suppression, app actions and other imported recovery remain unfinished. |
+| Vouch: unknown one-offs only; a person's work stays theirs; owner-applied Allow spends once for canonical ids; denial never re-asks | Owner adoption of eligible unknown plain imports and atomic owner-applied Allow are implemented, with owner client and app actions. Ask filing, grouping, denial suppression and other imported recovery remain unfinished. |
 | Empty spool plants a fixed 24-hour dead-man, replaced by real work; initial unconfigured service arms nothing | Explicit configured-agent fixed 24-hour safety wakes are implemented below; default configuration is empty and no owner Viewer is synthesized. |
 | Runtime model quota waits for reset (15 minutes to eight days; malformed reset defaults to an hour), does not count as a job failure; quota notice does not retry itself | Structured quota outcomes now defer to reset plus one minute without counting a failure, bounded to 15 minutes–eight days, and suppress quota-triage repeats. Owner notices are implemented through the Attention source described below. |
 | Retry alerts at failure three, give-up alert at six; clock's Next and jobs shown on agent cards | Clock event history, owner failure/quota notices, scoped Next/jobs reads and live Home agent-card composition are implemented. |
@@ -654,8 +654,13 @@ itself must explicitly supply this application role; an uncomposed installer
 continues to fail closed. Clock never reads Approvals tables or spends its receipt.
 
 This is the backend owning application for legacy `vouch-approved` and the owner
-vouch action. The wake client exposes the owner action as described above. App
-vouch and ask-vouch filing, automatic grouped asking and
+vouch action. The wake client exposes the owner action as described above. The app
+shows “Count as my work” only for a live, eligible wake visible to the current owner
+with target create authority. Its confirmation retains the saved words and due time,
+explains overdue dispatch and pause, and sends the existing operation through the
+window’s retained retry receipt. The live `canVouch` hint is advisory; the mutation
+rechecks authority and eligibility. Provenance-held work has no Run now button.
+Ask-vouch filing, automatic grouped asking and
 denial suppression, other imported adoption/recovery, and runtime-authenticated
 provenance remain unfinished on t-2201. No live import, configuration or dispatch
 is enabled by this slice.
