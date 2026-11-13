@@ -123,3 +123,22 @@ the receipt; interruption or comparison/receipt failure rolls everything back.
 The source file is unchanged. Names, requests, grants, carry/revocation and old
 audit import remain required; this slice does not claim the complete secrets
 migration or final command, and does not perform a real import.
+
+## Offline request source model
+
+`parseLegacySecretRequests(Buffer)` in `request-source.ts` parses stored v1
+`requests.json` metadata only. It preserves IDs, original stored states (an
+expired grant is still `granted`), exact house/service presence, timestamps,
+minutes, policy/owner decision, actual answering member when present, Always,
+and both carry links. It neither grants access nor reads a file or clock.
+Missing attribution on old owner decisions stays missing; no owner is invented.
+
+Malformed/unsupported sources, unknown fields, mismatched map IDs, self links
+and impossible local decision metadata refuse with a fixed value-free error.
+Unlike the old runtime's empty-store fallback, migration refuses corruption.
+Historical carry partners can have been pruned by the old 200-record retention;
+links are retained even when their other row is absent. This source model does
+not assert cross-row consistency or authorize a missing partner. The final
+importer must validate effective carry/revocation semantics and import matching
+scoped grants, names, policy and audit in its enclosing transaction. This slice
+has no DB writes, receipt, filesystem discovery, command or daemon registration.
