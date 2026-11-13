@@ -17,7 +17,7 @@ function Reader({ task, records, open, act }: { task: Task; records: readonly Ta
     <Relations label="Blocked by" ids={task.dependsOn} tasks={records.filter(t => task.dependsOn.includes(t.id))} open={open} />
     <Relations label="Blocks" tasks={records.filter(t => (t.dependsOn ?? []).includes(task.id))} open={open} />
     <section><h3>Pull requests</h3>{pullRequests(task).length ? <ul>{pullRequests(task).map(([ref,url]) => <li key={ref}><a href={url} target="_blank" rel="noreferrer">{ref}</a></li>)}</ul> : <p>None linked</p>}</section>
-    <section><h3>Comments</h3>{task.comments.length ? <ol className="grid gap-4">{[...task.comments].sort((a,b) => a.at.localeCompare(b.at)).map((comment,n) => <li key={n}><p>{comment.actor} · <time dateTime={comment.at}>{new Date(comment.at).toLocaleString('en-US', { timeZone: 'America/Chicago' })} CT</time></p><p className="whitespace-pre-wrap break-words">{comment.text}</p></li>)}</ol> : <p>No comments yet</p>}</section>
+    <section><h3>Comments</h3>{task.comments.length ? <ol className="grid gap-4">{[...task.comments].sort((a,b) => Date.parse(a.at) - Date.parse(b.at)).map((comment,n) => <li key={n}><p>{comment.actor} · <time dateTime={comment.at}>{new Date(comment.at).toLocaleString('en-US', { timeZone: 'America/Chicago' })} CT</time></p><p className="whitespace-pre-wrap break-words">{comment.text}</p></li>)}</ol> : <p>No comments yet</p>}</section>
   </article>;
 }
 function TaskRow({ task, selected, open, act }: { task: Task; selected: boolean; open(id: string): void; act(action: Action, id: string): void }) {
@@ -33,7 +33,7 @@ function TaskRow({ task, selected, open, act }: { task: Task; selected: boolean;
     actions={<details><summary aria-label={`Actions for ${task.title}`}>Actions</summary>{actionsFor(task).map(a => <Button variant="outline" size="sm" key={a} onClick={() => act(a,task.id)}>{actionLabel[a]}</Button>)}</details>} />;
 }
 export default function TasksApp({ path: shellPath, go }: { path?: string; go?: (path: string) => void } = {}) {
-  const [localPath,setLocalPath] = useState(() => typeof location === 'undefined' ? '/_dev/tasks' : location.pathname);
+  const [localPath,setLocalPath] = useState(() => typeof location === 'undefined' ? '/_dev/tasks-preview' : location.pathname);
   const path = (shellPath ?? localPath).split('?')[0];
   const base = path.split('/task/')[0];
   const selected = /\/task\/(t-\d+)$/.exec(path)?.[1];
