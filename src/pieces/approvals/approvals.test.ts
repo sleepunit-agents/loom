@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { once } from 'node:events';
+import { Readable } from 'node:stream';
+import { runApprovalsClient } from './client.js';
 import { WebSocket } from 'ws';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,7 +9,7 @@ import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { fixtureSharing } from '../../fixture.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
-import { installApprovals } from './index.js';
+import { installApprovals, type ApprovalOptions } from './index.js';
 import { load, persist } from './store.js';
 import { importApprovals } from './importer.js';
 import { approvalsRole } from './role.js';
@@ -19,11 +21,11 @@ const dir=()=>{const d=mkdtempSync(join(tmpdir(),'approvals-test-'));dirs.push(d
 afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true});});
 const target=`github:acme/app#12@${'a'.repeat(40)}`;
 const ask={kind:'merge',target,ask:'Merge the fix?',why:'It fixes the broken page.',if_yes:'I merge it.',if_no:'I leave it open.'};
-async function setup(applications?: ApprovalApplications){
+async function setup(applications?: ApprovalApplications,resolver?:ApprovalOptions['caller']){
   const clock=new FakeClock();let identity:Caller={who:{agent:'art',where:'h-1'},for:'owner'};
   const access=fixtureSharing();
   const sharing=()=>({...access,services:{runtime:{types:['approval'],operations:['approvals.piece-request','approvals.piece-use','approvals.piece-withdraw','approvals.piece-rule','approvals.piece-tell','approvals.standing']}}});
-  const app=await startLoom({home:dir(),clock,sharing,authenticate:req=>{const id=req.headers.authorization?.replace('Bearer ','');return id&&access.members[id]?{viewer:{kind:'member',id},valid:()=>!!access.members[id]}:undefined;},install:app=>installApprovals(app.db,app.operations,app.live,sharing,{applications,localAgent:'art',projects:()=>[{slug:'pond',repos:['github:acme/app']}],caller:v=>v.kind==='agent'?{...identity,who:{...identity.who,agent:v.id}}:undefined})});closes.push(app.close);let seq=0;
+  const app=await startLoom({home:dir(),clock,sharing,authenticate:req=>{const id=req.headers.authorization?.replace('Bearer ','');return id==='art'?{viewer:{kind:'agent',id},valid:()=>true}:id&&access.members[id]?{viewer:{kind:'member',id},valid:()=>!!access.members[id]}:undefined;},install:app=>installApprovals(app.db,app.operations,app.live,sharing,{applications,localAgent:'art',projects:()=>[{slug:'pond',repos:['github:acme/app']}],caller:resolver??(v=>v.kind==='agent'?{...identity,who:{...identity.who,agent:v.id}}:undefined)})});closes.push(app.close);let seq=0;
   const call=(op:string,input:Record<string,unknown>={},viewer:Viewer=agent,id=`op-${++seq}`)=>app.operations.call('direct',viewer,`approvals.${op}`,input,id);
   const value=(op:string,input:Record<string,unknown>={},viewer:Viewer=agent)=>{const r=call(op,input,viewer);expect(r.ok,JSON.stringify(r)).toBe(true);return r.ok?r.value as any:undefined;};
   return {...app,clock,call,value,access,identity:(next:Partial<Caller>)=>{identity={...identity,...next};},role:approvalsRole(app.operations,'runtime')};
@@ -301,5 +303,103 @@ describe('owner application routing and denial retention',()=>{
     expect(a.value('rule',{kind:'merge',targets:[target]})[target]).toMatchObject({tier:'do',for:'loren'});
     a.identity({for:'owner'});
     expect(a.value('rule',{kind:'merge',targets:[target]})[target]).toMatchObject({tier:'ask',for:'owner'});
+  });
+});
+
+describe('compatibility client and HTTP door',()=>{
+  it('retries the same argv and operation id after losing a committed response',async()=>{
+    const a=await setup(),token=join(dir(),'token');writeFileSync(token,'art');
+    let stdout='',stderr='',drop=true;const bodies:string[]=[];
+    const request:typeof fetch=async(url,options)=>{
+      bodies.push(String(options?.body));const response=await fetch(url,options);
+      if(drop){drop=false;await response.text();throw Error('lost response');}
+      return response;
+    };
+    const exit=await runApprovalsClient(['request','--kind','merge','--target',target,'--ask','Merge the fix?','--why','It fixes the page.','--if-yes','I merge it.','--if-no','I leave it open.'],{
+      env:{LOOM_URL:a.url,LOOM_TOKEN_FILE:token},stdin:Readable.from([]),stdinIsTTY:false,
+      stdout:s=>{stdout+=s;},stderr:s=>{stderr+=s;},
+    },{request,retry:async()=>{}});
+    expect(exit).toBe(0);expect(stderr).toBe('');expect(stdout).toMatch(/^a-[0-9a-f]{8}: asked the owner/);
+    expect(bodies).toHaveLength(2);expect(bodies[0]).toBe(bodies[1]);
+    expect(load(a.db).approvals).toHaveLength(1);expect(load(a.db).audit).toHaveLength(1);
+  });
+  it('rejects anonymous writes and direct service operations through HTTP',async()=>{
+    const a=await setup();
+    expect((await fetch(a.url+'/api/approvals/request',{method:'POST',body:'{}'})).status).toBe(401);
+    const response=await fetch(a.url+'/api/approvals/piece-request',{method:'POST',headers:{authorization:'Bearer art','content-type':'application/json'},body:JSON.stringify({id:'forged',input:{...ask,caller:{who:{agent:'art',where:'h-1'},for:'owner'}}})});
+    expect(await response.json()).toMatchObject({ok:false,code:'denied'});
+    expect(load(a.db).approvals).toEqual([]);
+  });
+});
+
+describe('refused spend audit survives rejection',()=>{
+  it('keeps the upstream request/allow/refusals/use sequence without changing the receipt',async()=>{
+    const a=await setup(),card=a.value('request',ask);
+    expect(a.call('use',{id:card.id,kind:'merge',target})).toMatchObject({ok:false});
+    a.value('answer',{id:card.id,action:'allow'},owner);
+    expect(a.call('use',{id:card.id,kind:'merge',target:target+'b'})).toMatchObject({ok:false});
+    expect(a.call('use',{id:card.id,kind:'relay',target})).toMatchObject({ok:false});
+    expect(a.call('use',{id:card.id,kind:'merge',target},other)).toMatchObject({ok:false});
+    a.identity({who:{agent:'art',where:'h-9 (chat)'}});
+    expect(a.call('use',{id:card.id,kind:'merge',target})).toMatchObject({ok:false});
+    expect(load(a.db).approvals[0].state).toBe('allowed');
+    a.identity({who:{agent:'art',where:'h-99'}});a.value('use',{id:card.id,kind:'merge',target});
+    expect(a.call('use',{id:card.id,kind:'merge',target})).toMatchObject({ok:false});
+    expect(load(a.db).audit.map(r=>r.event)).toEqual(['request','allow','refused-use','refused-use','refused-use','refused-use','use']);
+  });
+});
+
+describe('cold review authorization regressions',()=>{
+  it.each(['answer','open','use','withdraw','always','every-time','check'])('rejects non-string IDs before authorizing %s',async verb=>{
+    const a=await setup(),card=a.value('request',ask);
+    for(const id of [[card.id],{toString:card.id},null,0])
+      expect(a.call(verb,{id,action:'allow',kind:'merge',target})).toMatchObject({ok:false,code:'invalid'});
+    expect(load(a.db).approvals[0].state).toBe('pending');
+  });
+  it('checks request creation scope regardless of extra id input',async()=>{
+    const a=await setup();a.identity({project:'missing-project'});
+    for(const id of ['a-00000000',['a-00000000'],undefined])
+      expect(a.call('request',{...ask,id})).toMatchObject({ok:false,code:'denied'});
+    expect(load(a.db).approvals).toEqual([]);
+  });
+  it('Always and Every time cannot act on another member private card, including for a household owner',async()=>{
+    const a=await setup(),card=a.value('request',ask),state=load(a.db);
+    state.approvals[0].member='pollock';persist(a.db,state,a.clock.now());
+    expect(a.call('always',{id:card.id},owner)).toMatchObject({ok:false,code:'denied'});
+    expect(a.call('every-time',{id:card.id},owner)).toMatchObject({ok:false,code:'denied'});
+    expect(a.call('answer',{id:card.id,action:'allow'},owner)).toMatchObject({ok:false,code:'denied'});
+    expect(load(a.db).rules).toEqual([]);expect(load(a.db).standing).toEqual([]);
+  });
+  it.each([
+    ()=>({who:{agent:'mark',where:'h-1'},for:'owner'}),
+    ()=>Promise.resolve({who:{agent:'art',where:'h-1'},for:'owner'}),
+    ()=>({who:{agent:'art',where:'h-1'},for:'?',people:['eve',null]}),
+  ])('rejects malformed or asynchronous trusted callers',async resolver=>{
+    const a=await setup(undefined,resolver as ApprovalOptions['caller']);
+    expect(a.call('request',ask)).toMatchObject({ok:false,code:'denied'});
+    expect(load(a.db).approvals).toEqual([]);
+  });
+  it('ignores body assertions of agent, owner principal and service context',async()=>{
+    const a=await setup();a.identity({for:'?',who:{agent:'art',where:'h-1 (chat)'},people:['eve']});
+    const card=a.value('request',{...ask,for:'owner',who:{agent:'mark',where:'h-9'},caller:{who:{agent:'mark',where:'h-9'},for:'owner'},principal:'fabricated',agent:'mark'});
+    expect(card).toMatchObject({for:'?',people:['eve'],who:{agent:'art',where:'h-1 (chat)'},agent:'art'});
+  });
+  it('rejects an asynchronous application role and rolls back its synchronous writes',async()=>{
+    let a:Awaited<ReturnType<typeof setup>>;
+    a=await setup({runtime:{apply:((card:any)=>{a.db.prepare('INSERT INTO async_effect VALUES (?)').run(card.id);return Promise.resolve({ok:true,value:null});}) as any}});
+    a.db.exec('CREATE TABLE async_effect (id TEXT)');
+    const card=a.value('request',{...ask,kind:'grant',target:'tasks:mark'});
+    expect(a.call('answer',{id:card.id,action:'allow'},owner)).toMatchObject({ok:false,code:'unavailable'});
+    expect(a.db.prepare('SELECT * FROM async_effect').all()).toEqual([]);
+    expect(load(a.db).approvals[0].state).toBe('pending');
+    expect(load(a.db).audit.map(r=>r.event)).toEqual(['request']);
+  });
+});
+
+describe('service notices',()=>{
+  it('keeps the same person on notices filed directly by a piece',async()=>{
+    const a=await setup();a.value('set-rule',{kind:'merge',scope:'github:acme/*',tier:'tell',person:'loren'},owner);
+    expect(a.role.call('tell',{who:{agent:'art',where:'h-1'},for:'loren'},{kind:'merge',target,what:'Fixed the page.'},'notice')).toMatchObject({ok:true,value:{for:'loren'}});
+    expect(load(a.db).notices).toHaveLength(1);
   });
 });

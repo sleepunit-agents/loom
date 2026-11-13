@@ -144,3 +144,15 @@ export function always(s: State, id: string, by: string, c: DomainContext) {
   const r = setRule(s,'merge',scope,'do',by,c.now,forOf(a) === 'owner' ? undefined : forOf(a));
   answer(s,id,'allow',by,c.now); return r;
 }
+export function recordNotice(s: State, input: Record<string,unknown>, c: DomainContext) {
+  if (input.kind === 'host' && !c.piece) denied("a host step's notice is the runtime's");
+  const target = String(input.target), kind = String(input.kind);
+  const rule = rulesFor(s,c.caller,kind,[target],c.projects,c.now)[target];
+  if (!['do','tell'].includes(rule.tier)) denied(`the rule for ${target.split('@')[0]} is ask me: request a merge approval instead`);
+  const what = plain(String(input.what ?? ''));
+  if (!what || what.length > 300) invalid('--what says what was merged, at most 300 characters');
+  const notice = { at:iso(c.now), agent:c.caller.who.agent, kind, target, what, ...(c.caller.for !== 'owner' ? {for:c.caller.for} : {}) };
+  s.notices.unshift(notice);
+  s.notices = s.notices.slice(0,50);
+  return notice;
+}

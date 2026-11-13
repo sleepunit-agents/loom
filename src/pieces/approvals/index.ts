@@ -3,13 +3,14 @@ import { migrate, operation, maySee, mayAct, mayCreate, OperationError, type Vie
 import { schema } from './schema/001.js';
 import { load, persist, readApproval, ruleId } from './store.js';
 import { type Caller, type Approval, type State, stateOf, ownerAnswered, iso, maySpend, forOf, type Rule, type Standing } from './model.js';
-import { request, use, withdraw, answer, grant, find, allowEveryTime, standingMatch, always, everyTimeOk, type DomainContext } from './domain.js';
+import { request, use, withdraw, answer, grant, find, allowEveryTime, standingMatch, always, everyTimeOk, recordNotice, type DomainContext } from './domain.js';
 import { rulesFor, setRule, type Project } from './rules.js';
 import { denied, invalid, person } from './targets.js';
 import { plain, headline, cardWords } from './words.js';
 import { approvalCommands } from './commands.js';
 import { command } from './binding.js';
 import { callerSchema } from './validation.js';
+import { auditRefusedUse } from './refusal.js';
 import { answerAndApply, type ApprovalApplications } from './apply.js';
 const week = 7 * 86400_000;
 const scope = (a: Approval): RecordScope => ({ type:'approval', ...(a.project ? {project:a.project}:{}), ...(a.agent ?? a.who.agent ? {agent:a.agent ?? a.who.agent}:{}), ...(a.member ? {member:a.member}:{}) });
@@ -35,12 +36,24 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   const flush = (s: State, ctx: {now:number;changed(type:string,id:string):void}) => { for (const change of persist(db,s,ctx.now)) ctx.changed(change.type,change.id); };
   const register = (verb: string, write: boolean, run: (s:State,input:Record<string,unknown>,c:DomainContext,viewer:Viewer)=>unknown, config: { owner?:boolean; answer?:boolean; piece?:boolean; read?:boolean } = {}) => {
     const name = `approvals.${verb}`;
-    operations.register(operation({ name,write,input:z.record(z.string(),z.unknown()),output:z.unknown(),cli:approvalCommands.find(c=>c.name===verb),...(config.piece ? {doors:['direct'] as ['direct']} : {}),
+    const approvalId = ['check','use','withdraw','answer','open','always','every-time'].includes(verb);
+    const inputSchema = approvalId ? z.object({id:z.string().regex(/^a-[0-9a-f]{8}$/)}).catchall(z.unknown())
+      : verb === 'standing-off' ? z.object({id:z.string().regex(/^s-[0-9a-f]{8}$/)}).catchall(z.unknown())
+      : z.record(z.string(),z.unknown());
+    operations.register(operation({ name,write,input:inputSchema,output:z.unknown(),cli:approvalCommands.find(c=>c.name===verb),...(config.piece ? {doors:['direct'] as ['direct']} : {}),
+      ...(verb === 'use' ? { rejected(viewer:Viewer,input:Record<string,unknown>,_failure:unknown,now:number) { auditRefusedUse(db,input,context(viewer,input,now).caller,now); } } : {}),
       may(viewer,input) {
-        if (config.owner) return owner(viewer,name);
+        if (config.owner) {
+          if (!owner(viewer,name)) return false;
+          if (verb === 'always' || verb === 'every-time') {
+            const approval = readApproval(db,String(input.id));
+            return !!approval && visible(viewer,approval);
+          }
+          return true;
+        }
         if (config.piece) return viewer.kind === 'service' && mayAct(viewer,{type:'approval'},sharing(),'act',name);
-        if (typeof input.id === 'string') {
-          const a = readApproval(db,input.id); if (!a) return maySee(viewer,{type:'approval',agent:viewer.id},sharing());
+        if (approvalId) {
+          const a = readApproval(db,String(input.id)); if (!a) return maySee(viewer,{type:'approval',agent:viewer.id},sharing());
           if (config.answer) return mayAct(viewer,scope(a),sharing(),ownerAnswered.has(a.kind) ? 'household' : 'answer-person',name);
           return config.read ? visible(viewer,a) : mayAct(viewer,scope(a),sharing(),'act',name);
         }
@@ -73,19 +86,15 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('every-time',true,(s,i,c,v)=>allowEveryTime(s,String(i.id),v.id,c),{owner:true});
   register('standing-off',true,(s,i,c,v)=>{ const j=s.standing.find(j=>j.id===i.id); if(!j) throw new OperationError('not-found','no such standing job'); j.off ??= {at:iso(c.now),by:v.id}; return j; },{owner:true});
   register('grant',true,(s,i,c,v)=>{const principal=typeof i.person==='string'?i.person:'owner'; if(i.person==='owner'||!person.test(principal)) invalid('--person is the slug of whom it is for; leave it out for owner');return grant(s,String(i.kind),String(i.target),String(i.for),v.id,!!i.deny,principal,c.now);},{owner:true});
-  register('tell',true,(s,i,c)=>{
-    if(i.kind==='host'&&!c.piece) denied("a host step's notice is the runtime's");
-    const target=String(i.target),kind=String(i.kind),r=rulesFor(s,c.caller,kind,[target],c.projects,c.now)[target];
-    if(!['do','tell'].includes(r.tier)) denied(`the rule for ${target.split('@')[0]} is ask me: request a merge approval instead`);
-    const what=plain(String(i.what??'')); if(!what||what.length>300) invalid('--what says what was merged, at most 300 characters');
-    const n={at:iso(c.now),agent:c.caller.who.agent,kind,target,what,...(c.caller.for!=='owner'?{for:c.caller.for}:{})};s.notices.unshift(n);s.notices=s.notices.slice(0,50);return n;
-  });
+  register('tell',true,recordNotice);
   register('notices',false,(s,i,c,v)=>({notices:s.notices.filter(n=>maySee(v,{type:'approval',agent:n.agent},sharing()))}));
   register('state',false,(s,i,c,v)=>({approvals:Object.fromEntries(s.approvals.filter(a=>Array.isArray(i.ids)&&i.ids.includes(a.id)&&visible(v,a)).map(a=>[a.id,{state:stateOf(a,c.now),agent:a.who.agent,kind:a.kind,conversation:a.conversation??null,...(ownerAnswered.has(a.kind)?{target:a.target}:{})}]))}));
   // Direct-only roles are authenticated as a service with explicit central grants. No user-controlled --as exists.
   for (const verb of ['request','use','withdraw','rule','tell'] as const) {
     const name=`approvals.piece-${verb}`;
-    operations.register(operation({name,write:verb!=='rule',doors:['direct'],input:z.record(z.string(),z.unknown()),output:z.unknown(),may:(v)=>v.kind==='service'&&mayAct(v,{type:'approval'},sharing(),'act',name),run(ctx,input){
+    operations.register(operation({name,write:verb!=='rule',doors:['direct'],input:z.record(z.string(),z.unknown()),output:z.unknown(),
+      ...(verb === 'use' ? { rejected(viewer:Viewer,input:Record<string,unknown>,_failure:unknown,now:number) { if(viewer.kind==='service'&&mayAct(viewer,{type:'approval'},sharing(),'act',name)&&callerSchema.safeParse(input.caller).success) auditRefusedUse(db,input,input.caller as Caller,now,true); } } : {}),
+      may:(v)=>v.kind==='service'&&mayAct(v,{type:'approval'},sharing(),'act',name),run(ctx,input){
       const caller=input.caller as Caller;
       if(!callerSchema.safeParse(caller).success) invalid('A piece call needs its authenticated caller context');
       const c:DomainContext={caller,now:ctx.now,piece:true,localAgent:options.localAgent??'agent',projects:options.projects?.()},s=load(db);
@@ -94,7 +103,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
       else if(verb==='use') result=use(s,String(input.id),String(input.kind),String(input.target),c);
       else if(verb==='withdraw') result=withdraw(s,String(input.id),c);
       else if(verb==='rule') result=rulesFor(s,caller,String(input.kind),Array.isArray(input.targets)?input.targets.map(String):[],c.projects,c.now);
-      else { const r=rulesFor(s,caller,String(input.kind),[String(input.target)],c.projects,c.now)[String(input.target)];if(!['do','tell'].includes(r.tier)) denied('No do or tell rule covers this step');const n={at:iso(ctx.now),agent:caller.who.agent,kind:String(input.kind),target:String(input.target),what:plain(String(input.what??''))};if(!n.what||n.what.length>300)invalid('--what says what ran, at most 300 characters');s.notices.unshift(n);s.notices=s.notices.slice(0,50);result=n; }
+      else result=recordNotice(s,input,c);
       if(verb!=='rule')flush(s,ctx);return result;
     }}));
   }
