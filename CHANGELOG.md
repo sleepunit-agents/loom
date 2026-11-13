@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
 
 - Add next-mode Home with owned cards including idle agents, a central Needs you count/top three and the shared full question reader. Delivery and the remaining desk panels stay pending.
+- Show the latest visible report's complete jobs and watched items on Home, with new-app and HTTP(S) source links; absent or unavailable reports never claim there are no jobs.
 
 - Add an opt-in central Inbox preview with agent folders, answer history and daemon-confirmed answer controls. Source-owned decisions open their apps; private replies stay in Comms. Delivery remains pending.
 
