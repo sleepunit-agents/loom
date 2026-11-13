@@ -8,6 +8,7 @@ import { createFoundation } from '../core/app.js';
 import { SharingDatabase } from '../core/household/sharing.js';
 import { createMigrationRegistry, type MigrationRegistry } from './migration-registry.js';
 import { canonicalPlanValue, migrationPlanChecksum, prepareMigrationPlan, supportedMigrationImporters, type MigrationPlan } from './migration-plan.js';
+import { SecretsImportRefusal } from '../pieces/secrets/importer.js';
 import type { IOStreams } from './io.js';
 
 const receiptName = '.migration-all.json', pendingName = '.migration-all.pending';
@@ -159,5 +160,5 @@ export async function migrateAll(argv: string[], io: IOStreams, planOnly = false
     const report = await runMigrationAll(args.values.snapshot, args.values.home!, supplied);
     io.stdout(JSON.stringify(report, null, 2) + '\n');
     return report.status === 'complete' ? 0 : 3;
-  } catch { io.stderr('Migration refused; verify snapshot, plan and destination ownership, and stop the destination daemon.\n'); return 1; }
+  } catch (error) { if(error instanceof SecretsImportRefusal){io.stderr(error.message+'\n');return 1;} io.stderr('Migration refused; verify snapshot, plan and destination ownership, and stop the destination daemon.\n'); return 1; }
 }

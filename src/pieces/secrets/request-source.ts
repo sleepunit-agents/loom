@@ -5,7 +5,7 @@ import { parseLegacyMetadataJson } from './source-json.js';
 import { secretName } from './input.js';
 
 const requestId = z.string().regex(/^q-[0-9a-f]{8}$/);
-const timestamp = z.iso.datetime({ precision: 3 });
+const timestamp = z.iso.datetime();
 const request = z.object({
   id: requestId,
   secret: secretName,
