@@ -36,11 +36,36 @@ Existing model settings survive a preference change. The structured API accepts
 arrays; old command text parsing and stdout/exit parity belong to the generated
 client, still pending.
 
+## Placement selection
+
+`placement.ts` ports `control.mjs`'s `placeHouse`, `primaryOf`, `boxUp` and
+`meets` as the internal `placeBody` helper for the future start operation. It
+reads new-side records only and returns a box id. It does not authorize the
+caller, enqueue a job or dispatch anything; the eventual operation must use
+central `give-work` policy before calling it.
+
+An explicit live id or unique name must permit this agent and meet every need;
+it may be silent (work waits there). Otherwise, eligible preferences retain
+their stored order: first heard within two minutes, then first eligible even
+if silent. If no eligible preference remains, only explicitly registered,
+eligible local metadata is the default. An empty home fails with a conflict;
+the old environment-derived imaginary local box is deliberately removed.
+
+Needs match reported facts plus owner labels, with exact keys and
+case-insensitive substring values. With needs, choose the first live matching
+preference, then a matching primary, then a single eligible matching box.
+Multiple other matches require an explicit choice. Missing individual needs
+and needs split across different boxes produce distinct conflicts.
+Report-only and revoked boxes never host work. Ownership/lending and host
+permission use the existing `canHost` predicate. Local metadata initialization,
+runner heartbeats and drill/write-off state remain separate unfinished work;
+this helper makes no claim to implement their lifecycle.
+
 ## Remaining before the final move
 
 The full runtime rebuild is in progress. Enrollment (including stranger join,
 proof and owner decision), central credential integration, runner hello/poll/claim/report,
-placement and dispatch, houses/services/body hosts, delivery/results/retries,
+placement integration and dispatch, houses/services/body hosts, delivery/results/retries,
 model-account metadata and usage, settings, screens, generated command parity,
 background jobs and importer are still to be delivered. No old command is
 retired by these metadata operations. The final mapping must enumerate the old
