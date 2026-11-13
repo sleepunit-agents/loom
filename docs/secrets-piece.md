@@ -838,7 +838,9 @@ current user, have no group/world access, and have one hard link. Symlinks,
 nonregular files, missing files and malformed lengths refuse with the fixed
 `Secret retry key unavailable` diagnostic. Startup neither generates a key nor
 replaces an existing file. File bytes are bounded and erased after installation;
-the async installer retains its own crypto key copy.
+the async installer retains its own crypto key copy. A FIFO descriptor is rejected
+before reading, and even a file growing after inspection is read only up to
+33 bytes (the key plus one excess byte), then refused and erased.
 
 Every async installer, including the in-memory fixture entry, now atomically
 pins a domain-separated HMAC of a fixed constant in `secrets_meta` under
