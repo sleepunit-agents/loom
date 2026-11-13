@@ -9,3 +9,8 @@ export const homeApp = {
   fit: { min: [520,320] as [number,number], ideal:1040, max:null, big:true, why:'owned agents and their current questions' },
   Screen: Home,
 };
+
+const Rail = lazy(() => import('./rail'));
+export function RailSurface(props: { go: (path:string)=>void }) {
+  return createElement(Suspense,{fallback:createElement(Loading,{label:'Opening your agents…'})},createElement(Rail,props));
+}
