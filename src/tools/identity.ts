@@ -8,6 +8,7 @@
  * The response is structured text that the agent incorporates into its context.
  * The agent doesn't need to understand the structure — it just reads and follows.
  */
+import type { MemorySelection } from '../config.js';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -115,6 +116,8 @@ export async function loadIdentity(
   pieces?: string | readonly string[],
   /** Explicit household/standalone selection for the next stdio composition. */
   selection?: PeopleSelection,
+  /** Private memory routing is independent of People metadata. */
+  memorySelection?: MemorySelection,
 ): Promise<string> {
   const requested = pieces === undefined ? [] : typeof pieces === 'string' ? [pieces] : pieces;
   for (const name of requested) {
@@ -147,7 +150,7 @@ export async function loadIdentity(
     owners: async () => ownersBlock(contextDir, selection),
     'last-24h': async () => {
       try {
-        const tape = tapeForContext(contextDir, { onlyConversation });
+        const tape = tapeForContext(contextDir, { onlyConversation, memorySelection });
         return tape ? '# Last 24h across bodies\n\n' +
           '_Episodes other sleeves of you left (short-term, 48h TTL), and the digests of their ' +
           'conversations. This is the tape, oldest first — what just happened, not what is ' +
@@ -162,7 +165,7 @@ export async function loadIdentity(
     },
     'top-of-mind': async () => {
       try {
-        const digest = digestForContext(contextDir);
+        const digest = digestForContext(contextDir, { memorySelection });
         return digest ? '# Top of Mind\n\n' + digest : null;
       } catch { return null; }
     },
@@ -184,7 +187,7 @@ export async function loadIdentity(
   for (const section of IDENTITY_SECTIONS) {
     if (core && section.name === 'top-of-mind') {
       try {
-        const block = projectBlock(contextDir, project, { onFailure: e => recordFailure(contextDir, e) });
+        const block = projectBlock(contextDir, project, { onFailure: e => recordFailure(contextDir, e), selection: memorySelection });
         if (block) parts.push(block);
       } catch (error) {
         console.error('[loom:identity] project block failed:', error);
