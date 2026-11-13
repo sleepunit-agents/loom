@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { fixture, fixtureSharing, installFixture } from '../fixture.js';
+import { TokenDatabase } from '../core/household/tokens.js';
 import { installAttention } from '../pieces/attention/index.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
@@ -14,8 +15,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
   const home=mkdtempSync(join(tmpdir(),'loom-inbox-browser-')); fixture(home);
   const clock=new FakeClock(Date.parse('2026-11-13T06:00:00Z'));
   const owner={kind:'member' as const,id:'jonathan'};
-  const loom=await startLoom({home,clock,next:true,webRoot:root,install:app=>{installFixture(app);installAttention(app.db,app.operations,app.live,fixtureSharing);},
-    authenticate:req=>{const id=req.headers.cookie?.includes('fixture=pollock')?'pollock':req.headers.cookie?.includes('fixture=jonathan')?'jonathan':undefined;return id?{viewer:{kind:'member',id},valid:()=>true}:undefined;}});
+  const loom=await startLoom({home,clock,next:true,sharing:fixtureSharing,webRoot:root,install:app=>{installFixture(app);app.db.transaction(()=>new TokenDatabase(app.db).replace({v:1,tokens:[]},{}))();installAttention(app.db,app.operations,app.live,fixtureSharing);}});
   let serial=0;
   const raise=(input:object)=>{const result=loom.operations.call('direct',owner,'attention.raise',{agent:'art',answers:'yes-no',source:{kind:'piece',id:'fixture'},...input},`raise:${++serial}`);expect(result.ok).toBe(true);};
   raise({id:'public',ask:'Continue the Attention rebuild?',why:'The shared Inbox should show one current question in every window.',if_yes:'I build the remaining Home cards.',if_no:'I stop and keep this preview available.',refs:['t-2205','sleepunit-agents/loom#912']});
@@ -25,8 +25,15 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
   try {
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
     await context.grantPermissions(['local-network-access'],{origin:loom.url});
-    await context.addCookies([{name:'fixture',value:'jonathan',url:loom.url}]);
     const a=await context.newPage(),b=await context.newPage();
+    const signIn=async(page:typeof a,member:string)=>{
+      const link=loom.operations.call('direct',owner,'signin.link',{member});
+      expect(link.ok).toBe(true);if(!link.ok)throw Error('Fixture sign-in failed');
+      await page.goto(loom.url+(link.value as {path:string}).path);
+      const response=page.waitForResponse(r=>r.request().method()==='POST');
+      await page.getByRole('button',{name:'Sign in',exact:true}).click();expect((await response).status()).toBe(303);
+    };
+    await signIn(a,'jonathan');
     await Promise.all([a.goto(`${loom.url}/p/inbox-preview/ask/public`),b.goto(`${loom.url}/p/inbox-preview/ask/public`)]);
     const yes=(p:typeof a)=>p.getByRole('button',{name:'Yes',exact:true});
     await expect.poll(()=>yes(a).isEnabled()).toBe(true);await expect.poll(()=>yes(b).isEnabled()).toBe(true);
@@ -49,8 +56,8 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await expect.poll(()=>b.getByText('Answer this in its private conversation. Private replies stay there.').count()).toBe(1);
     expect(await yes(b).count()).toBe(0);
     const member=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
-    await member.grantPermissions(['local-network-access'],{origin:loom.url});await member.addCookies([{name:'fixture',value:'pollock',url:loom.url}]);
-    const p=await member.newPage();await p.goto(`${loom.url}/p/inbox-preview`);
+    await member.grantPermissions(['local-network-access'],{origin:loom.url});
+    const p=await member.newPage();await signIn(p,'pollock');await p.goto(`${loom.url}/p/inbox-preview`);
     await expect.poll(()=>p.locator('[data-split-row]').filter({hasText:'Review the shared Pond plan?'}).count()).toBe(1);
     expect(await p.getByText('Private conversation needs you').count()).toBe(0);
     expect(await p.getByText('Continue the Attention rebuild?').count()).toBe(0);
