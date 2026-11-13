@@ -390,10 +390,17 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    return t;
   };
   const before=available();
+  // A runtime restart can mint a different post id for the same final report.
+  // The stable reference is the receipt identity; first acceptance wins.
+  const report=m.kind==='reply'&&/^spawn-run-[0-9a-f]{12}$/.test(m.ref??'')?m.ref:undefined;
+  if(report)m.id=report;
+  const receipt=()=>report?db.prepare("SELECT seq FROM comms_messages WHERE thread=? AND kind='reply' AND id=?").get(place,report) as {seq:number}|undefined:undefined;
+  const accepted=receipt();if(accepted)return {seq:accepted.seq};
   const words=await key.seal(JSON.stringify({text:m.text,...(m.on?{card:{on:m.on}}:{}),run:m.run,tool:m.tool,state:m.state,step:m.step,ref:m.kind==='ask'?(m.ref??m.id):m.ref}));
   const result=db.transaction(()=> {
    const t=available();
    if(t.member!==before.member||t.conversation!==before.conversation||t.project!==before.project)return fail('denied','Thread unavailable');
+   const accepted=receipt();if(accepted)return {seq:accepted.seq,repeat:true};
    const meta=m.kind==='ask'?{ref:m.ref??m.id}:{};
    const old=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND kind=? AND id=?').get(place,m.kind,m.id) as MessageRow|undefined;
    if(old && m.kind==='card') {
@@ -405,6 +412,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    if(terminal&&!result.repeat){t.working=false;t.workingSince=null;t.workingBeat=null;saveThread(db,t);}
    return {seq:result.seq};
   })();
+  if('repeat' in result&&result.repeat)return {seq:result.seq};
   const current=requireAgent(agent,place);
   touched(current,result.seq);
   if(m.kind==='card'||m.kind==='reply'||m.id.startsWith('notice:no-reply:'))progressChanged(current);

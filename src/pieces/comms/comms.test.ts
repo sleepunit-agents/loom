@@ -13,6 +13,71 @@ import type { Attention, Hold, Comms, Delivery, RuntimeDelivery } from './role.j
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
 const member:Viewer={kind:'member',id:'jonathan'};
+it('keeps the first spawn report by reference across message ids, restart and expiry without crypto or new activity',async()=>{
+ let failSeal=false;const s=await setup({key:k=>({...k,seal:async words=>{if(failSeal)throw new Error('key unavailable');return k.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ const report={id:'first-report',kind:'reply' as const,text:'First private report',ref:'spawn-run-0123456789ab',run:'run-0123456789ab'};
+ const first=await s.comms.post('art',place,report);
+ const saved=()=>s.app.db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(place,first.seq);
+ const original=saved();await s.restart();s.clock.advance(1);
+ s.comms.status('art',place,'working');const live=vi.spyOn(s.app.live,'changed');live.mockClear();
+ failSeal=true;
+ expect(await s.comms.post('art',place,{...report,id:'retry-report',text:'Changed retry report'})).toEqual(first);
+ expect(saved()).toEqual(original);expect(live).not.toHaveBeenCalled();expect(s.comms.trace('art',place).working).toBe(true);
+ failSeal=false;s.clock.advance(14*86400_000);const expired=saved();failSeal=true;
+ expect(await s.comms.post('art',place,{...report,id:'after-expiry'})).toEqual(first);
+ expect(saved()).toEqual(expired);expect((expired as {words:unknown}).words).toBeNull();
+ expect(await s.call('messages',{thread:place})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({seq:first.seq,text:null})])});
+});
+it('coalesces overlapping spawn report references at commit and isolates them by thread',async()=>{
+ let pause=false,release!:()=>void,started!:()=>void;const gate=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:k=>({...k,seal:async words=>{if(pause){started();await gate;}return k.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);const other=await s.open();await s.comms.deliver('art',other,1);
+ const report={id:'report-a',kind:'reply' as const,text:'Private report A',ref:'spawn-run-0123456789ab'};
+ pause=true;const pending=s.comms.post('art',place,report);await began;pause=false;
+ const winner=await s.comms.post('art',place,{...report,id:'report-b',text:'Private report B'});release();
+ expect(await pending).toEqual(winner);
+ expect(await s.call('messages',{thread:place})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({seq:winner.seq,text:'Private report B'})])});
+ expect((s.app.db.prepare("SELECT count(*) AS n FROM comms_messages WHERE thread=? AND kind='reply'").get(place) as {n:number}).n).toBe(1);
+ await s.comms.post('art',other,report);
+ expect((s.app.db.prepare("SELECT count(*) AS n FROM comms_messages WHERE kind='reply'").get() as {n:number}).n).toBe(2);
+});
+for(const boundary of ['agent','ownership','archive','delete','close'] as const)it(`checks spawn report retry access before its receipt (${boundary})`,async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ const report={id:'first',kind:'reply' as const,text:'Private report',ref:'spawn-run-0123456789ab'};await s.comms.post('art',place,report);
+ if(boundary==='ownership')s.setSharing({...s.getSharing(),members:{jonathan:{agents:[]}}});
+ if(boundary==='archive'||boundary==='delete')await s.call('change',{thread:place,action:boundary});
+ if(boundary==='close')await s.comms.close();
+ await expect(s.comms.post(boundary==='agent'?'other-agent':'art',place,{...report,id:'retry'})).rejects.toThrow();
+});
+for(const boundary of ['ownership','archive','delete','close','conversation'] as const)it(`rechecks a racing spawn report receipt after encryption (${boundary})`,async()=>{
+ let pause=false,release!:()=>void,started!:()=>void;const gate=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:k=>({...k,seal:async words=>{if(pause){started();await gate;}return k.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ const report={id:'report-a',kind:'reply' as const,text:'Private report',ref:'spawn-run-0123456789ab'};
+ pause=true;const pending=s.comms.post('art',place,report);const rejected=expect(pending).rejects.toThrow();await began;pause=false;
+ await s.comms.post('art',place,{...report,id:'report-b'});
+ if(boundary==='ownership')s.setSharing({...s.getSharing(),members:{jonathan:{agents:[]}}});
+ if(boundary==='archive'||boundary==='delete')await s.call('change',{thread:place,action:boundary});
+ if(boundary==='close')await s.comms.close();
+ if(boundary==='conversation'){
+  const row=s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string};
+  s.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify({...JSON.parse(row.record),conversation:'cv-replaced'}),place);
+ }
+ release();await rejected;
+});
+it('applies spawn report references only to replies with the exact stable reference shape',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ for(const ref of ['spawn-run-0123456789aB','spawn-run-0123456789ab-extra','other-ref']){
+  await s.comms.post('art',place,{id:ref+'-one',kind:'reply',text:'One',ref});
+  await s.comms.post('art',place,{id:ref+'-two',kind:'reply',text:'Two',ref});
+ }
+ for(const kind of ['ask','error','card'] as const){
+  await s.comms.post('art',place,{id:kind+'-one',kind,text:'One',ref:'spawn-run-0123456789ab'});
+  await s.comms.post('art',place,{id:kind+'-two',kind,text:'Two',ref:'spawn-run-0123456789ab'});
+ }
+ expect((s.app.db.prepare('SELECT count(*) AS n FROM comms_messages WHERE thread=?').get(place) as {n:number}).n).toBe(13);
+});
 it('groups assigned spawn threads until their member writes, with scoped Live promotion',async()=>{
  const conversations=new Map<string,{agent:string;venue:string;version:string}>();
  const s=await setup({conversation:id=>conversations.get(id)});const place=await s.open();await s.comms.deliver('art',place,1);
