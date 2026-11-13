@@ -32,7 +32,10 @@ fields removed. The `message` record resolves ciphertext outside transactions.
 The live dispatcher rechecks access and the exact record after resolution;
 operation preparation rechecks session validity and permission before commit.
 Records are window-only. Runtime delivery rechecks thread ownership after
-crypto and inside the effect hold before handing words to runtime.
+crypto and inside the effect hold before handing words to runtime. Decrypted sends
+remain bound to the original member, conversation, project and exact message
+snapshot (including its receipt); changed rows receive neither stale words nor
+settlement from the old attempt. Unrelated title/read changes remain permitted.
 Runtime posts check original-member ownership, archive state and instance
 closure before encryption and again inside the commit transaction. A changed
 member or conversation during encryption rejects the post, including card
@@ -144,3 +147,12 @@ reject with unchanged rows and activity. Tests cover replies and existing card
 updates across revocation, closure, archive, deletion, member replacement and
 conversation replacement; initially unavailable posts of all four kinds are
 refused before encryption. All 132 focused tests and TypeScript checking pass.
+
+Delivery snapshot regression tests pause decryption or staging, then replace the
+member, conversation, project, ciphertext, message kind or receipt. All twelve
+first failed because runtime still received the original words. The guarded
+delivery now refuses them, preserves replacement rows, and permits unrelated
+title/read changes. A foreign-agent attempt cannot alter the held receipt.
+Late runtime acceptance or failure also preserves a replaced receipt. All 149
+focused tests, TypeScript checking and the web production build pass after the
+conflict-required rebase; no local browser ran.

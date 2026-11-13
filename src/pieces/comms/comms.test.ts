@@ -13,12 +13,12 @@ import type { Attention, Hold, Comms, Delivery, RuntimeDelivery } from './role.j
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
 const member:Viewer={kind:'member',id:'jonathan'};
-async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; receipt?:RuntimeDelivery['receipt']; end?:(conversation:string)=>Promise<void>}={}) {
+async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; receipt?:RuntimeDelivery['receipt']; deliver?:(message:Delivery)=>Promise<void>; end?:(conversation:string)=>Promise<void>}={}) {
  const home=mkdtempSync(join(tmpdir(),'comms-next-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();let sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['other','jonathan'],agents:['art','pond-bot']}},services:{runtime:{types:['message','thread'],operations:[]}}};
  const deliveries:Delivery[]=[];const ends:string[]=[];let comms:Comms & {close():Promise<void>};const base=await loadKey(home),key=overrides.key?.(base)??base;
  const start=()=>startLoom({home,clock,authenticate:req=>({viewer:{kind:'member',id:String(req.headers['x-member']??'jonathan')},window:req.headers['x-window']==='yes',valid:overrides.valid??(()=>true)}),
-  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,runtime:{receipt:overrides.receipt,deliver:async d=>{deliveries.push(d);},end:async cv=>{await overrides.end?.(cv);ends.push(cv);}},days:overrides.days,hold:typeof overrides.hold==='function'?overrides.hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:overrides.attention??{answer:()=>({ok:true,value:{answered:true}})}});},
+  install:a=>{comms=installComms({...a,clock,key,sharing:()=>sharing,runtime:{receipt:overrides.receipt,deliver:async d=>{await overrides.deliver?.(d);deliveries.push(d);},end:async cv=>{await overrides.end?.(cv);ends.push(cv);}},days:overrides.days,hold:typeof overrides.hold==='function'?overrides.hold:async f=>{if(overrides.hold)throw new Error('staging');return f();},attention:overrides.attention??{answer:()=>({ok:true,value:{answered:true}})}});},
  });let app=await start();cleanup.push(()=>app.close());cleanup.push(()=>comms.close());
  let n=0;
  const call=(name:string,input:unknown,v:Viewer=member,window=true)=>app.operations.callAsync('socket',v,`comms.${name}`,input,`op-${++n}`,window);
@@ -159,6 +159,56 @@ for(const boundary of ['decryption','staging'] as const)it(`revoking ownership d
  resume();await s.comms.deliver('art',place,1);
  expect(s.deliveries).toEqual([]);
  expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=? AND seq=1').get(place) as {record:string}).record).delivery).toBe('failed');
+});
+for(const boundary of ['decryption','staging'] as const)for(const change of ['member','conversation','project','words','kind','receipt'] as const)it(`refuses a replaced delivery snapshot during ${boundary} (${change})`,async()=>{
+ let resume:()=>void=()=>{},started:()=>void=()=>{};
+ const wait=new Promise<void>(r=>{resume=r;}),begin=new Promise<void>(r=>{started=r;});
+ const pause=async()=>{started();await wait;};
+ const s=await setup(boundary==='decryption'
+  ?{key:key=>({...key,open:async blob=>{await pause();return key.open(blob);}})}
+  :{hold:async run=>{await pause();return run();}});
+ const place=await s.open();await begin;expect(s.app.db.inTransaction).toBe(false);
+ const routing=change==='member'||change==='conversation'||change==='project';
+ if(routing)s.app.db.prepare(`UPDATE comms_threads SET record=json_set(record,'$.${change}',?) WHERE id=?`).run(change==='member'?'other':'replacement',place);
+ else if(change==='words')s.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=1').run(Buffer.from('replacement ciphertext'),place);
+ else if(change==='kind')s.app.db.prepare("UPDATE comms_messages SET kind='reply' WHERE thread=? AND seq=1").run(place);
+ else s.app.db.prepare("UPDATE comms_messages SET record=json_set(record,'$.delivery','delivered') WHERE thread=? AND seq=1").run(place);
+ const before=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ resume();await s.comms.deliver('art',place,1);
+ expect(s.deliveries).toEqual([]);
+ if(routing)expect(JSON.parse((s.app.db.prepare('SELECT record FROM comms_messages WHERE thread=? AND seq=1').get(place) as {record:string}).record).delivery).toBe('failed');
+ else expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(before);
+});
+for(const boundary of ['decryption','staging'] as const)it(`allows unrelated thread changes during delivery ${boundary}`,async()=>{
+ let resume:()=>void=()=>{},started:()=>void=()=>{};
+ const wait=new Promise<void>(r=>{resume=r;}),begin=new Promise<void>(r=>{started=r;});
+ const pause=async()=>{started();await wait;};
+ const s=await setup(boundary==='decryption'
+  ?{key:key=>({...key,open:async blob=>{await pause();return key.open(blob);}})}
+  :{hold:async run=>{await pause();return run();}});
+ const place=await s.open();await begin;
+ await s.call('change',{thread:place,action:'title',title:'Renamed while sending'});
+ await s.call('change',{thread:place,action:'read',seq:1});
+ resume();await s.comms.deliver('art',place,1);
+ expect(s.deliveries).toEqual([expect.objectContaining({member:'jonathan',conversation:expect.any(String),project:'pond',text:'secret member words'})]);
+});
+for(const outcome of ['accepted','failed'] as const)it(`does not settle a replacement row after runtime ${outcome}`,async()=>{
+ let resume:()=>void=()=>{},started:()=>void=()=>{};
+ const wait=new Promise<void>(r=>{resume=r;}),begin=new Promise<void>(r=>{started=r;});
+ const s=await setup({deliver:async()=>{started();await wait;if(outcome==='failed')throw new Error('uncertain runtime failure');}});
+ const place=await s.open();await begin;
+ s.app.db.prepare("UPDATE comms_messages SET record=json_set(record,'$.delivery','held') WHERE thread=? AND seq=1").run(place);
+ const before=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ resume();await s.comms.deliver('art',place,1);
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(before);
+});
+it('a foreign delivery attempt leaves the original held receipt unchanged',async()=>{
+ const s=await setup({hold:stagingHold({beforeOutside:()=>false,finish:()=>{}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ const before=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ await s.comms.deliver('pond-bot',place,1);
+ expect(s.deliveries).toEqual([]);
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(before);
 });
 it('sends encrypted records as plaintext only to its member signed-in socket; bearer subscriptions are denied',async()=>{
  const s=await setup();const place=await s.open();await s.comms.post('art',place,{id:'reply',kind:'reply',text:'agent secret'});

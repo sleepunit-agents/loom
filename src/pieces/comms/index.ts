@@ -133,23 +133,32 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const task=performDelivery(agent,place,seq).finally(()=>pending.delete(marker));pending.set(marker,task);return task;
  }
  async function performDelivery(agent:string,place:string,seq:number) {
+  let snapshot:MessageRow|undefined;
   try {
-   let t=requireAgent(agent,place);
-   let row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(place,seq) as MessageRow|undefined;
+   const original=requireAgent(agent,place);
+   const row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message'").get(place,seq) as MessageRow|undefined;
    if (!row) return;
    if (JSON.parse(row.record).delivery==='delivered') return;
-   if (!row.words || row.at + days*day <= clock.now() || t.archived!==null || !mayUseThread({kind:'member',id:t.member},t,o.sharing())) return fail('denied','Thread unavailable');
-   const plain=await key.open(row.words);const words=JSON.parse(row.record).encoding==='text'?{text:plain}:JSON.parse(plain) as {text:string};
-   // Recheck after crypto and again inside the staging hold before crossing the process boundary.
+   snapshot=row;
+   const checked=()=>{
+    const t=requireAgent(agent,place);
+    const current=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(place,seq);
+    if(closed || t.member!==original.member || t.conversation!==original.conversation || t.project!==original.project ||
+     JSON.stringify(current)!==JSON.stringify(row) || !row.words || row.at+days*day<=clock.now() || t.archived!==null ||
+     !mayUseThread({kind:'member',id:original.member},t,o.sharing()))return fail('denied','Thread unavailable');
+    return t;
+   };
+   checked();
+   const plain=await key.open(row.words!);const words=JSON.parse(row.record).encoding==='text'?{text:plain}:JSON.parse(plain) as {text:string};
+   // Bind decrypted words to their original routing and exact message, including
+   // the receipt. A later replacement must never receive words or our settlement.
+   checked();
    await o.hold(async()=> {
-    if(closed)return;
-    t=requireAgent(agent,place);
-    row=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(place,seq) as MessageRow|undefined;
-    if (!row?.words || row.at + days*day <= clock.now() || t.archived!==null || !mayUseThread({kind:'member',id:t.member},t,o.sharing())) return fail('denied','Thread unavailable');
+    const t=checked();
     await o.runtime.deliver({thread:place,agent,member:t.member,conversation:t.conversation,seq,text:words.text,...(t.project?{project:t.project}:{})});
    },{id:`comms-deliver:${place}:${seq}`,kind:'body-start',title:'Deliver a Comms message'});
-   settle(place,seq,'delivered');
-  } catch(error) { settle(place,seq,error instanceof HeldEffect?'held':'failed'); }
+   settle(place,seq,'delivered',row);
+  } catch(error) { if(snapshot)settle(place,seq,error instanceof HeldEffect?'held':'failed',snapshot); }
 
  }
  let recovery:Promise<void>|undefined;
@@ -188,11 +197,11 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    }
   }
  }
- function settle(place:string,seq:number,delivery:string) {
+ function settle(place:string,seq:number,delivery:string,expected?:MessageRow) {
   if(closed)return;
   const t=thread(db,place); if(!t)return;
-  const row=db.prepare('SELECT record FROM comms_messages WHERE thread=? AND seq=?').get(place,seq) as {record:string}|undefined;
-  if(!row)return;
+  const row=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(place,seq) as MessageRow|undefined;
+  if(!row || expected && JSON.stringify(row)!==JSON.stringify(expected))return;
   db.prepare('UPDATE comms_messages SET record=? WHERE thread=? AND seq=?').run(JSON.stringify({...JSON.parse(row.record),delivery}),place,seq);
   touched(t,seq);
  }
