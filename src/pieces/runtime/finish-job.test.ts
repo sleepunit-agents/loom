@@ -72,6 +72,9 @@ it('finishes through real bearer HTTP and invalidates only exact job credentials
   for (const token of [runner, ...others]) expect(f.resolve(token)?.valid()).toBe(true);
   expect(new HouseholdRows(f.app.db, 'settings').get('signin-principal:runner:a')).toEqual({ active: true });
   expect(f.store.read('job', 'waiting')?.state).toBe('waiting');
+  // Admission diagnostics from earlier successful resolutions publish asynchronously.
+  // Drain them before checking that the runtime retry itself emits nothing.
+  await Promise.resolve();
   // A network retry is acknowledged even though a new finish is forbidden.
   const before = f.store.read('job', 'running'), tokens = f.auth.tokens.document(), changed = vi.spyOn(f.app.live, 'changed');
   f.clock.advance(20);

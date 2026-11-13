@@ -66,9 +66,9 @@ import { attentionThreadProject } from './pieces/attention/comms.js';
 import { attentionProjects } from './pieces/attention/projects.js';
 import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
 const mindTransports = new WeakMap<Foundation, TouchSource[]>();
-export type NextSessionResolver = (req: IncomingMessage) => Authentication | undefined;
+export type NextSessionResolver = (req: IncomingMessage, transport?: 'upgrade') => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
-export function nextSessionResolver(app: Foundation): NextSessionResolver { return req => signin(app).resolve(req); }
+export function nextSessionResolver(app: Foundation): NextSessionResolver { return (req,transport) => signin(app).resolve(req,transport); }
 /** Trusted in-process composition only; never accepted from an operation or HTTP input.
  * source must be an authenticated separate holder transport delivering owned buffers.
  * Bindings contain public forge owner names and secret names, never credential values.
@@ -82,7 +82,11 @@ export interface NextChangesOptions {
 export interface NextBridgesOptions extends Omit<SlackDaemonOptions, 'secrets'> { source: SecretValueSource }
 const bridgeDaemons = new WeakMap<Foundation, ReturnType<typeof installSlackDaemon>>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
-export async function closeNext(app: Foundation) { await bridgeDaemons.get(app)?.close(); }
+const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
+export async function closeNext(app: Foundation) {
+  try { await bridgeDaemons.get(app)?.close(); }
+  finally { await runtimeClosers.get(app)?.(); }
+}
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
@@ -183,7 +187,8 @@ export async function installNext(app: Foundation, options: NextOptions) {
       recipients:()=>{const h=new HouseholdDatabase(app.db).household(options.home);return {agents:h?.agents??[],default:h?.default};},
     });
     conversations.connect(comms);
-    app.onClose(()=>{conversations.close();void comms.close();});
+    runtimeClosers.set(app,async()=>{await conversations.close();await comms.close();});
+    app.onClose(()=>{void conversations.close();void comms.close();});
   }
   if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects,
     {valid:conversations.validInput,issue:(agent,job)=>signin(app).issueBody(agent,job)});

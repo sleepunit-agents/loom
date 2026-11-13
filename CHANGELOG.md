@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Clock: add trusted owner-principal local-wake filing with full executable card words, exact saved prompt/note and project-preserving atomic approval filing; runtime/client recovery remains uncomposed.
+- Add an unregistered Discord Gateway transport with committed-sequence resume, service-scoped credentials, heartbeat recovery and awaited shutdown. Production receipt storage and daemon wiring remain required.
 - Capture an explicit external Secrets source with `migrate snapshot --secrets`, using the same private inventory and confinement rules as other roots.
+- Reconcile authoritative runner-fenced start failures into generation-matched private Comms notices, enabling member retry without automatically repeating an uncertain execution.
 
 - Add explicit next-mode Slack lifecycle composition with service credentials, staged connection release, startup receipt recovery and awaited shutdown.
 
@@ -66,6 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Request owner review of an eligible imported wake in the Clock app, preserving saved words and due time while leaving work held.
 - Show executable prompt or file excerpts alongside saved notes on Clock owner-vouch request cards, preserving every id and due time within the details limit.
 - Automatically group eligible unsteered unknown Clock imports on one owner-vouch card, atomically refresh unanswered groups, retain Deny suppression and hold overflow.
+- Clock: add trusted owner-principal local-wake filing with full executable card words, exact saved prompt/note and project-preserving atomic approval filing; runtime/client recovery remains uncomposed.
 - Preserve project scope on explicit Clock owner-vouch cards, reject mixed scopes and recheck the card scope before applying owner Allow.
 - Clock can file an exact owner-vouch request for eligible held imports through `ask-vouch`; owner Allow applies it, and Deny prevents re-asking.
 - Expose owner vouch for eligible unknown imported wakes through the opt-in wake API client, retaining owner policy and retry deduplication.
@@ -1066,6 +1068,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Give the next desk app-tinted cut frames, the icon dock, a searchable launcher and a live owned-agent rail.
 
 - Household Setup now manages tokens and sessions, with single-send browser token creation and private one-time bearer display.
+
+- Record token and session last use on the new side, including activity in open windows.
 
 ## [0.16.1] - 2026-10-25
 

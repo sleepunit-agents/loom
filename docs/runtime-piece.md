@@ -702,7 +702,7 @@ Tests run the actual next API with bearer-authenticated fake runners through
 start, queue, claim, held input, owner release, input, start confirmation and
 completion. Clock tests also cover definite refusal, staging, missing and lost
 confirmation, and restart without duplicate dispatch. The private conversation path below adds authenticated reads and replies.
-Generation-aware failure/retry notices, model accounts, remaining lifecycle,
+Automatic start retries, model accounts, remaining lifecycle,
 importer and screens are still required for the full runtime rebuild; this
 does not claim the whole task is complete or unblock dependent tasks.
 
@@ -742,6 +742,29 @@ proof under central policy; it cannot list the private record or read messages.
 
 The fixture exercises a real member socket and runner/body HTTP authentication,
 private input and reply, denied callers, restart, revocation and both staging
-gates. Account/model enrollment, generation-aware failure/retry notices, remaining
+gates. Account/model enrollment, automatic start retries, remaining
 lifecycle reconciliation, importer, command parity and screens remain on t-2209.
 No deploy, live import or transition is part of this implementation.
+
+
+### Authoritative final-start failure and member retry
+
+An assigned runner may finish an unconfirmed `starting` job with
+`runtime.finishJob({job, state: 'failed', startFailure: 'not-started'})` only
+when it has fenced that claim so no body has started or can subsequently start.
+This is an authoritative runner attestation, not a timeout or an ordinary exit
+failure. Runtime rejects this attestation for any other state. The terminal
+write, credential revocation, durable `startFailed` marker and registry receipt
+commit together. Later runner reports cannot resurrect the job.
+
+Next composition reconciles this marker into Comms' encrypted `startNotice`,
+echoing the accepted message sequence and generation. Restart recovers a missed
+notice; duplicate reconciliation uses Comms deduplication. Comms checks current
+scope and generation again after encryption. Only the member's existing
+`comms.retryStart` action advances the generation and queues a new start.
+Another message also retains the failed binding; replacement requires the next generation of a previously accepted message. There is no automatic start retry. An ordinary failed accepted claim remains held even when another member message arrives; it cannot silently queue a replacement. A normal failed exit, accepted-but-unknown
+start, lost runner, or timeout supplies no final-start proof and no retry notice.
+A failure after running/waiting is never described as a failure to start.
+
+Automatic bounded start retries and broader execution reconciliation remain
+part of t-2209, along with its enrollment, accounts, screens, importer and client.
