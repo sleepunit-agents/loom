@@ -35,6 +35,8 @@ it('queues durable input and canonical placement, then an assigned runner can cl
   expect(f.store.read('job', job)).toEqual({ id: job, agent: 'art', project: 'pond', title: f.input.title, box: 'b', runner: 'b', state: 'queued', createdAt: f.clock.now(), changedAt: f.clock.now() });
   expect(f.app.db.prepare('SELECT * FROM runtime_inputs WHERE job=?').get(job)).toEqual({ job, brief: f.input.brief, needs: '["gpu:5090"]' });
   expect(f.app.operations.call('direct', { kind: 'runner', id: 'a' }, 'runtime.claimJob', { job }, 'wrong')).toMatchObject({ ok: false, code: 'denied' });
+  expect(f.app.operations.call('direct', { kind: 'runner', id: 'b' }, 'runtime.claimJob', { job }, 'claim')).toMatchObject({ ok: false, code: 'conflict' });
+  expect(f.app.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'runtime.configureHouse', { agent: 'art', house: { repo: '/fixture/art' } }, 'configure').ok).toBe(true);
   expect(f.app.operations.call('direct', { kind: 'runner', id: 'b' }, 'runtime.claimJob', { job }, 'claim')).toEqual({ ok: true, value: { job, state: 'starting' } });
 });
 it('requires give-work and separately authorizes every supplied scope', async () => {

@@ -343,10 +343,50 @@ This operation grants no nested containers, GPU, ports, tailnets, secrets,
 repository credentials, harness logins, scopes or steering rights. Those old
 `set-agent` fields remain required in a separate centrally authorized grant path,
 including alias/scope preservation and checks; they are strictly rejected here.
-No capabilities are inferred from a repository or house file. Build reports and
-invalidation are still pending; execution must bind the effective configuration
-and invalidate stale build identity when repository, houseFile or branch changes.
+No capabilities are inferred from a repository or house file. Claim snapshots and
+per-job build reporting are described below; agent-wide build discovery and
+execution invalidation still require the future daemon release path.
 `queueBody` continues to accept nonexecutable intent before configuration.
 Configured build identity alone does not enable input fetch, credentials,
 `startBody`, slots/sessions, daemon staging release or runner execution. Those
 obligations in Durable body requests remain required before the final move.
+
+
+## Claimed house identity and build reports
+
+The metadata part of old `claim` now snapshots the current `settings.house` as
+`job.made` and server `claimedAt`, atomically with the starting transition and
+receipt. A queued job can precede house setup, but claim conflicts until setup
+exists. Failed attempts leave the same operation id available after setup.
+A repeated successful claim preserves its original snapshot and time. A fresh
+claim clears any previous image metadata on the queued row.
+
+The build part of old `report` maps to `runtime.reportJob {job, state:"running",
+build?}`. The existing assigned-runner and central report-job checks apply.
+The image must match `loom-house-<agent>:<20 lowercase hex>` for this job's
+agent; an optional `localhost/` prefix is removed. Unlike the old route's
+silent ignoring of malformed tags, an explicit invalid tag is refused. The
+first reported image is immutable for this job; a later different image
+conflicts. Waiting reports cannot carry an image. Older jobs lacking a claim
+snapshot still accept ordinary progress, but cannot acquire build attribution.
+No caller can supply `made` or `claimedAt`. Fields are optional JSON metadata,
+so no SQL migration or rewrite of older jobs is needed.
+
+`configuredBuild(job, house)` is an internal helper for subsequent build
+selection: a build is usable only with claim provenance and an exact matching
+repo, houseFile and branch. A settings change keeps the historical job image
+and snapshot for inspection, while making that image ineligible for the new
+configuration. Changing any one of those fields suffices. The helper does not
+select a newest build across jobs or authorize execution. No global current
+build, build-check route, warm body-host upgrade or repo-secret binding is
+implemented yet; the separate secret grant path must extend build identity
+before private repository access can be released.
+
+Snapshots and image tags are centrally scoped job metadata, never input words
+or credential references. Report acknowledgements remain `{job,state}`; changes
+publish only after commit, no-ops do not publish, failed receipts roll back image
+writes, and retries cannot restore an earlier progress state. This remains a
+metadata handshake even in staging: it performs no repository/image IO, issues
+no credential and releases no executable input. The daemon must revalidate the
+claimed configuration and grants immediately before outside-effect release;
+these records are not an execution grant or authenticated body proof.

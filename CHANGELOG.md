@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Start the next-mode Changes daemon with durable refresh and explicit, owner-granted Secrets composition.
+- Bind runtime job claims to configured house identity and record validated, immutable per-job build tags.
+
 - Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
 - Add centrally authorized runtime house build configuration in next mode, preserving box and model preferences without granting execution capabilities.
 

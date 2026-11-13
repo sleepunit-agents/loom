@@ -5,6 +5,7 @@ import { canHost } from './boxes.js';
 import { jobRecord, type RuntimeRecords } from './records.js';
 import { runtimeStore } from './store.js';
 import type { RuntimeCredentials } from './credentials.js';
+import { buildTag } from './builds.js';
 const input = z.object({ job: z.string().min(1).max(200) }).strict();
 const output = z.object({ job: z.string(), state: jobRecord.shape.state });
 export function installRunnerJobs(db: Db, operations: Operations, sharing: () => Sharing, credentials?: RuntimeCredentials) {
@@ -26,7 +27,11 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
       const job = store.read('job', id)!, box = store.read('box', job.box)!;
       if (!canHost(box, job.agent, sharing())) throw new OperationError('denied', 'Box may not host this agent');
       if (job.state !== 'queued') throw new OperationError('conflict', 'Job is not queued');
-      return save(ctx, id, 'starting');
+      const made = store.read('settings', job.agent)?.house;
+      if (!made) throw new OperationError('conflict', 'Agent has no house configuration');
+      const { changedAt: _, build: _build, ...before } = job;
+      if (store.put('job', { ...before, state: 'starting', made, claimedAt: ctx.now }, ctx.now)) ctx.changed('runtime.job', id);
+      return { job: id, state: 'starting' as const };
     },
   }));
   operations.register(operation({
@@ -50,11 +55,20 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
   }));
   operations.register(operation({
     name: 'runtime.reportJob', write: true,
-    input: input.extend({ state: z.enum(['running', 'waiting']) }).strict(), output,
+    input: input.extend({ state: z.enum(['running', 'waiting']), build: z.string().max(120).optional() }).strict(), output,
     may: (viewer, { job }) => assigned(viewer, job),
-    run(ctx, { job: id, state }) {
+    run(ctx, { job: id, state, build }) {
       const before = store.read('job', id)!;
       if (!['starting', 'running', 'waiting'].includes(before.state)) throw new OperationError('conflict', 'Job has not been claimed or has ended');
+      if (build !== undefined) {
+        const tag = buildTag(build, before.agent);
+        if (state !== 'running' || !tag) throw new OperationError('invalid', 'Build must name this agent image in a running report');
+        if (!before.made || before.claimedAt === undefined) throw new OperationError('conflict', 'Job has no claimed house identity');
+        if (before.build && before.build !== tag) throw new OperationError('conflict', 'Job already reported another image');
+        const { changedAt: _, ...job } = before;
+        if (store.put('job', { ...job, state, build: tag }, ctx.now)) ctx.changed('runtime.job', id);
+        return { job: id, state };
+      }
       return save(ctx, id, state);
     },
   }));
