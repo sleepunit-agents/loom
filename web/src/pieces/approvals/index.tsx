@@ -12,7 +12,7 @@ function Result({ request }: { request?: Call<unknown> }) {
   const state = useCall(request);
   return state.pending ? <Loading label="Saving…" /> : state.result?.ok === false ? <Error text={state.result.message} /> : state.result?.ok ? <p role="status">Saved</p> : null;
 }
-function Reader({ approval, snapshot }: { approval: Approval; snapshot: Snapshot<Approval> }) {
+export function ApprovalReader({ approval, snapshot }: { approval: Approval; snapshot: Snapshot<Approval> }) {
   const [confirmation,setConfirmation] = useState<{ records: readonly Approval[]; request: Call<Open> }>();
   const [request,setRequest] = useState<Call<unknown>>();
   const [checking,setChecking] = useState(false);
@@ -111,6 +111,6 @@ export default function ApprovalsApp({ path: shellPath, go }: { path?: string; g
     listTop={folder === 'history' ? <div className="p-3"><Button variant="outline" disabled={status!=='live'||archive.pending} onClick={()=>setHistory({records,request:call('approvals.history',{})})}>Load older approvals</Button>{archive.result?.ok===false && <Error text={archive.result.message} />}</div> : undefined}
     listTitle={folder === 'rules' ? 'Rules' : 'Approvals'} listMeta={folder === 'rules' ? undefined : shown.length}
     list={folder === 'rules' ? <Rules /> : status === 'loading' ? <Loading label="Opening approvals…" /> : status !== 'live' ? <Error text={status === 'denied' ? 'Sign in to see approvals.' : 'Waiting for connection.'} /> : <><List label="Approval list">{shown.map(a=><Row key={a.id} title={a.title} meta={a.why} status={`${a.who.agent} · ${a.state}`} selected={selected===a.id} onClick={()=>navigate(a.id)} />)}</List>{!shown.length && <Empty title="No approvals here" text={query ? 'Try another search.' : 'Choose another folder.'} />}</>}
-    reader={current ? <Reader key={current.id} approval={current} snapshot={snapshot} /> : selected ? <Empty title="This approval is no longer in view" text="It may have changed or become unavailable." /> : null}
+    reader={current ? <ApprovalReader key={current.id} approval={current} snapshot={snapshot} /> : selected ? <Empty title="This approval is no longer in view" text="It may have changed or become unavailable." /> : null}
     open={!!selected} onBack={()=>navigate()} backLabel="Approvals" blank={<Empty title="Open a question" text="Read the question and what happens either way before answering." />} />;
 }

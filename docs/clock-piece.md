@@ -903,7 +903,16 @@ command receipts remain reserved beyond core receipt expiry. Private words and
 public wrapper receipts are omitted from export. Local recovery starts no body;
 private local dispatch remains held pending the real Runtime delivery unit.
 
-Remaining in this workflow: the Clock app's owner-facing local filing/recovery
-controls and screenshot evidence. A member window never manufactures a body
-Caller. The current app can see the member's private approval and wake, but this
-unit exposes the new writes only to an authentically bound agent body.
+The Clock app's Local requests folder shows local-wake cards through the owning
+Approvals live scope. It reuses Approvals' exact-word reader, current-open check,
+and Allow/Deny/Allow-every-time actions; decisions create no wake. Private words
+still require the owning member's signed-in window. Standing jobs can be turned
+off in Approvals → Rules. The folder keeps Approvals feed readiness separate
+from ordinary Clock controls and their request state, preserving the existing
+Clock layout rather than unifying these independent feeds. CI screenshots cover this decision reader at all six
+required widths/looks, with real Signin sessions and cross-window answers.
+
+Remaining in this workflow: owner-facing local filing/recovery scheduling controls.
+A member window never manufactures a body Caller. New requestLocal/recoverLocal
+writes remain exclusive to an authentically bound agent body. The Clock decision
+reader does not claim to schedule or dispatch local work.
