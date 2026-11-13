@@ -82,7 +82,7 @@ async function socket(app: { url: string }, viewer = 'jonathan') {
 describe('policy, live records, retry and role binding', () => {
   it('keeps unscoped agent creates in its queue and member creates with the owners', async () => {
     const app = await loom(), agent: Viewer = { kind: 'agent', id: 'art' };
-    const own = app.command('create', { title: 'My next step' }, agent);
+    const own = app.command('create', { title: 'My next step', actor: 'someone-else' }, agent);
     expect(own).toMatchObject({ ok: true });
     expect(app.call('show', { id: own.id }, agent)).toMatchObject({ task: { agent: 'art' } });
     expect(app.call('show', { id: own.id }, { kind: 'agent', id: 'pond-bot' })).toMatchObject({ code: 'denied' });
