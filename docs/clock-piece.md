@@ -960,7 +960,12 @@ Runtime binding, runner claim/input/report and the issued body credential. From
 Clock the owner opens the new-thread route, sends exact local-work instructions,
 and the test body reads them through `runtime.readConversation`. It calls the
 public `clock.requestLocal` with that body credential and posts the review link
-through `runtime.reply`. The owner follows it into the existing decision and
+through `runtime.reply`. Comms renders only the exact relative Clock approval
+path (`/p/clock-preview/item/a-` plus eight lowercase hex characters) in this
+window; arbitrary internal links remain inert and external HTTPS links retain
+their separate-window protection. The destination still checks window ownership
+before showing or answering a card; a link supplies no authority.
+The owner follows it into the existing decision and
 scheduling flow. Runner and unbound-agent filing attempts fail; outsider windows
 cannot read the thread or card. The proof replaces synthetic trusted Caller
 filing fixtures. It uses a deterministic body tool-call harness, without claiming
