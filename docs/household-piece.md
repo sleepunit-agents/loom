@@ -165,3 +165,21 @@ acceptance test are still required before next stdio is exposed.
 | comms_title reads and changes the old Comms thread | Refused; use the daemon API |
 | comms_thread reads old thread words | Refused; runtime delivery to the bound body replaces transcript reads (web-foundation.md) |
 | digest uses old Comms project fallback and nudges old attention | Local continuity digest only; app project fallback and app notification are dropped offline |
+
+### Selected conversation storage
+
+Conversation SQL helpers accept the existing optional `MemorySelection`, including
+turns, digests, findings, needs, project-name resolution and retention. Explicit
+selection uses the context's `memories.db` and ignores `LOOM_SQLITE_DB_PATH`;
+omission retains the legacy override. Venue/household selection stays independent
+of memory selection. MCP conversation lists, views, findings, digest writes and
+the project hub forward both selections where needed.
+
+| Existing path | Explicit offline composition |
+| --- | --- |
+| Conversation list/view/findings read the global memory override | Selected context's records, including nested digests, stats and open asks |
+| Digest writes and project aliases use the global memory override | Selected context's digest and project tables |
+| Project conversation section reads the global memory override | Selected context's conversations; missing store means no section |
+
+The stdio entry point is still unchanged. This is storage routing, with no new
+app authority, schema change or import requirement.
