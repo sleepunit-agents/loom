@@ -982,6 +982,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add owner-only next-mode registration of existing agent contexts with atomic retries and live household updates.
 
+- Add next-mode household member management with atomic first-owner credential bindings and immediate access refresh.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
