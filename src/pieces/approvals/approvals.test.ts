@@ -12,7 +12,7 @@ import { FakeClock, type Viewer } from '../../core/index.js';
 import { installApprovals, type ApprovalOptions } from './index.js';
 import { load, persist } from './store.js';
 import { importApprovals } from './importer.js';
-import { approvalsRole } from './role.js';
+import { approvalsRole, isApplyingOwnerAnswer } from './role.js';
 import { type Caller, type Approval } from './model.js';
 import type { ApprovalApplications } from './apply.js';
 import { installClock } from '../clock/index.js';
@@ -607,4 +607,17 @@ describe('retired per-agent piece grants',()=>{
     expect(a.role.call('use',{who:card.who,for:'owner'},{id:card.id,kind:'grant',target:card.target},'retired-use')).toMatchObject({ok:false,code:'denied'});
     expect(applied).toBe(0);expect(load(a.db).audit.some(r=>r.event==='use')).toBe(false);
   });
+});
+
+it('scopes owner-answer proof to the exact object, database, owner and synchronous callback',async()=>{
+ const other=await setup();let current:Awaited<ReturnType<typeof setup>>,captured:Readonly<Approval>|undefined,fail=true;
+ current=await setup({runtime:{apply(card,by){
+  captured=card;expect(isApplyingOwnerAnswer(current.db,card,by)).toBe(true);
+  expect(isApplyingOwnerAnswer(current.db,{...card},by)).toBe(false);expect(other.db.transaction(()=>isApplyingOwnerAnswer(other.db,card,by))()).toBe(false);expect(isApplyingOwnerAnswer(current.db,card,'someone-else')).toBe(false);
+  return fail?{ok:false,code:'conflict',message:'Target changed'}:{ok:true,value:null};
+ }}});
+ const card=current.applicationCard();expect(current.call('answer',{id:card.id,action:'allow'},owner).ok).toBe(false);
+ const first=captured!;expect(current.db.transaction(()=>isApplyingOwnerAnswer(current.db,first,'jonathan'))()).toBe(false);
+ fail=false;expect(current.call('answer',{id:card.id,action:'allow'},owner).ok).toBe(true);
+ expect(current.db.transaction(()=>isApplyingOwnerAnswer(current.db,captured!,'jonathan'))()).toBe(false);
 });

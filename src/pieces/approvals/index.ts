@@ -105,7 +105,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('check',false,(s,i,c,v)=>{ const a=find(s,String(i.id)); if (i.json) { if (!maySpend(a.who,c.caller.who)) denied(`${a.id} isn't ${c.caller.who.agent}'s to read here; check ${a.id} gives its state`); return {id:a.id,agent:a.who.agent,for:forOf(a),state:stateOf(a,c.now),kind:a.kind,target:a.target,expires:stateOf(a,c.now)==='allowed'?a.expires:null}; } return {state:stateOf(a,c.now)}; },{read:true});
   register('use',true,(s,i,c)=>use(s,String(i.id),String(i.kind),String(i.target),c));
   register('withdraw',true,(s,i,c)=>withdraw(s,String(i.id),c));
-  register('answer',true,(s,i,c,v)=>answerAndApply(s,String(i.id),String(i.action),v.id,c,options.applications ?? {}),{answer:true});
+  register('answer',true,(s,i,c,v)=>answerAndApply(db,s,String(i.id),String(i.action),v.id,c,options.applications ?? {}),{answer:true});
   register('open',false,(s,i,c,v)=>{const a=find(s,String(i.id)); return {open:stateOf(a,c.now)==='pending',mayAnswer:mayAct(v,scope(a),sharing(),ownerAnswered.has(a.kind)?'household':'answer-person','approvals.answer'),mayEveryTime:owner(v,'approvals.every-time')&&everyTimeOk(a,c),mayAlways:owner(v,'approvals.always')&&stateOf(a,c.now)==='pending'&&a.kind==='merge'&&forOf(a)!=='?',alwaysScope:alwaysScope(a,c.projects)};},{read:true});
   register('list',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>!!c.canRead?.(a)).map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));
   register('history',false,(s,i,c,v)=>({approvals:s.approvals.filter(a=>!!c.canRead?.(a)&&stateOf(a,c.now)!=='pending').map(a=>({...a,...cardWords(a),state:stateOf(a,c.now)})).sort((a,b)=>b.at.localeCompare(a.at))}));

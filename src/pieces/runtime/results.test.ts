@@ -159,7 +159,7 @@ it('upgrades metadata-only storage, survives interrupted migration and remains i
   f.app.db.prepare('INSERT INTO runtime_inputs (job,brief,needs) VALUES (?,?,?)').run('j', 'private input', JSON.stringify(['gpu']));
   const inputs = f.app.db.prepare('SELECT * FROM runtime_inputs').all();
   expect(() => jobResults(f.app.db).put('j', { log: 'outside' })).toThrow('transaction');
-  f.app.db.exec("DROP TABLE runtime_deliveries; DROP TABLE runtime_results; DELETE FROM core_migrations WHERE piece='runtime' AND number>=3");
+  f.app.db.exec("DROP TABLE runtime_deliveries; DROP TABLE runtime_provenance_sources; DROP TABLE runtime_provenance; DROP TABLE runtime_owner_requests; DROP TABLE runtime_job_heartbeats; DROP TABLE runtime_results; DELETE FROM core_migrations WHERE piece='runtime' AND number>=3");
   f.app.db.exec("CREATE TRIGGER abort_migration BEFORE INSERT ON core_migrations WHEN NEW.piece='runtime' BEGIN SELECT RAISE(ABORT, 'interrupted'); END");
   expect(() => migrate(f.app.db, 'runtime', schema)).toThrow('interrupted');
   expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name='runtime_results'").get()).toBeUndefined();
