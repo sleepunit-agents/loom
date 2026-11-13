@@ -4,6 +4,7 @@ import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import type { Ask, AgentStatus } from './role.js';
+import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
 import { installDigests } from './digests.js';
 import type { DigestReferences } from './project-references.js';
@@ -27,6 +28,7 @@ const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...r
 export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}) {
   registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding']);
   migrate(db, 'attention', attentionMigrations);
+  installHomeRoster(live, sharing);
   installConversations(db, operations, live, sharing);
   installDigests(db, operations, live, sharing, references);
   installRetention(db, operations, live, sharing);
