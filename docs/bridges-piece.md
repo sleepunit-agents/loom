@@ -14,7 +14,7 @@ connections, `receive` durably accepts a venue message, and `reply` queues one r
 under runtime's operation id. The daemon composition root must call sync after a
 committed setup change, await engine.close before closing its database. Core staging releases notify
 the engine after commit through the effects role; no new venue traffic is needed. Next mode now installs the setup operations and metadata records for the preview,
-but does not start an engine or connect to either platform. Production Discord/Slack transports, importer, generated commands
+but does not start an engine or connect to either platform. Production Discord/Slack transports, importer, retained runtime commands
 and engine composition remain subsequent work on t-2210; the old side is untouched.
 
 | Old behavior | New owner / replacement |
@@ -201,6 +201,30 @@ evidence workflow uploads them with the exact PR head in the artifact name.
 | Channel/thread route configuration | Routes reader; editing remains pending |
 | Staging-held reply | Pending sends and staged effects, one-item release |
 | Partial or interrupted send | Uncertain state, review guidance and no replay control; explicit disposition pending |
+
+## Opt-in setup commands
+
+`loom-bridges <operation> '<json-object>'` targets the explicit `LOOM_URL` of a
+next-mode daemon using `LOOM_TOKEN_FILE`. It never chooses a local store or reads
+legacy bridge configuration. `--help` works offline. The six operation names are
+`putVenues`, `removeVenues`, `putRoutes`, `removeRoutes`, `putLinks`, `removeLinks`.
+The same declarations attach CLI metadata to the registry and generate help;
+`BridgesInputs` exposes input types derived from the piece's schemas.
+
+Put operations take the existing venue, route or link JSON; remove operations take
+`{"id":"record-id"}`. The daemon applies schemas and household policy. The client
+adds no actor or authority fields. It prints the daemon's `{ "id": "record-id" }`
+acknowledgement as JSON, with exit 0; refusal/unavailability exits 1 and malformed
+command/JSON usage exits 2. Transport failures and HTTP 5xx responses retry at most four times with the
+same write id and original JSON, including after a lost commit acknowledgement.
+Redirects are refused and diagnostics are fixed strings. The returned id must match
+the id supplied by the caller; unrelated response fields or ids are refused. Only secret references
+belong in venue setup; this command never obtains venue credentials.
+
+This is an additional setup surface for the new side. It does not replace legacy
+`send`, `read`, `describe`, `status`, relay or file commands: their generated typed
+client and fixture comparison remain required when the runtime operations land.
+No legacy dispatch or live installation changes here.
 
 ## Final move
 

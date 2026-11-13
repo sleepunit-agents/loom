@@ -16,6 +16,7 @@ import { installTasks } from './pieces/tasks/index.js';
 import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import { installRuntime } from './pieces/runtime/index.js';
+import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { installChanges } from './pieces/changes/index.js';
 import { householdProjects, householdAttribution } from './pieces/changes/daemon.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
@@ -26,6 +27,9 @@ import { signin, installSignin, sameOrigin } from './core/signin/index.js';
 import { signinRoutes } from './core/signin/routes.js';
 import { mindSources } from './pieces/mind/sources.js';
 import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
+import { installMindPeople } from './pieces/mind/people.js';
+import { installMindPeopleActions } from './pieces/mind/people-actions.js';
+import { createPersonHalf } from './backends/people-creation.js';
 import { installMindKnowledge } from './pieces/mind/index.js';
 import { installMindKnowledgeActions } from './pieces/mind/actions.js';
 import { verifyKnowledgePages, deriveSlaClass } from './backends/knowledge-verification.js';
@@ -63,7 +67,7 @@ export function installNext(app: Foundation, options: NextOptions) {
       } catch { return undefined; } // Unreadable metadata must preserve the asking fallback.
     },
   });
-  if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing);
+  if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials });
   if (!app.operations.has('changes.list')) installChanges(app.db, app.operations, app.live, sharing, {
     projects: householdProjects(new SharingDatabase(app.db, options.home)),
     attribution: () => householdAttribution(app.db, options.home),
@@ -78,6 +82,15 @@ export function installNext(app: Foundation, options: NextOptions) {
     app.onClose(() => actions.close());
   }
 
+  if (!app.operations.has('mind.peopleList')) {
+    const reader = installMindPeople(app.operations, app.live, { directory: inventory?.commons.people, agents: inventory?.agents ?? [], sharing,
+      projectHref: (agent, slug) => app.operations.has('mind.projectsList') ? `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}` : undefined });
+    app.onClose(() => reader.close());
+    const agent = new HouseholdDatabase(app.db).household(options.home)?.default;
+    const actions = installMindPeopleActions(app.operations, { directory: inventory?.commons.people,
+      relationship: inventory?.agents.find(a => a.agent === agent)?.memories, agent, sharing, create: createPersonHalf });
+    app.onClose(() => actions.close());
+  }
   const sources = mindTouchSources(inventory);
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
   mindTransports.set(app, sources);

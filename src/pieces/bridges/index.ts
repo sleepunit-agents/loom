@@ -1,7 +1,8 @@
 import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
-import { migrate, operation, mayAct, maySee, type Sharing } from '../../core/index.js';
+import { migrate, mayAct, maySee, type Sharing } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
+import { operation } from './commands.js';
 import { schema } from './schema/001.js';
 import { venueSchema, routeSchema, linkSchema } from './model.js';
 import { all, put, bumpSetup } from './store.js';

@@ -103,3 +103,12 @@ describe('CI runner fork safety', () => {
     expect(checkWorkflow('x.yml', wf(`    runs-on: ${TRUSTED_RUNS_ON}\n`, 'on:\n  push:\n    branches: [main]\n  pull_request:\n  merge_group:\n'))).toEqual([]);
   });
 });
+
+it('People browser evidence runs only in the hosted after job, never in the general CI suite',()=>{
+  const workflow=readFileSync(resolve(__dirname,'../.github/workflows/app-kit-evidence.yml'),'utf8');
+  expect(workflow).toContain('runs-on: ubuntu-latest');expect(workflow).not.toContain('TRUSTED_RUNS_ON');
+  expect(workflow).toContain("if: matrix.version == 'after'\n        env:\n          LOOM_PEOPLE_EVIDENCE: '1'");
+  expect(readFileSync(resolve(__dirname,'../.github/workflows/ci.yml'),'utf8')).not.toContain('LOOM_PEOPLE_EVIDENCE');
+  const test=readFileSync(resolve(__dirname,'../src/ui/mind-people-app.integration.test.ts'),'utf8');
+  expect(test).toContain("process.env.LOOM_PEOPLE_EVIDENCE==='1'");expect(test).toContain("process.env.RUNNER_ENVIRONMENT==='self-hosted'");
+});

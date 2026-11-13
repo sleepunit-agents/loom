@@ -7,6 +7,8 @@ export interface Snapshot<T = LiveRecord> { records: readonly T[]; status: Statu
 export interface CallState<T = unknown> { pending: boolean; status: 'pending' | 'offline' | 'done'; result?: Result<T> }
 export interface Call<T = unknown> {
   id: string;
+  /** Explicitly resend an unavailable answer with the original id/input. */
+  retry?(): void;
   result: Promise<Result<T>>;
   getSnapshot(): CallState<T>;
   subscribe(listener: () => void): () => void;
@@ -156,13 +158,20 @@ export class DataStore {
     let state: CallState<T> = { pending: true, status: this.socket?.readyState === 1 ? 'pending' : 'offline' };
     const listeners = new Set<() => void>();
     let resolve!: (result: Result<T>) => void;
-    const result = new Promise<Result<T>>(r => { resolve = r; });
+    let result = new Promise<Result<T>>(r => { resolve = r; });
     const update = (next: CallState) => { state = next as CallState<T>; listeners.forEach(fn => fn()); };
     const finish = (answer: Result) => { update({ pending: false, status: 'done', result: answer }); resolve(answer as Result<T>); };
-    const handle = { id, result, getSnapshot: () => state, subscribe: (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; } };
+    let wire: string | undefined;
+    const handle = { id, get result() { return result; }, retry: () => {
+      if (state.pending || state.result?.ok !== false || state.result.code !== 'unavailable' || !wire || this.stopped || this.denied) return;
+      result = new Promise<Result<T>>(r => { resolve = r; });
+      update({ pending: true, status: this.socket?.readyState === 1 ? 'pending' : 'offline' });
+      this.calls.set(id, { wire, update, finish });
+      if (this.socket?.readyState === 1) this.send(wire);
+      this.connect();
+    }, getSnapshot: () => state, subscribe: (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; } };
     if (this.stopped || this.denied) { finish(this.denied ? { ok: false, code: 'denied', message: 'Session ended' } : unavailable); return handle; }
     // Freeze the wire input now: edits to a caller's object cannot change a retry.
-    let wire: string;
     try { wire = JSON.stringify({ kind: 'call', request: id, name, input, id }); }
     catch { finish({ ok: false, code: 'invalid', message: 'Input must be JSON' }); return handle; }
     this.calls.set(id, { wire, update, finish });
