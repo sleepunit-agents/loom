@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import { useRecords, call, type Call } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, type SplitFolder } from '../../kit';
 import { ActionForm, actionsFor, actionLabel, useAnswer, type Action } from './actions';
+import type { ChangeRecord } from '../changes/model';
 import { inFolder, matches, pullRequests, type Task, type TaskAnswer } from './model';
 
 function Relations({ label, tasks, ids = tasks.map(t => t.id), open }: { label: string; tasks: readonly Task[]; ids?: string[]; open(id: string): void }) {
   return <section><h3>{label}</h3>{ids.length ? <List label={label}>{ids.map(id => <Row key={id} title={tasks.find(t => t.id === id)?.title ?? id} meta={id} onClick={() => open(id)} />)}</List> : <p>None</p>}</section>;
 }
 function Reader({ task, records, open, act }: { task: Task; records: readonly Task[]; open(id: string): void; act(action: Action): void }) {
+  const changes = useRecords<ChangeRecord>('change');
   return <article className="grid gap-5 p-5">
     <header><p>{task.id} · {task.type}</p><h1 className="text-2xl font-semibold">{task.title}</h1><p>{task.status.replace('_', ' ')} · P{task.priority}{task.assignee && ` · ${task.assignee}`}{task.project && ` · ${task.project}`}{task.blocked && ' · Blocked'}</p></header>
     <div role="group" aria-label="Task actions" className="flex flex-wrap gap-2">{actionsFor(task).map(action => <Button variant="outline" size="sm" key={action} type="button" onClick={() => act(action)}>{actionLabel[action]}</Button>)}</div>
@@ -16,7 +18,7 @@ function Reader({ task, records, open, act }: { task: Task; records: readonly Ta
     <Relations label="Children" tasks={records.filter(t => t.parent === task.id)} open={open} />
     <Relations label="Blocked by" ids={task.dependsOn} tasks={records.filter(t => task.dependsOn.includes(t.id))} open={open} />
     <Relations label="Blocks" tasks={records.filter(t => (t.dependsOn ?? []).includes(task.id))} open={open} />
-    <section><h3>Pull requests</h3>{pullRequests(task).length ? <ul>{pullRequests(task).map(([ref,url]) => <li key={ref}><a href={url} target="_blank" rel="noreferrer">{ref}</a></li>)}</ul> : <p>None linked</p>}</section>
+    <section><h3>Pull requests</h3>{pullRequests(task).length ? <ul>{pullRequests(task).map(([ref,url]) => <li key={ref}><a href={url} target="_blank" rel="noreferrer">{ref}</a>{changes.records.filter(c=>c.id===`github:${ref.toLowerCase()}`).map(c=><span key={c.id}> · {c.checks.state} · {c.review.state.replaceAll('_',' ')}</span>)}</li>)}</ul> : <p>None linked</p>}</section>
     <section><h3>Comments</h3>{task.comments.length ? <ol className="grid gap-4">{[...task.comments].sort((a,b) => Date.parse(a.at) - Date.parse(b.at)).map((comment,n) => <li key={n}><p>{comment.actor} · <time dateTime={comment.at}>{new Date(comment.at).toLocaleString('en-US', { timeZone: 'America/Chicago' })} CT</time></p><p className="whitespace-pre-wrap break-words">{comment.text}</p></li>)}</ol> : <p>No comments yet</p>}</section>
   </article>;
 }

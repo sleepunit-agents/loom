@@ -51,6 +51,8 @@ describe.runIf(built && chrome)('Changes split panes', () => {
     process.env.XDG_CONFIG_HOME = join(home, 'xdg');
     const bin = join(home, 'bin');
     mkdirSync(bin);
+    // changes is a core daemon command now, so discovery intentionally excludes loom-changes.
+    // Keep exercising the legacy page renderer through an ordinary extension fixture.
     writeFileSync(join(bin, 'changes.json'), JSON.stringify({ v: 2, tab: { label: 'Changes' }, asks: [] }));
     writeFileSync(join(bin, 'page.json'), JSON.stringify(PAGE));
     // Neighbour pieces exercise Changes in loom's desktop.
@@ -61,8 +63,8 @@ describe.runIf(built && chrome)('Changes split panes', () => {
       chmodSync(join(bin, `loom-${n}`), 0o755);
     }
     writeFileSync(join(bin, 'reader.json'), JSON.stringify(reader));
-    writeFileSync(join(bin, 'loom-changes'), `#!/usr/bin/env python3\nimport json,sys\nfrom pathlib import Path\np=Path(__file__).parent\nif sys.argv[1:] == ['ui','--json']:\n print((p/'changes.json').read_text())\nelse:\n req=json.load(sys.stdin)\n out=json.loads((p/'page.json').read_text())\n out['changes']['selected']=req.get('path','')\n if req.get('path'):\n  out['changes']['reader']=json.loads((p/'reader.json').read_text())\n print(json.dumps(out))\n`);
-    chmodSync(join(bin, 'loom-changes'), 0o755);
+    writeFileSync(join(bin, 'loom-change-board'), `#!/usr/bin/env python3\nimport json,sys\nfrom pathlib import Path\np=Path(__file__).parent\nif sys.argv[1:] == ['ui','--json']:\n print((p/'changes.json').read_text())\nelse:\n req=json.load(sys.stdin)\n out=json.loads((p/'page.json').read_text())\n out['changes']['selected']=req.get('path','')\n if req.get('path'):\n  out['changes']['reader']=json.loads((p/'reader.json').read_text())\n print(json.dumps(out))\n`);
+    chmodSync(join(bin, 'loom-change-board'), 0o755);
     process.env.PATH = `${bin}:${saved.PATH}`;
     h = loadHousehold(home)!;
     token = createToken(h, { role: { kind: 'owner', member: 'jonathan' }, label: 'jonathan' }).token;
@@ -87,7 +89,7 @@ describe.runIf(built && chrome)('Changes split panes', () => {
   for (const width of [1280, 1440, 1920, 390]) for (const look of ['neon', 'lowlight', 'daylight']) {
     it(`${width} ${look}: groups, URL filters, reader, edge scrollbars`, async () => {
       const { ctx, p } = await open(width, look);
-      await p.goto(`${base}/p/changes?t=*%2Fp%2Fchanges`);
+      await p.goto(`${base}/p/change-board?t=*%2Fp%2Fchange-board`);
       const app = p.locator('.loom-changes').last();
       await app.waitFor();
       await expect.poll(() => app.getAttribute('data-mode')).toBe(width === 390 ? 'one' : 'three');

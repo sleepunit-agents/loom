@@ -35,6 +35,7 @@ Commands:
   inject             Write loom identity pointer into harness dotfiles
   harness init      Scaffold a harness manifest from template
   install           Write loom-setup skill into a harness's skills dir
+  changes           Read Changes or request a refresh through the daemon
   fixture <dir>     Build a disposable foundation fixture home
   doctor            Probe the loom environment (read-only)
   migrate           Apply pending schema migrations to memories.db
@@ -92,6 +93,13 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
   const resolved = await resolveSubcommand(argv, io);
   if (typeof resolved === 'number') return resolved;
   const { sub, rest } = resolved;
+
+  // New-data-path client: never discover an old piece executable or /run adapter.
+  // Keep this outside dispatch: runCliLocal must never forward an HTTP request.
+  if (sub === 'changes') {
+    const { runChangesClient } = await import('./changes-client.js');
+    return runChangesClient(rest, io);
+  }
 
   // Remote mode: the store verbs go to loom-http when a URL is set.
   const url = extractGlobalFlags(rest).flags.url;
@@ -155,6 +163,9 @@ async function resolveSubcommand(
 
 async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<number> {
   switch (sub) {
+    case 'changes':
+      io.stderr('loom changes is a daemon client; use /api/changes operations directly.\n');
+      return 2;
     case 'fixture': {
       if (rest.length !== 1 || rest[0].startsWith('-')) { io.stderr('Usage: loom fixture <empty-dir>\n'); return 2; }
       const { fixture } = await import('../fixture.js');

@@ -1,0 +1,40 @@
+name: Changes piece evidence
+on:
+  pull_request:
+    paths:
+      - 'src/pieces/changes/**'
+      - 'web/src/pieces/changes/**'
+      - 'src/ui/changes-piece.integration.test.ts'
+      - '.github/workflows/changes-piece-evidence.yml'
+permissions:
+  contents: read
+concurrency:
+  group: changes-piece-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - name: Install and build
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+        run: |
+          nice -n 19 npm ci --no-audit --no-fund
+          nice -n 19 npm run build
+          npx playwright-core install --with-deps chromium
+      - name: Prove the new Changes app only
+        run: |
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          export LOOM_TEST_SHOTS="$PWD/artifacts/changes-piece"
+          nice -n 19 npx vitest run src/ui/changes-piece.integration.test.ts --maxWorkers=1
+          test "$(find artifacts/changes-piece -name '*.png' | wc -l)" -eq 6
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: changes-piece-${{ github.event.pull_request.head.sha }}
+          path: artifacts/changes-piece/
+          if-no-files-found: error

@@ -34,6 +34,10 @@ export class Live {
     });
   }
   register(type: RecordType) { if (this.types.has(type.name)) throw new Error('duplicate record type'); this.types.set(type.name, type); }
+  /** Derived records can invalidate through their owning piece's role without reading its tables. */
+  observe(fn: (changes: Change[]) => void): () => void {
+    this.emitter.on('changed', fn); return () => { this.emitter.off('changed', fn); };
+  }
   changed(changes: Change[]) {
     if (changes.some(c => c.type === 'core.access')) this.refreshAccess();
     this.emitter.emit('changed', changes);
@@ -112,5 +116,5 @@ export class Live {
     server.on('upgrade', upgrade);
     return () => server.off('upgrade', upgrade);
   }
-  close() { for (const socket of this.sockets.keys()) socket.terminate(); for (const c of this.clients) for (const s of c.types.values()) s.cancel.forEach(cancel => cancel()); this.clients.clear(); this.ws.close(); }
+  close() { for (const socket of this.sockets.keys()) socket.terminate(); for (const c of this.clients) for (const s of c.types.values()) s.cancel.forEach(cancel => cancel()); this.clients.clear(); this.emitter.removeAllListeners(); this.ws.close(); }
 }
