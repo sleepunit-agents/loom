@@ -908,7 +908,7 @@ No message decryption or new work index is involved. Another household owner
 cannot read a thread's panel; bearer callers cannot read either surface.
 
 The panel shows up to 100 items, bad then warn then other statuses, newest first,
-with fixed app links and “Made here”. A failing role is named (Tasks or Changes)
+with fixed app links and “Made here”. Owner-assigned open work reads Waiting on you for its assignee, or Waiting on the owner's member id for another viewer; it uses the current sharing registry, without opening a people store. Imported task ids over 200 characters are omitted. A failing role is named (Tasks or Changes)
 without returning its error details; the other role can still answer. Task
 status is the stored status, not a claim of readiness: visible unfinished
 blockers show Blocked, and hidden blockers are not exposed or inferred. Closed
@@ -918,6 +918,4 @@ remove it. A disconnected page hides cached work until its subscription is live.
 
 This completes the made-here portion only. References cited in words, note refs,
 ref chip resolution and reverse “From” links remain required. Runtime private
-input/control and production Comms composition also remain unfinished. The
-single existing browser proof now checks two-window task closure and work links
-and captures six additional work-panel screenshots in CI, with fake runtime/auth.
+input/control and production Comms composition also remain unfinished. Desktop work stays open beside the message column; a phone has a folded Work (N) strip with a worded bad-item warning. The single existing browser proof checks two-window closure, work links, phone folding/warnings, desktop placement and disconnect/reconnect, and captures six additional work-panel screenshots in CI with fake runtime/auth.

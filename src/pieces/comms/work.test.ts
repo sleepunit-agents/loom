@@ -108,3 +108,42 @@ it('sorts equivalent RFC3339 offset timestamps by instant rather than spelling',
  const s=await setup();s.task('t-1',s.conversation,'pond','open',undefined,'2026-11-01T12:00:00+12:00');s.task('t-2',s.conversation,'pond','open',undefined,'2026-11-01T01:00:00Z');
  expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{ref:'t-2'},{ref:'t-1'}]}});
 });
+it('shows waiting on the owning assignee in the original viewer wording',async()=>{
+ const s=await setup();s.task('t-1');
+ const assign=(assignee:string)=>s.app.operations.call('direct',{kind:'member',id:'other'},'tasks.update',{id:'t-1',set:{assignee},actor:'other',at:new Date(s.clock.now()).toISOString()},`assign-${assignee}`);
+ expect(assign('other')).toMatchObject({ok:true,value:{result:{ok:true}}});
+ expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{status:'Waiting on other',tone:'warn'}]}});
+ // The same trusted member id is both viewer and assigned owner after a registry change.
+ s.sharing.members.other.agents=['art'];
+ s.app.db.prepare("UPDATE comms_threads SET record=json_set(record,'$.member','other') WHERE id=?").run(s.thread);
+ expect(await s.call('work',{thread:s.thread},{kind:'member',id:'other'})).toMatchObject({ok:true,value:{items:[{status:'Waiting on you',tone:'warn'}]}});
+});
+it('omits long imported task ids and bounds a large made-here panel to 100',async()=>{
+ const s=await setup();const long='x'.repeat(201),boundary='x'.repeat(200);
+ const rows=Array.from({length:103},(_,n)=>({id:n===101?long:n===102?boundary:`t-${n}`,title:`Item ${n}`,type:'task',status:'open',priority:1,createdAt:'2026-11-01T00:00:00Z',createdBy:'other',source:`conversation:${s.conversation}`,project:'pond'}));
+ expect(s.app.operations.call('direct',{kind:'member',id:'other'},'tasks.import',{tasks:rows,actor:'other',at:'2026-11-01T00:00:00Z'},'many')).toMatchObject({ok:true,value:{result:{ok:true}}});
+ const result=await s.call('work',{thread:s.thread});expect(result.ok).toBe(true);
+ if(result.ok){const items=(result.value as {items:{ref:string}[]}).items;expect(items).toHaveLength(100);expect(items.every(i=>i.ref.length<=200)).toBe(true);}
+ // Isolate the boundary so the overall cap cannot mask a wrong length predicate.
+ for(const t of rows.filter(t=>t.id!==long&&t.id!==boundary))s.app.operations.call('direct',{kind:'member',id:'other'},'tasks.delete',{id:t.id,actor:'other',at:'2026-11-01T00:00:00Z'},`delete-${t.id}`);
+ expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{ref:boundary}]}});
+});
+it('does not reveal a hidden blocker through its identity or a derived blocked status',async()=>{
+ const s=await setup();s.task('t-1');s.task('hidden-blocker',s.conversation,'hidden');
+ expect(s.app.operations.call('direct',{kind:'member',id:'other'},'tasks.link',{id:'t-1',dependsOn:'hidden-blocker',type:'blocks',actor:'other',at:'2026-11-01T00:00:00Z'},'hidden-block')).toMatchObject({ok:true,value:{result:{ok:true}}});
+ const result=await s.call('work',{thread:s.thread});expect(result).toMatchObject({ok:true,value:{items:[{ref:'t-1',status:'Open'}]}});expect(JSON.stringify(result)).not.toMatch(/hidden-blocker|Blocked/);
+});
+it('keeps populated work available after archive',async()=>{
+ const s=await setup();s.task('t-1');const a=await socket(s);await a.next();
+ await s.call('change',{thread:s.thread,action:'archive'});
+ expect(await a.next()).toMatchObject({kind:'put',record:{items:[{ref:'t-1'}]}});
+ expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{ref:'t-1'}]}});
+});
+it('refreshes a subscribed Change after updates and removal',async()=>{
+ const s=await setup();s.task('t-1',s.conversation,'pond','open','acme/app#3');
+ const c=change({project:'pond',agent:'art'});replaceChanges(s.app.db,[c]);const a=await socket(s);await a.next();
+ replaceChanges(s.app.db,[{...c,title:'Changed title',conflicts:true}]);s.app.live.changed([{type:'change',id:c.id}]);
+ expect(await a.next()).toMatchObject({kind:'put',record:{items:[expect.objectContaining({from:'changes',status:'Conflicts',title:expect.stringContaining('Changed title')}),{ref:'t-1'}]}});
+ replaceChanges(s.app.db,[]);s.app.live.changed([{type:'change',id:c.id}]);
+ expect(await a.next()).toMatchObject({kind:'put',record:{items:[{ref:'t-1'}]}});
+});

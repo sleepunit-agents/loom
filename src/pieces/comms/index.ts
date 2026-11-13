@@ -34,7 +34,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  migrate(db,'comms',schema); db.pragma('secure_delete = ON');
  const see = (v: Viewer,t: Thread|undefined) => !!t && mayUseThread(v,t,o.sharing());
  const writable = (v: Viewer,input: {thread:string}) => see(v,thread(db,input.thread));
- installCommsWork({operations,live,clock,thread:(viewer,id)=>{const t=thread(db,id);return !closed&&see(viewer,t)?t:undefined;}});
+ installCommsWork({operations,live,clock,sharing:o.sharing,thread:(viewer,id)=>{const t=thread(db,id);return !closed&&see(viewer,t)?t:undefined;}});
  registerCommsMetadata(operations, {
   threadProject(viewer, conversation) {
    if (closed || !conversation.member) return null;

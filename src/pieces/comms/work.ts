@@ -1,12 +1,12 @@
 /** Made-here work is read through the owning pieces, with the original viewer. */
 import { z } from 'zod';
-import { operation, type Operations, type Live, type Viewer, type Clock } from '../../core/index.js';
+import { operation, type Operations, type Live, type Viewer, type Clock, type Sharing } from '../../core/index.js';
 import { tasksRole } from '../tasks/role.js';
-const task = z.object({id:z.string(),title:z.string(),status:z.enum(['open','in_progress','closed']),source:z.string().optional(),createdAt:z.string(),startedAt:z.string().optional(),closedAt:z.string().optional(),closeReason:z.string().optional()});
+const task = z.object({id:z.string(),title:z.string(),status:z.enum(['open','in_progress','closed']),source:z.string().optional(),assignee:z.string().optional(),createdAt:z.string(),startedAt:z.string().optional(),closedAt:z.string().optional(),closeReason:z.string().optional()});
 const exported = z.object({result:z.object({ok:z.literal(true),tasks:z.array(task),links:z.array(z.object({id:z.string(),dependsOn:z.string(),type:z.string()}))})});
 const feed = z.object({items:z.array(z.object({title:z.string().max(200),ref:z.string().max(200),status:z.string().max(24),when:z.string().optional(),tone:z.enum(['bad','warn','ok']).optional(),made:z.literal(true).optional()}))});
 export interface WorkItem { title:string;ref:string;status:string;from:'tasks'|'changes';made:true;when?:string;tone?:'bad'|'warn'|'ok';url:string }
-interface Options {operations:Operations;live:Live;clock:Clock;thread(viewer:Viewer,id:string):{conversation:string}|undefined}
+interface Options {operations:Operations;live:Live;clock:Clock;sharing():Sharing;thread(viewer:Viewer,id:string):{conversation:string}|undefined}
 export function installCommsWork(o:Options) {
  const read=(viewer:Viewer,id:string)=>{
   const thread=o.thread(viewer,id);if(!thread)return;
@@ -15,12 +15,15 @@ export function installCommsWork(o:Options) {
    const answer=tasksRole(o.operations).call(viewer,'export',{});
    if(!answer.ok)throw new Error();
    const {tasks,links}=exported.parse(answer.value).result;
-   for(const t of tasks.filter(t=>t.source===`conversation:${thread.conversation}`)) {
+   const unfinished=new Set(tasks.filter(t=>t.status!=='closed').map(t=>t.id));
+   const blockers=new Set(links.filter(l=>l.type==='blocks'&&unfinished.has(l.dependsOn)).map(l=>l.id));
+   for(const t of tasks.filter(t=>t.id.length<=200&&t.source===`conversation:${thread.conversation}`)) {
     // Hidden blockers still suppress ready work in Tasks. Do not infer or expose
     // hidden endpoints here: this panel reports stored status, not readiness.
-    const blocked=t.status!=='closed'&&links.some(l=>l.type==='blocks'&&l.id===t.id&&tasks.some(b=>b.id===l.dependsOn&&b.status!=='closed'));
-    items.push({ref:t.id,title:t.title.slice(0,200),from:'tasks',made:true,status:blocked?'Blocked':t.status==='open'?'Open':t.status==='in_progress'?'In progress':t.closeReason==='cancelled'?'Cancelled':'Done',
-     ...(blocked?{tone:'bad' as const}:t.status==='closed'?{tone:'ok' as const}:{}),when:t.closedAt??t.startedAt??t.createdAt,url:`/p/tasks-preview/task/${encodeURIComponent(t.id)}`});
+    const blocked=t.status!=='closed'&&blockers.has(t.id);
+    const waiting=t.status!=='closed'&&t.assignee!==undefined&&Object.hasOwn(o.sharing().members,t.assignee)&&o.sharing().members[t.assignee].owner;
+    items.push({ref:t.id,title:t.title.slice(0,200),from:'tasks',made:true,status:blocked?'Blocked':waiting?(t.assignee===viewer.id?'Waiting on you':`Waiting on ${t.assignee}`):t.status==='open'?'Open':t.status==='in_progress'?'In progress':t.closeReason==='cancelled'?'Cancelled':'Done',
+     ...(blocked?{tone:'bad' as const}:waiting?{tone:'warn' as const}:t.status==='closed'?{tone:'ok' as const}:{}),when:t.closedAt??t.startedAt??t.createdAt,url:`/p/tasks-preview/task/${encodeURIComponent(t.id)}`});
    }
   } catch {failed.push('Tasks');}
   try {
