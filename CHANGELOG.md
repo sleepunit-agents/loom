@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Import explicit Runtime snapshots with complete private source retention, scoped metadata, held old work and independent migration verification.
+
 ### Fixed
 
 - Accept legacy Secrets timestamps at arbitrary fractional precision during offline import, retain validated audit text exactly, and report value-free source check names.
@@ -19,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Review local machine requests in Clock with the existing exact-word approval controls; private decisions use the owning signed-in window and start no work.
+- Load the daemon Secrets retry key from an explicit private file and pin its identity before async value operations are registered; changed keys and unbound old journals fail closed.
 - Next bridge credential lifetimes now follow asynchronous public holder generation, retiring both transports on rotation or holder failure without reading credential values.
 - Persistent secret holder public generation for bridge credential lifetimes, atomically rotated with committed mutations and available through its authenticated read transport.
 
@@ -56,6 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Connect next-mode private Comms messages to runtime jobs and authenticated body reads, replies and status, keeping private words out of runner inputs and retry receipts.
 
 - Comms now shows work made in the thread, with live task/change statuses and links to their apps.
+
+- Review local machine requests in Clock with the existing exact-word approval controls; private decisions use the owning signed-in window and start no work.
 
 - Start conversations from Home with the shared Comms composer, retained drafts and recent/unread-thread navigation.
 

@@ -10,14 +10,30 @@ import { readReceipt, separateDestination } from './migration-all.js';
 import { canonicalPlanValue, migrationPlanChecksum, prepareMigrationPlan } from './migration-plan.js';
 import { openSnapshotSqlite } from './migration-sqlite.js';
 import type { IOStreams } from './io.js';
+import { HouseholdDatabase } from '../core/household/document.js';
+import { SharingDatabase } from '../core/household/sharing.js';
+import { parseHouseholdDocument } from '../household.js';
+import { readRuntimeImport } from '../pieces/runtime/import-source.js';
+import { runtimeImportTables } from '../pieces/runtime/import-projection.js';
+import { runtimeMigrationSources, assertRuntimeCheckpointed, sameRuntimeHousehold } from './migration-runtime.js';
 
 export interface VerificationDifference { piece: string; table: string; expected: number; actual: number | null }
 export interface VerificationReport { status: 'verified' | 'different' | 'incomplete'; snapshot: string; plan: string; pieces: string[]; missing: string[]; differences: VerificationDifference[] }
 const optional = (path: string): Buffer | undefined => existsSync(path) ? readFileSync(path) : undefined;
-const verifiers = ['household','tasks','attention','clock','approvals','changes','comms','secrets'];
+const verifiers = ['household','tasks','attention','clock','approvals','changes','comms','secrets','runtime'];
 /** Compare JSON semantically; ordering is retained inside records, table row order is immaterial. */
 function normalize(records: Row[]): string {
   return canonicalPlanValue(records.map(row=>Object.fromEntries(Object.entries(row).map(([key,value])=>[key, (key==='body'||key==='record') && typeof value==='string' ? JSON.parse(value) : value]))).map(row=>canonicalPlanValue(row)).sort());
+}
+function compareTable(db:Database.Database,table:string,expected:Row[],filter?:(row:Row)=>boolean):Omit<VerificationDifference,'piece'>|undefined {
+  let actual:Row[]|null=null;
+  try {
+    const columns=table==='approvals_approvals'||table==='approvals_rules'?'rowid AS migration_order, *':'*';
+    actual=db.prepare(`SELECT ${columns} FROM ${table}`).all() as Row[];
+    if(filter)actual=actual.filter(filter);
+  } catch {/* A missing schema or invalid record is a difference. */}
+  let equal=false;try{equal=actual!==null&&normalize(actual)===normalize(expected);}catch{/* Corrupt JSON differs. */}
+  if(!equal)return {table,expected:expected.length,actual:actual?.length??null};
 }
 export async function verifyMigration(snapshot: string, destination: string, supplied?: unknown): Promise<VerificationReport> {
   const prepared = prepareMigrationPlan(snapshot,supplied), home = resolve(destination), plan = prepared.plan;
@@ -55,17 +71,12 @@ export async function verifyMigration(snapshot: string, destination: string, sup
         const expected = await expectedTables(piece,input.paths.map(p=>join(checked.root,p)),input.options,receipt.now,join(checked.root,'home'));
         report.pieces.push(piece);
         for (const [table,rows] of Object.entries(expected)) {
-          let actual: Row[] | null = null;
-          try {
-            const columns = table==='approvals_approvals'||table==='approvals_rules' ? 'rowid AS migration_order, *' : '*';
-            actual = db.prepare(`SELECT ${columns} FROM ${table}`).all() as Row[];
-            if(table==='attention_asks' && (piece==='secrets'||plan.importers.secrets)) actual=actual.filter(row=>{
+          const filter=table==='attention_asks' && (piece==='secrets'||plan.importers.secrets) ? (row:Row)=>{
               const secret=JSON.parse(row.record as string).source?.kind==='piece' && JSON.parse(row.record as string).source?.id==='secrets';
               return piece==='secrets'?secret:!secret;
-            });
-          } catch { /* missing schema is a difference */ }
-          let equal = false; try { equal = actual!==null && normalize(actual)===normalize(rows); } catch { /* corrupt record is a difference */ }
-          if (!equal) report.differences.push({piece,table,expected:rows.length,actual:actual?.length??null});
+            }:undefined;
+          const difference=compareTable(db,table,rows,filter);
+          if(difference)report.differences.push({piece,...difference});
         }
         if (!receipt.completed.includes(piece)) report.differences.push({piece,table:'coordinator-receipt',expected:1,actual:0});
         if (piece==='household') {
@@ -88,15 +99,50 @@ export async function verifyMigration(snapshot: string, destination: string, sup
     } finally { db.close(); }
   } finally { lock.close(); }
 }
-const usage = 'usage: loom migrate verify --snapshot <directory> --home <stopped-home> [--plan <file>]\n';
+const usage = 'usage: loom migrate verify --snapshot <directory> --home <stopped-home> [--plan <file> | --runtime-mapping <file>]\n';
+/** Standalone Runtime verification has its own owning import metadata, not an all receipt. */
+export async function verifyRuntimeMigration(snapshot:string,home:string,options:unknown):Promise<VerificationReport> {
+  const prepared=prepareMigrationPlan(snapshot),input=prepared.plan.importers.runtime;
+  if(!input)throw Error('Runtime input required');
+  separateDestination(prepared.root,home,prepared.plan);
+  const lockPath=join(home,'http-daemon-lock.db'),lockBytes=readFileSync(lockPath);
+  if(lockBytes.length&&(lockBytes.length<20||lockBytes[18]!==1||lockBytes[19]!==1))throw Error('Unsafe daemon gate');
+  for(const suffix of ['-wal','-shm','-journal'])if(existsSync(lockPath+suffix))throw Error('Unsafe daemon gate journal');
+  const lock=new Database(lockPath,{readonly:true,fileMustExist:true,timeout:0});
+  try {
+    lock.exec('BEGIN EXCLUSIVE');
+    const path=join(home,'loom.db');assertRuntimeCheckpointed(path);
+    const before=readFileSync(path),db=openSnapshotSqlite(path);
+    try {
+      const sourceHome=join(prepared.root,'home');
+      const h=parseHouseholdDocument(sourceHome,JSON.parse(readFileSync(join(sourceHome,'household.json'),'utf8')));
+      const current=new HouseholdDatabase(db).household(home);
+      if(!sameRuntimeHousehold(current,h))throw Error('Destination household differs from snapshot');
+      const source=readRuntimeImport(runtimeMigrationSources(input.paths.map(p=>snapshotPath({snapshot:prepared},p))),options,
+        {agents:h.agents,members:h.members.map(m=>m.person),projects:new SharingDatabase(db,home).projectIds()},openSnapshotSqlite);
+      const plan={...prepared.plan,importers:{...prepared.plan.importers,runtime:{...input,options:JSON.parse(source.options)}}};
+      const report:VerificationReport={status:'verified',snapshot:prepared.plan.snapshot,plan:migrationPlanChecksum(plan),pieces:['runtime'],missing:[],differences:[]};
+      for(const [table,expected] of Object.entries(runtimeImportTables(source))) {
+        const difference=compareTable(db,table,expected);
+        if(difference)report.differences.push({piece:'runtime',...difference});
+      }
+      prepareMigrationPlan(snapshot,prepared.plan);assertRuntimeCheckpointed(path);
+      if(!before.equals(readFileSync(path)))throw Error('Runtime destination changed');
+      report.status=report.differences.length?'different':'verified';return report;
+    } finally {db.close();}
+  } finally {lock.close();}
+}
 export async function migrateVerify(argv: string[], io: IOStreams): Promise<number> {
   let args;
-  try { args = parseArgs({args:argv,options:{snapshot:{type:'string'},home:{type:'string'},plan:{type:'string'},help:{type:'boolean',short:'h'}},strict:true,allowPositionals:false}); }
+  try { args = parseArgs({args:argv,options:{snapshot:{type:'string'},home:{type:'string'},plan:{type:'string'},'runtime-mapping':{type:'string'},help:{type:'boolean',short:'h'}},strict:true,allowPositionals:false}); }
   catch { io.stderr(usage); return 2; }
   if (args.values.help) { io.stdout(usage); return 0; }
   if (!args.values.snapshot || !args.values.home) { io.stderr(usage); return 2; }
   try {
-    const report = await verifyMigration(args.values.snapshot,args.values.home,args.values.plan ? JSON.parse(readFileSync(args.values.plan,'utf8')) : undefined);
+    if(args.values.plan&&args.values['runtime-mapping'])throw Error('Choose all plan or standalone Runtime mapping');
+    const report = args.values['runtime-mapping']
+      ? await verifyRuntimeMigration(args.values.snapshot,args.values.home,JSON.parse(readFileSync(args.values['runtime-mapping'],'utf8')))
+      : await verifyMigration(args.values.snapshot,args.values.home,args.values.plan ? JSON.parse(readFileSync(args.values.plan,'utf8')) : undefined);
     io.stdout(JSON.stringify(report,null,2)+'\n'); return report.status==='verified'?0:3;
   } catch { io.stderr('Verification refused; check snapshot, plan and migration home, and stop the destination daemon.\n'); return 1; }
 }

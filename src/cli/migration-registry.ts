@@ -14,6 +14,11 @@ import { publishMigrationCommsKey } from './migration-comms-key.js';
 import { importSecrets } from '../pieces/secrets/importer.js';
 import type { SecretImportOptions } from '../pieces/secrets/import-source.js';
 import { importChanges } from '../pieces/changes/importer.js';
+import { importRuntime } from '../pieces/runtime/importer.js';
+import { type RuntimeImportOptions } from '../pieces/runtime/import-source.js';
+import { HouseholdDatabase } from '../core/household/document.js';
+import { SharingDatabase } from '../core/household/sharing.js';
+import { runtimeMigrationSources } from './migration-runtime.js';
 
 export interface MigrationContext {
   db: Db;
@@ -126,5 +131,14 @@ export function createMigrationRegistry(): MigrationRegistry {
   registry.register<SecretImportOptions>({ name: 'secrets', dependencies: ['household'], reads: ['home/<secrets directory>/{store.sops.json,policy.json,requests.json,audit.jsonl}'],
     sourceReads: ['**/store.sops.json','**/policy.json','**/requests.json','**/audit.jsonl'],
     run: (context,input) => importSecrets(context.db,context.home,single(context,input),context.now,input.options) });
+  registry.register<RuntimeImportOptions>({name:'runtime',dependencies:['household'],
+    reads:['home/commons/stores/runtime.db (all docs and revisions)','runtime/ (explicit LOOM_BOX_HOME snapshot)','runtime-data/ (explicit LOOM_BOX_DATA snapshot)'],
+    sourceReads:['commons/stores/runtime.db'],
+    run:(context,input)=>{
+      const h=new HouseholdDatabase(context.db).household(context.home);
+      if(!h)throw Error('Imported household required for runtime');
+      return importRuntime(context.db,runtimeMigrationSources(input.paths.map(path=>snapshotPath(context,path))),input.options,
+        {agents:h.agents,members:h.members.map(m=>m.person),projects:new SharingDatabase(context.db,context.home).projectIds()},context.now,openSnapshotSqlite);
+    }});
   return registry;
 }

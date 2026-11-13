@@ -12,6 +12,8 @@ export interface SnapshotManifest {
   consistency: 'per-database';
   skipped?: { path: string; rule: string; bytes: number | null }[];
   followed?: { path: string; realPath: string }[];
+  /** Explicit runtime roots remain inventoried even when their directories are empty. */
+  runtimeRoots?: ('runtime'|'runtime-data')[];
   files: { path: string; sha256: string; bytes: number; kind: 'sqlite' | 'file' }[];
 }
 const hash = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
@@ -70,7 +72,7 @@ export interface SnapshotInventory {
   followed: NonNullable<SnapshotManifest['followed']>;
 }
 /** Inventory only: no SQLite connection, destination creation or source writes. */
-export interface SnapshotRoots { clock?: string; wake?: string; approvals?: string; changes?: string; secrets?: string }
+export interface SnapshotRoots { clock?: string; wake?: string; approvals?: string; changes?: string; secrets?: string; runtime?: string; 'runtime-data'?: string }
 export function inventorySnapshot(from: string, to: string, tasks?: string, roots: SnapshotRoots = {}): SnapshotInventory {
   let source = guarded('.', 'source home must exist', () => realpathSync(from));
   let prefix = 'home';
@@ -93,7 +95,9 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
   };
   const skipRule = (path: string, directory: boolean, input: string): string | undefined => {
     const parts = path.split('/');
-    if (parts.slice(0, directory ? undefined : -1).some(p => excluded.has(p)) || (path === 'pieces/bin' && directory) || path.startsWith('pieces/bin/')) return 'installed program or runtime directory';
+    if(prefix==='runtime-data' && parts[0]==='logins')return 'runner-owned CLI login material (credential values are not imported)';
+    const omitted = prefix === 'runtime' || prefix === 'runtime-data' ? new Set(['.git','node_modules']) : excluded;
+    if (parts.slice(0, directory ? undefined : -1).some(p => omitted.has(p)) || (prefix==='home' && ((path === 'pieces/bin' && directory) || path.startsWith('pieces/bin/')))) return 'installed program or runtime directory';
     const base = input.replace(/(?:-wal|-shm|-journal)$/, '');
     if (base !== input && existsSync(base) && guarded(path, 'cannot inspect possible SQLite coordination file', () => isSqlite(base))) return 'SQLite coordination file (backup API reads committed data)';
     if (/(?:^|[/.])(?:[^/]*\.)?lock$/.test(path)) return 'lock file';
@@ -157,6 +161,7 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
     patterns = name === 'clock' ? ['lanes.json', 'fire', ...clockFiles.map(file => `*/${file}`)]
       : name === 'wake' ? clockFiles
       : name === 'secrets' ? ['store.sops.json', 'policy.json', 'requests.json', 'audit.jsonl']
+      : name === 'runtime' || name === 'runtime-data' ? ['**']
       : ['approvals.json', 'rules.json', 'audit.jsonl'];
     // Each root has its own alias confinement boundary; never follow a link to another root.
     visit(source);
@@ -187,10 +192,13 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
     if (current.dev !== reserved.dev || current.ino !== reserved.ino) refusal('<destination>', 'reserved destination was replaced');
   };
   const manifest: SnapshotManifest = { version: 1, consistency: 'per-database', files: [], skipped: inventory.skipped, followed: inventory.followed };
+  const runtimeRoots = (['runtime','runtime-data'] as const).filter(name=>roots[name]!==undefined);
+  if(runtimeRoots.length)manifest.runtimeRoots=runtimeRoots;
   const copied = new Map<string, Buffer>();
   try {
     destinationPath(join(target, 'home'));
     guarded('.', 'cannot create copied home', () => mkdirSync(join(target, 'home'), { mode: 0o700 }));
+    for(const name of runtimeRoots)guarded(name,'cannot create copied runtime root',()=>mkdirSync(join(target,name),{mode:0o700}));
     for (const file of inventory.copies) {
       const path = file.path.startsWith('home/') ? file.path.slice(5) : file.path;
       // Recheck confinement/type immediately before reading; never copy symlink bytes.
@@ -255,14 +263,14 @@ export function readSnapshot(dir: string): SnapshotManifest {
   }
   return manifest;
 }
-const usage = 'usage: loom migrate snapshot --from <old-home> [--tasks <store.db>] [--clock <WAKE_DATA>] [--wake <Art/.wake>] [--approvals <directory>] [--changes <snapshot.json>] [--secrets <directory>] --to <new-directory> [--dry-run]\n';
+const usage = 'usage: loom migrate snapshot --from <old-home> [--tasks <store.db>] [--clock <WAKE_DATA>] [--wake <Art/.wake>] [--approvals <directory>] [--changes <snapshot.json>] [--secrets <directory>] [--runtime <LOOM_BOX_HOME>] [--runtime-data <LOOM_BOX_DATA>] --to <new-directory> [--dry-run]\n';
 export async function migrateSnapshot(argv: string[], io: IOStreams): Promise<number> {
   let values;
-  try { ({ values } = parseArgs({ args: argv, options: { from: { type: 'string' }, to: { type: 'string' }, tasks: { type: 'string' }, clock: { type: 'string' }, wake: { type: 'string' }, approvals: { type: 'string' }, changes: { type: 'string' }, secrets: { type: 'string' }, 'dry-run': { type: 'boolean' } }, strict: true, allowPositionals: false })); }
+  try { ({ values } = parseArgs({ args: argv, options: { from: { type: 'string' }, to: { type: 'string' }, tasks: { type: 'string' }, clock: { type: 'string' }, wake: { type: 'string' }, approvals: { type: 'string' }, changes: { type: 'string' }, secrets: { type: 'string' }, runtime: { type: 'string' }, 'runtime-data': { type: 'string' }, 'dry-run': { type: 'boolean' } }, strict: true, allowPositionals: false })); }
   catch { io.stderr(usage); return 2; }
   if (!values.from || !values.to) { io.stderr(usage); return 2; }
   try {
-    const roots: SnapshotRoots = { clock: values.clock, wake: values.wake, approvals: values.approvals, changes: values.changes, secrets: values.secrets };
+    const roots: SnapshotRoots = { clock: values.clock, wake: values.wake, approvals: values.approvals, changes: values.changes, secrets: values.secrets, runtime:values.runtime,'runtime-data':values['runtime-data'] };
     if (values['dry-run']) {
       const inventory = inventorySnapshot(values.from, values.to, values.tasks, roots);
       io.stdout(JSON.stringify({ status: 'dry-run', consistency: inventory.consistency, sizes: 'source main-file bytes; SQLite backup size may differ', copies: inventory.copies.map(({ path, bytes }) => ({ path, bytes })), skipped: inventory.skipped, followed: inventory.followed }, null, 2) + '\n');

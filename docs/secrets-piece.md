@@ -70,8 +70,9 @@ key is separate from the holder's receipt key and age identity. Missing or
 incorrectly sized keys refuse before either value operation is registered.
 Fixed keys in fixture installers are synthetic test data only.
 
-No key is generated, discovered, installed or rotated here. Changing the key
-makes existing core retry IDs conflict rather than replay; do not use a fresh
+No key is generated or discovered here. The explicit persistent async loader
+and binding are described below; the older synchronous fixture seam still
+requires the same caller-provided key across restarts. Do not use a fresh
 random key at every startup. Existing unkeyed receipts are not rewritten by
 this change and remain guessable until removed under a separately verified
 migration or expired. Production value operations are still uninstalled;
@@ -826,3 +827,41 @@ marker to both daemons, composes People names and CLI options, and removes the
 old engine credential interface. This PR adds the real prerequisite; it does
 not activate a bridge or change an installed holder. The legacy age-file source
 has no generation capability and the endpoint refuses it.
+
+## Explicit daemon retry-key loading and binding
+
+`installAsyncSecretValuesFromFile(db, operations, sharing, holder, keyFile,
+attention?)` is the explicit async composition entry for a persistent daemon
+retry key. Supply an absolute file path in a private owned directory. The file
+must contain exactly 32 independently generated random bytes, be owned by the
+current user, have no group/world access, and have one hard link. Symlinks,
+nonregular files, missing files and malformed lengths refuse with the fixed
+`Secret retry key unavailable` diagnostic. Startup neither generates a key nor
+replaces an existing file. File bytes are bounded and erased after installation;
+the async installer retains its own crypto key copy. A FIFO descriptor is rejected
+before reading, and even a file growing after inspection is read only up to
+33 bytes (the key plus one excess byte), then refused and erased.
+
+Every async installer, including the in-memory fixture entry, now atomically
+pins a domain-separated HMAC of a fixed constant in `secrets_meta` under
+`daemon-retry-key-v1` before registering either value operation. No key, value,
+or unkeyed value hash enters the database. The binding and write journal have
+the same indefinite lifetime: reopening with a different key refuses startup,
+even with no unfinished write. Keep the daemon key separately from database
+backups and retain it for every restored journal. Loading runs outside any
+operation/outer transaction so its binding cannot be rolled back underneath
+registered operations.
+
+An older journal containing any write intent without a key binding refuses
+installation. Its full inputs are deliberately absent, so startup cannot prove
+which supplied key made those fingerprints. Do not delete intents or invent a
+binding to make it start; adoption of such a journal needs a separate explicit
+recovery protocol. This does not affect the normal next instance, which has
+never installed async values. No installed home is changed by this work.
+
+This adds loading and mismatch detection, not rotation. Changing the file is
+refused, including after completed writes; safe key rotation must retain the
+old retry identity before that restriction can be lifted. Holder key/identity
+rotation and automatic daemon reconciliation without caller plaintext still
+remain, followed by normal-root composition. Normal next mode and Settings
+value forms stay disabled until those prerequisites are delivered.

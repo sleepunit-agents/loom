@@ -51,6 +51,16 @@ it('fake runner claims only its queued job and reports progress over real bearer
   expect(f.store.read('job', 'j')).toEqual({ ...before, state: 'running', changedAt: f.clock.now() });
   expect(f.store.read('job', 'other')?.state).toBe('queued');
 });
+it('fences imported work over authenticated HTTP and preserves an old write-off history discard',async()=>{
+  const f=await setup(),token=f.bearer('a');
+  for(const history of ['unknown','discard'] as const) {
+    f.app.db.transaction(()=>{const {changedAt:_,...job}=f.store.read('job','j')!;f.store.put('job',{...job,state:'uncertain',imported:{history}},f.clock.now());})();
+    expect(await f.post(token,'jobControl',{job:'j'})).toEqual({ok:true,value:{stop:true,history}});
+    expect(await f.post(token,'claimJob',{job:'j'})).toMatchObject({ok:false,code:'conflict'});
+    expect(await f.post(token,'reportJob',{job:'j',state:'running'})).toMatchObject({ok:false,code:'conflict'});
+    expect(await f.post(token,'finishJob',{job:'j',state:'done'})).toMatchObject({ok:false,code:'conflict'});
+  }
+});
 it('denies off-assignment, missing, private and other viewer kinds for both operations', async () => {
   const f = await setup();
   for (const op of ['claimJob', 'reportJob']) {
