@@ -218,3 +218,21 @@ During the final coordinated move, update the harness's stdio arguments to the
 explicit new-side invocation after import verification. This PR performs no
 host or harness rollout. Earlier sections describe the incremental reader
 slices; this section supersedes their pending-entrypoint status.
+
+### Scoped agent ownership
+
+`household.setOwnedAgents({person, agents})` replaces an existing scoped member's
+owned-agent list. It is a household-owner operation through the central policy;
+a scoped owner cannot administer it. Agents must already belong to the household.
+Duplicates collapse, ordinary members may own none, and imported scoped owners
+retain their role and must still own at least one agent. Unknown member fields
+and project memberships survive. The write and its retry result commit together;
+`core.access` refreshes open windows immediately to evict lost agent records.
+
+| Old owner action | New operation |
+| --- | --- |
+| Change a scoped member's owned agents (`setMember`) | `household.setOwnedAgents` |
+
+This operation does not create members or promote/demote household owners; those
+operations remain separate. Keeping wildcard ownership unchanged also keeps the
+first household owner and existing credential bindings unchanged.
