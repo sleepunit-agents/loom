@@ -22,7 +22,7 @@ export default function AccessAdmin({ active = true, firstAgent }: { active?: bo
   const result = useSyncExternalStore(mint?.subscribe ?? noop, mint?.getSnapshot ?? (() => idle));
   const attempted = useSyncExternalStore(tokenAttempt.subscribe, tokenAttempt.getSnapshot);
   const [role, setRole] = useState('owner');
-  useEffect(() => { if (firstAgent) setRole('agent'); }, [firstAgent]);
+  useEffect(() => { if (firstAgent) { setMint(undefined); setRole('agent'); } }, [firstAgent]);
   const admin = feed.records[0], h = household.records[0];
   // Never retain a returned bearer beyond this mounted, authorized, connected screen.
   useEffect(() => { if (feed.status !== 'live' || !active || !admin || !h) setMint(undefined); }, [feed.status, active, admin, h]);

@@ -30,7 +30,7 @@ export function bootstrapHouseholdAgent(ctx: Context, home: string, input: Boots
   if (household.agents.includes(input.agent)) throw new OperationError('conflict', 'Agent is already registered');
   realDir(home);
   const parent = join(home, 'agents'), target = join(parent, input.agent);
-  if (!existsSync(parent)) mkdirSync(parent, { mode: 0o700 });
+  if (!existsSync(parent)) { mkdirSync(parent, { mode: 0o700 }); syncDir(home); }
   realDir(parent);
   const identity = buildIdentityMd({ name: input.name, purpose: input.purpose, voice: input.voice, user: household.owner }) +
     (input.rules ? `\n## Rules\n\n${input.rules}\n` : '') + (input.ask ? `\n## When to ask first\n\n${input.ask}\n` : '');

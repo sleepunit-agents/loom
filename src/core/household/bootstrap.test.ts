@@ -1,7 +1,11 @@
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { createStdioServer } from '../../index.js';
+import { closeAllBackends } from '../../backends/index.js';
 import { startLoom } from '../../foundation.js';
 import { fixture } from '../../fixture.js';
 import { FakeClock } from '../clock.js';
@@ -10,8 +14,9 @@ import { HouseholdRows } from './rows.js';
 import { signin } from '../signin/index.js';
 import { readContinuityHousehold } from '../../continuity/household.js';
 import type { Viewer } from '../../policy.js';
+vi.mock('../../backends/fastembed.js', () => ({ FastEmbedProvider: class { readonly dimensions = 384; async embed() { return new Array(384).fill(0.1); } async embedBatch(texts: string[]) { return texts.map(() => new Array(384).fill(0.1)); } } }));
 const homes: string[] = [], closes: (() => void | Promise<void>)[] = [];
-afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+afterEach(async () => { for (const close of closes.splice(0).reverse()) await close(); closeAllBackends(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const input = { agent: 'gabe', name: 'Gabe', purpose: 'You help with the garden.', voice: 'Warm and direct.', rules: 'Keep private things private.', ask: 'Ask before spending money.' };
 async function setup() { const home = mkdtempSync(join(tmpdir(), 'loom-bootstrap-')); homes.push(home); fixture(home); const clock = new FakeClock(); const app = await startLoom({ home, clock, next: true }); closes.push(app.close); return { home, clock, app }; }
@@ -38,6 +43,18 @@ it('creates a portable context, publishes Live after commit and mints its first 
   await app.close();
   expect(readContinuityHousehold(home, 'gabe').agent).toBe('gabe');
   expect(readFileSync(join(dir, 'IDENTITY.md'), 'utf8')).toContain('garden');
+  const bytes = readFileSync(join(home, 'loom.db'));
+  const { server } = createStdioServer(['mcp', '--next', '--home', home, '--agent', 'gabe']);
+  const client = new Client({ name: 'bootstrap-acceptance', version: '1' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  closes.push(async () => { await client.close(); await server.close(); });
+  await server.connect(a); await client.connect(b);
+  const identity = await client.callTool({ name: 'identity', arguments: {} });
+  expect(identity.isError).not.toBe(true);
+  const words = JSON.stringify(identity.content);
+  expect(words).toContain('Gabe'); expect(words).toContain('garden'); expect(words).toContain('Keep private things private.'); expect(words).toContain('Ask before spending money.');
+  expect(words).toContain('jonathan');
+  expect(readFileSync(join(home, 'loom.db'))).toEqual(bytes);
 });
 function signinHash(value: string) { return createHash('sha256').update(value).digest('hex'); }
 import { createHash } from 'node:crypto';
