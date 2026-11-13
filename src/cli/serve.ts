@@ -41,6 +41,7 @@ mesh-reachable HTTP daemon instead.
 
 Options:
   --next                 Run only the new app and in-repo pieces
+  --secret-authority <file> Explicit private holder authorization socket config (next mode)
   --secret-holder <file> Explicit private local holder config for next mode
   --staging              Hold outside effects in next mode
   --home <dir>           Next mode home (env LOOM_HOME)
@@ -99,6 +100,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
       options: {
         next: { type: 'boolean', default: false },
         staging: { type: 'boolean', default: false },
+        'secret-authority': { type: 'string' },
         'secret-holder': { type: 'string' },
         home: { type: 'string' },
         http: { type: 'boolean', default: false },
@@ -143,13 +145,22 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
     if (!Number.isInteger(port) || port < 1 || port > 65535) { io.stderr('Invalid --port\n'); return 2; }
     let changes;
+    let secretAuthority;
+    if (values['secret-authority']) {
+      try {
+        const { privateBytes } = await import('../pieces/secrets/local-holder.js');
+        const { authorityServerConfig } = await import('../pieces/secrets/holder-authority.js');
+        const bytes=privateBytes(values['secret-authority']);
+        try {secretAuthority=authorityServerConfig.parse(JSON.parse(bytes.toString('utf8')));} finally {bytes.fill(0);}
+      } catch {io.stderr('Invalid secret holder authority configuration\n');return 2;}
+    }
     if (values['secret-holder']) {
       try {
         const { configuredSecretHolder } = await import('../pieces/secrets/holder-config.js');
         changes = configuredSecretHolder(values['secret-holder']);
       } catch { io.stderr('Invalid local secret holder configuration\n'); return 2; }
     }
-    const handle = await startLoom({ home, next: true, staging: values.staging, host: hosts, port, stdout: io.stdout, changes });
+    const handle = await startLoom({ home, next: true, staging: values.staging, host: hosts, port, stdout: io.stdout, changes, secretAuthority });
     io.stderr(`loom: next app on ${handle.url}${values.staging ? ' (staging)' : ''}\n`);
     await new Promise<void>(done => {
       const stop = () => { process.off('SIGTERM', stop); process.off('SIGINT', stop); void handle.close().then(done); };
@@ -157,6 +168,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     });
     return 0;
   }
+  if (values['secret-authority']) { io.stderr('--secret-authority requires --next\n'); return 2; }
   if (values['secret-holder']) { io.stderr('--secret-holder requires --next\n'); return 2; }
   if (values.staging || values.home) { io.stderr('--staging and --home require --next\n'); return 2; }
   const contextDir = resolveContextDir();

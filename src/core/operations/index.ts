@@ -21,6 +21,8 @@ export interface CliCommand { name: string; write?: boolean; positional?: string
 /** A committed external result retains its original core retry deadline. */
 export class RecoveredWrite<T = unknown> { constructor(readonly value: T, readonly expires: number) {} }
 export interface Operation<I = unknown> {
+  /** Sensitive authority results must recheck current policy even on receipt replay. */
+  recheckPolicy?: boolean;
   name: string; cli?: CliCommand; windowOnly?: boolean; input: z.ZodType<I>; output: z.ZodType; write?: boolean; doors?: Door[];
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
@@ -110,7 +112,7 @@ export class Operations {
     try {
       result = this.db.transaction((): Result => {
         const now = this.clock.now();
-        if (op.windowOnly && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
+        if ((op.windowOnly || op.recheckPolicy) && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
         const who = canonical(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data)) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
         if (op.write) {
           this.db.prepare('DELETE FROM core_operations WHERE expires <= ?').run(now);

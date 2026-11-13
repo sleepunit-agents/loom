@@ -18,7 +18,7 @@ import type { Socket } from 'node:net';
 import type { Foundation } from './core/app.js';
 import { httpDoor } from './core/app.js';
 import type { Authentication } from './core/live/index.js';
-import { maySee } from './core/index.js';
+import { maySee, mayAct } from './core/index.js';
 import type { Sharing } from './core/index.js';
 import { installSharing } from './pieces/sharing/index.js';
 import { clockVouchApplication } from './pieces/clock/role.js';
@@ -33,6 +33,7 @@ import { installRunnerInput } from './pieces/runtime/input.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { clockRuntime } from './pieces/runtime/clock.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
+import { listenHolderAuthority, type AuthorityServerConfig } from './pieces/secrets/holder-authority.js';
 import { installSecrets } from './pieces/secrets/index.js';
 import { secretGrantAttention } from './pieces/secrets/attention.js';
 import { installSecretServices, secretUseRole, type SecretValueSource } from './pieces/secrets/service.js';
@@ -81,17 +82,19 @@ export interface NextChangesOptions {
   interval?: number;
 }
 export interface NextBridgesOptions extends Omit<SlackDaemonOptions, 'secrets'> { source: SecretValueSource }
+const secretAuthorities = new WeakMap<Foundation, Awaited<ReturnType<typeof listenHolderAuthority>>>();
 const bridgeDaemons = new WeakMap<Foundation, ReturnType<typeof installSlackDaemon>>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
 const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
 export async function closeNext(app: Foundation) {
   try { await bridgeDaemons.get(app)?.close(); }
-  finally { await runtimeClosers.get(app)?.(); }
+  finally { try { await secretAuthorities.get(app)?.close(); secretAuthorities.delete(app); } finally { await runtimeClosers.get(app)?.(); } }
 }
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
   changes?: NextChangesOptions;
+  secretAuthority?: AuthorityServerConfig;
   bridges?: NextBridgesOptions;
   /** Explicit opt-in for fixed 24-hour safety wakes, acting as the named agents. */
   clockDeadmanAgents?: readonly string[];
@@ -194,6 +197,11 @@ export async function installNext(app: Foundation, options: NextOptions) {
   }
   if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects,
     {valid:conversations.validInput,issue:(agent,job)=>signin(app).issueBody(agent,job)});
+  if (options.secretAuthority && !secretAuthorities.has(app)) {
+    const current = () => new SharingDatabase(app.db, options.home).sharing();
+    secretAuthorities.set(app, await listenHolderAuthority(options.secretAuthority, member =>
+      mayAct({kind:'member',id:member},{type:'secret.name'},current(),'household','secrets.set')));
+  }
   return effects;
 }
 export async function listenNext(app: Foundation, options: NextOptions) {

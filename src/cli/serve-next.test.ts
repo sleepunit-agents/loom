@@ -50,3 +50,14 @@ it('holder configuration requires next mode and invalid configuration never star
     expect(errors).toEqual(['--secret-holder requires --next\n','Invalid local secret holder configuration\n']);
   } finally { start.mockRestore(); }
 });
+
+it('holder authority requires next mode and explicit valid private configuration',async()=>{
+  const start=vi.spyOn(foundation,'startLoom');const errors:string[]=[];
+  const io={stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:(s:string)=>errors.push(s)};
+  try {
+    expect(await run(['--secret-authority','/does-not-exist'],io)).toBe(2);
+    expect(await run(['--next','--secret-authority','/does-not-exist'],io)).toBe(2);
+    expect(start).not.toHaveBeenCalled();
+    expect(errors).toEqual(['--secret-authority requires --next\n','Invalid secret holder authority configuration\n']);
+  } finally {start.mockRestore();}
+});

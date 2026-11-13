@@ -13,6 +13,12 @@ export function ownerApprovalsRole(operations: Operations) {
 export function approvalsRole(operations: Operations, service: string) {
   const viewer: Viewer = {kind:'service',id:service};
   return {
+    /** Clock passes an authenticated Caller and its immutable private filing.
+     * Check never consumes; use participates in the caller's foundation transaction.
+     */
+    localStanding(caller: Caller, input: Omit<import('./local-standing.js').LocalStandingInput,'caller'>, id: string) {
+      return operations.call('direct',viewer,input.mode==='check'?'approvals.piece-standing-local-check':'approvals.piece-standing-local',{...input,caller},id);
+    },
     call(verb: 'request'|'use'|'use-local'|'withdraw'|'rule'|'tell', caller: Caller, input: Record<string,unknown>, id?: string) {
       return operations.call('direct',viewer,`approvals.piece-${verb}`,{...input,caller},id);
     },

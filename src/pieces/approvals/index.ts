@@ -1,4 +1,5 @@
 import { groupVouch } from './group-vouch.js';
+import { installLocalStanding } from './local-standing.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { z } from 'zod';
 import { migrate, operation, maySee, mayAct, mayCreate, OperationError, type Viewer, type Sharing, type Db, type Operations, type Live, type LiveRecord } from '../../core/index.js';
@@ -25,6 +26,7 @@ export interface ApprovalOptions {
 export function installApprovals(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ApprovalOptions = {}) {
   registerBuiltinService(operations, 'approvals', ['approval', 'approval-rule']);
   migrate(db,'approvals',schema);
+  installLocalStanding(db,operations,sharing);
   const context = (viewer: Viewer, input: Record<string,unknown>, now: number, piece = false): DomainContext => {
     const resolved = piece ? input.caller as Caller : options.caller?.(viewer,typeof input.principal === 'string' ? input.principal : undefined);
     const caller: Caller = resolved ?? { who:{agent:viewer.id,where:'a body'},for:'?' };
