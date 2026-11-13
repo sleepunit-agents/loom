@@ -11,6 +11,12 @@ import { SharingDatabase } from './core/household/sharing.js';
 import { change } from './pieces/changes/fixture.js';
 import { replaceChanges } from './pieces/changes/store.js';
 
+function socketMessages(socket:WebSocket) {
+ const messages:unknown[]=[],waiters:((value:unknown)=>void)[]=[];
+ socket.on('message',data=>{const value=JSON.parse(String(data));const waiter=waiters.shift();if(waiter)waiter(value);else messages.push(value);});
+ return ()=>messages.length?Promise.resolve(messages.shift()):new Promise(resolve=>waiters.push(resolve));
+}
+
 it('next installs Changes without a fixture and reads current household project scope over HTTP', async () => {
  const home=mkdtempSync(join(tmpdir(),'changes-next-'));
  writeFileSync(join(home,'household.json'),'poisoned legacy household');
@@ -62,9 +68,7 @@ it('next reprojects account assignment and clearing over HTTP and live without g
   expect((show() as {value:{agent?:string}}).value.agent).toBeUndefined();
   expect(await list()).toMatchObject({ok:true,value:[]});
   socket=new WebSocket(loom.url.replace('http:','ws:')+'/live',{headers:{authorization:'pollock'}});
-  const messages:unknown[]=[],waiters:((v:unknown)=>void)[]=[];
-  socket.on('message',data=>{const value=JSON.parse(String(data));const waiter=waiters.shift();if(waiter)waiter(value);else messages.push(value);});
-  const next=()=>messages.length?Promise.resolve(messages.shift()):new Promise(resolve=>waiters.push(resolve));
+  const next=socketMessages(socket);
   await once(socket,'open');socket.send(JSON.stringify({kind:'subscribe',type:'change'}));
   expect(await next()).toMatchObject({kind:'set',records:[]});
   expect(assign('art',['ART-BOT'])).toMatchObject({ok:true});
@@ -72,13 +76,13 @@ it('next reprojects account assignment and clearing over HTTP and live without g
   expect(await next()).toMatchObject({kind:'put',record:{id:change().id,agent:'art',mine:false}});
   expect((await list()).value).toHaveLength(1); // Agent metadata cannot grant private project access.
   expect(loom.operations.call('direct',owner,'changes.confirm',{id:change().id,head:change().head.id})).toMatchObject({ok:true,value:{open:false}});
+  const answer=await fetch(`${loom.url}/api/changes/answer`,{method:'POST',headers:{authorization:'jonathan','content-type':'application/json'},body:JSON.stringify({id:'uncomposed-answer',input:{id:change().id,head:change().head.id,action:'yes'}})});
+  expect(await answer.json()).toMatchObject({ok:false,code:'unavailable',message:'Approvals is unavailable'});
   expect(assign('art',[])).toMatchObject({ok:true});
   expect(await next()).toMatchObject({kind:'del',id:change().id});
   expect(await list()).toMatchObject({ok:true,value:[]});
   ownerSocket=new WebSocket(loom.url.replace('http:','ws:')+'/live',{headers:{authorization:'jonathan'}});
-  const ownerMessages:unknown[]=[],ownerWaiters:((v:unknown)=>void)[]=[];
-  ownerSocket.on('message',data=>{const value=JSON.parse(String(data));const waiter=ownerWaiters.shift();if(waiter)waiter(value);else ownerMessages.push(value);});
-  const ownerNext=()=>ownerMessages.length?Promise.resolve(ownerMessages.shift()):new Promise(resolve=>ownerWaiters.push(resolve));
+  const ownerNext=socketMessages(ownerSocket);
   await once(ownerSocket,'open');ownerSocket.send(JSON.stringify({kind:'subscribe',type:'change'}));
   expect(await ownerNext()).toMatchObject({kind:'set',records:[{id:change().id},{id:'github:secret/app#4'}]});
   expect(assign('mark',['art-bot'])).toMatchObject({ok:true});
