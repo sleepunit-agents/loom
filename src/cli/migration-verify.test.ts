@@ -239,7 +239,7 @@ it.each([false,true])('keeps read-only resources and the daemon gate until an as
   try {
     await started;
     expect(settled).toBe(false);expect(()=>acquireHttpLock(f.home)).toThrow('already running');
-    expect(connections).toHaveLength(1);expect(connections[0].open).toBe(true);expect(closes[0]).not.toHaveBeenCalled();
+    expect(connections).toHaveLength(1);expect(connections[0].open).toBe(true);expect(connections[0].readonly).toBe(true);expect(closes[0]).not.toHaveBeenCalled();
     expect(bytes(f.home)).toEqual(before);expect(bytes(f.root)).toEqual(source);
     if(reject){rejectProjection(Error('PRIVATE_ASYNC_PROJECTION_CANARY'));await expect(result).rejects.toThrow('PRIVATE_ASYNC_PROJECTION_CANARY');}
     else {resolveProjection(await original('tasks',[join(f.root,'tasks/store.db')],f.plan.importers.tasks.options,JSON.parse(readFileSync(join(f.home,'.migration-all.json'),'utf8')).now));expect((await result).status).toBe('verified');}
