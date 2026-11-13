@@ -54,6 +54,8 @@ describe('durable daemon clock', () => {
     expect(app.value('in', { ...input, when: `${(occurrence.due + 6 * 3600_000 + 1000 - app.clock.now()) / 1000}s` }, agent).state).toBe('pending');
     expect(app.value('in', { ...input, when: `${(occurrence.due - 6 * 3600_000 - 1000 - app.clock.now()) / 1000}s` }, agent).state).toBe('pending');
     expect(app.value('in', { ...input, file: 'routines/other.md' }, agent).state).toBe('pending');
+    for (const file of ['./routines/upkeep.md', 'routines//upkeep.md'])
+      expect(app.value('in', { ...input, file }, agent).state).toBe('pending');
     app.value('pause', { agent: 'art' });
     app.clock.advance(occurrence.due - app.clock.now()); await settled();
     expect(wake(app.db, occurrence.id)?.hold).toBe('paused');
@@ -591,9 +593,10 @@ describe('durable daemon clock', () => {
     const app = await loom({ runtime: { startBody } }, home(), clock);
     app.value('laneSet', { name: 'local-lane', agent: 'art', at: '03:31', text: 'Local words', local: true });
     app.value('laneSet', { name: 'file-lane', agent: 'art', at: '03:31', text: 'File words', source: 'routines/does-not-exist.md' });
-    const guards = [vi.spyOn(fs, 'readFileSync'), vi.spyOn(fs, 'openSync'), vi.spyOn(childProcess, 'spawn'), vi.spyOn(childProcess, 'execFile'), vi.spyOn(childProcess, 'execSync')];
+    const guards = [vi.spyOn(fs, 'readFileSync'), vi.spyOn(fs, 'openSync'), vi.spyOn(fs, 'existsSync'), vi.spyOn(fs, 'statSync'), vi.spyOn(fs, 'realpathSync'), vi.spyOn(childProcess, 'spawn'), vi.spyOn(childProcess, 'execFile'), vi.spyOn(childProcess, 'execSync')];
     for (const guard of guards) guard.mockClear().mockImplementation(() => { throw new Error('Forbidden lane filesystem/process access'); });
     try {
+      expect(app.value('in', { agent: 'art', file: 'routines/does-not-exist.md', note: 'rearm', when: '31m' }, { kind: 'agent', id: 'art' })).toMatchObject({ alreadyScheduled: true, schedule: 'lane/file-lane' });
       clock.advance(31*60_000); await settled();
       expect(startBody).toHaveBeenCalledTimes(2);
       expect(wakes(app.db).filter(w => w.state === 'held')).toHaveLength(2);
