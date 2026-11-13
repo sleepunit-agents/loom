@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "loom": "dist/index.js"
+    "loom": "dist/index.js",
+    "loom-taskstore": "dist/taskstore-client.js"
   },
   "files": [
     "dist",

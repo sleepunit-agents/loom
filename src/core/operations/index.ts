@@ -12,8 +12,9 @@ export const failure = (code: Code, message: string): Failure => ({ ok: false, c
 export class OperationError extends Error { constructor(readonly code: Code, message: string) { super(message); } }
 export interface Change { type: string; id: string }
 export interface Context { db: Db; viewer: Viewer; changed(type: string, id: string): void; now: number }
+export interface CliCommand { name: string; write?: boolean; positional?: string[]; flags?: Record<string, string>; fileFields?: string[] }
 export interface Operation<I = unknown> {
-  name: string; input: z.ZodType<I>; output: z.ZodType; write?: boolean; doors?: Door[];
+  name: string; cli?: CliCommand; input: z.ZodType<I>; output: z.ZodType; write?: boolean; doors?: Door[];
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
   run(ctx: Context, input: I): unknown;
@@ -45,7 +46,7 @@ export class Operations {
     this.ops.set(op.name, op);
   }
   has(name: string) { return this.ops.has(name); }
-  offered(door: Door) { return [...this.ops.values()].filter(o => !o.doors || o.doors.includes(door)).map(o => ({ name: o.name, input: o.input, output: o.output, write: !!o.write })); }
+  offered(door: Door) { return [...this.ops.values()].filter(o => !o.doors || o.doors.includes(door)).map(o => ({ name: o.name, input: o.input, output: o.output, write: !!o.write, cli: o.cli })); }
   /** MCP registration is a hook; it dispatches exactly like the other doors. */
   registerMcp(register: (name: string, input: z.ZodType, call: (viewer: Viewer, input: unknown, id?: string) => Result) => void) {
     for (const op of this.offered('mcp')) register(op.name, op.input, (v, input, id) => this.call('mcp', v, op.name, input, id));
