@@ -175,4 +175,3 @@ export function answersOf(n: NeedsOwner): NeedsAnswers {
   if (n.answers) return n.answers;
   return !n.legacy && (n.if_yes || n.if_no) ? 'yes-no' : 'words';
 }
-
