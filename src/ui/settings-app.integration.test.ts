@@ -71,7 +71,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Settings keeps values wri
   expect(await b.locator('body').textContent()).not.toContain(sentinel);
   expect(await b.locator('body').innerHTML()).not.toContain(sentinel);
   for(const table of (app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[]))expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${table.name}"`).all())).not.toContain(sentinel);
-  await b.goto(`${app.url}/p/settings-preview/grants/mark`);await b.locator('section').filter({has:b.getByText('h-22',{exact:true})}).getByRole('button',{name:'Revoke API',exact:true}).click();
+  await b.goto(`${app.url}/p/settings-preview/grants/mark`);await b.getByText('h-22',{exact:true}).locator('..').getByRole('button',{name:'Revoke API',exact:true}).click();
   await expect.poll(()=>b.getByRole('button',{name:'Revoke API',exact:true}).count()).toBe(1);
   expect(grantsRole(app.db).mayUse('mark',{kind:'secret',target:'API'},clock.now(),{house:'h-23',service:'slack'})).toBe(true);
   await context.addCookies([{name:'fixture',value:'pollock',url:app.url}]);await b.reload();
