@@ -6,6 +6,8 @@ import { resolveGrantAttention } from './attention-resolution.js';
 import { installSecretUsage } from './usage.js';
 import { installSecretHistory } from './history.js';
 import { schema } from './schema/001.js';
+import { grantId } from './grant-id.js';
+export { grantId } from './grant-id.js';
 import type { GrantContext, Grant, GrantRequest, Grants, Resource, SecretName } from './role.js';
 
 import { readSecretPolicy, requestDecision, secretPolicy, withAlways } from './policy.js';
@@ -26,7 +28,6 @@ function read<T>(db: Db, table: string, id: string): T | undefined {
 function all<T>(db: Db, table: string): T[] {
   return (db.prepare(`SELECT record FROM ${table} ORDER BY id`).all() as { record: string }[]).map(r => JSON.parse(r.record) as T);
 }
-export const grantId = (agent: string, r: Resource, scope?: GrantContext) => JSON.stringify(scope ? [agent, r.kind, r.target, scope.house, scope.service ?? null] : [agent, r.kind, r.target]);
 export function grantsRole(db: Db): Grants {
   return { mayUse(agent, resource, now, context) {
     if (resource.kind === 'secret' && requestDecision(readSecretPolicy(db), agent, resource.target).level === 'never') return false;
