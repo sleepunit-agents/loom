@@ -182,3 +182,17 @@ it('session cap evicts ended sessions first, then agent sessions before a person
   f.s.sessions.change(file=>{file.sessions[hash(old)].issuedAt=now-1;for(let i=0;i<48;i++)file.sessions[hash('person'+i)]={issuedAt:now,secret:hash(f.owner)};file.sessions[hash('agent-browser')]={issuedAt:now,secret:hash(f.owner),agent:true};file.sessions[hash('ended')]={issuedAt:0,secret:hash(f.owner)};});
   f.s.createSession(hash(f.owner));expect(f.s.sessions.get('sessions',hash('ended'))).toBeUndefined();expect(f.s.sessions.get('sessions',hash('agent-browser'))).toBeUndefined();expect(f.s.session(old)).toBeDefined();expect(Object.keys(f.s.sessions.read().sessions)).toHaveLength(50);
 });
+it('rejects mismatched RP hosts and forged forwarding headers on requests and upgrades',async()=>{
+  const f=await setup(),origin=f.loom.url.replace('http:','https:');vi.stubEnv('LOOM_PUBLIC_URL',origin);
+  expect((await f.post('/login/passkey/options',{}, {host:'other.invalid',origin:'http://other.invalid'})).status).toBe(404);
+  const forged={origin:'https://evil.invalid','x-forwarded-host':'evil.invalid','x-forwarded-proto':'https'};
+  expect((await f.post('/login/passkey/options',{},forged)).status).toBe(403);
+  for(const extra of [forged,{host:'other.invalid',origin}]){const ws=new WebSocket(f.loom.url.replace('http:','ws:')+'/live',{headers:{cookie:`loom_ui=${f.cookie}`,...extra}});ws.on('error',()=>{});const status=await new Promise<number>(ok=>ws.once('unexpected-response',(_r,res)=>{res.resume();ws.terminate();ok(res.statusCode!);}));expect(status).toBe(401);}
+  const ws=await f.open({cookie:`loom_ui=${f.cookie}`,origin,'x-forwarded-proto':'http'});ws.terminate();
+});
+it('only household owners can administer machine principals or revoke tokens through authenticated doors',async()=>{
+  const f=await setup();const callers=[f.agent];
+  for(const [role,member] of [['owner','pollock'],['runner:box',undefined],['service:clock',undefined]] as const){const token=randomBytes(32).toString('hex');f.s.tokens.change(tokens=>tokens.push({role,member,label:role,sha256:hash(token),created:new Date(f.clock.now()).toISOString()}));if(role!=='owner')expect(f.loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.setPrincipal',{kind:role.split(':')[0],id:role.split(':')[1],active:true},role)).toMatchObject({ok:true});callers.push(token);}
+  for(const token of callers){const headers={authorization:`Bearer ${token}`};expect((await f.post('/api/signin/setPrincipal',{id:'try-principal',input:{kind:'runner',id:'box',active:false}},headers)).status).toBe(403);expect((await f.post('/api/signin/revokeToken',{id:'try-revoke',input:{label:'owner'}},headers)).status).toBe(403);}
+  expect((await(await f.get('/auth/session',{cookie:`loom_ui=${f.cookie}`})).json()).viewer.id).toBe('jonathan');
+});

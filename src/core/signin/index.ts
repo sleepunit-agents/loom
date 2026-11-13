@@ -150,11 +150,11 @@ export class Signin {
   }
   login(body: Record<string,unknown>, rp: {origin:string;rpId:string}, device?: string) {
     return this.app.db.transaction(()=>{
-      const k=typeof body.id==='string'?this.sessions.get('passkeys',body.id):undefined;if(!k || this.token(k.secret)?.viewer.kind!=='member')throw new Error('Passkey refused');
-      const a=verifyAssertion(body,k,rp),c=this.sessions.get('challenges',hash(a.challenge));
-      if(!c || c.purpose!=='login' || c.expires<=this.now() || ((a.counter!==0 || k.counter!==0) && a.counter<=k.counter))throw new Error('Challenge or counter refused');
-      this.sessions.change(f=>{delete f.challenges![hash(a.challenge)];f.passkeys![k.id]={...k,counter:a.counter,lastUsed:this.now()};});
-      return this.createSession(k.secret,{via:'passkey',device:deviceOf(device)});
+      const credential=typeof body.id==='string'?this.sessions.get('passkeys',body.id):undefined;if(!credential || this.token(credential.secret)?.viewer.kind!=='member')throw new Error('Passkey refused');
+      const assertion=verifyAssertion(body,credential,rp),challenge=this.sessions.get('challenges',hash(assertion.challenge));
+      if(!challenge || challenge.purpose!=='login' || challenge.expires<=this.now() || ((assertion.counter!==0 || credential.counter!==0) && assertion.counter<=credential.counter))throw new Error('Challenge or counter refused');
+      this.sessions.change(f=>{delete f.challenges![hash(assertion.challenge)];f.passkeys![credential.id]={...credential,counter:assertion.counter,lastUsed:this.now()};});
+      return this.createSession(credential.secret,{via:'passkey',device:deviceOf(device)});
     }).immediate();
   }
 }
