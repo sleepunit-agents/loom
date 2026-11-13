@@ -586,7 +586,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    return {async read(input={}) {
     const parsed=z.object({thread:id.optional(),before:z.number().int().positive().optional(),limit:z.number().int().positive().optional()}).parse(input);
     const lookup=()=>parsed.thread?thread(db,parsed.thread):(db.prepare('SELECT record FROM comms_threads WHERE agent=?').all(agent) as {record:string}[]).map(r=>JSON.parse(r.record) as Thread).find(t=>conversation!==undefined&&t.conversation===conversation);
-    const permitted=(t:Thread|undefined):t is Thread=>!closed&&valid()&&!!t&&t.agent===agent&&(allowed===undefined||allowed.includes(t.conversation))&&mayUseThread({kind:'member',id:t.member},t,o.sharing());
+    const permitted=(t:Thread|undefined):t is Thread=>!closed&&valid()&&!!t&&t.agent===agent&&conversation!==undefined&&t.conversation===conversation&&(allowed===undefined||allowed.includes(t.conversation))&&mayUseThread({kind:'member',id:t.member},t,o.sharing());
     const t=lookup();if(!permitted(t))return fail('denied','Thread unavailable');
     const limit=Math.min(parsed.limit??30,100);
     const rows=messageRows(db,t.id,parsed.before,limit);

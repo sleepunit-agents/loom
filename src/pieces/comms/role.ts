@@ -83,7 +83,8 @@ export interface Comms {
 }
 export interface ReadBinding {
  agent: string; conversation?: string;
- /** undefined means a local body; an empty list means a service/unbound house. */
+ /** Additional house restriction; conversation is always required for private reads.
+  * An empty list means a service/unbound house. */
  houseConversations?: readonly string[];
  valid(): boolean;
 }

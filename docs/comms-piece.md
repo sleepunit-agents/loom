@@ -831,3 +831,9 @@ dispatcher's post-decryption snapshot check therefore reloads a set if any row
 expires while another decrypts, even before the sweep timer runs. A socket
 regression suspends the later row across the exact earlier deadline and checks
 that earlier words and private work fields never arrive.
+
+Runtime private readers now always require the selected thread's conversation to
+match the captured body binding, both before and after decryption. An explicit
+thread id cannot widen that binding, including for a local body or another
+member's thread on the same agent. A missing conversation denies before crypto.
+This follows web-foundation's replacement of the old cross-thread MCP read.

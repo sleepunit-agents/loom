@@ -382,6 +382,9 @@ it('refreshes foreground presence on unchanged reads without moving activity or 
  expect((await s.call('change',{thread:place,action:'read',seq:1},member,false)).ok).toBe(false);
  expect(saved()).toEqual(before);
 });
+function conversationOf(db:import('../../core/index.js').Db,place:string):string {
+ return JSON.parse((db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).conversation;
+}
 async function setup(overrides: {recipients?:()=>{agents:readonly string[];default?:string};key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; receipt?:RuntimeDelivery['receipt']; conversation?:(id:string)=>{agent:string;venue:string;version:string}|undefined; deliver?:(message:Delivery)=>Promise<void>; end?:(conversation:string)=>Promise<void>}={}) {
  const home=mkdtempSync(join(tmpdir(),'comms-next-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();let sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['other','jonathan'],agents:['art','pond-bot']}},services:{runtime:{types:['message','thread'],operations:[]}}};
@@ -485,7 +488,7 @@ for(const progress of ['working','done','card','reply','no-reply'] as const)it(`
  else if(progress==='no-reply')await s.comms.notice('art',place,{kind:'no-reply',id:'progress'});
  else await s.comms.post('art',place,{id:'progress',kind:progress,text:'body progress'});
  expect(changed.mock.calls.flatMap(([refs])=>refs)).toContainEqual({type:'message',id:`${place}/2`});
- const read=()=>s.comms.reader({agent:'art',conversation:place,valid:()=>true}).read({thread:place});
+ const read=()=>s.comms.reader({agent:'art',conversation:conversationOf(s.app.db,place),valid:()=>true}).read({thread:place});
  const page=await read();
  expect(page.messages.find(m=>m.seq===2)).toMatchObject({text:"Art couldn't start at first.",step:{error:'start-retry',settled:true,attempt:2,reason:'private start reason'}});
  expect(JSON.stringify(await s.call('messages',{thread:place}))).toContain("Art couldn't start at first.");
@@ -531,7 +534,7 @@ it('keeps final start failures and a newer message retry distinct from prior pro
  await s.call('send',{thread:place,id:'newmessageaaaaaa',text:'new request'});
  await s.comms.deliver('art',place,3);
  await s.comms.startNotice('art',place,{kind:'start-retry',seq:3,attempt:1,retryAt:'2026-11-12T00:01:00Z'});
- const page=await s.comms.reader({agent:'art',valid:()=>true}).read({thread:place});
+ const page=await s.comms.reader({agent:'art',conversation:conversationOf(s.app.db,place),valid:()=>true}).read({thread:place});
  expect(page.messages.find(m=>m.seq===2)).toMatchObject({text:"Art couldn't start.",step:{error:'start-failed'}});
  expect(page.messages.find(m=>m.seq===4)).toMatchObject({text:"Art couldn't start; retrying."});
  expect(page.messages.find(m=>m.seq===4)?.step).not.toHaveProperty('settled');
@@ -932,18 +935,29 @@ it('binds runtime readers to trusted agent and house conversations with bounded 
  expect((await reader.read({before:3,limit:1})).messages.map(m=>m.text)).toEqual(['first']);
  await expect(reader.read({thread:other})).rejects.toMatchObject({code:'denied'});
  for(const binding of [{agent:'pond-bot',valid:()=>true},{agent:'art',houseConversations:[],valid:()=>true},{agent:'art',valid:()=>false}])await expect(s.comms.reader(binding).read({thread:place})).rejects.toMatchObject({code:'denied'});
- expect((await s.comms.reader({agent:'art',valid:()=>true}).read({thread:other})).messages).toHaveLength(1);
+ await expect(s.comms.reader({agent:'art',conversation:cv,valid:()=>true}).read({thread:other})).rejects.toMatchObject({code:'denied'});
  s.clock.advance(14*86400_000);
  expect((await reader.read()).messages.every(m=>m.text===null)).toBe(true);
  await s.call('change',{thread:place,action:'delete'});
  await expect(reader.read()).rejects.toMatchObject({code:'denied'});
+});
+it('confines local runtime readers to their bound conversation across members',async()=>{
+ let reads=0;const s=await setup({key:k=>({...k,open:async blob=>{reads++;return k.open(blob);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ const second=await s.call('open',{agent:'art',id:'llllllllllllllll',text:'another members private words'},{kind:'member',id:'other'});
+ expect(second.ok).toBe(true);const other=(second as {ok:true;value:{thread:string}}).value.thread;await s.comms.deliver('art',other,1);
+ const cv=conversationOf(s.app.db,place),reader=s.comms.reader({agent:'art',conversation:cv,valid:()=>true});
+ expect((await reader.read({thread:place})).messages[0].text).toBe('secret member words');const before=reads;
+ await expect(reader.read({thread:other})).rejects.toMatchObject({code:'denied'});
+ await expect(s.comms.reader({agent:'art',valid:()=>true}).read({thread:place})).rejects.toMatchObject({code:'denied'});
+ expect(reads).toBe(before);
 });
 it('revokes a bound runtime read while decryption is suspended',async()=>{
  let pause=false;let resume:()=>void=()=>{};let started:()=>void=()=>{};
  const began=new Promise<void>(r=>{started=r;});const waiting=new Promise<void>(r=>{resume=r;});
  const s=await setup({key:k=>({...k,open:async words=>{if(pause){started();await waiting;}return k.open(words);}})});
  const place=await s.open();await s.comms.deliver('art',place,1);
- let valid=true;const binding={agent:'art',valid:()=>valid,houseConversations:undefined as string[]|undefined};
+ let valid=true;const binding={agent:'art',conversation:conversationOf(s.app.db,place),valid:()=>valid,houseConversations:undefined as string[]|undefined};
  const reader=s.comms.reader(binding);binding.agent='pond-bot';pause=true;
  const read=reader.read({thread:place});await began;valid=false;resume();
  await expect(read).rejects.toMatchObject({code:'denied'});
@@ -1547,7 +1561,7 @@ it('supplies authoritative retention deadlines on page and runtime-reader record
  const s=await setup({days:1}),place=await s.open();await s.comms.deliver('art',place,1);
  const read=async()=>{const result=await s.call('messages',{thread:place});expect(result.ok).toBe(true);return (result as {ok:true;value:Record<string,unknown>[]}).value;};
  const first=(await read())[0];expect(first.keepUntil).toBe(Number(first.at)+86400000);
- const bound=await s.comms.reader({agent:'art',valid:()=>true}).read({thread:place});
+ const bound=await s.comms.reader({agent:'art',conversation:conversationOf(s.app.db,place),valid:()=>true}).read({thread:place});
  expect(bound.messages[0].keepUntil).toBe(first.keepUntil);
  await s.comms.post('art',place,{id:'deadline-card',kind:'card',text:'private step',step:{keepUntil:9999999999999}});
  const card=(await read())[1];expect(card.keepUntil).toBe(Number(card.at)+86400000);
