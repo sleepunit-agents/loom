@@ -23,9 +23,12 @@ async function setup(){
  const set=(id:string,viewer:Viewer=agent,extra:object={})=>app.operations.call('direct',viewer,'clock.scheduleSet',{id,agent:'art',at:'12:31',prompt:'Continue work',note:'schedule',...extra},randomUUID());
  return {app,open,set,access,clock,starts};
 }
+function fillApiShare(set:Awaited<ReturnType<typeof setup>>['set']) {
+ for(let n=0;n<20;n++)expect(set(`api-${n}`).ok).toBe(true);
+}
 it('rejects the twenty-first new API-origin schedule without recording any part of it',async()=>{
  const {app,set}=await setup();
- for(let n=0;n<20;n++)expect(set(`api-${n}`).ok).toBe(true);
+ fillApiShare(set);
  const before={s:schedules(app.db),w:wakes(app.db),events:app.db.prepare('SELECT * FROM clock_events').all()};
  expect(set('overflow')).toMatchObject({ok:false,code:'invalid',message:expect.stringContaining('20 API-origin schedules')});
  expect({s:schedules(app.db),w:wakes(app.db),events:app.db.prepare('SELECT * FROM clock_events').all()}).toEqual(before);
@@ -37,14 +40,14 @@ it('rejects the twenty-first new API-origin schedule without recording any part 
 it('allows owner schedules beyond twenty without consuming the API share',async()=>{
  const {app,set}=await setup();
  for(let n=0;n<21;n++)expect(set(`owner-${n}`,owner).ok).toBe(true);
- for(let n=0;n<20;n++)expect(set(`api-${n}`).ok).toBe(true);
+ fillApiShare(set);
  expect(schedules(app.db)).toHaveLength(41);
  expect(set('overflow').ok).toBe(false);
  expect(set('owner-extra',owner).ok).toBe(true);
 });
 it('allows replacement at capacity and frees a slot only after removal',async()=>{
  const {app,set}=await setup();
- for(let n=0;n<20;n++)expect(set(`api-${n}`).ok).toBe(true);
+ fillApiShare(set);
  expect(set('api-0',agent,{prompt:'Replacement'}).ok).toBe(true);
  expect(set('overflow').ok).toBe(false);
  expect(app.operations.call('direct',owner,'clock.scheduleRemove',{id:'api-1'},randomUUID()).ok).toBe(true);
@@ -53,7 +56,7 @@ it('allows replacement at capacity and frees a slot only after removal',async()=
 });
 it('counts disabled origin-bearing schedules but ignores historical rows without authenticated origin',async()=>{
  const {app,set,open}=await setup();
- for(let n=0;n<20;n++)expect(set(`api-${n}`).ok).toBe(true);
+ fillApiShare(set);
  for(const row of schedules(app.db))app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify({...row,enabled:false}),row.id);
  expect(set('overflow').ok).toBe(false);
  const historical=schedules(app.db)[0];delete historical.apiOrigin;
@@ -80,7 +83,7 @@ it('derives origin from the viewer, ignores caller-supplied origin, and keeps ta
 });
 it('retains the capacity boundary across restart',async()=>{
  const {app,set,open}=await setup();
- for(let n=0;n<20;n++)expect(set(`api-${n}`).ok).toBe(true);
+ fillApiShare(set);
  await app.close();const reopened=await open();
  expect(reopened.operations.call('direct',agent,'clock.scheduleSet',{id:'overflow',agent:'art',at:'12:31',prompt:'Continue',note:''},randomUUID())).toMatchObject({ok:false,code:'invalid'});
  expect(schedules(reopened.db)).toHaveLength(20);
@@ -88,7 +91,7 @@ it('retains the capacity boundary across restart',async()=>{
 
 it('allows an owner replacement to stop consuming the API share',async()=>{
  const {app,set}=await setup();
- for(let n=0;n<20;n++)expect(set(`api-${n}`).ok).toBe(true);
+ fillApiShare(set);
  expect(set('api-0',owner).ok).toBe(true);
  expect(schedules(app.db).find(s=>s.id==='api-0')?.apiOrigin).toBeUndefined();
  expect(set('new-slot').ok).toBe(true);
