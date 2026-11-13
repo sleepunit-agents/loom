@@ -297,3 +297,11 @@ All 245 focused tests, TypeScript and the web build pass. The existing browser
 proof now pushes a message outside the live hundred, loads it as an earlier
 page, and crosses its deadline using only browser time; recent cards remain.
 No local browser run; current-head CI must validate this extension.
+
+The first CI run of that extension failed before loading the earlier message:
+`setSystemTime` left browser time running during 101 encrypted posts, consuming
+the final second of retention. The fixture now pauses browser time before that
+work, asserts the page still has the server's exact time after loading, and
+checks presence at deadline minus one millisecond before crossing the deadline.
+The 245 focused tests pass; the browser proof remains CI-only and must pass on
+the updated head. This changes the fixture clock, not retention behavior.
