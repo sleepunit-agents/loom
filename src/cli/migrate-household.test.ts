@@ -31,5 +31,6 @@ it('refuses same-home aliases before creating any old-home files', async () => {
   const io = {stdout:()=>{},stderr:()=>{},stdin:Readable.from([]),stdinIsTTY:false,env:{}};
   expect(await migrateHousehold(['--home',from,'--from',from],io)).toBe(1);
   expect(await migrateHousehold(['--home',alias,'--from',from],io)).toBe(1);
+  expect(await migrateHousehold(['--home',join(from,'new'),'--from',from],io)).toBe(1);
   expect(readdirSync(from)).toEqual(['household.json']);
 });

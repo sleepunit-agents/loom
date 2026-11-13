@@ -14,7 +14,7 @@ With the owner present, stop both instances and back up the old home. Run:
 loom migrate household --home <new-home> --from <stopped-old-home>
 ```
 
-Both homes must be different directories. The destination's household tables must
+Both homes must be different directories, and the new home cannot be inside the old one. The destination's household tables must
 be empty. The command acquires the destination daemon gate and uses one database
 transaction for schema, rows, comparison and receipt. Source files are read only.
 The importer compares full reconstructed content (including all ids, optional and

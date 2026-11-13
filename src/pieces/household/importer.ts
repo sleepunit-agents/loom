@@ -48,7 +48,8 @@ function copyKey(home: string, key: Buffer): void {
 }
 /** Caller holds the destination's stopped-daemon gate; the source must be stopped too. */
 export function importHousehold(db: Db, home: string, from: string, now: number, options: { interrupt?: () => void } = {}) {
-  if (realpathSync(home) === realpathSync(from)) throw new Error('Household import requires a different destination home');
+  const target = realpathSync(home), source = realpathSync(from);
+  if (target === source || target.startsWith(source + '/')) throw new Error('Household import requires a different destination home');
   const files = snapshot(from), checksum = checksumOf(files);
   const raw = object(files.get('household.json'));
   parseHouseholdDocument(home, raw);

@@ -20,7 +20,8 @@ export async function migrateHousehold(argv: string[], io: IOStreams): Promise<n
   if (!args.values.from || !args.values.home) { io.stderr('usage: loom migrate household --home <new-home> --from <stopped-old-home>\n'); return 2; }
   let release: (() => void) | undefined;
   try {
-    if (canonicalPath(args.values.home) === realpathSync(args.values.from)) throw new Error('Household import requires a different destination home');
+    const target = canonicalPath(args.values.home), source = realpathSync(args.values.from);
+    if (target === source || target.startsWith(source + '/')) throw new Error('Household import requires a different destination home');
     release = acquireHttpLock(args.values.home);
     const app = createFoundation({ home: args.values.home });
     try { io.stdout(JSON.stringify(importHousehold(app.db, args.values.home, args.values.from, Date.now()), null, 2) + '\n'); return 0; }
