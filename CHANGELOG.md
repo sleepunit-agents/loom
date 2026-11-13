@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add an explicit offline Attention importer for copied conversation databases, with audience maps, atomic verification and repeat protection.
 - On the new clock side, count lane run-now against the one-off budget and wait for model quota reset without consuming job retries.
+- Avoid redundant file-lane self-rearms within six hours of an authorized owner schedule on the new clock side.
 - Preserve clock parked-work continuation instructions and readable answer notes; distinguish an unanswered wait from an expired Allow.
 
 - Keep long approval details and exact targets within the phone reader, with wrapping answer buttons.
