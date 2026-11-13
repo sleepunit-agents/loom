@@ -140,3 +140,28 @@ logs, filed approvals and lane text. Restoration of lane operations and explicit
 owner provenance adoption are unfinished. Importing alone intentionally does not
 authorize or start any work. The coordinator's final cutover must review held
 work and reconcile uncertain bodies before enabling any schedule.
+
+## Household lane operations
+
+`clock.laneSet` creates or patches a household lane; `laneAssign`, `laneRemove`,
+`lanes` and `laneText` cover assignment, removal and scoped reads. A lane is one
+schedule row (`lane/<name>`) carrying its full text, optional repository-relative
+source name and local-placement preference. Partial edits preserve omitted fields;
+inline text replacement clears the old source name. The daemon never opens that
+source path. The generated client will supply file contents when asked to set a
+lane from a file. Long text stays in the row and the dispatch prompt points to
+`wake lane text`. The local marker is runtime input, never a host launcher or grant;
+the staging runtime holds every start regardless of placement.
+
+Central household policy governs lane administration; the target agent must also
+pass the existing create/give-work policy. Ordinary schedule editing cannot replace
+a household lane, and schedule removal applies the household policy for lane rows.
+Reads use the schedule's agent scope. Assignment cancels pending/held occurrences
+and arms one for the new assignee in the same transaction. An already firing
+intent remains attributable to its original agent; its outcome cannot create a
+second next occurrence. A file-backed lane replaces matching same-agent pending
+self-chained work, retaining cancellation history rather than deleting the wake.
+
+The lane operation fixtures port the old set/assign/text/remove, partial sheet
+edits, long text/local marker, slot and file self-chain cases, plus reassignment
+while dispatch is in flight. The old page and client formatting are still pending.

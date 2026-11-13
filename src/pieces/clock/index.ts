@@ -93,21 +93,63 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   });
   register('status', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (_ctx, i) => ({ id: i.agent, paused: paused(db, i.agent) }));
   const scheduleInput = workInput.extend({ id: text, at: z.union([text, z.array(text)]), days: z.string().default(''), lane: text.optional() });
-  register('scheduleSet', scheduleInput, true, (v, i) => create(v, i) && (!schedule(db, i.id) || act(v, schedule(db, i.id)!)), (ctx, i) => {
+  register('scheduleSet', scheduleInput, true, (v, i) => create(v, i) && (!schedule(db, i.id) || act(v, schedule(db, i.id)!, !!schedule(db, i.id)!.laneDetails)), (ctx, i) => {
     work(i); calendar(() => daysOf(i.days));
     const old = schedule(db, i.id);
+    if (old?.laneDetails) invalid('Edit household lanes with laneSet');
     if (old && (old.agent !== i.agent || old.project !== i.project || old.member !== i.member)) invalid('Remove a schedule before changing its scope');
     const s: Schedule = { ...i, at: calendar(() => timesOf(i.at)), by: old?.by ?? ctx.viewer, enabled: true, changedAt: ctx.now };
     for (const w of wakes(db).filter(w => w.schedule === s.id && active(w) && w.state !== 'firing')) { w.state = 'cancelled'; saveWake(ctx, w); }
     saveSchedule(ctx, s); next(ctx, s, ctx.now); return s;
   });
   register('schedules', z.object({}), false, () => true, ctx => schedules(db).filter(s => see(ctx.viewer, s, 'schedule')));
-  register('scheduleRemove', idInput, true, (v, i) => !schedule(db, i.id) || act(v, schedule(db, i.id)!), (ctx, i) => {
+  register('scheduleRemove', idInput, true, (v, i) => !schedule(db, i.id) || act(v, schedule(db, i.id)!, !!schedule(db, i.id)!.laneDetails), (ctx, i) => {
     const s = schedule(db, i.id); if (!s) throw new OperationError('not-found', 'Schedule not found');
     for (const w of wakes(db).filter(w => w.schedule === s.id && active(w) && w.state !== 'firing')) { w.state = 'cancelled'; saveWake(ctx, w); }
     db.prepare('DELETE FROM clock_schedules WHERE id=?').run(s.id); ctx.changed('schedule', s.id); return { id: s.id };
   });
   register('scheduleRun', idInput, true, (v, i) => !!schedule(db, i.id) && act(v, schedule(db, i.id)!, true), (ctx, i) => make(ctx, schedule(db, i.id)!, ctx.now, { bypassPause: true }));
+  const laneName = z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(100);
+  const laneId = (name: string) => `lane/${name}`;
+  const getLane = (name: string) => { const s = schedule(db, laneId(name)); if (!s?.laneDetails) throw new OperationError('not-found', 'Lane not found'); return s; };
+  const laneInput = z.object({ name: laneName });
+  const laneSetInput = laneInput.extend({ agent: text.optional(), at: z.union([text, z.array(text)]).optional(), days: z.string().optional(),
+    text: text.optional(), source: text.optional(), local: z.boolean().optional(), note: z.string().max(100_000).optional(), model: text.optional(), slot: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).optional() });
+  const cancelOccurrences = (ctx: Context, id: string) => {
+    for (const w of wakes(db).filter(w => w.schedule === id && active(w) && w.state !== 'firing')) { w.state = 'cancelled'; w.outcome = 'Lane changed'; saveWake(ctx, w); event(ctx, w, 'cancel'); }
+  };
+  function setLane(ctx: Context, i: z.infer<typeof laneSetInput>) {
+    const old = schedule(db, laneId(i.name));
+    if (old && !old.laneDetails) invalid('Schedule id is already in use');
+    const details = { text: i.text ?? old?.laneDetails?.text ?? '', local: i.local ?? old?.laneDetails?.local ?? false,
+      ...(i.source !== undefined ? { source: i.source } : i.text !== undefined ? {} : old?.laneDetails?.source ? { source: old.laneDetails.source } : {}) };
+    const agent = i.agent ?? old?.agent, at = i.at ?? old?.at;
+    if (!agent || !at || !details.text) invalid('A new lane needs agent, time and text');
+    if (details.source && (/^(?:\/|[A-Za-z]:)/.test(details.source) || details.source.split('/').includes('..'))) invalid('Lane sources must be relative repository paths');
+    const days = i.days ?? old?.days ?? ''; calendar(() => daysOf(days));
+    const head = `This is a loom lane: household work on a schedule ("${i.name}"), assigned to you; the owner reassigns it on loom's Clock page. Do it as yourself.\n\n`;
+    const body = details.text.length <= 8000 ? details.text : `The lane's text is too long to hand over here: read it with \`wake lane text ${i.name}\` and follow it exactly, as if it were this prompt.`;
+    const s: Schedule = { id: laneId(i.name), lane: i.name, agent: agent!, at: calendar(() => timesOf(at!)), days,
+      prompt: (details.local ? '<!-- house: local -->\n' : '') + head + body, note: i.note ?? old?.note ?? '', model: i.model ?? old?.model, slot: i.slot ?? old?.slot,
+      laneDetails: details, by: ctx.viewer, enabled: true, changedAt: ctx.now };
+    cancelOccurrences(ctx, s.id);
+    // A file-backed lane replaces a self-chained one-off only on its assignee's clock.
+    if (details.source) for (const w of wakes(db).filter(w => w.agent === s.agent && !w.schedule && w.file === details.source && active(w) && w.state !== 'firing')) {
+      w.state = 'cancelled'; w.outcome = 'Replaced by household lane'; saveWake(ctx, w); event(ctx, w, 'cancel');
+    }
+    saveSchedule(ctx, s); next(ctx, s, ctx.now); return s;
+  }
+  const maySetLane = (v: Viewer, i: z.infer<typeof laneSetInput>) => {
+    const old = schedule(db, laneId(i.name)), agent = i.agent ?? old?.agent;
+    return mayAct(v, {}, sharing(), 'household') && !!agent && create(v, { agent, note: '' });
+  };
+  register('laneSet', laneSetInput, true, maySetLane, setLane);
+  register('laneAssign', laneInput.extend({ agent: text }), true, maySetLane, (ctx, i) => { getLane(i.name); return setLane(ctx, i); });
+  register('laneRemove', laneInput, true, v => mayAct(v, {}, sharing(), 'household'), (ctx, i) => {
+    const s = getLane(i.name); cancelOccurrences(ctx, s.id); db.prepare('DELETE FROM clock_schedules WHERE id=?').run(s.id); ctx.changed('schedule', s.id); return { name: i.name };
+  });
+  register('lanes', z.object({}), false, () => true, ctx => schedules(db).filter(s => s.laneDetails && see(ctx.viewer, s, 'schedule')));
+  register('laneText', laneInput, false, (v, i) => { const s = schedule(db, laneId(i.name)); return !s || see(v, s, 'schedule'); }, (_ctx, i) => ({ text: getLane(i.name).laneDetails!.text }));
   register('rearm', z.object({}), true, (v) => mayAct(v, {}, sharing(), 'household'), () => ({ rearmed: true }));
   // Intent and outcome use the registry too: all state and live changes commit together.
   register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && act(v, get(i.id)), (ctx, i) => {

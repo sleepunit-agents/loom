@@ -15,6 +15,7 @@ export interface Wake extends Work {
 export interface Schedule extends Work {
   id: string; at: string[]; days: string; by: Viewer; changedAt: number;
   lane?: string; enabled: boolean;
+  laneDetails?: { text: string; source?: string; local: boolean };
 }
 export function wakes(db: Db): Wake[] { return (db.prepare('SELECT record FROM clock_wakes ORDER BY id').all() as { record: string }[]).map(r => JSON.parse(r.record)); }
 export function schedules(db: Db): Schedule[] { return (db.prepare('SELECT record FROM clock_schedules ORDER BY id').all() as { record: string }[]).map(r => JSON.parse(r.record)); }

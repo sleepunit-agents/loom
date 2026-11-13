@@ -8,7 +8,7 @@ import { WebSocket } from 'ws';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
 import { installClock, type ClockOptions } from './index.js';
-import { wake, wakes, type Wake } from './store.js';
+import { wake, wakes, schedules, type Schedule, type Wake } from './store.js';
 import type { StartResult } from './dependencies/runtime.js';
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const sharing: Sharing = { members: { jonathan: { owner: true, agents: ['art'] }, guest: { owner: false, agents: [] } }, projects: { pond: { members: ['guest'], agents: ['art', 'pond-bot'] } }, services: {} };
@@ -105,6 +105,69 @@ describe('durable daemon clock', () => {
     expect(app.value<Wake[]>('list', {}, { kind: 'member', id: 'guest' }).map(w => w.id)).toContain(w.id);
     expect(app.call('now', { id: w.id }, { kind: 'member', id: 'guest' })).toMatchObject({ ok: false, code: 'denied' });
     access.projects.pond.agents = []; app.clock.advance(60_000); await settled(); expect(startBody).not.toHaveBeenCalled(); expect(wake(app.db, w.id)).toMatchObject({ state: 'held', hold: 'permission' });
+  });
+  it('creates, patches, reassigns and removes household lanes with one pending occurrence', async () => {
+    const access = structuredClone(sharing); access.members.jonathan.agents.push('bo');
+    const app = await loom({}, home(), new FakeClock(), access);
+    const original = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '06:05', days: 'mon-fri', text: 'Keep it tidy.', slot: 'upkeep', note: 'people cards' });
+    expect(original.prompt).toContain('This is a loom lane: household work');
+    expect(original.prompt).toMatch(/Keep it tidy\.$/);
+    const first = wakes(app.db).find(w => w.schedule === original.id)!;
+    app.value('laneSet', { name: 'upkeep', at: '07:15', days: '', local: true });
+    const patched = schedules(app.db)[0];
+    expect(patched).toMatchObject({ at: ['07:15'], days: '', slot: 'upkeep', note: 'people cards', laneDetails: { text: 'Keep it tidy.', local: true } });
+    expect(patched.prompt).toMatch(/^<!-- house: local -->/);
+    expect(wake(app.db, first.id)?.state).toBe('cancelled');
+    app.value('laneAssign', { name: 'upkeep', agent: 'bo' });
+    expect(app.value('laneText', { name: 'upkeep' }, { kind: 'agent', id: 'bo' })).toEqual({ text: 'Keep it tidy.' });
+    expect(app.call('laneText', { name: 'upkeep' }, { kind: 'agent', id: 'art' })).toMatchObject({ ok: false, code: 'denied' });
+    expect(wakes(app.db).filter(w => w.state === 'pending')).toMatchObject([{ agent: 'bo', schedule: original.id }]);
+    expect(app.value<Schedule[]>('lanes', {}, { kind: 'agent', id: 'art' })).toEqual([]);
+    app.value('laneSet', { name: 'upkeep', text: 'Keep it tidier.' });
+    expect(schedules(app.db)[0].prompt).toMatch(/Keep it tidier\.$/);
+    app.value('laneRemove', { name: 'upkeep' });
+    expect(schedules(app.db)).toEqual([]); expect(wakes(app.db).filter(w => w.state === 'pending')).toEqual([]);
+  });
+  it('keeps household lane administration behind central household policy and rejects bad edits atomically', async () => {
+    const app = await loom();
+    const input = { name: 'upkeep', agent: 'art', at: '06:05', text: 'Tidy.' };
+    expect(app.call('laneSet', input, { kind: 'agent', id: 'art' })).toMatchObject({ ok: false, code: 'denied' });
+    expect(app.call('laneSet', { ...input, agent: 'unknown' })).toMatchObject({ ok: false, code: 'denied' });
+    const s = app.value<Schedule>('laneSet', input);
+    expect(app.call('scheduleRemove', { id: s.id }, { kind: 'agent', id: 'art' })).toMatchObject({ ok: false, code: 'denied' });
+    expect(app.call('scheduleSet', { id: s.id, agent: 'art', at: '08:00', prompt: 'Override', note: 'override' }, { kind: 'agent', id: 'art' })).toMatchObject({ ok: false, code: 'denied' });
+    const before = schedules(app.db);
+    for (const patch of [{ days: 'someday' }, { at: '25:00' }, { source: '../secret.md' }, { slot: 'Bad Slot' }]) {
+      expect(app.call('laneSet', { name: 'upkeep', ...patch })).toMatchObject({ ok: false, code: 'invalid' });
+      expect(schedules(app.db)).toEqual(before); expect(wakes(app.db).filter(w => w.state === 'pending')).toHaveLength(1);
+    }
+    expect(app.call('laneAssign', { name: 'missing', agent: 'art' })).toMatchObject({ ok: false, code: 'not-found' });
+  });
+  it('preserves full long lane text and replaces only same-agent self-chained file work', async () => {
+    const app = await loom();
+    const own = app.value('in', { agent: 'art', file: 'routines/tidy.md', note: 'self chain', when: '2h' });
+    const other = app.value('in', { agent: 'art', file: 'routines/other.md', note: 'other', when: '2h' });
+    const text = 'x'.repeat(9000);
+    const s = app.value<Schedule>('laneSet', { name: 'upkeep', agent: 'art', at: '06:05', text, source: 'routines/tidy.md' });
+    expect(s.prompt!.length).toBeLessThan(1000); expect(s.prompt).toContain('wake lane text upkeep');
+    expect(app.value('laneText', { name: 'upkeep' })).toEqual({ text });
+    expect(wake(app.db, own.id)?.state).toBe('cancelled'); expect(wake(app.db, other.id)?.state).toBe('pending');
+    app.value('laneSet', { name: 'upkeep', text: 'Inline replacement' });
+    expect(schedules(app.db)[0].laneDetails?.source).toBeUndefined();
+  });
+  it('reassignment retains an in-flight intent and cannot create an extra old-agent occurrence', async () => {
+    const result = deferred<StartResult>(), invoked = deferred<void>();
+    const access = structuredClone(sharing); access.members.jonathan.agents.push('bo');
+    const clock = new FakeClock(Date.parse('2026-03-07T09:00:00Z'));
+    const app = await loom({ runtime: { startBody() { invoked.resolve(); return result.promise; } } }, home(), clock, access);
+    app.value('laneSet', { name: 'upkeep', agent: 'art', at: '03:31', text: 'Tidy.' });
+    clock.advance(31*60_000); await invoked.promise;
+    const firing = wakes(app.db).find(w => w.state === 'firing')!;
+    app.value('laneAssign', { name: 'upkeep', agent: 'bo' });
+    expect(wake(app.db, firing.id)?.state).toBe('firing');
+    result.resolve({ state: 'started', body: 'old-agent-body' }); await settled();
+    expect(wake(app.db, firing.id)?.state).toBe('fired');
+    expect(wakes(app.db).filter(w => w.state === 'pending')).toMatchObject([{ agent: 'bo' }]);
   });
   it('removes terminal wakes from the live scope exactly a day later', async () => {
     const app = await loom(), w = app.set(); app.value('cancel', { id: w.id });
