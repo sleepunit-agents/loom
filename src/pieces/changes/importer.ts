@@ -12,9 +12,7 @@ export function projectFor(repo: string, projects: Project[]) {
 }
 type ImportOptions = { projects: Project[]; attribution: Attribution; interrupt?: () => void };
 export function importChanges(db: Db, from: string, settings: ImportOptions | (() => ImportOptions)) {
- const bytes=readFileSync(from), source=JSON.parse(bytes.toString()) as {v:number; changes:unknown[]};
- if(source.v!==1 || !Array.isArray(source.changes)) throw new Error('Expected a v1 Changes snapshot');
- const checksum=createHash('sha256').update(bytes).digest('hex');
+ const { source, checksum } = readChangesSource(from);
  return db.transaction(()=>{
   migrate(db,'changes',schema);
   const old=db.prepare("SELECT value FROM changes_meta WHERE key='source-checksum'").get() as {value:string}|undefined;
@@ -31,9 +29,7 @@ export function importChanges(db: Db, from: string, settings: ImportOptions | ((
 
 /** Pure source projection; never opens or writes the destination. */
 export function readChangesImport(from: string, options: ImportOptions) {
- const bytes=readFileSync(from), source=JSON.parse(bytes.toString()) as {v:number; changes:unknown[]};
- if(source.v!==1 || !Array.isArray(source.changes)) throw new Error('Expected a v1 Changes snapshot');
- const checksum=createHash('sha256').update(bytes).digest('hex');
+ const { source, checksum } = readChangesSource(from);
  return { expected: changesImportRecords(source, options), checksum };
 }
 function changesImportRecords(source: {v:number; changes:unknown[]}, options: ImportOptions): Change[] {
@@ -46,4 +42,11 @@ function changesImportRecords(source: {v:number; changes:unknown[]}, options: Im
  }).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
  if(new Set(expected.map(c=>c.id)).size!==expected.length) throw new Error('Duplicate source change ids');
  return expected;
+}
+
+function readChangesSource(from: string) {
+ const bytes=readFileSync(from), source=JSON.parse(bytes.toString()) as {v:number; changes:unknown[]};
+ if(source.v!==1 || !Array.isArray(source.changes)) throw new Error('Expected a v1 Changes snapshot');
+ const checksum=createHash('sha256').update(bytes).digest('hex');
+ return { source, checksum };
 }

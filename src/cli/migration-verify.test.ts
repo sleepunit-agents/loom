@@ -1,4 +1,8 @@
 import * as fs from 'node:fs';
+import * as foundation from '../core/app.js';
+import * as core from '../core/index.js';
+import * as database from '../core/db/index.js';
+import * as householdSchema from '../core/household/schema.js';
 import { change } from '../pieces/changes/fixture.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
@@ -156,4 +160,27 @@ it('never opens a WAL-mode daemon gate that could create coordination files',asy
   const f=await fixture();runMigrationAll(f.root,f.home);const path=join(f.home,'http-daemon-lock.db');
   const db=new Database(path);db.pragma('journal_mode = WAL');db.exec('CREATE TABLE fixture(id INTEGER)');db.close();
   const before=bytes(f.home);expect(()=>verifyMigration(f.root,f.home)).toThrow('Unsafe daemon gate');expect(bytes(f.home)).toEqual(before);
+});
+it('refuses a nonempty rollback journal without opening or changing its data',async()=>{
+  const f=await fixture();runMigrationAll(f.root,f.home);
+  writeFileSync(join(f.home,'loom.db-journal'),Buffer.from('uncheckpointed fixture'));
+  const before=bytes(f.home),source=bytes(f.root);
+  expect(()=>verifyMigration(f.root,f.home)).toThrow('checkpointed');expect(bytes(f.home)).toEqual(before);expect(bytes(f.root)).toEqual(source);
+});
+it('never opens a foundation or writable database or migrates schema, including an absent destination table',async()=>{
+  const f=await fixture(true);runMigrationAll(f.root,f.home);
+  const db=new Database(join(f.home,'loom.db'));db.exec('DROP TABLE tasks_tasks');db.close();
+  const forbidden=()=>{throw Error('forbidden writer');};
+  const spies=[vi.spyOn(foundation,'createFoundation').mockImplementation(forbidden),vi.spyOn(database,'openDb').mockImplementation(forbidden),vi.spyOn(core,'migrate').mockImplementation(forbidden),vi.spyOn(database,'migrate').mockImplementation(forbidden),vi.spyOn(householdSchema,'migrateHouseholdTables').mockImplementation(forbidden)];
+  const before=bytes(f.home);
+  expect(verifyMigration(f.root,f.home)).toMatchObject({status:'different',differences:expect.arrayContaining([{piece:'tasks',table:'tasks_tasks',expected:1,actual:null}])});
+  for(const spy of spies)expect(spy).not.toHaveBeenCalled();expect(bytes(f.home)).toEqual(before);
+});
+it('returns CLI exit 3 for content differences with equal row counts and never echoes changed values',async()=>{
+  const f=await fixture(true);runMigrationAll(f.root,f.home);
+  const db=new Database(join(f.home,'loom.db'));db.exec("UPDATE tasks_tasks SET record=json_set(record,'$.title','PRIVATE_DIFFERENCE_CANARY')");db.close();
+  const io={stdout:vi.fn(),stderr:vi.fn(),stdin:Readable.from([]),stdinIsTTY:false,env:{}};
+  expect(await run(['verify','--snapshot',f.root,'--home',f.home],io)).toBe(3);expect(io.stdout).toHaveBeenCalledOnce();
+  expect(JSON.parse(io.stdout.mock.calls[0][0])).toMatchObject({status:'different',differences:[{piece:'tasks',table:'tasks_tasks',expected:1,actual:1}]});
+  expect(io.stdout.mock.calls.flat().join('')).not.toContain('PRIVATE_DIFFERENCE_CANARY');expect(io.stderr).not.toHaveBeenCalled();
 });
