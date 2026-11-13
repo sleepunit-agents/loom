@@ -11,9 +11,19 @@ import { HouseholdDatabase } from '../household/document.js';
 import { importHousehold } from '../../cli/household-importer.js';
 import { runSigninLink } from './client.js';
 import { requestLocalLink } from './operator.js';
-import { signin } from './index.js';
+import { signin, Signin, hash } from './index.js';
+import * as database from '../db/index.js';
+const fault = vi.hoisted(() => ({ wrongOwner: '' }));
+vi.mock('node:fs', async importOriginal => {
+  const fs = await importOriginal<typeof import('node:fs')>();
+  return { ...fs, lstatSync: (...args: Parameters<typeof fs.lstatSync>) => {
+    const stat = fs.lstatSync(...args);
+    if (args[0] === fault.wrongOwner) Object.assign(stat, { uid: Number(stat.uid) + 1 });
+    return stat;
+  } };
+});
 const cleanup: Array<() => void | Promise<void>> = [];
-afterEach(async () => { vi.restoreAllMocks(); for (const f of cleanup.splice(0).reverse()) await f(); });
+afterEach(async () => { vi.restoreAllMocks(); fault.wrongOwner = ''; for (const f of cleanup.splice(0).reverse()) await f(); });
 function home() { const path = mkdtempSync(join(tmpdir(), 'local-signin-')); cleanup.push(() => rmSync(path, { recursive: true, force: true })); return path; }
 async function setup() {
   const path = home(), clock = new FakeClock();
@@ -75,8 +85,7 @@ it('the client and daemon refuse an unsafe home or socket on a later connection'
   expect(f.app.db.prepare('SELECT count(*) AS n FROM signin_audit').get()).toEqual({ n: 1 });
 });
 it('wrong socket ownership is refused before connecting', async () => {
-  const f = await setup(); const uid = process.getuid!();
-  vi.spyOn(process, 'getuid').mockReturnValue(uid + 1);
+  const f = await setup(); fault.wrongOwner = join(f.path, 'operator.sock');
   await expect(requestLocalLink(f.path, { request: 'link', member: 'guest' })).rejects.toThrow('Unsafe operator path');
 });
 it('TTL expiry and audit failure leave no usable unaudited credential', async () => {
@@ -126,4 +135,33 @@ it('an imported session suppresses bootstrap output but local links still work',
   const app = createFoundation({ home: path }); importHousehold(app.db, path, old, clock.now()); app.close();
   let output = ''; const daemon = await startLoom({ home: path, next: true, clock, stdout: text => { output += text; } }); cleanup.push(() => daemon.close());
   expect(output).toBe(''); expect((await cli(['--home', path, '--member', 'jonathan'])).code).toBe(0);
+});
+
+it('records the actual credential expiry even if clock time advances while making the link', async () => {
+  const f = await setup();
+  vi.spyOn(Signin.prototype, 'now').mockImplementation(() => { const now = Math.floor(f.clock.now() / 1000); f.clock.advance(1000); return now; });
+  const answer = await requestLocalLink(f.path, { request: 'link', member: 'guest' });
+  const credential = signin(f.app).sessions.get('links', hash(answer.path.slice('/login/'.length)))!;
+  expect(f.app.db.prepare('SELECT expires FROM signin_audit').get()).toEqual({ expires: credential.expires });
+});
+it('default TTL is exactly five minutes and the local CLI does not open the database', async () => {
+  const f = await setup();
+  const opening = vi.spyOn(database, 'openDb').mockImplementation(() => { throw new Error('Client must not open SQLite'); });
+  const result = await cli(['--home', f.path, '--member', 'guest']); expect(result.code).toBe(0); expect(opening).not.toHaveBeenCalled();
+  expect(f.app.db.prepare('SELECT expires FROM signin_audit').get()).toEqual({ expires: f.clock.now() / 1000 + 300 });
+  f.clock.advance(299000);
+  const path = new URL(result.output.trim()).pathname, code = path.slice('/login/'.length);
+  expect(signin(f.app).sessions.get('links', hash(code))!.expires).toBe(f.clock.now() / 1000 + 1);
+  f.clock.advance(1000); expect((await fetch(f.app.url + path, { method: 'POST' })).status).toBe(401);
+});
+it('a lost local response is never retried and prints no credential', async () => {
+  const path = home(); let requests = 0, connections = 0;
+  const server = createServer(socket => {
+    connections++; socket.on('data', () => { requests++; socket.destroy(); });
+  });
+  await new Promise<void>(ok => server.listen(join(path, 'operator.sock'), ok)); chmodSync(join(path, 'operator.sock'), 0o600);
+  try {
+    const result = await cli(['--home', path, '--member', 'guest']); expect(result.code).toBe(1); expect(result.output).toBe('');
+    expect(requests).toBe(1); expect(connections).toBe(1);
+  } finally { await new Promise<void>(ok => server.close(() => ok())); }
 });

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { z } from 'zod';
 import type { Foundation } from '../app.js';
-import { signin } from './index.js';
+import { signin, hash } from './index.js';
 import { HouseholdRows } from '../household/rows.js';
 import { HouseholdDatabase } from '../household/document.js';
 export const operatorRequest = z.strictObject({
@@ -66,8 +66,9 @@ function localLink(app: Foundation, input: z.infer<typeof operatorRequest>) {
   const s = signin(app), os = userInfo();
   return app.db.transaction(() => {
     const path = s.link(input.member, input.label, false, undefined, input.ttl);
+    const link = s.sessions.get('links', hash(path.slice('/login/'.length)))!;
     app.db.prepare('INSERT INTO signin_audit (at, os_uid, os_user, member, label, expires) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(s.now(), os.uid, os.username, input.member, input.label, s.now() + input.ttl);
+      .run(s.now(), os.uid, os.username, input.member, link.label ?? '', link.expires);
     return path;
   }).immediate();
 }
