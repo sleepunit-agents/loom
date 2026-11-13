@@ -654,6 +654,53 @@ A lost response or a crash after consuming the gate is uncertain: reconcile
 that job, never retry an automatic start. Repeated fetch is refused. This
 conservative choice uses the existing gate without inventing a second dispatch
 ledger; reliable runner recovery/acknowledgement is still required before the
-final move. `runtime.startBody`, trusted body credentials, Clock dispatch,
-conversation in/out and Comms linkage remain outstanding. This operation does
+final move. Trusted body credentials, conversation in/out and Comms linkage
+remain outstanding. This operation does
 not claim to implement those paths or change the separate runner program.
+
+## Start intents and Clock confirmation
+
+`runtime.startBody` now implements the durable request part of old
+`bodies.mjs:startBody`. It creates a queued job with the existing placement and
+house configuration, and stores the brief in `runtime_inputs`. Its reply is
+`{job,state}`, never a claim that a body has started. It is available through
+the same registry doors as the runtime role. Members must own the requested
+agent; an agent may start its own work under central scope checks. Runners cannot
+create starts. Service type/operation grants confer no agent authority: current
+central `mayCreate` also denies agent-scoped service starts with both grants.
+Private member work and model-account selection
+fail unavailable until their trusted delivery/account implementations land.
+An optional model request reaches the runner's one-time input payload.
+
+A source kind/id is scoped to the authenticated caller and agent, producing a
+stable job id. Repeating it with a fresh operation id, after receipt expiry or
+after restart finds the same intent; different work conflicts. Without a source,
+the caller's operation id identifies the intent. Briefs never enter reply
+receipts or live records. This is metadata and input storage, not a second
+credential or authority store. A conversation field is inert metadata here and
+confers no conversation access.
+
+Next mode installs the actual Clock adapter. A prompt wake queues a start under
+its original viewer with its wake id as the stable source. An in-process change
+observer waits for the assigned runner's `running` or `waiting` report before
+returning `started` to Clock. Queue, claim and input acknowledgements leave the
+wake firing. Before a queue exists, a placement refusal is definitely not
+started and Clock may use its normal retry policy. Missing house configuration,
+lanes (including inlined file-backed lanes), lane files, continuations, slots, approval-bearing and local wakes are held
+without creating a job; those trusted inputs remain required follow-up work.
+
+The confirmation deadline is 60 seconds on the daemon's clock. A still-held
+staging input returns held; every other unconfirmed accepted intent returns
+uncertain, including a terminal job without observed start confirmation.
+Closing/restarting during dispatch also stays uncertain. These outcomes require
+reconciliation, and never authorize another automatic start. A late runner
+report updates its job but does not automatically resolve an already-held wake.
+The runner still releases input through the staging gate described above.
+
+Tests run the actual next API with bearer-authenticated fake runners through
+start, queue, claim, held input, owner release, input, start confirmation and
+completion. Clock tests also cover definite refusal, staging, missing and lost
+confirmation, and restart without duplicate dispatch. Conversation delivery,
+trusted body proof, model accounts, remaining lifecycle, importer and screens
+are still required for the full runtime rebuild; this path does not unblock
+Comms or claim the whole task is complete.

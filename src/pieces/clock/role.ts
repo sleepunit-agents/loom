@@ -1,6 +1,7 @@
 /** Clock owns the desk's schedule readings; consumers retain the original viewer. */
 import type { Operations, Result, Viewer } from '../../core/index.js';
 export type { AgentNext, ClockJob } from './desk.js';
+export type { Runtime, StartResult } from './dependencies/runtime.js';
 export interface Clock {
   agentNext(viewer: Viewer, input: { agent: string }): Result;
   jobs(viewer: Viewer, input: { agent: string }): Result;
