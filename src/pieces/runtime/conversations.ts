@@ -1,3 +1,4 @@
+import { provenanceStore } from './provenance-store.js';
 import type { Caller } from '../approvals/role.js';
 import { attentionRole } from '../attention/role.js';
 import { controlScope, currentExecution } from './control.js';
@@ -69,6 +70,9 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   may:(v,m)=>v.kind==='member'&&v.id===m.member&&available(m),
   run(ctx,m){
    const old=receipt(m);if(old)return old;
+   // available() and the direct member viewer establish the actual Comms
+   // sender. Public body arguments never become provenance.
+   provenanceStore(db).note(m.conversation,m.agent,{key:key(m),sender:{kind:'person',person:m.member},at:ctx.now},Object.entries(sharing().members).filter(([,v])=>v.owner).map(([id])=>id));
    const before=store.read('binding',m.conversation);
    if(before&&(before.agent!==m.agent||before.member!==m.member||before.place!==m.thread))throw new OperationError('conflict','Conversation binding changed');
    if(before)refile(ctx,m);
@@ -93,6 +97,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    }
    store.put('binding',{id:m.conversation,agent:m.agent,member:m.member,project:m.project,venue:'loom',place:m.thread,job},ctx.now);
    db.prepare('INSERT INTO runtime_deliveries (id,job) VALUES (?,?)').run(key(m),job);
+   if(['running','waiting'].includes(store.read('job',job)!.state))provenanceStore(db).consumed(m.conversation,[key(m)]);
    ctx.changed('runtime.binding',m.conversation);return {job};
   },after(){confirmed();},
  }));
