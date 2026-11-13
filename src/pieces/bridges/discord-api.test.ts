@@ -133,19 +133,23 @@ describe('Discord fresh service metadata',()=>{
     expect(await f.api.authenticate(v)).toEqual({bot:'100',workspace:'1'});
     expect(f.use.mock.calls.map(c=>c[0])).toEqual(['discord','discord']);
   });
-  it('expires a stalled request at 15 seconds and returns only wait',async()=>{
+  it.each(['headers','body'])('expires stalled %s at 15 seconds and returns only wait',async phase=>{
     vi.useFakeTimers();
     const timeout=vi.spyOn(AbortSignal,'timeout').mockImplementation(ms=>{
       const controller=new AbortController();setTimeout(()=>controller.abort(Error('PRIVATE')),ms);return controller.signal;
     });
     try {
-      const f=fixture();let done=false;
-      f.request.mockImplementationOnce(async(_url,init)=>new Promise((_resolve,reject)=>{
-        init!.signal!.addEventListener('abort',()=>reject(Error('PRIVATE TEST-TOKEN')),{once:true});
-      }));
+      const f=fixture(),cancel=vi.fn(async()=>{});let done=false;
+      f.request.mockImplementationOnce(async(_url,init)=>{
+        const stalled=new Promise<never>((_resolve,reject)=>{
+          init!.signal!.addEventListener('abort',()=>reject(Error('PRIVATE TEST-TOKEN')),{once:true});
+        });
+        return phase==='headers'?stalled:{ok:true,body:{getReader:()=>({read:()=>stalled,cancel})}} as unknown as Response;
+      });
       const waiting=f.api.channel(venue,place).then(value=>{done=true;return value;});
       await vi.advanceTimersByTimeAsync(14_999);expect(done).toBe(false);
       await vi.advanceTimersByTimeAsync(1);expect(await waiting).toBe('wait');expect(timeout).toHaveBeenCalledWith(15_000);
+      if(phase==='body')expect(cancel).toHaveBeenCalledOnce();
     } finally {timeout.mockRestore();vi.useRealTimers();}
   });
   it('uses each new callback token rather than retaining the preceding credential',async()=>{
