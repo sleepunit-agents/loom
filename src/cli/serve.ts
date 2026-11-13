@@ -40,6 +40,9 @@ Start the MCP server. Default transport is stdio; --http starts the
 mesh-reachable HTTP daemon instead.
 
 Options:
+  --next                 Run only the new app and in-repo pieces
+  --staging              Hold outside effects in next mode
+  --home <dir>           Next mode home (env LOOM_HOME)
   --http                 Serve over HTTP instead of stdio
   --scope <full|knowledge>  Tool surface for --http (default full);
                          knowledge without --http is rejected
@@ -93,6 +96,9 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     ({ values } = parseArgs({
       args: argv,
       options: {
+        next: { type: 'boolean', default: false },
+        staging: { type: 'boolean', default: false },
+        home: { type: 'string' },
         http: { type: 'boolean', default: false },
         scope: { type: 'string', default: 'full' },
         host: { type: 'string', multiple: true },
@@ -125,6 +131,24 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     return 2;
   }
 
+  if (values.next) {
+    if (values.scope !== 'full') { io.stderr('--next cannot use --scope\n'); return 2; }
+    const { startLoom } = await import('../foundation.js');
+    const { resolve } = await import('node:path');
+    const { homedir } = await import('node:os');
+    const home = resolve(values.home ?? process.env.LOOM_HOME ?? `${homedir()}/.config/loom-next`);
+    const hosts = values.host ?? (process.env.LOOM_HTTP_HOST ?? '127.0.0.1').split(',');
+    const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) { io.stderr('Invalid --port\n'); return 2; }
+    const handle = await startLoom({ home, next: true, staging: values.staging, host: hosts, port });
+    io.stderr(`loom: next app on ${handle.url}${values.staging ? ' (staging)' : ''}\n`);
+    await new Promise<void>(done => {
+      const stop = () => { process.off('SIGTERM', stop); process.off('SIGINT', stop); void handle.close().then(done); };
+      process.on('SIGTERM', stop); process.on('SIGINT', stop);
+    });
+    return 0;
+  }
+  if (values.staging || values.home) { io.stderr('--staging and --home require --next\n'); return 2; }
   const contextDir = resolveContextDir();
   // Optional: gaps directory for recall-miss logging (LOOM_GAPS_DIR env var).
   // When set, knowledge_recall misses are appended to ${gapsDir}/recall-miss.jsonl

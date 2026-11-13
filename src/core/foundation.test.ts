@@ -234,3 +234,25 @@ describe('in-process HTTP and live socket', () => {
     expect(app.db.prepare('SELECT count(*) AS n FROM example_records').get()).toEqual({ n: 6 });
   });
 });
+
+describe('post-rollback rejection audit',()=>{
+  it('observes rolled back action state and cannot replace a denial with audit success or failure',()=>{
+    const app=createFoundation({home:home(),clock:new FakeClock()});closes.push(app.close);
+    app.db.exec('CREATE TABLE rejected_effects (id TEXT); CREATE TABLE rejected_audit (id TEXT)');
+    let auditFails=false;
+    app.operations.register({name:'audit.reject',write:true,input:z.object({id:z.string()}),output:z.unknown(),may:()=>true,
+      run(ctx,input){ctx.db.prepare('INSERT INTO rejected_effects VALUES (?)').run(input.id);throw new OperationError('denied','No');},
+      rejected(_viewer,input){
+        expect(app.db.prepare('SELECT * FROM rejected_effects').all()).toEqual([]);
+        app.db.prepare('INSERT INTO rejected_audit VALUES (?)').run(input.id);
+        if(auditFails)throw Error('audit write interrupted');
+      },
+    });
+    expect(app.operations.call('direct',owner,'audit.reject',{id:'first'},'first')).toEqual({ok:false,code:'denied',message:'No'});
+    expect(app.db.prepare('SELECT * FROM rejected_audit').all()).toEqual([{id:'first'}]);
+    auditFails=true;
+    expect(app.operations.call('direct',owner,'audit.reject',{id:'second'},'second')).toEqual({ok:false,code:'denied',message:'No'});
+    expect(app.db.prepare('SELECT * FROM rejected_audit').all()).toEqual([{id:'first'}]);
+    expect(app.db.prepare('SELECT * FROM rejected_effects').all()).toEqual([]);
+  });
+});

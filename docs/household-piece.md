@@ -51,3 +51,48 @@ they are not app tables and are not imported here.
 
 The command/route/job replacement table, next-mode authentication, owner operations,
 generated clients, offline continuity and Setup screen remain tracked by t-2203.
+
+## Stdio metadata composition (new side)
+
+`src/continuity/household.ts` is the explicit read-only metadata seam for the
+new stdio composition. `readContinuityHousehold(home, agent?)` reads an existing
+`loom.db`, chooses the named agent or household default, and returns ownership,
+context and commons paths. Each call closes its connection and takes a fresh
+snapshot; it sees committed WAL data while a daemon is up, too. It never opens
+old JSON, migrates tables, creates app records, or runs jobs. SQLite may create
+its WAL/SHM sidecars for a read-only connection; immutable mode is deliberately
+avoided because it can miss a daemon's committed WAL.
+
+`continuityTarget({home?, agent?, contextDir?})` makes the composition explicit:
+
+- A home without a context chooses the named agent or household default.
+- An explicit context inside that home's `agents/` chooses that registered
+  agent, including through symlink aliases; an unknown agent is an error.
+- An explicit standalone context needs no app database. It takes precedence
+  over the home/agent selection.
+- A missing database, absent schema or inconsistent household rows fails
+  loudly when a household was selected. An import receipt never selects a
+  backend, and contradictory old JSON has no effect.
+
+This is a composition prerequisite, not the completed stdio cutover. Existing
+`householdOf`, `contextFromHome`, CLI and MCP entry points still behave exactly
+as before. The next stdio composition must pass this metadata to identity's
+Owners block, knowledge and people paths, with end-to-end two-agent and
+standalone identity/memory/knowledge/people tests before its entry point ships.
+
+The People/Owners consumers now accept explicit selection too:
+`createLoomServer({contextDir, peopleSelection})` passes a trusted
+`{household, agent}` snapshot to every person tool, the Owners block and the
+identity room cards. `readContinuityHousehold` supplies that shape directly.
+Passing `null` selects only the standalone context; omitting the property
+retains legacy JSON discovery. Selection stays per server, with no global path
+registry or environment changes. Person ensure/merge helpers accept the same
+selection for later new-side route composition. The room reader closes its
+explicit store and keeps its existing rendering limits and failure handling.
+
+This still does not enable a new stdio entry point: knowledge routing and the
+remaining server household consumers must be composed explicitly before that
+entry point is exposed. The new MCP continuity tests cover two simultaneous
+agents' Owners and room cards, shared directory/private relationships,
+standalone override beside legacy JSON, and an agent-scoped merge with the
+other agent's relationship database unchanged.

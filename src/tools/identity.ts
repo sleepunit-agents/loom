@@ -21,6 +21,7 @@ import { tapeForContext } from '../backends/episodes.js';
 import { PeopleStore, roomBlock } from '../backends/people.js';
 import { projectBlock } from '../backends/projects.js';
 import { commonsPeoplePath } from '../backends/people-household.js';
+import { openPeople, type PeopleSelection } from './person.js';
 import { householdOf } from '../household.js';
 import { readHealth, recordFailure, warningBlock } from '../backends/recorder-health.js';
 
@@ -66,9 +67,9 @@ function plainName(name: unknown): string {
   return typeof name === 'string' ? name.normalize('NFKC').replace(/[\p{C}\n\r]/gu, ' ').replace(/[`*_#>\[\]<>|~]/g, '').replace(/\s+/g, ' ').trim().slice(0, 80) : '';
 }
 
-export function ownersBlock(contextDir: string): string | null {
+export function ownersBlock(contextDir: string, selection?: PeopleSelection): string | null {
   try {
-    const hh = householdOf(contextDir);
+    const hh = selection === undefined ? householdOf(contextDir) : selection;
     if (!hh) return null;
     const mine = hh.household.members.filter((m) => m.agents === '*' || m.agents.includes(hh.agent));
     if (!mine.length) return null;
@@ -112,6 +113,8 @@ export async function loadIdentity(
   onlyConversation?: string | null,
   /** Omit for core + index; all preserves the historical full output. */
   pieces?: string | readonly string[],
+  /** Explicit household/standalone selection for the next stdio composition. */
+  selection?: PeopleSelection,
 ): Promise<string> {
   const requested = pieces === undefined ? [] : typeof pieces === 'string' ? [pieces] : pieces;
   for (const name of requested) {
@@ -141,7 +144,7 @@ export async function loadIdentity(
   const readers: Record<IdentitySectionName, () => Promise<string | null>> = {
     creed: () => fileSection(join(contextDir, 'IDENTITY.md'), '# Identity'),
     preferences: () => fileSection(join(contextDir, 'preferences.md'), '# Preferences'),
-    owners: async () => ownersBlock(contextDir),
+    owners: async () => ownersBlock(contextDir, selection),
     'last-24h': async () => {
       try {
         const tape = tapeForContext(contextDir, { onlyConversation });
@@ -188,7 +191,10 @@ export async function loadIdentity(
         recordFailure(contextDir, error);
       }
       try {
-        const block = roomBlock(contextDir, people, { onFailure: e => recordFailure(contextDir, e) });
+        const block = roomBlock(contextDir, people, {
+          onFailure: e => recordFailure(contextDir, e),
+          ...(selection === undefined ? {} : { openStore: () => openPeople(contextDir, { readonly: true, selection }) }),
+        });
         if (block) parts.push(block);
       } catch (error) {
         console.error('[loom:identity] room block failed:', error);

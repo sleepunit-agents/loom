@@ -31,6 +31,10 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     const { migrateChanges } = await import('./migrate-changes.js');
     return migrateChanges(argv.slice(1), io);
   }
+  if (argv[0] === 'approvals') {
+    const { migrateApprovals } = await import('./migrate-approvals.js');
+    return migrateApprovals(argv.slice(1), io);
+  }
   if (argv[0] === 'household') {
     const { migrateHousehold } = await import('./migrate-household.js');
     return migrateHousehold(argv.slice(1), io);
