@@ -97,7 +97,7 @@ polling. An unavailable snapshot immediately clears the time. No operation, CLI,
 importer or schema is needed for this derived record.
 
 On desktop the clock precedes the title; connection and working-agent glyphs
-follow the brand, with names and tooltips. Phones retain the single compact bar
+follow the brand, with names and tooltips. The iOS home-screen app also keeps its own status bar at desktop widths. Phones retain the single compact bar
 under their own status bar. Connection means the bar's source feeds are live;
 agent counts use the owned roster and latest reports. Boxes and backup remain
 explicit follow-ups, pending proper owning sources. No tiling behavior changes.

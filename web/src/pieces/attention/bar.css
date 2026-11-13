@@ -18,3 +18,4 @@
 :root[data-look] [data-shell=phone] .next-system-clock,:root[data-look] [data-shell=phone] .next-system-icons{display:none}
 [data-shell=phone] .next-status-start{max-width:28%}
 :root[data-look] [data-shell=phone] .next-status-start .loom-pbar__name{max-width:100%}
+html.loom-ios-app:root[data-look] .next-status-line :is(.next-system-clock,.next-system-icons){display:none}

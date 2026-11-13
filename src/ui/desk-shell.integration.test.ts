@@ -111,6 +111,11 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     // Comparison boards intentionally retain the fixture's ordinary drawn identity.
     expect((await context.request.get(app.url+'/manifest.webmanifest')).headers()['content-type']).toBe('application/manifest+json');
     await expect.poll(() => a.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL)).toBe(app.url+'/sw.js');
+    // iPad's home-screen app has its own status bar even in a desktop-width layout.
+    await a.evaluate(()=>document.documentElement.classList.add('loom-ios-app'));
+    expect(await a.locator('.next-system-clock').isVisible()).toBe(false);
+    expect(await a.locator('.next-system-icons').isVisible()).toBe(false);
+    await a.evaluate(()=>document.documentElement.classList.remove('loom-ios-app'));
     const shots = resolve('artifacts/desk-shell'); mkdirSync(shots,{recursive:true});
     for (const look of ['neon','lowlight','daylight']) {
       set({look,contrast:'off',motion:'on',sound:false},'look-'+look);
