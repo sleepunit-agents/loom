@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Attention next-mode digests now resolve project aliases and venue filing through visible Projects cards for the conversation’s agent.
+
 - Prepare offline migration plans with snapshot-bound inputs, strict options and explicit audience/attribution defaults (CLI runner follows).
 - Add centrally authorized runtime house build configuration in next mode, preserving box and model preferences without granting execution capabilities.
 
