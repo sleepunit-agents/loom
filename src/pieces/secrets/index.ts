@@ -131,9 +131,9 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
       const decision = requestDecision(readSecretPolicy(db), input.agent, input.target);
       const old = decision.level !== 'never' && all<GrantRequest>(db, 'secrets_requests').find(r => r.agent === input.agent && r.kind === 'secret' && r.target === input.target
         && r.scope?.house === input.scope.house && r.scope?.service === input.scope.service
-        && (r.state === 'pending' || r.state === 'allowed' && (() => {
+        && (r.state === 'pending' && decision.level === 'ask' || r.state === 'allowed' && (() => {
           const grant = read<Grant>(db, 'secrets_grants', grantId(r.agent, r, input.scope));
-          return grant?.requestId === r.id && grant.expiresAt !== undefined && grant.expiresAt > ctx.now;
+          return grant?.requestId === r.id && !grant.movedTo && grant.expiresAt !== undefined && grant.expiresAt > ctx.now;
         })()));
       if (old) return old;
       const minutes = Math.min(input.minutes ?? decision.minutes, decision.minutes);

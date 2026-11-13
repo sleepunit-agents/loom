@@ -64,7 +64,7 @@ it('never wins; expired, revoked, manual and Always grants do not carry', async 
 it('rolls a failed move back and permits the same operation to retry', async () => {
   const { app, call, request, may, answer } = await setup();
   expect(answer(request('h-1')).ok).toBe(true);
-  const snapshot = () => ['secrets_requests', 'secrets_grants', 'core_operations'].map(t => app.db.prepare(`SELECT * FROM ${t} ORDER BY 1`).all());
+  const snapshot = () => snapshotStorage(app);
   const before = snapshot();
   const changed = vi.spyOn(app.live, 'changed');
   app.db.exec("CREATE TRIGGER fail_carry BEFORE INSERT ON secrets_grants WHEN NEW.id LIKE '%h-2%' BEGIN SELECT RAISE(ABORT,'fixture'); END;");
@@ -96,7 +96,7 @@ it('does not revoke a later independent replacement at a paired scope', async ()
 it('paired revoke rolls both grants and request states back on failure', async () => {
   const { app, call, request, may, answer, resource } = await setup();
   expect(answer(request('h-1')).ok).toBe(true); expect(request('h-2').ok).toBe(true);
-  const snapshot = () => ['secrets_requests', 'secrets_grants', 'core_operations'].map(t => app.db.prepare(`SELECT * FROM ${t} ORDER BY 1`).all());
+  const snapshot = () => snapshotStorage(app);
   const before = snapshot();
   const changed = vi.spyOn(app.live, 'changed');
   app.db.exec("CREATE TRIGGER fail_revoke BEFORE DELETE ON secrets_grants WHEN OLD.id LIKE '%h-1%' BEGIN SELECT RAISE(ABORT,'fixture'); END;");
@@ -142,4 +142,24 @@ it('does not carry an eligible owner Allow for a different secret name', async (
   expect(call(owner, 'describe', { name: 'other-key', description: '' }).ok).toBe(true);
   expect(call(agent, 'requestHouse', { agent: agent.id, target: 'other-key', scope: { house: 'h-2' }, why: 'work' })).toMatchObject({ ok: true, value: { state: 'pending' } });
   expect(may('h-1')).toBe(true);
+});
+
+function snapshotStorage(app: Awaited<ReturnType<typeof setup>>['app']) {
+  return ['secrets_requests', 'secrets_grants', 'core_operations'].map(t => app.db.prepare(`SELECT * FROM ${t} ORDER BY 1`).all());
+}
+it('Auto replaces pending and moved-original request reuse without extending active grants', async () => {
+  const { app, clock, call, request, answer, may, raised } = await setup();
+  expect(answer(request('h-1')).ok).toBe(true);
+  expect(request('h-2')).toMatchObject({ ok: true, value: { state: 'allowed', carriedFrom: expect.any(String) } });
+  expect(request('h-3')).toMatchObject({ ok: true, value: { state: 'pending' } });
+  expect(call(owner, 'policy', { default: 'auto' }).ok).toBe(true);
+  for (const house of ['h-1', 'h-3']) {
+    expect(request(house)).toMatchObject({ ok: true, value: { state: 'allowed', decision: 'policy' } });
+    expect(may(house)).toBe(true);
+  }
+  expect(raised).toHaveLength(2);
+  const before = app.db.prepare('SELECT * FROM secrets_grants ORDER BY id').all();
+  clock.advance(1000);
+  expect(request('h-1')).toMatchObject({ ok: true, value: { state: 'allowed', decision: 'policy' } });
+  expect(app.db.prepare('SELECT * FROM secrets_grants ORDER BY id').all()).toEqual(before);
 });
