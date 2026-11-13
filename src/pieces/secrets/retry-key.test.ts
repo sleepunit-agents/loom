@@ -34,6 +34,9 @@ it('loads the same disk key after daemon restart and core expiry to reconcile a 
  expect(await call()).toMatchObject({code:'unavailable'});expect(h.set).toHaveBeenCalledTimes(1);
  await app.close();clock.advance(31*86400_000);app=await open(root,clock);install();
  expect(await call()).toEqual({ok:true,value:{saved:true}});expect(h.set).toHaveBeenCalledTimes(1);
+ // This second restart expires an actual saved core success result.
+ await app.close();clock.advance(31*86400_000);app=await open(root,clock);install();
+ expect(await call()).toEqual({ok:true,value:{saved:true}});expect(h.set).toHaveBeenCalledTimes(1);
  expect(binding(app)).toBe(expected);expect(readFileSync(path)).toEqual(key);
  const tables=app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[];
  for(const {name} of tables){const contents=JSON.stringify(app.db.prepare(`SELECT * FROM "${name}"`).all());expect(contents).not.toContain(input.value);expect(contents).not.toContain(key.toString('hex'));}
