@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Add an explicit offline Attention importer for copied conversation databases, with audience maps, atomic verification and repeat protection.
+- Next mode signs in through database sessions, one-time links and passkeys, with bearer authentication for agents, runners and services.
+
 - On the new clock side, count lane run-now against the one-off budget and wait for model quota reset without consuming job retries.
 
 - Keep long approval details and exact targets within the phone reader, with wrapping answer buttons.

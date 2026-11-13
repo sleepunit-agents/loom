@@ -86,13 +86,13 @@ export class Live {
     for (const [socket, auth] of this.sockets) if (!auth.valid()) socket.close(1008, 'Session ended');
     for (const c of this.clients) for (const sub of [...c.types.values()]) { try { this.set(c, sub.type, sub.scope); } catch { this.failed(c); } }
   }
-  attach(server: Server, authenticate: (req: IncomingMessage) => Authentication | undefined) {
+  attach(server: Server, authenticate: (req: IncomingMessage) => Authentication | undefined, originAllowed?: (req: IncomingMessage) => boolean) {
     const upgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
       if (new URL(req.url ?? '/', 'http://localhost').pathname !== '/live') return;
       let auth: Authentication | undefined;
       try { auth = authenticate(req); } catch { /* fail closed */ }
       // A cookie-authenticated browser must be same-origin. Nonbrowser tokens have no Origin.
-      if (!auth || !auth.valid() || (req.headers.origin && req.headers.origin !== `${('encrypted' in req.socket && req.socket.encrypted) ? 'https' : 'http'}://${req.headers.host}`)) {
+      if (!auth || !auth.valid() || (originAllowed ? !originAllowed(req) : (req.headers.origin && req.headers.origin !== `${('encrypted' in req.socket && req.socket.encrypted) ? 'https' : 'http'}://${req.headers.host}`))) {
         socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return;
       }
       const authenticated = auth;
