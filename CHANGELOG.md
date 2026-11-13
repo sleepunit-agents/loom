@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add a private Discord raw receipt drain with fresh metadata, bounded retries and durable normalized handoff; production activation remains pending.
+
 - Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.
 - Show each Comms thread’s agent letter beside its title in the list.
 
