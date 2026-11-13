@@ -12,11 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an explicit next-mode mutual-TLS Unix socket holder source and separate age decryption process for owner-granted service use.
 - Discover visible reported runtime builds for the current house configuration without treating later progress as a newer image.
 
 - Add confirmed dismissal of held and uncertain sends in the next-mode Bridges preview, with pending and error feedback across navigation.
 - Retry runtime-held Bridges intake after daemon restart with the original receipt and fresh admission, while preserving administrative holds.
 - Bound transient Bridges intake retries to a durable one-hour budget across restarts and duplicate receipts, erasing expired payloads while retaining deduplication.
+- Add opt-in fixed 24-hour Clock safety wakes under explicitly configured agent authority, retaining restart deadlines and staging holds.
 - Clock rejects continuation requests combined with a lane file, slot, place, approval or local-wake marker before saving work.
 - Compose parked Clock wakes with current scoped Approvals and Secrets answers in next mode, without spending receipts or carrying grants.
 - Add owner-controlled runtime house grant configuration with preserved secret scopes and repository-secret build provenance.
@@ -42,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
 - Add the Projects preview app with private agent cards, Tasks-first computed hubs, independent role sections and live outside-write updates.
 - Run next-mode Attention metadata retention daily as its registered service, respecting private scope and daemon shutdown.
+- Add explicit Attention wait checks through visible Approvals and Tasks roles, preserving the caller and central ask history.
 - Activity preview on the new desk: live episode timeline, three-day windows, filters and full readers, with a synchronous seam for the new Conversations owner.
 
 - Add an opt-in `loom-bridges` JSON setup client for next-mode connection, route and person-link operations.
