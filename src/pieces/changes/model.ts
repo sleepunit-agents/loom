@@ -20,6 +20,9 @@ export const changeSchema = z.object({
 export type Change = z.infer<typeof changeSchema> & { project?: string; agent?: string; mine?: boolean; syncError?: string };
 export interface Project { slug: string; name: string; repos: string[] }
 export interface Attribution { agents: Record<string, { logins: string[]; branches: string[] }>; ownerLogins: string[]; taskOwner?: string }
+export function currentAttribution(settings:Attribution, knownAgents:string[]):Attribution {
+ const known=new Set(knownAgents);return {...settings,agents:Object.fromEntries(Object.entries(settings.agents).filter(([id])=>known.has(id)))};
+}
 export interface Rule { tier: 'do'|'tell'|'ask'; approval?: { state: string }; for?: { slug: string; name: string; state: string } }
 export const targetOf = (c: Change) => `${c.id}@${c.head.id}`;
 export const short = (c: Change) => `${c.repo.split('/').at(-1)}#${c.number}`;

@@ -18,8 +18,8 @@ function setup(read:(repo:string,now:number)=>Promise<Change[]>) {
  const clock=new FakeClock(),app=createFoundation({home,clock});cleanup.push(app.close);
  let job:ReturnType<typeof startChangesJob>;
  installChanges(app.db,app.operations,app.live,fixtureSharing,{onRefresh:()=>job.wake()});
- const config:{projects:Project[];attribution:Attribution}={projects:[{slug:'pond',name:'Pond',repos:['acme/app']}],attribution:{agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}};
- job=startChangesJob(app,{clock,sharing:fixtureSharing,viewer:owner,projects:{list:()=>config.projects},attribution:()=>config.attribution,read});cleanup.push(job.close);
+ const config:{projects:Project[];attribution:Attribution;agents:string[]}={agents:['art'],projects:[{slug:'pond',name:'Pond',repos:['acme/app']}],attribution:{agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}};
+ job=startChangesJob(app,{knownAgents:()=>config.agents,clock,sharing:fixtureSharing,viewer:owner,projects:{list:()=>config.projects},attribution:()=>config.attribution,read});cleanup.push(job.close);
  return {app,clock,job,config};
 }
 it('reapplies current attribution to failed snapshots so a removed agent cannot authorize an answer',async()=>{
@@ -58,4 +58,17 @@ it('refuses external doors and unauthorized direct snapshot writes without chang
 it('backs off configuration/commit failures instead of scheduling a millisecond retry loop',async()=>{
  const {job,config,clock}=setup(async()=>[]);config.projects=[{slug:'broken',name:'Broken',repos:['invalid']}];
  const list=vi.spyOn(config,'projects','get');await job.run();const calls=list.mock.calls.length;clock.advance(59999);await Promise.resolve();expect(list.mock.calls).toHaveLength(calls);
+});
+it('does not attribute a stale mapping to an agent that is absent from the destination household',async()=>{
+ const {app,job,config}=setup(async()=>[change()]);config.agents=[];await job.run();
+ expect(loadChanges(app.db)[0].agent).toBeUndefined();
+});
+it('keeps expired closed detail through successful and unavailable daemon reads while hiding it from lists',async()=>{
+ let fail=false;const {app,job,clock}=setup(async()=>{if(fail)throw Error('unavailable');return [];});
+ const closed=change({state:'merged',closed:new Date(clock.now()).toISOString()});replaceChanges(app.db,[closed]);
+ clock.advance(7*86400_000);await job.run();
+ expect(app.operations.call('direct',owner,'changes.list',{})).toEqual({ok:true,value:[]});
+ expect(app.operations.call('direct',owner,'changes.show',{id:closed.id})).toMatchObject({ok:true,value:{state:'merged'}});
+ fail=true;app.operations.call('direct',owner,'changes.refresh',{},'failed');await job.run();
+ expect(app.operations.call('direct',owner,'changes.show',{id:closed.id})).toMatchObject({ok:true,value:{state:'merged',syncError:'GitHub read unavailable'}});
 });

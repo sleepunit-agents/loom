@@ -116,3 +116,8 @@ commit transaction, including preserved rows from failed reads. A refresh reques
 increments a durable generation; an older in-flight read cannot consume it.
 Concurrent runs share one read, and configuration or commit failures back off
 rather than retrying continuously. Permission/daemon review evidence is pending.
+Known agents come from the destination household rows. Read/answer/live projections
+also recheck these identities and repository mappings before the next forge read;
+household access/project events invalidate them. Closed detail survives later
+successful or unavailable syncs even after its one-week list expiry. Shutdown
+proof covers both late success and rejection, including a still-open foundation.

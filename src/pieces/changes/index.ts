@@ -5,18 +5,25 @@ import { randomUUID } from 'node:crypto';
 import { migrate, operation, maySee, mayAct, OperationError, type Db, type Operations, type Live, type Sharing, type Viewer } from '../../core/index.js';
 import { tasksRole } from '../tasks/role.js';
 import { schema } from './schema.js';
-import { active, week, targetOf, taskLinks, waitsOn, stateLine, citations, groups, type Change, type Attribution, type CitingTask, short, tasksCited } from './model.js';
+import { active, attribute, currentAttribution, week, targetOf, taskLinks, waitsOn, stateLine, citations, groups, type Change, type Attribution, type CitingTask, short, tasksCited } from './model.js';
 import { loadChanges } from './store.js';
-import type { Approvals } from './roles.js';
+import { projectFor } from './importer.js';
+import type { Approvals, Projects } from './roles.js';
 const emptyAttribution:Attribution={agents:{},ownerLogins:[]};
-export function installChanges(db:Db, operations:Operations, live:Live, sharing:()=>Sharing, options:{onRefresh?:()=>void; approvals?:Approvals; attribution?:()=>Attribution}={}) {
+export function installChanges(db:Db, operations:Operations, live:Live, sharing:()=>Sharing, options:{onRefresh?:()=>void; approvals?:Approvals; attribution?:()=>Attribution;knownAgents?:()=>string[];projects?:Projects}={}) {
  migrate(db,'changes',schema);
  const scope=(c:Change)=>({type:'change',...(c.project?{project:c.project}:{}),...(c.agent?{agent:c.agent}:{})});
 
- const find=(id:string|undefined)=>loadChanges(db).find(c=>c.id===id);
+ const records=()=>loadChanges(db).map(c=>{
+  let value=c;
+  if(options.attribution&&options.knownAgents)value=attribute(value,currentAttribution(options.attribution(),options.knownAgents()));
+  if(options.projects){value={...value};delete value.project;const project=projectFor(value.repo,options.projects.list());if(project)value.project=project;}
+  return value;
+ });
+ const find=(id:string|undefined)=>records().find(c=>c.id===id);
  const see=(v:Viewer,c:Change)=>maySee(v,scope(c),sharing());
  const access=(v:Viewer,op:string)=>v.kind!=='service'||mayAct(v,{type:'change'},sharing(),'act',op);
- const all=(v:Viewer)=>loadChanges(db).filter(c=>see(v,c));
+ const all=(v:Viewer)=>records().filter(c=>see(v,c));
  const readTasks=(v:Viewer):CitingTask[]=>{
   const answer=tasksRole(operations).call(v,'export',{});
   return answer.ok ? ((answer.value as {result:{tasks?:CitingTask[]}}).result.tasks ?? []) : [];
@@ -36,7 +43,7 @@ export function installChanges(db:Db, operations:Operations, live:Live, sharing:
    if(verb==='references') {const wanted=new Set((input.references??[]).flatMap(r=>citations(r)));return changes.filter(c=>wanted.has(c.id));}
    if(verb==='cited-by') {if(!input.task) throw new OperationError('invalid','cited-by needs a task');return changes.filter(c=>tasksCited(c).includes(input.task!)||c.tasks.some(t=>t.id===input.task)).map(c=>({id:c.id,title:c.title,short:short(c),page:c.page,words:stateLine(c,waitsOn(c).words)}));}
    if(verb==='project-feed') changes=changes.filter(c=>c.project===input.project);
-   if(verb==='thread-feed') {if(!/^cv-[0-9a-f]{12}$/.test(input.conversation??'')) throw new OperationError('invalid','thread-feed needs a conversation');return threadFeed(changes,input.conversation!,input.references??[],ctx.now,new Set(loadChanges(db).filter(c=>!see(ctx.viewer,c)).map(c=>c.id)));}
+   if(verb==='thread-feed') {if(!/^cv-[0-9a-f]{12}$/.test(input.conversation??'')) throw new OperationError('invalid','thread-feed needs a conversation');return threadFeed(changes,input.conversation!,input.references??[],ctx.now,new Set(records().filter(c=>!see(ctx.viewer,c)).map(c=>c.id)));}
    changes.sort((a,b)=>groups.indexOf(a.group)-groups.indexOf(b.group)||Date.parse(b.updated??'')-Date.parse(a.updated??''));
    if(verb==='project-feed') return projectFeed(changes,ctx.now);
    return input.cli ? {stdout:changes.filter(c=>c.state==='open').map(c=>`${c.id}  ${c.words}  — ${c.title}\n`).join('')} : changes;
@@ -68,7 +75,7 @@ export function installChanges(db:Db, operations:Operations, live:Live, sharing:
    ctx.changed('change',c.id);return answer.value;
   }
  }));
- live.register({name:'change',ids:()=>loadChanges(db).map(c=>c.id),read(id,v){const c=loadChanges(db).find(c=>c.id===id);return c&&see(v,c)?decorate(c,v):undefined;},inScope:(r,parent,now)=>(parent===undefined||r.project===parent)&&active(r as unknown as Change,now),expires:r=>r.state==='open'?undefined:Date.parse(String(r.closed))+week});
- live.observe(changes=>{if(changes.some(c=>c.type==='task'||c.type==='approval'||c.type==='approval-rule')) live.changed(loadChanges(db).map(c=>({type:'change',id:c.id})));});
+ live.register({name:'change',ids:()=>loadChanges(db).map(c=>c.id),read(id,v){const c=find(id);return c&&see(v,c)?decorate(c,v):undefined;},inScope:(r,parent,now)=>(parent===undefined||r.project===parent)&&active(r as unknown as Change,now),expires:r=>r.state==='open'?undefined:Date.parse(String(r.closed))+week});
+ live.observe(changes=>{if(changes.some(c=>c.type==='task'||c.type==='approval'||c.type==='approval-rule'||c.type==='household.project'||c.type==='core.access')) live.changed(loadChanges(db).map(c=>({type:'change',id:c.id})));});
  return { decorate };
 }
