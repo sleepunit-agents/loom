@@ -90,6 +90,7 @@ it('recovers the exact unchanged filesystem publication after SQLite rollback an
   expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'create-gabe')).toMatchObject({ code: 'unavailable' });
   expect(new HouseholdDatabase(app.db).document()).toEqual(before); expect(events).toEqual([]);
   const identity = readFileSync(join(home, 'agents', 'gabe', 'IDENTITY.md'));
+  expect(app.operations.call('direct', owner, 'household.addAgent', { agent: 'gabe' }, 'adopt-complete')).toMatchObject({ code: 'conflict' });
   expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'different')).toMatchObject({ code: 'conflict' });
   app.db.exec('DROP TRIGGER fail_bootstrap'); await app.close();
   const reopened = await startLoom({ home, clock, next: true }); closes.push(reopened.close);
@@ -170,6 +171,7 @@ it('does not overwrite a directory reserved by another filesystem caller during 
   });
   expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'race')).toMatchObject({ code: 'conflict' });
   expect(readdirSync(target)).toEqual([]);
+  expect(app.operations.call('direct', owner, 'household.addAgent', { agent: 'gabe' }, 'adopt-empty')).toMatchObject({ code: 'invalid' });
   expect(new HouseholdDatabase(app.db).household(home)?.agents).not.toContain('gabe');
 });
 
@@ -184,6 +186,7 @@ it('finishes an interrupted exclusive file publication only for its original req
   expect(new HouseholdDatabase(app.db).household(home)?.agents).not.toContain('gabe');
   const target = join(home, 'agents', 'gabe');
   expect(readdirSync(target).sort()).toEqual(['.loom-bootstrap.json', 'IDENTITY.md']);
+  expect(app.operations.call('direct', owner, 'household.addAgent', { agent: 'gabe' }, 'adopt-partial')).toMatchObject({ code: 'conflict' });
   expect(app.operations.call('direct', owner, 'household.bootstrapAgent', input, 'other')).toMatchObject({ code: 'conflict' });
   fail = false; expect(call()).toMatchObject({ ok: true });
   expect(readdirSync(target).sort()).toEqual(['.loom-bootstrap.json', 'IDENTITY.md', 'preferences.md', 'self-model.md']);

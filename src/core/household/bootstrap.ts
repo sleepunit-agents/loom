@@ -84,7 +84,7 @@ export function bootstrapHouseholdAgent(ctx: Context, home: string, input: Boots
   // Repeat directory flushes on recovery too: a previous attempt may have
   // published successfully and then failed here before SQLite registration.
   syncDir(target); syncDir(parent); syncDir(home);
-  addHouseholdAgent(ctx.db, home, input.agent);
+  addHouseholdAgent(ctx.db, home, input.agent, true);
   ctx.changed('household.sharing', 'household'); ctx.changed('core.access', 'household');
   return { agent: input.agent, contextDir: target, mcp: { command: 'loom', args: ['mcp', '--next', '--home', home, '--agent', input.agent] } };
 }

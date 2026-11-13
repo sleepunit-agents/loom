@@ -18,6 +18,7 @@ async function setup() {
   const people = new PeopleStore({ dbPath: join(home, 'commons', 'people.db') });
   people.write({ slug: 'guest', name: 'Guest' }); people.close();
   mkdirSync(join(home, 'agents', 'new-agent'), { recursive: true });
+  writeFileSync(join(home, 'agents', 'new-agent', 'IDENTITY.md'), '# New agent\nPrepared context\n');
   const app = await startLoom({ home, next: true, clock: new FakeClock(), install: installFixture,
     authenticate: req => ({ viewer: { kind: 'member', id: req.headers.authorization === 'Bearer owner-token' ? 'jonathan' : 'pollock' }, valid: () => true }) });
   cleanup.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });

@@ -265,7 +265,7 @@ household client remain tracked by t-2203.
 `household.addAgent({agent})` registers an existing portable context under
 `HOME/agents/<agent>`. Only a household owner may call it. The name follows the
 existing lowercase agent-name format; the context and its `agents` parent must
-be real directories, not symlinks. Missing contexts and files are refused. An
+be real directories, not symlinks. Missing contexts and files are refused. Prepared contexts need a nonempty regular `IDENTITY.md`; bootstrap-marked contexts must finish through their original creation request, so registration cannot bypass publication recovery. An
 already registered agent is a successful no-op, matching the old CLI helper.
 The operation leaves the default agent, members, ownership, projects, unknown
 metadata, context contents and credentials intact. Wildcard household owners
