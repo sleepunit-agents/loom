@@ -28,6 +28,8 @@ export interface MigrationImporter<Options = unknown> {
   dependencies: readonly string[];
   /** Human-readable inventory of old snapshot data consumed. */
   reads: readonly string[];
+  /** Machine-readable file globs relative to the old home (tasks is external). */
+  sourceReads?: readonly string[];
   /** Caller holds stopped-home lock. Importer owns its transaction and comparisons. */
   run(context: MigrationContext, input: MigrationInput<Options>): unknown;
 }
@@ -96,16 +98,17 @@ function single(context: MigrationContext, input: MigrationInput): string {
 export function createMigrationRegistry(): MigrationRegistry {
   const registry = new MigrationRegistry();
   registry.register({ name: 'household', dependencies: [], reads: ['home/ (household metadata, identity files and keys)'],
+    sourceReads: ['household.json', 'tokens.json', 'tokens.used.json', 'ui-sessions.json', 'ui-cookie.key', 'pieces/*/settings.json'],
     run: (context, input) => importHousehold(context.db, context.home, single(context, input), context.now) });
   registry.register<Parameters<typeof importTasks>[3]>({ name: 'tasks', dependencies: ['household'], reads: ['tasks/store.db'],
     run: (context, input) => importTasks(context.db, single(context, input), context.now, input.options, openSnapshotSqlite) });
-  registry.register<ImportScopes>({ name: 'attention', dependencies: ['household'], reads: ['home/**/memories.db (conversation tables)'],
+  registry.register<ImportScopes>({ name: 'attention', dependencies: ['household'], reads: ['home/**/memories.db (conversation tables)'], sourceReads: ['**/memories.db'],
     run: (context, input) => importAttention(context.db, input.paths.map(path => snapshotPath(context, path)), input.options, {}, openSnapshotSqlite) });
-  registry.register({ name: 'clock', dependencies: ['household'], reads: ['home/<old WAKE_DATA>/'],
+  registry.register({ name: 'clock', dependencies: ['household'], reads: ['home/<old WAKE_DATA>/'], sourceReads: ['**/lanes.json', '**/fire', ...['spool.jsonl', 'schedules.json', 'paused', 'wake.log', 'filed.json', 'sessions.json', 'vouch.json', 'places.json'].map(name => `**/*/${name}`)],
     run: (context, input) => importClock(context.db, single(context, input), context.now) });
-  registry.register<Parameters<typeof importApprovals>[3]>({ name: 'approvals', dependencies: ['household'], reads: ['home/<old approvals directory>/'],
+  registry.register<Parameters<typeof importApprovals>[3]>({ name: 'approvals', dependencies: ['household'], reads: ['home/<old approvals directory>/'], sourceReads: ['**/approvals.json', '**/rules.json', '**/audit.jsonl'],
     run: (context, input) => importApprovals(context.db, single(context, input), context.now, input.options) });
-  registry.register<Parameters<typeof importChanges>[2]>({ name: 'changes', dependencies: ['household'], reads: ['home/<Changes snapshot JSON>'],
+  registry.register<Parameters<typeof importChanges>[2]>({ name: 'changes', dependencies: ['household'], reads: ['home/<Changes snapshot JSON>'], sourceReads: ['**/changes.json', '**/changes/*.json'],
     run: (context, input) => importChanges(context.db, single(context, input), input.options) });
   return registry;
 }

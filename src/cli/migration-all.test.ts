@@ -200,3 +200,38 @@ it('refuses dangling symlink destinations and parents before creating their miss
   const f=await fixture();const target=join(f.dir,'absent'),alias=join(f.dir,'alias');symlinkSync(target,alias);
   expect(()=>runMigrationAll(f.root,alias)).toThrow('Symlink');expect(()=>runMigrationAll(f.root,join(alias,'child'))).toThrow('Symlink');expect(fs.existsSync(target)).toBe(false);
 });
+
+it('snapshots the real-home layout with 28 aliases, installed programs and a live socket, then runs all importers', async () => {
+  const f = await fixture(true);
+  const { createServer } = await import('node:net');
+  const server = createServer();
+  mkdirSync(join(f.old, 'pieces/runtime/run'), {recursive:true});
+  await new Promise<void>(resolve => server.listen(join(f.old, 'pieces/runtime/run/ui.sock'), resolve));
+  try {
+    symlinkSync('agents/art', join(f.old, 'art'));
+    symlinkSync('/home/jbarket/.config/loom/art', join(f.old, 'default'));
+    mkdirSync(join(f.old, 'pieces/bin'), {recursive:true});
+    for (let i=0; i<13; i++) {
+      const piece = `program-${i}`;
+      mkdirSync(join(f.old, `pieces/${piece}/versions/one/node_modules/.bin`), {recursive:true});
+      writeFileSync(join(f.old, `pieces/${piece}/versions/one/node_modules/unused`), 'program bytes');
+      symlinkSync('versions/one', join(f.old, `pieces/${piece}/current`));
+      symlinkSync(`../${piece}/current/node_modules/.bin/tool`, join(f.old, `pieces/bin/tool-${i}`));
+    }
+    // A declared-looking filename in an installed tree must never be visited or copied.
+    mkdirSync(join(f.old, 'pieces/runtime/current'), {recursive:true});
+    writeFileSync(join(f.old, 'pieces/runtime/current/memories.db'), 'invalid database');
+    const snapshot = join(f.dir, 'real-shape');
+    const manifest = await createSnapshot(f.old, snapshot, join(f.dir,'tasks.db'));
+    expect(manifest.followed).toContainEqual({path:'art',realPath:'agents/art'});
+    expect(manifest.skipped).toEqual(expect.arrayContaining([
+      expect.objectContaining({path:'default',rule:'dangling or unresolved symlink'}),
+      expect.objectContaining({path:'pieces/bin'}), expect.objectContaining({path:'pieces/runtime/run'}),
+      expect.objectContaining({path:'pieces/program-0/current'}),
+    ]));
+    expect(manifest.files.filter(file=>file.path.endsWith('memories.db')).map(file=>file.path)).toEqual(['home/agents/art/memories.db']);
+    const report = runMigrationAll(snapshot, join(f.dir, 'real-shape-new'));
+    expect(report.status).toBe('complete');
+    expect(report.pieces.map(p=>p.name)).toEqual(['household','tasks','attention','clock','approvals','changes']);
+  } finally { await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve())); }
+});

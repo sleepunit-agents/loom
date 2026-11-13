@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Migration snapshots collect registered importer data and keys only, skip legacy aliases and live/program entries safely, explain refusals, and support a no-write `--dry-run` inventory.
+
 - Discover visible reported runtime builds for the current house configuration without treating later progress as a newer image.
 
 - Add confirmed dismissal of held and uncertain sends in the next-mode Bridges preview, with pending and error feedback across navigation.

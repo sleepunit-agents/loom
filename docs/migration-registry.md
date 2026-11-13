@@ -5,7 +5,8 @@ The registry and [plan preparation](migration-plan.md) are available;
 the all/verify commands follow in t-2213. Existing individual commands are unchanged. No daemon path loads it.
 
 An importer declares a unique lowercase `name`, `dependencies` (registration
-names), `reads` (a human-readable snapshot input inventory), and an in-process
+names), `reads` (a human-readable snapshot input inventory), `sourceReads`
+(machine-readable file globs relative to the old home), and an in-process
 `run(context, input)`. Register it in `createMigrationRegistry`; never spawn a
 piece program. The context supplies the open destination database, destination
 home, one timestamp and the validated snapshot root/manifest. The input supplies
@@ -42,3 +43,10 @@ importers land. Declare all required predecessors explicitly and add fixture
 coverage for registration, transaction rollback and comparison. Don't change
 another piece's tables or read live paths. Source discovery and editable-plan
 derivation belong to the all command, not to a registration.
+
+Snapshot collection uses `sourceReads` for every registered importer. `*` matches
+one path segment and `**` matches zero or more segments. External taskstore is
+selected only by `--tasks`, not a home glob. Add a source rule whenever an importer
+starts reading another file, and test snapshot → plan → all on that layout.
+Program/run pruning and key inclusion are central rules; an importer must never
+read installed program trees.

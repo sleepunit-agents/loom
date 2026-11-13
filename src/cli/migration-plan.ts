@@ -60,7 +60,7 @@ function regularFiles(root: string): string[] {
 function assertInventory(root: string, manifest: SnapshotManifest, regular: string[]): void {
   const schema = z.object({ version: z.literal(1), consistency: z.literal('per-database'), files: z.array(z.object({
     path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/), bytes: z.number().int().nonnegative(), kind: z.enum(['sqlite','file']),
-  }).strict()) }).strict();
+  }).strict()), skipped: z.array(z.object({ path: z.string(), rule: z.string(), bytes: z.number().nonnegative().nullable() }).strict()).optional(), followed: z.array(z.object({ path: z.string(), realPath: z.string() }).strict()).optional() }).strict();
   schema.parse(manifest);
   const paths = new Set(manifest.files.map(f => f.path));
   if (paths.has('manifest.json')) throw Error('Manifest cannot inventory itself');
