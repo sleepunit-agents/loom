@@ -28,7 +28,7 @@ private local wakes are explicitly held before intent and before Runtime.
 Independent work remains: exact local-approval filing/recovery,
 standing-job rechecks and app/client flow; and other imported provenance recovery
 or explicit deliberate drops. Runtime-dependent work remains: conversation-bound
-mutation/join, original schedule principal narrowing, API 40/conversation 20 quotas, agent-authored self-rearm eligibility, and
+mutation/join, original schedule principal narrowing, agent-authored self-rearm eligibility, and
 continuation issuer/handle/deadline/place validation. These are gaps, not deliberate
 drops. Archived strings and caller-supplied handles cannot fill them.
 
@@ -273,7 +273,7 @@ the command inventory above, the source has these domain obligations:
 
 | Legacy behavior | Current new-side gap or choice |
 | --- | --- |
-| `pending_full`: 50 wake/parked one-offs per agent; API 40 total and 20 per verified conversation, unknown callers sharing one bucket; API-originated schedules 20 (only new origin-bearing schedules count) | The shared 50 cap covers at/in, park and ordinary or lane schedule run-now. API shares and verified conversation provenance are unfinished. New origin-bearing schedules have the 20-per-agent cap described below. A caller's continuation or conversation string cannot establish provenance. |
+| `pending_full`: 50 wake/parked one-offs per agent; API 40 total and 20 per verified conversation, unknown callers sharing one bucket; API-originated schedules 20 (only new origin-bearing schedules count) | The shared 50 cap covers at/in, park and ordinary or lane schedule run-now. API40 and Runtime-bound conversation20 capacity shares are implemented below; authenticated mutation/join provenance remains unfinished. New origin-bearing schedules have the 20-per-agent cap described below. A caller's continuation or conversation string cannot establish provenance. |
 | `api_may_change`: a body cannot replace/cancel another conversation's work unless the runtime names owner authority | New central agent/project/member policy exists; authenticated conversation provenance still needs reconciliation with runtime, without a piece-specific authority rule. |
 | Schedule re-set and run-now narrow the original principal against the caller's; an edit never widens it | Caller Viewer is retained, but the core currently has no runtime principal/conversation seam. Preserve this boundary when reconciling runtime. |
 | `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Owner-authored schedule suppression and its client response are implemented below; agent-authored eligibility still needs authenticated runtime provenance. |
@@ -991,3 +991,25 @@ rows, separate target-agent shares, ignored forged origin and restart persistenc
 Matching origin cannot bypass revoked project policy or the private local dispatch
 hold; both probes have a permitted ordinary Runtime-call positive control.
 Archived origin text remains uncounted and unstamped after restart.
+
+### API one-off capacity
+
+New agent-created one-offs retain capacity-only `apiCapacity` metadata. Per target
+agent, the existing fifty active one-off ceiling still applies; API-origin work
+also has a forty ceiling, and each Runtime-proven conversation has twenty. Bodies
+without a current owning binding share one unknown bucket. Parked, firing and held
+work counts; cancelled, fired and failed work does not. Ordinary recurring
+occurrences and deadman safety wakes are outside these one-off counts. Owner/member
+timed/parked/run-now creation consumes only the shared fifty, preserving ten slots beyond the API ceiling. Fresh owner `clock.now {agent}` keeps its documented legacy exemption. Retrying a failed one-off with `clock.now {id}` rechecks the saved API/conversation share and shared capacity before reactivation; accelerating already-active work adds no slot.
+
+Runtime supplies a conversation only for the exact central Signin Viewer with a
+current live private Comms or Bridges binding and current source access. A public
+`runtime.startBody` conversation string is insufficient. Clock stores a hash of the
+agent and conversation, not the private conversation id. Local approval recovery uses
+its authenticated saved Caller for the same capacity bucket and checks capacity
+before spending. No historical `by`, archive or imported metadata is promoted.
+
+This metadata is capacity only: it supplies no principal, visibility, mutation,
+join or dispatch authority. Original schedule principal narrowing, authenticated
+mutation/join rules and agent-authored six-hour self-chain suppression remain
+unfinished, as does service-identity dispatch and actual private Runtime delivery.
