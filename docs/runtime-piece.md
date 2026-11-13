@@ -1106,7 +1106,7 @@ Compilation never grants a registry permission or authorizes a launch.
 | `policyProblem` | `bodyPolicy` validates the whole document |
 | `rulesFor`, `gatesWords` | `compileBodyRules`: typed sections, narrowing and complete effective-rule key |
 | `sameRules` | `sameBodyRules`: exact effective-key match, including policy and file changes |
-| `briefs.mjs` filesystem composition | Remains separate-runner execution work; no host files read in the daemon |
+| `briefs.mjs` filesystem composition | `src/runtime-runner/brief.ts`: runner-local required sections and resolved history key; launch integration remains |
 
 Persisting/adopting archived gates, policies and original proposals, authenticated
 Bridges intake, body feed/reseat/history, runner file composition and actual
@@ -1170,3 +1170,32 @@ proposal decisions, lifecycle/history, source queues and original pending owner
 requests, accounts/models, Clock/Comms retry integration, Runtime Kit screens,
 generated client and complete old-command parity remain on t-2209. No running
 home, worker or real import is changed by this code unit.
+
+
+## Worker checkout brief preparation
+
+`src/runtime-runner/brief.ts` is separate-runner code, not installed in the
+loom daemon or exposed as a registry operation. `prepareRunnerBrief` consumes
+compiler sections and the exact tool deny list. It resolves required files
+in order on the worker checkout; no permission files are read on loom’s machine.
+A required file that is missing, empty, invalid UTF-8, nonregular, oversized or
+unsafe refuses the whole preparation. Each file is at most 20,000 bytes; the
+complete brief is at most 1 MiB across at most 40 sections. Nothing is truncated.
+
+The Linux worker pins directory descriptors and opens every component with
+`O_NOFOLLOW`, including the checkout root. All symlinks are refused, including
+links within the checkout. This deliberately stricter choice prevents a
+check-then-read path race. Other operating systems refuse file sections until
+they have equivalent safe descriptor-relative reads. Inline-only briefs need
+no checkout. File descriptors close on both success and refusal.
+
+The returned immutable preparation contains the complete brief, exact deny
+list, original compiler policy key and a resolved key over policy identity,
+deny and every resolved section’s contents. A file edit therefore changes the
+resolved key even when the compiler’s repo-relative references do not change.
+The eventual runner must preserve this key with its own native history and
+also verify the original agent/venue binding; a body-supplied key is no proof.
+
+This helper does not launch a harness, enforce its deny list, authorize history
+reuse or remove `bodyPolicyExecutionHeld`. Those end-to-end runner and owning
+binding checks remain required before configured-policy delivery is enabled.
