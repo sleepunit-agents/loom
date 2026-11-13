@@ -14,8 +14,8 @@ export function useSetupState(current: Map<string, string>, selected: string | u
       next.set(key, { signature, stale: true }); changed = true;
     }
   }
-  if (selected && current.has(selected) && !next.has(selected)) {
-    next.set(selected, { signature: current.get(selected)!, stale: false }); changed = true;
+  if (selected && !next.has(selected)) {
+    next.set(selected, { signature: current.get(selected) ?? null, stale: false }); changed = true;
   }
   if (changed) setGuards(next);
   return {

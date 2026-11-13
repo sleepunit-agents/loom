@@ -349,3 +349,14 @@ it('observes a newly saved link arriving only after its creation editor unmounte
   await act(async () => { tree!.update(h(BridgesApp, { path: '/p/bridges-preview/item/new-link/new-id' })); });
   expect(button('Save person link')).toBeUndefined(); expect(text()).toContain('no longer in view');
 });
+it.each([
+  ['new-link/same-id', 'bridges.link', 'Save person link', 'Person ID', 'person', 'mark', { id: 'same-id', platform: 'slack', workspace: 'T1', user: 'U1', person: 'other-person' }],
+  ['new-route/same-id', 'bridges.route', 'Save route', 'Primary agent', 'primary', 'mark', { id: 'same-id', platform: 'slack', workspace: 'T1', channel: 'G1', primary: 'other-agent', peer: false, guest: false, readers: [], notes: [] }],
+  ['new-venue/same-id', 'bridges.venue', 'Save connection', 'Agent', 'agent', 'mark', { id: 'same-id', platform: 'slack', workspace: 'T1', bot: 'U1', agent: 'other-agent', tokenSecret: 'reference', enabled: true, only: [], ignore: [], botRoles: [] }],
+] as const)('blocks a creation draft when another window first creates that id: %s', async (item, type, save, label, field, draft, incoming) => {
+  pendingWrite(); await draw(`/p/bridges-preview/item/${item}`); await change(label, draft);
+  await publish(type, [incoming]);
+  expect(button(save).props.disabled).toBe(true); await submit(); expect(f.call).not.toHaveBeenCalled();
+  await click('Try again'); expect(button(save).props.disabled).toBe(false); await submit();
+  expect(f.call.mock.calls[0][1]).toMatchObject({ id: 'same-id', [field]: incoming[field] });
+});
