@@ -77,3 +77,13 @@ it('refuses importing into the source home and refuses overwriting populated tab
   new HouseholdRows(f.app.db,'imports').remove('legacy-home');
   expect(() => importHousehold(f.app.db,f.home,f.from,1000)).toThrow('must be empty');
 });
+it('recovers a missing cookie key on an unchanged repeat without resetting sessions', async () => {
+  const f = await fixture();
+  importHousehold(f.app.db,f.home,f.from,1000);
+  const store = new SessionStore(f.home,new SessionDatabase(f.app.db));
+  store.spendLink('link',1001);
+  rmSync(join(f.home,'ui-cookie.key'));
+  expect(importHousehold(f.app.db,f.home,f.from,2000).imported).toBe(false);
+  expect(readFileSync(join(f.home,'ui-cookie.key'))).toEqual(f.files['ui-cookie.key']);
+  expect(store.spendLink('link',1001)).toBeNull();
+});

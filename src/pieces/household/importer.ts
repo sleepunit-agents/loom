@@ -1,6 +1,6 @@
 /** Offline import into a different home. No legacy backend is activated. */
-import { createHash } from 'node:crypto';
-import { closeSync, fsyncSync, openSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { closeSync, fsyncSync, linkSync, openSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import type { Db } from '../../core/index.js';
@@ -35,6 +35,17 @@ function object(bytes: Buffer | undefined, fallback?: object): Record<string, un
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Source document must be an object');
   return value as Record<string, unknown>;
 }
+/** Publish only a complete durable key, never a half-written final pathname. */
+function copyKey(home: string, key: Buffer): void {
+  const temp = join(home, `.ui-cookie.key-import-${randomUUID()}`);
+  const fd = openSync(temp, 'wx', 0o600);
+  try {
+    try { writeFileSync(fd, key); fsyncSync(fd); } finally { closeSync(fd); }
+    linkSync(temp, join(home, 'ui-cookie.key'));
+    const dir = openSync(home, 'r');
+    try { fsyncSync(dir); } finally { closeSync(dir); }
+  } finally { unlinkSync(temp); }
+}
 /** Caller holds the destination's stopped-daemon gate; the source must be stopped too. */
 export function importHousehold(db: Db, home: string, from: string, now: number, options: { interrupt?: () => void } = {}) {
   if (realpathSync(home) === realpathSync(from)) throw new Error('Household import requires a different destination home');
@@ -61,6 +72,7 @@ export function importHousehold(db: Db, home: string, from: string, now: number,
     const receipt = receipts.get('legacy-home');
     if (receipt) {
       if (receipt.checksum !== checksum) throw new Error('Household source changed since import');
+      if (key && !previousKey) copyKey(home, key);
       return { imported: false, checksum };
     }
     if (concerns.some(c => new HouseholdRows(db, c).entries().length)) throw new Error('Destination household tables must be empty');
@@ -76,12 +88,7 @@ export function importHousehold(db: Db, home: string, from: string, now: number,
     same(tokenStore.document(), tokens); same(tokenStore.used(), used);
     same(sessionStore.read(), sessions); same(pieces.entries(), [...settings].sort(([a],[b]) => a.localeCompare(b)));
     if (checksumOf(snapshot(from)) !== checksum) throw new Error('Source changed during household import');
-    if (key && !previousKey) {
-      const fd = openSync(keyPath, 'wx', 0o600);
-      try { writeFileSync(fd, key); fsyncSync(fd); } finally { closeSync(fd); }
-      const dir = openSync(home, 'r');
-      try { fsyncSync(dir); } finally { closeSync(dir); }
-    }
+    if (key && !previousKey) copyKey(home, key);
     receipts.put('legacy-home', { checksum, at: now });
     return { imported: true, checksum, counts: { agents: (raw.agents as string[]).length, members: (raw.members as unknown[] | undefined)?.length ?? 0, tokens: tokens.tokens.length, sessions: Object.keys(sessions.sessions as object).length, pieces: settings.length } };
   }).immediate();
