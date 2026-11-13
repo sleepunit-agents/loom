@@ -63,7 +63,7 @@ export class Signin {
     const a=/^agent:([a-z0-9-]+)(?:\/[a-z0-9-]+)?(?:@[a-z0-9-]+)?$/.exec(t.role);
     if (a && h.agents.includes(a[1])) viewer={kind:'agent',id:a[1]};
     const r=/^(runner|service):([a-z0-9-]+)$/.exec(t.role);
-    if (r) viewer={kind:r[1] as 'runner'|'service',id:r[2]};
+    if (r && new HouseholdRows<{active:boolean}>(this.app.db,'settings').get(`signin-principal:${r[1]}:${r[2]}`)?.active) viewer={kind:r[1] as 'runner'|'service',id:r[2]};
     return viewer ? {viewer,...(t.expires?{expiresAt:Date.parse(t.expires)}:{})} : undefined;
   }
   csrf(id: string) { return createHmac('sha256',this.key).update(`loom-next-csrf|${id}`).digest('hex'); }
@@ -162,5 +162,6 @@ export function installSignin(app: Foundation) {
   const s=signin(app);
   // Deliberately ephemeral: no write retry journal may retain a sign-in URL or its input hash.
   app.operations.register({name:'signin.link',input:z.object({member:z.string(),label:z.string().optional(),agent:z.boolean().optional(),ttl:z.number().int().min(1).max(3600).optional()}),output:z.object({path:z.string()}),doors:['direct'],may:v=>v.kind==='member'&&s.owner(v.id),run:(_ctx,i)=>({path:s.link(i.member,i.label,i.agent,undefined,i.ttl)})});
+  app.operations.register({name:'signin.setPrincipal',write:true,input:z.object({kind:z.enum(['runner','service']),id:z.string().regex(/^[a-z0-9-]+$/),active:z.boolean()}),output:z.object({ok:z.literal(true)}),may:v=>v.kind==='member'&&s.owner(v.id),run:(ctx,i)=>{new HouseholdRows(ctx.db,'settings').put(`signin-principal:${i.kind}:${i.id}`,{active:i.active});ctx.changed('core.access','credentials');return {ok:true as const};}});
   app.operations.register({name:'signin.revokeToken',write:true,input:z.object({label:z.string()}),output:z.object({revoked:z.boolean()}),may:v=>v.kind==='member'&&s.owner(v.id),run:(ctx,i)=>{const revoked=s.tokens.change(tokens=>{let found=false;for(const t of tokens)if(t.label===i.label&&!t.revoked){t.revoked=new Date(ctx.now).toISOString();found=true;}return found;});ctx.changed('core.access','credentials');return {revoked};}});
 }

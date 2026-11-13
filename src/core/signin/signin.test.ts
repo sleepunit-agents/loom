@@ -45,7 +45,7 @@ it('imports an old home and serves its existing browser cookie and agent bearer 
 it('CLI links are member-bound, GET-safe, single-use, expiring, and absent from retry storage',async()=>{
   const f=await setup();writeFileSync(join(f.root,'token'),f.owner);let stdout='';
   expect(await runSigninLink(['--member','pollock','--label','Tablet'],{stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:f.loom.url,LOOM_TOKEN_FILE:join(f.root,'token')},stdout:s=>{stdout+=s;},stderr:()=>{}})).toBe(0);
-  const url=stdout.trim();expect((await fetch(url)).status).toBe(200);expect((await fetch(url)).status).toBe(200);
+  const url=stdout.trim();const confirmation=await fetch(url);expect(confirmation.status).toBe(200);expect(await confirmation.text()).not.toContain(url.split('/').pop());expect((await fetch(url)).status).toBe(200);
   const res=await fetch(url,{method:'POST',redirect:'manual',headers:{origin:f.loom.url}});expect(res.status).toBe(303);const cookie=res.headers.get('set-cookie')!.split(';')[0];
   expect((await(await f.get('/auth/session',{cookie})).json()).viewer).toEqual({kind:'member',id:'pollock'});
   expect((await fetch(url,{method:'POST'})).status).toBe(401);
@@ -92,6 +92,8 @@ it('runner and service tokens keep their viewer kinds; expired and unknown-agent
   for(const role of ['runner:box','service:clock','agent:missing']){
     const token=randomBytes(32).toString('hex');f.s.tokens.change(tokens=>tokens.push({label:role,role,sha256:hash(token),created:new Date(f.clock.now()).toISOString(),expires:new Date(f.clock.now()+1000).toISOString()}));
     if(role==='agent:missing'){expect((await f.post('/api/tasks/list',{input:{}},{authorization:`Bearer ${token}`})).status).toBe(401);continue;}
+    expect(f.s.token(hash(token))).toBeUndefined();
+    expect(f.loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.setPrincipal',{kind:role.split(':')[0],id:role.split(':')[1],active:true},role)).toMatchObject({ok:true});
     expect(f.s.token(hash(token))?.viewer).toEqual({kind:role.split(':')[0],id:role.split(':')[1]});
     const ws=await f.open({authorization:`Bearer ${token}`});const ended=once(ws,'close');f.clock.advance(1000);expect((await ended)[0]).toBe(1008);
     expect((await f.post('/api/tasks/list',{input:{}},{authorization:`Bearer ${token}`})).status).toBe(401);
@@ -156,4 +158,27 @@ it('isolates member user handles and excluded credentials and invalidates a remo
   f.loom.live.changed([{type:'core.access',id:'household'}]);expect((await closed)[0]).toBe(1008);
   expect((await(await f.get('/auth/session',{cookie:cookieB})).json()).viewer).toBeNull();expect((await f.post('/api/tasks/list',{input:{}},{authorization:`Bearer ${memberToken}`})).status).toBe(401);
   const c=await(await f.post('/login/passkey/options',{}, {origin})).json();b.d.counter=1;expect((await f.post('/login/passkey',b.d.assertion(c.challenge),{origin})).status).toBe(401);
+});
+it('revoking a session token closes its socket and unknown or disabled machine principals cannot authenticate',async()=>{
+  const f=await setup();const ws=await f.open({cookie:`loom_ui=${f.cookie}`,origin:f.loom.url}),closed=once(ws,'close');
+  f.loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.revokeToken',{label:'owner'},'revoke-bound-token');expect((await closed)[0]).toBe(1008);
+  expect((await(await f.get('/auth/session',{cookie:`loom_ui=${f.cookie}`})).json()).viewer).toBeNull();
+  const token=randomBytes(32).toString('hex');f.s.tokens.change(tokens=>tokens.push({role:'runner:box',label:'box',sha256:hash(token),created:new Date(f.clock.now()).toISOString()}));
+  expect((await f.post('/api/tasks/list',{input:{}},{authorization:`Bearer ${token}`})).status).toBe(401);
+  const principal=(active:boolean,id:string)=>f.loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.setPrincipal',{kind:'runner',id:'box',active},id);
+  expect(principal(true,'enable')).toMatchObject({ok:true});const runner=await f.open({authorization:`Bearer ${token}`}),ended=once(runner,'close');expect(principal(false,'disable')).toMatchObject({ok:true});expect((await ended)[0]).toBe(1008);
+  expect((await f.post('/api/tasks/list',{input:{}},{authorization:`Bearer ${token}`})).status).toBe(401);
+});
+it('link spend rolls back if session creation fails, agent suffixes resolve, and CLI never retries a lost response',async()=>{
+  const f=await setup(),path=f.s.link('jonathan');
+  f.loom.db.exec("CREATE TRIGGER fail_session BEFORE INSERT ON household_sessions BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
+  expect((await f.post(path)).status).toBe(400);f.loom.db.exec('DROP TRIGGER fail_session');expect((await f.post(path)).status).toBe(303);
+  for(const role of ['agent:art/service','agent:art@house','agent:art/service@house']){const token=randomBytes(32).toString('hex');f.s.tokens.change(tokens=>tokens.push({role,label:role,sha256:hash(token),created:new Date(f.clock.now()).toISOString()}));expect(f.s.token(hash(token))?.viewer).toEqual({kind:'agent',id:'art'});}
+  writeFileSync(join(f.root,'token'),f.owner);let calls=0,output='';
+  expect(await runSigninLink(['--member','jonathan'],{stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:f.loom.url,LOOM_TOKEN_FILE:join(f.root,'token')},stdout:s=>{output+=s;},stderr:()=>{}},async()=>{calls++;throw new Error('response lost');})).toBe(1);expect(calls).toBe(1);expect(output).toBe('');
+});
+it('session cap evicts ended sessions first, then agent sessions before a person',async()=>{
+  const f=await setup(),old=f.cookie,now=f.clock.now()/1000;
+  f.s.sessions.change(file=>{file.sessions[hash(old)].issuedAt=now-1;for(let i=0;i<48;i++)file.sessions[hash('person'+i)]={issuedAt:now,secret:hash(f.owner)};file.sessions[hash('agent-browser')]={issuedAt:now,secret:hash(f.owner),agent:true};file.sessions[hash('ended')]={issuedAt:0,secret:hash(f.owner)};});
+  f.s.createSession(hash(f.owner));expect(f.s.sessions.get('sessions',hash('ended'))).toBeUndefined();expect(f.s.sessions.get('sessions',hash('agent-browser'))).toBeUndefined();expect(f.s.session(old)).toBeDefined();expect(Object.keys(f.s.sessions.read().sessions)).toHaveLength(50);
 });
