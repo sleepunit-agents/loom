@@ -5,6 +5,7 @@ import { migrate, failure, maySee, mayAct, mayCreate, type Db, type Operations, 
 import type { Ask, AgentStatus } from './role.js';
 import { installRetention } from './retention.js';
 import { installDigests } from './digests.js';
+import type { DigestReferences } from './project-references.js';
 import { installConversations } from './conversations.js';
 const id = z.string().min(1).max(200);
 const scopeFields = { project: id.optional(), agent: id.optional(), member: id.optional() };
@@ -22,10 +23,10 @@ const answer = z.union([
 const link = z.object({ id, label: z.string(), href: z.string().optional() });
 const status = z.object({ id, ...scopeFields, agent: id, state: z.enum(['working', 'waiting', 'idle', 'offline']), work: z.string(), jobs: z.array(link), watched: z.array(link) }).strict();
 const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...record });
-export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
+export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}) {
   migrate(db, 'attention', attentionMigrations);
   installConversations(db, operations, live, sharing);
-  installDigests(db, operations, live, sharing);
+  installDigests(db, operations, live, sharing, references);
   installRetention(db, operations, live, sharing);
   const readAsk = (key: string): Ask | undefined => {
     const row = db.prepare('SELECT record FROM attention_asks WHERE id=?').get(key) as { record: string } | undefined;
