@@ -9,6 +9,7 @@ import {recordSecretChange} from './history.js';
 import {removeSecretMetadata} from './removal.js';
 import type {GrantAttention} from './index.js';
 import type {HolderWrite} from './holder-store.js';
+import {bindSecretRetryKey} from './retry-key.js';
 
 export interface AsyncSecretMutations {
   set(who: HolderWrite, name: string, value: Uint8Array, mode: 'add'|'replace'): Promise<void>;
@@ -27,6 +28,7 @@ const ack = (r: Intent) => r.action === 'removed' ? {removed:true as const} : {s
 export function installAsyncSecretValues(db: Db, operations: Operations, sharing: () => Sharing,
   holder: AsyncSecretMutations, fingerprintKey: Uint8Array, attention?: GrantAttention) {
   if (!(fingerprintKey instanceof Uint8Array) || fingerprintKey.byteLength !== 32) throw new Error('Invalid secret retry key');
+  bindSecretRetryKey(db,fingerprintKey);
   const key = createSecretKey(fingerprintKey);
   const inputHash = (text: string) => createHmac('sha256',key).update('loom-secrets-operation-v1\0').update(text).digest('hex');
   const lookup = (r: Readonly<WriteReceipt>) => db.prepare('SELECT * FROM secrets_write_intents WHERE viewer=? AND id=?').get(r.viewer,r.id) as Intent|undefined;
