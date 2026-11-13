@@ -305,7 +305,10 @@ it('shutdown during lookup prevents late database access and job runs coalesce',
   expect(await s.call('secrets.set',s.input,'closing')).toMatchObject({code:'unavailable'});
   let release!:(v:boolean)=>void;holder.hasReceipt.mockImplementationOnce(()=>new Promise(r=>{release=r;}));
   const job=startSecretReconciliation(s.app,s.recovery),work=job.run();expect(job.run()).toBe(work);
-  await s.app.close();release(true);await expect(work).resolves.toBeUndefined();await job.run();
+  const prepare=vi.spyOn(s.app.db,'prepare'),transaction=vi.spyOn(s.app.db,'transaction');
+  await s.app.close();prepare.mockClear();transaction.mockClear();
+  release(true);await expect(work).resolves.toBeUndefined();await job.run();
+  expect(prepare).not.toHaveBeenCalled();expect(transaction).not.toHaveBeenCalled();
   const next=await setup(holder,s.home,s.clock);expect(next.rows()[0].state).toBe('pending');
 });
 

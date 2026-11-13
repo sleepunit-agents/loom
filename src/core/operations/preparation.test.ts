@@ -4,12 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHmac } from 'node:crypto';
 import { z } from 'zod';
+import {startLoom} from '../../foundation.js';
+import {fixture} from '../../fixture.js';
 import { createFoundation, type Foundation } from '../app.js';
 import { FakeClock, OperationError, RecoveredWrite, type Context, type Viewer } from '../index.js';
 
 const owner: Viewer = { kind: 'member', id: 'owner' };
 const homes: string[] = [], apps: Foundation[] = [];
-afterEach(() => { for (const a of apps.splice(0)) a.close(); for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true }); });
+afterEach(async () => { for (const a of apps.splice(0)) await a.close(); for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true }); });
 function setup(home = mkdtempSync(join(tmpdir(), 'loom-preparation-')), clock = new FakeClock()) {
   if (!homes.includes(home)) homes.push(home);
   const app = createFoundation({ home, clock }); apps.push(app);
@@ -23,6 +25,11 @@ function install(app: Foundation, options: { prepare?: () => Promise<unknown>; r
     may: options.allowed ?? (() => true), prepare, run, admit:options.admit, recover: options.recover, recheckPolicy: options.recheckPolicy });
   app.operations.register({ name: 'example.other', input: z.object({ words: z.string() }).strict(), output: z.null(), write: true, may: () => true, run: () => null });
   return { prepare, run };
+}
+async function setupNext() {
+  const home=mkdtempSync(join(tmpdir(),'loom-recovery-next-'));homes.push(home);fixture(home);
+  const clock=new FakeClock(),app=await startLoom({home,next:true,staging:true,clock,stdout:()=>{}});apps.push(app);
+  return {app,clock};
 }
 const input = { words: 'private-preparation-sentinel' };
 
@@ -147,9 +154,10 @@ it('checks recovery again after preparation when an external receipt becomes ava
   expect(publicationTransactions).toEqual([false]);
 });
 
-it('recovers journal identity without input, validating authority, output, conflicts and atomic publication',()=>{
-  const {app,clock}=setup();let permitted=true,malformed=false;
+it('recovers journal identity without input, validating authority, output, conflicts and atomic publication',async()=>{
+  const {app,clock}=await setupNext();let permitted=true,malformed=false;
   app.db.exec('CREATE TABLE recovered_without_input(id TEXT)');
+  const offeredBefore=new Set(app.operations.offered('http').map(op=>op.name));
   const admit=vi.fn();
   const spies=install(app,{admit,recover(ctx){
     if(!permitted)throw new OperationError('denied','Permission denied');
@@ -172,10 +180,10 @@ it('recovers journal identity without input, validating authority, output, confl
   expect(app.operations.recoverWrite(owner,{...receipt,inputHash:'other'})).toMatchObject({code:'conflict'});
   permitted=false;expect(app.operations.recoverWrite(owner,receipt)).toMatchObject({code:'denied'});
   expect(spies.prepare).not.toHaveBeenCalled();expect(spies.run).not.toHaveBeenCalled();expect(admit).not.toHaveBeenCalled();
-  expect(app.operations.offered('http').some(op=>op.name.includes('recover'))).toBe(false);
+  expect(app.operations.offered('http').map(op=>op.name).filter(name=>!offeredBefore.has(name))).toEqual(['example.save','example.other']);
 });
-it.each(['before','after'])('journal recovery runs global guards registered %s the receipt hook and rejects invalid deadlines',order=>{
-  const {app,clock}=setup();let expires=clock.now()+1,found=false,guard=false;
+it.each(['before','after'])('journal recovery runs global guards registered %s the receipt hook and rejects invalid deadlines',async order=>{
+  const {app,clock}=await setupNext();let expires=clock.now()+1,found=false,guard=false;
   app.db.exec('CREATE TABLE guard_effect(id TEXT)');
   const registerGuard=()=>app.operations.register({name:'guard.global',write:true,input:z.object({}),output:z.null(),may:()=>false,run:()=>null,recover(){if(guard)throw new OperationError('conflict','Reserved');}});
   if(order==='before')registerGuard();
@@ -184,7 +192,7 @@ it.each(['before','after'])('journal recovery runs global guards registered %s t
   const r={viewer:'{"id":"owner","kind":"member"}',id:'reserved',name:'example.save',inputHash:'hash',expires:clock.now()+1};
   expect(app.operations.recoverWrite(owner,r)).toMatchObject({code:'unavailable'});
   found=true;guard=true;expect(app.operations.recoverWrite(owner,r)).toMatchObject({code:'conflict'});guard=false;
-  for(const value of [NaN,Infinity,clock.now(),clock.now()+31*86400_000]) {expires=value;expect(app.operations.recoverWrite(owner,r)).toMatchObject({code:'unavailable'});}
-  expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual([]);
+  for(const value of [NaN,Infinity,clock.now(),clock.now()+2,clock.now()+31*86400_000]) {expires=value;expect(app.operations.recoverWrite(owner,r)).toMatchObject({code:'unavailable'});}
+  expect(app.db.prepare('SELECT * FROM core_operations WHERE id=?').all('reserved')).toEqual([]);
   expect(app.db.prepare('SELECT * FROM guard_effect').all()).toEqual([]);
 });

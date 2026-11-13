@@ -111,7 +111,7 @@ export class Operations {
             recovered = candidate;
           }
         }
-        if (!(recovered instanceof RecoveredWrite) || !Number.isFinite(recovered.expires) || recovered.expires <= now || recovered.expires > now + 30 * 86400_000)
+        if (!(recovered instanceof RecoveredWrite) || !Number.isFinite(recovered.expires) || recovered.expires <= now || recovered.expires > Math.min(receipt.expires, now + 30 * 86400_000))
           throw new Error('Recovery unavailable');
         const answer: Result = {ok:true,value:op.output.parse(recovered.value ?? null)};
         const serialized = JSON.stringify(answer);
