@@ -10,6 +10,17 @@ export function installHouseholdProjects(app: Foundation, home: string): void {
   const store = new SharingDatabase(app.db, home);
   const owner = (v: Viewer) => mayAct(v, {}, store.sharing(), 'household');
   app.operations.register(operation({
+    name: 'household.setMemberProjects', write: true,
+    input: z.object({ person: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/), projects: z.array(projectSlug) }).strict(),
+    output: z.array(projectSlug), may: owner,
+    run(ctx, input) {
+      const result = store.setMemberProjects(input.person, input.projects);
+      for (const slug of result.changed) ctx.changed('household.project', slug);
+      ctx.changed('core.access', 'household');
+      return result.projects;
+    },
+  }));
+  app.operations.register(operation({
     name: 'household.setOwnedAgents', write: true,
     input: z.object({ person: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/), agents: z.array(z.string().min(1).max(40)) }).strict(),
     output: z.array(z.string()), may: owner,
