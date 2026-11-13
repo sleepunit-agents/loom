@@ -11,6 +11,9 @@ import {connect as netConnect} from 'node:net';
 import {generateIdentity} from 'age-encryption';
 import {listenHolderMutations,localHolderMutations} from './holder-mutations.js';
 import {openHolderStore} from './holder-store.js';
+import {startLoom} from '../../foundation.js';
+import {fixture} from '../../fixture.js';
+import {FakeClock} from '../../core/clock.js';
 import {localSecretSource,privateBytes} from './local-holder.js';
 const homes:string[]=[],closes:(()=>Promise<void>)[]=[];
 afterEach(async()=>{vi.useRealTimers();for(const close of closes.splice(0).reverse())await close();for(const home of homes.splice(0))rmSync(home,{recursive:true,force:true});vi.restoreAllMocks();});
@@ -252,13 +255,22 @@ it('rejects malformed receipt requests before lookup and normalizes provider fai
   await expect(localHolderMutations(client).hasReceipt(who)).rejects.toThrow(/^Local secret mutation unavailable$/);
   expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
 });
-it.each([204,404])('requires an empty exact receipt response for status %s',async status=>{
-  const {client,server,who}=setup();
+it.each([
+  {label:'nonempty204',status:204,headers:{'content-length':'12'},body:'PRIVATE-BODY'},
+  {label:'nonempty404',status:404,headers:{'content-length':'12'},body:'PRIVATE-BODY'},
+  {label:'empty chunked404',status:404,headers:{'transfer-encoding':'chunked'},body:''},
+  {label:'unexpected empty200',status:200,headers:{'content-length':'0'},body:''},
+  {label:'missing length204',status:204,headers:{},body:''},
+])('requires exact empty receipt framing: $label',async({status,headers,body})=>{
+  const {home,client,server,who}=setup();
   const peer=https.createServer({ca:privateBytes(server.ca),cert:privateBytes(server.cert),key:privateBytes(server.key),requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},(req,res)=>{
-    req.resume();req.on('end',()=>{res.writeHead(status,{'content-length':12});res.end('PRIVATE-BODY');});
+    req.resume();req.on('end',()=>{res.writeHead(status,headers);res.end(body);});
   });
-  await new Promise<void>(resolve=>peer.listen(server.socket,resolve));chmodSync(server.socket,0o600);
-  closes.push(async()=>{peer.closeAllConnections();await new Promise<void>(resolve=>peer.close(()=>resolve()));});
+  const appHome=join(home,'app');fixture(appHome);
+  const app=await startLoom({home:appHome,clock:new FakeClock(),listen:async()=>{
+    await new Promise<void>(resolve=>peer.listen(server.socket,resolve));chmodSync(server.socket,0o600);
+    return {url:'https://holder.test',async close(){peer.closeAllConnections();await new Promise<void>(resolve=>peer.close(()=>resolve()));}};
+  }});closes.push(app.close);
   await expect(localHolderMutations(client).hasReceipt(who)).rejects.toThrow(/^Local secret mutation unavailable$/);
 });
 it('bounds receipt authority before disclosure and never returns late evidence',async()=>{

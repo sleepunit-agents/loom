@@ -200,8 +200,8 @@ it('reports only committed member/id receipts across restart, rollback and later
   } finally {db.close();}
   f.s.close();const restarted=await f.open();
   await restarted.set(who(),'api-key',value('new'),'add');
-  expect(restarted.hasReceipt(add)).toBe(true);expect(restarted.hasReceipt(remove)).toBe(true);
   const decrypt=vi.spyOn(Decrypter.prototype,'decrypt');
+  expect(restarted.hasReceipt(add)).toBe(true);expect(restarted.hasReceipt(remove)).toBe(true);
   expect(restarted.hasReceipt(who())).toBe(false);expect(decrypt).not.toHaveBeenCalled();
   expect(()=>restarted.hasReceipt({...add,writeId:'invalid'})).toThrow(/^Secret holder storage unavailable$/);
   restarted.close();expect(()=>restarted.hasReceipt(add)).toThrow(/^Secret holder storage unavailable$/);
