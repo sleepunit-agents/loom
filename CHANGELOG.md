@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Show Stop only for active joined Comms threads, disabling it while disconnected or saving.
 
+- Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.
 - Show each Comms thread’s agent letter beside its title in the list.
 
 - Add private Discord Gateway receipt/session storage with atomic checkpoints and credential-generation isolation; daemon registration remains pending.
@@ -1086,6 +1087,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Record token and session last use on the new side, including activity in open windows.
 
 - Add owner-controlled agent creation in next Setup, with portable creed/rules, recoverable context publication, first-token selection and an explicit next-mode harness snippet.
+
+- Fresh next-mode households publish a complete default assistant context before first sign-in, with exclusive filesystem recovery on failed initialization.
 
 ## [0.16.1] - 2026-10-25
 

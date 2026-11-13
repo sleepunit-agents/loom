@@ -192,3 +192,23 @@ it('finishes an interrupted exclusive file publication only for its original req
   expect(readdirSync(target).sort()).toEqual(['.loom-bootstrap.json', 'IDENTITY.md', 'preferences.md', 'self-model.md']);
   expect(readFileSync(join(target, 'preferences.md'), 'utf8')).toContain('Gabe');
 });
+it('a fresh household default loads identity over generated next stdio after the daemon stops', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'loom-first-start-')); homes.push(home);
+  const app = await startLoom({ home, next: true, stdout: () => {} }); closes.push(app.close);
+  const household = new HouseholdDatabase(app.db).household(home)!;
+  expect(household.agents).toEqual(['assistant']); expect(household.default).toBe('assistant');
+  const mint = app.operations.call('direct', { kind: 'member', id: household.members[0].person }, 'token.create', { role: 'agent', agent: 'assistant', label: 'first-agent' });
+  expect(mint.ok).toBe(true);
+  await app.close();
+  const bytes = readFileSync(join(home, 'loom.db'));
+  const { server } = createStdioServer(['mcp', '--next', '--home', home]);
+  const client = new Client({ name: 'fresh-start-acceptance', version: '1' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  closes.push(async () => { await client.close(); await server.close(); });
+  await server.connect(a); await client.connect(b);
+  const identity = await client.callTool({ name: 'identity', arguments: {} });
+  expect(identity.isError).not.toBe(true);
+  expect(JSON.stringify(identity.content)).toContain('# Assistant');
+  expect(JSON.stringify(identity.content)).toContain(household.owner);
+  expect(readFileSync(join(home, 'loom.db'))).toEqual(bytes);
+});
