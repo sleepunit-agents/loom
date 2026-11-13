@@ -531,3 +531,20 @@ containers, dispatch bodies or resolve `startBody`. Account results, native
 history collection, output retention/deletion and the screens/client/importer
 remain required before the final move. No old endpoint is retired here and no
 outside effect occurs, including in staging.
+
+## Structured quota refusal parsing
+
+`refusals.ts` ports the pure `claudeRefusal`, `codexRefusal`, `lastRefusal`
+and `refusedUntil` portions of old `logins.mjs`. Only structured quota/billing
+codes count; authentication failures and prose do not. JSONL bookkeeping and
+uncoded failure wrappers preserve a refusal, while later work, a new prompt or
+an explicit nonquota error clears it. Malformed lines are ignored. Reset
+selection takes the latest future reset among full windows, otherwise the
+nearest future reset; missing resets use `nextQuotaHold`'s blind backoff.
+Nonfinite readings/resets are ignored. Time is explicit, in seconds.
+
+These are internal helpers, with no operation or daemon consumer yet. They
+open no transcript, login or file and change no state. Authenticated account/job
+report binding, account grouping, usage report validation and transactional
+hold persistence still belong to the future account layer. Parsing a supplied
+harness event grants no authority and is not trusted body or account proof.
