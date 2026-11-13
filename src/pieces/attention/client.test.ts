@@ -6,7 +6,8 @@ import { Readable } from 'node:stream';
 import { startLoom } from '../../foundation.js';
 import { FakeClock } from '../../core/index.js';
 import { installAttention } from './index.js';
-import { attentionCommands } from './commands.js';
+import { z } from 'zod';
+import { attentionCommands, operation } from './commands.js';
 import { runAttentionClient } from '../../cli/attention-client.js';
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
@@ -94,4 +95,18 @@ it('handles 503 retries, refusal envelopes, malformed responses and escaped toke
   }
   const token = 'abc"def\\ghi'; writeFileSync(app.tokenFile, token);
   expect(await app.run(['conversations'], async () => Response.json({ ok: true, value: [{ label: token }] }))).toMatchObject({ code: 0, stdout: '[\n  {\n    "label": "[redacted]"\n  }\n]\n' });
+});
+
+it('refuses unlisted operations and mismatched write markers before registration', () => {
+  const base = { input: z.object({}), output: z.unknown(), may: () => true, run: () => null };
+  expect(() => operation({ ...base, name: 'attention.unlisted' })).toThrow('metadata does not match');
+  expect(() => operation({ ...base, name: 'attention.raise' })).toThrow('metadata does not match');
+  expect(() => operation({ ...base, name: 'attention.get', write: true })).toThrow('metadata does not match');
+});
+it('prints help with no credentials or daemon and never invokes transport', async () => {
+  for (const args of [[], ['--help'], ['-h']]) {
+    let stdout = '', stderr = '';
+    expect(await runAttentionClient(args, { stdout: s => stdout += s, stderr: s => stderr += s, stdin: Readable.from([]), stdinIsTTY: false, env: {} }, { request: async () => { throw Error('must not request'); }, retry: async () => { throw Error('must not retry'); } })).toBe(0);
+    expect(stdout).toContain('usage: loom-attention'); expect(stderr).toBe('');
+  }
 });
