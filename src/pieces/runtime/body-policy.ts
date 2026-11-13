@@ -98,7 +98,7 @@ export async function compileBodyRules(raw:BodyPolicyInput,card:(slug:string)=>P
   const briefs=pol.briefs??{},sections:BriefSection[]=[];
   const text=(text:string)=>{sections.push({text});};
   const addFile=(file:string,what:string)=>{sections.push({file,what});};
-  const name=(s:string,e:ReturnType<typeof person>)=>e?.name?.trim()?`${e.name.trim().slice(0,80)} (${s})`:s;
+  const name=(s:string,e:{name?:string}|undefined)=>e?.name?.trim()?`${e.name.trim().slice(0,80)} (${s})`:s;
   const who=unique(senders.flatMap(m=>{
     if(m.from.kind==='schedule')return [];
     if(m.from.kind==='agent')return [`${m.from.id}: an agent of this household (a relay)`];
