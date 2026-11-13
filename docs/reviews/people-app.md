@@ -80,3 +80,8 @@ test renderer declarations; the author initially reported that build prematurely
 and corrected the report. Web now excludes collocated test files, matching the
 root production tsconfig's existing test boundary. Vitest still discovers/runs
 the collocated component tests. The subsequent full web build passed.
+
+Second rebase: GitHub reported CONFLICTING at 192314d after main 2adfcfc
+registered Inbox. Resolved only web/src/apps.ts by retaining both Inbox and
+People. No old branch was rebased. All 100 affected tests, root TypeScript and
+full web build passed again on the resulting composition.
