@@ -8,6 +8,7 @@ export type EffectKind = 'wake' | 'bridge-send' | 'body-start' | 'push';
 export interface Effect { id: string; kind: EffectKind; title: string; state: 'due' | 'released' | 'started' | 'done' | 'uncertain' }
 const read = (db: Db, id: string) => db.prepare('SELECT * FROM core_effects WHERE id=?').get(id) as Effect | undefined;
 export function installEffects(app: Foundation, sharing: () => Sharing, staging: boolean) {
+  const released = new Set<(id: string) => void>();
   migrate(app.db, 'core', [{ number: 2, sql: `CREATE TABLE core_effects (id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, state TEXT NOT NULL)` }]);
   // An interrupted effect is never repeated automatically.
   app.db.prepare("UPDATE core_effects SET state='uncertain' WHERE state='started'").run();
@@ -16,7 +17,9 @@ export function installEffects(app: Foundation, sharing: () => Sharing, staging:
     run(ctx, { id }) {
       const r = read(ctx.db, id); if (!r) throw new OperationError('not-found', 'No held effect');
       if (r.state !== 'due') throw new OperationError('conflict', 'Effect is not held');
-      ctx.db.prepare("UPDATE core_effects SET state='released' WHERE id=?").run(id); ctx.changed('core.effect', id); return read(ctx.db, id);
+      ctx.db.prepare("UPDATE core_effects SET state='released' WHERE id=?").run(id); ctx.changed('core.effect', id);
+      app.operations.clock.at(app.operations.clock.now(), () => { for (const listener of released) listener(id); });
+      return read(ctx.db, id);
     },
   }));
   app.live.register({ name: 'core.effect', ids: () => (app.db.prepare('SELECT id FROM core_effects').all() as { id: string }[]).map(r => r.id),
@@ -24,6 +27,7 @@ export function installEffects(app: Foundation, sharing: () => Sharing, staging:
     inScope: r => r.state !== 'done',
   });
   return {
+    onReleased(listener: (id: string) => void) { released.add(listener); return () => { released.delete(listener); }; },
     /** Call immediately before IO, outside an operation. A stable job id claims at most once. */
     beforeOutside(effect: Pick<Effect, 'id' | 'kind' | 'title'>): boolean {
       if (app.db.inTransaction) throw new Error('Outside effects must run after commit');
