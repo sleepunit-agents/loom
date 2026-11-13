@@ -41,6 +41,9 @@ it('registers only installed built-ins, isolates homes and rebuilds authority on
   expect(sharing().services.changes.types).toEqual(['change', 'change-sync']);
   expect(sharing().services.changes.operations).toContain('changes.list');
   expect(fixture().store.sharing().services).toEqual({});
+  const secondConnection = fixture(home);
+  expect(secondConnection.store.sharing().services).toEqual({});
+  secondConnection.app.close();
   const sharingServices = sharing().services;
   app.close();
   const reopened = fixture(home);
