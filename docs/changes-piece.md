@@ -100,3 +100,13 @@ that browser proof, and uploads six screenshots under `artifacts/changes-piece`
 citations and answers, viewer project scope, navigation/reload and merged expiry.
 Browser execution belongs in CI. Artifact links and the mandatory cold credential,
 permission and importer review will be recorded in the PR before it is ready.
+
+Credential reader/client cold review stopped at its three-round bound, last
+verdict BLOCKING with all CRITICAL/MAJOR findings folded and tested. The fixes
+cover escaped credentials before serialization, redirects, explicit connection
+configuration, response validation, safe pagination and malformed PR states.
+Missing or invalid upstream states fail the read and preserve the prior snapshot.
+The injected secret helper remains as an intentional paired boundary. Ledger
+and full transcripts are retained in loom note
+`loom/2026-11-12-changes-credential-review`. Permission/daemon review and actual
+root/Approvals integration remain required; this does not claim a CLEAR verdict.

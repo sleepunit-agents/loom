@@ -143,3 +143,9 @@ it('reads only the explicitly supplied token file and never discovers legacy fil
  expect(await app.run(['list'])).toMatchObject({code:0});
  expect(asyncReads.mock.calls.map(args=>String(args[0]))).toEqual([join(app.home,'token')]);expect(syncReads).not.toHaveBeenCalled();
 });
+it('requires an explicit token file without discovering or requesting anything',async()=>{
+ const app=await setup();let calls=0,stdout='',stderr='';
+ const reads=vi.spyOn(fsPromises,'readFile'),syncReads=vi.spyOn(fsSync,'readFileSync');syncBuiltinESMExports();
+ const code=await runChangesClient(['refresh'],{stdout:s=>stdout+=s,stderr:s=>stderr+=s,stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:app.url}},{request:async()=>{calls++;throw Error('unexpected');},retry:async()=>{}});
+ expect(code).toBe(1);expect(stdout).toBe('');expect(stderr).toBe('loom-changes: LOOM_TOKEN_FILE is required\n');expect(calls).toBe(0);expect(reads).not.toHaveBeenCalled();expect(syncReads).not.toHaveBeenCalled();
+});

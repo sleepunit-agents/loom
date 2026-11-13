@@ -180,3 +180,13 @@ it('uses the injected secret role without filesystem discovery',async()=>{
   expect(secrets.resolveGitHub).toHaveBeenCalledExactlyOnceWith('acme');expect(secrets.withValue).toHaveBeenCalledExactlyOnceWith('explicit-reference',expect.any(Function));expect(reads).not.toHaveBeenCalled();expect(syncReads).not.toHaveBeenCalled();
  } finally {reads.mockRestore();syncReads.mockRestore();syncBuiltinESMExports();}
 });
+it('preserves the prior snapshot when an upstream change has a missing or invalid state',async()=>{
+ const node=JSON.parse(readFileSync(new URL('./github.fixture.json',import.meta.url),'utf8')).data.repository.open.nodes[0];
+ const secrets={resolveGitHub:async()=> 'github-acme',withValue:async<T>(_ref:string,use:(token:string)=>Promise<T>)=>use('secret')};
+ for(const state of [undefined,null,'UNKNOWN',false,42,{}]) {
+  const app=await setup();replaceChanges(app.db,[change({project:'pond',title:'Keep this snapshot'})]);
+  const read=githubReader(secrets,async()=>Response.json({data:{repository:{pullRequests:{nodes:[{...node,number:3,state,closedAt:null,mergedAt:null}],pageInfo:{hasNextPage:false,endCursor:null}}}}}));
+  const job=startChangesJob(app,{clock:app.clock,sharing:fixtureSharing,viewer:owner,projects:{list:()=>[{slug:'pond',name:'Pond',repos:['acme/app']}]},attribution:()=>({agents:{},ownerLogins:[]}),read});
+  try {await job.run();expect(loadChanges(app.db)).toMatchObject([{title:'Keep this snapshot',syncError:'GitHub read unavailable'}]);expect(loadChanges(app.db)).toHaveLength(1);}finally{job.close();}
+ }
+});
