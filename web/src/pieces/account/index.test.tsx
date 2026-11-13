@@ -7,7 +7,7 @@ const f=vi.hoisted(()=>({snapshot:{status:'live',records:[]} as Snapshot,call:vi
 vi.mock('../../data',()=>({useRecords:()=>f.snapshot,call:f.call}));
 vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':'div',props)])));
 import Account from './index';
-import { mutation } from '../household/model';
+import { mutation } from './model';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 function request(){let state:CallState={pending:true,status:'pending'};const listeners=new Set<()=>void>();const retry=vi.fn();const handle={id:'stable',result:new Promise<Result>(()=>{}),retry,getSnapshot:()=>state,subscribe:(fn:()=>void)=>{listeners.add(fn);return()=>{listeners.delete(fn);};}};return{handle,finish:async(result:Result)=>act(async()=>{state={pending:false,status:'done',result};listeners.forEach(fn=>fn());})};}
@@ -27,4 +27,10 @@ it('sends exact opaque target and cascade choice once, clears confirmation, reta
   const inactive=tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Retry this change');expect(inactive.props.disabled).toBe(true);await act(async()=>inactive.props.onClick());expect(r.handle.retry).not.toHaveBeenCalled();
   await act(async()=>tree.update(h(Account,{active:true})));
   await act(async()=>tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Retry this change').props.onClick());expect(r.handle.retry).toHaveBeenCalledOnce();expect(f.call).toHaveBeenCalledOnce();
+});
+it('keeps browser/device, link label and both dates visible together and distinguishes same-name keys',async()=>{
+  const issuedAt=1760000000,seenAt=1760009000;
+  f.snapshot={status:'live',records:[{id:'jonathan',member:'jonathan',passkeys:[{ref:'1'.repeat(64),label:'Phone',created:0,ended:false,made:0},{ref:'2'.repeat(64),label:'Phone',created:0,ended:false,made:0}],sessions:[{ref:'3'.repeat(64),label:'Daily',device:'Chrome on Linux',issuedAt,seenAt,ended:false}]}]};
+  await act(async()=>{tree=create(h(Account));});const text=JSON.stringify(tree.toJSON());
+  for(const value of ['Chrome on Linux','Daily',new Date(issuedAt*1000).toLocaleString(),new Date(seenAt*1000).toLocaleString(),'1'.repeat(64),'2'.repeat(64)])expect(text).toContain(value);
 });

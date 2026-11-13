@@ -109,3 +109,12 @@ it('refreshes Account browser usage through signin.admin without core.access chu
   const updated=new Promise<Record<string,unknown>>(resolve=>{const listener=(data:Buffer)=>{const event=JSON.parse(data.toString());const record=event.record??event.records?.[0];if(record?.sessions?.some((x:{ref:string;seenAt?:number})=>x.ref===ref&&x.seenAt===f.s.now())){ws.off('message',listener);resolve(record);}};ws.on('message',listener);});
   const changes:string[]=[];const stop=f.app.live.observe(cs=>changes.push(...cs.map(c=>c.type)));expect(f.s.session(f.jonathan,true)).toBeDefined();await updated;stop();expect(changes).toContain('signin.admin');expect(changes).not.toContain('core.access');
 });
+it.each(['removePasskey','revokeSession'] as const)('%s closes the target authenticated socket while its own sibling stays connected',async operation=>{
+  const {WebSocket}=await import('ws'),{once}=await import('node:events');const f=await setup();
+  const siblingCookie=f.s.createSession(hash(operation==='removePasskey'?'jonathanchild':'jonathanroot'),{device:'Sibling'});
+  const open=async(cookie:string)=>{const ws=new WebSocket(f.app.url.replace('http:','ws:')+'/live',{headers:{cookie:`loom_ui=${cookie}`,origin:f.app.url}});cleanup.push(()=>ws.terminate());await once(ws,'open');return ws;};
+  const target=await open(f.jonathan),sibling=await open(siblingCookie),closed=once(target,'close');
+  const ref=operation==='removePasskey'?f.read().passkeys.find(k=>k.label==='root')!.ref:f.read().sessions.find(x=>x.device==='Phone')!.ref;
+  expect(f.call(operation,{ref},`close-${operation}`).ok).toBe(true);await closed;expect(sibling.readyState).toBe(WebSocket.OPEN);expect(f.s.session(siblingCookie)).toBeDefined();
+  sibling.send(JSON.stringify({kind:'subscribe',type:'account.self'}));expect(JSON.parse((await once(sibling,'message'))[0].toString()).records[0].member).toBe('jonathan');
+});
