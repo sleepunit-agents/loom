@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Route explicitly selected project tools and hub memories to the context-local private store, ignoring legacy database and actor overrides.
+
 - Clock exposes scoped next-wake and complete scheduled/waiting/running job reads for the new desk.
 
 - Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.

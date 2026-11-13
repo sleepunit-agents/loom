@@ -1335,7 +1335,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async (input) => {
-      const result = await projectWrite(contextDir, input as Parameters<typeof projectWrite>[1]);
+      const result = await projectWrite(contextDir, input as Parameters<typeof projectWrite>[1], config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1355,7 +1355,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ slug, fields, verified_at, source }) => {
-      const result = await projectVerify(contextDir, { slug, fields, verified_at, source });
+      const result = await projectVerify(contextDir, { slug, fields, verified_at, source }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1373,7 +1373,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ slug, reason }) => {
-      const result = await projectArchive(contextDir, { slug, reason });
+      const result = await projectArchive(contextDir, { slug, reason }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1388,7 +1388,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async ({ slug }) => {
-      const result = await projectRestore(contextDir, { slug });
+      const result = await projectRestore(contextDir, { slug }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1403,7 +1403,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ slug }) => {
-      const result = await projectHistory(contextDir, { slug });
+      const result = await projectHistory(contextDir, { slug }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1421,7 +1421,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
     async ({ slug, revision_id }) => {
-      const result = await projectRevisionRestore(contextDir, { slug, revision_id });
+      const result = await projectRevisionRestore(contextDir, { slug, revision_id }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1439,7 +1439,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ slug, include_archived }) => {
-      const result = await projectRead(contextDir, { slug, include_archived });
+      const result = await projectRead(contextDir, { slug, include_archived }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1458,7 +1458,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ status, include_archived }) => {
-      const result = await projectList(contextDir, { status, include_archived });
+      const result = await projectList(contextDir, { status, include_archived }, config.memorySelection);
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );
@@ -1481,6 +1481,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     async ({ slug, since, include_archived }) => {
       // From a house, no other conversation's digests (t-2118): a house reads only the conversation it holds.
       const result = await projectHub(contextDir, { slug, since, include_archived }, {
+        memorySelection: config.memorySelection,
         peopleSelection: config.peopleSelection,
         conversationSelection: config.conversationSelection,
         ...(bodyHouseConversation(contextDir, config.caller) === undefined ? {} : { noConversations: true }),
@@ -1498,7 +1499,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       inputSchema: z.object({}).strict(),
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
-    async () => ({ content: [{ type: 'text' as const, text: await projectOrphansText(contextDir) }] }),
+    async () => ({ content: [{ type: 'text' as const, text: await projectOrphansText(contextDir, config.memorySelection) }] }),
   );
 
   // ─── Conversations (docs/specs/conversations.md) ──────────────────────────────
