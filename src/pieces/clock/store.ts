@@ -12,6 +12,8 @@ export interface Wake extends Work {
   id: string; due: number; state: WakeState; createdAt: number; changedAt: number;
   by: Viewer; schedule?: string; attempt?: string; outcome?: string; hold?: string;
   failures: number; bypassPause?: boolean;
+  /** Explicit lane run-now keeps its schedule link but consumes one-off capacity. */
+  runNow?: boolean;
   wait?: { id: string; until: number; kind?: string; target?: string; answer?: string };
   /** Imported provenance is data, never a Viewer or a grant. */
   legacy?: Record<string, unknown>;
