@@ -25,6 +25,7 @@ class TrackingClock extends FakeClock {
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanups.splice(0)) await close(); });
 async function settled() { for (let i=0;i<50;i++) await Promise.resolve(); }
+async function until(check:()=>boolean) { for(let n=0;n<2000&&!check();n++) await Promise.resolve(); expect(check()).toBe(true); }
 const ready = (seq=1) => ({op:0,t:'READY',s:seq,d:{user:{id:'123'},session_id:'private-session',resume_gateway_url:'wss://gateway-us-east1-b.discord.gg'}});
 const message = (seq=2) => ({op:0,t:'MESSAGE_CREATE',s:seq,d:{id:'777',content:'hello'}});
 function fixture(overrides: Partial<DiscordGatewayOptions> = {}) {
@@ -142,10 +143,10 @@ describe('Discord gateway session transport',()=>{
     const g=fixture(),t=await connected(g); t.frame({...message(),d:{content:'x'.repeat(1024*1024)}}); await settled(); expect(g.commit).toHaveBeenCalledOnce(); expect(t.terminate).toHaveBeenCalledOnce();
   });
   it('recovers the full 64-dispatch capacity after overflowing a retired connection',async()=>{
-    const f=fixture(),a=await identified(f); a.frame(ready()); for(let n=2;n<=65;n++) a.frame(message(n));
-    await settled(); expect(a.terminate).toHaveBeenCalledOnce(); expect(f.commit).not.toHaveBeenCalled();
-    const b=await retry(f,5000); b.hello(); await settled(); b.frame(ready()); for(let n=2;n<=64;n++) b.frame(message(n));
-    await settled(); expect(b.terminate).not.toHaveBeenCalled(); expect(f.commit).toHaveBeenCalledTimes(64); expect(f.saved()?.seq).toBe(64);
+    const clock=new TrackingClock(),f=fixture({clock}),a=await identified(f); a.frame(ready()); for(let n=2;n<=65;n++) a.frame(message(n));
+    await until(()=>clock.active.size===1); expect(a.terminate).toHaveBeenCalledOnce(); expect(f.commit).not.toHaveBeenCalled();
+    clock.advance(5000); await settled(); const b=f.sockets[1]; b.hello(); await settled(); b.frame(ready()); for(let n=2;n<=64;n++) b.frame(message(n));
+    await until(()=>f.saved()?.seq===64 || b.terminate.mock.calls.length>0); expect(b.terminate).not.toHaveBeenCalled(); expect(f.commit).toHaveBeenCalledTimes(64); expect(f.saved()?.seq).toBe(64);
   });
   it('times out silent gateway and missing READY; write errors reconnect',async()=>{
     const f=fixture(); await settled(); f.clock.advance(15_000); await settled(); expect(f.sockets[0].terminate).toHaveBeenCalledOnce();
