@@ -35,6 +35,25 @@ Upstream contract audited: sleepunit-agents/loom-approvals at
 | Expiry and bounded history rendering | fake-clock live deadlines; complete persisted history |
 | JSON/lock, subprocess principal verification and project listing | removed in new side; database and injected in-process roles |
 
+The old install manifest and its `settings.json` are intentionally absent from
+the new path. `APPROVALS_DIR` and `LOOM_PIECE_HOME` do not select daemon storage;
+the foundation home owns the database, and old JSON files are importer input only.
+`APPROVALS_LOCAL_AGENT` becomes the injected `localAgent` option.
+`APPROVALS_PRINCIPAL` and `APPROVALS_LOCAL_PRINCIPAL` become the trusted caller
+resolver; there is no implicit local-owner default. `APPROVALS_PROJECTS` becomes
+the injected project repository, with unreadable project metadata asking safely.
+`APPROVALS_SEED_RULES` is replaced by explicit import or owner rule edits; startup
+does not seed authority from environment JSON. `APPROVALS_KINDS` custom labels are
+not carried forward: the new app uses its built-in kind words and generic fallback.
+The old executable/UI manifest is replaced by registry operations and the kit app;
+its files and settings remain untouched until the coordinated retirement.
+
+Imported allowed wake-vouch receipts are tested against newer denials covering
+either end of their wake set, across principals. A refused service spend preserves
+both decisions and appends `refused-use` with `denied_by`, without a use event.
+Malformed imported tiers, scopes, host verbs and owner fields refuse the whole
+import, leave no checksum marker or rules, and retain the default asking behavior.
+
 No independent background poller exists in the old program; expiry was evaluated
 on read. New live records refresh at receipt expiry and leave the live set one
 week after the last receipt change. Pending receipts remain live indefinitely.
@@ -90,7 +109,7 @@ untouched stores until the owner retires those stores.
 - Register in the new next-mode composition when that root lands (fixture, standalone startLoom and app registry are wired).
 - Complete old contract cases and independent CLI output/exit oracle fixtures.
 - Supply real runtime/clock application roles in next composition. `ApprovalOptions.applications` routes wake vouches to clock and grants, conversation resets and box write-offs to runtime. Roles must be synchronous and use the same foundation database; external work must be an outbox entry. Missing/failed roles roll back the answer; successful roles spend the receipt in the same transaction. Rollback and retry tests cover the seam; actual owning roles still need integration.
-- Complete overlap denial and owner-application routing cases and HTTP coverage. Direct standing jobs, malformed receipt/standing imports, interrupted imports and socket expiry/access changes now have tests.
+- Complete owner-application routing cases and HTTP coverage. Direct standing jobs, malformed receipt/standing imports, interrupted imports and socket expiry/access changes now have tests.
 - Security/spend review stopped at the three-round bound: final BLOCKING, one CRITICAL and one MAJOR, both folded with regression tests; final folds have no further review and no CLEAR is claimed. The separate persistence/importer/client review also stopped at three rounds: final BLOCKING with two CRITICAL findings, both folded with regression tests (command stderr credential redaction and map-only project scope). No fourth read and no CLEAR claimed; final folds are unreviewed. Full ledger: loom note loom/2026-11-12-approvals-importer-client-review.
 - One two-window app test; screenshots at 390, 1280, 1920 in Neon Noir and
   Daylight as CI artifacts; no browser suite on loom's machine.

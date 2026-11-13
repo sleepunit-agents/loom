@@ -61,6 +61,20 @@ describe('approval receipts and central policy',()=>{
   it('a newer denial stops earlier yes across principals and keeps conversation asks pending',async()=>{
     const a=await setup(),first=a.value('request',ask);a.value('answer',{id:first.id,action:'allow'},owner);a.clock.advance(1000);a.identity({for:'loren'});const second=a.value('request',ask);a.value('answer',{id:second.id,action:'deny'},owner);a.identity({for:'owner'});expect(a.call('use',{id:first.id,kind:'merge',target})).toMatchObject({code:'denied'});
   });
+  it.each(['art:w-000001','art:w-000002,w-000003'])('retains imported overlapping denials when spending %s',async deniedTarget=>{
+    const a=await setup(),source=dir();
+    const allowed={id:'a-01234567',kind:'vouch-wake',target:'art:w-000001,w-000002',what:'Vouch for the wakes.',why:'Resume them.',who:{agent:'art',where:'h-import'},for:'owner',minutes:60,at:'2026-11-12T22:00:00Z',state:'allowed',decided:'2026-11-12T22:01:00Z',expires:'2026-11-13T00:00:00Z',by:'jonathan'};
+    const denial={...allowed,id:'a-89abcdef',target:deniedTarget,for:'loren',state:'denied',at:'2026-11-12T22:02:00Z',decided:'2026-11-12T22:03:00Z'};
+    writeFileSync(join(source,'approvals.json'),JSON.stringify({v:1,approvals:{[allowed.id]:allowed,[denial.id]:denial}}));
+    importApprovals(a.db,source,a.clock.now());
+    const input={id:allowed.id,kind:allowed.kind,target:allowed.target};
+    expect(a.role.call('use',{who:{agent:'art',where:'h-continuation'},for:'owner'},input,'overlap-spend')).toMatchObject({ok:false,code:'denied'});
+    const state=load(a.db);
+    expect(state.approvals.find(r=>r.id===allowed.id)).toMatchObject({state:'allowed'});
+    expect(state.approvals.find(r=>r.id===denial.id)).toMatchObject({state:'denied'});
+    expect(state.audit).toEqual([expect.objectContaining({event:'refused-use',id:allowed.id,denied_by:denial.id})]);
+    expect(state.audit.some(r=>r.event==='use')).toBe(false);
+  });
   it('only repairs provenance proven by runtime and never retargets it',async()=>{
     const a=await setup(),cv='cv-0123456789ab',card=a.value('request',{...ask,conversation:cv});expect(card).not.toHaveProperty('conversation');a.identity({conversation:cv});expect(a.value('request',{...ask,conversation:cv})).toMatchObject({id:card.id,conversation:cv});a.identity({conversation:'cv-abcdef012345'});expect(a.value('request',{...ask,conversation:'cv-abcdef012345'})).toMatchObject({conversation:cv});
   });
@@ -168,6 +182,19 @@ describe('import validation',()=>{
     a.value('request',ask);
     expect(()=>importApprovals(a.db,source,a.clock.now())).toThrow('destination must be empty');
     const b=await setup();expect(importApprovals(b.db,source,b.clock.now())).toMatchObject({approvals:1,rules:0,audit:0});
+  });
+  it.each([
+    {scope:'github:acme/*',tier:'always'}, {scope:'github:acme/*',tier:null},
+    {scope:'project:../pond'}, {kind:'host',scope:'host:restart:../secret'},
+    {kind:'host',scope:'host:invented'}, {scope:7}, {by:[]},
+  ])('refuses malformed imported rules without granting authority: %j',async change=>{
+    const a=await setup(),source=dir();
+    writeFileSync(join(source,'approvals.json'),JSON.stringify({v:1,approvals:{}}));
+    writeFileSync(join(source,'rules.json'),JSON.stringify({v:1,rules:[{kind:'merge',scope:'github:acme/*',tier:'do',by:'jonathan',at:receipt.at,...change}]}));
+    expect(()=>importApprovals(a.db,source,a.clock.now())).toThrow('Invalid source rule');
+    expect(load(a.db).rules).toEqual([]);
+    expect(a.db.prepare('SELECT * FROM approvals_meta').all()).toEqual([]);
+    expect(a.value('rule',{kind:'merge',targets:[target]})[target]).toMatchObject({tier:'ask'});
   });
   it('rejects duplicate rules and malformed standing jobs',async()=>{
     const a=await setup(),source=dir();
