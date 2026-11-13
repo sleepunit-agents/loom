@@ -18,7 +18,7 @@ export function privateBytes(path: string, limit = 64 * 1024): Buffer {
   let fd: number | undefined;
   try {
     if (!isAbsolute(path)) throw failed();
-    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const s = fstatSync(fd);
     if (!s.isFile() || s.uid !== process.getuid?.() || (s.mode & 0o077) || s.nlink !== 1 || s.size < 1 || s.size > limit) throw failed();
     const bytes = readFileSync(fd);

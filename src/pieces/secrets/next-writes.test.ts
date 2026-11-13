@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,chmodSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,chmodSync,openSync,fstatSync,constants} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -16,6 +16,11 @@ import {FakeClock} from '../../core/clock.js';
 import {configuredSecretWrites} from './holder-config.js';
 import {startPersistentHolder} from './holder-lifecycle.js';
 import {localSecretSource} from './local-holder.js';
+vi.mock('node:fs',async importOriginal=>{
+  const real=await importOriginal<typeof import('node:fs')>();
+  return {...real,openSync:vi.fn(real.openSync),fstatSync:vi.fn(real.fstatSync),readFileSync:vi.fn(real.readFileSync)};
+});
+const realFs=await vi.importActual<typeof import('node:fs')>('node:fs');
 const homes:string[]=[],stops:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const stop of stops.splice(0).reverse())await stop();for(const home of homes.splice(0))rmSync(home,{recursive:true,force:true});vi.restoreAllMocks();});
 async function setup(){
@@ -175,4 +180,15 @@ it.each(['receipt','mutation'])('shutdown destroys an actually stalled authentic
   expect(requests.length).toBeGreaterThan(0);expect(requests.every(r=>r.destroyed)).toBe(true);
   await expect.poll(()=>sockets.size).toBe(0);db.mockRestore();spy.mockRestore();
   await expect(config.holder.hasReceipt({member:'jonathan',writeId:randomUUID()})).rejects.toThrow();
+});
+
+it('rejects a FIFO descriptor nonblocking before reading private mutation configuration',async()=>{
+  const s=await setup();let flags=0;
+  vi.mocked(openSync).mockImplementationOnce((path,mode,permissions)=>{flags=mode as number;return realFs.openSync(path,mode,permissions);});
+  vi.mocked(fstatSync).mockImplementationOnce(fd=>Object.assign(realFs.fstatSync(fd),{isFile:()=>false,isFIFO:()=>true}));
+  vi.mocked(readFileSync).mockClear();
+  expect(()=>configuredSecretWrites(s.writes)).toThrow(/^Invalid secret mutation configuration$/);
+  expect(readFileSync).not.toHaveBeenCalled();
+  // Assert outside the production catch: dropping NONBLOCK must fail the test.
+  expect(flags&constants.O_NONBLOCK).not.toBe(0);
 });
