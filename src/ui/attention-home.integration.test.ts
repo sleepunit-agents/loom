@@ -7,11 +7,17 @@ import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { fixture, fixtureSharing, installFixture } from '../fixture.js';
+import { PeopleStore } from '../backends/people.js';
 import { TokenDatabase } from '../core/household/tokens.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
 it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned cards, shares answers and Inbox counts across windows, and captures both looks',async()=>{
   const home=mkdtempSync(join(tmpdir(),'loom-home-browser-'));fixture(home);
+  mkdirSync(join(home,'commons'),{recursive:true});
+  const directory=new PeopleStore({dbPath:join(home,'commons/people.db')});
+  directory.write({slug:'art',name:'Art E Fish',how:{kind:'agent'}});
+  directory.write({slug:'mark',name:'Mark',how:{kind:'agent'}});
+  directory.write({slug:'pond-bot',name:'Pond Bot',how:{kind:'agent'}});
   const owner={kind:'member' as const,id:'jonathan'};
   const loom=await startLoom({home,next:true,clock:new FakeClock(Date.parse('2026-11-13T08:00:00Z')),sharing:fixtureSharing,webRoot:root,install:app=>{installFixture(app);app.db.transaction(()=>new TokenDatabase(app.db).replace({v:1,tokens:[]},{}))();}});
   let serial=0;
@@ -35,7 +41,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     };
     await signIn(a,'jonathan');await Promise.all([a.goto(loom.url),b.goto(loom.url)]);
     const cards=(p:typeof a)=>p.locator('[data-attention-home] [aria-label$=" card"]');
-    await expect.poll(()=>cards(a).evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label')))).toEqual(['art card','mark card']);
+    await expect.poll(()=>cards(a).evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label')))).toEqual(['Art E Fish card','Mark card']);
     await expect.poll(()=>b.getByRole('heading',{name:'Needs you · 4',exact:true}).count()).toBe(1);
     expect(await b.getByText('Nothing right now',{exact:true}).count()).toBe(1);
     await expect.poll(()=>b.getByRole('button',{name:'Finish the shared Home',exact:true}).count()).toBe(1);
@@ -58,25 +64,33 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
       writeFileSync(join(shots,`home-${look}-${width}-layout.json`),JSON.stringify(dimensions,null,2));
       if(dimensions.home[1]>dimensions.home[0] || dimensions.page[1]>dimensions.page[0])overflows.push({look,width,...dimensions});
       await b.screenshot({path:join(shots,`home-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-      await b.getByRole('region',{name:'art reported work',exact:true}).scrollIntoViewIfNeeded();
+      await b.getByRole('region',{name:'Art E Fish reported work',exact:true}).scrollIntoViewIfNeeded();
       await b.screenshot({path:join(shots,`home-work-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     expect(overflows).toEqual([]);
     await yes(a).click();await expect.poll(()=>yes(b).count()).toBe(0);await expect.poll(()=>b.getByRole('heading',{name:'Needs you · 3',exact:true}).count()).toBe(1);
     await expect.poll(()=>b.getByText('Answer this in its private conversation. Private replies stay there.').count()).toBe(1);
     expect(await cards(b).count()).toBe(2);
-    await expect.poll(()=>b.getByRole('region',{name:'art last answer'}).count()).toBe(1);
+    await expect.poll(()=>b.getByRole('region',{name:'Art E Fish last answer'}).count()).toBe(1);
     expect(await b.getByText(/yes · jonathan/).count()).toBe(1);
     await b.getByRole('button',{name:'Inbox',exact:true}).click();await expect.poll(()=>b.locator('[data-split-row]').count()).toBe(3);
     await b.goto(`${loom.url}/p/home-preview`);await expect.poll(()=>cards(b).count()).toBe(2);
     await b.getByRole('button',{name:'Finish the shared Home',exact:true}).click();
     await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/tasks-preview/task/t-2205');
+    await b.goto(`${loom.url}/p/home-preview`);
+    directory.write({slug:'art',name:'Art the Fish'});
+    await expect.poll(()=>cards(a).evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label')))).toEqual(['Art the Fish card','Mark card']);
+    await expect.poll(()=>cards(b).evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label')))).toEqual(['Art the Fish card','Mark card']);
+    await b.getByRole('button',{name:'Art the Fish in People',exact:true}).click();
+    await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/people-preview/person/art');
+    await expect.poll(()=>b.getByRole('heading',{name:'Art the Fish',exact:true}).count()).toBe(1);
     const member=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await member.grantPermissions(['local-network-access'],{origin:loom.url});
     const p=await member.newPage();await signIn(p,'pollock');await p.goto(loom.url);
     await expect.poll(()=>cards(p).evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label')))).toEqual(['pond-bot card']);
+    expect(await p.getByRole('button',{name:'Pond Bot in People',exact:true}).count()).toBe(0);
     await expect.poll(()=>p.getByRole('heading',{name:'Needs you · 2',exact:true}).count()).toBe(1);
     expect(await p.getByText('Private conversation needs you',{exact:true}).count()).toBe(0);
     expect(await p.getByText('Connecting the next Home panels',{exact:true}).count()).toBe(0);
     await member.close();
-  }finally{await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
+  }finally{await browser.close();await loom.close();directory.close();rmSync(home,{recursive:true,force:true});}
 },60_000);

@@ -28,7 +28,7 @@ function request<T>() {
   const call:Call<T>={id:'request',result:new Promise(r=>{resolve=r;}),getSnapshot:()=>state,subscribe:fn=>{listeners.add(fn);return()=>{listeners.delete(fn);};}};
   return {call,finish:async(result:Result<T>)=>act(async()=>{state={pending:false,status:'done',result};resolve(result);listeners.forEach(fn=>fn());})};
 }
-beforeEach(()=>{f.call.mockReset();f.listeners.clear();f.snapshots={'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
+beforeEach(()=>{f.call.mockReset();f.listeners.clear();f.snapshots={'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'person':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
 it('keeps idle owned cards alphabetical by display name and id, without deriving agents from asks or work',async()=>{
   f.snapshots['attention.ask']=live([ask('foreign',{agent:'other'})]);
@@ -123,4 +123,27 @@ it('keeps report destinations on new apps or explicit HTTP(S) sources',()=>{
   expect(reportLink('/p/tasks-preview/task/t-1?tab=comments#latest')).toEqual({app:true,href:'/p/tasks-preview/task/t-1?tab=comments#latest'});
   expect(reportLink('https://example.com/work')).toEqual({app:false,href:'https://example.com/work'});
   for(const href of [undefined,'','javascript:alert(1)','data:text/html,hi','//evil.test/p/x','/runtime','/p/../../signin','/p/%2e%2e/signin','/p/\\evil.test','https://example.com/\nwork'])expect(reportLink(href)).toBeUndefined();
+});
+
+const person=(slug:string,name:string,extra:Record<string,unknown>={})=>({id:`commons:${slug}`,slug,name,kind:'agent',...extra});
+it('uses live directory agent names and People links without adding relationship or project-only cards',async()=>{
+  f.snapshots['person']=live([person('art','Zulu Fish'),person('mark','ALPHA Mark'),person('pond-bot','Not owned'),person('art','Relationship name',{id:'mark:art',agent:'mark'}),person('outsider','Outside')]);
+  const go=await draw();
+  const cards=()=>tree!.root.findAllByType('section').filter((n:Node)=>n.props['aria-label']?.endsWith(' card')).map((n:Node)=>n.props['aria-label']);
+  expect(cards()).toEqual(['ALPHA Mark card','Zulu Fish card']);
+  expect(text()).not.toContain('Relationship name');expect(text()).not.toContain('Not owned');
+  await act(async()=>tree!.root.findByProps({'aria-label':'Zulu Fish in People'}).props.onClick());expect(go).toHaveBeenCalledWith('/p/people-preview/person/art');expect(f.call).not.toHaveBeenCalled();
+  await publish('person',live([person('art','Beta Fish')]));
+  expect(cards()).toEqual(['Beta Fish card','Mark card']);
+  expect(tree!.root.findAllByProps({'aria-label':'ALPHA Mark in People'})).toHaveLength(0);
+});
+it.each(['loading','offline','denied'] as const)('drops stale directory names and links on %s while retaining owned ids and ask controls',async(status)=>{
+  const records=[person('art','Private display name')];f.snapshots['person']=live(records);f.snapshots['attention.ask']=live([ask('first')]);
+  await draw();expect(text()).toContain('Private display name');
+  await publish('person',{status,records});
+  expect(text()).not.toContain('Private display name');expect(text()).toContain('Art card');expect(buttons('Check again')).toHaveLength(1);
+});
+it('ignores person-kind and mismatched directory identities and blank names',async()=>{
+  f.snapshots['person']=live([person('art','Wrong kind',{kind:'person'}),person('mark','Wrong id',{id:'commons:art'}),person('mark','   ')]);
+  await draw();expect(text()).toContain('Art card');expect(text()).toContain('Mark card');expect(text()).not.toContain('Wrong');
 });

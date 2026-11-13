@@ -3,7 +3,7 @@ import { useRecords, type Snapshot } from '../../data';
 import { AppFrame, Button, Empty, Error, List, Loading, Row } from '../../kit';
 import { AskReader, AnswerReceipt, stamp, type Guard } from './index';
 import type { Ask } from './model';
-import { inboxPath, latestStatus, openAsks, orderedAgents, reportLink, type AgentStatus, type OwnedAgent, type ReportedItem } from './home-model';
+import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, reportLink, type AgentPerson, type AgentStatus, type OwnedAgent, type ReportedItem } from './home-model';
 function Unavailable({ status, label }: { status: Snapshot['status']; label: string }) {
   return status === 'loading' ? <Loading label={`Opening ${label}…`} /> : <Error title={`Couldn’t load ${label}`} text={status === 'denied' ? 'Sign in with access to see this.' : 'Waiting for connection.'} />;
 }
@@ -19,6 +19,8 @@ function ReportedItems({ title, empty, items, go }: { title: string; empty: stri
 }
 export default function Home({ go = path => location.assign(path) }: { go?: (path:string)=>void } = {}) {
   const roster = useRecords<OwnedAgent>('attention.ownedAgent');
+  const people = useRecords<AgentPerson>('person');
+  const agents = namedAgents(roster.records, people.status === 'live' ? people.records : []);
   const asks = useRecords<Ask>('attention.ask');
   const statuses = useRecords<AgentStatus>('attention.agent');
   const lock = useRef(false), [busy,setBusy] = useState(false);
@@ -37,12 +39,12 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
         </section>
         {busy && <p role="status">An answer is still being checked or recorded. Other answers wait.</p>}
         {roster.status !== 'live' ? <Unavailable status={roster.status} label="your agents" /> : !roster.records.length ? <Empty title="No agents of your own" text="Agents you own appear here, including when idle." /> : <div className={`grid min-w-0 grid-cols-1 items-start gap-4 ${columns}`} aria-label="Your agents">
-          {orderedAgents(roster.records).map(agent=>{
+          {orderedAgents(agents).map(agent=>{
             const ownAsks = open.filter(ask=>ask.agent===agent.id), first=ownAsks[0];
             const receipt = asks.status === 'live' ? asks.records.filter(ask=>ask.agent===agent.id && ask.answer).sort((a,b)=>b.answer!.at-a.answer!.at || a.id.localeCompare(b.id))[0] : undefined;
             const status = statuses.status === 'live' ? latestStatus(statuses.records,agent.id) : undefined;
             return <section key={agent.id} aria-label={`${agent.name} card`} className="grid min-w-0 gap-3 rounded-lg border p-3">
-              <header><h2 className="text-xl font-semibold">{agent.name}</h2><p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
+              <header><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
               {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} requireOwnership /> : <p>Nothing needs you from {agent.name}.</p>}
               {ownAsks.length > 1 && <Button variant="outline" onClick={()=>go(inboxPath(ownAsks[1]))}>Next ask · {ownAsks.length-1} more</Button>}
               {receipt && <section aria-label={`${agent.name} last answer`}><h3>Last answer</h3><p>{receipt.ask}</p><AnswerReceipt ask={receipt} /></section>}
