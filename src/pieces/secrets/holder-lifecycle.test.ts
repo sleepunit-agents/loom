@@ -84,6 +84,7 @@ it('pins both peers beyond the CA and fails closed when authority is absent',asy
   const stranger={...s.client,cert:join(s.home,'stranger.pem'),key:join(s.home,'stranger.key')};
   await expect(localHolderMutations(stranger).set(who,'API',Buffer.from('X'),'add')).rejects.toThrow();
   await expect(localSecretSource({...stranger,socket:s.config.read.socket}).read('API')).rejects.toThrow();
+  await expect(remoteHolderAuthority({...s.config.authority,servername:'wrong.test'},s.daemonFingerprint)(s.daemonFingerprint,'jonathan')).resolves.toBeNull();
   const wrongHolder=remoteHolderAuthority({...s.config.authority,cert:stranger.cert,key:stranger.key},s.daemonFingerprint);
   await expect(wrongHolder(s.daemonFingerprint,'jonathan')).resolves.toBeNull();
   const badDaemon=remoteHolderAuthority(s.config.authority,new X509Certificate(readFileSync(stranger.cert)).fingerprint256);
@@ -202,4 +203,19 @@ it('bounds persistent reader connections before TLS and incomplete HTTP headers'
     try {await vi.waitFor(()=>expect(connected).toBe(true));await vi.advanceTimersByTimeAsync(5000);await vi.waitFor(()=>expect(closed).toBe(true));}
     finally {peer.destroy();vi.useRealTimers();}
   }
+});
+
+it('denies authority methods, paths and bodies before looking up current membership',async()=>{
+  const s=await setup(),current=vi.fn(()=>true);const authority=await listenHolderAuthority(s.authority,current);closes.push(authority.close);
+  const request=(method:string,path:string,body:string,framing:Record<string,string>)=>new Promise<number>((resolve,reject)=>{
+    const req=https.request({socketPath:s.authority.socket,servername:'daemon.test',ca:privateBytes(s.config.authority.ca),cert:privateBytes(s.config.authority.cert),key:privateBytes(s.config.authority.key),agent:false,method,path,
+      headers:{'x-holder-member':Buffer.from('jonathan').toString('base64url'),...framing}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode!));res.on('error',reject);});
+    req.on('error',reject);req.end(body);
+  });
+  expect(await request('GET','/v1/authority','',{'content-length':'0'})).toBe(503);
+  expect(await request('POST','/wrong','',{'content-length':'0'})).toBe(503);
+  expect(await request('POST','/v1/authority','X',{'content-length':'1'})).toBe(503);
+  expect(await request('POST','/v1/authority','X',{'transfer-encoding':'chunked'})).toBe(503);
+  expect(current).not.toHaveBeenCalled();
+  expect(await request('POST','/v1/authority','',{'content-length':'0'})).toBe(204);expect(current).toHaveBeenCalledExactlyOnceWith('jonathan');
 });
