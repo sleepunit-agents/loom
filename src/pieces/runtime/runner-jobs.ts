@@ -29,7 +29,7 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
       if (job.state !== 'queued') throw new OperationError('conflict', 'Job is not queued');
       const made = configuredHouse(store.read('settings', job.agent));
       if (!made) throw new OperationError('conflict', 'Agent has no house configuration');
-      const { changedAt: _, build: _build, ...before } = job;
+      const { changedAt: _, build: _build, buildAt: _buildAt, ...before } = job;
       if (store.put('job', { ...before, state: 'starting', made, claimedAt: ctx.now }, ctx.now)) ctx.changed('runtime.job', id);
       return { job: id, state: 'starting' as const };
     },
@@ -66,7 +66,9 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
         if (!before.made || before.claimedAt === undefined) throw new OperationError('conflict', 'Job has no claimed house identity');
         if (before.build && before.build !== tag) throw new OperationError('conflict', 'Job already reported another image');
         const { changedAt: _, ...job } = before;
-        if (store.put('job', { ...job, state, build: tag }, ctx.now)) ctx.changed('runtime.job', id);
+        // Repeated reports and later progress must not make an old image newer.
+        // Historical images without a report time remain undated until rebuilt.
+        if (store.put('job', { ...job, state, build: tag, ...(!before.build ? { buildAt: ctx.now } : {}) }, ctx.now)) ctx.changed('runtime.job', id);
         return { job: id, state };
       }
       return save(ctx, id, state);
