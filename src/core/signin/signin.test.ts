@@ -61,7 +61,11 @@ it('session expiry closes sockets and cross-origin or missing-origin cookie sock
     const ws=new WebSocket(f.loom.url.replace('http:','ws:')+'/live',{headers});ws.on('error',()=>{});
     const status=await new Promise<number>(ok=>ws.on('unexpected-response',(_r,res)=>{res.resume();ws.terminate();ok(res.statusCode!);}));expect(status).toBe(401);
   }
-  const ws=await f.open({cookie:`loom_ui=${f.cookie}`,origin:f.loom.url});const closed=once(ws,'close');f.clock.advance(30*86400_000);expect((await closed)[0]).toBe(1008);
+  // Age the fixture instead of replaying a month of every daemon's scheduled jobs.
+  f.s.sessions.change(file=>{file.sessions[hash(f.cookie)].issuedAt=f.clock.now()/1000-30*86400+1;});
+  const ws=await f.open({cookie:`loom_ui=${f.cookie}`,origin:f.loom.url});const closed=once(ws,'close');
+  f.clock.advance(999);expect(f.s.session(f.cookie)).toBeDefined();expect(ws.readyState).toBe(WebSocket.OPEN);
+  f.clock.advance(1);expect((await closed)[0]).toBe(1008);
   expect((await(await f.get('/auth/session',{cookie:`loom_ui=${f.cookie}`})).json()).viewer).toBeNull();
 });
 it('passkeys use one WebAuthn user per member, their own token, fresh CSRF registration and verified login',async()=>{
