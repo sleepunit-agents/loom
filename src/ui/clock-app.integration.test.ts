@@ -370,5 +370,15 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>p.getByText('This thread is no longer in view',{exact:true}).count()).toBe(1);
     expect(await p.getByText('Please file these exact words',{exact:false}).count()).toBe(0);
     await guest.close();
+    const privateDue=wakes(loom.db).filter(w=>localCards.includes(w.approval??''));
+    expect(privateDue).toHaveLength(2);
+    clock.advance(Math.max(...privateDue.map(w=>w.due))-clock.now()+1);
+    for(const scheduled of privateDue) {
+      await expect.poll(()=>wake(loom.db,scheduled.id)?.state).toBe('held');
+      expect(wake(loom.db,scheduled.id)).toMatchObject({hold:'permission',member:'jonathan',prompt:scheduled.prompt,note:scheduled.note});
+      expect(loom.db.prepare('SELECT record FROM clock_events WHERE wake=?').all(scheduled.id).some(row=>(row as {record:string}).record.includes('"kind":"intent"'))).toBe(false);
+      expect(calls.mock.calls.filter(args=>args[2]==='clock.dispatch'&&(args[3] as {id?:string}).id===scheduled.id)).toHaveLength(0);
+      expect(runtimeStore(loom.db).ids('job').map(id=>runtimeStore(loom.db).read('job',id)).filter(job=>job?.source?.kind==='wake'&&job.source.id===scheduled.id)).toHaveLength(0);
+    }
   }finally{await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },60_000);
