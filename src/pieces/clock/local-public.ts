@@ -2,12 +2,29 @@
  * Only acknowledgements leave this boundary; saved private words stay inside
  * the owning Clock/Approvals transaction.
  */
+import { saveLocalReceipt } from './local-receipt.js';
+import { filedLocal } from './local-filing.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { operation, OperationError, type Operations, type Sharing, type Viewer } from '../../core/index.js';
-import { localOwner, type Caller } from '../approvals/role.js';
+import { operation, OperationError, type Operations, type Sharing, type Viewer, mayAct, mayCreate } from '../../core/index.js';
+import { localOwner, sameLocalCaller, type Caller } from '../approvals/role.js';
 import { clockLocalFiling, clockLocalRecovery, clockLocalStanding } from './role.js';
 const text=z.string().min(1).max(100_000);
+export function localPublicPolicy(operations:Operations,sharing:()=>Sharing,resolve:((viewer:Viewer)=>Caller|undefined)|undefined,v:Viewer,i:{agent:string;approval?:string;standing?:boolean}) {
+ const c=resolve?.(v),s=sharing();
+ if(v.kind!=='agent'||v.id!==i.agent||c?.who.agent!==i.agent||!localOwner(c,s))return false;
+ const service={kind:'service' as const,id:'clock'},agent={kind:'agent' as const,id:i.agent};
+ const scope={agent:i.agent,project:c.project};
+ const clockOp=i.approval?(i.standing?'clock.localStandingSchedule':'clock.localSchedule'):'clock.localRequest';
+ const approvalOp=i.approval?(i.standing?'approvals.piece-standing-local':'approvals.piece-use-local'):'approvals.piece-request';
+ if(!mayCreate(agent,{type:'wake',...scope},s)||!mayCreate(agent,{type:'approval',...scope},s)
+   ||!mayAct(service,{type:'clock'},s,'act',clockOp)||!mayAct(service,{type:'approval',...scope},s,'act',approvalOp))return false;
+ if(i.approval) {
+  const filing=filedLocal(operations.db,i.approval);
+  if(!filing||!localOwner(filing.caller,s)||!sameLocalCaller(c,filing.caller))return false;
+ }
+ return true;
+}
 export function installLocalPublic(operations:Operations,sharing:()=>Sharing,resolve?: (viewer:Viewer)=>Caller|undefined) {
   const caller=(viewer:Viewer,agent:string)=>{
     const c=resolve?.(viewer);
@@ -17,7 +34,7 @@ export function installLocalPublic(operations:Operations,sharing:()=>Sharing,res
   };
   const request=z.object({agent:text,prompt:text,note:z.string().max(100_000)}).strict();
   const recover=z.object({agent:text,approval:z.string().regex(/^a-[0-9a-f]{8}$/),when:text,mode:z.enum(['in','at']),standing:z.boolean().optional(),prompt:text.optional(),note:z.string().max(100_000).optional()}).strict();
-  const permitted=(v:Viewer,i:{agent:string})=>{try{caller(v,i.agent);return true;}catch{return false;}};
+  const permitted=(v:Viewer,i:{agent:string;approval?:string;standing?:boolean})=>localPublicPolicy(operations,sharing,resolve,v,i);
   operations.register(operation({name:'clock.requestLocal',input:request,output:z.object({id:z.string(),state:z.string()}),write:true,recheckPolicy:true,may:(v,i)=>permitted(v,i),
     run(ctx,i){
       const c=caller(ctx.viewer,i.agent),result=clockLocalFiling(operations).request(c,i.prompt,i.note,randomUUID());
@@ -32,12 +49,7 @@ export function installLocalPublic(operations:Operations,sharing:()=>Sharing,res
       const result=role.schedule(c,input,randomUUID());
       if(!result.ok)throw new OperationError(result.code,result.message);
       const {id,due}=result.value as {id:string;due:number};
-      if(i.standing) {
-        const receipt=ctx.receipt!;
-        operations.db.prepare('INSERT INTO clock_meta(key,value) VALUES (?,?)').run(
-          `local-standing-receipt:${receipt.viewer}:${receipt.id}`,
-          JSON.stringify({name:receipt.name,hash:receipt.inputHash,result:{id,due}}));
-      }
+      if(i.standing)saveLocalReceipt(ctx,{id,due});
       return {id,due};
     },
   }));

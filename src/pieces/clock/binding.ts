@@ -154,3 +154,21 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   }
   return success('clock deadlines rearmed');
 }
+
+/** Policy preflight for acknowledgement replay; uses the same option tokenizer.
+ * Invalid commands have no successful receipt to replay; execution owns errors.
+ */
+export function localCommandInput(viewer:Viewer,request:ClockCommandInput):{agent:string;approval?:string;standing?:boolean}|undefined {
+ const argv=[...request.argv];let agent=request.agent??(viewer.kind==='agent'?viewer.id:undefined);
+ if(argv[0]==='--agent'){agent=argv[1];argv.splice(0,2);}
+ else if(argv[0]?.startsWith('--agent='))agent=argv.shift()!.slice(8);
+ const {name,args}=commandHead(argv);if(!['at','in'].includes(name!))return;
+ const flags:Record<string,string|boolean>={};
+ for(let n=0;n<args.length;n++) {
+  if(args[n]==='--')break;
+  const option=clockOption(args[n]);if(!option)continue;
+  flags[option.flag]=option.flag==='standing'?true:option.attached??args[++n];
+ }
+ if(!flags.approval&&!String(flags.prompt??'').includes('<!-- house: local -->'))return;
+ return {agent:agent??'',...(typeof flags.approval==='string'?{approval:flags.approval}:{}),...(flags.standing?{standing:true}:{})};
+}

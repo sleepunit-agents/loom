@@ -51,6 +51,10 @@ export const active = (w: Wake) => ['pending', 'parked', 'firing', 'held'].inclu
 export function installPrivateExport(db:Db) {
  registerExportFilter(db,'clock',(table,row)=>{
   if(!table.startsWith('clock_') && table!=='core_operations')return true;
+  if(table==='clock_meta' && String(row.key).startsWith('local-standing-receipt:')) {
+   const saved=JSON.parse(String(row.value));
+   if(['clock.command','clock.requestLocal','clock.recoverLocal'].includes(saved.name))return false;
+  }
   const ids=new Set((db.prepare("SELECT key FROM clock_meta WHERE key LIKE 'private-id:%'").all() as {key:string}[]).map(r=>r.key.slice(11)));
   for(const w of [...wakes(db),...schedules(db)])if(w.member)ids.add(w.id);
   return !(table==='core_operations' && ['clock.command','clock.requestLocal','clock.recoverLocal'].includes(String(row.name))) && !privateExportCopy(row,ids);

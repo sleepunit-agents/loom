@@ -1,3 +1,5 @@
+import * as services from '../../core/services.js';
+import { SharingDatabase } from '../../core/household/sharing.js';
 import { wakes } from '../clock/store.js';
 import { exportDatabase } from '../../core/index.js';
 import { readApproval } from '../approvals/store.js';
@@ -536,15 +538,16 @@ it('refuses private non-owner local public requests without publishing a card',a
  const f=await setup(false,'pollock');await f.open();const job=await f.queued();
  await f.post(f.runner,'runtime.claimJob',{job});const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
  await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
- expect(await f.post(body,'clock.command',{argv:['in','1h','-p','<!-- house: local --> Inspect host','--note','PRIVATE REFUSED'],agent:'art'})).toMatchObject({ok:true,value:{exit:1}});
+ expect(await f.post(body,'clock.command',{argv:['in','1h','-p','<!-- house: local --> Inspect host','--note','PRIVATE REFUSED'],agent:'art'})).toMatchObject({ok:false,code:'denied'});
  expect(f.app.db.prepare('SELECT count(*) AS n FROM approvals_approvals').get()).toEqual({n:0});
  expect(wakes(f.app.db)).toHaveLength(0);
 });
 
 it('recovers standing private work through the public body command without returning words or replaying after receipt expiry',async()=>{
- const f=await setup();await f.open();const job=await f.queued();
+ const f=await setup();const thread=await f.open();const job=await f.queued();
  await f.post(f.runner,'runtime.claimJob',{job});const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
  await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ value(await f.socket('comms.change',{thread,action:'project',project:'pond'}));
  const card=value<{id:string}>(await f.post(body,'clock.requestLocal',{agent:'art',prompt:'<!-- house: local --> Inspect disk',note:'PRIVATE STANDING'}));
  value(await f.socket('approvals.every-time',{id:card.id}));
  const original=signin(f.app).token(hash(body))!.viewer;
@@ -566,4 +569,19 @@ it('recovers standing private work through the public body command without retur
  expect(wakes(f.app.db)).toHaveLength(2);
  expect(f.app.operations.call('http',original,'clock.in',{agent:'art',prompt:'new',note:'',when:'2h'},'command-standing')).toMatchObject({ok:false,code:'conflict'});
  expect(f.app.operations.call('direct',{...original},'clock.requestLocal',{agent:'art',prompt:'<!-- house: local --> Copy proof',note:''},'copied-local-viewer')).toMatchObject({ok:false});
+ const exported=JSON.stringify(exportDatabase(f.app.db));
+ expect(exported).not.toContain('command-standing');expect(exported).not.toContain('standing-public');
+ const replayDenied=()=>{
+  for(const expired of [false,true]){
+   if(expired)f.app.db.prepare("DELETE FROM core_operations WHERE id IN ('standing-public','command-standing')").run();
+   expect(f.app.operations.call('http',original,'clock.recoverLocal',input,'standing-public')).toMatchObject({ok:false,code:'denied'});
+   expect(f.app.operations.call('http',original,'clock.command',commandInput,'command-standing')).toMatchObject({ok:false,code:'denied'});
+  }
+ };
+ const builtin=services.builtinServices;
+ const spy=vi.spyOn(services,'builtinServices').mockImplementation(db=>{const s=builtin(db);return {...s,clock:{...s.clock,operations:s.clock.operations.filter(n=>n!=='approvals.piece-standing-local')}};});
+ replayDenied();spy.mockRestore();
+ f.app.db.transaction(()=>new SharingDatabase(f.app.db,f.home).setAgents('pond',[]))();
+ replayDenied();
+
 });

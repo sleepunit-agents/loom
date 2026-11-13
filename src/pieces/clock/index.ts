@@ -1,10 +1,11 @@
-import { installLocalPublic } from './local-public.js';
+import { saveLocalReceipt } from './local-receipt.js';
+import { installLocalPublic, localPublicPolicy } from './local-public.js';
 import { installPrivateExport } from './store.js';
 import { localOwner, sameLocalCaller } from '../approvals/role.js';
 import { standingBinding, bindStandingWake, checkStandingWake } from './local-standing.js';
 import { filedLocal, localFilingWords, installLocalFiling } from './local-filing.js';
 import { clockCommands, clockOperationCommands } from './commands.js';
-import { command } from './binding.js';
+import { command, localCommandInput } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -370,18 +371,16 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('rearm', z.object({}), true, (v) => mayAct(v, {}, sharing(), 'household'), () => ({ rearmed: true }));
   register('deadman', agentInput, true, (v, i) => deadmanAgents.has(i.agent) && v.kind === 'agent' && v.id === i.agent
     && create(v, { agent: i.agent, note: '' }), (ctx, i) => ensureDeadman(ctx, i.agent), true);
-  operations.register(operation({ name: 'clock.command', write: true,
+  operations.register(operation({ name: 'clock.command', write: true, recheckPolicy:true,
     input: z.object({ argv: z.array(z.string()).max(100), agent: text.optional(), laneFile: z.object({path:text,text:z.string().max(100_000)}).optional() }),
     output: z.object({ exit:z.number().int(), stdout:z.string(), stderr:z.string() }),
-    may: viewer => viewer.kind === 'member' || viewer.kind === 'agent',
+    may: (viewer,input) => {
+      const local=localCommandInput(viewer,input);
+      return local ? localPublicPolicy(operations,sharing,options.caller,viewer,local) : viewer.kind === 'member' || viewer.kind === 'agent';
+    },
     run: (ctx,input) => {
       const result=command(operations,ctx.viewer,input);
-      if(result.exit===0 && input.argv.includes('--standing')) {
-        const receipt=ctx.receipt!;
-        db.prepare('INSERT INTO clock_meta(key,value) VALUES (?,?)').run(
-          `local-standing-receipt:${receipt.viewer}:${receipt.id}`,
-          JSON.stringify({name:receipt.name,hash:receipt.inputHash,result}));
-      }
+      if(result.exit===0 && input.argv.includes('--standing'))saveLocalReceipt(ctx,result);
       return result;
     },
   }));
