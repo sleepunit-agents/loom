@@ -43,7 +43,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   // Until Home's piece registers a rail there is no invented agent data or empty reserved column.
   const { Home, Rail } = surfaces;
   const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railWidth(width)||64)+10 : 0)) };
-  useEffect(() => { if(!phone) {const notices=router.fit(workArea,width);if(notices.length)setNotice(notices.join(' '));} },[area.w,area.h,width,phone,router,!!Rail]);
+  useEffect(() => { if(!phone) {const notices=router.fit(workArea,width);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,router]);
   const boxes = layout(router.asTiles(),workArea,width).apps;
   const open = (id: string) => {
     const gone = router.open(id,phone ? undefined : workArea,phone ? 1920 : width);
