@@ -235,3 +235,34 @@ reports with credential revocation remain required on this task before a real
 runner can execute. A runner cannot end, revive or report uncertain/lost work
 through these two operations. The fake runner test seeds queued jobs internally;
 public job creation and `startBody` remain unfinished.
+
+## Completion metadata and job credential revocation
+
+The completion portion of old `report` maps to `runtime.finishJob {job, state}`,
+where state is `done` or `failed`. Only the exact assigned authenticated runner
+may complete a starting, running or waiting job, using the same central
+`report-job` check, enrolled box and privacy restrictions as progress reports.
+Withdrawing hosting permission does not prevent a claimed job from finishing.
+The acknowledgement contains only `{job, state}`. Server time sets `endedAt`
+and `changedAt`. A new report cannot overwrite a terminal job; a retry with the
+original registry id returns its original acknowledgement without revoking
+again or changing timestamps.
+
+`RuntimeCredentials.revokeJob` synchronously revokes every central agent token
+with the exact `@job` suffix, including service-qualified agent roles. Runner
+credentials, unbound agent credentials and other jobs remain valid. It uses
+the same central role grammar as box revocation and never matches display
+labels. Earlier revocations keep their timestamps. Missing token documents
+need no cleanup. The job update, central revocation and retry receipt share one
+transaction; a failure or asynchronous credential role rolls everything back.
+An after-commit `core.access` change invalidates existing authentication handles.
+An installer without central credentials fails unavailable before changing data.
+
+This is completion metadata only. Exit codes, log/result words, builds, native
+history collection, cooperative stop, written-off jobs and service restarts
+remain to be implemented with their owning lifecycle operations. `stopped` and
+`lost` are not accepted here: there is no stop-intent or write-off protocol yet.
+Input delivery and execution still require the outside-effect staging gate;
+this endpoint releases no work and performs no outside effect, even in staging.
+Earlier text describing terminal reports as future work now refers to those
+remaining result and lifecycle portions, rather than done/failed metadata.

@@ -26,7 +26,7 @@ async function setup(installed = true, asynchronous = false) {
     for (const id of input.jobs) db.prepare('UPDATE fake_credentials SET revoked=? WHERE target=?').run(input.now, id);
     if (fail) throw new Error('central revocation failed');
   });
-  const credentials: RuntimeCredentials = { revokeBox(db, input) {
+  const credentials: RuntimeCredentials = { revokeJob() { throw new Error('unexpected job revocation'); }, revokeBox(db, input) {
     revoke(db, input);
     if (asynchronous) return Promise.resolve();
   } };

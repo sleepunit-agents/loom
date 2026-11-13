@@ -11,7 +11,7 @@ const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]),call:f.call}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import Home from './home';
-import { orderedAgents } from './home-model';
+import { orderedAgents, reportLink } from './home-model';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 const ask=(id:string,fields:Partial<Ask>={}):Ask=>({id,agent:'art',ask:`Question ${id}`,why:'The whole reason',if_yes:'I continue.',if_no:'I stop.',refs:['t-2205'],source:{kind:'piece',id:'test'},state:'open',createdAt:1,changedAt:1,...fields});
 const live=<T,>(records:T[])=>({records,status:'live' as const});
@@ -92,4 +92,35 @@ it('clears failed asks and statuses independently while retaining idle owned car
   expect(text()).not.toContain('Current secret work');expect(text()).toContain('Question first');expect(text()).toContain('Art card');
   await publish('attention.ask',{records:[first],status:'denied'});
   expect(text()).not.toContain('Question first');expect(text()).not.toContain('All clear.');expect(text()).toContain('Art card');expect(buttons('Check again')).toHaveLength(0);
+});
+
+it('shows only the latest visible report’s complete jobs and watches and routes new apps without a write',async()=>{
+  const report:AgentStatus={id:'current',agent:'art',state:'working',work:'Reviewing changes',changedAt:2,
+    jobs:[{id:'job',label:'Review this task',href:'/p/tasks-preview/task/t-2205'},{id:'plain',label:'Waiting for input'},{id:'empty',label:''}],
+    watched:[{id:'pr',label:'Watch the pull request',href:'https://github.com/sleepunit-agents/loom/pull/927'},{id:'unsafe',label:'Unsafe source',href:'javascript:alert(1)'},{id:'old',label:'Old source',href:'/runtime'}]};
+  f.snapshots['attention.agent']=live([{...report,id:'old',changedAt:1,jobs:[{id:'gone',label:'Superseded job'}]},report,{...report,id:'foreign',agent:'other',jobs:[{id:'hidden',label:'Other agent work'}]}]);
+  const go=await draw();
+  for(const label of ['Review this task','Waiting for input','empty','Watch the pull request','Unsafe source','Old source'])expect(text()).toContain(label);
+  for(const label of ['Superseded job','Other agent work','javascript:','/runtime'])expect(text()).not.toContain(label);
+  const external=tree!.root.findAllByType('a').find((n:Node)=>words(n)==='Watch the pull request');
+  expect(external.props).toMatchObject({href:'https://github.com/sleepunit-agents/loom/pull/927',target:'_blank',rel:'noopener noreferrer'});
+  await click('Review this task');expect(go).toHaveBeenCalledWith('/p/tasks-preview/task/t-2205');expect(f.call).not.toHaveBeenCalled();
+  await publish('attention.agent',live([{...report,changedAt:3,jobs:[],watched:[]}]));
+  expect(text()).not.toContain('Waiting for input');expect(text()).not.toContain('Watch the pull request');
+  expect(text()).toContain('No jobs reported.');expect(text()).toContain('No watched items reported.');
+  await publish('attention.agent',live([]));expect(text()).not.toContain('No jobs reported.');expect(text()).toContain('No status reported');
+});
+
+it.each(['loading','offline','denied'] as const)('removes jobs and watches on %s even when stale records remain in the snapshot',async(status)=>{
+  const report:AgentStatus={id:'work',agent:'art',state:'working',work:'Current work',changedAt:1,jobs:[{id:'job',label:'Private job',href:'/p/tasks-preview/task/t-1'}],watched:[{id:'watch',label:'Private watch'}]};
+  f.snapshots['attention.agent']=live([report]);await draw();expect(text()).toContain('Private job');
+  await publish('attention.agent',{records:[report],status});
+  expect(text()).not.toContain('Private job');expect(text()).not.toContain('Private watch');expect(text()).not.toContain('No jobs reported.');
+  expect(text()).toContain('Art card');expect(text()).toContain(status==='loading'?'Opening agent status':'Couldn’t load agent status');
+});
+
+it('keeps report destinations on new apps or explicit HTTP(S) sources',()=>{
+  expect(reportLink('/p/tasks-preview/task/t-1?tab=comments#latest')).toEqual({app:true,href:'/p/tasks-preview/task/t-1?tab=comments#latest'});
+  expect(reportLink('https://example.com/work')).toEqual({app:false,href:'https://example.com/work'});
+  for(const href of [undefined,'','javascript:alert(1)','data:text/html,hi','//evil.test/p/x','/runtime','/p/../../signin','/p/%2e%2e/signin','/p/\\evil.test','https://example.com/\nwork'])expect(reportLink(href)).toBeUndefined();
 });
