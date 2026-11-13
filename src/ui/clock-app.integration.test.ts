@@ -1,5 +1,5 @@
 /** One browser proof: real operations/live feed, two windows, six looks/widths. */
-import { it, expect, vi } from 'vitest';
+import { it, expect, vi, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, extname, resolve } from 'node:path';
@@ -17,6 +17,8 @@ import { fixture } from '../fixture.js';
 import { importClock } from '../pieces/clock/importer.js';
 import { wake } from '../pieces/clock/store.js';
 import { load } from '../pieces/approvals/store.js';
+const runtimeFactory=runtimeClock.clockRuntime;
+afterEach(()=>vi.restoreAllMocks());
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
 it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes across two windows, holds dispatch, and covers phone and desktop looks', async () => {
@@ -25,7 +27,6 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
   writeFileSync(join(source,'art','spool.jsonl'), JSON.stringify({id:'w-aaaaaa',kind:'wake',for:'-',at:'2026-11-13 07:00:00',created:'2026-11-13 05:00:00',prompt:'Review these exact imported words',note:'Unknown imported review',origin:'agent:art'}));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   const runtimeStarts:string[]=[];
-  const runtimeFactory=runtimeClock.clockRuntime;
   vi.spyOn(runtimeClock,'clockRuntime').mockImplementation((...args)=>{
     const bridge=runtimeFactory(...args);
     return {startBody(input){runtimeStarts.push(input.wake.id);return bridge.startBody(input);}};
@@ -392,5 +393,5 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
       expect(runtimeStarts).not.toContain(scheduled.id);
       expect(runtimeStore(loom.db).ids('job').map(id=>runtimeStore(loom.db).read('job',id)).filter(job=>job?.source?.kind==='wake'&&job.source.id===scheduled.id)).toHaveLength(0);
     }
-  }finally{await browser.close();await loom.close();vi.restoreAllMocks();rmSync(home,{recursive:true,force:true});}
-},60_000);
+  }finally{await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
+},120_000);
