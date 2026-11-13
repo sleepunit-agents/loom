@@ -81,7 +81,7 @@ it('refuses unrepresentable flags from another accepted agent and inherits paren
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
 });
 it('requires explicit Slack team/bot/app and token secret names without opening a whole bundle',()=>{
- const f=fixture();writeFileSync(f.sources.files[0].path,JSON.stringify({agent:{slug:'art'},slack:{secrets_env:'/never-open-bundle'}}));writeFileSync(f.sources.files[2].path,'{}');
+ const f=fixture();writeFileSync(f.sources.files[0].path,JSON.stringify({agent:{slug:'art'},slack:{secrets_env:'/never-open-bundle'}}));writeFileSync(f.sources.files[2].path,'{}');writeFileSync(f.sources.files[1].path,JSON.stringify({people:{jonathan:{slack:{T1:['U1']}}}}));
  const connection={agent:'art',platform:'slack',workspace:'T1',bot:'B1',tokenSecret:'art-slack-token',appSecret:'art-slack-app'};
  const options={...f.options,connections:[connection]};
  expect(readBridgeImport(f.sources,options,h,f.open).expected.venues[0]).toMatchObject({...connection,enabled:false});
@@ -101,4 +101,31 @@ it('requires every accepted bot mapping and preserves each agent own filters',()
  f.options.connections.push({agent:'mark',platform:'discord',workspace:'789',bot:'200',tokenSecret:'mark-discord'});
  const venues=readBridgeImport(f.sources,f.options,h,f.open).expected.venues;
  expect(venues.find(v=>v.agent==='art')?.only).toEqual(['300']);expect(venues.find(v=>v.agent==='mark')?.only).toEqual(['400']);
+});
+it('resolves additional accepted agents people and moved tombstones even without instance files',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100'}],['channels','mark',{bot:'200'}],['people','mark',{people:{loren:{discord:['456']}}}]]);
+ f.options.connections.push({agent:'mark',platform:'discord',workspace:'789',bot:'200',tokenSecret:'mark-discord'});
+ expect(readBridgeImport(f.sources,f.options,h,f.open).expected.links.map(l=>l.person)).toEqual(['jonathan','loren']);
+ const d=new Database(f.sources.stores[0].path);d.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('moved','mark','{}','now','owner');d.close();
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+});
+it('store-only accepted parts cannot certify empty setup or bypass moved checks',()=>{
+ const f=fixture();f.sources.files=[];f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100'}],['people','art',{people:{jonathan:{discord:['123']}}}]]);
+ expect(()=>readBridgeImport(f.sources,{instances:[],connections:[]},h,f.open)).toThrow();
+ const options={instances:[],connections:f.options.connections};expect(readBridgeImport(f.sources,options,h,f.open).expected.links[0].person).toBe('jonathan');
+ const d=new Database(f.sources.stores[0].path);d.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('moved','art','{}','now','owner');d.close();
+ expect(()=>readBridgeImport(f.sources,options,h,f.open)).toThrow();
+});
+it('shuttle people override stale files when Runtime gates are absent',()=>{
+ const f=fixture();f.store('shuttle',[['people','art',{people:{loren:{discord:['456']}}}]]);
+ expect(readBridgeImport(f.sources,f.options,h,f.open).expected.links.map(l=>[l.person,l.user])).toEqual([['loren','456']]);
+});
+it('refuses contradictory agent account claims against routes and other selected people',()=>{
+ const f=fixture();f.store('shuttle',[['people','art',{agents:{art:{discord:['999']}}}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+ const d=new Database(f.sources.stores[0].path);d.prepare('UPDATE docs SET doc=?').run(JSON.stringify({agents:{art:{discord:['100']}}}));d.close();
+ expect(readBridgeImport(f.sources,f.options,h,f.open).expected.venues[0].bot).toBe('100');
+ const changed=new Database(f.sources.stores[0].path);changed.prepare('UPDATE docs SET doc=?').run(JSON.stringify({agents:{mark:{slack:{T1:['B1']}}}}));
+ changed.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('people','mark',JSON.stringify({agents:{mark:{slack:{T1:['B2']}}}}),'now','owner');changed.close();
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
 });

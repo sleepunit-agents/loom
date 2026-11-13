@@ -73,21 +73,37 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     const byName=new Map(sources.files.map(f=>[f.name,f]));
     const get=(kind:'shuttle'|'runtime',collection:string,key:string)=>stores.stores.find(s=>s.kind===kind)?.documents.find(d=>d.collection===collection&&d.key===key)?.doc;
     const parts=new Map((stores.stores.find(s=>s.kind==='shuttle')?.documents??[]).filter(d=>d.collection==='channels').map(d=>[d.key,d.doc]));
-    const effective=empty(),used=new Set<string>(),agents=new Set<string>(),routeOwners=new Map<string,string>();
+    const effective=empty(),used=new Set<string>(),agents=new Set<string>(),routeOwners=new Map<string,string>(),peopleResolved=new Set<string>();
+    const resolvePeople=(agent:string,fallback?:string)=>{
+      if(peopleResolved.has(agent))return;
+      if(!household.agents.includes(agent))throw Error();
+      const runtime=get('runtime','gates',agent),shuttle=get('shuttle','people',agent);
+      if(runtime===undefined&&get('shuttle','moved',agent)!==undefined)throw Error();
+      const selected=runtime??shuttle;
+      if(selected!==undefined)projectBridgeDocument(effective,`accepted:${agent}`,'people',selected);
+      else if(fallback!==undefined)effective.accounts.push(...inventory.accounts.filter(a=>a.source===fallback));
+      peopleResolved.add(agent);
+    };
     for(const instance of options.instances){
       for(const [kind,n]of Object.entries(instance)){if(byName.get(n)?.kind!==kind||used.has(n))throw Error();used.add(n);}
-      const s=inventory.instances.find(s=>s.source===instance.shuttle);if(!s||agents.has(s.agent)||!household.agents.includes(s.agent))throw Error();agents.add(s.agent);
-      effective.instances.push(s);
-      const runtime=get('runtime','gates',s.agent),shuttle=get('shuttle','people',s.agent);
-      if(runtime===undefined&&get('shuttle','moved',s.agent)!==undefined)throw Error();
-      const selected=runtime??shuttle;
-      if(selected!==undefined)projectBridgeDocument(effective,`accepted:${s.agent}`,'people',selected);
-      else effective.accounts.push(...inventory.accounts.filter(a=>a.source===instance.people));
-      const routes=acceptedRoutes(s.agent,(c,k)=>get('shuttle',c,k),parts);
-      if(routes!==undefined){projectBridgeDocument(effective,`accepted:${s.agent}`,'routes',routes);routeOwners.set(`accepted:${s.agent}`,s.agent);}
-      else{effective.routes.push(...inventory.routes.filter(r=>r.source===instance.routes));routeOwners.set(instance.routes,s.agent);}
+      const instanceConfig=inventory.instances.find(s=>s.source===instance.shuttle);
+      if(!instanceConfig||agents.has(instanceConfig.agent)||!household.agents.includes(instanceConfig.agent))throw Error();agents.add(instanceConfig.agent);
+      effective.instances.push(instanceConfig);
+      resolvePeople(instanceConfig.agent,instance.people);
+      const routes=acceptedRoutes(instanceConfig.agent,(c,k)=>get('shuttle',c,k),parts);
+      if(routes!==undefined){projectBridgeDocument(effective,`accepted:${instanceConfig.agent}`,'routes',routes);routeOwners.set(`accepted:${instanceConfig.agent}`,instanceConfig.agent);}
+      else{effective.routes.push(...inventory.routes.filter(r=>r.source===instance.routes));routeOwners.set(instance.routes,instanceConfig.agent);}
     }
     for(const f of sources.files)if(!f.kind.endsWith('-settings')&&!used.has(f.name))throw Error();
+    // Every relevant accepted store agent participates, not only explicit instances.
+    for(const store of stores.stores)for(const d of store.documents){
+      if(store.kind==='runtime'&&d.collection==='gates'||store.kind==='shuttle'&&['people','moved','channels'].includes(d.collection))resolvePeople(d.key);
+    }
+    for(const agent of parts.keys()){
+      if([...routeOwners.values()].includes(agent))continue;
+      const resolved=acceptedRoutes(agent,(c,k)=>get('shuttle',c,k),parts);if(resolved===undefined)throw Error();
+      projectBridgeDocument(effective,`accepted:${agent}`,'routes',resolved);routeOwners.set(`accepted:${agent}`,agent);
+    }
     // Every declared legacy connection needs an explicit reviewed secret-name mapping.
     const required=new Set<string>();
     for(const s of effective.instances){if(s.discordSecret!==undefined)required.add(`${s.agent}:discord`);if(s.slackBundle!==undefined)required.add(`${s.agent}:slack`);}
@@ -131,11 +147,21 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
         routes.push(record);
       }
     }
+    const agentClaims=effective.accounts.filter(a=>a.kind==='agent');
+    for(const a of agentClaims){
+      if(!household.agents.includes(a.owner)||a.user==='0')throw Error();
+      const samePlace=(b:typeof a)=>a.platform===b.platform&&(a.platform==='discord'||a.workspace===b.workspace);
+      if(agentClaims.some(b=>samePlace(b)&&(b.owner===a.owner&&b.user!==a.user||b.user===a.user&&b.owner!==a.owner)))throw Error();
+      const bots=venues.filter(v=>v.agent===a.owner&&v.platform===a.platform&&(a.platform==='discord'||v.workspace===a.workspace)).map(v=>v.bot);
+      if(a.platform==='discord')bots.push(...effective.routes.flatMap(r=>r.bots[a.owner]===undefined?[]:[r.bots[a.owner]]));
+      if(bots.some(bot=>bot!==a.user))throw Error();
+    }
     for(const a of effective.accounts){
       if(a.kind!=='person')continue;
       if(venues.some(v=>v.platform===a.platform&&v.bot===a.user&&(a.platform==='discord'||v.workspace===a.workspace))||effective.routes.some(r=>a.platform==='discord'&&Object.values(r.bots).includes(a.user))||effective.accounts.some(b=>b.kind==='agent'&&b.platform===a.platform&&b.user===a.user&&(a.platform==='discord'||b.workspace===a.workspace)))throw Error();
       if(!household.members.includes(a.owner)||a.user==='0')throw Error();
       const workspaces=a.platform==='slack'?[a.workspace!]:[...new Set(venues.filter(v=>v.platform==='discord').map(v=>v.workspace))];
+      if(!workspaces.length)throw Error();
       for(const workspace of workspaces)links.push(linkSchema.parse({id:`legacy:${a.platform}:${workspace}:${a.user}`,platform:a.platform,workspace,user:a.user,person:a.owner}));
     }
     const unique=<T extends{id:string}>(records:T[]):T[]=>{
