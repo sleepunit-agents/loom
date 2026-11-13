@@ -73,7 +73,7 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     const byName=new Map(sources.files.map(f=>[f.name,f]));
     const get=(kind:'shuttle'|'runtime',collection:string,key:string)=>stores.stores.find(s=>s.kind===kind)?.documents.find(d=>d.collection===collection&&d.key===key)?.doc;
     const parts=new Map((stores.stores.find(s=>s.kind==='shuttle')?.documents??[]).filter(d=>d.collection==='channels').map(d=>[d.key,d.doc]));
-    const effective=empty(),used=new Set<string>(),agents=new Set<string>();
+    const effective=empty(),used=new Set<string>(),agents=new Set<string>(),routeOwners=new Map<string,string>();
     for(const instance of options.instances){
       for(const [kind,n]of Object.entries(instance)){if(byName.get(n)?.kind!==kind||used.has(n))throw Error();used.add(n);}
       const s=inventory.instances.find(s=>s.source===instance.shuttle);if(!s||agents.has(s.agent)||!household.agents.includes(s.agent))throw Error();agents.add(s.agent);
@@ -84,23 +84,32 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
       if(selected!==undefined)projectBridgeDocument(effective,`accepted:${s.agent}`,'people',selected);
       else effective.accounts.push(...inventory.accounts.filter(a=>a.source===instance.people));
       const routes=acceptedRoutes(s.agent,(c,k)=>get('shuttle',c,k),parts);
-      if(routes!==undefined)projectBridgeDocument(effective,`accepted:${s.agent}`,'routes',routes);
-      else effective.routes.push(...inventory.routes.filter(r=>r.source===instance.routes));
+      if(routes!==undefined){projectBridgeDocument(effective,`accepted:${s.agent}`,'routes',routes);routeOwners.set(`accepted:${s.agent}`,s.agent);}
+      else{effective.routes.push(...inventory.routes.filter(r=>r.source===instance.routes));routeOwners.set(instance.routes,s.agent);}
     }
     for(const f of sources.files)if(!f.kind.endsWith('-settings')&&!used.has(f.name))throw Error();
     // Every declared legacy connection needs an explicit reviewed secret-name mapping.
     const required=new Set<string>();
     for(const s of effective.instances){if(s.discordSecret!==undefined)required.add(`${s.agent}:discord`);if(s.slackBundle!==undefined)required.add(`${s.agent}:slack`);}
     for(const s of inventory.settings)for(const a of Object.keys(s.bots))required.add(`${a}:${s.platform}`);
+    for(const r of effective.routes)for(const a of Object.keys(r.bots))required.add(`${a}:discord`);
+    // Accepted parts carry each agent's own filters. Resolve every declared bot,
+    // even when its instance has no legacy file fallback in this snapshot.
+    for(const key of required){
+      const [a,platform]=key.split(':');
+      if(platform!=='discord'||[...routeOwners.values()].includes(a))continue;
+      const resolved=acceptedRoutes(a,(c,k)=>get('shuttle',c,k),parts);if(resolved===undefined)throw Error();
+      projectBridgeDocument(effective,`accepted:${a}`,'routes',resolved);routeOwners.set(`accepted:${a}`,a);
+    }
     const venues:Venue[]=[],routes:Route[]=[],links:PersonLink[]=[];
     for(const c of options.connections){
       if(!household.agents.includes(c.agent)||!required.delete(`${c.agent}:${c.platform}`))throw Error();
-      if(c.bot==='0'||c.workspace==='0'||(c.platform==='slack'&&!c.appSecret))throw Error();
+      if(c.bot==='0'||c.workspace==='0'||(c.platform==='slack'&&(!c.appSecret||c.appSecret===c.tokenSecret)))throw Error();
       if(c.platform==='discord'){
-        const claims=effective.routes.filter(r=>r.bots[c.agent]!==undefined);
+        const claims=effective.routes.filter(r=>routeOwners.get(r.source)===c.agent&&r.bots[c.agent]!==undefined);
         if(!claims.length||claims.some(r=>r.bots[c.agent]!==c.bot||r.guild!==c.workspace))throw Error();
       }
-      const configs=c.platform==='discord'?effective.routes.filter(r=>r.guild===c.workspace&&r.bots[c.agent]===c.bot):[];
+      const configs=c.platform==='discord'?effective.routes.filter(r=>routeOwners.get(r.source)===c.agent&&r.guild===c.workspace&&r.bots[c.agent]===c.bot):[];
       const settings=configs.map(r=>({only:r.only,ignore:r.ignore,botRoles:r.botRoles[c.agent]??[]}));
       if(settings.some(r=>canonical(r)!==canonical(settings[0])))throw Error();
       venues.push(venueSchema.parse({...c,...settings[0],id:`legacy:${c.agent}:${c.platform}`,enabled:false}));

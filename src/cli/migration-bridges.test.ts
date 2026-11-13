@@ -59,3 +59,12 @@ it('both verifiers detect adapter receipt/session rows independently of import r
   const clean=new Database(join(f.home,'loom.db'));clean.exec(`DELETE FROM ${table}`);clean.close();
  }
 });
+
+it('both verifiers derive every setup row from source rather than a receipt',async()=>{
+ const f=await fixture();await runMigrationAll(f.snapshot,f.home,f.plan);
+ for(const table of ['bridges_venues','bridges_routes','bridges_links']){
+  const d=new Database(join(f.home,'loom.db')),row=d.prepare(`SELECT id,record FROM ${table}`).get() as{id:string;record:string};d.prepare(`UPDATE ${table} SET record=? WHERE id=?`).run(JSON.stringify({...JSON.parse(row.record),unexpected:'tampered'}),row.id);d.close();
+  for(const report of [await verifyMigration(f.snapshot,f.home,f.plan),await verifyBridgesMigration(f.snapshot,f.home,f.plan.importers.bridges.options)])expect(report.differences).toContainEqual(expect.objectContaining({piece:'bridges',table,expected:1,actual:1}));
+  const clean=new Database(join(f.home,'loom.db'));clean.prepare(`UPDATE ${table} SET record=? WHERE id=?`).run(row.record,row.id);clean.close();
+ }
+});

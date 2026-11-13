@@ -50,6 +50,7 @@ it('refuses moved-without-Runtime rather than falling back to stale people',()=>
 });
 it('assembles all accepted agent parts and flags, never proposal flags',()=>{
  const f=fixture();f.store('shuttle',[['routes','household',{guild:'789',channel_names:{'300':'work'}}],['channels','art',{bot:'100',answers:{'300':'work'},flags:{'300':{guest_venue:true,readers:['jonathan']}}}],['channels','mark',{bot:'200',flags:{'300':{guest_venue:true,readers:['jonathan']}},answers:{'400':'mark'},threads:{'500':{primary:'mark',parent:'400',peer:true}}}],['route-offers','art',{doc:{bots:{art:'100',mark:'200'},channels:{'300':{peer:true}}}}]]);
+ f.options.connections.push({agent:'mark',platform:'discord',workspace:'789',bot:'200',tokenSecret:'mark-discord'});
  const s=readBridgeImport(f.sources,f.options,h,f.open);expect(s.expected.routes).toEqual(expect.arrayContaining([expect.objectContaining({channel:'300',guest:true,peer:false,readers:['jonathan']}),expect.objectContaining({channel:'400',primary:'mark'}),expect.objectContaining({channel:'500',parent:'400',peer:false})]));
 });
 it('falls back to files when accepted routes lack an offered agent part',()=>{
@@ -64,10 +65,12 @@ it('refuses contradictory identities, route claims and incomplete mapping',()=>{
  expect(()=>readBridgeImport(f.sources,{...f.options,connections:[]},h,f.open)).toThrow();
 });
 
-it('refuses agent bot/person collisions, including route bots without a connection',()=>{
- const f=fixture();for(const bot of ['100','200']){
+it('refuses agent bot/person collisions after both accepted connections resolve',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100'}],['channels','mark',{bot:'200'}]]);
+ f.options.connections.push({agent:'mark',platform:'discord',workspace:'789',bot:'200',tokenSecret:'mark-discord'});
+ expect(readBridgeImport(f.sources,f.options,h,f.open).expected.links[0].user).toBe('123');
+ for(const bot of ['100','200']){
   writeFileSync(f.sources.files[1].path,JSON.stringify({people:{jonathan:{discord:[bot]}}}));
-  writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100',mark:'200'}}));
   expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
  }
 });
@@ -82,6 +85,7 @@ it('requires explicit Slack team/bot/app and token secret names without opening 
  const connection={agent:'art',platform:'slack',workspace:'T1',bot:'B1',tokenSecret:'art-slack-token',appSecret:'art-slack-app'};
  const options={...f.options,connections:[connection]};
  expect(readBridgeImport(f.sources,options,h,f.open).expected.venues[0]).toMatchObject({...connection,enabled:false});
+ expect(()=>readBridgeImport(f.sources,{...options,connections:[{...connection,appSecret:connection.tokenSecret}]},h,f.open)).toThrow();
  for(const key of ['workspace','bot','tokenSecret','appSecret']){const c={...connection} as Record<string,unknown>;delete c[key];expect(()=>readBridgeImport(f.sources,{...options,connections:[c]},h,f.open)).toThrow();}
 });
 it('checks private adapter tables for emptiness and comparison',()=>{
@@ -89,4 +93,12 @@ it('checks private adapter tables for emptiness and comparison',()=>{
  importBridges(db,f.sources,f.options,h,f.open);db.prepare("DELETE FROM bridges_meta WHERE key='source-checksum'").run();db.prepare("INSERT INTO bridges_discord_sessions VALUES ('old','private cursor')").run();
  expect(()=>importBridges(db,f.sources,f.options,h,f.open)).toThrow('must be empty');
  }finally{close();}
+});
+
+it('requires every accepted bot mapping and preserves each agent own filters',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',extra:{only:['300']}}],['channels','mark',{bot:'200',extra:{only:['400']}}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+ f.options.connections.push({agent:'mark',platform:'discord',workspace:'789',bot:'200',tokenSecret:'mark-discord'});
+ const venues=readBridgeImport(f.sources,f.options,h,f.open).expected.venues;
+ expect(venues.find(v=>v.agent==='art')?.only).toEqual(['300']);expect(venues.find(v=>v.agent==='mark')?.only).toEqual(['400']);
 });
