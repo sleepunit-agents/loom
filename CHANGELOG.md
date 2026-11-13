@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add keyboard-accessible Pin and Archive actions to Comms list rows, including right-click entry.
+
 - Show Stop only for active joined Comms threads, disabling it while disconnected or saving.
 
 - Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.
