@@ -22,22 +22,32 @@ async function setup(){
   const s=signin(app);app.db.transaction(()=>s.tokens.replace({v:1,tokens:[{label:'operator',role:'owner',member:'jonathan',sha256:hash('operator-bearer'),created:new Date(clock.now()).toISOString()}]},{}))();
   const call=(name:string,input:unknown={},id?:string)=>app.operations.call('direct',owner,name,input,id);
   const file=join(home,'client-token');writeFileSync(file,'operator-bearer');
-  const client=async(piece:'token'|'sessions',args:string[],request:typeof fetch=fetch)=>{
+  const client=async(piece:'token'|'sessions',args:string[],request:typeof fetch=fetch,env:NodeJS.ProcessEnv={LOOM_URL:app.url,LOOM_TOKEN_FILE:file,LOOM_HOME:'/missing'})=>{
     let stdout='',stderr='',now=0,calls=0;const bodies:string[]=[];
-    const code=await runAccessClient(piece,args,{stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:app.url,LOOM_TOKEN_FILE:file,LOOM_HOME:'/missing'},stdout:t=>stdout+=t,stderr:t=>stderr+=t},{request:(url,init)=>{calls++;bodies.push(String(init?.body));return request(url,init);},retry:async ms=>{now+=ms;},now:()=>now});
+    const code=await runAccessClient(piece,args,{stdin:Readable.from([]),stdinIsTTY:false,env,stdout:t=>stdout+=t,stderr:t=>stderr+=t},{request:(url,init)=>{calls++;bodies.push(String(init?.body));return request(url,init);},retry:async ms=>{now+=ms;},now:()=>now});
     return {code,stdout,stderr,calls,bodies};
   };
-  return {app,s,clock,call,client};
+  return {app,s,clock,call,client,home,file};
 }
 it('mints only supported identities, returns the bearer once, and never journals a credential',async()=>{
   const f=await setup();
   for(const input of [{role:'owner'},{role:'owner',member:'missing'},{role:'agent',agent:'missing'},{role:'service',principal:'absent'},{role:'peer',principal:'peer'},{role:'owner',member:'jonathan',agent:'art'},{role:'agent',agent:'art',expires:new Date(f.clock.now()-1).toISOString()}])expect(f.call('token.create',{label:'bad',...input})).toMatchObject({ok:false});
   expect(f.call('signin.setPrincipal',{kind:'service',id:'clock',active:true},'principal')).toMatchObject({ok:true});
-  for(const input of [{role:'owner',member:'pollock'},{role:'agent',agent:'art',service:'build',house:'house'},{role:'service',principal:'clock'}]){
+  expect(f.call('signin.setPrincipal',{kind:'runner',id:'box',active:true},'runner-principal')).toMatchObject({ok:true});
+  const grants=()=>({secrets:f.app.db.prepare('SELECT * FROM secrets_grants ORDER BY id').all(),runtime:f.app.db.prepare('SELECT * FROM runtime_settings ORDER BY id').all()});
+  const grantsBefore=grants();
+  const runnerBefore=f.app.db.prepare("SELECT body FROM household_settings WHERE id='signin-principal:runner:box'").get();
+  for(const input of [{role:'runner',principal:'box'},{role:'owner',member:'pollock'},{role:'agent',agent:'art',service:'build',house:'house'},{role:'service',principal:'clock'}]){
     const r=f.call('token.create',{...input,label:input.role});expect(r.ok).toBe(true);if(!r.ok)throw Error();
     const {token,record}=r.value as {token:string;record:object};expect(f.s.token(hash(token))).toBeDefined();
     expect(JSON.stringify(record)).not.toContain(hash(token));
     const dump=JSON.stringify(f.app.db.prepare('SELECT * FROM core_operations').all());expect(dump).not.toContain(token);expect(dump).not.toContain(hash(token));
+    expect(f.app.db.prepare("SELECT body FROM household_settings WHERE id='signin-principal:runner:box'").get()).toEqual(runnerBefore);
+    expect(grants()).toEqual(grantsBefore);
+    if(input.role==='runner'){
+      expect(f.s.token(hash(token))).toEqual({viewer:{kind:'runner',id:'box'}});
+      const denied=await fetch(f.app.url+'/api/token/list',{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:'{"input":{}}'});expect(denied.status).toBe(403);await denied.body?.cancel();
+    }
     expect(f.call('token.create',{...input,label:input.role})).toMatchObject({ok:false,code:'conflict'});
   }
   for(const viewer of [{kind:'member',id:'pollock'},{kind:'agent',id:'art'},{kind:'runner',id:'box'},{kind:'service',id:'clock'}] as const){
@@ -119,11 +129,11 @@ it('does not infer ancestry from a reused label and resolves safe origin metadat
 it('lists populated session metadata in recency order including ended sessions',async()=>{
   const f=await setup(),secret=hash('operator-bearer');
   const first=f.s.createSession(secret,{device:'Phone',label:'daily',via:'link'}),second=f.s.createSession(secret,{device:'HeadlessChrome',label:'screens',via:'passkey'});
-  f.s.sessions.change(x=>{x.sessions[hash(first)].issuedAt=f.s.now()-100;x.sessions[hash(first)].seenAt=f.s.now()-1;x.sessions[hash(second)].issuedAt=f.s.now()-6*3600;});
+  f.s.sessions.change(x=>{const recent=x.sessions[hash(first)],old=x.sessions[hash(second)];recent.issuedAt=f.s.now()-100;recent.seenAt=f.s.now()-1;old.issuedAt=f.s.now()-6*3600;x.sessions={['f'.repeat(64)]:recent,['0'.repeat(64)]:old};});
   const answer=f.call('sessions.list');expect(answer.ok).toBe(true);if(!answer.ok)throw Error();
   expect(answer.value).toEqual([
-    {ref:hash(first).slice(0,16),issuedAt:f.s.now()-100,seenAt:f.s.now()-1,expiresAt:(f.s.now()-100+30*86400)*1000,device:'Phone',label:'daily',via:'link',agent:false,token:'operator',member:'jonathan',ended:false},
-    {ref:hash(second).slice(0,16),issuedAt:f.s.now()-6*3600,expiresAt:f.clock.now(),device:'HeadlessChrome',label:'screens',via:'passkey',agent:true,token:'operator',member:'jonathan',ended:true},
+    {ref:'f'.repeat(16),issuedAt:f.s.now()-100,seenAt:f.s.now()-1,expiresAt:(f.s.now()-100+30*86400)*1000,device:'Phone',label:'daily',via:'link',agent:false,token:'operator',member:'jonathan',ended:false},
+    {ref:'0'.repeat(16),issuedAt:f.s.now()-6*3600,expiresAt:f.clock.now(),device:'HeadlessChrome',label:'screens',via:'passkey',agent:true,token:'operator',member:'jonathan',ended:true},
   ]);
 });
 it('withDevices alone removes root devices and keeps descendant passkeys working',async()=>{
@@ -158,4 +168,13 @@ it('refuses empty normalized labels without signing out unlabeled agent sessions
   const before=f.s.sessions.read();
   for(const label of [' ','\t','\u200b','\u202e','\u2060','\ufeff'])expect(f.call('sessions.revoke',{label},'blank-'+label)).toMatchObject({ok:false,code:'invalid'});
   expect(f.s.sessions.read()).toEqual(before);expect(f.s.session(a)).toBeDefined();expect(f.s.session(b)).toBeDefined();
+});
+it('requires explicit safe client connection settings and a readable nonempty token before transport',async()=>{
+  const f=await setup();let requests=0;
+  const request:typeof fetch=async()=>{requests++;throw Error('private-witness');};
+  const base={LOOM_URL:f.app.url,LOOM_TOKEN_FILE:f.file};
+  for(const env of [{},{LOOM_URL:f.app.url},{LOOM_TOKEN_FILE:f.file},...['ftp://example.com','http://user:password@example.com','http://example.com/path','http://example.com/?query','http://example.com/#hash','not a URL'].map(LOOM_URL=>({...base,LOOM_URL})),{...base,LOOM_TOKEN_FILE:join(f.home,'absent')}]){
+    const r=await f.client('token',['list','{}'],request,env);expect(r).toMatchObject({code:1,stdout:'',calls:0});expect(r.stderr).not.toContain('private-witness');expect(r.stderr).not.toContain('password');
+  }
+  writeFileSync(f.file,' \n');expect(await f.client('sessions',['list','{}'],request,base)).toMatchObject({code:1,stdout:'',calls:0});expect(requests).toBe(0);
 });
