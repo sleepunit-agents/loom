@@ -132,10 +132,12 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>b.getByText('Saved',{exact:true}).count()).toBe(1);
     clock.advance(0);
     await expect.poll(()=>{const r=loom.operations.call('direct',{kind:'member',id:'jonathan'},'clock.list',{});return r.ok&&(r.value as Array<{hold?:string}>).some(w=>w.hold==='staging');}).toBe(true);
+    await b.setViewportSize({width:1280,height:900});
     await b.getByRole('button',{name:/Local requests/}).click();
     await expect.poll(()=>b.getByRole('group',{name:'Local requests'}).locator('[data-split-row]').count()).toBe(3);
     const openLocal=async(p:typeof a,index:number)=>{await p.goto(`${loom.url}/p/clock-preview/item/${localCards[index]}`);await expect.poll(()=>p.getByRole('group',{name:'Answer approval'}).count()).toBe(1);};
-    await openLocal(b,0);
+    await row(b,'Allow once').click();
+    await expect.poll(()=>b.getByRole('group',{name:'Answer approval'}).count()).toBe(1);
     await expect.poll(()=>b.getByText('Report host disk usage: Allow once.',{exact:false}).count()).toBe(1);
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
