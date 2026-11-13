@@ -83,6 +83,10 @@ it('propagates lookup refusals without fallback or partial writes, and retries r
   expect(write(['pond'])).toMatchObject({ code: 'denied' });
   refs.threadProject = () => failure('unavailable', 'Thread unavailable');
   expect(write()).toMatchObject({ code: 'unavailable' });
+  refs.threadProject = () => ({ ok: true, value: 'pond' });
+  const byVenue = vi.spyOn(refs.projects!, 'byVenue');
+  expect(write()).toMatchObject({ code: 'denied' });
+  expect(byVenue).not.toHaveBeenCalled();
   refs.threadProject = () => ({ ok: true, value: null });
   refs.projects!.byVenue = () => failure('denied', 'Venue refused');
   expect(write()).toMatchObject({ code: 'denied' });
