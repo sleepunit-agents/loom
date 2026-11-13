@@ -12,8 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Connect the persistent Secrets holder executable to authenticated current household authority over a dedicated private socket.
-
+- Add unregistered Discord service authentication and fresh channel, thread-parent and DM-recipient metadata reads for durable intake normalization.
 - Show each Comms thread’s agent letter beside its title in the list.
 
 - Add private Discord Gateway receipt/session storage with atomic checkpoints and credential-generation isolation; daemon registration remains pending.
@@ -54,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Next-mode runtime releases claimed input once through the staging gate; HTTP supports asynchronous operations with authentication revalidation.
 - Derive the private-app window capability from validated next-mode page sessions, while keeping bearer callers denied.
 - Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
+- Connect the persistent Secrets holder executable to authenticated current household authority over a dedicated private socket.
 
 - Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
 - Add atomic offline Secrets metadata import, source-owned pending asks, migration-all discovery and independent destination verification.
@@ -1086,6 +1086,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Record token and session last use on the new side, including activity in open windows.
 
 - Add owner-controlled agent creation in next Setup, with portable creed/rules, recoverable context publication, first-token selection and an explicit next-mode harness snippet.
+
+- Fresh next-mode households publish a complete default assistant context before first sign-in, with exclusive filesystem recovery on failed initialization.
 
 ## [0.16.1] - 2026-10-25
 

@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { Foundation } from '../app.js';
 import { signin, hash } from './index.js';
 import { HouseholdRows } from '../household/rows.js';
+import { publishBootstrapContext } from '../household/bootstrap.js';
 import { HouseholdDatabase } from '../household/document.js';
 export const operatorRequest = z.strictObject({
   request: z.literal('link'), member: z.string().min(1).max(200),
@@ -103,6 +104,13 @@ export function firstSignin(app: Foundation, home: string, url: string, stdout: 
     if (!s.household()) {
       const username = userInfo().username;
       const member = /^[a-z0-9]+(-[a-z0-9]+)*$/.test(username) ? username : 'owner';
+      // An initial registry entry must have a complete portable context. Use the
+      // same exclusive publication/recovery protocol as Setup before committing
+      // any household or credential. Defaults contain no chosen personality.
+      const input = { agent: 'assistant', name: 'Assistant', purpose: 'Help with the work you are given.', voice: 'Use clear, direct language.', rules: '', ask: '' };
+      publishBootstrapContext(home, input, member, {
+        viewer: `local-os-owner:${userInfo().uid}`, id: 'household-first-start-v1', inputHash: hash(JSON.stringify(input)),
+      }, { requireCompleteRecovery: true });
       new HouseholdDatabase(app.db).replace(home, { v: 1, agents: ['assistant'], owner: member, members: [{ person: member, role: 'owner', agents: '*' }] });
     }
     if (!s.tokens.document()) s.tokens.replace({ v: 1, tokens: [] }, {});
