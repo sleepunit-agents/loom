@@ -29,6 +29,8 @@ export interface DiscordGatewayOptions {
 }
 const INITIAL = 'wss://gateway.discord.gg/?v=10&encoding=json';
 function gateway(value: string): string {
+  // Validate the entire input before URL parsing as well as its parsed parts.
+  if (!/^wss:\/\/gateway(?:-[a-z0-9-]+)?\.discord\.gg\/?(?:\?[^#\r\n]*)?$/.test(value)) throw Error();
   const url = new URL(value);
   url.search = '?v=10&encoding=json';
   if (url.protocol !== 'wss:' || !/^gateway(?:-[a-z0-9-]+)?\.discord\.gg$/.test(url.hostname)

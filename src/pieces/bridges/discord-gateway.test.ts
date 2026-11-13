@@ -126,7 +126,7 @@ describe('Discord gateway session transport',()=>{
     const gate=vi.fn(()=>false); const f=fixture({beforeConnect:gate}); await settled(); expect(f.socket).not.toHaveBeenCalled(); expect(f.withValue).not.toHaveBeenCalled();
     gate.mockReturnValue(true); const s=await retry(f); gate.mockReturnValue(false); s.hello(); await settled(); expect(s.send).not.toHaveBeenCalled();
   });
-  it.each(['wss://evil.example/','wss://gateway.discord.gg.evil.example/','https://gateway.discord.gg/','wss://user:pass@gateway.discord.gg/','wss://gateway.discord.gg:8443/','wss://gateway.discord.gg/private','wss://gateway.discord.gg/#private'])('rejects unsafe persisted host %s before dial',async url=>{
+  it.each(['wss://evil.example/','wss://gateway.discord.gg.evil.example/','https://gateway.discord.gg/','wss://user:pass@gateway.discord.gg/','wss://gateway.discord.gg:443/','wss://gateway.discord.gg:8443/','wss://gateway.discord.gg/private','wss://gateway.discord.gg/#private'])('rejects unsafe persisted host %s before dial',async url=>{
     const f=fixture({load:()=>({session:'private',seq:1,url})}); await settled(); expect(f.socket).not.toHaveBeenCalled(); expect(f.withValue).not.toHaveBeenCalled();
   });
   it.each([null,[],{op:10,d:{heartbeat_interval:0}},{op:10,d:{heartbeat_interval:Infinity}},{op:0,s:1,t:'READY',d:{}},{op:9,d:'false'}])('disconnects malformed frame %j without committing',async frame=>{
