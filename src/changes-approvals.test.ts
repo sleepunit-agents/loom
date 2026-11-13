@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { startLoom } from './foundation.js';
 import { FakeClock } from './core/clock.js';
 import { HouseholdDatabase } from './core/household/document.js';
+import { HouseholdRows } from './core/household/rows.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { change } from './pieces/changes/fixture.js';
 import { replaceChanges } from './pieces/changes/store.js';
@@ -43,6 +44,14 @@ it('next Changes answers through real owner Approvals and keeps exact-head and c
   // A new head cannot inherit a previous grant.
   loom.db.transaction(()=>replaceChanges(loom.db,[change({head:{id:'b'.repeat(40),ref:'art/new'}})]))();
   expect(show()).toMatchObject({ok:true,value:{group:'you'}});
+  expect(call('changes.confirm',{id:change().id,head:'b'.repeat(40)})).toMatchObject({ok:true,value:{open:true}});
+  const projects=new HouseholdRows(loom.db,'projects');
+  const project=new SharingDatabase(loom.db,home).project('pond')!;
+  projects.put('pond',{...project,repositories:[]});
+  expect(await answer('always','b'.repeat(40))).toMatchObject({ok:false,code:'invalid'});
+  expect(call('approvals.rules')).toMatchObject({ok:true,value:{rules:[]}});
+  expect(call('approvals.list')).toMatchObject({ok:true,value:{approvals:[{target},{target}]}});
+  projects.put('pond',project);
   // Fail the actual grant write after the project rule write, inside the real outer operation.
   loom.db.exec("CREATE TRIGGER fail_changes_grant BEFORE INSERT ON approvals_approvals BEGIN SELECT RAISE(ABORT, 'test grant failure'); END");
   expect(await answer('always','b'.repeat(40))).toMatchObject({ok:false,code:'unavailable'});
