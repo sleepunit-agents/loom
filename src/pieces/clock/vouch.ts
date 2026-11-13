@@ -20,13 +20,13 @@ export function vouchable(w: Wake): boolean {
 
 /** Archived strings can exclude a request, never authenticate its asker. */
 export function askable(w: Wake): boolean {
-  return vouchable(w) && w.member === undefined && w.project === undefined
-    && w.legacy?.member === undefined && w.legacy?.project === undefined && !(Array.isArray(w.legacy?.for_people) ? w.legacy.for_people.length : w.legacy?.for_people)
+  return vouchable(w) && w.member === undefined
+    && w.legacy?.member === undefined && (w.legacy?.project === undefined || w.legacy.project === w.project) && !(Array.isArray(w.legacy?.for_people) ? w.legacy.for_people.length : w.legacy?.for_people)
     && !['steered', 'other-agent'].includes(String(w.legacy?.for_why));
 }
 /** Archived ownership hints only restrict automatic selection. */
 export function automaticVouch(w: Wake): boolean {
-  return askable(w) && w.legacy?.origin === `agent:${w.agent}` && w.legacy?.for_why === 'none';
+  return askable(w) && w.project === undefined && w.legacy?.project === undefined && w.legacy?.origin === `agent:${w.agent}` && w.legacy?.for_why === 'none';
 }
 /** Shape saved work for the owning card renderer without restoring authority. */
 export function vouchWords(w: Wake) {

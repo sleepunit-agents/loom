@@ -158,17 +158,18 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   }, (_ctx, i) => {
     const target = vouchOf(i.target)!;
     const rows = target.ids.map(get);
+    if (rows.some(row => row.project !== rows[0].project)) invalid('Ask about one project scope at a time');
     for (const row of rows) {
       if (!askable(row)) invalid('Only eligible unknown imports without evidence of another person steering may be asked about');
       newWork(row);
     }
     if (!options.vouchFiling) throw new OperationError('unavailable', 'Clock approval filing is not composed');
-    const result = options.vouchFiling.request(target.agent, i.target, vouchDetails(rows));
+    const result = options.vouchFiling.request(target.agent, i.target, vouchDetails(rows), rows[0].project);
     if (!result.ok) throw new OperationError(result.code, result.message);
     const card = result.value as { id: string; state: string };
     return { id: card.id, state: card.state, target: i.target };
   });
-  register('vouch', z.object({ target: text }).strict(), true, (v, i) => {
+  register('vouch', z.object({ target: text, expectedScope: z.object({project:text.optional(), member:text.optional()}).strict().optional() }).strict(), true, (v, i) => {
     const target = vouchOf(i.target);
     if (!target || i.target.length > 200 || !mayAct(v, {}, sharing(), 'household')) return false;
     // Check every existing row, including rows that cannot be adopted. Missing
@@ -176,6 +177,10 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     return target.ids.every(id => { const w = wake(db, id); return !w || w.agent === target.agent && see(v, w) && create(v, w); });
   }, (ctx, i) => {
     const target = vouchOf(i.target)!;
+    if (i.expectedScope && target.ids.some(id => {
+      const w = wake(db,id);
+      return w && (w.project !== i.expectedScope!.project || w.member !== i.expectedScope!.member);
+    })) invalid('The saved work scope changed; review the work again');
     const done: string[] = [], gone: string[] = [];
     for (const id of target.ids) {
       const w = wake(db, id);
@@ -361,7 +366,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     if (options.vouchFiling?.group) {
       const rows = wakes(db).filter(w => {
         const viewer: Viewer = {kind:'agent',id:w.agent};
-        if (!vouchOf(`${w.agent}:${w.id}`) || !askable(w) || !see(viewer,w) || !create(viewer,w)) return false;
+        if (w.project !== undefined || w.legacy?.project !== undefined || !vouchOf(`${w.agent}:${w.id}`) || !askable(w) || !see(viewer,w) || !create(viewer,w)) return false;
         try { newWork(w); return true; }
         catch (e) { if (e instanceof OperationError && e.code === 'invalid') return false; throw e; }
       });

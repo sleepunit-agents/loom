@@ -668,9 +668,11 @@ is enabled by this slice.
 `clock.askVouch {target}` and `ask-vouch <id> [<id> …]` let the authenticated
 assignee agent or current household owner request adoption of selected eligible
 unknown imports. Every row must remain visible and pass current create policy.
-Private/member-scoped and project-scoped imports are also refused by this filing
-path: an agent-scoped approval cannot carry their saved words. Scope-preserving
-filing remains future work. Known-person, steered, other-agent and capability-bearing imports are refused;
+Private/member-scoped imports remain refused by this filing path. Project-scoped
+imports may be explicitly selected together only when all rows share one project,
+with current visibility and creation checks for both agent and project. Their
+approval retains that project; archived project metadata must be absent or match
+the current scope. A mixed project selection refuses before filing. Known-person, steered, other-agent and capability-bearing imports are refused;
 archived words supply no authority. The target uses the same canonical grammar
 and bounds as owner vouch. Clock generates the question and lists every id and
 saved due time within Approvals' details cap. Each line includes a saved-note and
@@ -728,3 +730,21 @@ cards remain intact when all their eligible ids cannot fit into one group. A mis
 service access fails closed and is retried by the next daemon check. Filing never
 changes the held work; only the existing owner Allow application adopts it. No
 old stores, polling subprocesses or systemd jobs are involved.
+
+
+### Project-scoped explicit review
+
+Project work stays out of automatic groups, including previously explicitly asked
+project ids. Its explicit card uses the existing owning request, permanent Deny
+suppression and retained client receipt. The existing Clock reader action uses
+the same live eligibility hint and operation; no new client grammar or screen is
+needed. Agent access alone does not expose the project's card details. An owner
+still needs target give-work authority, and the owning filing service independently
+checks that the assignee agent can create approval records in the project.
+
+On owner Allow the Clock application supplies the card's exact project/member
+scope. If any existing selected wake has moved scope, the answer, application and
+spend roll back. Approvals refuses reuse of a pending/allowed exact target whose
+scope differs. No archived scope authenticates a principal; private work remains
+held for a separate recovery flow. Local-wake filing/recovery still needs the
+runtime's authenticated caller provenance and is not implemented by this unit.
