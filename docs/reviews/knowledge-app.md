@@ -114,3 +114,20 @@ TypeScript and web production build pass; web lint passes with existing App
 warnings. Chrome is CI-only. Final acceptance still requires the exact head's
 browser proof/six screenshots and green checks; no owner decision or host action
 is part of this merge.
+
+## CI folds (no additional cold rounds)
+
+Run 43377302879 at 6ba7be9 found two defects in this PR, so neither job was simply
+rerun: shard 4 measured the shell's initial JS at 252,365 gzip bytes (over the
+250,000 budget), and shard 1's Knowledge test could not pass the new sign-in shell
+gate after main's sign-in merge. Both are folded:
+
+- Kit now exposes a lazy Markdown component; the parser loads only with a reader.
+  The unchanged next-budget test and retained-request tests pass after the web
+  build. This keeps the renderer behind kit without putting it in first paint.
+- The browser fixture seeds disposable DB token metadata and signs in through the
+  real one-time-link/cookie flow before opening Knowledge in both windows. Its
+  fixed live authentication intentionally permits aging records beyond the
+  browser session TTL; no production authentication behavior is changed.
+
+These fixes change the final tested head; earlier CI results do not transfer.

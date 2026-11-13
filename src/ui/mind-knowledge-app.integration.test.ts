@@ -8,6 +8,7 @@ import { startLoom } from '../foundation.js';
 import { createFoundation } from '../core/app.js';
 import { FakeClock } from '../core/clock.js';
 import { migrateHouseholdTables } from '../core/household/schema.js';
+import { TokenDatabase } from '../core/household/tokens.js';
 import { HouseholdDatabase } from '../core/household/document.js';
 import { SqliteKnowledgeBackend } from '../backends/sqlite-knowledge.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
@@ -16,17 +17,27 @@ if(process.env.CI && (!chrome || !existsSync(join(root,'next.html')))) throw new
 it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks in two windows, follows citations, ages and removes pages',async()=>{
   const home=mkdtempSync(join(tmpdir(),'knowledge-app-'));
   const metadata=createFoundation({home});migrateHouseholdTables(metadata.db);
-  metadata.db.transaction(()=>new HouseholdDatabase(metadata.db).replace(home,{v:1,agents:['art'],default:'art',owner:'owner'}))();metadata.close();
+  metadata.db.transaction(()=>new HouseholdDatabase(metadata.db).replace(home,{v:1,agents:['art'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]}))();
+  metadata.db.transaction(()=>new TokenDatabase(metadata.db).replace({v:1,tokens:[]},{}))();metadata.close();
   const source=new SqliteKnowledgeBackend({dbPath:join(home,'commons/knowledge.db')});
   await source.writePage({slug:'six-voices',title:'Six voices',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'softcut has **six voices**. See [[clock-tempo]].',citations:[{claim:'Six voices',source_kind:'web',source_locator:'https://example.com/voices',excerpt:'six'}]});
   await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'Set the clock tempo with params.'});
   await source.writePage({slug:'backup',title:'Nightly backup',domain:'ours/homelab',verified_at:'2026-11-10T12:00:00Z',body:'Backups run overnight.'});
   const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
+  // Fixed fixture authentication lets record aging run beyond the browser session TTL.
   const app=await startLoom({home,next:true,clock,webRoot:root,sharing:()=>({members:{owner:{owner:true,agents:['art']}},projects:{},services:{}}),authenticate:()=>({viewer:{kind:'member',id:'owner'},valid:()=>true})});
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
     const a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});
+    // Signin's shell gate uses the real disposable cookie even with a fixture
+    // live resolver. Preserve that composition when main adds authentication.
+    const link=app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});
+    if(!link.ok)throw new Error('Fixture sign-in link failed');
+    await a.goto(app.url+(link.value as {path:string}).path);
+    const signedIn=a.waitForResponse(response=>response.request().method()==='POST');
+    await a.getByRole('button',{name:'Sign in',exact:true}).click();
+    expect((await signedIn).status()).toBe(303);
     await Promise.all([a.goto(`${app.url}/p/knowledge-preview`),b.goto(`${app.url}/p/knowledge-preview`)]);
     const row=(p:typeof a,title:string)=>p.locator('[data-split-row]').filter({hasText:title});
     await expect.poll(()=>row(b,'Six voices').count()).toBe(1);
@@ -45,7 +56,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     expect(await source.getVerifications('six-voices')).toHaveLength(1);
     await a.getByRole('button',{name:'Check again',exact:true}).click();
     await expect.poll(()=>b.getByText(/Asked to be checked again/).count()).toBe(1);
-    await b.locator('article a[data-knowledge]').click();
+    await b.locator('article a[href^="https://loom.invalid/knowledge/"]').click();
     await expect.poll(()=>b.getByRole('heading',{name:'Clock tempo',exact:true}).count()).toBe(1);
     await b.locator('article').getByRole('button',{name:'Six voices',exact:true}).click();
     await expect.poll(()=>b.getByRole('heading',{name:'Six voices',exact:true}).count()).toBe(1);

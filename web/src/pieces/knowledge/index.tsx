@@ -1,22 +1,21 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { Suspense, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useRecords, call, type Call } from '../../data';
-import { Split, List, Row, Empty, Loading, Error, Input, Textarea, Button, prose, type SplitFolder } from '../../kit';
+import { Split, List, Row, Empty, Loading, Error, Input, Textarea, Button, Markdown, type SplitFolder } from '../../kit';
 import { date, freshWord, shownPages, type Page } from './model';
 const idle = { pending: false, status: 'done' as const };
 const noop = () => () => {};
 function Reader({ page, open, canVerify, canRecheck, request, act }: { page: Page; open(slug: string): void; canVerify: boolean; canRecheck: boolean; request?: Call; act(verb: 'knowledgeVerify' | 'knowledgeRecheck'): void }) {
   const answer = useSyncExternalStore(request?.subscribe ?? noop, request?.getSnapshot ?? (() => idle));
-  const body = useMemo(() => prose(page.body.replace(/\[\[([a-z0-9][\w/-]*)(?:\|([^\]]+))?\]\]/gi, (_, slug: string, label?: string) => `[${label ?? slug}](https://loom.invalid/knowledge/${slug})`))
-    .replaceAll('href="https://loom.invalid/knowledge/', 'data-knowledge="" href="/p/knowledge-preview/page/'), [page.body]);
+  const body = useMemo(() => page.body.replace(/\[\[([a-z0-9][\w/-]*)(?:\|([^\]]+))?\]\]/gi, (_, slug: string, label?: string) => `[${label ?? slug}](https://loom.invalid/knowledge/${slug})`), [page.body]);
   return <article className="grid gap-5 p-5">
     <header><p>{page.domain}</p><h1 className="text-2xl font-semibold">{page.title}</h1><p>{freshWord[page.fresh]} · {page.verified_at ? `verified ${date(page.verified_at)}` : `written ${date(page.updated)}, not verified yet`}</p>
       <p>{page.checked?.outcome === 'stale' ? `Asked to be checked again ${date(page.checked.at)}` : 'Pages are re-checked every 30 days'}</p>
       {page.checked?.by && <p>Last check by {page.checked.by}</p>}</header>
-    <div className="loom-prose" dangerouslySetInnerHTML={{ __html: body }} onClick={event => {
-      const link = (event.target as HTMLElement).closest('a[data-knowledge]');
-      if (!link || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-      event.preventDefault(); open(link.getAttribute('href')!.split('/page/')[1]);
-    }} />
+    <Suspense fallback={<Loading label="Opening words…" />}><Markdown text={body} onLink={href => {
+      const prefix = 'https://loom.invalid/knowledge/';
+      if (!href.startsWith(prefix)) return false;
+      open(href.slice(prefix.length)); return true;
+    }} /></Suspense>
     <section><h2>Sources</h2>{page.sources.length ? <dl className="grid gap-3">{page.sources.map((source,n) => <div key={n}><dt>{source.kind}</dt><dd>{source.claim}{source.locator && <> · {source.href ? <a className="underline" href={source.href} target="_blank" rel="noreferrer">{source.locator}</a> : source.locator}</>}</dd></div>)}</dl> : <p>No sources recorded</p>}</section>
     <section><h2>Cited by</h2>{page.citedBy.length ? <List label="Cited by">{page.citedBy.map(p => <Row key={p.slug} title={p.title} onClick={() => open(p.slug)} />)}</List> : <p>No referring pages</p>}</section>
     <div className="flex flex-wrap gap-2"><Button disabled={answer.pending || !canVerify} onClick={() => act('knowledgeVerify')}>Still true</Button><Button variant="outline" disabled={answer.pending || !canRecheck} onClick={() => act('knowledgeRecheck')}>Check again</Button></div>

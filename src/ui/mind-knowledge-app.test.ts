@@ -5,7 +5,7 @@ import type { CallState, Snapshot } from '../../web/src/data/store';
 const f=vi.hoisted(()=>({feed:{records:[],status:'live'} as Snapshot,detail:{records:[],status:'live'} as Snapshot,access:{records:[{id:'knowledge',allowed:true,canVerify:true,canRecheck:true}],status:'live'} as Snapshot,call:vi.fn()}));
 vi.mock('../../web/src/data',()=>({useRecords:(type:string,scope?:string)=>type==='knowledge.access'?f.access:scope===undefined?f.feed:f.detail,call:f.call}));
 vi.mock('../../web/src/kit',()=>({
-  prose:(text:string)=>text,
+  Markdown:(p:{text:string})=>h('div',null,p.text),
   Split:(p:{list:unknown;reader:unknown})=>h('div',null,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;onClick:()=>void})=>h('button',{onClick:p.onClick},p.title),
   Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button',
 }));
