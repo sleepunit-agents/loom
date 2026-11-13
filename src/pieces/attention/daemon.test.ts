@@ -17,7 +17,7 @@ async function setup(staging = false, denied?: { value: boolean }) {
   const metadata = createFoundation({ home }); migrateHouseholdTables(metadata.db);
   metadata.db.transaction(() => new HouseholdDatabase(metadata.db).replace(home, {
     v: 1, agents: ['art'], default: 'art', owner: 'owner',
-    members: [{ person: 'owner', role: 'owner', agents: '*' }],
+    members: [{ person: 'owner', role: 'owner', agents: '*' }, { person: 'other', role: 'member', agents: ['art'] }],
   }))(); metadata.close();
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   let foundation: ReturnType<typeof createFoundation>;
@@ -103,4 +103,26 @@ it('rechecks real central service grants on every sweep without impersonating a 
   expect(warning).toHaveBeenCalledExactlyOnceWith('Attention retention failed (denied)');
   denied.value = false; clock.advance(86_400_000);
   expect(turns()).toHaveLength(0);
+});
+
+it('member retention folds its own private metadata after service retention, leaving other members private turns held', async () => {
+  const { app, clock, write, turns } = await setup();
+  write('public'); write('owner-private', 'owner');
+  expect(app.operations.call('direct', { kind: 'member', id: 'other' }, 'attention.recordTurn', {
+    agent: 'art', member: 'other', turn: { venue: 'loom', place: 'other-private', at: '2026-07-01T09:00:00Z', from: { kind: 'person', slug: 'other' }, kind: 'message' },
+  }, 'other-private-turn')).toMatchObject({ ok: true });
+  clock.advance(0);
+  expect(turns().map(t => t.member).sort()).toEqual(['other', 'owner']);
+  const changed = vi.spyOn(app.live, 'changed');
+  const result = app.operations.call('direct', { kind: 'member', id: 'owner' }, 'attention.retain', {}, 'member-retain');
+  expect(result).toEqual({ ok: true, value: { days: 1, turns: 1 } });
+  expect(turns()).toMatchObject([{ member: 'other' }]);
+  expect(changed).toHaveBeenCalledOnce();
+  const days = app.db.prepare('SELECT record FROM attention_days').all().map(r => JSON.parse((r as { record: string }).record));
+  expect(days).toHaveLength(2);
+  const own = days.find(d => d.member === 'owner');
+  expect(own).toMatchObject({ member: 'owner', counts: { message: 1 } });
+  expect(app.operations.call('direct', { kind: 'member', id: 'other' }, 'attention.days', { conversation: own.conversation })).toMatchObject({ code: 'denied' });
+  expect(app.operations.call('direct', { kind: 'member', id: 'owner' }, 'attention.retain', {}, 'member-retain')).toEqual(result);
+  expect(app.operations.call('direct', { kind: 'member', id: 'owner' }, 'attention.retain', {}, 'member-retain-again')).toEqual({ ok: true, value: { days: 0, turns: 0 } });
 });
