@@ -23,6 +23,7 @@ const options = {
   clock: z.object({}).strict(),
   approvals: z.object({ projects: z.record(z.string(), slug) }).strict(),
   changes: z.object({ attribution }).strict(),
+  comms: z.object({}).strict(),
 };
 export const supportedMigrationImporters: readonly string[] = Object.keys(options);
 const inputSchema = z.object({ paths: z.array(z.string().min(1)).min(1), options: z.json() }).strict();
@@ -130,7 +131,35 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     const value = json(p);
     return value?.v === 1 && Array.isArray(value.changes);
   }).sort();
+  const comms = [...files].filter(p => basename(p) === 'comms.db').sort();
+  // A destination has one Comms identity; selecting one of several stores would discard data.
+  if (comms.length > 1) throw Error('Multiple Comms sources are not supported');
+  const commsPaths = comms.flatMap(source => {
+    const directory = posix.dirname(source);
+    const required = ['comms.db', 'household.db', 'comms.key'].map(name => `${directory}/${name}`);
+    if (required.some(p => !physical.has(p))) throw Error('Incomplete Comms source');
+    const columns = {
+      'household.db': {
+        comms_threads: ['id','agent','member','conversation','title','titled_by','project','pinned','archived','opened','last','read_seq','first_id','first_hash','stop','working_since'],
+        comms_deleted: ['id','member','agent','at'],
+      },
+      'comms.db': {
+        comms_messages: ['thread','seq','at','kind','sender','id','hash','text','card_json','run','delivered','step'],
+        comms_asks: ['thread','ref','approval','raised','seen','words','answer_json'],
+        conversation_steps: ['seq','conversation','at','run','id','tool','state','words'],
+      },
+    };
+    for (const [database,tables] of Object.entries(columns)) sqlite(path(`${directory}/${database}`), db => {
+      for (const [table,names] of Object.entries(tables)) {
+        const held = new Set((db.prepare(`PRAGMA table_info(${table})`).all() as {name:string}[]).map(row => row.name));
+        if (!held.size && table !== 'comms_threads' && table !== 'comms_messages') continue;
+        if (names.some(name => !held.has(name))) throw Error('Incomplete Comms source columns');
+      }
+    });
+    return [...required, ...[`${directory}/comms.salt`].filter(p => physical.has(p))];
+  });
   const discovered: MigrationPlan['importers'] = { household: { paths: ['home'], options: {} } };
+  if (commsPaths.length) discovered.comms = { paths: commsPaths, options: {} };
   if (files.has('tasks/store.db')) discovered.tasks = { paths: ['tasks/store.db'], options: {
     projects: Object.fromEntries(epics.filter(t => t.project !== undefined).map(t => [t.id, t.project!])), agent: household.default,
   } };
@@ -157,9 +186,10 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     if (Object.hasOwn(options, name)) {
       const schema = options[name as keyof typeof options];
       input.options = schema.parse(input.options);
-      if (name !== 'attention' && input.paths.length !== 1) throw Error('Importer requires exactly one input');
+      if (name !== 'attention' && name !== 'comms' && input.paths.length !== 1) throw Error('Importer requires exactly one input');
     }
   }
+  if (plan.importers.comms && canonicalPlanValue(plan.importers.comms.paths) !== canonicalPlanValue(commsPaths)) throw Error('Comms must include every discovered input in order');
   const taskOptions = plan.importers.tasks && options.tasks.parse(plan.importers.tasks.options);
   if (taskOptions) {
     if (plan.importers.tasks.paths[0] !== 'tasks/store.db') throw Error('Tasks must use copied taskstore');

@@ -41,7 +41,7 @@ command must derive its projects from the destination household and validate
 attribution against that household, as the individual Changes command does.
 Callbacks and interruption hooks are internal TypeScript APIs, never JSON plan data.
 
-Comms, secrets, bridges and runtime can add their registrations here when their
+Secrets, bridges and runtime can add their registrations here when their
 importers land. Declare all required predecessors explicitly and add fixture
 coverage for registration, transaction rollback and comparison. Don't change
 another piece's tables or read live paths. Source discovery and editable-plan
@@ -76,3 +76,18 @@ every source projection settles, including rejection; callers must await the
 result. `migration-projection.ts` builds source-only physical rows separately
 from destination comparison. Existing six projections retain their synchronous
 source readers. This async prerequisite does not register or verify Comms.
+
+Comms is registered after household. Snapshot collection includes co-located
+`comms.db`, `household.db`, `comms.key` and optional `comms.salt` at the root or
+in a data subdirectory. Its plan names every file individually with strict empty
+options. Every file passes `snapshotPath`; the adapter publishes the verified
+snapshot identity durably and directly awaits `importComms` with the deserialized
+snapshot reader for both databases. No key is minted. Receipt-bound recovery
+selects the exact Comms key path from that same plan for nested layouts.
+
+Independent Comms comparison lives in `migration-comms-projection.ts`, never
+calls an importer and opens source backups read-only. It compares all physical
+columns, IDs, sequences, timestamps, thread metadata, deleted rows, salt and source
+receipt. Original encrypted words and step envelopes must remain byte-identical;
+randomized private metadata envelopes compare decrypted JSON semantics in memory.
+Only table names and row counts enter the report, including malformed envelopes.

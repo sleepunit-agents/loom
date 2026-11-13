@@ -153,3 +153,22 @@ app writes, minted credentials or project creation are differences. The househol
 importer currently creates no sharing projects, so Changes' expected attribution
 uses that empty project set; a later project-import registration must supply its
 source-derived expected projects when added.
+
+## Comms inputs
+
+Discovery includes one co-located Comms store: `comms.db`, `household.db`,
+`comms.key`, and optional `comms.salt`. Root and nested data layouts are supported.
+The plan's `comms.paths` lists those files in that order; `options` is strictly
+`{}`. Edited plans cannot omit, replace or reorder any discovered input. Missing
+required files or required columns refuse preparation. Optional legacy tables may
+be absent; when present their importer-read columns must exist. Multiple Comms
+stores refuse even an explicit plan: selecting one would discard another identity.
+Consolidating such stores needs separate work before the coordinator can proceed.
+
+Comms depends on household and preserves the snapshot key bytes in the destination.
+It never generates a key or changes the household importer checksum/receipt. Its
+independent verification checks all five Comms tables, original ciphertext and
+decrypted private metadata semantics, plus the key. It holds the same read-only
+destination and stopped-home gate throughout cryptographic awaits. No plaintext
+from this comparison appears in reports or CLI errors. Application writes after
+migration, including retention expiry, are reported as differences.

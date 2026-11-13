@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Include Comms in offline migration plans, imports and independent private-content verification.
+
 - Bridges: add unregistered Slack Socket Mode transport with durable-receiver-before-ACK ordering, fresh service credentials, reconnect and heartbeat bounds.
 - Add an unregistered async holder mutation channel with trusted current-member authorization and durable-store acknowledgements.
 
