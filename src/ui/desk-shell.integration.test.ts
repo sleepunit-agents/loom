@@ -133,7 +133,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         await expect.poll(() => page.locator('html').getAttribute('data-look')).toBe(look);
         await expect.poll(()=>page.locator('.next-status-bar .loom-pbar__needs').getAttribute('aria-label')).toBe('1 needs you');
         expect(await page.locator('.next-status-bar h1').innerText()).toBe('Home');
-        await expect.poll(()=>page.locator('.next-system-clock').getAttribute('aria-label')).toBe('12:41 PM, America/Chicago time');
+        await expect.poll(()=>page.locator('.next-system-clock').getAttribute('title')).toBe('12:41 PM, America/Chicago time');
         expect(await page.locator('.next-system-clock').isVisible()).toBe(width!==390);
         expect(await page.locator('.next-system-icons').isVisible()).toBe(width!==390);
         expect(await page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('1 agent');

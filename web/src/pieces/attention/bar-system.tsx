@@ -15,7 +15,7 @@ export function BarClock() {
   const minute = time.status === 'live' ? time.records[0] : undefined;
   const text = minute && serverTime(minute.at, minute.timezone);
   const words = text && minute ? serverTime(minute.at, minute.timezone, true) : 'Loom time unavailable';
-  return <span className="next-system-clock loom-sys__clock" title={words} aria-label={words}><span aria-hidden="true">{text || '—:—'}</span></span>;
+  return <span className="next-system-clock loom-sys__clock" title={words}><span aria-hidden="true">{text || '—:—'}</span><span className="sr-only">{words}</span></span>;
 }
 export function BarStatus({ roster, statuses, available, live, go }: { roster: readonly OwnedAgent[]; statuses: readonly AgentStatus[]; available: boolean; live: boolean; go(path:string):void }) {
   const working = roster.filter(a=>latestStatus(statuses,a.id)?.state==='working').length;
