@@ -18,6 +18,7 @@ async function setup() {
   const people = new PeopleStore({ dbPath: join(home, 'commons', 'people.db') });
   people.write({ slug: 'guest', name: 'Guest' }); people.close();
   mkdirSync(join(home, 'agents', 'new-agent'), { recursive: true });
+  writeFileSync(join(home, 'agents', 'new-agent', 'IDENTITY.md'), '# New agent\nPrepared context\n');
   const app = await startLoom({ home, next: true, clock: new FakeClock(), install: installFixture,
     authenticate: req => ({ viewer: { kind: 'member', id: req.headers.authorization === 'Bearer owner-token' ? 'jonathan' : 'pollock' }, valid: () => true }) });
   cleanup.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
@@ -32,6 +33,7 @@ async function setup() {
   return { app, home, tokenFile, run };
 }
 const inputs: Record<string, unknown> = {
+  bootstrapAgent: { agent: 'gabe', name: 'Gabe', purpose: 'Help with the garden.', voice: 'Warm and direct.', rules: 'Keep private things private.', ask: 'Before spending money.' },
   show: {}, setMember: { person: 'guest', agents: ['art'] }, removeMember: { person: 'guest' },
   addAgent: { agent: 'new-agent' }, setMemberProjects: { person: 'pollock', projects: ['other'] },
   setOwnedAgents: { person: 'pollock', agents: ['mark'] }, setAgentAccounts: { agent: 'art', accounts: { github: ['art-e-fish'] } },

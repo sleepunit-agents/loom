@@ -105,3 +105,18 @@ it('distinguishes otherwise identical sessions by visible safe refs and exact co
     expect(label.props.children.slice(1).join('')).toBe(`I confirm signing out session ${ref}`);
   }
 });
+
+it('selects the created agent for its first token and discards any previous displayed bearer', async () => {
+  const r = request(); f.once.mockReturnValue(r.handle);
+  const Original = FormData;
+  vi.stubGlobal('FormData', class extends Original { constructor() { super(); this.set('role', 'owner'); this.set('label', 'old'); this.set('member', 'jonathan'); } });
+  await act(async () => { tree = create(h(AccessAdmin)); });
+  await act(async () => tree.root.findByProps({ 'aria-label': 'Create token' }).props.onSubmit({ preventDefault() {}, currentTarget: {} }));
+  await r.finish({ ok: true, value: { token: 'old-fixture-bearer' } });
+  expect(tree.root.findAllByProps({ 'aria-label': 'Token value' })).toHaveLength(1);
+  await act(async () => tree.update(h(AccessAdmin, { firstAgent: 'art' })));
+  expect(tree.root.findAllByProps({ 'aria-label': 'Token value' })).toHaveLength(0);
+  expect(tree.root.findByProps({ name: 'role' }).props.value).toBe('agent');
+  expect(tree.root.findByProps({ name: 'agent' }).props.defaultValue).toBe('art');
+  expect(tree.root.findByProps({ name: 'label' }).props.defaultValue).toBe('art · first token');
+});

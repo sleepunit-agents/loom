@@ -265,7 +265,7 @@ household client remain tracked by t-2203.
 `household.addAgent({agent})` registers an existing portable context under
 `HOME/agents/<agent>`. Only a household owner may call it. The name follows the
 existing lowercase agent-name format; the context and its `agents` parent must
-be real directories, not symlinks. Missing contexts and files are refused. An
+be real directories, not symlinks. Missing contexts and files are refused. Prepared contexts need a nonempty regular `IDENTITY.md`; bootstrap-marked contexts must finish through their original creation request, so registration cannot bypass publication recovery. An
 already registered agent is a successful no-op, matching the old CLI helper.
 The operation leaves the default agent, members, ownership, projects, unknown
 metadata, context contents and credentials intact. Wildcard household owners
@@ -517,3 +517,34 @@ socket upgrades do not record use. Diagnostic writes are best effort and atomic;
 a busy store does not reject a valid credential. Changed usage publishes the
 existing safe owner-only `signin.admin` snapshot, without `core.access` churn or
 new records, commands, jobs or schema changes.
+
+### Creating an agent from Setup
+
+Setup's Create an agent form calls `household.bootstrapAgent` (also available in
+`loom-household`) with short name, display name, purpose, voice, rules and when
+to ask first. Only a household owner can create a context. It writes the existing
+voice-neutral scaffold, preferences and self-model in a private directory,
+flushes every file and publishes through exclusive directory reservation and file links before registering the complete context.
+Existing agents, directories, links and files are refused; no overwrite option
+is offered. Existing household metadata, projects and credentials are retained.
+
+The filesystem and SQLite cannot commit together. A private context receipt binds
+publication to its original viewer, operation id and input fingerprint. If the
+row or retry-receipt commit fails, registration and events roll back; only that
+same request can adopt the byte-identical context after restart. A changed
+context refuses recovery. Hidden staging directories left by abrupt interruption
+are inert and never registered. Interrupted reservations without a complete receipt, or with unresolved staging hard links, refuse recovery rather than adopting an unproven context. After a receipt is published, an original-request retry can finish missing files with exclusive links, checking every existing byte first. No automatic deletion of abandoned contexts is
+performed. Successful same-id retries return the ordinary stored result without
+rewriting an agent's later preferences or creed.
+
+After creation the existing single-send token form selects the new agent and a
+first-token label. The owner deliberately creates and saves that bearer; context
+creation neither mints nor journals a secret. Token failure/recovery, hiding and
+revocation are the same as the token controls above. Setup shows a JSON MCP
+snippet using `loom mcp --next --home HOME --agent AGENT`, with the home on the
+machine running MCP. It works while the daemon is stopped; the token is for
+remote API access, separately. No harness or host config is installed by Setup.
+
+This flow creates an agent in an initialized household. Fresh-household ownership
+and offline `household init`/commons migration remain in the inventory, as do
+appearance/profile/health controls. Setup does not edit existing identity files.
