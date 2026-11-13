@@ -159,6 +159,21 @@ it('recovers actual encrypted holder success after a lost reply and restart with
   expect(await s.call('secrets.set',input,'actual')).toEqual({ok:true,value:{saved:true}});
   expect(holder.set).toHaveBeenCalledTimes(1);
   const bytes=await store.read('API');expect(Buffer.from(bytes).toString()).toBe(sentinel);bytes.fill(0);
+  expect(s.app.operations.call('direct',owner,'secrets.describe',{name:'API',description:'Keep this description'},'describe')).toMatchObject({ok:true});
+  const replace={...input,mode:'replace' as const,value:'REPLACED-SENTINEL',writeId:randomUUID()};lost=true;clock.advance(50);
+  expect(await s.call('secrets.set',replace,'actual-replace')).toMatchObject({code:'unavailable'});
+  const row=s.app.db.prepare('SELECT holder_id FROM secrets_write_intents WHERE id=?').get('actual-replace') as {holder_id:string};
+  expect(holder.set).toHaveBeenLastCalledWith({member:'jonathan',writeId:row.holder_id},'API',expect.any(Buffer),'replace');
+  await s.app.close();store.close();store=await openHolderStore(directory,identity,receiptKey);
+  s=await setup(holder,home,clock);
+  expect(await s.call('secrets.set',replace,'actual-replace')).toEqual({ok:true,value:{saved:true}});
+  expect(holder.set).toHaveBeenCalledTimes(2);
+  const replaced=await store.read('API');expect(Buffer.from(replaced).toString()).toBe(replace.value);replaced.fill(0);
+  const record=JSON.parse((s.app.db.prepare('SELECT record FROM secrets_names WHERE id=?').get('API') as {record:string}).record);
+  expect(record).toEqual({id:'API',description:'Keep this description',by:'jonathan',changedAt:clock.now()});
+  const changes=(s.app.db.prepare('SELECT record FROM secrets_changes ORDER BY id').all() as {record:string}[]).map(r=>JSON.parse(r.record));
+  expect(changes.map(r=>({name:r.name,action:r.action,by:r.by}))).toEqual([{name:'API',action:'add',by:'jonathan'},{name:'API',action:'replace',by:'jonathan'}]);
+  expect(await s.call('secrets.set',replace,'actual-replace')).toMatchObject({ok:true});expect(holder.set).toHaveBeenCalledTimes(2);
 });
 it.each(['throw','async','change'] as const)('rolls admission back and never prepares when admission fails by %s',async mode=>{
   const s=await setup(),prepare=vi.fn(async()=>null);
