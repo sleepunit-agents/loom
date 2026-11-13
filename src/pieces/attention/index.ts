@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { migrate, operation, failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import type { Ask, AgentStatus } from './role.js';
+import { importSchema } from './schema/005.js';
 import { schema } from './schema/001.js';
 import { conversationSchema } from './schema/002.js';
 import { retentionSchema } from './schema/004.js';
@@ -25,7 +26,7 @@ const link = z.object({ id, label: z.string(), href: z.string().optional() });
 const status = z.object({ id, ...scopeFields, agent: id, state: z.enum(['working', 'waiting', 'idle', 'offline']), work: z.string(), jobs: z.array(link), watched: z.array(link) }).strict();
 const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...record });
 export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
-  migrate(db, 'attention', [...schema, conversationSchema, digestSchema, retentionSchema]);
+  migrate(db, 'attention', [...schema, conversationSchema, digestSchema, retentionSchema, importSchema]);
   installConversations(db, operations, live, sharing);
   installDigests(db, operations, live, sharing);
   installRetention(db, operations, live, sharing);

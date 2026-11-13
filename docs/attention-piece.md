@@ -43,3 +43,26 @@ Schema 4 adds folded days and checked findings. `attention.fold({conversation})`
 The remaining rebuild units must add the old-format importer with checks and interruption/repeat coverage, generated client bindings, Inbox and Home apps, liveness checks and CI screenshot artifacts. The mapping above covers installed operations, not a completed replacement of every old conversation route or job.
 
 For the final move, the importer must read only a copy of old data and verify ids, counts and content in one transaction. No real import or deployment is part of this implementation. After all pieces and apps are merged and the owner approves the move, the coordinator backs up, imports, starts next mode and verifies the shared counts and answers. Until then, the old side is untouched and the new side depends on no import having run.
+
+## Offline import
+
+`loom migrate attention --home <stopped-new-home> --from <copied-memories.db> --scopes <conversation-audiences.json>` accepts repeated `--from` flags for the whole household batch. All source databases must be stopped copies; none is written. The home is explicit and the CLI holds the daemon's home lock throughout. There is no default home and no automatic discovery of installed pieces or live data. A source cannot also be the destination, including through a hardlink. This implements the importer only; no real import is authorized by this change.
+
+The audience file maps **every** conversation id to `{project?, member?}`. An explicit `{}` means agent audience alone. The agent is preserved from the source; a digest's reference projects never determine policy. The coordinator must reconcile private thread membership with Comms before producing this file. Missing, extra or malformed entries refuse the batch. Approval/task asks are migrated by their owning pieces through the role; this importer covers only conversation asks.
+
+| Old data | Import mapping |
+|---|---|
+| `conversations` | Same ids, metadata and `last_seq` high-water mark (`turns`), normalized UTC dates; project reference union recomputed |
+| `conversation_turns` | Same seq, sender, time, kind, run/model/harness/outcome and recorded latency; stable `conversation:seq` ids; original writer retained as `{kind: 'legacy', id: <old writer>}` |
+| `conversation_days` | Same counts, median and model outcomes; stable `conversation:day` ids; no replay/recomputation |
+| `conversation_digests` | Same ids and authored content; revision starts at 1, order follows old `at,rowid`; stored pre-lint question wording is retained |
+| Digest Needs you | Ask id `digest:1`; only newest digest can remain open, including same-clock rowid ties; a newest null resolves older asks |
+| `conversation_needs_answers` | Current answers close their asks; done/dismissed/replied/yes/no become done/dismiss/replied/yes/no; resolved retains its reason; actual reply words were never in the source |
+| Old answer predating a same-run rewrite | Current ask stays open; original answer metadata retained as digest `legacyAnswer`, without claiming the rewritten wording was what the person answered |
+| `findings` | Same ids, seq, day, score, measure, text and time, including findings on folded turns |
+
+Every source is read within one read transaction, including committed WAL data. The batch checksum covers the canonical snapshots (all selected source columns and rowids) and the audience map; filenames and batch order do not affect it. Source stores are separate SQLite databases, so their snapshots are not a cross-database instant: the offline stopped-copy requirement supplies that consistency. Optional old href/json, answer reason and findings tables may be absent. Broken identities, orphans, sender words, invalid dates/JSON, held/folded overlap or inconsistent turn totals refuse the import.
+
+The new records, migration history and receipt are committed in one destination transaction. Import into a nonempty Attention destination is refused. Before the receipt is written, every target table is compared against the complete mapped records (ids, counts and content); any mismatch or interruption rolls everything back. Repeating the same batch and map is a no-op; changing either refuses. The receipt intentionally is not a continuous mirror/check of a destination subsequently used by the daemon. It never gates installation, operations or next-mode startup. Schema 5 only adds the offline receipt table.
+
+`replied` is an import-only answer kind: a delivered reply with no stored words. Runtime answer input still accepts only yes/no/done/dismiss/words. Digest `legacyAnswer` preserves the original verdict, actor, time and optional reason even when it predates a rewrite or the current digest cleared its ask. Old overwritten digest revisions and old delivered message words cannot be recovered and are not invented. Status records are derived from live runtime state, never fabricated from old conversation rows.
