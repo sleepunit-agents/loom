@@ -162,7 +162,7 @@ describe('transient intake expiry',()=>{
   it('expires a foundation pending receipt using its backfilled budget before credentials or admission',async()=>{
     const f=await fixture(); f.setGate('wait'); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
     // Reconstruct the pre-upgrade shape with a real pending payload, then reopen normally.
-    f.app.db.exec('ALTER TABLE bridges_inbox DROP COLUMN retry_since; DROP TABLE bridges_slack_receipts');
+    f.app.db.exec('ALTER TABLE bridges_inbox DROP COLUMN retry_since; DROP TABLE bridges_slack_receipts; DROP TABLE bridges_discord_receipts; DROP TABLE bridges_discord_sessions');
     f.app.db.prepare("DELETE FROM core_migrations WHERE piece='bridges' AND number>=2").run();
     const now=f.clock.now()+hour+1; await f.close(); closes.pop();
     const next=await fixture('discord',false,f.home,now); await next.engine.flush();
