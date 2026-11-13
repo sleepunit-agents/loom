@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Add an authenticated owner-window recovery operation for saved private Clock local requests, retaining their exact scope and durable retry acknowledgement. App scheduling controls and Runtime delivery remain unfinished.
+
 - Import explicit Runtime snapshots with complete private source retention, scoped metadata, held old work and independent migration verification.
 
 ### Fixed

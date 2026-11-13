@@ -48,15 +48,16 @@ export function event(ctx: Context, w: Wake, kind: string) {
 export const paused = (db: Db, agent: string) => !!db.prepare('SELECT 1 FROM clock_pauses WHERE agent=?').get(agent);
 export const active = (w: Wake) => ['pending', 'parked', 'firing', 'held'].includes(w.state);
 
+const privateReceiptOperations = ['clock.command','clock.requestLocal','clock.recoverLocal','clock.scheduleLocalFromWindow'];
 export function installPrivateExport(db:Db) {
  registerExportFilter(db,'clock',(table,row)=>{
   if(!table.startsWith('clock_') && table!=='core_operations')return true;
   if(table==='clock_meta' && String(row.key).startsWith('local-standing-receipt:')) {
    const saved=JSON.parse(String(row.value));
-   if(['clock.command','clock.requestLocal','clock.recoverLocal'].includes(saved.name))return false;
+   if(privateReceiptOperations.includes(saved.name))return false;
   }
   const ids=new Set((db.prepare("SELECT key FROM clock_meta WHERE key LIKE 'private-id:%'").all() as {key:string}[]).map(r=>r.key.slice(11)));
   for(const w of [...wakes(db),...schedules(db)])if(w.member)ids.add(w.id);
-  return !(table==='core_operations' && ['clock.command','clock.requestLocal','clock.recoverLocal'].includes(String(row.name))) && !privateExportCopy(row,ids);
+  return !(table==='core_operations' && privateReceiptOperations.includes(String(row.name))) && !privateExportCopy(row,ids);
  });
 }
