@@ -91,7 +91,7 @@ data does not remove the behavior it delivered.
 | Inline asks, kept asks, `/act`, Inbox sync | Comms ciphertext and opaque attention reference | Partial: distinct reference id and original-member yes/no forwarding work. Need private ask creation, state/history/Inbox synchronization and freeform answers without plaintext attention rows or retry results. |
 | `/work`, `comms-work` piece feeds | Shared piece roles and live records | Missing: made-here tasks/changes, status ordering, project/member filtering and source links. |
 | `/refs`, `comms-refs`, chip cards | Shared piece roles | Missing: authorized ref resolution, safe links and live chip updates. |
-| `/about`, `/route`, `comms-about`, Chat about this | Comms operations and shell action | Partial: `comms.open` validates and encrypts the quoted attachment with the first message. Recipient rule and five recent owned-thread matching now exist as window-only operations. Production registry binding, importer association and attachment UI remain missing. |
+| `/about`, `/route`, `comms-about`, Chat about this | Comms operations and shell action | Partial: `comms.open` validates and encrypts the quoted attachment with the first message. Recipient rule and five recent owned-thread matching now exist as window-only operations. Imported associations now use destination-key fingerprints. Production registry binding and attachment UI remain missing. |
 | Digests after words expire | Conversation role / thread app | Missing: metadata remains useful without resurrecting words. |
 | Push and desktop unread integration | `Comms.announcements(member)`, Attention/frame notification seam | Partial: trusted metadata-only candidates select opener-owned open unread threads, stable latest-reply keys and exact two-minute per-thread foreground suppression. Production member-subscription matching, dispatch dedupe/rate limiting/staging and desktop binding remain missing. |
 | Markdown, drafts, optimistic send, settings | Kit Comms app | Partial: safe markdown and per-member/thread drafts with stable base32 retry ids work; reply following now keeps the reader at the end only while near it, counts appended non-card records while scrolled back and follows their own sends; attachment/ref rendering and broader disconnected/reconnect parity need completion. |
@@ -816,7 +816,7 @@ returns at most five open threads for the same member and selected agent,
 ordered by activity, with their current titles. It performs no decryption,
 send, read-mark change or runtime start. Matching remains useful after word
 expiry. Existing pre-association threads are not inferred from message text;
-the offline importer's association preservation is still required.
+the offline importer now preserves legacy associations as destination-key fingerprints.
 
 Four regressions first failed with unknown operations. They now cover routing
 precedence, changed registry/ownership, household-owner isolation, page-only and
