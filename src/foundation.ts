@@ -24,9 +24,10 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   const release = next ? await ownHome(home) : async () => {};
   let app: Foundation;
   try { app = createFoundation({ home, clock }); } catch(e) { await release(); throw e; }
+  const closeApp = async () => { try { app.close(); } finally { await release(); } };
   let effects: OutsideEffects | undefined;
   const nextOptions: NextOptions = { home, staging, host, port, webRoot, authenticate, sharing };
-  if (next && listen) { app.close(); await release(); throw new Error("next mode owns its listener"); }
+  if (next && listen) { await closeApp(); throw new Error("next mode owns its listener"); }
   try {
     install?.(app);
     if (next) effects = installNext(app, nextOptions);
@@ -36,19 +37,19 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
       if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, access);
       if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, access);
     }
-  } catch (e) { app.close(); await release(); throw e; }
+  } catch (e) { await closeApp(); throw e; }
   if (next) {
     try {
       const server = await listenNext(app, nextOptions);
-      let closed=false;
-      return { ...app, effects, url: server.url, async close() { if(closed)return;closed=true;try { await server.close(); } finally { app.close(); await release(); } } };
-    } catch (e) { app.close(); await release(); throw e; }
+      let closing: Promise<void> | undefined;
+      return { ...app, effects, url: server.url, close() { return closing ??= (async () => { try { await server.close(); } finally { await closeApp(); } })(); } };
+    } catch (e) { await closeApp(); throw e; }
   }
   if (listen) {
     try {
       const server = await listen(app);
-      return { ...app, url: server.url, async close() { try { await server.close(); } finally { app.close(); await release(); } } };
-    } catch (error) { app.close(); await release(); throw error; }
+      return { ...app, url: server.url, async close() { try { await server.close(); } finally { await closeApp(); } } };
+    } catch (error) { await closeApp(); throw error; }
   }
   const auth = authenticate ?? (() => undefined);
   const http = createServer(httpDoor(app, auth));
