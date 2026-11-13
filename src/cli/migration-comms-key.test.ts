@@ -41,7 +41,7 @@ it('never leaves an empty final file on a failed file sync and retries after a d
   }
 });
 it('refuses different keys, aliases, broad permissions and overlapping homes without changing inputs', async () => {
-  for (const kind of ['different', 'source-link', 'destination-link', 'source-mode', 'destination-mode', 'source-symlink', 'parent-symlink', 'overlap']) {
+  for (const kind of ['different', 'source-link', 'destination-link', 'source-mode', 'destination-mode', 'source-symlink', 'destination-symlink', 'parent-symlink', 'overlap']) {
     const f = await fixture(); let input = f.key, home = f.home;
     if (kind === 'different') await loadKey(home);
     if (kind === 'source-link') linkSync(input, join(f.dir, 'outside'));
@@ -49,6 +49,7 @@ it('refuses different keys, aliases, broad permissions and overlapping homes wit
     if (kind === 'source-mode') chmodSync(input, 0o644);
     if (kind === 'destination-mode') writeFileSync(join(home, 'comms.key'), readFileSync(input), { mode: 0o644 });
     if (kind === 'source-symlink') { input = join(f.dir, 'alias'); symlinkSync(f.key, input); }
+    if (kind === 'destination-symlink') symlinkSync(f.key, join(home, 'comms.key'));
     if (kind === 'parent-symlink') { home = join(f.dir, 'alias'); symlinkSync(f.home, home); }
     if (kind === 'overlap') home = f.source;
     const before = readFileSync(f.key), entries = readdirSync(f.home);
