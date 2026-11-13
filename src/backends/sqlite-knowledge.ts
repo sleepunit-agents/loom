@@ -1,3 +1,4 @@
+import { notifyWrites } from '../core/touched/writes.js';
 /**
  * SQLite knowledge backend — isolated from the memory wing.
  *
@@ -77,6 +78,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     this.db.pragma(`busy_timeout = ${config.busyTimeoutMs ?? 5000}`);
     this.db.pragma('user_version = 1');
     this.initSchema();
+    notifyWrites(this, config.dbPath, 'knowledge', ['writePage', 'archivePage', 'restorePage', 'supersedePage', 'movePage', 'mergePages', 'purgePages', 'verifyPages', 'restoreRevision', 'addCitations'], ['slug', 'slugs', 'old_slug', 'new_slug', 'target_slug', 'source_slugs']);
   }
 
   // ── KnowledgeBackend interface ──

@@ -26,6 +26,13 @@ import {
   type PersonEvidence,
 } from '../backends/people.js';
 
+/** Undefined keeps legacy discovery; null explicitly selects a standalone store. */
+export type PeopleSelection = { household: Household; agent: string } | null;
+
+function selectedHousehold(contextDir: string, selection: PeopleSelection | undefined) {
+  return selection === undefined ? householdOf(contextDir) : selection;
+}
+
 const json = (v: unknown) => JSON.stringify(v, null, 2);
 
 /** Slugs validate before anything else, store or no store (criterion 11). */
@@ -44,15 +51,15 @@ function errorText(e: unknown): string {
  * this agent's relationships (backends/people-household.ts). Otherwise the
  * one store in the agent's memories.db, as before.
  */
-export function openPeople(contextDir: string, opts: { readonly?: boolean } = {}): PeopleStore | HouseholdPeople | null {
-  const hh = householdOf(contextDir);
+export function openPeople(contextDir: string, opts: { readonly?: boolean; selection?: PeopleSelection } = {}): PeopleStore | HouseholdPeople | null {
+  const hh = selectedHousehold(contextDir, opts.selection);
   if (hh) return openHouseholdPeople(hh.household, hh.agent, contextDir, opts);
   return openPeopleStore(contextDir, opts);
 }
 
-function withWritable(contextDir: string, fn: (store: PeopleStore | HouseholdPeople) => unknown): string {
+function withWritable(contextDir: string, fn: (store: PeopleStore | HouseholdPeople) => unknown, selection?: PeopleSelection): string {
   try {
-    const store = openPeople(contextDir)!;
+    const store = openPeople(contextDir, { selection })!;
     try {
       return json(fn(store));
     } finally {
@@ -63,31 +70,33 @@ function withWritable(contextDir: string, fn: (store: PeopleStore | HouseholdPeo
   }
 }
 
-export async function personWrite(contextDir: string, input: PersonWriteInput): Promise<string> {
-  return withWritable(contextDir, (s) => s.write(input));
+export async function personWrite(contextDir: string, input: PersonWriteInput, selection?: PeopleSelection): Promise<string> {
+  return withWritable(contextDir, (s) => s.write(input), selection);
 }
 
 export async function personVerify(
   contextDir: string,
   input: { slug: string; fields: string[]; verified_at?: string; source?: string },
+  selection?: PeopleSelection,
 ): Promise<string> {
-  return withWritable(contextDir, (s) => s.verify(input));
+  return withWritable(contextDir, (s) => s.verify(input), selection);
 }
 
-export async function personArchive(contextDir: string, input: { slug: string; reason: string }): Promise<string> {
+export async function personArchive(contextDir: string, input: { slug: string; reason: string }, selection?: PeopleSelection): Promise<string> {
   // The actor is the calling agent's name — the value knowledge_write uses for author.
-  return withWritable(contextDir, (s) => s.archive({ ...input, actor: resolveIdentityName(contextDir) }));
+  return withWritable(contextDir, (s) => s.archive({ ...input, actor: resolveIdentityName(contextDir) }), selection);
 }
 
-export async function personRestore(contextDir: string, input: { slug: string }): Promise<string> {
-  return withWritable(contextDir, (s) => s.restore(input));
+export async function personRestore(contextDir: string, input: { slug: string }, selection?: PeopleSelection): Promise<string> {
+  return withWritable(contextDir, (s) => s.restore(input), selection);
 }
 
 export async function personRevisionRestore(
   contextDir: string,
   input: { slug: string; revision_id: number; store?: 'directory' | 'relationship' },
+  selection?: PeopleSelection,
 ): Promise<string> {
-  return withWritable(contextDir, (s) => (s instanceof PeopleStore ? s.revisionRestore({ slug: input.slug, revision_id: input.revision_id }) : s.revisionRestore(input)));
+  return withWritable(contextDir, (s) => (s instanceof PeopleStore ? s.revisionRestore({ slug: input.slug, revision_id: input.revision_id }) : s.revisionRestore(input)), selection);
 }
 
 /** A store opened read-only, or an empty one in memory when its file isn't there yet (a dry run writes nothing). */
@@ -102,9 +111,9 @@ function readonlyOrEmpty(dbPath: string, actor: string): PeopleStore {
  * card's summary goes to `body.agent`'s relationship (the household's default agent when
  * none is named); its name and handles go to the shared directory. Throws PersonCardError.
  */
-export function personEnsure(contextDir: string, body: unknown, actor: string): EnsureResult {
+export function personEnsure(contextDir: string, body: unknown, actor: string, selection?: PeopleSelection): EnsureResult {
   const input = checkEnsureInput(body);
-  const hh = householdOf(contextDir);
+  const hh = selectedHousehold(contextDir, selection);
   const h: Household | undefined = hh?.household;
   if (h && input.agent !== undefined && !h.agents.includes(input.agent)) throw new PersonCardError(`agent: ${input.agent} isn't one of this household's agents`);
   const dir = h ? agentDir(h, input.agent ?? hh!.agent) : contextDir;
@@ -132,9 +141,9 @@ export function personEnsure(contextDir: string, body: unknown, actor: string): 
  * answer shows the card as this context's agent sees it. Throws
  * PersonMergeError (its `status` says 400, 404 or 409).
  */
-export function personMergeRun(contextDir: string, body: unknown, actor: string, opts: { onlyOwnAgent?: boolean } = {}): PersonMergeResult {
+export function personMergeRun(contextDir: string, body: unknown, actor: string, opts: { onlyOwnAgent?: boolean; selection?: PeopleSelection } = {}): PersonMergeResult {
   const input = checkMergeInput(body);
-  const hh = householdOf(contextDir);
+  const hh = selectedHousehold(contextDir, opts.selection);
   return mergePeople(hh
     ? { household: hh.household, viewer: hh.agent, actor, ...(opts.onlyOwnAgent ? { onlyAgent: hh.agent } : {}) }
     : { contextDir, agentName: resolveIdentityName(contextDir), actor }, input);
@@ -145,19 +154,19 @@ export function personMergeRun(contextDir: string, body: unknown, actor: string,
  * household it reaches the commons card, its own copy and its own memories and
  * conversations, never another agent's store: the answer's not_done names them, for the owner.
  */
-export async function personMerge(contextDir: string, input: { from: string; into: string; dry_run?: boolean }): Promise<string> {
+export async function personMerge(contextDir: string, input: { from: string; into: string; dry_run?: boolean }, selection?: PeopleSelection): Promise<string> {
   try {
-    const hh = householdOf(contextDir);
-    return json(personMergeRun(contextDir, input, hh?.agent ?? resolveIdentityName(contextDir), { onlyOwnAgent: true }));
+    const hh = selectedHousehold(contextDir, selection);
+    return json(personMergeRun(contextDir, input, hh?.agent ?? resolveIdentityName(contextDir), { onlyOwnAgent: true, selection }));
   } catch (e) {
     return errorText(e);
   }
 }
 
 /** The `person` read. Throws on an invalid slug or an unreadable row; the MCP wrapper turns that into text. */
-export function readPerson(contextDir: string, slug: string, includeArchived = false): PersonReadResult {
+export function readPerson(contextDir: string, slug: string, includeArchived = false, selection?: PeopleSelection): PersonReadResult {
   assertSlug(slug);
-  const store = openPeople(contextDir, { readonly: true });
+  const store = openPeople(contextDir, { readonly: true, selection });
   if (!store) return { found: false };
   try {
     return store.read(slug, includeArchived);
@@ -166,8 +175,8 @@ export function readPerson(contextDir: string, slug: string, includeArchived = f
   }
 }
 
-export function listPeople(contextDir: string, includeArchived = false): PersonListEntry[] {
-  const store = openPeople(contextDir, { readonly: true });
+export function listPeople(contextDir: string, includeArchived = false, selection?: PeopleSelection): PersonListEntry[] {
+  const store = openPeople(contextDir, { readonly: true, selection });
   if (!store) return [];
   try {
     return store.list(includeArchived);
@@ -177,8 +186,8 @@ export function listPeople(contextDir: string, includeArchived = false): PersonL
 }
 
 /** The memories a person's card condenses, oldest first (newer than `since` when given). */
-export function personEvidence(contextDir: string, slug: string, since: string | null = null): PersonEvidence[] {
-  const store = openPeople(contextDir, { readonly: true });
+export function personEvidence(contextDir: string, slug: string, since: string | null = null, selection?: PeopleSelection): PersonEvidence[] {
+  const store = openPeople(contextDir, { readonly: true, selection });
   if (!store) return [];
   try {
     return store.evidence(slug, since);
@@ -187,26 +196,26 @@ export function personEvidence(contextDir: string, slug: string, since: string |
   }
 }
 
-export async function person(contextDir: string, input: { slug: string; include_archived?: boolean }): Promise<string> {
+export async function person(contextDir: string, input: { slug: string; include_archived?: boolean }, selection?: PeopleSelection): Promise<string> {
   try {
-    return json(readPerson(contextDir, input.slug, input.include_archived ?? false));
+    return json(readPerson(contextDir, input.slug, input.include_archived ?? false, selection));
   } catch (e) {
     return errorText(e);
   }
 }
 
-export async function personList(contextDir: string, input: { include_archived?: boolean }): Promise<string> {
+export async function personList(contextDir: string, input: { include_archived?: boolean }, selection?: PeopleSelection): Promise<string> {
   try {
-    return json(listPeople(contextDir, input.include_archived ?? false));
+    return json(listPeople(contextDir, input.include_archived ?? false, selection));
   } catch (e) {
     return errorText(e);
   }
 }
 
-export async function personHistory(contextDir: string, input: { slug: string }): Promise<string> {
+export async function personHistory(contextDir: string, input: { slug: string }, selection?: PeopleSelection): Promise<string> {
   try {
     assertSlug(input.slug);
-    const store = openPeople(contextDir, { readonly: true });
+    const store = openPeople(contextDir, { readonly: true, selection });
     if (!store) return json([]);
     try {
       return json(store.history(input.slug));

@@ -35,16 +35,22 @@ open and in-progress tasks stay live. Imported tasks start their live week at im
 Readiness uses the complete graph before visibility filtering, so a hidden blocker
 still blocks without exposing its id. Relations to hidden tasks are omitted on reads.
 
-The production composition temporarily adapts the existing household members and
-ownership to Sharing, with empty project/service maps: legacy metadata has neither.
-The fixture/test composition injects full Sharing. The household foundation must
-supply actual shared projects before project-based production cutover; no local
-project file or second policy store is introduced here.
+The next-side composition uses household sharing from `loom.db`. Project creation
+and its member and agent lists are the household operations, registered by
+`installSharing` (`src/pieces/sharing`). The owner manages them in the kit app at
+`/p/sharing-preview`. The screen uses live `household.project` records and the
+owner-only `household.sharing` choices record; writes use the existing household
+operations. Creating a project starts with no repositories; repository editing is
+outside this plain sharing screen. No legacy household files are read.
 
-## Coordinator cutover (owner present)
+## Final move (owner present)
 
-Run these steps on loom's machine only after the Tasks app and household-sharing
-work are ready. No implementation body runs them against the live home.
+Tasks moves once with the whole new side, as [Moving there](specs/web-foundation.md#moving-there)
+says. There is no live per-piece switch and no import marker selects an app. Build
+and exercise `loom serve --next --staging` on a separate home first. The following
+importer steps remain part of the final move with the owner present, after the
+new side has been used on real data and the owner says go. No implementation body
+runs them against the live home.
 
 1. Back up the old taskstore database using SQLite's backup API to a stopped-source
    copy, including all WAL-visible commits. Back up the target loom home. Keep both
@@ -65,21 +71,22 @@ work are ready. No implementation body runs them against the live home.
    different input is refused. Corrupt sequences that could reuse ids are refused.
    A failure rolls back the import and its marker; keep the old path active and
    restore the backup if the cutover comparison fails.
-4. Start the daemon with the approved sharing configuration. Point `LOOM_URL` at its
+4. After all importers finish, start `loom serve --next` with the approved sharing in `loom.db`. Point `LOOM_URL` at its
    URL (a trailing `/mcp` is accepted) and `LOOM_TOKEN_FILE` at the existing token file.
    Verify `node dist/taskstore-client.js export`, ids/counts/content, policy and live
    updates against the imported copy before retiring the old store.
 5. Switch the household's `taskstore` launcher to execute
    `node <installed-loom>/dist/taskstore-client.js "$@"` with those environment values.
    The package exposes this opt-in launcher as `loom-taskstore`; it deliberately
-   does not install a `taskstore` bin that would take over before this step. Existing
-   `loom tasks`, the old tasks piece pin and the old Tasks page remain intact in this
-   implementation; their cutover/deletion belongs to the coordinated Tasks app step.
+   does not install a `taskstore` bin that would take over before this step. Until this final move, existing
+   `loom tasks`, the old tasks piece pin and the old Tasks page stay active without
+   knowing about the new side. Their deletion follows whole-side verification.
 6. Validate ready/show/create/claim/unclaim/close/reopen/comment/link/unlink/update/
    list/report/export using a disposable task. Unlink exits 0 for removal, 3 for a
    valid miss, 1 for rejection, 2 for usage. Duplicate link exits 3 too. With the daemon
    stopped the new client reports unavailable; it never opens `TASKSTORE_DB`.
-   Retire the legacy writers and store only after that verification, with the owner.
+   Going back means restarting old loom on its untouched stores. Retire legacy writers
+   and stores only after whole-side verification, with the owner.
 
 ## Recorded upstream
 

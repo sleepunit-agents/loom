@@ -65,7 +65,8 @@ removing those causes. The historical evidence is in the review note above; the 
 
 These make the work a failure even if it runs:
 
-- An old path left beside its replacement. Every step deletes what it replaces in the same change.
+- An old path left beside its replacement once the move is done. The two sides run beside each other only while
+  the new one is being built; after the move the old one is deleted, not kept as a fallback.
 - A second way to do anything on the lists above: a second fetch path, a second store for a fact, a second place
   that decides who may see something.
 - A continuity regression: an agent's identity and memory must still load over stdio with no daemon running.
@@ -445,40 +446,49 @@ the machine, the raw samples and the percentiles. The reference machine is four 
 
 ## Moving there
 
-No new screens until step 3 lands; bug fixes only. Each step has a gate and the next doesn't start before it
-passes.
+**Build the whole new side beside the old one, then move across once** (the owner, 2026-11-12: "we're also good
+to literally just rip through this whole thing and once you're happy with it create some kind of transition
+path"). This replaces the earlier plan of cutting each piece over on the live loom as it landed, which needed a
+compatibility switch for every old caller of every piece.
 
-**The old path lives only for apps that haven't moved.** An app's cutover removes all of its old reads, writes,
-streams and stores in the same change. Shared old machinery goes with its last caller. In step 2 the code that
-still reads `household.json`, `tokens.json` and the settings files is pointed at the same tables in `loom.db`.
+**Next mode.** `loom serve --next` runs the new side and nothing else: the new shell, the in-repo pieces, and
+`loom.db` as the only home of app data. Without the flag, loom runs exactly as it does today, and no new code is
+on its request path beyond what is already merged. The flag is the whole seam:
 
-**One generated file stays until step 5.** The clock and the runtime are still separate programs and read
-`household.json` themselves (agent names, members and owner, the default agent, relays, and whether the file
-exists). Until they move in, the daemon writes that file from `loom.db` after every household change. It is an
-export: nothing reads it back into loom, a hand edit is overwritten, and it is deleted when the runtime moves in.
-This is the ruling's own exception ("a file is fine as a generated export of what loom holds").
+- New code never reads the old stores, files or piece programs, and old code is never changed to know about the
+  new side. There are no adapters between them and no switch that depends on an import having run.
+- In next mode, members, tokens, sessions, passkeys and settings come from `loom.db` only. `household.json` is not
+  read and not written.
+- Everything is built and tested on `startLoom` in next mode with the fixture home.
 
-1. **This spec,** agreed.
-2. **The foundation:** `loom serve` as one process on Hono; `loom.db` with sign-in state, members and settings
-   moved in (including push subscriptions); the operation registry; the policy module; the live feed; `startLoom` and the fixture home. The
-   present page keeps working for unmoved apps in the same process. Gate: one listener process; offline continuity,
-   policy table, registry retry, socket/reconnect, sign-in and staging hold tests pass; the benchmark is runnable.
-3. **Tasks, end to end:** the `tasks` piece in-repo, its data imported, its app on the desk reading records. This
-   proves the whole path. Gate: unchanged taskstore conformance cases, canonical import comparison, two-window
-   updates and CLI/API parity pass; no tasks legacy read, write, poll, piece program or old store remains active.
-4. **The rest, one piece at a time:** approvals, changes, clock, then core's own apps (Inbox and what needs you,
-   Comms, People, Projects, Knowledge, Activity). Each piece cuts over whole: its data, its operations, its
-   screens, and deletion of its old path, in one change. Comms imports read marks; Activity imports audit.db. Gate per piece: verified import, policy and live-feed
-   tests, operation parity and no legacy callers; the clock also passes daemon-only scheduling and restart tests.
-5. **Runtime and the bridges.** The runtime is the largest piece and the riskiest; its runner stays outside. The
-   bridges come in-process. Gate: delivery, reconnect and assigned-job token tests pass, with one active adapter
-   per venue and all old runtime/bridge services stopped. Secrets' app state moves here too; only its key holder stays out.
-   **Before any piece in steps 4 and 5 cuts over,** its PR lists every command, route and job of the old piece
-   beside the operation that replaces it. Anything dropped is named and said so; nothing disappears silently.
-6. **Deletion:** whatever of the old contract nothing uses (the manifest machinery, the pools, the collections
-   code, the old shells, the catalog). Gate: no legacy entry points or first-party pins remain; all completion
-   measures pass. The same apps on the phone use the new path; its visual redesign is still separate.
-7. **The phone's redesign,** as its own project.
+**A next instance to look at.** Loom's machine runs a second loom, `loom serve --next --staging`, on its own port
+and its own home, redeployed from main with the first. Its home is rebuilt on demand from a copy of the real one
+by the importers below. This is where the owner watches the new side fill in and where it is used before the
+move. `--staging` holds everything that reaches outside, as "Tests" says.
+
+**The order of work.** Pieces are independent, so they are built at the same time:
+
+1. **Done:** this spec, the foundation (database, operations, policy, live feed, harness), one process on three
+   addresses, the browser's data layer, the tasks piece and the Tasks app.
+2. **The frame:** next mode, the shell (the tiled desk and the phone on registered apps, one router), sign-in on
+   `loom.db`, and the next instance.
+3. **Every piece and app, in parallel,** each as tasks was: its tables, operations and records, its screens on the
+   kit, its importer, and tests on the fixture. Approvals, the clock, Changes; the Inbox and what needs you, Home
+   and the agent desk; Comms; People, Projects, Knowledge, Activity; settings and pieces; then the runtime's
+   state and screens and the bridges. For a piece that replaces an old program, the old program's commands and
+   tests are the contract: its PR lists each old command, route and job beside what replaces it, and anything
+   dropped is named.
+4. **The move,** once the next instance has been used on real data and the owner says go: one sitting with the
+   owner present. Stop the old loom, back everything up, run every importer (`loom migrate all`, each import one
+   transaction with its checks), start loom in next mode on the real home, point the commands agents type
+   (`taskstore`, `approvals`, `wake`) and the house image at the API, and verify. Going back is restarting the old
+   loom on the untouched old stores, until the owner retires them.
+5. **Deletion:** the old page server and screens, collections, the piece contract and its pools, the catalog and
+   the piece repos' pins, the lease and owner-lock code, and the `--next` flag itself, which becomes the only way
+   loom runs. Then the measures in "What must be true when this is done" are taken.
+6. **The phone's redesign,** as its own project.
+
+No new screens are added to the old side, and it gets bug fixes only.
 
 ## What this replaces
 
