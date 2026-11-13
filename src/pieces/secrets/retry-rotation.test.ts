@@ -76,7 +76,8 @@ it('requires all historical keys even with only completed writes; rejects malfor
 it('upgrades an existing v1-only binding without rewriting any old intent or core receipt',async()=>{
  const root=home(),h=fake(),body=input();let app=await open(root);install(app,h,keys[0]);expect(await call(app,body,'old')).toMatchObject({ok:true});
  app.db.prepare("DELETE FROM secrets_meta WHERE key='daemon-retry-keys-v1'").run();const before=intents(app),receipts=app.db.prepare('SELECT * FROM core_operations').all();await app.close();
- app=await open(root);install(app,h,{active:keys[1],previous:[keys[0]]});expect(intents(app)).toEqual(before);expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(receipts);
+ app=await open(root);const bindings=meta(app);expect(()=>install(app,h,keys[1])).toThrow('Secret retry key unavailable');expect(meta(app)).toEqual(bindings);expect(app.operations.has('secrets.set')).toBe(false);
+ install(app,h,{active:keys[1],previous:[keys[0]]});expect(intents(app)).toEqual(before);expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(receipts);
  expect(await call(app,body,'old')).toMatchObject({ok:true});expect(h.set).toHaveBeenCalledTimes(1);
 });
 it('loads a ring from explicit private files and refuses an unsafe historical file before binding or registration',async()=>{
@@ -103,4 +104,19 @@ it('snapshots all supplied key buffers before the caller erases them',async()=>{
  install(app,h,{active,previous:[previous]});active.fill(0);previous.fill(0);
  expect(await call(app,body,'old')).toMatchObject({ok:true});const next=input('NEXT');expect(await call(app,next,'new')).toMatchObject({ok:true});
  expect(app.db.prepare("SELECT input_hash FROM secrets_write_intents WHERE id='new'").get()).toEqual({input_hash:hash(keys[1],next)});
+});
+
+it.each(['not-json','null','{}','[]','[1]','["bad"]','duplicate','missing-original','missing-history'])('refuses malformed persisted history (%s) without changing bindings or registering values',async corruption=>{
+ const root=home(),h=fake();let app=await open(root);install(app,h,keys[0]);await app.close();app=await open(root);install(app,h,{active:keys[1],previous:[keys[0]]});
+ const original=(app.db.prepare("SELECT value FROM secrets_meta WHERE key='daemon-retry-key-v1'").get() as {value:string}).value;
+ const verifiers=JSON.parse((app.db.prepare("SELECT value FROM secrets_meta WHERE key='daemon-retry-keys-v1'").get() as {value:string}).value) as string[];
+ const changed=corruption==='duplicate'?JSON.stringify([...verifiers,verifiers[0]]):corruption==='missing-original'?JSON.stringify(verifiers.filter(v=>v!==original)):corruption==='missing-history'?JSON.stringify([...verifiers,'0'.repeat(64)]):corruption;
+ app.db.prepare("UPDATE secrets_meta SET value=? WHERE key='daemon-retry-keys-v1'").run(changed);const before=meta(app);await app.close();app=await open(root);
+ expect(()=>install(app,h,{active:keys[2],previous:[keys[1],keys[0]]})).toThrow('Secret retry key unavailable');expect(meta(app)).toEqual(before);expect(app.operations.has('secrets.set')).toBe(false);expect(app.operations.has('secrets.remove')).toBe(false);
+});
+it('can explicitly reactivate a retained key while preserving all history and old identities',async()=>{
+ const root=home(),h=fake(),body=input();let app=await open(root);install(app,h,keys[0]);expect(await call(app,body,'old')).toMatchObject({ok:true});await app.close();
+ app=await open(root);install(app,h,{active:keys[1],previous:[keys[0]]});const second=input('SECOND');expect(await call(app,second,'second')).toMatchObject({ok:true});const before=intents(app),bindings=meta(app);await app.close();
+ app=await open(root);install(app,h,{active:keys[0],previous:[keys[1]]});expect(intents(app)).toEqual(before);expect(meta(app)).toEqual(bindings);expect(await call(app,second,'second')).toMatchObject({ok:true});
+ const third=input('THIRD');expect(await call(app,third,'reactivated')).toMatchObject({ok:true});expect(app.db.prepare("SELECT input_hash FROM secrets_write_intents WHERE id='reactivated'").get()).toEqual({input_hash:hash(keys[0],third)});expect(h.set).toHaveBeenCalledTimes(3);
 });
