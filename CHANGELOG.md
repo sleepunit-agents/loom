@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add explicit Attention project lookup roles for digest aliases, thread filing and unambiguous venue fallback; production wiring remains separate.
+
 - Add an opt-in Attention API client generated from operation command metadata, with authenticated JSON calls and safe write retries.
 - Next-mode Approvals uses current household project repositories for standing merge rules, asking safely when metadata cannot be read.
 - Accept the new clock's UUID wake ids in approval vouch targets, preserving imported compact ids, exact matching and overlapping denials.
