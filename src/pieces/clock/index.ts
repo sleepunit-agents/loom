@@ -11,7 +11,7 @@ import { stagingRuntime, type Runtime, type StartResult } from './dependencies/r
 import { deskJobs, agentNext } from './desk.js';
 import { unpark } from './unpark.js';
 import { vouchable } from './vouch.js';
-import { vouchOf } from '../approvals/targets.js';
+import { vouchOf } from '../approvals/role.js';
 import { deadmanPrompt, deadmanNote } from './deadman.js';
 import type { HouseholdAskSource } from '../attention/role.js';
 import type { Approvals } from './dependencies/approvals.js';
