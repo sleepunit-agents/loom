@@ -6,6 +6,10 @@ import { Hono } from 'hono';
 import { getRequestListener } from '@hono/node-server';
 import { McpServer, WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/server';
 import { z } from 'zod';
+import { trustedRequestOrigin } from './core/request-origin.js';
+import { nextSignin } from './next-signin.js';
+import { nextCredentials } from './next-auth.js';
+import type { Clock } from './core/clock.js';
 import type { Socket } from 'node:net';
 import type { Foundation } from './core/app.js';
 import { httpDoor } from './core/app.js';
@@ -20,10 +24,10 @@ import { migrateHouseholdTables } from './core/household/schema.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { installEffects } from './core/effects.js';
 export type NextSessionResolver = (req: IncomingMessage) => Authentication | undefined;
-/** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
-export function nextSessionResolver(_app: Foundation): NextSessionResolver { return () => undefined; }
+/** Explicit home and row stores only. */
+export function nextSessionResolver(app: Foundation, home: string, clock?: Clock): NextSessionResolver { return nextCredentials(app, home, clock).authenticate; }
 export interface NextOptions {
-  home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
+  home: string; clock?: Clock; publicUrl?: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
 }
 export function installNext(app: Foundation, options: NextOptions) {
@@ -42,10 +46,13 @@ export function installNext(app: Foundation, options: NextOptions) {
   return installEffects(app, sharing, !!options.staging);
 }
 export async function listenNext(app: Foundation, options: NextOptions) {
-  const auth = options.authenticate ?? nextSessionResolver(app);
+  const publicOrigin = options.publicUrl ? new URL(options.publicUrl).origin : undefined;
+  const credentials = nextCredentials(app, options.home, options.clock);
+  const auth = options.authenticate ?? credentials.authenticate;
   const api = httpDoor(app, auth);
   const root = resolve(options.webRoot ?? resolve(import.meta.dirname, '../dist/web'));
   const routes = new Hono<{ Bindings: { incoming: IncomingMessage } }>();
+  routes.route('/auth', nextSignin(app, credentials, options.publicUrl));
   routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
   routes.all('/mcp', async c => {
     // A stateless transport per request binds every call to this caller.
@@ -94,13 +101,14 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   try {
     for (const host of [...new Set(hosts)]) {
       const http = createServer((req: IncomingMessage, res: ServerResponse) => {
-        const origin = req.headers.origin;
-        if (origin && origin !== `${'encrypted' in req.socket && req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`) { res.writeHead(403); res.end(); return; }
+        const path = new URL(req.url ?? '/', 'http://localhost').pathname;
+        const sensitive = path.startsWith('/auth/') || path.startsWith('/api/') || path === '/mcp';
+        if ((sensitive || req.headers.origin) && !trustedRequestOrigin(req, publicOrigin)) { res.writeHead(403); res.end(); return; }
         if (req.url?.startsWith('/api/')) return api(req, res);
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
       });
       http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
-      servers.push(http); detaches.push(app.live.attach(http,auth));
+      servers.push(http); detaches.push(app.live.attach(http,auth,publicOrigin));
       await new Promise<void>((ok, no) => { http.once('error', no); http.listen(port,host,ok); });
       const address = http.address();
       if (!address || typeof address === 'string') throw new Error('no next address');

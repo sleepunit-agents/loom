@@ -117,3 +117,33 @@ During the remaining memory cutover, explicit knowledge isolation checks both
 An override cannot hide a hard link between local memory and selected knowledge;
 the active legacy store also remains protected. Memory tools still need explicit
 routing before the new stdio entry point can ship.
+
+### Next sign-in transport
+
+`startLoom({home, next: true, publicUrl})` composes row-backed household,
+TokenDatabase and SessionDatabase credentials for HTTP, MCP and live sockets.
+`serve --next` passes `LOOM_PUBLIC_URL` as the trusted external origin; configure
+it for TLS termination and WebAuthn. Forwarded headers never choose authority.
+Browser cookie requests to API/MCP require `x-loom-csrf`, obtained from the
+session status endpoint. Socket operation messages carry the same proof in `csrf`.
+Bearer tokens identify members or agents and never
+assert that a browser window is present. Runtime/review credentials are refused
+until their trusted service composition exists.
+
+| Next route | Behavior |
+| --- | --- |
+| `GET /auth/session` | Current member and session-bound CSRF token; no-store |
+| `POST /auth/token` | JSON `{token}` opens a browser session for a live member token |
+| `POST /auth/link` | JSON `{code}` consumes an existing unexpired one-time link atomically with session creation |
+| `POST /auth/passkey/options` | Creates a bounded, expiring login challenge for the configured public URL |
+| `POST /auth/passkey` | Verifies an existing credential's assertion, consumes challenge and advances counter atomically |
+| `POST /auth/logout` | Requires cookie plus CSRF, ends that session and clears cookie |
+
+Existing imported cookie IDs and cookie key bytes are preserved. At next-mode
+startup, existing owner tokens are bound to their original member in household
+settings so replacing the first owner cannot reassign an old credential. The integration
+test removes the stopped source home before starting next mode and verifies its
+browser cookie/CSRF and old bearer token on the real API. Old JSON on the new
+home is ignored. These routes return JSON; the sign-in screen, new passkey
+registration, token/link creation and owner session management are still required
+follow-up work. No running home is imported or activated by these routes.

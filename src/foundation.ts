@@ -13,9 +13,9 @@ import { installNext, listenNext, type NextOptions } from './next.js';
 import { ownHome } from './core/daemon-home.js';
 import type { OutsideEffects } from './core/effects.js';
 export { createFoundation } from './core/app.js';
-export async function startLoom({ home, clock, install, authenticate, sharing, listen, next, staging, host, port, webRoot }: {
+export async function startLoom({ home, clock, install, authenticate, sharing, listen, next, staging, host, port, webRoot, publicUrl }: {
   home: string; clock?: Clock; sharing?: () => Sharing;
-  next?: boolean; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
+  publicUrl?: string; next?: boolean; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   install?: (app: ReturnType<typeof createFoundation>) => void;
   authenticate?: (req: IncomingMessage) => Authentication | undefined;
   /** Transitional production transport; it owns piece installation and listener shutdown. */
@@ -25,7 +25,7 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   let app: Foundation;
   try { app = createFoundation({ home, clock }); } catch(e) { await release(); throw e; }
   let effects: OutsideEffects | undefined;
-  const nextOptions: NextOptions = { home, staging, host, port, webRoot, authenticate, sharing };
+  const nextOptions: NextOptions = { home, clock, publicUrl, staging, host, port, webRoot, authenticate, sharing };
   if (next && listen) { app.close(); await release(); throw new Error("next mode owns its listener"); }
   try {
     install?.(app);

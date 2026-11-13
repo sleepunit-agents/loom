@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import type { Server, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Viewer } from '../../policy.js';
+import { trustedRequestOrigin } from '../request-origin.js';
 import type { Clock } from '../clock.js';
 import type { Change, Operations } from '../operations/index.js';
 export interface LiveRecord { id: string; [key: string]: unknown }
@@ -21,9 +22,9 @@ export interface RecordType {
   refreshOn?(change: Change): boolean;
 }
 const subscribe = z.object({ kind: z.literal('subscribe'), type: z.string(), scope: z.string().optional() });
-const call = z.object({ kind: z.literal('call'), request: z.string(), name: z.string(), input: z.unknown(), id: z.string().optional() });
+const call = z.object({ kind: z.literal('call'), request: z.string(), name: z.string(), input: z.unknown(), id: z.string().optional(), csrf: z.string().optional() });
 interface Subscriber { viewer: Viewer; send(value: unknown): void; close(): void; types: Map<string, { type: RecordType; scope?: string; sent: Set<string>; cancel: Map<string, () => void> }> }
-export interface Authentication { viewer: Viewer; valid(): boolean; expiresAt?: number }
+export interface Authentication { window?: boolean; authorizeCall?(proof: unknown): boolean; viewer: Viewer; valid(): boolean; expiresAt?: number }
 export class Live {
   private types = new Map<string, RecordType>();
   private emitter = new EventEmitter();
@@ -86,13 +87,13 @@ export class Live {
     for (const [socket, auth] of this.sockets) if (!auth.valid()) socket.close(1008, 'Session ended');
     for (const c of this.clients) for (const sub of [...c.types.values()]) { try { this.set(c, sub.type, sub.scope); } catch { this.failed(c); } }
   }
-  attach(server: Server, authenticate: (req: IncomingMessage) => Authentication | undefined) {
+  attach(server: Server, authenticate: (req: IncomingMessage) => Authentication | undefined, origin?: string) {
     const upgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
       if (new URL(req.url ?? '/', 'http://localhost').pathname !== '/live') return;
       let auth: Authentication | undefined;
       try { auth = authenticate(req); } catch { /* fail closed */ }
       // A cookie-authenticated browser must be same-origin. Nonbrowser tokens have no Origin.
-      if (!auth || !auth.valid() || (req.headers.origin && req.headers.origin !== `${('encrypted' in req.socket && req.socket.encrypted) ? 'https' : 'http'}://${req.headers.host}`)) {
+      if (!auth || !auth.valid() || !trustedRequestOrigin(req, origin)) {
         socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return;
       }
       const authenticated = auth;
@@ -100,7 +101,7 @@ export class Live {
         const auth = authenticated;
         const stopExpiry = auth.expiresAt === undefined ? undefined : this.clock.at(auth.expiresAt, () => ws.close(1008, 'Session ended'));
         this.sockets.set(ws, auth);
-        const c: Subscriber = { viewer: auth.viewer, types: new Map(), close: () => ws.close(1011, 'Subscription failed'), send: value => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); } };
+        const c: Subscriber = { viewer: auth.viewer, types: new Map(), close: () => ws.close(1011, 'Subscription failed'), send: value => { if (!auth.valid()) { ws.close(1008, 'Session ended'); return; } if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value)); } };
         this.clients.add(c);
         ws.on('message', raw => {
           if (!auth.valid()) { ws.close(1008, 'Session ended'); return; }
@@ -114,6 +115,7 @@ export class Live {
           }
           const op = call.safeParse(data);
           if (!op.success) { c.send({ ok: false, code: 'invalid', message: 'Invalid socket message' }); return; }
+          if (auth.authorizeCall && !auth.authorizeCall(op.data.csrf)) { c.send({ kind: 'result', request: op.data.request, result: { ok: false, code: 'denied', message: 'CSRF required' } }); return; }
           c.send({ kind: 'pending', request: op.data.request });
           const result = this.ops.call('socket', c.viewer, op.data.name, op.data.input, op.data.id);
           c.send({ kind: 'result', request: op.data.request, result });
