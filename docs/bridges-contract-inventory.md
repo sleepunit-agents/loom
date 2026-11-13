@@ -75,9 +75,10 @@ The new runtime role uses venue `slack`/`discord` and a separate place. Foundati
 Discord channel/thread places, stable IDs and authenticated Caller/Viewer roles.
 
 Legacy malformed intake remains held without TTL and retries after adapter restart.
-Current new-side `held` receipts remain held across restart, with no repair command
-yet. Record that gap when building disposition/repair; restart is not evidence that
-the new engine recovers it. Uncertain outgoing attempts are a separate case: human
+New-side runtime-delivery holds now requeue on engine restart, retaining the original
+receipt and id and repeating current setup, credentials and admission checks.
+Same-process holds and administrative/identity/invalid-time holds stay held.
+Uncertain outgoing attempts are a separate case: human
 disposition must never automatically resend them. Legacy one-hour transient intake
 expiry likewise is not implemented by the current durable retry loop; choose and
 document its treatment before claiming full retry parity.

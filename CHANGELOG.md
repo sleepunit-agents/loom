@@ -12,7 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Discover visible reported runtime builds for the current house configuration without treating later progress as a newer image.
+
 - Add confirmed dismissal of held and uncertain sends in the next-mode Bridges preview, with pending and error feedback across navigation.
+- Retry runtime-held Bridges intake after daemon restart with the original receipt and fresh admission, while preserving administrative holds.
 - Add opt-in fixed 24-hour Clock safety wakes under explicitly configured agent authority, retaining restart deadlines and staging holds.
 - Clock rejects continuation requests combined with a lane file, slot, place, approval or local-wake marker before saving work.
 - Compose parked Clock wakes with current scoped Approvals and Secrets answers in next mode, without spending receipts or carrying grants.

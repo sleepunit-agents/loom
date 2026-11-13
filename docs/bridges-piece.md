@@ -44,7 +44,12 @@ Previously queued foundation messages without a recoverable event time also hold
 The injected runtime delivery role returns `delivered`, `refused`, `retry` or `held`.
 Only `delivered` establishes a conversation binding. A final refusal consumes the
 receipt and erases its words; a transient outcome or exception retains the stable id
-for retry; malformed/unknown outcomes hold without retry until deliberately repaired.
+for retry; malformed/unknown outcomes hold for the life of the engine. On daemon restart, only
+`runtime delivery held` receipts return to pending, preserving the original id, words
+and event metadata. Delivery repeats current setup, credential and admission checks;
+a still-malformed result holds again. Venue-removal, identity and invalid-event-time
+holds stay held. Delivered/dropped receipts and all outbox states are unaffected.
+The legacy one-hour transient retry limit remains a separate pending port.
 Production composition must map the runtime registry Result into these outcomes and
 must preserve authenticated caller identity; that integration remains on t-2210.
 
@@ -212,8 +217,9 @@ stay blocked even after an edit-and-restore, until the
 current route is reloaded. This catches changes already received by the window;
 the existing put operation remains last-write-wins, without an atomic revision check.
 The daemon continues to enforce the existing household-owner policy for every write.
-Uncertain-send disposition and held intake
-repair remain required work before the full rebuild is complete. No live
+Confirmed uncertain-send dismissal is available below; runtime-held intake repair
+runs on restart as described above. Transient retry expiry remains required before
+the full rebuild is complete. No live
 connections start merely by opening this app or installing next-mode metadata.
 
 The CI-only `bridges-preview.integration.test.ts` uses two windows and fake venue IO
