@@ -1,0 +1,25 @@
+.next-shell { height:100dvh; overflow:hidden; display:flex; flex-direction:column; background:var(--v-canvas); color:var(--v-text); }
+.next-bar { height:34px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 24px; border-bottom:1px solid var(--v-line); font-size:12px; letter-spacing:.08em; }
+.next-bar strong { color:var(--v-accent); }
+.next-ground { position:relative; flex:1; min-height:0; margin:24px; }
+.next-tile { position:absolute; display:flex; flex-direction:column; min-width:0; overflow:hidden; border:1px solid var(--v-line); border-radius:8px; background:var(--v-surface,var(--v-canvas)); box-shadow:0 8px 32px #0002; animation:next-in .18s ease-out; }
+.next-tile[data-focused] { border-color:var(--v-accent); }
+.next-strip { display:flex; align-items:center; min-height:38px; flex:none; gap:2px; padding:2px 6px; border-bottom:1px solid var(--v-line); }
+.next-strip details { position:relative; font-size:12px; }
+.next-strip details ol { position:absolute; z-index:5; left:0; top:100%; min-width:180px; max-height:200px; overflow:auto; background:var(--v-canvas); border:1px solid var(--v-line); }
+.next-spacer { flex:1; }
+.next-page { flex:1; min-height:0; min-width:0; overflow:auto; container-type:inline-size; isolation:isolate; }
+.next-dock { flex:none; display:flex; align-items:center; justify-content:center; gap:8px; padding:8px 16px; border-top:1px solid var(--v-line); }
+.next-dock [data-open] { border-bottom:2px solid var(--v-accent); }
+.next-launcher { position:absolute; z-index:10; right:24px; top:48px; padding:20px; display:flex; gap:10px; background:var(--v-canvas); border:1px solid var(--v-line); box-shadow:0 10px 40px #0004; }
+.next-notice:empty { display:none; }
+.next-notice { position:fixed; bottom:68px; left:24px; max-width:calc(100vw - 48px); padding:10px; background:var(--v-canvas); border:1px solid var(--v-line); font-size:12px; }
+[data-shell=phone] .next-bar { padding:0 12px; height:44px; }
+[data-shell=phone] .next-ground { margin:0; }
+[data-shell=phone] .next-tile { position:absolute; inset:0; border:0; border-radius:0; }
+[data-shell=phone] .next-strip { padding:0 4px; }
+[data-shell=phone] .next-strip button { padding-inline:5px; }
+[data-shell=phone] .next-dock { justify-content:flex-start; overflow-x:auto; padding-bottom:max(8px,env(safe-area-inset-bottom)); }
+@keyframes next-in { from {opacity:0;transform:translateY(5px)} to {opacity:1;transform:none} }
+@media (prefers-reduced-motion:reduce) { .next-tile {animation:none} }
+[data-motion=reduce] .next-tile {animation:none}
