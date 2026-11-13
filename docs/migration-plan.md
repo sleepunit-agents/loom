@@ -6,7 +6,8 @@ outside the snapshot and destination, then validate it with
 an explicit plan as described below. Plan preparation opens no destination.
 
 `loom migrate all --snapshot DIR --home NEW [--plan FILE]` runs registered
-importers directly in dependency order under the destination's stopped-daemon
+importers directly in dependency order, awaiting successful settlement before
+publishing each completion receipt, under the destination's stopped-daemon
 lock. Use a fresh home, then keep that home stopped through import and independent
 verification. Exit 0 means every planned piece completed; exit 3 and an
 `incomplete` report mean missing or blocked registrations, never success. Exit 1

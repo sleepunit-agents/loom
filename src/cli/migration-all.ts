@@ -81,7 +81,7 @@ function saveReceipt(home: string, receipt: Receipt, publication: Publication): 
 }
 export interface MigrationReport { status: 'complete' | 'incomplete'; snapshot: string; plan: string; pieces: { name: string; status: 'imported' | 'completed' }[]; missing: string[]; blocked: string[] }
 /** Hooks and alternate registries are internal TypeScript only, never JSON plan options. */
-export function runMigrationAll(snapshot: string, destination: string, supplied?: unknown, controls: { registry?: MigrationRegistry; now?: () => number; afterPiece?: (name: string) => void; publication?: Publication } = {}): MigrationReport {
+export async function runMigrationAll(snapshot: string, destination: string, supplied?: unknown, controls: { registry?: MigrationRegistry; now?: () => number; afterPiece?: (name: string) => void; publication?: Publication } = {}): Promise<MigrationReport> {
   const prepared = prepareMigrationPlan(snapshot, supplied), home = canonical(destination);
   separateDestination(prepared.root, destination, prepared.plan);
   readReceipt(home, prepared.plan); // No writable destination open until both preflights pass.
@@ -124,7 +124,7 @@ export function runMigrationAll(snapshot: string, destination: string, supplied?
             return { slug: project.slug, name: project.name, repos: project.repositories };
           }) };
         } } : input;
-        entry.run({ db: app.db, home, now: receipt.now, snapshot: { root: checked.root, manifest: checked.manifest } }, effective);
+        await entry.run({ db: app.db, home, now: receipt.now, snapshot: { root: checked.root, manifest: checked.manifest } }, effective);
         // If death lands before this write, the importer's own transaction/receipt makes retry safe.
         controls.afterPiece?.(entry.name);
         receipt.completed.push(entry.name); saveReceipt(home, receipt, controls.publication ?? durablePublication);
@@ -135,7 +135,7 @@ export function runMigrationAll(snapshot: string, destination: string, supplied?
   } finally { release(); }
 }
 const usage = 'usage: loom migrate all --snapshot <directory> --home <fresh-stopped-home> [--plan <file>]\n       loom migrate plan --snapshot <directory> [--plan <edited-file>]\n';
-export function migrateAll(argv: string[], io: IOStreams, planOnly = false): number {
+export async function migrateAll(argv: string[], io: IOStreams, planOnly = false): Promise<number> {
   let args;
   try { args = parseArgs({ args: argv, options: { snapshot: { type: 'string' }, home: { type: 'string' }, plan: { type: 'string' }, help: { type: 'boolean', short: 'h' } }, strict: true, allowPositionals: false }); }
   catch { io.stderr(`Invalid migration arguments.\n${usage}`); return 2; }
@@ -144,7 +144,7 @@ export function migrateAll(argv: string[], io: IOStreams, planOnly = false): num
   try {
     const supplied = args.values.plan ? JSON.parse(readFileSync(args.values.plan, 'utf8')) : undefined;
     if (planOnly) { io.stdout(JSON.stringify(prepareMigrationPlan(args.values.snapshot, supplied).plan, null, 2) + '\n'); return 0; }
-    const report = runMigrationAll(args.values.snapshot, args.values.home!, supplied);
+    const report = await runMigrationAll(args.values.snapshot, args.values.home!, supplied);
     io.stdout(JSON.stringify(report, null, 2) + '\n');
     return report.status === 'complete' ? 0 : 3;
   } catch { io.stderr('Migration refused; verify snapshot, plan and destination ownership, and stop the destination daemon.\n'); return 1; }
