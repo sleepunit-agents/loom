@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Add an offline Bridges configuration source inventory prerequisite with explicit files, source checksums, bounded reads and no credential acquisition; database import and migration registration remain pending.
+- Preserve deleted private Comms bindings only in the Runtime import archive, report their skipped ids, and validate spawned thread ownership.
 
 - Add a daemon-owned Secrets receipt reconciliation job that recovers confirmed writes without caller plaintext, retaining locks on uncertain writes and rechecking current authority.
 - Compose explicit authenticated Secrets mutations, retained retry keys and automatic recovery in next startup, with per-write staging holds.
