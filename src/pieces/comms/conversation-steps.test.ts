@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Sharing, type Viewer } from '../../core/index.js';
+import type { Comms } from './role.js';
 import { installComms } from './index.js';
 import { loadKey, type WordsKey } from './crypto.js';
 
@@ -16,12 +17,13 @@ async function setup(wrap?: (key: WordsKey) => WordsKey, configured = true) {
  let sharing: Sharing = { members: { jonathan: { owner: false, agents: ['art'] }, owner: { owner: true, agents: [] }, other: { owner: false, agents: [] } }, projects: {}, services: {} };
  const conversations = new Map([['cv-public', { agent: 'art', venue: 'discord', version: 'original' }]]);
  const key = wrap?.(base) ?? base;
+ let role: Comms;
  let close: () => Promise<void> = async () => {};
  const app = await startLoom({ home, clock, install: a => {
   const comms = installComms({ ...a, clock, key, days: 1, sharing: () => sharing,
    runtime: { deliver: async () => {}, end: async () => {} }, hold: async f => f(), attention: { answer: () => ({ ok: true, value: {} }) },
    ...{ conversation: configured ? (id: string) => conversations.get(id) : undefined },
-  }); close = () => comms.close();
+  }); role = comms; close = () => comms.close();
  } });
  cleanups.push(async () => { await close(); await app.close(); rmSync(home, { recursive: true, force: true }); });
  const seed = async (seq: number, conversation = 'cv-public', at = clock.now()) => {
@@ -29,7 +31,7 @@ async function setup(wrap?: (key: WordsKey) => WordsKey, configured = true) {
    await base.seal(`private label ${seq}`), await base.seal(JSON.stringify({ run: 'private-run', id: `card-${seq}`, tool: 'Shell', state: 'done', body: 'must never be exposed' })));
  };
  const read = (input: unknown = { conversation: 'cv-public' }, viewer = member, window = true, valid = () => true) => app.operations.callAsync('socket', viewer, 'comms.conversationSteps', input, undefined, window, valid);
- return { app, clock, conversations, base, read, seed, close: () => close(), revoke: () => { sharing = { ...sharing, members: { ...sharing.members, jonathan: { owner: false, agents: [] } } }; } };
+ return { app, clock, conversations, base, read, seed, writer: (binding: Parameters<Comms['conversationWriter']>[0]) => role.conversationWriter(binding), close: () => close(), revoke: () => { sharing = { ...sharing, members: { ...sharing.members, jonathan: { owner: false, agents: [] } } }; } };
 }
 
 it('reads retained encrypted conversation labels in pages of one hundred without persisting words', async () => {
@@ -126,4 +128,115 @@ it('never projects body text cards from a non-thread step envelope', async () =>
  const s = await setup(); await s.seed(1);
  s.app.db.prepare('UPDATE comms_conversation_steps SET record=?').run(await s.base.seal(JSON.stringify({ run: 'private-run', id: 'body', tool: 'text', state: 'done' })));
  expect(await s.read()).toEqual({ ok: true, value: { steps: [{ seq: 1, conversation: 'cv-public', at: s.clock.now(), keepUntil: s.clock.now() + 86400_000, text: null }] } });
+});
+
+it('writes encrypted labels with stable run/card identity and preserves the original deadline', async () => {
+ const s = await setup();
+ const writer = s.writer({ agent: 'art', conversation: 'cv-public', run: 'new-run', startedAt: s.clock.now(), valid: () => true });
+ const card = { id: 'card', tool: 'Shell', summary: 'private new label', state: 'running' as const };
+ expect(await writer.write([card])).toEqual({ added: 1, updated: 0 });
+ const original = s.app.db.prepare('SELECT seq,at FROM comms_conversation_steps').get();
+ s.clock.advance(1000);
+ expect(await writer.write([{ ...card, summary: 'private updated label', state: 'done' }])).toEqual({ added: 0, updated: 1 });
+ expect(s.app.db.prepare('SELECT seq,at FROM comms_conversation_steps').get()).toEqual(original);
+ expect(await s.read()).toMatchObject({ ok: true, value: { steps: [{ run: 'new-run', id: 'card', state: 'done', text: 'private updated label' }] } });
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_conversation_steps').all())).not.toMatch(/private|new-run|Shell/);
+ expect(await writer.write([{ ...card, tool: 'text' }])).toEqual({ added: 0, updated: 0 });
+});
+
+for (const boundary of ['deleted', 'replaced', 'private', 'row', 'session', 'closed', 'deadline'] as const)
+ it(`rejects activity changed while encryption is suspended (${boundary})`, async () => {
+  let release = () => {}, started = () => {}, valid = true, block = false;
+  const waiting = new Promise<void>(r => { release = r; }), began = new Promise<void>(r => { started = r; });
+  const s = await setup(k => ({ ...k, seal: async words => {
+   expect(s.app.db.inTransaction).toBe(false);
+   if (block) { started(); await waiting; } return k.seal(words);
+  }, open: async words => { expect(s.app.db.inTransaction).toBe(false); return k.open(words); } }));
+  const start = s.clock.now(); await s.seed(1);
+  const writer = s.writer({agent:'art',conversation:'cv-public',run:'new-run',startedAt:start,valid:()=>valid});
+  block = true;
+  const write = writer.write([{id:'new-card',tool:'Shell',summary:'private activity',state:'done'}]);
+  const rejected = expect(write).rejects.toMatchObject({code: boundary === 'row' ? 'conflict' : 'denied'});
+  await began;
+  if (boundary === 'deleted') s.conversations.delete('cv-public');
+  if (boundary === 'replaced') s.conversations.get('cv-public')!.version = 'recreated';
+  if (boundary === 'private') s.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('private','other','art','cv-public',start);
+  if (boundary === 'row') s.app.db.prepare('UPDATE comms_conversation_steps SET at=at+1').run();
+  if (boundary === 'session') valid = false;
+  if (boundary === 'closed') await s.close();
+  if (boundary === 'deadline') s.clock.now = () => start + 86400_000;
+  release(); await rejected;
+  expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_conversation_steps').get()).toEqual({n:1});
+ });
+
+it('binds activity to its agent and house, snapshots capabilities and rejects invalid cards before crypto', async () => {
+ let seals = 0;
+ const s = await setup(k => ({...k,seal:async words=>{seals++;return k.seal(words);}}));
+ const binding = {agent:'art',conversation:'cv-public',run:'run',startedAt:s.clock.now(),valid:()=>true,houseConversations:['cv-public']};
+ const cards = [{id:'card',tool:'Shell',summary:'label',state:'done' as const}];
+ for (const change of [{agent:'other'}, {houseConversations:[]}, {valid:()=>false}, {startedAt:s.clock.now()+1}, {run:''}])
+  await expect(s.writer({...binding,...change}).write(cards)).rejects.toMatchObject({code:'denied'});
+ for (const venue of ['loom','comms','spawn']) {
+  s.conversations.get('cv-public')!.venue=venue;
+  await expect(s.writer(binding).write(cards)).rejects.toMatchObject({code:'denied'});
+ }
+ s.conversations.get('cv-public')!.venue='discord';
+ const writer=s.writer(binding);binding.agent='other';binding.houseConversations.length=0;
+ for (const bad of [[],[...cards,...cards],[{...cards[0],summary:'bad\nlabel'}],[{...cards[0],body:'private body'}],Array(51).fill(cards[0])])
+  await expect(writer.write(bad)).rejects.toThrow();
+ expect(seals).toBe(0);
+ expect(await writer.write(cards)).toEqual({added:1,updated:0});
+ expect(s.app.operations.offered('mcp').some(o=>o.name.includes('conversationWriter'))).toBe(false);
+});
+
+it('caps each conversation at one thousand while preserving other conversations and global sequence order', async () => {
+ const s=await setup();await s.seed(1);await s.seed(2,'another-conversation');
+ s.app.db.prepare(`WITH RECURSIVE numbers(n) AS (SELECT 3 UNION ALL SELECT n+1 FROM numbers WHERE n<1002)
+ INSERT INTO comms_conversation_steps SELECT n,'cv-public',at,words,record FROM numbers,comms_conversation_steps WHERE seq=1`).run();
+ const writer=s.writer({agent:'art',conversation:'cv-public',run:'new-run',startedAt:s.clock.now(),valid:()=>true});
+ expect(await writer.write([{id:'new-card',tool:'Shell',summary:'new label',state:'running'}])).toEqual({added:1,updated:0});
+ expect(s.app.db.prepare("SELECT count(*) AS n,min(seq) AS first,max(seq) AS last FROM comms_conversation_steps WHERE conversation='cv-public'").get()).toEqual({n:1000,first:4,last:1003});
+ expect(s.app.db.prepare("SELECT seq FROM comms_conversation_steps WHERE conversation='another-conversation'").get()).toEqual({seq:2});
+});
+
+it('keeps runs distinct and cannot restore swept activity or extend its original retention', async () => {
+ const s=await setup(),start=s.clock.now();
+ const binding={agent:'art',conversation:'cv-public',run:'first-run',startedAt:start,valid:()=>true};
+ const cards=[{id:'card',tool:'Shell',summary:'private label',state:'running' as const}];
+ const writer=s.writer(binding);await writer.write(cards);
+ await s.writer({...binding,run:'second-run'}).write(cards);
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_conversation_steps').get()).toEqual({n:2});
+ s.clock.advance(86400_000);
+ expect(s.app.db.prepare('SELECT words,record FROM comms_conversation_steps').all()).toEqual([{words:null,record:null},{words:null,record:null}]);
+ await expect(writer.write(cards)).rejects.toMatchObject({code:'denied'});
+ expect(await s.read()).toEqual({ok:true,value:{steps:[]}});
+});
+
+it('never lets an existing writer follow deletion and recreation between calls', async () => {
+ const s=await setup();
+ const writer=s.writer({agent:'art',conversation:'cv-public',run:'run',startedAt:s.clock.now(),valid:()=>true});
+ const cards=[{id:'card',tool:'Shell',summary:'label',state:'done' as const}];
+ await writer.write(cards);
+ s.conversations.set('cv-public',{agent:'art',venue:'discord',version:'recreated'});
+ await expect(writer.write(cards)).rejects.toMatchObject({code:'denied'});
+});
+
+it('commits no partial batch when encryption fails and fences concurrent updates', async () => {
+ let fail=false,block=false,release=()=>{},started=()=>{};
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup(k=>({...k,seal:async words=>{
+  if(fail&&words==='fail label')throw new Error('crypto unavailable');
+  if(block&&words==='paused label'){started();await waiting;}
+  return k.seal(words);
+ }}));
+ const writer=s.writer({agent:'art',conversation:'cv-public',run:'run',startedAt:s.clock.now(),valid:()=>true});
+ const card={id:'card',tool:'Shell',summary:'label',state:'running' as const};
+ fail=true;
+ await expect(writer.write([card,{...card,id:'failed',summary:'fail label'}])).rejects.toThrow();
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_conversation_steps').get()).toEqual({n:0});
+ fail=false;await writer.write([card]);block=true;
+ const paused=writer.write([{...card,summary:'paused label'}]);
+ const rejected=expect(paused).rejects.toMatchObject({code:'conflict'});await began;
+ await writer.write([{...card,summary:'winning label',state:'done'}]);release();await rejected;
+ expect(await s.read()).toMatchObject({ok:true,value:{steps:[{text:'winning label',state:'done'}]}});
 });

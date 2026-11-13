@@ -33,7 +33,13 @@ export interface DeliveryTrace {
  thread: string; conversation: string; archived: number | null; working: boolean;
  messages: {seq:number;at:number;kind:string;from:string;delivery?: 'sending'|'held'|'failed'|'delivered'}[];
 }
+/** Supplied by the runtime, never by tool arguments. run is unique per body and
+ * startedAt is its original epoch-ms start, preserved across capability renewal. */
+export interface ConversationWriteBinding extends ReadBinding { conversation: string; run: string; startedAt: number }
+export interface ConversationCard { id: string; tool: string; summary: string; state: 'running' | 'done' | 'failed' }
 export interface Comms {
+ /** Label-only activity for ordinary conversations. Private venues use post instead. */
+ conversationWriter(binding: ConversationWriteBinding): {write(cards: readonly ConversationCard[]): Promise<{added: number; updated: number}>};
  /** One encrypted line per member message; late/duplicate attempts cannot replace progress. */
  startNotice(agent: string, thread: string, notice: StartNotice): Promise<{seq: number | null}>;
  /** Private startup brief for the trusted runtime; no window/token operation. */

@@ -83,7 +83,7 @@ data does not remove the behavior it delivered.
 | Adapter `status`, `stateOf`, `settleThread`, `startNotice`, `noteLoopPause` | Runtime role and clock jobs | Partial: consumes stop flag and accepts optional working/done heartbeats, preserving turn start and updating beat without moving thread activity. Archive clears working state; heartbeats cannot restart archived threads. Working state expires after 90 seconds without a beat, including startup settlement (missing beats fall back to turn start or last activity). Trusted `activity(agent,thread,{at,tokens?})` now records monotonic body movement (epoch milliseconds, integer tokens 0–1e12), ignores duplicate/older or >60-second-future samples, and clears a missing token count on a newer sample. It neither starts nor extends working state, moves thread activity nor appends messages. Thread Live records and trace show these facts only while working and within the turn-start/future bounds; idle and prior-turn facts stay hidden. The connected thread header renders the latest body activity time in CT and the exact optional token count (including zero), and hides it on turn completion or connection loss. Trusted `notice(agent,thread,{kind,id})` now records encrypted no-reply/loop notices and clears working state atomically on first insertion. Its id is a stable run/event identity; retries never clear a later turn or resurrect expired words. Trusted `startNotice(agent,thread,{seq,kind,attempt,retryAt?,reason?,run?})` now maintains one encrypted retry/failure line per member message. Attempts are monotonic; a same-attempt failure wins over retry, and final failures never reopen within a delivery generation. Body progress suppresses late notices, including after heartbeat expiry/restart. An existing retry line now reads “couldn't start at first” with a settled work flag after progress, including after restart. The app shows a retained unsettled retry time in CT and removes it after settlement. The app now projects working/quiet/stuck and running-step time limits. Final-start Send again now uses `comms.retryStart` with the source sequence and expected generation. A retained, unprogressed authoritative final failure permits one new persisted generation, with distinct runtime receipt/staging identity; duplicate/stale controls cannot advance it again. Runtime binding and queued/busy timing remain missing. |
 | Adapter `spawn`, `isJob`, `isBackground` | Runtime role and thread app | Missing: preserve supplied conversation without starting a body, brief/parent, report dedupe, background grouping and follow-up promotion. |
 | Watching / Join in | Thread app and runtime role | Missing: read-only watching, joined state, no interrupt on opening/closing, explicit join. |
-| Activity route, `postActivity` | `Comms.post` cards plus activity role | Partial: replaces encrypted card payload and does not resurrect swept words; batch validation, run-scoped identity, timing/body limits, heartbeat and non-thread conversation steps missing. |
+| Activity route, `postActivity` | `Comms.post` cards plus activity role | Partial: replaces encrypted card payload and does not resurrect swept words; thread batch validation and timing/body limits remain missing. Ordinary conversation label batches now have a trusted writer with encrypted run/card identity; runtime binding and Live/UI remain missing. |
 | `conversationSteps` | `comms.conversationSteps`, encrypted step records | Partial: import, export exclusion, retention and window-only pages of 100 now exist. Reads require authoritative new-side conversation metadata, ordinary agent viewer policy, and fail closed for private/spawned venues, live private threads and deleted-thread tombstones. Runtime writes, the per-conversation cap of 1000, Live records, production lookup binding and conversation-page UI remain missing. |
 | `comms_thread`, `agentThreadRead` | Bound internal runtime role | Partial: trusted in-process `Comms.reader` snapshots agent/conversation/house restrictions and exposes read-only pages (default 30, cap 100), with validity/ownership/row checks after crypto and retention at return. Runtime tool binding remains to be connected; no bearer operation is exposed. |
 | Inline asks, kept asks, `/act`, Inbox sync | Comms ciphertext and opaque attention reference | Partial: distinct reference id and original-member yes/no forwarding work. Need private ask creation, state/history/Inbox synchronization and freeform answers without plaintext attention rows or retry results. |
@@ -109,7 +109,7 @@ rolls back its schema as well as its rows.
 
 The app maps imported nested card tool/state and step details, ask question/reason/outcome
 lines, and kept answer verdicts. Answered, expired, freeform and unreferenced asks do not
-offer boolean answer buttons. Non-thread conversation-step labels are also preserved by the importer; their new writer, authorized reader and page binding remain required before release. Imported metadata encryption and same-key ciphertext preservation now have
+offer boolean answer buttons. Non-thread conversation-step labels are also preserved by the importer; their trusted label writer and window reader now exist; production runtime/metadata binding, Live records and page UI remain required before release. Imported metadata encryption and same-key ciphertext preservation now have
 focused tests for both matching and different destination keys.
 Source preservation includes the old files and their WAL snapshots; no live
 host import has been attempted by this work.
@@ -314,8 +314,7 @@ byte for byte; a different key rekeys it only in memory. Run, card id, tool and
 state use a separate encrypted envelope. Rows whose source words are already
 absent retain only routing facts. The shared deadline sweep clears both blobs
 at the configured retention deadline, including when no thread messages exist.
-This adds storage and offline preservation only: runtime writes, authorized
-conversation-page reads, and UI remain unfinished.
+This checkpoint added storage and offline preservation. The later sections below add the window reader and trusted label writer; production binding, Live and UI remain unfinished.
 
 Two regression cases first failed because the importer returned no step count
 and silently omitted these rows. They now cover both key paths, separate
@@ -353,7 +352,43 @@ conversation replacement/deletion, session invalidation, closure, changed rows,
 exact expiry without a sweep, generic crypto errors and body-text suppression.
 Both same-key and rekey importer tests now read their imported labels through
 this operation. All 299 affected tests and TypeScript checking pass. No web
-change or local browser run. Runtime writes, cap enforcement, Live updates,
-production metadata lookup and conversation-page UI remain unfinished. This new
+change or local browser run. The following unit adds runtime label writes and cap enforcement. Live updates, production runtime/metadata binding and conversation-page UI remain unfinished. This new
 permission surface awaits the remaining aggregate security review before merge;
 review budgets stay backend/security 2/3 and importer 1/3.
+
+
+Ordinary conversation activity now has a trusted `Comms.conversationWriter`
+capability. The runtime supplies agent, conversation, unique body run, original
+`startedAt`, validity and optional house conversation restrictions; none comes
+from tool arguments. The capability snapshots these facts and the authoritative
+conversation version at creation. Each write rechecks them before and after
+crypto, so an old capability cannot follow a deleted/recreated conversation.
+Private venues, live private-thread rows and deleted-thread tombstones never
+fall back to this store. Production runtime binding is still absent.
+
+Batches accept 1–50 label cards with the legacy id/tool/summary/state bounds;
+duplicate ids and extra fields reject the whole batch. `text` cards are dropped.
+Only labels are stored here: bodies, output and further private detail are not
+accepted. Labels and run/id/tool/state are encrypted separately. Matching run/id
+updates preserve sequence, original tool and timestamp; separate runs stay
+separate. Crypto and encrypted-identity comparison happen outside transactions;
+commit rechecks the exact conversation rows and writes the batch atomically.
+A concurrent change returns a conflict for the runtime to retry. Each successful
+batch trims only its conversation to the newest 1,000 global sequence numbers
+and rearms the shared retention sweep.
+
+Choice: a writer expires at the original body start plus configured retention.
+The runtime must preserve that start and use unique run ids; renewing a binding
+must not reset them. This prevents a late body callback from recreating labels
+after both encrypted blobs have been swept, when the old run/card identity is
+no longer recoverable. An expired run cannot write even a new card. Existing
+rows never acquire a new timestamp through update.
+
+The initial regression failed because `conversationWriter` did not exist.
+New cases cover stable encrypted updates, separate runs, cap and other-page
+isolation, invalid/private/house/agent bindings, whole-batch validation and
+crypto failure, concurrent changes, replacement between calls, revocation and
+exact expiry during suspended encryption, no resurrection, and transaction-free
+crypto. No migration or web change in this unit. Live records, production
+composition and the conversation page UI remain required. Aggregate review
+budgets are unchanged: backend/security 2/3, importer 1/3.

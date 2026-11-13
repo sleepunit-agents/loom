@@ -117,7 +117,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   },
  }));
  let closed=false;
- installConversationSteps({...o,days,closed:()=>closed});
+ const conversationSteps=installConversationSteps({...o,days,closed:()=>closed,changed:armSweep});
  const pending = new Map<string,Promise<void>>();
  type End = {thread:string;conversation:string;generation:number;action:'archive'|'delete'};
  const endKey=(place:string)=>`pending-end:${place}`;
@@ -476,7 +476,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  sweep();
  void reconcileEnds();
  void reconcileDeliveries();
- return {post,startNotice,deliver,reconcileEnds,reconcileDeliveries,
+ return {post,startNotice,deliver,reconcileEnds,reconcileDeliveries,conversationWriter:conversationSteps.writer,
   notice(agent,place,raw) {
    const n=z.object({kind:z.enum(['no-reply','loop']),id:z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/)}).strict().parse(raw);
    const name=agent.charAt(0).toUpperCase()+agent.slice(1);
