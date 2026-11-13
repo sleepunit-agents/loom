@@ -4,14 +4,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, fsyncSync, linkSync, openSync, readFileSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import type { Db } from '../../core/index.js';
-import { HouseholdDatabase } from '../../core/household/document.js';
-import { migrateHouseholdTables } from '../../core/household/schema.js';
-import { HouseholdRows } from '../../core/household/rows.js';
-import { TokenDatabase } from '../../core/household/tokens.js';
-import { parseHouseholdDocument, parseTokenDocument } from '../../household.js';
-import { SessionDatabase } from '../../ui/session-db.js';
-import type { SessionFile } from '../../ui/sessions.js';
+import type { Db } from '../core/index.js';
+import { HouseholdDatabase } from '../core/household/document.js';
+import { migrateHouseholdTables } from '../core/household/schema.js';
+import { HouseholdRows } from '../core/household/rows.js';
+import { TokenDatabase } from '../core/household/tokens.js';
+import { parseHouseholdDocument, parseTokenDocument } from '../household.js';
+import { SessionDatabase } from '../ui/session-db.js';
+import type { SessionFile } from '../ui/sessions.js';
 
 const concerns = ['settings', 'agents', 'members', 'projects', 'tokens', 'token_use', 'sessions', 'links', 'challenges', 'passkeys', 'push', 'readers', 'piece_settings', 'imports'] as const;
 function optional(path: string): Buffer | undefined {

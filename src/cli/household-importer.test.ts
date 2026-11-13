@@ -3,14 +3,14 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startLoom } from '../../foundation.js';
-import { HouseholdDatabase } from '../../core/household/document.js';
-import { HouseholdRows } from '../../core/household/rows.js';
-import { TokenDatabase } from '../../core/household/tokens.js';
-import { TokenResolver } from '../../household.js';
-import { SessionDatabase } from '../../ui/session-db.js';
-import { SessionStore } from '../../ui/sessions.js';
-import { importHousehold } from './importer.js';
+import { startLoom } from '../foundation.js';
+import { HouseholdDatabase } from '../core/household/document.js';
+import { HouseholdRows } from '../core/household/rows.js';
+import { TokenDatabase } from '../core/household/tokens.js';
+import { TokenResolver } from '../household.js';
+import { SessionDatabase } from '../ui/session-db.js';
+import { SessionStore } from '../ui/sessions.js';
+import { importHousehold } from './household-importer.js';
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 const cleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const f of cleanup.splice(0).reverse()) await f(); });
@@ -101,7 +101,7 @@ it('retries after interruption between durable key publication and committing th
   const f = await fixture();
   // Abort on receipt insertion, after the durable key exists. The schema and
   // all app tables roll back; the filesystem key is deliberately retained.
-  const { migrateHouseholdTables } = await import('../../core/household/schema.js');
+  const { migrateHouseholdTables } = await import('../core/household/schema.js');
   migrateHouseholdTables(f.app.db);
   f.app.db.exec("CREATE TRIGGER interrupt_receipt BEFORE INSERT ON household_imports BEGIN SELECT RAISE(ABORT, 'power lost after key'); END");
   expect(() => importHousehold(f.app.db,f.home,f.from,1000)).toThrow('power lost after key');

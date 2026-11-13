@@ -3,7 +3,7 @@ import { dirname, resolve, basename, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { acquireHttpLock } from '../transport/http-lock.js';
 import { createFoundation } from '../core/app.js';
-import { importHousehold } from '../pieces/household/importer.js';
+import { importHousehold } from './household-importer.js';
 import type { IOStreams } from './io.js';
 function canonicalPath(path: string): string {
   const absolute = resolve(path);
