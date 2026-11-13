@@ -129,7 +129,11 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
       addCopy(`${prefix}/${path}`, input, stat.size);
       // Fixed-path importers still need the original file name. Materialize it
       // as regular bytes, retaining canonical provenance in followed.
-      if (fileAlias && logical !== path && patterns.some(pattern => matches(logical, pattern))) addCopy(`${prefix}/${logical}`, input, stat.size);
+      const preserveAlias = prefix === 'home' ? fileAlias && importerPatterns.some(pattern => matches(logical, pattern)) : declaredAlias;
+      if (logical !== path && preserveAlias) {
+        addCopy(`${prefix}/${logical}`, input, stat.size);
+        if (!inventory.followed.some(alias => alias.path === label(logical) && alias.realPath === label(path))) inventory.followed.push({path: label(logical), realPath: label(path)});
+      }
       inventory.skipped = inventory.skipped.filter(entry => entry.path !== label(path));
     }
     else if (!inventory.copies.some(file => file.source === input)) inventory.skipped.push({ path: label(path), rule: 'not declared by a registered importer or key rule', bytes: stat.size });
@@ -144,7 +148,7 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
     const stat = guarded(`<${name}>`, 'cannot inspect source root', () => lstatSync(source));
     if (name === 'changes') {
       if (!stat.isFile()) refusal('<changes>', 'Changes snapshot must be a regular file');
-      inventory.copies.push({path: 'changes/changes.json', bytes: stat.size, source});
+      addCopy('changes/changes.json', source, stat.size);
       continue;
     }
     if (!stat.isDirectory()) refusal(`<${name}>`, 'source root must be a directory');
@@ -154,18 +158,12 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
     // Each root has its own alias confinement boundary; never follow a link to another root.
     visit(source);
   }
-  // Old WAKE_DATA and Art's flat .wake may both name art. Never overwrite or choose one.
-  const destinations = new Set<string>();
-  for (const file of inventory.copies) {
-    if (destinations.has(file.path)) refusal('<roots>', 'source roots collide in the snapshot');
-    destinations.add(file.path);
-  }
   if (tasks) {
     const input = guarded('<tasks>', 'taskstore must exist', () => realpathSync(tasks));
     const stat = guarded('<tasks>', 'cannot inspect taskstore', () => lstatSync(input));
     if (!stat.isFile()) refusal('<tasks>', 'taskstore must be a regular file');
     if (within(input, target)) refusal('<tasks>', 'taskstore and destination must be separate');
-    inventory.copies.push({ path: 'tasks/store.db', bytes: stat.size, source: input });
+    rootId++; addCopy('tasks/store.db', input, stat.size);
   }
   inventory.copies.sort((a,b) => a.path.localeCompare(b.path));
   return inventory;

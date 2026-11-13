@@ -133,6 +133,7 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
   const clock = [...new Set([...files].filter(p => (legacyClockAgentFiles as readonly string[]).includes(basename(p)) && agent.safeParse(posix.basename(posix.dirname(p))).success).map(p => posix.dirname(posix.dirname(p))))].sort();
   if ((files.has('clock/lanes.json') || files.has('clock/fire')) && !clock.includes('clock')) throw Error('Explicit clock source has no agent files');
   const approvals = [...files].filter(p => basename(p) === 'approvals.json').map(p => posix.dirname(p)).sort();
+  if ((files.has('approvals/rules.json') || files.has('approvals/audit.jsonl')) && !approvals.includes('approvals')) throw Error('Explicit approvals source is incomplete');
   const changes = [...files].filter(p => basename(p) === 'changes.json' || /(?:^|\/)changes\/.*\.json$/.test(p)).filter(p => {
     const value = json(p);
     const valid = value?.v === 1 && Array.isArray(value.changes);

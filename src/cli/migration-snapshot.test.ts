@@ -361,3 +361,27 @@ test('plan refuses explicit clock metadata without agent files and malformed Cha
   }
   expect(existsSync(join(root,'new-home'))).toBe(false);
 });
+
+test('clock directory aliases preserve logical agent claims and refuse collisions before destination creation', async () => {
+  const {root,home,to}=fixture();const clock=join(root,'clock'),wake=join(root,'wake');
+  mkdirSync(join(clock,'data/art'),{recursive:true});mkdirSync(wake);
+  writeFileSync(join(clock,'data/art/schedules.json'),'{}');symlinkSync('data/art',join(clock,'art'));
+  writeFileSync(join(wake,'schedules.json'),'{}');
+  await expect(createSnapshot(home,to,undefined,{clock,wake})).rejects.toThrow('collide');expect(existsSync(to)).toBe(false);
+  writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['art'],default:'art',owner:'jonathan'}));
+  await createSnapshot(home,to,undefined,{clock});
+  expect(readFileSync(join(to,'clock/art/schedules.json'),'utf8')).toBe('{}');
+  const {prepareMigrationPlan}=await import('./migration-plan.js');expect(prepareMigrationPlan(to).plan.importers.clock.paths).toEqual(['clock']);
+  const {runMigrationAll}=await import('./migration-all.js');const {verifyMigration}=await import('./migration-verify.js');
+  await runMigrationAll(to,join(root,'new-home'));expect((await verifyMigration(to,join(root,'new-home'))).status).toBe('verified');
+});
+
+test('captured approval rules or audit without approvals.json refuse plan instead of disappearing', async () => {
+  const {root,home,to}=fixture();writeFileSync(join(home,'household.json'),JSON.stringify({v:1,agents:['art'],default:'art',owner:'jonathan'}));
+  const approvals=join(root,'approvals');mkdirSync(approvals);const {prepareMigrationPlan}=await import('./migration-plan.js');
+  for(const name of ['rules.json','audit.jsonl']) {
+    writeFileSync(join(approvals,name),name==='rules.json'?'{"v":1,"rules":[]}':'archival audit');
+    await createSnapshot(home,to,undefined,{approvals});expect(()=>prepareMigrationPlan(to)).toThrow('approvals source is incomplete');
+    rmSync(to,{recursive:true});rmSync(join(approvals,name));
+  }
+});
