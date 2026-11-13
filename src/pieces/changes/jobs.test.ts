@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFoundation } from '../../core/app.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
+import { builtinServices } from '../../core/services.js';
 import { fixtureSharing } from '../../fixture.js';
 import { installChanges } from './index.js';
 import { startChangesJob } from './jobs.js';
@@ -17,10 +18,10 @@ function setup(read:(repo:string,now:number)=>Promise<Change[]>) {
  const home=mkdtempSync(join(tmpdir(),'changes-job-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock(),app=createFoundation({home,clock});cleanup.push(app.close);
  let job:ReturnType<typeof startChangesJob>;
- const config:{projects:Project[];attribution:Attribution;agents:string[];owner:boolean}={owner:true,agents:['art'],projects:[{slug:'pond',name:'Pond',repos:['acme/app']}],attribution:{agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}};
- const sharing=()=>{const value=fixtureSharing();value.members.jonathan.owner=config.owner;return value;};
+ const config:{projects:Project[];attribution:Attribution;agents:string[];service:boolean}={service:true,agents:['art'],projects:[{slug:'pond',name:'Pond',repos:['acme/app']}],attribution:{agents:{art:{logins:['art-bot'],branches:[]}},ownerLogins:[]}};
+ const sharing=()=>{const value=fixtureSharing();value.services=config.service?builtinServices(app.db):{};return value;};
  installChanges(app.db,app.operations,app.live,sharing,{onRefresh:()=>job.wake()});
- job=startChangesJob(app,{knownAgents:()=>config.agents,clock,sharing,viewer:owner,projects:{list:()=>config.projects},attribution:()=>config.attribution,read});cleanup.push(job.close);
+ job=startChangesJob(app,{knownAgents:()=>config.agents,clock,sharing,projects:{list:()=>config.projects},attribution:()=>config.attribution,read});cleanup.push(job.close);
  return {app,clock,job,config};
 }
 it('reapplies current attribution to failed snapshots so a removed agent cannot authorize an answer',async()=>{
@@ -53,7 +54,7 @@ it('refuses external doors and unauthorized direct snapshot writes without chang
   expect(app.operations.offered(door).some(op=>op.name==='changes.commit-sync')).toBe(false);
   expect(app.operations.call(door,owner,'changes.commit-sync',input,door)).toMatchObject({ok:false,code:'denied'});
  }
- for(const viewer of [{kind:'member',id:'pollock'},{kind:'agent',id:'art'},{kind:'service',id:'changes'},{kind:'runner',id:'art'}] as Viewer[])expect(app.operations.call('direct',viewer,'changes.commit-sync',input,viewer.kind)).toMatchObject({ok:false,code:'denied'});
+ for(const viewer of [{kind:'member',id:'jonathan'},{kind:'member',id:'pollock'},{kind:'agent',id:'art'},{kind:'service',id:'other'},{kind:'runner',id:'art'}] as Viewer[])expect(app.operations.call('direct',viewer,'changes.commit-sync',input,viewer.kind)).toMatchObject({ok:false,code:'denied'});
  expect(loadChanges(app.db)).toEqual([before]);expect(app.db.prepare('SELECT due FROM changes_jobs').get()).toEqual({due:clock.now()});
 });
 it('backs off configuration/commit failures instead of scheduling a millisecond retry loop',async()=>{
@@ -73,9 +74,19 @@ it('keeps expired closed detail through successful and unavailable daemon reads 
  fail=true;app.operations.call('direct',owner,'changes.refresh',{},'failed');await job.run();
  expect(app.operations.call('direct',owner,'changes.show',{id:closed.id})).toMatchObject({ok:true,value:{state:'merged',syncError:'GitHub read unavailable'}});
 });
-it('rechecks the job viewer after ownership is revoked during an in-flight read',async()=>{
+it('rechecks service registration after it is removed during an in-flight read',async()=>{
  let release!:(rows:Change[])=>void;const {app,job,config}=setup(()=>new Promise<Change[]>(resolve=>{release=resolve;}));
  const before=change({title:'Retain prior snapshot'});replaceChanges(app.db,[before]);const state=app.db.prepare('SELECT * FROM changes_jobs').all();
- const running=job.run();config.owner=false;release([change({title:'Unauthorized replacement'})]);await running;
+ const running=job.run();config.service=false;release([change({title:'Unauthorized replacement'})]);await running;
  expect(loadChanges(app.db)).toEqual([before]);expect(app.db.prepare('SELECT * FROM changes_jobs').all()).toEqual(state);
+});
+
+it('allows the installed service and refuses commits after close',()=>{
+ const {app,job,clock}=setup(async()=>[]);
+ const input={records:[],due:clock.now()+180000,requested:0,error:false};
+ expect(app.operations.call('direct',{kind:'service',id:'changes'},'changes.commit-sync',input,'installed')).toMatchObject({ok:true});
+ job.close();
+ const before=app.db.prepare('SELECT * FROM changes_jobs').all();
+ expect(app.operations.call('direct',{kind:'service',id:'changes'},'changes.commit-sync',input,'closed')).toMatchObject({ok:false,code:'denied'});
+ expect(app.db.prepare('SELECT * FROM changes_jobs').all()).toEqual(before);
 });
