@@ -42,8 +42,10 @@ describe('runner-local compiled brief',()=>{
   expect(prepareRunnerBrief({...raw,deny:[]},root).key).not.toBe(prepareRunnerBrief(raw,root).key);
   expect(prepareRunnerBrief(rules([{text:'a'},{text:'b'}])).key).not.toBe(prepareRunnerBrief(rules([{text:'b'},{text:'a'}])).key);
  });
- it.each(['../outside','/etc/passwd','a/../outside','./floor','a//floor','a\\floor'])('rejects unsafe reference %s',file=>{
-  expect(()=>prepareRunnerBrief(rules([{file,what:'floor'}]),temp())).toThrow(RunnerBriefError);
+ it.each(['../outside','/floor','a/../floor','./floor','a//floor','a\\floor'])('rejects unsafe reference %s with readable targets',file=>{
+  const base=temp(),root=join(base,'repo');mkdirSync(root);mkdirSync(join(root,'a'));
+  for(const p of [join(base,'outside'),join(root,'floor'),join(root,'a/floor'),join(root,'a\\floor')])writeFileSync(p,'READABLE');
+  expect(()=>prepareRunnerBrief(rules([{file,what:'floor'}]),root)).toThrow(RunnerBriefError);
  });
  it.each(['missing','empty','whitespace','oversize','directory','invalid-utf8','nul'])('requires whole valid regular file: %s',kind=>{
   const root=temp(),p=join(root,'floor');
@@ -67,8 +69,21 @@ describe('runner-local compiled brief',()=>{
   mkdirSync(join(root,'nested'));writeFileSync(join(root,'nested/floor'),'inside');
   expect(()=>prepareRunnerBrief(rules([{file:'floor',what:'floor'}]),join(outside,'root/nested'))).toThrow(RunnerBriefError);
  });
- it.each(['relative/path','/tmp/../tmp','/tmp/./repo','/tmp//repo','/'])('rejects ambiguous checkout path %s',repo=>{
-  expect(()=>prepareRunnerBrief(rules([{file:'floor',what:'floor'}]),repo)).toThrow(RunnerBriefError);
+ it.each(['parent','dot','double','trailing','filesystem-root'])('rejects ambiguous checkout path %s with readable targets',kind=>{
+  const root=temp();mkdirSync(join(root,'dir'));writeFileSync(join(root,'floor'),'READABLE');writeFileSync(join(root,'dir/floor'),'READABLE');
+  const repo=kind==='parent'?root+'/dir/..':kind==='dot'?root+'/.':kind==='double'?root+'//dir':kind==='trailing'?root+'/':'/';
+  const file=kind==='filesystem-root'?root.slice(1)+'/floor':'floor';
+  expect(()=>prepareRunnerBrief(rules([{file,what:'floor'}]),repo)).toThrow(RunnerBriefError);
+ });
+ it('refuses a nonregular descriptor even when its bytes are readable and bounded',()=>{
+  const root=temp();writeFileSync(join(root,'floor'),'READABLE');
+  const original=fs.fstatSync;
+  vi.spyOn(fs,'fstatSync').mockImplementation(((...args:Parameters<typeof fs.fstatSync>)=>{
+   const stat=original(...args);return Object.assign(stat,{isFile:()=>false});
+  }) as typeof fs.fstatSync);
+  const read=vi.spyOn(fs,'readSync');
+  expect(()=>prepareRunnerBrief(rules([{file:'floor',what:'floor'}]),root)).toThrow(RunnerBriefError);
+  expect(read).not.toHaveBeenCalled();
  });
  it('pins opened directories across a replacement with an escaping symlink',()=>{
   const root=temp(),outside=temp();mkdirSync(join(root,'dir'));writeFileSync(join(root,'dir/floor'),'SAFE');writeFileSync(join(outside,'floor'),'PRIVATE');
