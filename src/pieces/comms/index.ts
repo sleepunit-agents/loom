@@ -290,9 +290,17 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  }));
  async function post(agent:string,place:string,raw:AgentPost) {
   const m=z.object({id,kind:z.enum(['reply','card','ask','error']),text,run:id.optional(),tool:z.string().max(100).optional(),state:z.enum(['running','done','failed']).optional(),ref:id.optional(),step:z.record(z.string(),z.unknown()).optional()}).parse(raw);
-  requireAgent(agent,place); const words=await key.seal(JSON.stringify({text:m.text,run:m.run,tool:m.tool,state:m.state,step:m.step,ref:m.kind==='ask'?(m.ref??m.id):m.ref}));
+  const available=()=>{
+   const t=requireAgent(agent,place);
+   if(closed||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');
+   if(t.archived!==null)return fail('conflict','Thread archived');
+   return t;
+  };
+  const before=available();
+  const words=await key.seal(JSON.stringify({text:m.text,run:m.run,tool:m.tool,state:m.state,step:m.step,ref:m.kind==='ask'?(m.ref??m.id):m.ref}));
   const result=db.transaction(()=> {
-   const t=requireAgent(agent,place);if(t.archived!==null)return fail('conflict','Thread archived');
+   const t=available();
+   if(t.member!==before.member||t.conversation!==before.conversation)return fail('denied','Thread unavailable');
    const meta=m.kind==='ask'?{ref:m.ref??m.id}:{};
    const old=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND kind=? AND id=?').get(place,m.kind,m.id) as MessageRow|undefined;
    if(old && m.kind==='card') {

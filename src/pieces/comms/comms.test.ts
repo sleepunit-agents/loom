@@ -25,6 +25,35 @@ async function setup(overrides: {key?:(key:WordsKey)=>WordsKey; hold?:boolean|Ho
  const open=async()=>{const r=await call('open',{agent:'art',id:n.toString(2).replaceAll('0','a').replaceAll('1','b').padStart(16,'a'),text:'secret member words',project:'pond'});expect(r.ok).toBe(true);return (r as {ok:true;value:{thread:string;seq:number}}).value.thread;};
  return {get app(){return app;},clock,home,call,open,deliveries,ends,get comms(){return comms;},async restart(){await comms.close();await app.close();app=await start();},setSharing:(value:Sharing)=>{sharing=value;app.live.refreshAccess();},getSharing:()=>sharing};
 }
+for(const kind of ['reply','card'] as const)for(const boundary of ['revoked','closed','archived','deleted','member','conversation'] as const)it(`refuses a runtime post changed during encryption (${kind}, ${boundary})`,async()=>{
+ let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:k=>({...k,seal:async words=>{if(pause){started();await waiting;}return k.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ if(kind==='card')await s.comms.post('art',place,{id:'late-post',kind,text:'original private card'});
+ pause=true;
+ const result=s.comms.post('art',place,{id:'late-post',kind,text:'late private reply'});
+ const rejected=expect(result).rejects.toThrow();await began;
+ if(boundary==='revoked')s.setSharing({...s.getSharing(),members:{jonathan:{agents:[]}}});
+ else if(boundary==='closed')await s.comms.close();
+ else if(boundary==='archived'||boundary==='deleted')await s.call('change',{thread:place,action:boundary==='archived'?'archive':'delete'});
+ else s.app.db.prepare(`UPDATE comms_threads SET record=json_set(record,'$.${boundary}',?) WHERE id=?`).run(boundary==='member'?'other':'replacement',place);
+ const before=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ const threadBefore=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_threads').all());
+ release();await rejected;
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(before);
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_threads').all())).toBe(threadBefore);
+});
+it('refuses every runtime post kind before encryption when ownership or the instance is unavailable',async()=>{
+ let seals=0;const s=await setup({key:k=>({...k,seal:async words=>{seals++;return k.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ const sharing=s.getSharing(),before=seals;
+ s.setSharing({...sharing,members:{jonathan:{agents:[]}}});
+ for(const kind of ['reply','card','ask','error'] as const)await expect(s.comms.post('art',place,{id:kind,kind,text:'refused private words'})).rejects.toThrow();
+ s.setSharing(sharing);await s.comms.close();
+ await expect(s.comms.post('art',place,{id:'closed',kind:'reply',text:'refused private words'})).rejects.toThrow();
+ expect(seals).toBe(before);
+});
 it('encrypts rows with age; only acknowledgements enter retry storage, and runtime receives the words',async()=>{
  const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
  expect(s.deliveries[0]).toMatchObject({thread:place,text:'secret member words',agent:'art'});

@@ -33,6 +33,10 @@ The live dispatcher rechecks access and the exact record after resolution;
 operation preparation rechecks session validity and permission before commit.
 Records are window-only. Runtime delivery rechecks thread ownership after
 crypto and inside the effect hold before handing words to runtime.
+Runtime posts check original-member ownership, archive state and instance
+closure before encryption and again inside the commit transaction. A changed
+member or conversation during encryption rejects the post, including card
+updates, without changing messages or thread activity.
 
 The in-process `Comms` role currently exposes `post`, `deliver`, `title`, private startup `describe`, metadata-only `trace` and
 stop-consuming `status` with optional working/done heartbeats. `reconcileEnds` retries durable archive/delete end jobs at startup and can be called by the frame after staging release. `reconcileDeliveries` resumes staging-held sends at startup or on an explicit frame call, and settles archived, expired or revoked pending sends without decrypting them. Eligible `sending`/`failed` sends use an optional routing-only runtime receipt lookup: accepted settles delivered without crypto, authoritative not-accepted retries through the gate, and unknown/errors remain unchanged. Without the lookup they remain untouched. Recovery calls coalesce and recheck snapshots, ownership and retention after lookup. It is not yet the complete old runtime adapter.
@@ -133,3 +137,10 @@ Runtime describe tests cover exact brief/readers, conditional project/title guid
 Heartbeat tests first failed because status ignored working/done and accepted invalid states. They now cover repeated beats, persisted turn start across restart, done, one-shot stop, archive clearing, malformed input, wrong agent, revoked ownership and closed instances. Two further tests first failed with working still true after expiry. They now cover exact 90-second settlement, heartbeat extension, restart, missing-beat fallback and close cancellation without changing message words or thread activity. This internal capability still needs runtime binding.
 
 Body activity browser evidence checks the Live update in the thread header, exact timestamp, absent-token clearing, completion hiding and zero-token rendering. The header reports the sampled activity time; it does not infer quiet/stuck state or step limits. Those richer old status semantics remain unfinished.
+
+Runtime post regression tests first resolved successfully after ownership
+revocation, closure or conversation replacement during encryption. They now
+reject with unchanged rows and activity. Tests cover replies and existing card
+updates across revocation, closure, archive, deletion, member replacement and
+conversation replacement; initially unavailable posts of all four kinds are
+refused before encryption. All 132 focused tests and TypeScript checking pass.
