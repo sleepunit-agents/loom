@@ -1,7 +1,8 @@
+import { MANIFEST, nextWorker } from './next-pwa.js';
 import { installMindActivity } from './pieces/mind/activity.js';
 /** The sole composition root for --next. No old page routes or piece programs. */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve, extname, sep } from 'node:path';
 import { Hono } from 'hono';
 import { getRequestListener } from '@hono/node-server';
@@ -184,13 +185,21 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     try { return await transport.handleRequest(c.req.raw); }
     finally { await transport.close(); await server.close(); }
   });
+  const publicRoot = resolve(import.meta.dirname, '../assets');
+  const built = existsSync(resolve(root, 'assets')) ? readdirSync(resolve(root, 'assets')).filter(f => /\.(js|css|woff2)$/.test(f)).sort().map(f => `/app/assets/${f}`) : [];
+  routes.get('/manifest.webmanifest', () => new Response(MANIFEST, { headers: { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' } }));
+  routes.get('/sw.js', () => new Response(nextWorker(built), { headers: { 'content-type': 'text/javascript', 'cache-control': 'no-cache', 'service-worker-allowed': '/' } }));
   routes.get('*', c => {
     const pathname = new URL(c.req.url).pathname;
     if (pathname.startsWith('/api/') || pathname === '/events' || pathname.startsWith('/collections') || pathname === '/live') return c.notFound();
     const asset = pathname.startsWith('/app/');
-    const file = asset ? resolve(root, '.' + pathname.slice(4)) : resolve(root, 'next.html');
-    if (!file.startsWith(root + sep) || !existsSync(file)) return c.notFound();
-    const body = asset ? readFileSync(file) : readFileSync(file,'utf8').replace('<html ', `<html data-fixture="${app.operations.has('example.put')}" data-staging="${!!options.staging}" `);
+    const publicAsset = /^\/(icons|fonts)\//.test(pathname);
+    // A missing resource must never be mistaken for an HTML navigation.
+    if (!asset && !publicAsset && (extname(pathname) || /^\/(assets|faces|pixel-icons)(\/|$)/.test(pathname))) return c.notFound();
+    const base = publicAsset ? publicRoot : root;
+    const file = publicAsset ? resolve(base, '.' + pathname) : asset ? resolve(root, '.' + pathname.slice(4)) : resolve(root, 'next.html');
+    if (!file.startsWith(base + sep) || !existsSync(file) || !statSync(file).isFile()) return c.notFound();
+    const body = asset || publicAsset ? readFileSync(file) : readFileSync(file,'utf8').replace('<html ', `<html data-fixture="${app.operations.has('example.put')}" data-staging="${!!options.staging}" `);
     return new Response(body, { headers: {
       'content-type': ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.png': 'image/png' } as Record<string,string>)[extname(file)] ?? 'application/octet-stream',
       'cache-control': asset ? 'public, max-age=31536000, immutable' : 'no-store',
