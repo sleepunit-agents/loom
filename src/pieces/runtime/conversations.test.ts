@@ -677,6 +677,8 @@ it('issues current Clock principal history only through the exact private body b
  const conversation=runtimeStore(f.app.db).read('job',job)!.conversation!;
  const expected={agent:'art',member:'jonathan',conversation,principal:{for:'owner',people:[]}};
  expect(role!.clockProvenance(viewer)).toEqual(expected);
+ value(await f.post(f.runner,'runtime.reportJob',{job,state:'waiting'}));
+ expect(role!.clockProvenance(viewer)).toEqual(expected);
  expect(provenanceStore(f.app.db).read(conversation)?.queue).toEqual([]);
  for(const v of [{...viewer},{kind:'agent',id:'art'},{kind:'member',id:'jonathan'},{kind:'runner',id:'a'},{kind:'service',id:'clock'}] as const)
   expect(role!.clockProvenance(v)).toBeUndefined();

@@ -310,6 +310,8 @@ it('issues Clock provenance from current bridge history and loses it when the ve
  const {body}=await f.running(),viewer=signin(f.app).token(hash(body))!.viewer;
  const job=runtimeStore(f.app.db).read('job',runtimeStore(f.app.db).ids('job')[0])!,conversation=job.conversation!;
  expect(role!.clockProvenance(viewer)).toEqual({agent:'art',member:'jonathan',conversation,principal:{for:'owner',people:[]}});
+ value(await f.post(f.runner,'runtime.reportJob',{job:job.id,state:'waiting'}));
+ expect(role!.clockProvenance(viewer)).toEqual({agent:'art',member:'jonathan',conversation,principal:{for:'owner',people:[]}});
  expect(role!.clockProvenance({...viewer})).toBeUndefined();
  f.app.db.transaction(()=>provenanceStore(f.app.db).note(conversation,'art',{key:'other-person',sender:{kind:'person',person:'pollock'},at:f.clock.now()},['jonathan']))();
  expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',principal:{for:'pollock',people:['pollock']}});
