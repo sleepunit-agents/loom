@@ -73,6 +73,7 @@ export function discordApi(secrets: SecretUse, beforeRead: () => boolean, reques
         const ch = await call(venue,`channels/${place.channel}`);
         if (ch.id !== place.channel || !Number.isInteger(ch.type)) return 'wait';
         if (place.dm) {
+          if (ch.guild_id !== undefined && ch.guild_id !== null && !snowflake(ch.guild_id)) return 'wait';
           if (ch.type !== 1 || ch.guild_id !== undefined && ch.guild_id !== null) return 'drop';
           if (!Array.isArray(ch.recipients) || ch.recipients.length !== 1 || !object(ch.recipients[0]) || !snowflake(ch.recipients[0].id)) return 'wait';
           if (ch.recipients[0].id !== place.user || place.user === venue.bot) return 'drop';

@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { discordApi, type DiscordPlace } from './discord-api.js';
 import { venueSchema } from './model.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startLoom } from '../../foundation.js';
+import { fixture as homeFixture, fixtureSharing } from '../../fixture.js';
+import { installSecretServices, secretUseRole } from '../secrets/service.js';
 const venue = venueSchema.parse({id:'art',platform:'discord',agent:'art',bot:'100',workspace:'1',tokenSecret:'discord'});
 const place: DiscordPlace = {channel:'300',user:'200',dm:false};
 function fixture() {
@@ -80,6 +86,8 @@ describe('Discord fresh service metadata',()=>{
     [{id:'300',type:1,guild_id:'1',recipients:[{id:'200'}]},'drop'],[{id:'300',type:1},'wait'],
     [{id:'300',type:1,recipients:[]},'wait'],[{id:'300',type:1,recipients:[{id:'200'},{id:'201'}]},'wait'],
     [{id:'300',type:1,recipients:[{id:'0200'}]},'wait'],
+    [{id:'300',type:1,guild_id:{},recipients:[{id:'200'}]},'wait'],
+    [{id:'300',type:1,guild_id:'01',recipients:[{id:'200'}]},'wait'],
   ])('fails closed on DM %j',async(ch,result)=>{
     const f=fixture();f.request.mockResolvedValueOnce(Response.json(ch));expect(await f.api.channel(venue,{...place,dm:true})).toBe(result);
   });
@@ -124,5 +132,51 @@ describe('Discord fresh service metadata',()=>{
     f.request.mockImplementationOnce(async()=>{v.bot='999';v.workspace='2';v.tokenSecret='other';return Response.json({id:'100',bot:true});});
     expect(await f.api.authenticate(v)).toEqual({bot:'100',workspace:'1'});
     expect(f.use.mock.calls.map(c=>c[0])).toEqual(['discord','discord']);
+  });
+  it('expires a stalled request at 15 seconds and returns only wait',async()=>{
+    vi.useFakeTimers();
+    const timeout=vi.spyOn(AbortSignal,'timeout').mockImplementation(ms=>{
+      const controller=new AbortController();setTimeout(()=>controller.abort(Error('PRIVATE')),ms);return controller.signal;
+    });
+    try {
+      const f=fixture();let done=false;
+      f.request.mockImplementationOnce(async(_url,init)=>new Promise((_resolve,reject)=>{
+        init!.signal!.addEventListener('abort',()=>reject(Error('PRIVATE TEST-TOKEN')),{once:true});
+      }));
+      const waiting=f.api.channel(venue,place).then(value=>{done=true;return value;});
+      await vi.advanceTimersByTimeAsync(14_999);expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);expect(await waiting).toBe('wait');expect(timeout).toHaveBeenCalledWith(15_000);
+    } finally {timeout.mockRestore();vi.useRealTimers();}
+  });
+  it('uses each new callback token rather than retaining the preceding credential',async()=>{
+    const f=fixture();
+    f.use.mockImplementationOnce(async(_name,callback)=>callback('FIRST')).mockImplementationOnce(async(_name,callback)=>callback('SECOND'));
+    f.request.mockImplementation(async(url,init)=>{
+      const me=String(url).endsWith('@me');expect(init?.headers).toEqual({Authorization:`Bot ${me?'FIRST':'SECOND'}`});
+      return Response.json(me?{id:'100',bot:true}:{id:'1'});
+    });
+    expect(await f.api.authenticate(venue)).toEqual({bot:'100',workspace:'1'});expect(f.use).toHaveBeenCalledTimes(2);
+  });
+  it('uses real service grants in a next-mode fixture, zeroes holder buffers and observes revocation',async()=>{
+    const home=mkdtempSync(join(tmpdir(),'discord-api-'));homeFixture(home);
+    const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue'],operations:[]}}});
+    const app=await startLoom({home,next:true,sharing,stdout:()=>{}});
+    try {
+      installSecretServices(app.db,app.operations,sharing);
+      const owner={kind:'member' as const,id:'jonathan'},buffers:Uint8Array[]=[];
+      const source={read:vi.fn(async()=>{const bytes=Buffer.from('FIXTURE-CREDENTIAL');buffers.push(bytes);return bytes;})};
+      const request=vi.fn<typeof fetch>(async(url,init)=>{
+        expect(init?.headers).toEqual({Authorization:'Bot FIXTURE-CREDENTIAL'});
+        return Response.json(String(url).endsWith('@me')?{id:'100',bot:true}:{id:'1'});
+      });
+      const api=discordApi(secretUseRole(app.db,source,sharing,{kind:'service',id:'bridges'},()=>app.operations.clock.now(),app.live),()=>true,request);
+      expect(await api.authenticate(venue)).toBe('wait');expect(source.read).not.toHaveBeenCalled();expect(request).not.toHaveBeenCalled();
+      expect(app.operations.call('direct',owner,'secrets.describe',{name:'discord',description:'Bot'},'describe').ok).toBe(true);
+      expect(app.operations.call('direct',owner,'secrets.grantService',{service:'bridges',name:'discord'},'grant').ok).toBe(true);
+      expect(await api.authenticate(venue)).toEqual({bot:'100',workspace:'1'});
+      expect(buffers).toHaveLength(2);expect(buffers.every(b=>b.every(v=>v===0))).toBe(true);
+      expect(app.operations.call('direct',owner,'secrets.revokeService',{service:'bridges',name:'discord'},'revoke').ok).toBe(true);
+      expect(await api.authenticate(venue)).toBe('wait');expect(request).toHaveBeenCalledTimes(2);expect(source.read).toHaveBeenCalledTimes(2);
+    } finally {await app.close();rmSync(home,{recursive:true,force:true});}
   });
 });
