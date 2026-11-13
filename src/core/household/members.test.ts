@@ -1,6 +1,7 @@
+import { PeopleStore } from '../../backends/people.js';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -23,6 +24,12 @@ afterEach(async () => {
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'household-members-')); homes.push(home); fixture(home);
+  mkdirSync(join(home,'commons'),{recursive:true});
+  const people=new PeopleStore({dbPath:join(home,'commons','people.db')});
+  for(const slug of ['jonathan','pollock','guest','second','third','legacy','new-owner']) people.write({slug,name:slug});
+  people.write({slug:'archived',name:'Archived'});
+  people.archive({slug:'archived',reason:'fixture',actor:'fixture'});
+  people.close();
   const clock = new FakeClock();
   const app = await startLoom({ next: true, home, clock, install: installFixture }); closes.push(app.close);
   const household = new HouseholdDatabase(app.db), tokens = new TokenDatabase(app.db);
@@ -77,7 +84,7 @@ it('preserves raw fields, projects and credentials; supports ordinary members an
 
 it('refuses the last household owner, unknown removals and invalid input without writes', async () => {
   const {app,household}=await setup(), before=household.document();
-  for (const input of [{person:'jonathan',agents:['art']},{person:'jonathan',agents:[]},{person:'guest',agents:['missing']},{person:'../bad',agents:'*'},{person:'guest',agents:[]},{person:'guest',agents:'*',role:'owner'}]) {
+  for (const input of [{person:'jonathan',agents:['art']},{person:'jonathan',agents:[]},{person:'guest',agents:['missing']},{person:'../bad',agents:'*'},{person:'guest',agents:[]},{person:'guest',agents:'*',role:'owner'},{person:'nonexistent',agents:'*'},{person:'archived',agents:'*'}]) {
     expect(app.operations.call('direct',owner,'household.setMember',input,'invalid')).toMatchObject({code:'invalid'});
   }
   expect(app.operations.call('direct',owner,'household.removeMember',{person:'jonathan'},'last')).toMatchObject({code:'invalid'});
@@ -185,4 +192,13 @@ it('refuses a removed member over HTTP and closes their authenticated socket imm
   expect(s.session(browserId)?.viewer).toEqual({kind:'member',id:'pollock'});
   expect(new SharingDatabase(app.db,home).sharing().projects.pond.members).toContain('pollock');
   expect(signin(app).token(createHash('sha256').update(bearer).digest('hex'))?.viewer).toEqual({kind:'member',id:'pollock'});
+});
+
+it('fails closed without the People directory while permitting membership removal', async () => {
+  const home=mkdtempSync(join(tmpdir(),'members-no-people-'));homes.push(home);fixture(home);
+  const app=await startLoom({next:true,home,clock:new FakeClock(),install:installFixture});closes.push(app.close);
+  const household=new HouseholdDatabase(app.db),before=household.document();
+  for(const person of ['guest','pollock']) expect(app.operations.call('direct',owner,'household.setMember',{person,agents:'*'},person)).toMatchObject({code:'invalid'});
+  expect(household.document()).toEqual(before);
+  expect(app.operations.call('direct',owner,'household.removeMember',{person:'pollock'},'remove-without-directory')).toMatchObject({ok:true});
 });

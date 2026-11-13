@@ -4,7 +4,7 @@ import { AGENT_NAME } from '../../household.js';
 import { addHouseholdAgent } from './agents.js';
 import { HouseholdAccounts, agentAccountsSchema } from './accounts.js';
 import type { Foundation } from '../app.js';
-import { operation } from '../operations/index.js';
+import { operation, OperationError } from '../operations/index.js';
 import { mayAct, maySee, type Viewer } from '../../policy.js';
 import { SharingDatabase, projectSchema, projectSlug } from './sharing.js';
 
@@ -17,6 +17,11 @@ export function installHouseholdProjects(app: Foundation, home: string): void {
     input: z.object({ person: memberPerson, agents: memberAgents }).strict(),
     output: z.array(memberSchema), may: owner,
     run(ctx, input) {
+      const person = app.operations.call('direct', ctx.viewer, 'mind.personRead', { id: `commons:${input.person}` });
+      if (!person.ok || !person.value || typeof person.value !== 'object' ||
+          !('slug' in person.value) || person.value.slug !== input.person) {
+        throw new OperationError('invalid', 'Pick someone from People');
+      }
       const members = changeHouseholdMember(app.db, home, input.person, input.agents);
       ctx.changed('household.sharing', 'household'); ctx.changed('core.access', 'household');
       return members;

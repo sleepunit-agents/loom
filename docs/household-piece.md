@@ -290,6 +290,9 @@ scoped owner cannot call them. At least one wildcard household owner must remain
 New members have role `owner`, matching the old page action; existing ordinary
 members keep their role for scoped lists and become owners on wildcard promotion.
 Scoped owners must own at least one agent. Agent references must already exist.
+Setting membership requires an active, exact People directory entry, read through
+the next-mode People operation; a missing directory, archived entry or redirect
+slug cannot create household authority. Removal needs no directory entry.
 Unknown household/member fields and project assignments are preserved.
 
 | Old page action/helper | New operation |
