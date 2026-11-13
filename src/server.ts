@@ -935,12 +935,13 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
   );
 
   // ─── Knowledge ──────────────────────────────────────────────────────────────
-  // The local identity — LOOM_IDENTITY, else the context dir's real name —
+  // Explicit continuity uses the selected agent; legacy callers use
+  // LOOM_IDENTITY, else the context dir's real name,
   // since this server runs as whichever identity owns contextDir, not only
   // Art. The standalone knowledge-only service (knowledge-http-server.ts)
   // resolves identity per-connection from its per-identity bearer token instead.
   registerKnowledgeTools(server, {
-    contextDir, gapsDir, identity: resolveIdentityName(contextDir), personCards: true,
+    contextDir, gapsDir, identity: resolveIdentityName(contextDir, config.knowledgeSelection), personCards: true,
     peopleSelection: config.peopleSelection, knowledgeSelection: config.knowledgeSelection,
   });
 
