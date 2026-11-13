@@ -29,6 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Comms now shows work made in the thread, with live task/change statuses and links to their apps.
 
+- Start conversations from Home with the shared Comms composer, retained drafts and recent/unread-thread navigation.
+
 - Keep long Home agent details scrollable within desktop cards, with a keyboard focus target and natural page scrolling on phones.
 
 - Import registered agents’ pixel sheets with the household, serve them from the new database with current agent visibility, and honor Pixel faces on Home and the rail.

@@ -7,8 +7,8 @@ import type { OwnedAgent, AgentStatus, RuntimeJob } from './home-model';
 import type { Call, CallState, Result, Snapshot } from '../../data';
 // Renderer nodes carry arbitrary DOM callbacks; snapshots mix three record types for the hook fake.
 type Node={children:Array<Node|string>;props:Record<string,any>};
-const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),call:vi.fn()}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]),call:f.call}));
+const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),call:vi.fn(),once:vi.fn()}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]),call:f.call,callOnce:f.once}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import Home from './home';
 vi.mock('./member-retention',()=>({useMemberRetention:vi.fn()}));
@@ -29,7 +29,7 @@ function request<T>() {
   const call:Call<T>={id:'request',result:new Promise(r=>{resolve=r;}),getSnapshot:()=>state,subscribe:fn=>{listeners.add(fn);return()=>{listeners.delete(fn);};}};
   return {call,finish:async(result:Result<T>)=>act(async()=>{state={pending:false,status:'done',result};resolve(result);listeners.forEach(fn=>fn());})};
 }
-beforeEach(()=>{f.call.mockReset();f.listeners.clear();f.snapshots={'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'household.agentDisplay':live([]),'person':live([]),'runtime.job':live([]),'wake':live([]),'clock':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
+beforeEach(()=>{f.call.mockReset();f.once.mockReset();f.once.mockReturnValue({result:new Promise(()=>{})});f.listeners.clear();f.snapshots={'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'thread':live([]),'household.agentDisplay':live([]),'person':live([]),'runtime.job':live([]),'wake':live([]),'clock':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
 it('keeps idle owned cards alphabetical by display name and id, without deriving agents from asks or work',async()=>{
   f.snapshots['attention.ask']=live([ask('foreign',{agent:'other'})]);
@@ -216,4 +216,21 @@ it.each(['loading','offline','denied'] as const)('clears Runtime words and avoid
 it('orders Runtime work deterministically by state, queued time and identity without mutating the live snapshot or limiting rows',()=>{
   const rows=[runtimeJob('z',{createdAt:2}),runtimeJob('b'),runtimeJob('a'),...Array.from({length:40},(_,i)=>runtimeJob(`running-${i}`,{state:'running'}))];
   const original=[...rows];const jobs=currentRuntimeJobs(rows,'art');expect(rows).toEqual(original);expect(jobs).toHaveLength(43);expect(jobs.slice(-3).map(j=>j.id)).toEqual(['a','b','z']);
+});
+
+it('shows member conversation metadata and opens the latest and first unread exact threads',async()=>{
+ const pending=request<any>();f.once.mockReturnValue(pending.call);const go=await draw();
+ expect(f.once).toHaveBeenCalledWith('comms.agents',{});
+ await pending.finish({ok:true,value:{member:'owner',agents:[],summaries:[{agent:'art',unread:2,last:{thread:'th:last',title:'Recent desk work',at:1},first:{thread:'th:first',text:'Reply words are not retained on Home'}}]}});
+ expect(text()).toContain('Recent desk work');expect(buttons('2 unread threads')).toHaveLength(1);expect(text()).not.toContain('Reply words are not retained on Home');
+ await click('2 unread threads');expect(go).toHaveBeenCalledWith('/p/comms-preview/thread/first');
+ await publish('thread',{status:'denied',records:[]});expect(text()).not.toContain('Recent desk work');expect(buttons('2 unread threads')).toHaveLength(0);
+});
+it('fences late conversation summaries after a thread feed loses access or changes',async()=>{
+ const old=request<any>(),fresh=request<any>();f.once.mockReturnValueOnce(old.call).mockReturnValueOnce(fresh.call);await draw();
+ await publish('thread',live([{id:'th:new'}]));
+ await fresh.finish({ok:true,value:{member:'owner',agents:[],summaries:[{agent:'art',unread:0,last:{thread:'th:new',title:'Current conversation',at:2}}]}});
+ await old.finish({ok:true,value:{member:'owner',agents:[],summaries:[{agent:'art',unread:0,last:{thread:'th:old',title:'Stale conversation',at:1}}]}});
+ expect(text()).toContain('Current conversation');expect(text()).not.toContain('Stale conversation');
+ await publish('thread',{status:'offline',records:[{id:'th:new'}]});expect(text()).not.toContain('Current conversation');
 });
