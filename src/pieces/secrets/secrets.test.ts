@@ -153,14 +153,14 @@ it('accepts secret requests only through the authenticated runtime seam and answ
   for (const viewer of [owner, agentOwner, { kind: 'agent', id: 'art' } as Viewer]) {
     expect(call(viewer, 'requestHouse', input)).toMatchObject({ ok: false, code: 'denied' });
   }
-  for (const minutes of [0, -1, 481, 1.5]) expect(call(agent, 'requestHouse', { ...input, minutes })).toMatchObject({ ok: false, code: 'invalid' });
+  for (const minutes of [0, -1, 1.5]) expect(call(agent, 'requestHouse', { ...input, minutes })).toMatchObject({ ok: false, code: 'invalid' });
   const result = call(agent, 'requestHouse', input);
   expect(result).toMatchObject({ ok: true, value: { scope: input.scope, minutes: 60 } });
   expect(call(agent, 'requestHouse', input)).toEqual(result);
   expect(raised).toHaveLength(1);
   const otherService = call(agent, 'requestHouse', { ...input, scope: { house: 'h-71' }, minutes: 480 });
   const otherHouse = call(agent, 'requestHouse', { ...input, scope: { house: 'h-72', service: 'discord' } });
-  expect(otherService).toMatchObject({ ok: true, value: { minutes: 480 } });
+  expect(otherService).toMatchObject({ ok: true, value: { minutes: 60 } });
   expect(otherHouse.ok).toBe(true);
   expect(raised).toHaveLength(3);
   const request = result.ok ? result.value as GrantRequest : undefined;

@@ -4,8 +4,8 @@ import { migrate, operation, failure, mayAct, maySee, type Context, type Db, typ
 import { schema } from './schema/001.js';
 import type { GrantContext, Grant, GrantRequest, Grants, Resource, SecretName } from './role.js';
 
-import { secretName as name } from './input.js';
-const agent = z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100);
+import { readSecretPolicy, requestDecision, secretPolicy } from './policy.js';
+import { secretName as name, secretAgent as agent } from './input.js';
 const grantScope = z.object({ house: z.string().regex(/^h-[0-9]{1,9}$/), service: agent.optional() }).strict();
 const resource = { kind: z.enum(['secret', 'runner', 'piece', 'tailnet']), target: name };
 /** Trusted in-process attention seam. Implementations must raise a household ask and
@@ -24,6 +24,7 @@ function all<T>(db: Db, table: string): T[] {
 export const grantId = (agent: string, r: Resource, scope?: GrantContext) => JSON.stringify(scope ? [agent, r.kind, r.target, scope.house, scope.service ?? null] : [agent, r.kind, r.target]);
 export function grantsRole(db: Db): Grants {
   return { mayUse(agent, resource, now, context) {
+    if (resource.kind === 'secret' && requestDecision(readSecretPolicy(db), agent, resource.target).level === 'never') return false;
     const candidates = [read<Grant>(db, 'secrets_grants', grantId(agent, resource))];
     if (context) candidates.push(read<Grant>(db, 'secrets_grants', grantId(agent, resource, context)));
     return candidates.some(row => !!row && (row.expiresAt === undefined || row.expiresAt > now)
@@ -51,6 +52,15 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
   operations.register(operation({ name: 'secrets.list', input: z.object({}).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.list'), run: () => ({ names: all<SecretName>(db, 'secrets_names'), grants: all<Grant>(db, 'secrets_grants'), requests: all<GrantRequest>(db, 'secrets_requests') }),
   }));
+  operations.register(operation({ name: 'secrets.policy', write: true, input: secretPolicy, output: secretPolicy,
+    may: v => owner(v, 'secrets.policy'), run(ctx, input) {
+      db.prepare("INSERT INTO secrets_meta VALUES ('policy',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(input));
+      ctx.changed('secret.policy', 'policy'); return input;
+    },
+  }));
+  live.register({ name: 'secret.policy', ids: () => ['policy'], inScope: () => true,
+    read: (id, viewer) => id === 'policy' && owner(viewer, 'secrets.list') ? { id, ...readSecretPolicy(db) } : undefined,
+  });
   operations.register(operation({ name: 'secrets.describe', write: true, input: z.object({ name, description: z.string().max(2000) }).strict(), output: z.unknown(),
     may: v => owner(v, 'secrets.describe'), run(ctx, input) {
       const record: SecretName = { id: input.name, description: input.description, by: ctx.viewer.id, changedAt: ctx.now };
@@ -87,7 +97,7 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
   // This door is only for an in-process runtime adapter after authenticating its job/token.
   // House/service are never accepted by the public request operation.
   operations.register(operation({ name: 'secrets.requestHouse', doors: ['direct'], write: true,
-    input: z.object({ agent, target: name, scope: grantScope, why: z.string().trim().min(1).max(2000), minutes: z.number().int().positive().max(480).default(60) }).strict(), output: z.unknown(),
+    input: z.object({ agent, target: name, scope: grantScope, why: z.string().trim().min(1).max(2000), minutes: z.number().int().positive().optional() }).strict(), output: z.unknown(),
     may: (v, i) => v.kind === 'agent' && v.id === i.agent && canAsk(v, i.agent), run(ctx, input) {
       if (!read<SecretName>(db, 'secrets_names', input.target)) return failure('not-found', 'Secret name not found');
       const old = all<GrantRequest>(db, 'secrets_requests').find(r => r.agent === input.agent && r.kind === 'secret' && r.target === input.target
@@ -97,7 +107,20 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
           return grant?.requestId === r.id && grant.expiresAt !== undefined && grant.expiresAt > ctx.now;
         })()));
       if (old) return old;
-      const record: GrantRequest = { ...input, kind: 'secret', id: `q-${randomUUID()}`, state: 'pending', askedBy: { kind: ctx.viewer.kind, id: ctx.viewer.id }, createdAt: ctx.now };
+      const decision = requestDecision(readSecretPolicy(db), input.agent, input.target);
+      const minutes = Math.min(input.minutes ?? decision.minutes, decision.minutes);
+      const record: GrantRequest = { ...input, minutes, kind: 'secret', id: `q-${randomUUID()}`, state: 'pending', askedBy: { kind: ctx.viewer.kind, id: ctx.viewer.id }, createdAt: ctx.now };
+      if (decision.level !== 'ask') {
+        record.state = decision.level === 'auto' ? 'allowed' : 'denied';
+        record.decision = 'policy'; record.answeredAt = ctx.now;
+        saveRequest(record); ctx.changed('secret.request', record.id);
+        if (record.state === 'allowed') {
+          const grant: Grant = { id: grantId(record.agent, record, input.scope), agent: record.agent, kind: 'secret', target: record.target,
+            scope: input.scope, requestId: record.id, expiresAt: ctx.now + minutes * 60_000, createdAt: ctx.now, by: 'policy' };
+          saveGrant(grant); ctx.changed('secret.grant', grant.id);
+        }
+        return record;
+      }
       return raiseRequest(ctx, record);
     },
   }));
@@ -107,6 +130,7 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
       if (!record) return failure('not-found', 'Request not found');
       if (record.state !== 'pending') return failure('conflict', 'Request already answered');
       if (input.allow && record.kind === 'secret' && (!record.scope || !record.minutes)) return failure('invalid', 'Secret request has no house or duration');
+      if (input.allow && record.kind === 'secret' && requestDecision(readSecretPolicy(db), record.agent, record.target).level === 'never') return failure('conflict', 'Policy never gives this secret out');
       record.state = input.allow ? 'allowed' : 'denied'; record.by = ctx.viewer.id; record.answeredAt = ctx.now; saveRequest(record);
       if (input.allow) {
         const grant: Grant = { id: grantId(record.agent, record, record.scope), ...(record.scope ? { scope: record.scope, requestId: record.id, expiresAt: ctx.now + record.minutes! * 60_000 } : {}), agent: record.agent, kind: record.kind, target: record.target, createdAt: ctx.now, by: ctx.viewer.id };
