@@ -1555,7 +1555,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       const home = config.conversationSelection === undefined && here ? homeFor(contextDir) : undefined;
       const self = config.conversationSelection === undefined ? householdOf(contextDir)?.agent : undefined;
       const project = home && here && self ? threadOfAgentConversation(home, self, here.conversation)?.project ?? null : null;
-      const d = writeDigest(contextDir, here ?? { conversation: '', run: '' }, input, new Date(), project);
+      const d = writeDigest(contextDir, here ?? { conversation: '', run: '' }, input, new Date(), project, config.memorySelection);
       // An ask raised or cleared is what needs its owner moving (t-2025): the HTTP listeners pull it now, not on their
       // next round (a nudge names only the domain, through the household's live data).
       const h = config.conversationSelection === undefined ? homeFor(contextDir) : undefined;
@@ -1683,7 +1683,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     async ({ people, project, venue, since }) => convText(() => {
-      const all = conversationsList(contextDir, { people, venue, since, ...(project ? { project: resolveProjectName(contextDir, project) } : {}) }, process.env, config.conversationSelection);
+      const all = conversationsList(contextDir, { people, venue, since, ...(project ? { project: resolveProjectName(contextDir, project, config.memorySelection) } : {}) }, process.env, config.conversationSelection, config.memorySelection);
       // From a house, only the conversation it holds (t-2118): a digest summarises its conversation's words, and a
       // house (a sibling's, a guest's, a chat bridge's) never reads another's. None from a house the runtime named none for.
       const held = bodyHouseConversation(contextDir, config.caller, config.conversationSelection);
@@ -1704,7 +1704,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       // From a house, only the conversation it holds (t-2118), the same refusal as one that isn't there.
       const held = bodyHouseConversation(contextDir, config.caller, config.conversationSelection);
       if (held !== undefined && held !== id) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `no conversation ${id}` }, null, 2) }], isError: true };
-      const view = await conversationView(contextDir, agentOfDir(contextDir, config.conversationSelection), id, process.env, config.conversationSelection);
+      const view = await conversationView(contextDir, agentOfDir(contextDir, config.conversationSelection), id, process.env, config.conversationSelection, config.memorySelection);
       return { content: [{ type: 'text' as const, text: JSON.stringify(view ?? { error: `no conversation ${id}` }, null, 2) }], ...(view ? {} : { isError: true }) };
     },
   );
@@ -1722,7 +1722,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       // From a house, the findings on the conversation it holds only (t-2118); none from a house it named none for.
       const held = bodyHouseConversation(contextDir, config.caller, config.conversationSelection);
       if (held === null) return { findings: [] };
-      return { findings: findingsOf(contextDir, { ...(since ? { since } : {}), ...(held ? { conversation: held } : {}) }) };
+      return { findings: findingsOf(contextDir, { ...(since ? { since } : {}), ...(held ? { conversation: held } : {}) }, config.memorySelection) };
     }),
   );
 

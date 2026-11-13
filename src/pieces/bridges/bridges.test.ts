@@ -463,6 +463,21 @@ describe('in-process bridge delivery',()=>{
     const f=await fixture(); f.setGate('drop'); await f.engine.receive(f.venue.id,f.message()); await f.engine.flush();
     expect(f.deliveries.size).toBe(0); expect(f.app.db.prepare('SELECT message,reason FROM bridges_inbox').get()).toEqual({message:'{}',reason:'not admitted'});
   });
+  it('refuses non-owner route edits and removal without changing saved routes',async()=>{
+    const f=await fixture();
+    const before=f.app.db.prepare('SELECT id,record FROM bridges_routes ORDER BY id').all();
+    const changed=routeSchema.parse({id:'channel',platform:'discord',workspace:'house',channel:'300',primary:'mark'});
+    for (const viewer of [{kind:'agent',id:'art'},{kind:'member',id:'pollock'},{kind:'runner',id:'box'}] as const) {
+      for (const [name,input] of [['putRoutes',changed],['removeRoutes',{id:'channel'}]] as const) {
+        expect(f.app.operations.call('direct',viewer,`bridges.${name}`,input,crypto.randomUUID())).toMatchObject({ok:false,code:'denied'});
+        expect(f.app.db.prepare('SELECT id,record FROM bridges_routes ORDER BY id').all()).toEqual(before);
+      }
+    }
+    expect(f.op('putRoutes',changed).ok).toBe(true);
+    expect(f.app.db.prepare('SELECT id,record FROM bridges_routes ORDER BY id').all()).not.toEqual(before);
+    expect(f.op('removeRoutes',{id:'channel'}).ok).toBe(true);
+    expect(f.app.db.prepare('SELECT id FROM bridges_routes').all()).toEqual([]);
+  });
   it('protects links and connection setup through the central household policy',async()=>{
     const f=await fixture();
     for (const viewer of [{kind:'agent',id:'art'},{kind:'member',id:'pollock'},{kind:'runner',id:'box'}] as const) {
