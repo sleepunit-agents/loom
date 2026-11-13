@@ -17,6 +17,7 @@ import { installTasks } from './pieces/tasks/index.js';
 import { installBridges } from './pieces/bridges/index.js';
 import { installApprovals } from './pieces/approvals/index.js';
 import { installRuntime } from './pieces/runtime/index.js';
+import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { installChanges } from './pieces/changes/index.js';
 import { householdProjects, householdAttribution } from './pieces/changes/daemon.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
@@ -67,12 +68,7 @@ export function installNext(app: Foundation, options: NextOptions) {
       } catch { return undefined; } // Unreadable metadata must preserve the asking fallback.
     },
   });
-  if (!app.operations.has('clock.list')) {
-    // The runtime dispatch role is still unavailable: Clock's default holds starts.
-    const jobs = installClock(app.db, app.operations, app.live, sharing);
-    app.onClose(jobs.close);
-  }
-  if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing);
+  if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials });
   if (!app.operations.has('changes.list')) installChanges(app.db, app.operations, app.live, sharing, {
     projects: householdProjects(new SharingDatabase(app.db, options.home)),
     attribution: () => householdAttribution(app.db, options.home),
@@ -99,6 +95,11 @@ export function installNext(app: Foundation, options: NextOptions) {
   const sources = mindTouchSources(inventory);
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
   mindTransports.set(app, sources);
+  if (!app.operations.has('clock.list')) {
+    // The runtime dispatch role is still unavailable: Clock's default holds starts.
+    const jobs = installClock(app.db, app.operations, app.live, sharing);
+    app.onClose(jobs.close);
+  }
   return installEffects(app, sharing, !!options.staging);
 }
 export async function listenNext(app: Foundation, options: NextOptions) {

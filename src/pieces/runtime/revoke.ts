@@ -22,6 +22,7 @@ export function installRevokeBox(db: Db, operations: Operations, sharing: () => 
       // gone, but box revocation must not rely on a previous cleanup succeeding.
       const result = credentials.revokeBox(db, { box: box.id, jobs: jobs.map(job => job.id), now: ctx.now });
       if ((result as unknown) instanceof Promise) throw new Error('Credential revocation must be synchronous');
+      ctx.changed('core.access', 'credentials');
       if (store.put('box', { ...box, revokedAt: ctx.now }, ctx.now)) ctx.changed('runtime.box', box.id);
       for (const job of jobs) {
         if (terminal.has(job.state)) continue;

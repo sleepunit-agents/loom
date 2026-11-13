@@ -68,8 +68,11 @@ it('atomically revokes the box and all its credentials, loses active jobs and re
   expect(store.read('settings', 'untouched')?.changedAt).toBe(1);
   expect(revoke).toHaveBeenCalledOnce();
   for (const t of tokens()) expect(t.revoked).toBe(['r2', 'other'].includes(t.target) ? null : clock.now());
-  expect(changed).toHaveBeenCalledOnce();
-  expect(changed.mock.calls[0][0]).toEqual([
+  // Access invalidation may also publish dependent piece records.
+  const batches = changed.mock.calls.map(([batch]) => batch).filter(batch => batch.some(c => c.type === 'runtime.box'));
+  expect(batches).toHaveLength(1);
+  expect(batches[0]).toEqual([
+    { type: 'core.access', id: 'credentials' },
     { type: 'runtime.box', id: 'r1' },
     ...['queued', 'running', 'starting', 'uncertain', 'waiting'].map(id => ({ type: 'runtime.job', id })),
     { type: 'runtime.settings', id: 'art' }, { type: 'runtime.settings', id: 'pond-bot' },
