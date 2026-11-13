@@ -4,6 +4,8 @@ export interface Thread {
  title: string | null; titledBy: 'member' | 'agent' | null; pinned: boolean; archived: number | null;
  opened: number; last: number; readSeq: number; nextSeq: number; stop: boolean;
  firstId: string; firstHash: string; working: boolean; workingSince?: number | null; workingBeat?: number | null; endGeneration?: number; aliveAt?: number | null; aliveTokens?: number | null;
+ /** Highest member-message sequence whose start is over, even after heartbeat expiry. */
+ startedThrough?: number;
  [key: string]: unknown;
 }
 export interface MessageRow {

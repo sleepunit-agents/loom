@@ -5,7 +5,7 @@ import { schema } from './schema/001.js';
 import { thread, saveThread, append, messageRows, messageId, type Thread, type MessageRow } from './store.js';
 import type { WordsKey } from './crypto.js';
 import { HeldEffect } from './role.js';
-import type { Comms, AgentPost, RuntimeDelivery, Hold, Attention } from './role.js';
+import type { Comms, AgentPost, StartNotice, RuntimeDelivery, Hold, Attention } from './role.js';
 const day = 86400_000;
 const workingStale = 90_000;
 const fail = (code: 'denied'|'conflict'|'invalid'|'unavailable', message: string): never => { throw new OperationError(code,message); };
@@ -333,6 +333,64 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   })();
   touched(requireAgent(agent,place),result.seq);return result;
  }
+ async function startNotice(agent:string,place:string,raw:StartNotice) {
+  const common={seq:z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),attempt:z.number().int().min(1).max(1000),
+   reason:z.string().min(1).max(200).refine(s=>!/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u.test(s)).optional(),
+   run:z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/).optional()};
+  const n=z.discriminatedUnion('kind',[
+   z.object({...common,kind:z.literal('start-retry'),retryAt:z.iso.datetime({offset:true})}).strict(),
+   z.object({...common,kind:z.literal('start-failed')}).strict(),
+  ]).parse(raw);
+  const available=()=>{
+   const t=requireAgent(agent,place);
+   if(closed||t.archived!==null||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');
+   return t;
+  };
+  const before=available();
+  const source=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message' AND sender=?").get(place,n.seq,before.member) as MessageRow|undefined;
+  if(!source||!source.words||source.at+days*day<=clock.now())return fail('unavailable','Message unavailable');
+  const noticeId=`start:${n.seq}`;
+  const readNotice=()=>db.prepare("SELECT * FROM comms_messages WHERE thread=? AND kind='error' AND id=?").get(place,noticeId) as MessageRow|undefined;
+  const old=readNotice();
+  const recheck=()=>{
+   const t=available();
+   const currentSource=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(place,n.seq);
+   if(t.member!==before.member||t.conversation!==before.conversation||t.project!==before.project||
+    JSON.stringify(currentSource)!==JSON.stringify(source)||source.at+days*day<=clock.now())return fail('denied','Message unavailable');
+   if(JSON.stringify(readNotice())!==JSON.stringify(old))return fail('conflict','Start notice changed');
+   return t;
+  };
+  const progressed=(t:Thread)=>t.working||(t.startedThrough??0)>=n.seq||!!db.prepare(
+   "SELECT 1 FROM comms_messages WHERE thread=? AND seq>? AND (kind IN ('card','reply') OR (kind='error' AND (id LIKE 'notice:no-reply:%' OR id LIKE 'noreply-%'))) LIMIT 1"
+  ).get(place,n.seq);
+  if(progressed(before))return {seq:old?.seq??null};
+  if(old&&(!old.words||old.at+days*day<=clock.now()))return {seq:old.seq};
+  // Attempt, error reason and run stay inside ciphertext, including retry arbitration.
+  const previous=old?JSON.parse(await key.open(old.words!)):undefined;
+  if(progressed(recheck()))return {seq:old?.seq??null};
+  if(previous&&(previous.step?.error!=='start-retry'||n.attempt<previous.step.attempt||
+   (n.attempt===previous.step.attempt&&n.kind==='start-retry')))return {seq:old!.seq};
+  const name=agent.charAt(0).toUpperCase()+agent.slice(1);
+  const payload={text:n.kind==='start-retry'
+   ? n.attempt===1?`${name} couldn't start; retrying.`:`${name} couldn't start (${n.attempt} tries so far); retrying.`
+   : n.attempt===1?`${name} couldn't start.`:`${name} couldn't start after ${n.attempt} tries.`,
+   run:n.run??previous?.run,step:{error:n.kind,attempt:n.attempt,
+    ...(n.kind==='start-retry'?{retry_at:new Date(n.retryAt).toISOString()}:{}),
+    ...(n.reason??previous?.step?.reason?{reason:n.reason??previous.step.reason}:{})}};
+  const encoded=JSON.stringify(payload),words=await key.seal(encoded);
+  const result=db.transaction(()=>{
+   const t=recheck();
+   if(progressed(t))return {seq:old?.seq??null};
+   if(old) {
+    if(old.at+days*day<=clock.now())return {seq:old.seq};
+    db.prepare('UPDATE comms_messages SET words=?,hash=? WHERE thread=? AND seq=?').run(words,key.hash(encoded),place,old.seq);
+    t.last=clock.now();saveThread(db,t);return {seq:old.seq};
+   }
+   return {seq:append(db,t,{id:noticeId,kind:'error',at:clock.now(),sender:agent,words,hash:key.hash(encoded),record:'{}'}).seq};
+  })();
+  if(result.seq!==null)touched(requireAgent(agent,place),result.seq);
+  return result;
+ }
  let cancel:()=>void=()=>{};
  function workingThreads(): Thread[] {
   return (db.prepare("SELECT record FROM comms_threads WHERE json_extract(record,'$.working')=1").all() as {record:string}[]).map(r=>JSON.parse(r.record) as Thread);
@@ -356,7 +414,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  sweep();
  void reconcileEnds();
  void reconcileDeliveries();
- return {post,deliver,reconcileEnds,reconcileDeliveries,
+ return {post,startNotice,deliver,reconcileEnds,reconcileDeliveries,
   notice(agent,place,raw) {
    const n=z.object({kind:z.enum(['no-reply','loop']),id:z.string().regex(/^[A-Za-z0-9._:-]{1,128}$/)}).strict().parse(raw);
    const name=agent.charAt(0).toUpperCase()+agent.slice(1);
@@ -425,6 +483,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     const working=state==='working'&&t.archived===null;
     t.workingSince=working?(t.working?t.workingSince??clock.now():clock.now()):null;
     t.workingBeat=working?clock.now():null;t.working=working;
+    if(t.archived===null)t.startedThrough=t.nextSeq-1;
    }
    saveThread(db,t);touched(t);return {stop,archived:t.archived!==null};
   },

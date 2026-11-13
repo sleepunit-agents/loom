@@ -54,6 +54,102 @@ it('refuses every runtime post kind before encryption when ownership or the inst
  await expect(s.comms.post('art',place,{id:'closed',kind:'reply',text:'refused private words'})).rejects.toThrow();
  expect(seals).toBe(before);
 });
+it('keeps one encrypted start notice through retries, restart and final failure',async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ const retry={kind:'start-retry' as const,seq:1,attempt:1,retryAt:'2026-11-12T00:01:00Z',reason:'private host failure',run:'run-start'};
+ expect(await s.comms.startNotice('art',place,retry)).toEqual({seq:2});
+ const first=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ expect(first).not.toContain('private host failure');expect(first).not.toContain('run-start');expect(first).not.toContain('start-retry');
+ expect(JSON.stringify(await s.call('messages',{thread:place}))).toContain("Art couldn't start; retrying.");
+ await s.comms.startNotice('art',place,{...retry,reason:'changed duplicate'});
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(first);
+ await s.restart();await s.comms.startNotice('art',place,{...retry,attempt:2});
+ const second=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ await s.comms.startNotice('art',place,retry);expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(second);
+ expect(JSON.stringify(await s.call('messages',{thread:place}))).toContain("Art couldn't start (2 tries so far); retrying.");
+ await s.comms.startNotice('art',place,{kind:'start-failed',seq:1,attempt:2});
+ const page=JSON.stringify(await s.call('messages',{thread:place}));
+ expect(page).toContain("Art couldn't start after 2 tries.");expect(page).toContain('private host failure');
+ const failed=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ await s.comms.startNotice('art',place,{...retry,attempt:3});
+ await s.comms.startNotice('art',place,{kind:'start-failed',seq:1,attempt:3});
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(failed);
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get()).toEqual({n:2});
+});
+for(const progress of ['working','done','card','reply','no-reply'] as const)it(`ignores start notices after body progress (${progress})`,async()=>{
+ const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
+ if(progress==='working'||progress==='done'){s.comms.status('art',place,progress);if(progress==='working')s.clock.advance(90_000);}
+ else if(progress==='no-reply')await s.comms.notice('art',place,{kind:'no-reply',id:'run'});
+ else await s.comms.post('art',place,{id:'progress',kind:progress,text:'body progress'});
+ const before=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ expect(await s.comms.startNotice('art',place,{kind:'start-failed',seq:1,attempt:1})).toEqual({seq:null});
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(before);
+ // A new member message has its own start lifecycle.
+ await s.call('send',{thread:place,id:'newmessageaaaaaa',text:'new request'});
+ const seq=(s.app.db.prepare("SELECT max(seq) AS seq FROM comms_messages WHERE kind='message'").get() as {seq:number}).seq;
+ await s.comms.deliver('art',place,seq);
+ expect((await s.comms.startNotice('art',place,{kind:'start-failed',seq,attempt:1})).seq).not.toBeNull();
+});
+for(const boundary of ['revoked','closed','archived','conversation','project','source','notice'] as const)it(`refuses changed start-notice snapshots during encryption (${boundary})`,async()=>{
+ let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:k=>({...k,seal:async words=>{expect(s.app.db.inTransaction).toBe(false);if(pause){started();await waiting;}return k.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ await s.comms.startNotice('art',place,{kind:'start-retry',seq:1,attempt:1,retryAt:'2026-11-12T00:01:00Z'});
+ pause=true;const result=s.comms.startNotice('art',place,{kind:'start-failed',seq:1,attempt:1});
+ const rejected=expect(result).rejects.toThrow();await began;
+ if(boundary==='revoked')s.setSharing({...s.getSharing(),members:{jonathan:{agents:[]}}});
+ else if(boundary==='closed')await s.comms.close();
+ else if(boundary==='archived')await s.call('change',{thread:place,action:'archive'});
+ else if(boundary==='source'||boundary==='notice')s.app.db.prepare('UPDATE comms_messages SET hash=? WHERE thread=? AND seq=?').run('replacement',place,boundary==='source'?1:2);
+ else s.app.db.prepare(`UPDATE comms_threads SET record=json_set(record,'$.${boundary}',?) WHERE id=?`).run('replacement',place);
+ const before=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ const threads=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_threads').all());
+ release();await rejected;
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(before);
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_threads').all())).toBe(threads);
+});
+it('rechecks access even for a duplicate start notice after decrypting the prior attempt',async()=>{
+ let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:k=>({...k,open:async words=>{expect(s.app.db.inTransaction).toBe(false);if(pause){started();await waiting;}return k.open(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ const notice={kind:'start-retry' as const,seq:1,attempt:1,retryAt:'2026-11-12T00:01:00Z'};
+ await s.comms.startNotice('art',place,notice);pause=true;
+ const result=s.comms.startNotice('art',place,notice),rejected=expect(result).rejects.toThrow();await began;
+ s.setSharing({...s.getSharing(),members:{jonathan:{agents:[]}}});release();await rejected;
+});
+it('suppresses a start notice if the body starts during encryption, including after restart',async()=>{
+ let pause=false,release:()=>void=()=>{},started:()=>void=()=>{};
+ const waiting=new Promise<void>(r=>{release=r;}),began=new Promise<void>(r=>{started=r;});
+ const s=await setup({key:k=>({...k,seal:async words=>{if(pause){started();await waiting;}return k.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);pause=true;
+ const result=s.comms.startNotice('art',place,{kind:'start-failed',seq:1,attempt:1});await began;
+ s.comms.status('art',place,'working');s.comms.status('art',place,'done');release();
+ expect(await result).toEqual({seq:null});await s.restart();
+ expect(await s.comms.startNotice('art',place,{kind:'start-failed',seq:1,attempt:1})).toEqual({seq:null});
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get()).toEqual({n:1});
+});
+it('validates start notices before crypto and never revives expired notices',async()=>{
+ let seals=0;const s=await setup({key:k=>({...k,seal:async words=>{seals++;return k.seal(words);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);const before=seals;
+ const valid={kind:'start-failed',seq:1,attempt:1};
+ for(const input of [{...valid,seq:0},{...valid,attempt:0},{...valid,attempt:1.5},{...valid,attempt:1001},
+  {...valid,retryAt:'2026-11-12T00:01:00Z'},{...valid,reason:'bad\nline'},{...valid,run:'bad run'},
+  {...valid,text:'private extra'},{kind:'start-retry',seq:1,attempt:1},{kind:'start-retry',seq:1,attempt:1,retryAt:'tomorrow'}])
+  await expect(s.comms.startNotice('art',place,input as never)).rejects.toThrow();
+ await expect(s.comms.startNotice('pond-bot',place,valid as never)).rejects.toThrow();
+ await expect(s.comms.startNotice('art',place,{...valid,seq:99} as never)).rejects.toThrow();
+ expect(seals).toBe(before);
+ await s.comms.startNotice('art',place,{kind:'start-retry',seq:1,attempt:1,retryAt:'2026-11-12T00:01:00Z'});
+ const saved=JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all());
+ s.app.db.exec("CREATE TRIGGER refuse_start BEFORE UPDATE ON comms_threads BEGIN SELECT RAISE(ABORT, 'refused'); END");
+ await expect(s.comms.startNotice('art',place,{kind:'start-failed',seq:1,attempt:1})).rejects.toThrow();
+ expect(JSON.stringify(s.app.db.prepare('SELECT * FROM comms_messages').all())).toBe(saved);
+ s.app.db.exec('DROP TRIGGER refuse_start');s.clock.advance(14*86400_000);
+ await expect(s.comms.startNotice('art',place,{kind:'start-failed',seq:1,attempt:1})).rejects.toThrow();
+ expect(s.app.db.prepare('SELECT words FROM comms_messages').all()).toEqual([{words:null},{words:null}]);
+});
 for(const kind of ['no-reply','loop'] as const)it(`records an encrypted terminal notice once without stopping a later turn (${kind})`,async()=>{
  const s=await setup();const place=await s.open();await s.comms.deliver('art',place,1);
  s.comms.status('art',place,'working');s.comms.activity('art',place,{at:s.clock.now(),tokens:25});

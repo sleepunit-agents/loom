@@ -23,12 +23,17 @@ export interface AgentPost {
 }
 /** Body record movement, distinct from the working heartbeat. Times are epoch milliseconds. */
 export interface BodyAlive { at: number; tokens?: number }
+/** A failed start for one member-message sequence, after runtime accepted it as queued. */
+export type StartNotice = {seq: number; attempt: number; reason?: string; run?: string} &
+ ({kind: 'start-retry'; retryAt: string} | {kind: 'start-failed'});
 export interface DeliveryTrace {
  alive?: BodyAlive;
  thread: string; conversation: string; archived: number | null; working: boolean;
  messages: {seq:number;at:number;kind:string;from:string;delivery?: 'sending'|'held'|'failed'|'delivered'}[];
 }
 export interface Comms {
+ /** One encrypted line per member message; late/duplicate attempts cannot replace progress. */
+ startNotice(agent: string, thread: string, notice: StartNotice): Promise<{seq: number | null}>;
  /** Private startup brief for the trusted runtime; no window/token operation. */
  describe(agent: string, thread: string): {brief: string[]; readers: string[]};
  /** Retry durable end jobs at startup or after staging release; no private words. */
