@@ -1477,7 +1477,11 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
     },
     async ({ slug, since, include_archived }) => {
       // From a house, no other conversation's digests (t-2118): a house reads only the conversation it holds.
-      const result = await projectHub(contextDir, { slug, since, include_archived }, bodyHouseConversation(contextDir, config.caller) === undefined ? {} : { noConversations: true });
+      const result = await projectHub(contextDir, { slug, since, include_archived }, {
+        peopleSelection: config.peopleSelection,
+        conversationSelection: config.conversationSelection,
+        ...(bodyHouseConversation(contextDir, config.caller) === undefined ? {} : { noConversations: true }),
+      });
       return { content: [{ type: 'text' as const, text: result }] };
     },
   );

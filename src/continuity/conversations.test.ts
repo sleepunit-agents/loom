@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { recordTurn } from '../backends/conversations.js';
+import { recordTurn, writeDigest } from '../backends/conversations.js';
 import { conversationView, conversationsList, homeFor } from '../conversations.js';
+import { openProjectsStore } from '../backends/projects.js';
+import { personWrite } from '../tools/person.js';
+import { projectHub } from '../tools/project.js';
 import { createLoomServer } from '../server.js';
 
 const homes: string[] = [];
@@ -56,4 +59,37 @@ it('explicit standalone ignores neighbouring JSON and env while omitted readers 
   const view = await conversationView(art.contextDir, 'art', art.conversation, { LOOM_HOME: home }, null);
   expect(view?.render.by).toBe('core');
   expect(existsSync(join(home, 'household.db'))).toBe(false);
+});
+
+
+it('explicit project hubs read each agent core conversations and selected People without opening the legacy app', async () => {
+  const { home, selections } = fixture();
+  // A legacy app database must never be opened, even if old metadata and env point here.
+  writeFileSync(join(home, 'household.json'), JSON.stringify({ v: 1, agents: ['art', 'mark'], default: 'mark', members: [] }));
+  writeFileSync(join(home, 'household.db'), 'unavailable legacy app');
+  for (const { contextDir, conversation, selection } of selections) {
+    const projects = openProjectsStore(contextDir)!;
+    projects.write({ slug: 'loom', name: 'Loom' }); projects.close();
+    await personWrite(contextDir, { slug: 'jonathan', name: 'Jonathan', where: { loom: { value: `${selection.agent} relationship` } } }, selection);
+    writeDigest(contextDir, { conversation, run: 'run-project' }, { summary: `${selection.agent} work`, projects: ['loom'] });
+    const result = await projectHub(contextDir, { slug: 'loom' }, { peopleSelection: selection, conversationSelection: selection });
+    expect(result).not.toContain('error');
+    expect(result).toContain(`${selection.agent} work`);
+    expect(result).toContain(`${selection.agent} relationship`);
+    expect(result).not.toContain(`${selection.agent === 'art' ? 'mark' : 'art'} work`);
+    expect(result).not.toContain('piece:');
+    const { server } = createLoomServer({ contextDir, peopleSelection: selection, conversationSelection: selection });
+    const client = new Client({ name: 'project-continuity', version: '1' });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    await server.connect(a); await client.connect(b);
+    try {
+      const reply = await client.callTool({ name: 'project_hub', arguments: { slug: 'loom' } });
+      expect(JSON.stringify(reply.content)).toContain(`${selection.agent} relationship`);
+      expect(JSON.stringify(reply.content)).toContain(`${selection.agent} work`);
+      expect(JSON.stringify(reply.content)).not.toContain('error');
+    } finally { await client.close(); await server.close(); }
+    const standalone = await projectHub(contextDir, { slug: 'loom' }, { peopleSelection: null, conversationSelection: null });
+    expect(standalone).toContain(`${selection.agent} work`);
+    expect(standalone).not.toContain('error');
+  }
 });
