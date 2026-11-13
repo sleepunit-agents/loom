@@ -196,7 +196,9 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
     return false;
   }).map(p=>posix.dirname(p)))].sort();
   const discovered: MigrationPlan['importers'] = { household: { paths: ['home'], options: {} } };
-  const bridgePaths=[...files].filter(bridgeSourcePath).sort();
+  const bridgeCandidates=[...files].filter(bridgeSourcePath).sort();
+  // Runtime's store is comparison evidence only when an actual Bridges source exists.
+  const bridgePaths=bridgeCandidates.some(p=>p!=='home/commons/stores/runtime.db')?bridgeCandidates:[];
   if(bridgePaths.length)discovered.bridges={paths:bridgePaths,options:{instances:bridgePaths.filter(p=>p.endsWith('/shuttle.json')).map(p=>({shuttle:p,people:posix.join(posix.dirname(p),'people.json'),routes:posix.join(posix.dirname(p),'routes.json')})),connections:[]}};
   const runtimePaths = [
     ...['home/commons/stores/runtime.db'].filter(p=>files.has(p)),
