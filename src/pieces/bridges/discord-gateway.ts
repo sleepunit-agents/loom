@@ -30,9 +30,10 @@ export interface DiscordGatewayOptions {
 const INITIAL = 'wss://gateway.discord.gg/?v=10&encoding=json';
 function gateway(value: string): string {
   const url = new URL(value);
+  url.search = '?v=10&encoding=json';
   if (url.protocol !== 'wss:' || !/^gateway(?:-[a-z0-9-]+)?\.discord\.gg$/.test(url.hostname)
     || url.username || url.password || url.port || url.hash || url.pathname !== '/') throw Error();
-  url.search = '?v=10&encoding=json'; return url.href;
+  return url.href;
 }
 const sequence = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0;
 const checkpointValid = (c: DiscordCheckpoint) => typeof c.session === 'string' && /^[\w-]{1,256}$/.test(c.session) && sequence(c.seq);
@@ -43,7 +44,7 @@ const fatal = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
  * Invalid sessions can lose events Discord no longer retains: no history replay. */
 export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<void> } {
   const { clock } = o;
-  const dial = o.socket ?? ((url, options) => new WebSocket(url, options));
+  const dial = o.socket ?? ((url, options) => new WebSocket(gateway(url), options));
   let closed = false, stopped = false, generation = 0, failures = 0, pending = 0;
   let socket: Socket | undefined, checkpoint: DiscordCheckpoint | undefined;
   let queue: Promise<void> = Promise.resolve();
