@@ -19,7 +19,8 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | Home conversations and composer | Existing private `comms.agents` summary; latest thread and unread-thread navigation. Shared Comms composer opens a thread with member/agent drafts and stable retry IDs. No Home message-feed subscription or retained reply-word preview |
 | Home composition | Full question first; work/runtime and recent conversation beside Clock on a wide single-agent card, stacked on narrower cards; composer follows the details |
 | Phone bar and centered desktop ticker | Registration title, shared existing ticker renderer, owned roster/status and live Needs you count; exact Inbox navigation, appearance gear on phone; all apps stays in dock |
-| System clock, Boxes/backup status glyphs, piece-stat ticker items | Follow-up proper new-side sources; no browser clock presented as loom time or fabricated piece stats |
+| System clock and status glyphs | Member-private `household.time` carries server minutes and database timezone; desktop shows connection and working-agent glyphs. Phone retains its device status bar |
+| Boxes/backup status glyphs, piece-stat ticker items | Follow-up proper new-side sources; no fabricated piece stats or old-store reads |
 | Last steps, phone Home accordion, per-app parity | Follow-up slices before owner acceptance; no invented tape steps |
 
 Every unavailable live feed drops its old content immediately. Roster loss removes cards; directory failure uses canonical roster names; status, ask and thread failures show unavailable words instead of stale values. Rail navigation is read-only. Approval and private ask actions stay in the owning reader.
@@ -84,3 +85,19 @@ and fixed Needs you count fit one line, below the device's own status bar.
 No old Shell object or legacy fetching is used. Clock and status glyphs await
 proper new-side sources; they are not inferred from device time or hidden
 legacy data.
+
+
+### Server time and system indicators
+
+`household.time` is a member-scoped read-only record, using the existing central
+member rule. Live refreshes it at each server minute and cancels its deadline on
+unsubscribe/close. It reads the household timezone from loom.db (UTC when unset).
+The bar uses that snapshot directly: no device clock, elapsed-time estimate or
+polling. An unavailable snapshot immediately clears the time. No operation, CLI,
+importer or schema is needed for this derived record.
+
+On desktop the clock precedes the title; connection and working-agent glyphs
+follow the brand, with names and tooltips. Phones retain the single compact bar
+under their own status bar. Connection means the bar's source feeds are live;
+agent counts use the owned roster and latest reports. Boxes and backup remain
+explicit follow-ups, pending proper owning sources. No tiling behavior changes.

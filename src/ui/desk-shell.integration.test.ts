@@ -19,10 +19,10 @@ const root = resolve('dist/web');
 if (enabled && (!chrome || !existsSync(chrome) || !existsSync(join(root,'next.html')))) throw Error('Desk evidence needs Chrome and the built app');
 it.runIf(enabled)('desk applies member appearance live across fresh windows and serves PWA assets', async () => {
   const home = mkdtempSync(join(tmpdir(),'desk-shell-'));
-  const app = await startLoom({home,next:true,staging:true,clock:new FakeClock(),webRoot:root,install(app) {
+  const app = await startLoom({home,next:true,staging:true,clock:new FakeClock(Date.parse('2026-11-13T18:41:00Z')),webRoot:root,install(app) {
     migrateHouseholdTables(app.db);
     app.db.transaction(() => {
-      new HouseholdDatabase(app.db).replace(home,{v:1,agents:['art'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]});
+      new HouseholdDatabase(app.db).replace(home,{v:1,tz:'America/Chicago',agents:['art'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]});
       new TokenDatabase(app.db).replace({v:1,tokens:[]},{});
       // Existing technical test sheet, never supplied artwork or screenshot evidence.
       const sample = sheet(), manifest = manifestFromPixelLab(JSON.parse(sample.json.toString()));
@@ -122,6 +122,9 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         await expect.poll(() => page.locator('html').getAttribute('data-look')).toBe(look);
         await expect.poll(()=>page.locator('.next-status-bar .loom-pbar__needs').getAttribute('aria-label')).toBe('1 needs you');
         expect(await page.locator('.next-status-bar h1').innerText()).toBe('Home');
+        await expect.poll(()=>page.locator('.next-system-clock').getAttribute('aria-label')).toBe('12:41 PM, America/Chicago time');
+        expect(await page.locator('.next-system-clock').isVisible()).toBe(width!==390);
+        expect(await page.locator('.next-system-icons').isVisible()).toBe(width!==390);
         expect(await page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('1 agent');
         expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
         await expect.poll(() => page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);

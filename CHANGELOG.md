@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Next desk: show loom's server minute/timezone and live connection/working-agent status glyphs on desktop; retain compact phone chrome.
+
 - Add keyboard-accessible Pin and Archive actions to Comms list rows, including right-click entry.
 
 - Add a private Discord raw receipt drain with fresh metadata, bounded retries and durable normalized handoff; production activation remains pending.
