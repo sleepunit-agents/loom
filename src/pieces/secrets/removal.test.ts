@@ -78,7 +78,10 @@ it('denies nonowners, missing names and injected fields before touching the hold
     expect(call('remove', input, viewer)).toMatchObject({ ok: false, code: 'denied' });
   }
   expect(call('remove', {...input, name: 'missing'})).toMatchObject({ ok: false, code: 'not-found' });
-  expect(call('remove', {...input, value: 'SENTINEL'})).toMatchObject({ ok: false, code: 'invalid' });
+  for (const invalid of [
+    {...input, value: 'SENTINEL'}, {...input, name: '../key'}, {...input, name: ''},
+    {writeId: input.writeId}, {name: input.name}, {...input, writeId: ''}, {...input, writeId: 'not-a-uuid'},
+  ]) expect(call('remove', invalid)).toMatchObject({ ok: false, code: 'invalid' });
   expect(holder.remove).not.toHaveBeenCalled();
   vi.mocked(holder.remove).mockImplementation(() => { throw Error('SENTINEL'); });
   const before = app.db.prepare('SELECT * FROM secrets_names').all();
@@ -120,4 +123,26 @@ it('rejects an asynchronous holder before committing metadata', async () => {
   const before = app.db.prepare('SELECT * FROM secrets_names').all();
   expect(call('remove', {name: 'api-key', writeId: randomUUID()})).toEqual({ok: false, code: 'unavailable', message: 'Key holder could not remove the secret'});
   expect(app.db.prepare('SELECT * FROM secrets_names').all()).toEqual(before);
+});
+
+it('suppresses successful holder output and rolls back even after removal and auto-policy cleanup', async () => {
+  const {app, call, request, holder} = await setup();
+  const pending = request('h-9');
+  call('grant', {agent: agent.id, kind: 'secret', target: 'api-key'});
+  call('policy', {secrets: {'api-key': {grant: 'auto', agents: [agent.id]}}});
+  vi.mocked(holder.remove).mockImplementation(() => 'HOLDER-OUTPUT-SENTINEL');
+  const rows = () => ['secrets_names', 'secrets_grants', 'secrets_requests', 'secrets_meta', 'core_operations'].map(t => app.db.prepare(`SELECT * FROM ${t}`).all());
+  const before = rows(), changed = vi.spyOn(app.live, 'changed');
+  // Fail after name/policy/request/grant deletion and the stable write receipt.
+  app.db.exec("CREATE TRIGGER reject_remove_receipt BEFORE INSERT ON core_operations WHEN NEW.name='secrets.remove' BEGIN SELECT RAISE(ABORT, 'failure'); END");
+  const input = {name: 'api-key', writeId: randomUUID()};
+  expect(call('remove', input, owner, 'last-write-retry')).toMatchObject({ok: false, code: 'unavailable'});
+  expect(rows()).toEqual(before); expect(changed).not.toHaveBeenCalled();
+  app.db.exec('DROP TRIGGER reject_remove_receipt');
+  const result = call('remove', input, owner, 'last-write-retry');
+  expect(result).toEqual({ok: true, value: {removed: true}});
+  expect(JSON.stringify([result, rows(), changed.mock.calls])).not.toContain('HOLDER-OUTPUT-SENTINEL');
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect(changed.mock.calls[0][0]).toHaveLength(4);
+  expect(changed.mock.calls[0][0]).toContainEqual({type: 'secret.request', id: pending.id});
 });
