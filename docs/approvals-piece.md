@@ -1,4 +1,4 @@
-# Approvals in the foundation (runtime integration pending)
+# Approvals in the foundation
 
 This is built beside the old approvals program for `loom serve --next`. It does
 not import real data or change the old request path. Until the coordinated move,
@@ -6,7 +6,7 @@ the old command, page and installed piece remain authoritative.
 
 Upstream contract audited: sleepunit-agents/loom-approvals at
 `588b3f7c22f86068063153676de159597348216a`, `bin/approvals` and
-`test/test_approvals.py`. Its domain cases are being ported to in-process
+`test/test_approvals.py`. Its domain cases are covered by in-process
 `startLoom` tests. The old Python is not a runtime dependency.
 
 ## Old to new surface
@@ -31,7 +31,9 @@ Upstream contract audited: sleepunit-agents/loom-approvals at
 | `ui act rule/rule-add/host-rule-add` | `approvals.set-rule` |
 | `ui act grant/grant-add` (standing per-person rules) | `approvals.set-rule` with `person` |
 | `ui act always` | `approvals.always` |
-| `ui act every-time` | `approvals.every-time` |
+| `ui act every-time` | `approvals.every-time`; Clock consumes exact saved local authority through its direct role |
+| Secret-use request and answer | Secrets owns `secrets.requestHouse` / `secrets.answer`, with source-managed `attention.answer`; no duplicate Approvals receipt |
+| Principal reset / box write-off owner Allow | Runtime owns `runtime.askPrincipalReset` / `runtime.askWriteOff`; `approvals.answer` dispatches its synchronous owning application |
 | `ui act standing-off` | `approvals.standing-off` |
 | Expiry and bounded history rendering | fake-clock live deadlines; complete persisted history |
 | JSON/lock, subprocess principal verification and project listing | removed in new side; database and injected in-process roles |
@@ -115,14 +117,39 @@ using `LOOM_URL` and `LOOM_TOKEN_FILE`. The compatibility client is transport
 only and never opens old state. LOOM_URL is an HTTP(S) origin without URL credentials, path, query or fragment; redirects are refused. The client validates daemon output and preserves one operation id across at most four attempts. Returning to the old side restarts it on its
 untouched stores until the owner retires those stores.
 
-## Shipped and remaining integration
+## Completion and integration evidence
 
 - The piece, importer, API client and kit app shipped in #856; #869 fixes mobile wrapping. CI verified the two-window answer/stale guard, Rules and history, with six inspected screenshots at 390, 1280 and 1920 in Neon Noir and Daylight. Evidence: loom notes `loom/2026-11-12-approvals-ci-evidence` and `loom/2026-11-12-approvals-mobile-evidence`. No local browser suite was run.
 - Next mode now registers approvals on the same database, operations and Live instance as Sharing and Tasks, without requiring a fixture installer. The existing app registry supplies `/p/approvals-preview`. HTTP coverage verifies request, open, restricted answer, exact spend/retry, persisted history across restart and rollback when an application role is absent. Poisoned old JSON stores are ignored.
 - The independent frozen CLI corpus covers 62 old-program cases; broader parser abbreviations, complex quoting and combinations of errors are not exhaustive.
-- Next composition reads project repository metadata from household rows on every operation; bare `owner/repo` selectors are GitHub repositories, and locators are case insensitive. Unreadable metadata keeps the safe asking fallback when central Sharing can authorize the operation; with the default database-backed Sharing, a malformed project row makes policy unavailable and the operation refuses before rule matching. No fallback bypasses central policy. Owner previews resolve project rules, and repository changes take effect on the next lookup. Next composition supplies Runtime’s trusted caller resolver. Only the exact Viewer authenticated by central Signin with a current job credential can prove a body. A live private Runtime binding and current Comms membership derive its person, people set, conversation and project; household owners map to `owner`. The authenticated service suffix preserves service-house spending constraints. Body-supplied principal/project/people fields confer no authority; a conversation argument attaches only when it equals the proven conversation. Shared credentials, copied viewers, missing or stale bindings and unproven job attribution remain unknown. Owner action applications for Runtime are still pending.
-- Clock’s real `clockVouchApplication` is composed in next mode, with owning `clock.askVouch` filing requests. Supply the remaining runtime application role in next composition. `ApprovalOptions.applications` routes wake vouches to clock and conversation resets and box write-offs to runtime. Roles must be synchronous and use the same foundation database; external work must be an outbox entry. Missing/failed roles roll back the answer; successful roles spend the receipt in the same transaction. Clock integration is exercised over HTTP on the real next composition: an agent cannot answer as owner, a second-row database failure rolls back all wake rows, events, answer and spend, the same operation can retry successfully, and a committed response survives restart with exactly one use audit. A fresh answer or body spend cannot adopt again. Runtime reset/write-off integration remains blocked on its owning role.
-- Complete runtime owner-application integration cases once its role lands. Clock owner-application HTTP/restart/rollback/spend-once proof is complete. Direct standing jobs, malformed receipt/standing imports, interrupted imports and socket expiry/access changes have tests.
+- Next composition reads project repository metadata from household rows on every operation; bare `owner/repo` selectors are GitHub repositories, and locators are case insensitive. Unreadable metadata keeps the safe asking fallback when central Sharing can authorize the operation; with the default database-backed Sharing, a malformed project row makes policy unavailable and the operation refuses before rule matching. No fallback bypasses central policy. Owner previews resolve project rules, and repository changes take effect on the next lookup. Next composition supplies Runtime’s trusted caller resolver. Only the exact Viewer authenticated by central Signin with a current job credential can prove a body. A live private Runtime binding and current Comms membership derive its person, people set, conversation and project; household owners map to `owner`. The authenticated service suffix preserves service-house spending constraints. Body-supplied principal/project/people fields confer no authority; a conversation argument attaches only when it equals the proven conversation. Shared credentials, copied viewers, missing or stale bindings and unproven job attribution remain unknown. Runtime’s synchronous owner recovery application is composed beside Clock on the same foundation database (#1087).
+- Clock’s real `clockVouchApplication` is composed in next mode, with owning `clock.askVouch` filing requests. `ApprovalOptions.applications` routes wake vouches to clock and conversation resets and box write-offs to runtime. Roles must be synchronous and use the same foundation database; external work must be an outbox entry. Missing/failed roles roll back the answer; successful roles spend the receipt in the same transaction. Clock integration is exercised over HTTP on the real next composition: an agent cannot answer as owner, a second-row database failure rolls back all wake rows, events, answer and spend, the same operation can retry successfully, and a committed response survives restart with exactly one use audit. A fresh answer or body spend cannot adopt again. Runtime reset and write-off have real next HTTP tests in `src/pieces/runtime/owner-application.test.ts`: authenticated owner/member/body separation, original saved cards and snapshots, restart replay, late-failure rollback of central credentials and recovery, and exactly-once spending.
+- All owning applications below are composed and tested. Direct standing jobs, malformed receipt/standing imports, interrupted imports and socket expiry/access changes have tests. The broader Runtime rebuild remains on its own task; it does not gate Approvals completion.
 - Security/spend review stopped at the three-round bound: final BLOCKING, one CRITICAL and one MAJOR, both folded with regression tests; final folds have no further review and no CLEAR is claimed. The separate persistence/importer/client review also stopped at three rounds: final BLOCKING with two CRITICAL findings, both folded with regression tests (command stderr credential redaction and map-only project scope). No fourth read and no CLEAR claimed; final folds are unreviewed. Full ledger: loom note loom/2026-11-12-approvals-importer-client-review.
 
 Legacy agent grant import closures retain the original card and append a retirement audit entry; the source card time is used for the withdrawal so offline verification is deterministic. Already answered legacy receipts remain history and cannot be spent. Household service record-type/operation grants and secret-use grants are separate authorities and are unchanged.
+
+
+## Owning application proof
+
+| Authority | Owning path and proof on the new side |
+| --- | --- |
+| Clock vouch | `clock.askVouch` → `approvals.answer` → `clockVouchApplication`; `src/pieces/approvals/clock-http.test.ts` proves HTTP, restart, multi-row rollback and a single use audit. |
+| Runtime principal reset | `runtime.askPrincipalReset` → `runtimeOwnerApplication`; `src/pieces/runtime/owner-application.test.ts` proves HTTP, original queue snapshot, restart, credential/receipt rollback and single application. |
+| Runtime box write-off | `runtime.askWriteOff` → the same owning application; the same suite proves covered-job snapshots, current heartbeat refusal, HTTP/restart, late rollback and preservation of unrelated work and credentials. |
+| Local one-shot / standing | Clock’s saved local filing and recovery/standing roles own scheduling. `local-standing.test.ts`, Clock’s `local-recovery.test.ts`, `local-standing.test.ts` and `private-local.test.ts` prove restart, exact words/caller, rollback and durable deduplication. `owning-http.test.ts` adds household HTTP answer/replay and atomic single scheduling. Standing authority intentionally permits later distinct uses; each use receipt is counted once. Private local cards require the owning member’s authenticated window: HTTP token refusal is the intended boundary, not a missing application. Private due work stays held pending a private Runtime dispatch path; it never falls through ordinary dispatch. |
+| Secret use | Secrets owns requests and temporary grants; Attention invokes its source-managed answer synchronously in next composition. `src/pieces/secrets/next-attention.test.ts` and `src/pieces/approvals/owning-http.test.ts` prove owner authority, HTTP, restart, grant/answer rollback and one grant across lost-answer retries. Consent is applied once; the resulting time-bounded grant permits repeated eligible secret use until expiry or revocation. |
+| Retired piece/path grant | No owning application exists by design (#1072). Requests refuse, imported pending cards withdraw deterministically, and answered history cannot be spent. `retirement-scope.test.ts` and importer/domain tests preserve central record scope. |
+
+Merge, host and generic receipts remain exact external-action authority, rather
+than synchronous database applications. Their matching/spending is covered by the
+Approvals domain and frozen command corpus; no database callback pretends to merge
+a PR or execute a host command. Runtime’s private in-flight dispatch proof binds
+the exact application object, database and answering member only during the
+callback; exported role calls with manufactured Allow fields refuse.
+
+The final completion audit runs importer, generated client, migration command,
+next composition, all Approvals tests, owning Runtime recovery and Clock/Secrets
+integration suites. Screens and their six inspected CI artifacts remain those
+linked above: this final integration changes no screen. No real import, deployment,
+installed-piece change or host rollout is part of this task’s completion.
