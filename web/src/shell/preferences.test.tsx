@@ -41,6 +41,15 @@ it('sends only the changed choice over the shared operation and waits for live c
   await r.finish({ ok: true, value: { look: 'daylight', at: 9 } });
   expect(f.look).toHaveBeenLastCalledWith('neon'); await publish(live({ look: 'daylight', at: 9 })); expect(f.look).toHaveBeenLastCalledWith('daylight');
 });
+it('saves a ground choice through the existing member operation and waits for the record', async () => {
+  f.snapshot = live({ground:'depth'}); const r = request(); f.call.mockReturnValue(r.handle); await draw();
+  await act(async () => tree.root.findByProps({'aria-label':'Ground'}).props.onChange({target:{value:'contours'}}));
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('household.setPreferences',{ground:'contours'});
+  expect(tree.root.findByProps({'aria-label':'Ground'}).props.value).toBe('depth');
+  expect(tree.root.findByProps({'aria-label':'Ground'}).props.disabled).toBe(true);
+  await r.finish({ok:true,value:{ground:'contours'}}); await publish(live({ground:'contours'}));
+  expect(tree.root.findByProps({'aria-label':'Ground'}).props.value).toBe('contours');
+});
 it('disables edits while loading or disconnected and resets displayed choices when access ends', async () => {
   await draw(); expect(tree.root.findByProps({ 'aria-label': 'Look' }).props.disabled).toBe(true); expect(f.look).not.toHaveBeenCalled();
   await publish(live({ look: 'daylight' })); await publish({ status: 'offline', records: [{ id: 'jonathan', prefs: { look: 'daylight' } }] });
