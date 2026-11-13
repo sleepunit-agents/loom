@@ -2,6 +2,7 @@ import { registerBuiltinService } from '../../core/services.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { migrate, operation, failure, mayAct, maySee, type Context, type Db, type Operations, type Live, type Sharing, type Viewer, type LiveRecord } from '../../core/index.js';
+import { installSecretUsage } from './usage.js';
 import { installSecretHistory } from './history.js';
 import { schema } from './schema/001.js';
 import type { GrantContext, Grant, GrantRequest, Grants, Resource, SecretName } from './role.js';
@@ -37,6 +38,7 @@ export function installSecrets(db: Db, operations: Operations, live: Live, shari
   registerBuiltinService(operations, 'secrets', ['secret.name', 'secret.grant', 'secret.request', 'secret.policy', 'secret.change']);
   migrate(db, 'secrets', schema);
   installSecretHistory(db, operations, live, sharing);
+  installSecretUsage(db, operations, live, sharing);
   const owner = (v: Viewer, op: string) => mayAct(v, { type: 'secret.grant' }, sharing(), 'household', op);
   const canAsk = (v: Viewer, a: string) => v.kind === 'agent' ? v.id === a && maySee(v, { agent: a }, sharing()) : owner(v, 'secrets.request') || mayAct(v, { agent: a }, sharing(), 'agent-setup', 'secrets.request');
   const saveGrant = (record: Grant) => db.prepare('INSERT INTO secrets_grants VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, record.agent, record.kind, record.target, JSON.stringify(record));

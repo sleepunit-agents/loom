@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Next-mode local operators can create audited, single-use sign-in links without a bearer token; first start prints an owner link once.
+- Add a Bridges preview for next mode with connection status, daily counts, routes and individually released staging sends; uncertain sends require review.
 - Route explicitly selected project tools and hub memories to the context-local private store, ignoring legacy database and actor overrides.
 
 - Clock exposes scoped next-wake and complete scheduled/waiting/running job reads for the new desk.
@@ -43,6 +43,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add `loom serve --next --staging`: the separate new shell, registered app tiles and phone pane, one address router, and individually released outside work. Existing serve behavior is unchanged.
 
 - Keep agent-created unscoped foundation tasks in their own queue; let the offline tasks importer assign projectless tasks with `--agent`.
+
+- Next-mode local operators can create audited, single-use sign-in links without a bearer token; first start prints an owner link once.
 
 - Add a Tasks app preview at `/p/tasks-preview`, with live folders, task reading and actions through the foundation socket; the current Tasks entry stays unchanged until the import.
 
