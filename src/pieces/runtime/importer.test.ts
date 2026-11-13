@@ -235,3 +235,16 @@ it('refuses a valid project on a deleted binding even with the correct owning me
  (f.options.conversations as Record<string,unknown>)[cv]={member:'jonathan',project:'pond'};
  expect(f.read).toThrow('owning Comms source');
 });
+
+it('refuses a live binding with a conflicting deleted conversation at a different thread id',()=>{
+ const f=fixture();deletedThread(f);
+ const db=new Database(f.sources.household);
+ db.prepare('UPDATE comms_deleted SET id=?,conversation=?').run('other-deleted-thread',cv);
+ db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run('kehvhuwzdm',cv,'art','jonathan',null);db.close();
+ expect(f.read).toThrow('owning Comms source');
+});
+it.each([null,cv])('refuses a tombstone for another thread, with conversation %s, rather than skipping',conversation=>{
+ const f=fixture();deletedThread(f);const db=new Database(f.sources.household);
+ db.prepare('UPDATE comms_deleted SET id=?,conversation=?').run('unrelated',conversation);db.close();
+ expect(f.read).toThrow('owning Comms source');
+});

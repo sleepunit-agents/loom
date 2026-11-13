@@ -165,10 +165,10 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
     // Older fixtures/stores can retain the full place as the table id.
     const placeId=typeof c.place==='string'&&c.place.startsWith('th:')?c.place.slice(3):undefined;
     const threads=inventory.privateThreads.filter(t=>t.conversation===id || t.id===c.place || (placeId!==undefined&&t.id===placeId));
-    const deleted=placeId===undefined?[]:inventory.deletedThreads.filter(t=>t.id===placeId || t.id===c.place);
+    const deleted=inventory.deletedThreads.filter(t=>t.conversation===id || (placeId!==undefined&&(t.id===placeId || t.id===c.place)));
     if(deleted.length) {
       const tombstone=deleted[0];
-      if(deleted.length!==1 || threads.length || tombstone.agent!==agent || typeof tombstone.member!=='string' || !identities.members.includes(tombstone.member)
+      if(deleted.length!==1 || threads.length || placeId===undefined || (tombstone.id!==placeId&&tombstone.id!==c.place) || tombstone.agent!==agent || typeof tombstone.member!=='string' || !identities.members.includes(tombstone.member)
         || (tombstone.conversation!==null&&tombstone.conversation!==id)
         || (audience.member!==undefined&&audience.member!==tombstone.member) || audience.project!==undefined)
         throw Error('Runtime deleted binding must match the owning Comms source');
