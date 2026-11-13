@@ -183,3 +183,34 @@ it('checks add/replace existence inside the transaction after gated encryption r
   other.remove(who(),'api-key');resume();await expect(replacement).rejects.toThrow();
   await expect(f.s.read('api-key')).rejects.toThrow();
 });
+
+it('reports only committed member/id receipts across restart, rollback and later writes', async () => {
+  const f=await setup(),add=who(),remove=who(),failed=who();
+  expect(f.s.hasReceipt(add)).toBe(false);
+  await f.s.set(add,'api-key',value(),'add');
+  expect(f.s.hasReceipt(add)).toBe(true);
+  expect(f.s.hasReceipt({...add,member:'another-member'})).toBe(false);
+  await expect(f.s.set(failed,'api-key',value(),'add')).rejects.toThrow();
+  expect(f.s.hasReceipt(failed)).toBe(false);
+  const db=new Database(join(f.home,'holder.db'));
+  try {
+    db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON holder_receipts BEGIN SELECT RAISE(ABORT, 'PRIVATE'); END");
+    expect(()=>f.s.remove(remove,'api-key')).toThrow();expect(f.s.hasReceipt(remove)).toBe(false);
+    db.exec('DROP TRIGGER fail_receipt');f.s.remove(remove,'api-key');
+  } finally {db.close();}
+  f.s.close();const restarted=await f.open();
+  await restarted.set(who(),'api-key',value('new'),'add');
+  expect(restarted.hasReceipt(add)).toBe(true);expect(restarted.hasReceipt(remove)).toBe(true);
+  const decrypt=vi.spyOn(Decrypter.prototype,'decrypt');
+  expect(restarted.hasReceipt(who())).toBe(false);expect(decrypt).not.toHaveBeenCalled();
+  expect(()=>restarted.hasReceipt({...add,writeId:'invalid'})).toThrow(/^Secret holder storage unavailable$/);
+  restarted.close();expect(()=>restarted.hasReceipt(add)).toThrow(/^Secret holder storage unavailable$/);
+});
+it('an absent receipt does not rule out a concurrently encrypting write committing later', async () => {
+  const f=await setup(),other=await f.open(),id=who(),encrypt=Encrypter.prototype.encrypt;
+  let resume!:()=>void;const gate=new Promise<void>(resolve=>{resume=resolve;});
+  vi.spyOn(Encrypter.prototype,'encrypt').mockImplementationOnce(async function(this:Encrypter,bytes:Uint8Array|string){await gate;return encrypt.call(this,bytes);});
+  const pending=f.s.set(id,'api-key',value(),'add');
+  expect(other.hasReceipt(id)).toBe(false);resume();await pending;
+  expect(other.hasReceipt(id)).toBe(true);expect(await text(other)).toBe(value().toString());
+});
