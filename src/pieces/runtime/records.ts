@@ -29,6 +29,8 @@ export const jobRecord = z.object({
   conversation: id.optional(), model: id.optional(), account: id.optional(),
   /** Assigned runner authoritatively fenced a claim against ever starting. */
   startFailed: z.literal(true).optional(),
+  /** Offline imports are fenced until the owning lifecycle reconciles old work. */
+  imported: z.object({history:z.enum(['discard','unknown'])}).strict().optional(),
   /** Owner ended exact silent work; no returned body may resume its history. */
   principalReset: z.object({approval:id,by:id,at:z.number().int()}).strict().optional(),
   writtenOff: z.object({approval:id,by:id,at:z.number().int()}).strict().optional(),

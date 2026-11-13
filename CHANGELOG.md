@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Import explicit Runtime snapshots with complete private source retention, scoped metadata, held old work and independent migration verification.
+
 ### Fixed
 
 - Accept legacy Secrets timestamps at arbitrary fractional precision during offline import, retain validated audit text exactly, and report value-free source check names.

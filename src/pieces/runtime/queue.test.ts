@@ -111,7 +111,7 @@ it('upgrades version-one runtime storage without changing existing job/box metad
   const f = await setup(), job = f.jobOf(f.call());
   const before = f.store.read('job', job), boxes = f.app.db.prepare('SELECT * FROM runtime_boxes ORDER BY id').all();
   // Materialize the previous runtime layout with existing metadata.
-  f.app.db.exec("DROP TABLE runtime_provenance_sources; DROP TABLE runtime_provenance; DROP TABLE runtime_owner_requests; DROP TABLE runtime_job_heartbeats; DROP TABLE runtime_results; DROP TABLE runtime_deliveries; DROP TABLE runtime_inputs; DELETE FROM core_migrations WHERE piece='runtime' AND number>=2");
+  f.app.db.exec("DROP TABLE runtime_import_meta; DROP TABLE runtime_import_sources; DROP TABLE runtime_import_documents; DROP TABLE runtime_import_revisions; DROP TABLE runtime_provenance_sources; DROP TABLE runtime_provenance; DROP TABLE runtime_owner_requests; DROP TABLE runtime_job_heartbeats; DROP TABLE runtime_results; DROP TABLE runtime_deliveries; DROP TABLE runtime_inputs; DELETE FROM core_migrations WHERE piece='runtime' AND number>=2");
   await f.restart();
   expect(f.store.read('job', job)).toEqual(before);
   expect(f.app.db.prepare('SELECT * FROM runtime_boxes ORDER BY id').all()).toEqual(boxes);
