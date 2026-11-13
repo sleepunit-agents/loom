@@ -94,3 +94,24 @@ it('recovers a refused stale socket under home ownership', async()=>{
   expect(existsSync(path)).toBe(true);
   const app=await start(h);expect(await notify(directory,{type:'knowledge',id:'fact'})).toMatchObject({ok:true});await app.close();expect(existsSync(path)).toBe(false);
 });
+
+it('distinguishes denied Knowledge access from an empty authorized store', async()=>{
+  const h=home();const app=await start(h,{authenticate:()=>({viewer:{kind:'member',id:'partial'},valid:()=>true})});
+  const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');cleanup.push(()=>ws.close());
+  await once(ws,'open');const reply=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'knowledge.access'}));
+  expect(JSON.parse((await reply)[0].toString())).toMatchObject({kind:'set',records:[{id:'knowledge',allowed:false,canVerify:false,canRecheck:false}]});
+});
+it('rolls source transports back on HTTP startup failure and shares concurrent shutdown', async()=>{
+  const h=home();await store(h);
+  await expect(start(h,{host:[]})).rejects.toThrow('bind host');
+  expect(existsSync(touchSocketPath(join(h,'commons')))).toBe(false);
+  const app=await start(h);const first=app.close(),second=app.close();expect(second).toBe(first);await first;
+  expect(existsSync(touchSocketPath(join(h,'commons')))).toBe(false);
+  const restarted=await start(h);await restarted.close();
+});
+it('releases home ownership even when a synchronous reader shutdown fails', async()=>{
+  const h=home();
+  const app=await startLoom({home:h,next:true,sharing:()=>sharing,install:app=>app.onClose(()=>{throw new Error('injected reader close');})});
+  await expect(app.close()).rejects.toThrow('injected reader close');
+  const restarted=await start(h);await restarted.close();
+});

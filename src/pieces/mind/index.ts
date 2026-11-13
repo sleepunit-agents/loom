@@ -2,7 +2,7 @@
 import { existsSync } from 'node:fs';
 import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
-import { operation, maySee, type Operations, type Live, type Sharing, type Viewer } from '../../core/index.js';
+import { operation, maySee, mayAct, type Operations, type Live, type Sharing, type Viewer } from '../../core/index.js';
 import { knowledgeView, type KnowledgeOpen } from './knowledge.js';
 
 /** Composition supplies paths from household database metadata, never household.json. */
@@ -27,6 +27,13 @@ export function installMindKnowledge(operations: Operations, live: Live, options
   operations.register(operation({ name: 'mind.knowledgeRead', input: z.object({ slug: z.string().min(1).max(200) }), output: z.unknown(),
     may: visible, run: (ctx, input) => read(input.slug, ctx.viewer) ?? { ok: false, code: 'not-found', message: 'Knowledge page not found' },
   }));
+  // Permission state is explicit: an empty authorized store differs from denial.
+  live.register({ name: 'knowledge.access', ids: () => ['knowledge'],
+    read: (_id, viewer) => ({ id: 'knowledge', allowed: visible(viewer),
+      canVerify: mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', 'mind.knowledgeVerify'),
+      canRecheck: mayAct(viewer, { type: 'knowledge' }, options.sharing(), 'act', 'mind.knowledgeRecheck') }),
+    inScope: () => true,
+  });
   live.register({ name: 'knowledge', ids: scope => scope === undefined ? view().pages.map(p => p.slug) : [scope], read,
     inScope: (r, scope) => scope === undefined || r.id === scope,
     // A referring page can have lost its link or disappeared entirely. Refresh

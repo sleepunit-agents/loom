@@ -223,7 +223,9 @@ It uses the kit Split and the shared live feed, including a scoped page feed for
 direct links beyond the 2,000-page list. It preserves topics, title/domain search,
 recent and due folders, freshness, markdown, sources, referring pages and both
 check actions. Calls start only in handlers and retain their retry state. Missing,
-loading and connection/access failures are separate states. The old Add a fact
+loading and connection/access failures are separate states. A content-free
+`knowledge.access` record carries the current viewer’s central-policy result and
+per-action eligibility; an empty store cannot masquerade as a denied surface. The old Add a fact
 link was a conversation composer entry, not a Knowledge content operation; that
 entry belongs to the new Conversations app rather than the old composer.
 
