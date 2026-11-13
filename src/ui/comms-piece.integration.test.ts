@@ -106,8 +106,17 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   // Scroll following uses new sequence identities, including when Live stays capped at 100.
   const messages=b.getByLabel('Thread messages');
   const gap=()=>messages.evaluate(el=>el.scrollHeight-el.scrollTop-el.clientHeight);
+  // The standalone app must own a real scroller on phone and desktop alike;
+  // gap=0 alone would also pass for a message area grown to its entire content.
+  for(const width of [390,1280,1920]){
+   await b.setViewportSize({width,height:900});
+   await expect.poll(()=>messages.evaluate(el=>el.scrollHeight-el.clientHeight)).toBeGreaterThan(80);
+   expect(await messages.evaluate(el=>el.clientHeight)).toBeGreaterThan(0);
+   await expect.poll(()=>b.getByRole('textbox',{name:'Message',exact:true}).evaluate(el=>el.closest('form')!.getBoundingClientRect().bottom)).toBeLessThanOrEqual(900);
+  }
   await expect.poll(gap).toBeLessThanOrEqual(80);
   await messages.evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});
+  expect(await gap()).toBeGreaterThan(80);
   await comms.post('art',place,{id:'follow-reply-one',kind:'reply',text:'Reply while reading earlier words'});
   await expect.poll(()=>b.getByRole('button',{name:'New messages ↓ (1)',exact:true}).count()).toBe(1);
   expect(await gap()).toBeGreaterThan(80);

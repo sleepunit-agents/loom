@@ -477,3 +477,16 @@ are disconnected on cleanup. Scroll bookkeeping retains sequence numbers only.
 A new unit case covers window rollover, older rows, card updates, sends and reset.
 The existing browser proof now covers scrolled-back arrival, jump, following and
 earlier-page loading; CI must validate this extension on the new head.
+
+The first reply-follow browser run (`0685eac`, run 43384683982) failed to
+show the scrolled-back jump control. The standalone preview had no bounded
+height: its message area grew with its contents, leaving no scroll range.
+Comms now gives its Split a viewport height outside tiles (the kit's container
+height still applies inside a tile), a bounded grid row and a flex reader.
+The header and composer retain their space while messages scroll. The browser
+proof additionally requires a nonzero message viewport, more than 80 pixels of
+scroll range, a composer within the viewport at 390/1280/1920, and an actual
+gap after scrolling back. This is a product layout correction; the failed
+assertion and the existing jump/follow/earlier-page checks remain in place.
+Mobile visual-keyboard behavior and the wider parity/integration obligations
+above remain unfinished. Browser validation must pass on this new head.

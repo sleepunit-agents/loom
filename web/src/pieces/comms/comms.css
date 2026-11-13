@@ -1,0 +1,6 @@
+/* Comms owns a bounded message scroller, including on the standalone preview.
+   In a desktop tile Split's 100cqh rule supplies the available height instead. */
+.loom-comms { height: 100dvh; grid-template-rows: minmax(0, 1fr); }
+.loom-comms > .loom-split__list, .loom-comms > .loom-split__nav { min-height: 0; overflow-y: auto; }
+.loom-comms > .loom-split__reader { display: flex; flex-direction: column; min-height: 0; }
+.loom-comms .loom-split__back, .loom-comms article > header, .loom-comms article > form { flex-shrink: 0; }

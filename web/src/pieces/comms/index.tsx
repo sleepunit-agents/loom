@@ -8,6 +8,7 @@ import { workingView } from './working';
 import { EarlierPages, retainedMessage } from './pages';
 import { ConversationActivity } from './conversation';
 import { useReplyFollow } from './use-follow';
+import './comms.css';
 interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};[key:string]:unknown}
 interface Ack {thread:string;seq:number}
 const idle:CallState={pending:false,status:'done'};const noop=()=>()=>{};
@@ -58,7 +59,7 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
  },[older,records,status,pages,now]);
  const working=workingView(thread,all,now,status==='live');
  const scroller=useRef<HTMLDivElement>(null);const follow=useReplyFollow(scroller,records,status==='live');
- return <article className="flex h-full min-h-0 flex-col">
+ return <article className="flex min-h-0 flex-1 flex-col">
   <header className="grid gap-2 border-b p-4"><h1>{thread.title??`New thread with ${thread.agent}`}</h1><p>{thread.agent}</p>
    {working&&<p role="status" aria-label="Working status" data-alive={working.face}>{working.text}</p>}
    {status==='live'&&thread.working&&thread.alive&&<p aria-label="Body activity">Last body activity <time dateTime={new Date(thread.alive.at).toISOString()}>{new Date(thread.alive.at).toLocaleString('en-US',{timeZone:'America/Chicago'})} CT</time>{thread.alive.tokens!==undefined&&` · ${thread.alive.tokens.toLocaleString('en-US')} tokens`}</p>}
@@ -87,7 +88,7 @@ export default function CommsApp({path:shellPath,go}:{path?:string;go?:(path:str
  let conversation:string|undefined;try{conversation=conversationPath?decodeURIComponent(conversationPath):undefined;}catch{/* Invalid route stays unavailable. */}
  if(conversation)return <ConversationActivity key={conversation} conversation={conversation} onBack={()=>navigate()}/>;
  const current=records.find(t=>t.id===selected);const ownedAgent=agent||mine?.agents[0]||'';
- return <Split label="Comms" folder={folder} folders={[{id:'live',label:'Threads'},{id:'archived',label:'Archived'}]} onFolder={setFolder} listTitle="Threads" listMeta={records.length}
+ return <Split className="loom-comms" label="Comms" folder={folder} folders={[{id:'live',label:'Threads'},{id:'archived',label:'Archived'}]} onFolder={setFolder} listTitle="Threads" listMeta={records.length}
   listTop={<div className="p-3"><Button disabled={status!=='live'} onClick={()=>{navigate();setCreating(true);}}>New thread</Button></div>}
   list={status==='loading'?<Loading label="Opening Comms…"/>:status!=='live'?<Error text="Waiting for your signed-in connection."/>:<List label="Thread list">{[...records].sort((a,b)=>Number(b.pinned)-Number(a.pinned)||b.last-a.last).map(t=><Row key={t.id} title={t.title??`New thread with ${t.agent}`} meta={t.agent} unread={t.unread} selected={selected===t.id} onClick={()=>navigate(t.id)}/>)}</List>}
   reader={creating&&mine?<div className="grid gap-3 p-4"><h1>New thread</h1><label>Agent<select value={ownedAgent} onChange={e=>setAgent(e.target.value)}>{mine.agents.map(id=><option key={id}>{id}</option>)}</select></label>{ownedAgent?<Composer key={ownedAgent} member={mine.member} agent={ownedAgent} onOpened={navigate} enabled={status==='live'}/>:<Empty title="No agents available"/>}</div>:current?<ThreadReader key={current.id} thread={current} onDeleted={()=>navigate()}/>:selected?<Empty title="This thread is no longer in view"/>:null}
