@@ -751,3 +751,18 @@ invisible and a successful receipt survive restarts and later replacement/remova
 Normal Settings value forms and production async registry writes remain disabled
 until durable admission and metadata reconciliation are connected. No credential,
 installed configuration, real import or host activation accompanies this change.
+
+### Legacy timestamp precision and refusal diagnostics
+
+Offline Secrets import accepts UTC ISO timestamps with no fraction or any number
+of fractional digits in audit and request metadata. Projected record times use
+integer milliseconds; validated original timestamps stay unchanged. The retained
+legacy snapshot includes `auditText`, preserving the complete validated UTF-8
+audit input (spacing, line endings and fractional digits), alongside parsed audit
+metadata. Unknown fields and invalid dates still refuse before retention.
+
+Source refusals name a fixed check: `copied-source`, `identity-options`,
+`source-files`, `encrypted-store`, `policy-request-plan`, `identity-mapping`,
+`audit-schema`, or `audit-projection`. Parser messages, keys and values never enter
+the error. Destination failures retain the generic refusal. This is an offline
+parser repair only; it performs no live import or holder/Settings activation.

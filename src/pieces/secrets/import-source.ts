@@ -11,6 +11,11 @@ import type { SecretName } from './role.js';
 import type { SecretChange } from './history.js';
 import type { SecretUsage } from './usage.js';
 
+/** Fixed diagnostics only; never carry parser errors or source values. */
+export class SecretImportSourceError extends Error {
+  constructor(readonly check: string) { super(`Invalid legacy secrets source or identity mapping: ${check}`); }
+}
+
 export const secretImportOptions = z.object({
   agents: z.record(z.string(), z.string().min(1)), members: z.record(z.string(), z.string().min(1)),
 }).strict();
@@ -21,7 +26,7 @@ export const canonicalSecretImport = (v: unknown): string => {
   return JSON.stringify(v);
 };
 const auditSchema = z.object({
-  at: z.iso.datetime({precision:3}), event: z.enum(['request','read','refused-read','grant','deny','revoke','always','stop-always','always-on','houses-allow','houses-stop','set','removed','host-read','missing','issue']),
+  at: z.iso.datetime(), event: z.enum(['request','read','refused-read','grant','deny','revoke','always','stop-always','always-on','houses-allow','houses-stop','set','removed','host-read','missing','issue']),
   secret: secretName, id: z.string().regex(/^q-[0-9a-f]{8}$/).optional(), agent: z.string().optional(),
   agents: z.array(z.string()).optional(), house: z.string().regex(/^h-[0-9]{1,9}$/).optional(),
   why: z.string().optional(), result: z.enum(['pending','granted','denied','revoked']).optional(),
@@ -47,9 +52,12 @@ export function assertCopiedSecretSource(from: string): void {
 /** Raw encrypted bytes affect receipt only. They never enter the projection. */
 export function readSecretImport(from: string, now: number, input: SecretImportOptions,
   registered: {agents: readonly string[]; members: readonly string[]}) {
+  let check = 'copied-source';
   try {
     assertCopiedSecretSource(from);
+    check = 'identity-options';
     const options = secretImportOptions.parse(input);
+    check = 'source-files';
     const files = new Map([
       ['store.sops.json', optional(join(from,'store.sops.json'))],
       ['policy.json', optional(join(from,'policy.json'))],
@@ -58,21 +66,27 @@ export function readSecretImport(from: string, now: number, input: SecretImportO
     ]);
     if([...files.values()].every(b=>b===undefined))throw Error();
     const file=(name:string,fallback:string)=>files.get(name)??Buffer.from(fallback);
+    check = 'encrypted-store';
     const store = z.record(z.string(), z.unknown()).parse(parseLegacyMetadataJson(file('store.sops.json','{}')));
     if(Object.entries(store).some(([n,v])=>n!=='sops' && (typeof v!=='string'||!v.startsWith('ENC[AES256_GCM,')||!v.endsWith(']'))))throw Error();
     const names = Object.keys(store).filter(n=>n!=='sops').sort();
     for (const name of names) secretName.parse(name);
     const principals: LegacySecretRecordPrincipals = { bindings:new Map(Object.entries(options.agents)), registered:new Set(registered.agents),
       members:new Map(Object.entries(options.members)), registeredMembers:new Set(registered.members) };
+    check = 'policy-request-plan';
     const plan = planLegacySecretRecords(file('policy.json','{}'),file('requests.json','{"v":1,"requests":{}}'),principals,new Set(names),now,{pendingAttention:true});
+    check = 'identity-mapping';
     // Audit-only identities must satisfy the same exact, injective mapping.
     for (const [map, ids] of [[options.agents,registered.agents],[options.members,registered.members]] as const) {
       if (new Set(Object.values(map)).size!==Object.keys(map).length || Object.values(map).some(id=>!ids.includes(id))) throw Error();
     }
-    const audit = new TextDecoder('utf-8',{fatal:true}).decode(file('audit.jsonl','')).split('\n').filter(line=>line.trim()).map(line=>auditSchema.parse(parseLegacyMetadataJson(Buffer.from(line))));
+    check = 'audit-schema';
+    const auditText = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(file('audit.jsonl',''));
+    const audit = auditText.split('\n').filter(line=>line.trim()).map(line=>auditSchema.parse(parseLegacyMetadataJson(Buffer.from(line))));
     const agent = (id: string) => { if(!Object.hasOwn(options.agents,id))throw Error(); return options.agents[id]; };
     const member = (id: string) => { if(!Object.hasOwn(options.members,id))throw Error(); return options.members[id]; };
     const changes: SecretChange[] = [], uses: SecretUsage[] = [];
+    check = 'audit-projection';
     audit.forEach((e,i)=>{
       const at=Date.parse(e.at), id=`legacy-${String(i).padStart(12,'0')}`;
       if(at>now)throw Error();
@@ -98,7 +112,7 @@ export function readSecretImport(from: string, now: number, input: SecretImportO
       ask:`Allow ${r.agent} to use ${r.target}?`,why:r.why,if_yes:'I grant this request.',if_no:'I deny this request.',
       answers:'yes-no',refs:[r.id],href:'/p/settings-preview',state:'open',createdAt:r.createdAt,changedAt:r.createdAt}));
     const checksum=createHash('sha256').update(canonicalSecretImport([...files].map(([n,b])=>[n,b?.toString('base64')??null]))).digest('hex');
-    const legacy={policy:plan.metadata.sourcePolicy,requests:plan.metadata.requests.requests.map(r=>r.source),audit};
+    const legacy={policy:plan.metadata.sourcePolicy,requests:plan.metadata.requests.requests.map(r=>r.source),audit,auditText};
     return {checksum,options:canonicalSecretImport(options),records,requests:plan.requests,grants:plan.grants,policy:plan.metadata.policy,changes,uses,asks,legacy};
-  } catch { throw Error('Invalid legacy secrets source or identity mapping'); }
+  } catch { throw new SecretImportSourceError(check); }
 }

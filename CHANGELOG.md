@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Accept legacy Secrets timestamps at arbitrary fractional precision during offline import, retain validated audit text exactly, and report value-free source check names.
+
 ### Added
 
 - Comms thread rows pin on a stationary touch or pen long press, without opening the thread; scrolling and cancelled holds leave it unchanged.

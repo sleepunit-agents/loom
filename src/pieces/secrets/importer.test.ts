@@ -78,10 +78,10 @@ it('refuses unknown identities, malformed/value-bearing metadata, pending ask co
   expect(()=>importSecrets(f.app.db,f.home,f.from,now,{agents:{art:'absent'},members:options.members})).toThrow('Secrets import refused');
   for(const file of ['policy.json','requests.json']) {
     const before=readFileSync(join(f.from,file));f.put(file,{value:'PLAINTEXT_CANARY'});
-    expect(()=>importSecrets(f.app.db,f.home,f.from,now,options)).toThrow(/^Secrets import refused$/);writeFileSync(join(f.from,file),before);
+    expect(()=>importSecrets(f.app.db,f.home,f.from,now,options)).toThrow(/^Secrets import refused: policy-request-plan$/);writeFileSync(join(f.from,file),before);
   }
   writeFileSync(join(f.from,'audit.jsonl'),JSON.stringify({at,event:'set',secret:'API',how:'add',value:'PLAINTEXT_CANARY'}));
-  expect(()=>importSecrets(f.app.db,f.home,f.from,now,options)).toThrow(/^Secrets import refused$/);
+  expect(()=>importSecrets(f.app.db,f.home,f.from,now,options)).toThrow(/^Secrets import refused: audit-schema$/);
   writeFileSync(join(f.from,'audit.jsonl'),'');
   expect(readSecretImport(f.from,now,options,{agents:['art'],members:['jonathan']}).records).toEqual([{id:'API',description:'',by:'legacy:unattributed',changedAt:0}]);
   f.app.db.exec('CREATE TABLE attention_asks(id TEXT PRIMARY KEY,record TEXT NOT NULL)');
@@ -91,7 +91,7 @@ it('refuses unknown identities, malformed/value-bearing metadata, pending ask co
 it('checks raw source identity, encrypted-only store contents, duplicate audit keys, future timestamps and exact mappings',()=>{
   const f=setup(),registered={agents:['art','mark'],members:['jonathan']};
   const read=()=>readSecretImport(f.from,now,options,registered);
-  f.put('store.sops.json',{API:'PLAINTEXT_CANARY'});expect(read).toThrow(/^Invalid legacy secrets source or identity mapping$/);
+  f.put('store.sops.json',{API:'PLAINTEXT_CANARY'});expect(read).toThrow(/^Invalid legacy secrets source or identity mapping: encrypted-store$/);
   f.put('store.sops.json',{API:'ENC[AES256_GCM,data:fixture]'});
   for(const audit of ['{"at":"'+at+'","event":"read","event":"issue","secret":"API","agent":"art"}',
     JSON.stringify({at:'2099-01-01T00:00:00.000Z',event:'read',secret:'API',agent:'art'}),
@@ -126,4 +126,67 @@ it('reads only the four copied metadata inputs and invokes no decryptor, child p
   expect(read.mock.calls.map(c=>String(c[0])).sort()).toEqual([...inputs.keys()].sort());
   for(const spy of [...writes,...processes])expect(spy).not.toHaveBeenCalled();
  } finally {vi.restoreAllMocks();syncBuiltinESMExports();}
+});
+
+it('imports the reported synthetic inventory and retains the validated audit text byte-exact',()=>{
+  const f=setup(),member='jonathan-barket';
+  // Synthetic shapes/counts from the coordinator, never copied credential data.
+  const names=Array.from({length:62},(_,i)=>`KEY_${i}`);
+  f.put('store.sops.json',Object.fromEntries(names.map(n=>[n,'ENC[AES256_GCM,data:SYNTHETIC]'])));
+  f.put('policy.json',{v:1,default:'ask',secrets:{KEY_0:{grant:'ask',houses:['art','mark']}}});
+  const requests=Array.from({length:99},(_,i)=>{
+    const id=`q-${i.toString(16).padStart(8,'0')}`,policy=i%2===0;
+    return [id,{id,secret:names[i%62],agent:'art',house:`h-${i+1}`,why:'fixture',minutes:60,
+      at,state:'granted',by:policy?'policy':'owner',...(policy?{}:{who:member}),decided:at,
+      expires:'2026-11-13T12:59:00.000Z',...(i%3===0?{}:{service:i%3===1?'discord':'discord-bodies'})}];
+  });
+  f.put('requests.json',{v:1,requests:Object.fromEntries(requests)});
+  const counts={request:99,read:402,'refused-read':291,grant:12,always:3,'houses-allow':13,'houses-stop':1,'host-read':14025,issue:15315};
+  const events=Object.entries(counts).flatMap(([event,count])=>Array.from({length:count},(_,i)=>({
+    at:event==='always'&&i===0?'2026-10-28T11:33:18.985771Z':at,event,secret:names[i%62],
+    agent:i%2?'art':'mark',why:'fixture',
+    by:event==='host-read'&&i<14?null:(['owner','policy','runtime'] as const)[i%3],
+    ...(i%2?{who:member}:{}),...(i%2?{how:'get'}:{}),
+  })));
+  expect(events).toHaveLength(30161);
+  // Include noncanonical JSON spacing and CRLF to distinguish exact retention
+  // from reserialization; all lines must still pass the value-free schema.
+  const auditText='\uFEFF'+events.map(e=>'  '+JSON.stringify(e)+' \r').join('\n')+'\n';
+  writeFileSync(join(f.from,'audit.jsonl'),auditText);
+  // Fixture household has jonathan; explicit source mapping preserves attribution.
+  const mapped={agents:{art:'art',mark:'mark'},members:{[member]:'jonathan'}};
+  expect(importSecrets(f.app.db,f.home,f.from,now,mapped)).toMatchObject({names:62,requests:99,grants:99});
+  const stored=JSON.parse((f.app.db.prepare("SELECT value FROM secrets_meta WHERE key='legacy-snapshot'").get() as {value:string}).value);
+  expect(Buffer.from(stored.auditText)).toEqual(Buffer.from(auditText));
+  expect(stored.audit).toEqual(events);expect(stored.requests).toHaveLength(99);
+  expect(f.app.db.prepare('SELECT count(*) AS n FROM secrets_uses').get()).toEqual({n:30033});
+  expect(readFileSync(join(f.from,'audit.jsonl'),'utf8')).toBe(auditText);
+},30_000);
+
+it.each(['','1','12','123','123456','123456789012'])('accepts legacy fractional precision %s and projects milliseconds without changing originals',fraction=>{
+  const f=setup(),stamp=`2026-11-13T11:59:00${fraction?'.'+fraction:''}Z`;
+  const original={at:stamp,event:'set',secret:'API',how:'add'};
+  const auditText=JSON.stringify(original)+'\n';writeFileSync(join(f.from,'audit.jsonl'),auditText);
+  // Request timestamps use the same legacy precision rules.
+  const expires=`2026-11-13T12:59:00${fraction?'.'+fraction:''}Z`;
+  f.put('requests.json',{v:1,requests:{[request.id]:{...request,at:stamp,decided:stamp,expires}}});
+  const projected=readSecretImport(f.from,now,options,{agents:['art'],members:['jonathan']});
+  expect(projected.records[0].changedAt).toBe(Date.parse(stamp));
+  expect(projected.requests[0].createdAt).toBe(Date.parse(stamp));
+  expect(projected.legacy.auditText).toBe(auditText);expect(projected.legacy.audit).toEqual([original]);
+  expect(importSecrets(f.app.db,f.home,f.from,now,options).imported).toBe(true);
+});
+
+it('reports fixed source checks through the importer without reflecting malicious fields or values',()=>{
+  const f=setup(),bad='PRIVATE_CANARY';
+  f.put('policy.json',{[bad]:bad});
+  expect(()=>importSecrets(f.app.db,f.home,f.from,now,options)).toThrow(/^Secrets import refused: policy-request-plan$/);
+  f.put('policy.json',{});
+  for(const at of ['2026-02-30T11:59:00Z','2026-11-13T11:59:00.Z',bad]){
+    writeFileSync(join(f.from,'audit.jsonl'),JSON.stringify({at,event:'always',secret:'API',why:bad}));
+    expect(()=>importSecrets(f.app.db,f.home,f.from,now,options)).toThrow(/^Secrets import refused: audit-schema$/);
+  }
+  writeFileSync(join(f.from,'audit.jsonl'),JSON.stringify({at,event:'read',secret:'API',agent:bad}));
+  expect(()=>importSecrets(f.app.db,f.home,f.from,now,options)).toThrow(/^Secrets import refused: audit-projection$/);
+  expect(f.app.db.prepare("SELECT name FROM sqlite_master WHERE name='secrets_meta'").all()).toEqual([]);
 });
