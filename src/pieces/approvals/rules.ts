@@ -57,6 +57,6 @@ export function rulesFor(s: State, caller: Caller, kind: string, targets: string
     if (kind === 'host' && caller.for !== 'owner') result = { tier: 'ask', note: "a step on loom's machine is only ever the owner's own work, so this asks" };
     else if (caller.for === '?') result = { tier: 'ask', note: "this body acts for someone loom can't name (no word from the runtime, or several people), so it asks" };
     const mine = s.approvals.filter(a => a.kind === kind && a.target === target && a.who.agent === caller.who.agent && samePrincipal(a,caller)).sort((a,b) => b.at.localeCompare(a.at))[0];
-    return [target,{ ...result, for: caller.for, ...(mine ? { approval: { id: mine.id, state: stateOf(mine,now) } } : {}) }];
+    return [target,{ tier:result.tier, for: caller.for, ...(result.scope ? {scope:result.scope}:{}), ...(result.note ? {note:result.note}:{}), ...(mine ? { approval: { id: mine.id, state: stateOf(mine,now) } } : {}) }];
   }));
 }

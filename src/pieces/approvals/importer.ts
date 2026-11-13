@@ -6,7 +6,7 @@ import { migrate, type Db } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { type Approval, type Rule, type Standing, type State } from './model.js';
 import { load, persist } from './store.js';
-import { approvalSchema, standingSchema } from './validation.js';
+import { approvalSchema, standingSchema, ruleSchema, noticeSchema } from './validation.js';
 import { person } from './targets.js';
 import { ruleId } from './store.js';
 import { validScope } from './rules.js';
@@ -23,15 +23,15 @@ export function importApprovals(db: Db, from: string, now: number, options: { in
   });
   const rulesDoc = files[1].text === undefined ? {v:1,rules:[],grants:[],standing:[]} : JSON.parse(files[1].text);
   if (!object(rulesDoc) || rulesDoc.v !== 1 || !Array.isArray(rulesDoc.rules) || !Array.isArray(rulesDoc.grants ?? []) || !Array.isArray(rulesDoc.standing ?? [])) throw Error('Invalid rules source');
-  const validRule = (r: unknown) => object(r) && ['merge','host'].includes(String(r.kind)) && ['do','tell','ask'].includes(String(r.tier)) && typeof r.scope === 'string' && validScope(r.scope,String(r.kind));
+  const validRule = (r: unknown) => ruleSchema.safeParse(r).success && object(r) && ['merge','host'].includes(String(r.kind)) && ['do','tell','ask'].includes(String(r.tier)) && typeof r.scope === 'string' && validScope(r.scope,String(r.kind));
   if (!rulesDoc.rules.every(validRule) || !(rulesDoc.grants as unknown[] ?? []).every(r => validRule(r) && object(r) && typeof r.person === 'string' && person.test(r.person) && !['owner','?'].includes(r.person) && r.kind !== 'host')) throw Error('Invalid source rule or grant');
   for (const j of (rulesDoc.standing ?? []) as unknown[]) if (!standingSchema.safeParse(j).success) throw Error('Invalid standing job source');
   const ruleKeys = [...rulesDoc.rules, ...(rulesDoc.grants ?? []) as unknown[], ...(rulesDoc.standing ?? []) as unknown[]].map(r => ruleId(r as Rule | Standing));
   if (new Set(ruleKeys).size !== ruleKeys.length) throw Error('Duplicate source rule or standing job');
-  if (doc.notices !== undefined && (!Array.isArray(doc.notices) || !doc.notices.every(n => object(n) && ['at','agent','kind','target','what'].every(k=>typeof n[k]==='string')))) throw Error('Invalid notices source');
+  if (doc.notices !== undefined && (!Array.isArray(doc.notices) || !doc.notices.every(n => noticeSchema.safeParse(n).success))) throw Error('Invalid notices source');
   const audit = files[2].text?.split('\n').filter(s=>s.trim()).map(line=>{const r=JSON.parse(line);if(!object(r))throw Error('Invalid audit source');return r;}) ?? [];
   const projects=options.projects??{};
-  if(Object.values(projects).some(p=>typeof p!=='string'||!p))throw Error('Invalid approval project map');
+  if(Object.values(projects).some(p=>typeof p!=='string'||!person.test(p)||p.length>80))throw Error('Invalid approval project map');
   const checksum=createHash('sha256').update(canonical({files,projects})).digest('hex');
   return db.transaction(()=>{
     migrate(db,'approvals',schema);

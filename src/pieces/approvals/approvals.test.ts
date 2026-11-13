@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { fixtureSharing } from '../../fixture.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
 import { installApprovals } from './index.js';
-import { load } from './store.js';
+import { load, persist } from './store.js';
 import { importApprovals } from './importer.js';
 import { approvalsRole } from './role.js';
 import { type Caller } from './model.js';
@@ -239,5 +239,67 @@ describe('standing local jobs',()=>{
     expect(a.role.standing(unknown,input,'unknown')).toMatchObject({ok:true});
     expect(a.role.standing(caller,input,'owner')).toMatchObject({ok:false});
     expect(a.role.standing({...unknown,people:['eve']},input,'eve')).toMatchObject({ok:false});
+  });
+});
+
+describe('frozen independent old CLI oracle',()=>{
+  const oracle=JSON.parse(readFileSync(new URL('./fixtures/cli-oracle.json',import.meta.url),'utf8'));
+  it.each(oracle.cases)('$label',async test=>{
+    const a=await setup();
+    persist(a.db,{approvals:test.approvals,rules:test.rules,grants:[],standing:[],audit:[],notices:[]},a.clock.now());
+    const result=a.value('command',{argv:test.argv},test.member?owner:agent);
+    // Request and owner grant allocate a new random id; the oracle freezes that allocation.
+    if(['request','grant'].includes(test.argv[0]))result.stdout=result.stdout.replace(/a-[0-9a-f]{8}/g,'a-01234567');
+    expect(result).toEqual(test.expected);
+  });
+});
+
+describe('owner application routing and denial retention',()=>{
+  const caller:Caller={who:{agent:'art',where:'h-1'},for:'owner'};
+  it.each([
+    ['grant','tasks:mark','runtime','Access to Tasks.'],
+    ['vouch-wake','art:w-000001,w-000002','clock','w-000001 fires at ten\nw-000002 fires at eleven'],
+    ['principal-reset','art:cv-0123456789ab','runtime','The conversation cv-0123456789ab.'],
+    ['box-write-off','art:box-one@1762718400','runtime','The box box-one was last heard yesterday.'],
+  ])('applies %s through %s exactly once at Allow',async(kind,target,route,details)=>{
+    const calls:string[]=[];
+    const a=await setup({runtime:{apply:card=>{calls.push('runtime:'+card.kind);return {ok:true,value:null};}},clock:{apply:card=>{calls.push('clock:'+card.kind);return {ok:true,value:null};}}});
+    const response=kind==='grant'?a.call('request',{...ask,kind,target,details}):a.role.call('request',caller,{...ask,kind,target,details},'piece-file');
+    expect(response).toMatchObject({ok:true});if(!response.ok)return;
+    const card=response.value as {id:string};
+    expect(a.call('answer',{id:card.id,action:'allow'},pollock)).toMatchObject({ok:false});
+    expect(a.value('answer',{id:card.id,action:'allow'},owner)).toMatchObject({state:'used'});
+    expect(calls).toEqual([route+':'+kind]);
+    expect(a.call('answer',{id:card.id,action:'allow'},owner)).toMatchObject({ok:false});
+    expect(calls).toHaveLength(1);
+  });
+  it('refuses overlapping vouches while pending and keeps a no beyond live history',async()=>{
+    const a=await setup();
+    const file=(target:string,id:string)=>a.role.call('request',caller,{...ask,kind:'vouch-wake',target,details:target.split(':')[1].split(',').map(id=>`${id} fires at ten`).join('\n')},id);
+    const first=file('art:w-000001,w-000002','first');expect(first.ok).toBe(true);if(!first.ok)return;
+    expect(file('art:w-000002,w-000003','overlap')).toMatchObject({ok:false,code:'denied'});
+    expect(file('art:w-000001,w-000002','same')).toMatchObject({ok:true,value:{id:(first.value as any).id}});
+    a.value('answer',{id:(first.value as any).id,action:'deny'},owner);
+    a.clock.advance(30*86400_000);
+    expect(file('art:w-000002','after')).toMatchObject({ok:false,code:'denied'});
+    expect(file('art:w-000003','unrelated')).toMatchObject({ok:true});
+  });
+  it('pregrants do not answer conversation cards, and a deny revokes unspent yes without closing that thread',async()=>{
+    const a=await setup(),conversation='cv-0123456789ab';a.identity({conversation});
+    const card=a.value('request',{...ask,conversation});
+    const yes=a.value('grant',{kind:'merge',target,for:'art'},owner);
+    expect(yes.id).not.toBe(card.id);
+    expect(load(a.db).approvals.find(r=>r.id===card.id)?.state).toBe('pending');
+    a.value('grant',{kind:'merge',target,for:'art',deny:true},owner);
+    expect(load(a.db).approvals.find(r=>r.id===card.id)?.state).toBe('pending');
+    expect(a.call('use',{id:yes.id,kind:'merge',target})).toMatchObject({ok:false,code:'denied'});
+  });
+  it('Always grants only that person, using project scope without changing the owner rules',async()=>{
+    const a=await setup();a.identity({for:'loren'});const card=a.value('request',ask);
+    expect(a.value('always',{id:card.id},owner)).toMatchObject({scope:'project:pond',person:'loren',tier:'do'});
+    expect(load(a.db).rules).toEqual([]);
+    expect(a.value('rule',{kind:'merge',targets:[target]})[target]).toMatchObject({tier:'do',for:'loren'});
+    a.identity({for:'owner'});
+    expect(a.value('rule',{kind:'merge',targets:[target]})[target]).toMatchObject({tier:'ask',for:'owner'});
   });
 });

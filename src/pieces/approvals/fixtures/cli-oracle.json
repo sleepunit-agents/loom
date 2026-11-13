@@ -1,0 +1,775 @@
+{
+  "upstream": "588b3f7c22f86068063153676de159597348216a",
+  "generated_by": "offline Python run() oracle; frozen time and id; trusted owner principal; no runtime subprocess",
+  "cases": [
+    {
+      "label": "request",
+      "argv": [
+        "request",
+        "--kind",
+        "merge",
+        "--target",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--ask",
+        "Merge the fix?",
+        "--why",
+        "It fixes the page.",
+        "--if-yes",
+        "I merge it.",
+        "--if-no",
+        "I leave it open."
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "a-01234567: asked the owner (a card on loom's Home); check it: approvals check a-01234567\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "request already allowed",
+      "argv": [
+        "request",
+        "--kind",
+        "merge",
+        "--target",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--what",
+        "Merge the fix?",
+        "--why",
+        "It fixes the page."
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "allowed",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open.",
+          "decided": "2026-11-12T00:00:00Z",
+          "expires": "2026-11-12T01:00:00Z",
+          "by": "jonathan"
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "a-01234567: already allowed (until 2026-11-12T01:00:00Z); use it: approvals use a-01234567 --kind merge --target 'github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "check pending",
+      "argv": [
+        "check",
+        "a-01234567"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "pending",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open."
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "pending\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "check json pending",
+      "argv": [
+        "check",
+        "a-01234567",
+        "--json",
+        "--principal",
+        "fixture-proof"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "pending",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open."
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "{\"id\": \"a-01234567\", \"agent\": \"art\", \"for\": \"owner\", \"state\": \"pending\", \"kind\": \"merge\", \"target\": \"github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"expires\": null}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "check allowed",
+      "argv": [
+        "check",
+        "a-01234567"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "allowed",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open.",
+          "decided": "2026-11-12T00:00:00Z",
+          "expires": "2026-11-12T01:00:00Z",
+          "by": "jonathan"
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "allowed\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "check json allowed",
+      "argv": [
+        "check",
+        "a-01234567",
+        "--json",
+        "--principal",
+        "fixture-proof"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "allowed",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open.",
+          "decided": "2026-11-12T00:00:00Z",
+          "expires": "2026-11-12T01:00:00Z",
+          "by": "jonathan"
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "{\"id\": \"a-01234567\", \"agent\": \"art\", \"for\": \"owner\", \"state\": \"allowed\", \"kind\": \"merge\", \"target\": \"github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"expires\": \"2026-11-12T01:00:00Z\"}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "check denied",
+      "argv": [
+        "check",
+        "a-01234567"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "denied",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open.",
+          "decided": "2026-11-12T00:00:00Z"
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "denied\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "check json denied",
+      "argv": [
+        "check",
+        "a-01234567",
+        "--json",
+        "--principal",
+        "fixture-proof"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "denied",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open.",
+          "decided": "2026-11-12T00:00:00Z"
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "{\"id\": \"a-01234567\", \"agent\": \"art\", \"for\": \"owner\", \"state\": \"denied\", \"kind\": \"merge\", \"target\": \"github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"expires\": null}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "use",
+      "argv": [
+        "use",
+        "a-01234567",
+        "--kind",
+        "merge",
+        "--target",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "allowed",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open.",
+          "decided": "2026-11-12T00:00:00Z",
+          "expires": "2026-11-12T01:00:00Z",
+          "by": "jonathan"
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "a-01234567: used\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "use pending",
+      "argv": [
+        "use",
+        "a-01234567",
+        "--kind",
+        "merge",
+        "--target",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "pending",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open."
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: a-01234567 is pending, waiting on the owner\n"
+      }
+    },
+    {
+      "label": "use wrong kind",
+      "argv": [
+        "use",
+        "a-01234567",
+        "--kind",
+        "relay",
+        "--target",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "allowed",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open.",
+          "decided": "2026-11-12T00:00:00Z",
+          "expires": "2026-11-12T01:00:00Z",
+          "by": "jonathan"
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: a-01234567 allows merge for github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, not relay for github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
+      }
+    },
+    {
+      "label": "use wrong target",
+      "argv": [
+        "use",
+        "a-01234567",
+        "--kind",
+        "merge",
+        "--target",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "allowed",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open.",
+          "decided": "2026-11-12T00:00:00Z",
+          "expires": "2026-11-12T01:00:00Z",
+          "by": "jonathan"
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: a-01234567 allows merge for github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, not merge for github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab\n"
+      }
+    },
+    {
+      "label": "standing refused",
+      "argv": [
+        "standing",
+        "--check",
+        "s-01234567"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: standing is for the clock on loom's machine, acting for a body (--as)\n"
+      }
+    },
+    {
+      "label": "withdraw",
+      "argv": [
+        "withdraw",
+        "a-01234567"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "pending",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open."
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "a-01234567: withdrawn\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "rule asks",
+      "argv": [
+        "rule",
+        "merge",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "ask\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "rule json",
+      "argv": [
+        "rule",
+        "merge",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--json"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "{\"github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\": {\"tier\": \"ask\", \"for\": \"owner\"}}\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "rule pending",
+      "argv": [
+        "rule",
+        "merge",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "pending",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open."
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "ask pending a-01234567\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "rule allowed",
+      "argv": [
+        "rule",
+        "merge",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "allowed",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open.",
+          "decided": "2026-11-12T00:00:00Z",
+          "expires": "2026-11-12T01:00:00Z",
+          "by": "jonathan"
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "ask allowed a-01234567\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "rule do",
+      "argv": [
+        "rule",
+        "merge",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ],
+      "approvals": [],
+      "rules": [
+        {
+          "kind": "merge",
+          "scope": "github:acme/*",
+          "tier": "do",
+          "by": "jonathan",
+          "at": "2026-11-12T00:00:00Z"
+        }
+      ],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "do\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "tell",
+      "argv": [
+        "tell",
+        "--kind",
+        "merge",
+        "--target",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--what",
+        "Fixed the page."
+      ],
+      "approvals": [],
+      "rules": [
+        {
+          "kind": "merge",
+          "scope": "github:acme/*",
+          "tier": "do",
+          "by": "jonathan",
+          "at": "2026-11-12T00:00:00Z"
+        }
+      ],
+      "member": false,
+      "expected": {
+        "exit": 0,
+        "stdout": "told the owner: Art merged acme/app#12\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "owner list",
+      "argv": [
+        "list"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "allowed",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open.",
+          "decided": "2026-11-12T00:00:00Z",
+          "expires": "2026-11-12T01:00:00Z",
+          "by": "jonathan"
+        }
+      ],
+      "rules": [],
+      "member": true,
+      "expected": {
+        "exit": 0,
+        "stdout": "a-01234567 allowed  merge github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \u2014 art: Merge the fix?\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "owner grant",
+      "argv": [
+        "grant",
+        "--kind",
+        "merge",
+        "--target",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--for",
+        "art"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": true,
+      "expected": {
+        "exit": 0,
+        "stdout": "a-01234567: allowed\n",
+        "stderr": ""
+      }
+    },
+    {
+      "label": "agent list refused",
+      "argv": [
+        "list"
+      ],
+      "approvals": [
+        {
+          "id": "a-01234567",
+          "kind": "merge",
+          "target": "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "what": "Merge the fix?",
+          "why": "It fixes the page.",
+          "who": {
+            "agent": "art",
+            "where": "h-1"
+          },
+          "for": "owner",
+          "minutes": 60,
+          "at": "2026-11-12T00:00:00Z",
+          "state": "pending",
+          "ask": "Merge the fix?",
+          "if_yes": "I merge it.",
+          "if_no": "I leave it open."
+        }
+      ],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: the list is the owner's, on loom's machine\n"
+      }
+    },
+    {
+      "label": "agent grant refused",
+      "argv": [
+        "grant",
+        "--kind",
+        "merge",
+        "--target",
+        "github:acme/app#12@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "--for",
+        "art"
+      ],
+      "approvals": [],
+      "rules": [],
+      "member": false,
+      "expected": {
+        "exit": 1,
+        "stdout": "",
+        "stderr": "approvals: grant is the owner's, on loom's machine; a body asks with request\n"
+      }
+    }
+  ]
+}
