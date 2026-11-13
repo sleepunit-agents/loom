@@ -26,7 +26,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
  try{
   const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await context.grantPermissions(['local-network-access'],{origin:loom.url});
   await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.pathname==='/live'||url.pathname.startsWith('/api/'))return route.continue();const path=url.pathname.startsWith('/app/')?resolve(root,url.pathname.slice(5)):join(root,'index.html');if(!path.startsWith(root+'/')||!existsSync(path))return route.fulfill({status:404,body:''});await route.fulfill({body:readFileSync(path),contentType:({'.js':'text/javascript','.css':'text/css','.html':'text/html','.woff2':'font/woff2'} as Record<string,string>)[extname(path)]??'application/octet-stream'});});
-  const a=await context.newPage(),b=await context.newPage();await Promise.all([a.goto(`${loom.url}/p/comms-preview`),b.goto(`${loom.url}/p/comms-preview`)]);
+  const a=await context.newPage(),b=await context.newPage();await b.clock.install({time:clock.now()});await Promise.all([a.goto(`${loom.url}/p/comms-preview`),b.goto(`${loom.url}/p/comms-preview`)]);
   const row=(page:typeof a)=>page.locator('[data-split-row]').filter({hasText:'New thread with art'});
   await expect.poll(()=>row(a).count()).toBe(1);await row(a).click();await row(b).click();
   await expect.poll(()=>a.getByText('Comms fixture message',{exact:true}).count()).toBe(1);
@@ -50,8 +50,22 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByLabel('Body activity').textContent()).not.toContain('tokens');
   comms.status('art',place,'done');
   await expect.poll(()=>b.getByLabel('Body activity').count()).toBe(0);
+  await expect.poll(()=>b.getByLabel('Working status').count()).toBe(0);
   comms.status('art',place,'working');comms.activity('art',place,{at:clock.now()+2,tokens:0});
   await expect.poll(()=>b.getByLabel('Body activity').textContent()).toContain('0 tokens');
+  await expect.poll(()=>b.getByLabel('Working status').getAttribute('data-alive')).toBe('working');
+  // Browser time alone changes the display; no new server record is needed.
+  await b.clock.fastForward(121000);
+  await expect.poll(()=>b.getByLabel('Working status').getAttribute('data-alive')).toBe('quiet');
+  expect(await b.getByLabel('Working status').textContent()).toContain('art is still running');
+  await b.clock.fastForward(600000);
+  await expect.poll(()=>b.getByLabel('Working status').getAttribute('data-alive')).toBe('stuck');
+  expect(await b.getByLabel('Working status').textContent()).toContain('it may be stuck');
+  await b.clock.setSystemTime(clock.now());
+  await comms.post('art',place,{id:'limited-step',kind:'card',text:'Run fixture tests',tool:'shell',state:'running',step:{t0:new Date(clock.now()).toISOString(),limit:1}});
+  await b.clock.fastForward(31001);
+  await expect.poll(()=>b.getByLabel('Working status').textContent()).toContain('past its limit');
+  await b.clock.setSystemTime(clock.now());
   // A queued start retry shows its encrypted time; Live progress removes the old promise.
   comms.status('art',place,'done');reply=false;
   const sentRetry=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.send',{thread:place,id:'retrystartaaaaaa',text:'A queued start'},'fixture-retry',true);

@@ -40,6 +40,29 @@ it('keeps the in-memory retry id when device storage is unavailable',()=>{
 });
 
 import { messageView, type Message } from '../../web/src/pieces/comms/message.js';
+import { workingView } from '../../web/src/pieces/comms/working.js';
+it('ages a connected working spell into quiet and stuck, refreshing only for body movement',()=>{
+ const since=Date.parse('2026-11-13T05:00:00Z'),t={agent:'art',working:true,workingSince:since};
+ expect(workingView(t,[],since+119999,true)?.face).toBe('working');
+ expect(workingView(t,[],since+120000,true)).toMatchObject({face:'quiet',text:'Quiet for 2m 0s — art is still running'});
+ expect(workingView(t,[],since+720000,true)).toMatchObject({face:'stuck',text:expect.stringContaining('it may be stuck')});
+ expect(workingView({...t,alive:{at:since+719000,tokens:0}},[],since+720000,true)?.face).toBe('working');
+ expect(workingView({...t,alive:{at:since+800000}},[],since+720000,true)?.face).toBe('working');
+ expect(workingView(t,[],since+720000,false)).toBeNull();expect(workingView({...t,working:false},[],since+720000,true)).toBeNull();
+});
+it('uses retained current and imported step times, including any overdue running helper, without prior-turn or plan alarms',()=>{
+ const since=Date.parse('2026-11-13T05:00:00Z'),t={agent:'art',working:true,workingSince:since};
+ const base:Message={id:'th/1',thread:'th',seq:1,at:since,kind:'card',from:'art',text:'Run the tests',tool:'shell',state:'running',step:{t0:new Date(since).toISOString(),limit:60}};
+ expect(workingView(t,[base],since+90000,true)?.face).toBe('working');
+ expect(workingView(t,[base],since+90001,true)).toMatchObject({face:'stuck',text:expect.stringContaining('past its limit')});
+ const child={...base,id:'th/2',seq:2,text:'Read a file',at:since+90000,step:{t0:new Date(since+90000).toISOString(),limit:300}};
+ expect(workingView(t,[base,child],since+90001,true)?.text).toContain('Run the tests');
+ expect(workingView(t,[{...base,text:null}],since+90001,true)?.face).toBe('working');
+ expect(workingView(t,[{...base,step:{t0:new Date(since-61000).toISOString(),limit:1}}],since+90001,true)?.face).toBe('working');
+ expect(workingView(t,[{...base,tool:'TodoWrite',step:{limit:1}}],since+90001,true)?.face).toBe('working');
+ const imported={...base,tool:undefined,state:undefined,step:undefined,card:{tool:'shell',state:'done',t0:new Date(since).toISOString(),t1:new Date(since+710000).toISOString()}};
+ expect(workingView(t,[imported],since+720000,true)?.face).toBe('working');
+});
 it('maps legacy nested cards and asks while preserving current runtime records',()=>{
  const base:Message={id:'th/1',thread:'th',seq:1,at:0,kind:'card',from:'art',text:'Ran tests'};
  expect(messageView({...base,card:{tool:'shell',state:'done',step:{output:'passed'}}})).toMatchObject({tool:'shell',state:'done',step:{output:'passed'}});
