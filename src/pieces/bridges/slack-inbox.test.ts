@@ -1,0 +1,125 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EventEmitter } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { startLoom } from '../../foundation.js';
+import { FakeClock, migrate, openDb } from '../../core/index.js';
+import { installBridges } from './index.js';
+import { venueSchema } from './model.js';
+import { put } from './store.js';
+import { slackInbox } from './slack-inbox.js';
+import { slackSocket, type SlackSocketOptions } from './slack-socket.js';
+import { schema as initial } from './schema/001.js';
+import { schema as retry } from './schema/002.js';
+import { schema as receipts } from './schema/003.js';
+const homes: string[] = [], closes: (() => Promise<void>)[] = [];
+afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
+const venue = venueSchema.parse({ id:'art-slack', platform:'slack', agent:'art', workspace:'T123', bot:'U123', tokenSecret:'bot', appSecret:'app' });
+const payload = (eventId='Ev123') => ({ type:'event_callback', team_id:'T123', api_app_id:'A123', event_id:eventId,
+  token:'OUTER-VERIFICATION-TOKEN', authorizations:[{user_id:'U123'}], event:{type:'message',channel:'D123',user:'U200',ts:'1793828004.242749',text:'private words'} });
+async function fixture(existing?: string) {
+  const home=existing ?? mkdtempSync(join(tmpdir(),'slack-inbox-')); if (!existing) homes.push(home);
+  const clock=new FakeClock(1000);
+  const app=await startLoom({home,clock,install(app) { installBridges(app,()=>({members:{},projects:{},services:{}})); }});
+  let closed=false;
+  const close=async()=>{if(!closed){closed=true;await app.close();}}; closes.push(close);
+  if (!existing) put(app.db,'venues',venue);
+  const inbox=slackInbox(app.db,clock,{venue,app:'A123'});
+  return {home,clock,app,inbox,close};
+}
+class Socket extends EventEmitter {
+  readyState=1;
+  send=vi.fn((_text:string,callback:(error?:Error)=>void)=>callback());
+  terminate=vi.fn(()=>{this.readyState=3;});
+  ping=vi.fn();
+  frame(value:unknown) {this.emit('message',Buffer.from(JSON.stringify(value)),false);}
+}
+async function settle() {for(let n=0;n<40;n++) await Promise.resolve();}
+function connect(f: Awaited<ReturnType<typeof fixture>>) {
+  const socket=new Socket();
+  const transport=slackSocket({appSecret:'app',clock:f.clock,beforeConnect:()=>true,
+    secrets:{withValue:async<T>(_name:string,use:(value:string)=>Promise<T>)=>use('APP-SECRET')},
+    request:vi.fn(async()=>Response.json({ok:true,url:'wss://wss.slack.com/link?ticket=SECRET'})) as typeof fetch,
+    socket:()=>socket as unknown as ReturnType<NonNullable<SlackSocketOptions['socket']>>,receive:f.inbox.receive});
+  closes.unshift(async()=>transport.close());
+  return {socket,transport};
+}
+describe('private Slack durable raw inbox',()=>{
+  it('installs migration on a prior database, preserves old rows and is repeatable',()=>{
+    const home=mkdtempSync(join(tmpdir(),'slack-upgrade-'));homes.push(home);
+    const lease=openDb(home);try {
+      migrate(lease.db,'bridges',[...initial,...retry]);
+      put(lease.db,'venues',venue);
+      const before=lease.db.prepare('SELECT * FROM bridges_venues').all();
+      migrate(lease.db,'bridges',[...initial,...retry,...receipts]);
+      migrate(lease.db,'bridges',[...initial,...retry,...receipts]);
+      expect(lease.db.prepare('SELECT * FROM bridges_venues').all()).toEqual(before);
+      expect(lease.db.prepare('SELECT * FROM bridges_slack_receipts').all()).toEqual([]);
+    } finally {lease.close();}
+  });
+  it('commits actual Socket Mode receipt before ACK; restart keeps words and dedups event id across envelopes',async()=>{
+    const f=await fixture();const {socket,transport}=connect(f);await settle();socket.frame({type:'hello'});
+    socket.send.mockImplementation((_text,callback)=>{
+      expect(f.app.db.inTransaction).toBe(false);
+      expect(f.inbox.pending()).toHaveLength(1);
+      callback();
+    });
+    socket.frame({type:'events_api',envelope_id:'first',payload:payload()});await settle();
+    expect(socket.send).toHaveBeenCalledExactlyOnceWith('{"envelope_id":"first"}',expect.any(Function));
+    transport.close();await f.close();
+    const g=await fixture(f.home);const before=g.inbox.pending();
+    expect(before[0]).toMatchObject({eventId:'Ev123',received:1000,event:payload().event});
+    g.clock.advance(5000);await g.inbox.receive({...payload(),event:{...payload().event,text:'changed duplicate'}});
+    expect(g.inbox.pending()).toEqual(before);
+    await g.inbox.receive(payload('EvDifferentSameTimestamp'));
+    expect(g.inbox.pending()).toHaveLength(2);
+    expect(JSON.stringify(g.app.db.prepare('SELECT * FROM bridges_slack_receipts').all())).not.toContain('OUTER-VERIFICATION-TOKEN');
+    expect(g.app.operations.call('direct',{kind:'service',id:'bridges'},'bridges.slackReceipts',{},'private')).toMatchObject({ok:false});
+  });
+  it('a failed durable insert never ACKs and leaves no partial receipt',async()=>{
+    const f=await fixture();f.app.db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON bridges_slack_receipts BEGIN SELECT RAISE(ABORT,'private failure'); END;");
+    const {socket}=connect(f);await settle();socket.frame({type:'hello'});socket.frame({type:'events_api',envelope_id:'first',payload:payload()});await settle();
+    expect(socket.send).not.toHaveBeenCalled();expect(socket.terminate).toHaveBeenCalledOnce();expect(f.inbox.pending()).toEqual([]);
+  });
+  it('refuses an enclosing transaction so a later rollback cannot follow an ACK',async()=>{
+    const f=await fixture();let receipt!:Promise<void>;
+    f.app.db.transaction(()=>{receipt=f.inbox.receive(payload());})();
+    await expect(receipt).rejects.toThrow('own transaction');expect(f.inbox.pending()).toEqual([]);
+  });
+  it.each([
+    {team_id:'TOTHER'}, {api_app_id:'AOTHER'}, {type:'url_verification'}, {event_id:''}, {event_id:42},
+    {event:null}, {event:[]}, {event:{type:''}}, {event:{type:7}},
+  ])('rejects malformed or cross-binding receipt %j',async patch=>{
+    const f=await fixture();await expect(f.inbox.receive({...payload(),...patch})).rejects.toThrow('Invalid Slack receipt');expect(f.inbox.pending()).toEqual([]);
+  });
+  it('rejects an oversized otherwise-valid event without storing words',async()=>{
+    const f=await fixture();await expect(f.inbox.receive({...payload(),event:{...payload().event,text:'x'.repeat(1024*1024)}})).rejects.toThrow('too large');expect(f.inbox.pending()).toEqual([]);
+  });
+  it('consumes only its own receipts, erases words and retains dedup tombstones through restart',async()=>{
+    const f=await fixture();await f.inbox.receive(payload());const [row]=f.inbox.pending();
+    expect(()=>f.inbox.consume('unknown')).toThrow('Unknown');f.inbox.consume(row.id);f.inbox.consume(row.id);
+    expect(f.inbox.pending()).toEqual([]);expect(f.app.db.prepare('SELECT event,state FROM bridges_slack_receipts').get()).toEqual({event:null,state:'consumed'});
+    await f.close();const g=await fixture(f.home);await g.inbox.receive(payload());expect(g.inbox.pending()).toEqual([]);
+  });
+  it('isolates bots, apps and connection ids, even with identical platform event ids',async()=>{
+    const f=await fixture();await f.inbox.receive(payload());
+    const otherVenue={...venue,id:'mark-slack',agent:'mark',bot:'U456'};put(f.app.db,'venues',otherVenue);
+    const other=slackInbox(f.app.db,f.clock,{venue:otherVenue,app:'A456'});await other.receive({...payload(),api_app_id:'A456'});
+    const [row]=other.pending();expect(()=>f.inbox.consume(row.id)).toThrow('Unknown');expect(f.inbox.pending()).toHaveLength(1);expect(other.pending()).toHaveLength(1);
+    const secondVenue={...venue,id:'second-art'};put(f.app.db,'venues',secondVenue);
+    const second=slackInbox(f.app.db,f.clock,{venue:secondVenue,app:'A123'});await second.receive(payload());expect(second.pending()).toHaveLength(1);
+    expect(f.app.db.prepare('SELECT count(*) AS n FROM bridges_slack_receipts').get()).toEqual({n:3});
+  });
+  it.each([{enabled:false},{workspace:'TOTHER'},{bot:'UOTHER'},{agent:'mark'},{tokenSecret:'replacement'},{appSecret:'replacement'}])('rejects stale binding after setup edit %j',async patch=>{
+    const f=await fixture();await f.inbox.receive(payload());const [row]=f.inbox.pending();put(f.app.db,'venues',{...venue,...patch});
+    await expect(f.inbox.receive(payload('EvNew'))).rejects.toThrow('binding changed');expect(()=>f.inbox.pending()).toThrow('binding changed');expect(()=>f.inbox.consume(row.id)).toThrow('binding changed');
+    expect(f.app.db.prepare('SELECT state FROM bridges_slack_receipts').get()).toEqual({state:'pending'});
+  });
+  it('rejects removed setup, snapshots inputs and bounds pending pages',async()=>{
+    const f=await fixture();const copy=structuredClone(venue);const inbox=slackInbox(f.app.db,f.clock,{venue:copy,app:'A123'});copy.bot='changed';await inbox.receive(payload());
+    await inbox.receive(payload('Ev2'));expect(inbox.pending(1)).toHaveLength(1);
+    for(const limit of [0,65,1.5,NaN]) expect(()=>inbox.pending(limit)).toThrow('limit');
+    f.app.db.prepare('DELETE FROM bridges_venues').run();await expect(inbox.receive(payload())).rejects.toThrow('binding changed');
+  });
+});

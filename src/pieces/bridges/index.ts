@@ -5,11 +5,12 @@ import type { Foundation } from '../../core/app.js';
 import { operation } from './commands.js';
 import { schema as foundationSchema } from './schema/001.js';
 import { schema as retrySchema } from './schema/002.js';
+import { schema as slackInboxSchema } from './schema/003.js';
 import { venueSchema, routeSchema, linkSchema } from './model.js';
 import { all, put, bumpSetup } from './store.js';
 export function installBridges(app: Foundation, sharing: () => Sharing) {
   registerBuiltinService(app.operations, 'bridges', ['bridges.venue', 'bridges.route', 'bridges.link', 'bridges.send']);
-  migrate(app.db, 'bridges', [...foundationSchema, ...retrySchema]);
+  migrate(app.db, 'bridges', [...foundationSchema, ...retrySchema, ...slackInboxSchema]);
   const { db, operations, live } = app;
   // Connections and routing are household setup; person links are authority, not descriptive People handles.
   for (const [table, input, type] of [
