@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { operation, mayAct, OperationError, type Db, type Live, type Operations, type Sharing } from '../../core/index.js';
-import { grantsRole } from './index.js';
+import { type GrantAttention, grantsRole } from './index.js';
 import type { GrantContext } from './role.js';
 import type { KeyHolder } from './keyholder.js';
 import { secretName as name } from './input.js';
@@ -10,7 +10,7 @@ import { removeSecretMetadata } from './removal.js';
 /** Registry values flow one way. Never return the holder's output, even on failure.
  * The registry stores only an input hash and this fixed acknowledgement.
  */
-export function installSecretValues(db: Db, operations: Operations, sharing: () => Sharing, holder: KeyHolder) {
+export function installSecretValues(db: Db, operations: Operations, sharing: () => Sharing, holder: KeyHolder, attention?: GrantAttention) {
   operations.register(operation({ name: 'secrets.remove', write: true,
     input: z.object({ name, writeId: z.uuid() }).strict(), output: z.object({ removed: z.literal(true) }),
     may: v => mayAct(v, { type: 'secret.name' }, sharing(), 'household', 'secrets.remove'),
@@ -31,7 +31,7 @@ export function installSecretValues(db: Db, operations: Operations, sharing: () 
       }
       catch { throw new OperationError('unavailable', 'Key holder could not remove the secret'); }
       recordSecretChange(ctx, receipt, input.name, 'removed');
-      removeSecretMetadata(ctx, input.name);
+      removeSecretMetadata(ctx, input.name, attention);
       db.prepare('INSERT INTO secrets_meta VALUES (?,?)').run(receipt, input.name);
       return { removed: true as const };
     },

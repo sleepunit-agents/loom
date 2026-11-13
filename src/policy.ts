@@ -11,7 +11,7 @@ export interface Sharing {
   projects: Record<string, { members: string[]; agents: string[] }>;
   services: Record<string, { types: string[]; operations: string[] }>;
 }
-export type Action = 'act' | 'give-work' | 'agent-setup' | 'household' | 'answer-person' | 'report-job';
+export type Action = 'act' | 'give-work' | 'agent-setup' | 'household' | 'answer-person' | 'report-job' | 'report-box';
 const entry = <T>(map: Record<string, T>, id: string): T | undefined => Object.hasOwn(map, id) ? map[id] : undefined;
 export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
   if (v.kind === 'runner') return r.member === undefined && r.type === 'runtime.job' && r.runner === v.id;
@@ -27,6 +27,8 @@ export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
   return false;
 }
 export function mayAct(v: Viewer, r: RecordScope, s: Sharing, action: Action = 'act', operation?: string): boolean {
+  // A runner may update its own box report without gaining registry read access.
+  if (action === 'report-box') return v.kind === 'runner' && r.type === 'runtime.box' && r.runner === v.id && r.member === undefined;
   if (!maySee(v, r, s)) return false;
   if (v.kind === 'service') return action === 'act' && !!operation && !!entry(s.services, v.id)?.operations.includes(operation);
   if (v.kind === 'runner') return action === 'report-job';
