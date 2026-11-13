@@ -123,3 +123,11 @@ it('refuses future source events instead of authorizing early or reconstructing 
   expect(planLegacySecretRequests(bytes(plain), principals(), Date.parse(at)).grants).toHaveLength(1);
   expect(planLegacySecretRequests(bytes(original, carried), principals(), now).grants).toHaveLength(1);
 });
+it('retains exact answering member on attributed owner history without assigning it to a carry', () => {
+  const attributed = { ...original, who: 'Dana Mixed-Case / household-member' };
+  const result = plan(attributed, carried);
+  expect(result.requests[0].source).toEqual(attributed);
+  expect(result.requests[0].source.who).toBe(attributed.who);
+  expect(Object.hasOwn(result.requests[1].source, 'who')).toBe(false);
+  expect(plan({ ...plain, who: attributed.who, state: 'revoked', decided: later }).requests[0].source.who).toBe(attributed.who);
+});

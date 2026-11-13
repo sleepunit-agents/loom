@@ -191,7 +191,9 @@ There is no same-name fallback or normalization; two distinct source principals
 cannot map to the same new principal, including historical/pending rows.
 
 The plan retains every original request field under `source` alongside its
-mapped agent. Missing owner attribution stays missing. Its grant proposals are
+mapped agent. Exact `who` attribution stays on the original row, including
+revoked history; it is not copied onto an unattributed carry. Missing owner
+attribution stays missing. Its grant proposals are
 only the live `granted` rows at snapshot time, scoped to the exact house and
 service presence, with the stored expiry. Expired, denied, pending, revoked and
 claimed-original rows confer no authority. Always and policy grants remain
