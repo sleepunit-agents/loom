@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Import explicit Runtime snapshots with complete private source retention, scoped metadata, held old work and independent migration verification.
+
 ### Fixed
 
 - Accept legacy Secrets timestamps at arbitrary fractional precision during offline import, retain validated audit text exactly, and report value-free source check names.
@@ -20,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Compose next Bridges from the explicit secret holder with scoped HTTP inspection/sends, policy-checked People labels and a durable engine that never receives raw credentials.
+- Load the daemon Secrets retry key from an explicit private file and pin its identity before async value operations are registered; changed keys and unbound old journals fail closed.
 - Next bridge credential lifetimes now follow asynchronous public holder generation, retiring both transports on rotation or holder failure without reading credential values.
 - Persistent secret holder public generation for bridge credential lifetimes, atomically rotated with committed mutations and available through its authenticated read transport.
 

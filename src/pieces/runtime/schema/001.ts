@@ -23,4 +23,10 @@ CREATE TABLE runtime_provenance_sources (conversation TEXT NOT NULL, key TEXT NO
 CREATE TABLE runtime_owner_requests (target TEXT PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record)));
 -- Runner progress is distinct from administrative runtime_jobs.changed_at.
 CREATE TABLE runtime_job_heartbeats (job TEXT PRIMARY KEY REFERENCES runtime_jobs(id), heard_at INTEGER NOT NULL);
+` }, { number: 6, sql: `
+-- Offline migration archive. No registry collections or authority read these tables.
+CREATE TABLE runtime_import_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE runtime_import_sources (path TEXT PRIMARY KEY, content TEXT NOT NULL);
+CREATE TABLE runtime_import_documents (collection TEXT NOT NULL, key TEXT NOT NULL, record TEXT NOT NULL CHECK(json_valid(record)), PRIMARY KEY(collection,key));
+CREATE TABLE runtime_import_revisions (id INTEGER PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record)));
 ` }];
