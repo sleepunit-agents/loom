@@ -1,7 +1,7 @@
 /** Desk metadata only. Delivered words are rejected before retry storage or SQL. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { operation, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord } from '../../core/index.js';
+import { operation, failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord } from '../../core/index.js';
 const agentId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
 const slug = z.string().max(80).regex(/^[a-z0-9]+(-[a-z0-9]+)*$/);
 const printable = (max: number) => z.string().min(1).max(max).regex(/^[^\x00-\x1f\x7f]+$/);
@@ -45,6 +45,7 @@ export function installConversations(db: Db, operations: Operations, live: Live,
     },
     run(ctx, input) {
       const t = input.turn, id = conversationId(input.agent, t.venue, t.place);
+      if (db.prepare('SELECT 1 FROM attention_days WHERE conversation=? AND day=?').get(id, t.at.slice(0, 10))) return failure('conflict', 'A folded UTC day takes no more turns');
       const c: Conversation = conversation(id) ?? { id, agent: input.agent, ...(input.project ? { project: input.project } : {}), ...(input.member ? { member: input.member } : {}), venue: t.venue, place: t.place, label: null, people: [], agents: [], projects: [], started: t.at, last: t.at, turns: 0 };
       if (t.from.kind === 'person' && !c.people.includes(t.from.slug) && c.people.length < 32) c.people.push(t.from.slug);
       if (t.from.kind === 'agent' && t.from.id !== c.agent && !c.agents.includes(t.from.id) && c.agents.length < 16) c.agents.push(t.from.id);
