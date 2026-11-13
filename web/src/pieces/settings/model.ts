@@ -21,3 +21,8 @@ export function grantLabel(grant:Grant,policy:Policy,now:number):string {
   if(grant.kind==='secret'&&(rule?.grant??policy.default)==='never')return 'Blocked by Never policy';
   return activeGrant(grant,now)?'Granted':grant.movedTo?'Moved to another house':'Expired';
 }
+export function automaticRequest(policy:Policy,name:string,agent:string):boolean {
+  const rule=Object.hasOwn(policy.secrets,name)?policy.secrets[name]:undefined;
+  return rule?.grant==='auto'?!!rule.agents?.includes(agent):(rule?.grant??policy.default)==='auto';
+}
+export const grantScopeLabel=(grant:Grant)=>grant.scope?`${grant.scope.house} · ${grant.scope.service??'No service'}`:'All houses and services';

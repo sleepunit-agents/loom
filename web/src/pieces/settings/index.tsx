@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } fro
 import { call, useRecords, type Call } from '../../data';
 import { settingsWrites } from './writes';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, Textarea } from '../../kit';
-import { revokeInput, warnings, type SettingsAccess, type SecretName, type Grant, type Request, type Policy, type Use, type Change, grantLabel, missingNames } from './model';
+import { revokeInput, warnings, type SettingsAccess, type SecretName, type Grant, type Request, type Policy, type Use, type Change, grantLabel, missingNames, automaticRequest, grantScopeLabel } from './model';
 const idle={pending:false,status:'done' as const},noop=()=>()=>{};
 const date=(at?:number)=>at===undefined?'No expiry':new Date(at).toLocaleString();
 function useWrite() {
@@ -66,7 +66,7 @@ function GrantRow({grant,enabled,now,policy}:{grant:Grant;enabled:boolean;now:nu
   const write=useWrite();
   const service=grant.agent.startsWith('service:');
   return <section className="grid gap-2 border-t py-3"><h3>{grant.kind}: {grant.target}</h3><p>{grantLabel(grant,policy,now)} · {date(grant.expiresAt)}</p>
-    {grant.scope&&<p>{grant.scope.house}{grant.scope.service&&` · ${grant.scope.service}`}</p>}
+    {grant.scope&&<p>{grantScopeLabel(grant)}</p>}
     <Button disabled={!enabled||write.blocked} onClick={()=>write.send(service?'secrets.revokeService':'secrets.revoke',service?{service:grant.agent.slice(8),name:grant.target}:revokeInput(grant))}>Revoke {grant.target}</Button>{write.feedback}</section>;
 }
 function SecretReader({name,policy,agents,grants,uses,changes,enabled,values,now}:{name:SecretName;policy:Policy;agents:string[];grants:readonly Grant[];uses:readonly Use[];changes:readonly Change[];enabled:boolean;values:boolean;now:number}) {
@@ -74,10 +74,11 @@ function SecretReader({name,policy,agents,grants,uses,changes,enabled,values,now
   const rule=policy.secrets[name.id],usage=uses.filter(u=>u.name===name.id);
   return <article className="grid gap-5 p-5"><header><h1 className="text-2xl font-semibold">{name.id}</h1><p>{name.description}</p></header>
     <form aria-label="Describe secret" className="grid gap-3" onSubmit={e=>{e.preventDefault();if(enabled&&!write.blocked)write.send('secrets.describe',{name:name.id,description:String(new FormData(e.currentTarget).get('description'))});}}><label>Description<Textarea key={name.description} name="description" defaultValue={name.description} maxLength={2000} disabled={!enabled||write.blocked}/></label><Button disabled={!enabled||write.blocked}>Save description</Button></form>
-    <section><h2>Who may use it</h2>{grants.filter(g=>g.kind==='secret'&&g.target===name.id).map(g=><p key={g.id}>{g.agent} · {grantLabel(g,policy,now)} · {g.scope?.house??'All houses'} · {date(g.expiresAt)}</p>)}
+    <section><h2>Who may use it</h2>{grants.filter(g=>g.kind==='secret'&&g.target===name.id).map(g=><p key={g.id}>{g.agent} · {grantLabel(g,policy,now)} · {grantScopeLabel(g)} · {date(g.expiresAt)}</p>)}
       <p>Request policy: {rule?.grant??policy.default}. Requests last at most {rule?.minutes??60} minutes.</p>
       <p>At startup: {rule?.grant==='never'?'Blocked by Never policy':rule?.houses?.join(', ')||'No agents'}</p>
-      <div className="grid gap-2">{agents.map(agent=><label className="flex gap-2" key={agent}><input type="checkbox" checked={rule?.grant==='auto'&&!!rule.agents?.includes(agent)} disabled={!enabled||write.blocked||rule?.grant==='never'} onChange={e=>write.send('secrets.always',{name:name.id,agent,on:e.target.checked})}/>Always allow {agent} when asked</label>)}</div>
+      {rule?.grant===undefined&&policy.default==='auto'&&<p>Automatic access comes from the default request policy.</p>}
+      <div className="grid gap-2">{agents.map(agent=><label className="flex gap-2" key={agent}><input type="checkbox" checked={automaticRequest(policy,name.id,agent)} disabled={!enabled||write.blocked||rule?.grant==='never'||rule?.grant===undefined&&policy.default==='auto'} onChange={e=>write.send('secrets.always',{name:name.id,agent,on:e.target.checked})}/>Always allow {agent} when asked</label>)}</div>
     </section>
     <section><h2>Recorded use</h2>{usage.length?usage.slice().sort((a,b)=>b.at-a.at).slice(0,30).map(u=><p key={u.id}>{date(u.at)} · {u.by.id} · {u.state==='released'?'Delivered':u.state==='failed'?'Failed':'Delivery unconfirmed'}</p>):<p>No recorded use.</p>}</section>
     <section><h2>Changes</h2>{changes.filter(c=>c.name===name.id).slice().sort((a,b)=>b.at-a.at).map(c=><p key={c.id}>{date(c.at)} · {c.action} · {c.by}</p>)}</section>

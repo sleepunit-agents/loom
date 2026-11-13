@@ -29,3 +29,13 @@ it.each(['piece','runner','tailnet'] as const)('never applies secret policy to a
  const {grantLabel}=await import('./model');
  expect(grantLabel({id:'g',agent:'art',kind,target:'API',by:'jonathan'},{id:'policy',default:'never',secrets:{API:{grant:'never'}}},now)).toBe('Granted');
 });
+
+it('shows inherited automatic requests, explicit overrides and exact service absence',async()=>{
+ const {automaticRequest,grantScopeLabel}=await import('./model');
+ const policy={id:'p',default:'auto' as const,secrets:{ASK:{grant:'ask' as const},SOME:{grant:'auto' as const,agents:['art']}}};
+ expect(automaticRequest(policy,'API','art')).toBe(true);expect(automaticRequest(policy,'API','mark')).toBe(true);
+ expect(automaticRequest(policy,'ASK','art')).toBe(false);expect(automaticRequest(policy,'SOME','art')).toBe(true);expect(automaticRequest(policy,'SOME','mark')).toBe(false);
+ const g:Grant={id:'g',agent:'art',kind:'secret',target:'API',by:'jonathan'};
+ expect(grantScopeLabel({...g,scope:{house:'h-1',service:'slack'}})).toBe('h-1 · slack');
+ expect(grantScopeLabel({...g,scope:{house:'h-1'}})).toBe('h-1 · No service');
+});

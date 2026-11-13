@@ -481,3 +481,9 @@ expiry mechanism at the next grant expiry or year-old change boundary. New grant
 and changes invalidate it and reschedule that boundary. No screen timer/poller is
 added. Never policy overrides recorded grant labels and startup membership; every
 missing policy key is shown, including rules with no startup/request agents.
+
+Inherited default Auto is displayed as checked automatic permission for every
+agent, with the default-policy explanation. Those inherited checkboxes are
+read-only: the existing Stop operation edits explicit Always membership and cannot
+turn off inherited Auto. Explicit per-name membership remains editable. Every
+scoped grant displays its exact service, including “No service” when absent.

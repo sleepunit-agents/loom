@@ -47,7 +47,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Settings keeps values wri
   await a.goto(`${app.url}/p/settings-preview/requests`);await expect.poll(()=>row(a,'mark: API').count()).toBe(1);await row(a,'mark: API').click();
   await a.getByRole('button',{name:'Allow once',exact:true}).click();
   await b.goto(`${app.url}/p/settings-preview/grants/mark`);await expect.poll(()=>b.getByRole('button',{name:'Revoke API',exact:true}).count()).toBe(1);
-  expect(await b.getByText('h-22',{exact:true}).count()).toBe(1);
+  expect(await b.getByText('h-22 · No service',{exact:true}).count()).toBe(1);
   expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.grant',{agent:'mark',kind:'secret',target:'API',scope:{house:'h-23',service:'slack'},expiresAt:clock.now()+60*60_000},randomUUID()).ok).toBe(true);
   // Put the historical boundary 31 minutes ahead rather than advancing every
   // unrelated next-mode job through a year of fake time.
@@ -57,7 +57,9 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Settings keeps values wri
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/settings-app');mkdirSync(shots,{recursive:true});
   await b.goto(`${app.url}/p/settings-preview/secrets/API`);await expect.poll(()=>b.getByRole('heading',{name:'Who may use it',exact:true}).count()).toBe(1);
   for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
-   await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+   await b.setViewportSize({width,height:900});await b.reload();
+   await expect.poll(()=>b.getByRole('heading',{name:'Who may use it',exact:true}).count()).toBe(1);
+   await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
    await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
    await expect.poll(()=>b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
    await b.screenshot({path:join(shots,`settings-${look}-${width}.png`),fullPage:true,animations:'disabled'});
@@ -72,7 +74,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Settings keeps values wri
   expect(await b.locator('body').textContent()).not.toContain(sentinel);
   expect(await b.locator('body').innerHTML()).not.toContain(sentinel);
   for(const table of (app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[]))expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${table.name}"`).all())).not.toContain(sentinel);
-  await b.goto(`${app.url}/p/settings-preview/grants/mark`);await b.getByText('h-22',{exact:true}).locator('..').getByRole('button',{name:'Revoke API',exact:true}).click();
+  await b.goto(`${app.url}/p/settings-preview/grants/mark`);await b.getByText('h-22 · No service',{exact:true}).locator('..').getByRole('button',{name:'Revoke API',exact:true}).click();
   await expect.poll(()=>b.getByRole('button',{name:'Revoke API',exact:true}).count()).toBe(1);
   expect(grantsRole(app.db).mayUse('mark',{kind:'secret',target:'API'},clock.now(),{house:'h-23',service:'slack'})).toBe(true);
   await context.addCookies([{name:'fixture',value:'pollock',url:app.url}]);await b.reload();

@@ -111,3 +111,21 @@ it('shows startup membership, delivery uncertainty and change history without tr
  await draw(h(SettingsApp,{path:'/p/settings-preview/secrets/API'}));
  expect(text()).toContain('At startup: ');expect(text()).toContain('art');expect(text()).toContain('Delivered');expect(text()).toContain('Delivery unconfirmed');expect(text()).toContain('replace');expect(text()).toContain('jonathan');
 });
+
+it('renders inherited auto as checked without offering a toggle that cannot change it',async()=>{
+ feeds();f.feeds['secret.policy'].records=[{id:'policy',default:'auto',secrets:{}}];
+ await draw(h(SettingsApp,{path:'/p/settings-preview/secrets/API'}));
+ const box=tree.root.findAllByType('input').find((n:any)=>n.props.type==='checkbox');expect(box.props.checked).toBe(true);expect(box.props.disabled).toBe(true);
+ expect(text()).toContain('Automatic access comes from the default request policy');
+});
+it('renders exact service scope and revokes a service grant through its own operation',async()=>{
+ feeds();const g={id:'service-grant',agent:'service:changes',kind:'secret',target:'API',by:'jonathan'};
+ f.feeds['secret.grant'].records=[g];const write=pending();f.call.mockReturnValue(write.request);
+ await draw(h(SettingsApp,{path:'/p/settings-preview/grants/service%3Achanges'}));
+ await act(async()=>button('Revoke API').props.onClick());expect(f.call).toHaveBeenCalledWith('secrets.revokeService',{service:'changes',name:'API'});
+ await write.finish({ok:true,value:{revoked:true}});
+ await act(async()=>{f.feeds['secret.grant']={status:'live',records:[]};f.listeners.forEach(fn=>fn());});expect(button('Revoke API')).toBeUndefined();
+ f.feeds['secret.grant'].records=[{...g,agent:'art',scope:{house:'h-1',service:'slack'}},{...g,id:'absent',agent:'art',scope:{house:'h-1'}}];
+ await act(async()=>{tree.update(h(SettingsApp,{path:'/p/settings-preview/secrets/API'}));f.listeners.forEach(fn=>fn());});
+ expect(text()).toContain('h-1 · slack');expect(text()).toContain('h-1 · No service');
+});
