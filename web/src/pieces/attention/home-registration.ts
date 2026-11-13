@@ -14,3 +14,8 @@ const Rail = lazy(() => import('./rail'));
 export function RailSurface(props: { go: (path:string)=>void }) {
   return createElement(Suspense,{fallback:createElement(Loading,{label:'Opening your agents…'})},createElement(Rail,props));
 }
+
+const Bar = lazy(() => import('./bar'));
+export function BarSurface(props: import('./bar').BarProps) {
+  return createElement(Suspense,{fallback:null},createElement(Bar,props));
+}

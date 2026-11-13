@@ -120,6 +120,10 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         await page.setViewportSize({width,height:900}); await page.reload();
         await expect.poll(() => page.locator('.next-shell').count()).toBe(1);
         await expect.poll(() => page.locator('html').getAttribute('data-look')).toBe(look);
+        await expect.poll(()=>page.locator('.next-status-bar .loom-pbar__needs').getAttribute('aria-label')).toBe('1 needs you');
+        expect(await page.locator('.next-status-bar h1').innerText()).toBe('Home');
+        expect(await page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('1 agent');
+        expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
         await expect.poll(() => page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
         await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(1);
         await reference.setViewportSize({width,height:900});
@@ -135,6 +139,18 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
           if(surface==='work') {
             await page.getByRole('button',{name:'Open Inbox',exact:true}).click();
             await expect.poll(()=>page.locator('[data-tile=inbox]').count()).toBe(1);
+            await expect.poll(()=>page.locator('.next-status-bar h1').innerText()).toBe('Inbox');
+            if(width===390) {
+              const needs=page.locator('.next-status-bar .loom-pbar__needs');
+              await needs.click();
+              expect(new URL(page.url()).pathname).toBe('/p/inbox-preview');
+              const bar=await page.locator('.next-status-bar').boundingBox();
+              expect(bar!.height).toBeLessThan(40);
+              expect(await page.locator('.next-status-bar .loom-tick__track').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
+              await page.locator('.next-status-bar summary').click();
+              await expect.poll(()=>page.getByRole('combobox',{name:'Look',exact:true}).isVisible()).toBe(true);
+              await page.locator('.next-status-bar summary').click();
+            }
             await expect.poll(()=>page.locator('[data-tile=inbox]').getByText('OK to run the backup now?',{exact:true}).count()).toBe(1);
             await reference.goto(old.base+(width<1024?'/inbox':'/inbox?t=*inbox'));
             if(width>=1024) {

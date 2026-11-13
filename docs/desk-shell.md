@@ -18,7 +18,9 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | Depth / Contours / Wash | Existing lazy ground components, selected by member `household.preferences`; Appearance offers all three |
 | Home conversations and composer | Existing private `comms.agents` summary; latest thread and unread-thread navigation. Shared Comms composer opens a thread with member/agent drafts and stable retry IDs. No Home message-feed subscription or retained reply-word preview |
 | Home composition | Full question first; work/runtime and recent conversation beside Clock on a wide single-agent card, stacked on narrower cards; composer follows the details |
-| Last steps, phone bars, ticker, per-app parity | Follow-up slices before owner acceptance; no invented tape steps |
+| Phone bar and centered desktop ticker | Registration title, shared existing ticker renderer, owned roster/status and live Needs you count; exact Inbox navigation, appearance gear on phone; all apps stays in dock |
+| System clock, Boxes/backup status glyphs, piece-stat ticker items | Follow-up proper new-side sources; no browser clock presented as loom time or fabricated piece stats |
+| Last steps, phone Home accordion, per-app parity | Follow-up slices before owner acceptance; no invented tape steps |
 
 Every unavailable live feed drops its old content immediately. Roster loss removes cards; directory failure uses canonical roster names; status, ask and thread failures show unavailable words instead of stale values. Rail navigation is read-only. Approval and private ask actions stay in the owning reader.
 
@@ -62,3 +64,23 @@ and no artwork is generated or bundled by this change. Fixture comparison boards
 without imported sheets continue to show drawn faces; they are not evidence of
 Jonathan's real artwork. Its visual acceptance follows a coordinator-managed
 staging rebuild, outside this implementation's authorized host scope.
+
+## Bar and ticker
+
+Attention registers a bar alongside its Home and rail surfaces. It reads only
+owned roster, directory names, reported status and open asks from the existing
+live records; unavailable feeds immediately remove their words/count. The bar
+never retains conversation words. A count links to Inbox through the shell
+router. Agent ticker links open Home, where all owned cards are visible; a
+dedicated agent window remains follow-up. All apps stays reachable in the dock
+and by its existing keyboard shortcut. Appearance stays in the bar, a named
+gear on a phone.
+
+The present ticker renderer is shared unchanged: only overflow moves, at
+24px/second, paused while touched or hidden, still with reduced motion. Its
+loop copy stays out of the tab order and screen readers. Desktop sides have
+equal width around the centered ticker. On a phone the title, ticker, brand
+and fixed Needs you count fit one line, below the device's own status bar.
+No old Shell object or legacy fetching is used. Clock and status glyphs await
+proper new-side sources; they are not inferred from device time or hidden
+legacy data.

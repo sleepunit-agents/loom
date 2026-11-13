@@ -20,7 +20,7 @@ function Screen({ app, tile, router, active }: { app: RegisteredApp; tile: Tile;
   const View = app.Screen;
   return <AppBoundary><Suspense fallback={<Loading label={`Opening ${app.title}…`} />}><View active={active} path={currentPath(tile)} go={path => router.go(tile.id,path)} /></Suspense></AppBoundary>;
 }
-export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void }> }
+export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void }>; Bar?: ComponentType<{ title: string; go(path: string): void; actions: ReactNode }> }
 export default function Shell({ apps, surfaces = {} }: { apps: readonly RegisteredApp[]; surfaces?: ShellSurfaces }) {
   const [router] = useState(() => new DeskRouter(apps, window));
   const route = useSyncExternalStore(router.subscribe,router.getSnapshot);
@@ -41,7 +41,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   useEffect(() => () => router.close(),[router]);
   const visible = route.tiles.filter(t => !t.minimized);
   // Until Home's piece registers a rail there is no invented agent data or empty reserved column.
-  const { Home, Rail } = surfaces;
+  const { Home, Rail, Bar } = surfaces;
   const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railWidth(width)||64)+10 : 0)) };
   useEffect(() => { if(!phone) {const notices=router.fit(workArea,width);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,router]);
   const boxes = layout(router.asTiles(),workArea,width).apps;
@@ -78,7 +78,11 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   },[visible,route.focused,router]);
   const focused = visible.find(t => t.id === route.focused) ?? visible[0];
   return <div className="next-shell" data-shell={phone ? 'phone' : 'desk'}>
-    <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Preferences /><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>
+    {Bar ? <Bar title={apps.find(a => a.id === focused?.id)?.title ?? 'Home'} go={path => {
+      if(path === '/') {router.home();return;}
+      const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));
+      if(app){open(app.id);router.go(app.id,path);}
+    }} actions={<Preferences />} /> : <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Preferences /><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>}
     <div ref={ground} className="next-ground">
       {!visible.length && (Home ? <Home go={path => { const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/')); if(app){open(app.id);router.go(app.id,path);} }} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
       {!phone && Rail && visible.length>0 && <aside aria-label="Your agents" className="next-rail" style={{width:railWidth(width)||64}}><Rail go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} /></aside>}
