@@ -69,3 +69,10 @@ that have exactly two links, source-identical bytes and the matching plan receip
 just as for `ui-cookie.key`. External aliases and unrelated pairs remain refused.
 This prerequisite does not add Comms discovery, registration or independent
 verification; all three remain required before Comms is covered by migrate-all.
+
+Independent verification's `verifyMigration` and CLI `migrateVerify` return
+Promises. The read-only destination and stopped-daemon gate remain held until
+every source projection settles, including rejection; callers must await the
+result. `migration-projection.ts` builds source-only physical rows separately
+from destination comparison. Existing six projections retain their synchronous
+source readers. This async prerequisite does not register or verify Comms.
