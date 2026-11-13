@@ -92,6 +92,8 @@ it('pins both peers beyond the CA and fails closed when authority is absent',asy
   const stranger={...s.client,cert:join(s.home,'stranger.pem'),key:join(s.home,'stranger.key')};
   await expect(localHolderMutations(stranger).set(who,'API',Buffer.from('X'),'add')).rejects.toThrow();
   await expect(localSecretSource({...stranger,socket:s.config.read.socket}).read('API')).rejects.toThrow();
+  await expect(localSecretSource({...stranger,socket:s.config.read.socket}).generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+  expect(await localSecretSource({...s.client,socket:s.config.read.socket}).generation()).toMatch(/^[0-9a-f-]{36}$/);
   await expect(remoteHolderAuthority({...s.config.authority,servername:'wrong.test'},s.daemonFingerprint)(s.daemonFingerprint,'jonathan')).resolves.toBeNull();
   const wrongHolder=remoteHolderAuthority({...s.config.authority,cert:stranger.cert,key:stranger.key},s.daemonFingerprint);
   await expect(wrongHolder(s.daemonFingerprint,'jonathan')).resolves.toBeNull();

@@ -257,19 +257,19 @@ it('recognizes the npm symlink entrypoint without starting the executable on imp
   expect(isHolderEntrypoint(module)).toBe(true);expect(isHolderEntrypoint(link)).toBe(true);
   expect(isHolderEntrypoint(undefined)).toBe(false);expect(isHolderEntrypoint(join(home,'missing'))).toBe(false);expect(isHolderEntrypoint(join(home,'ca.pem'))).toBe(false);
 });
-it('absolute deadline ends a response that keeps streaming below each inactivity cutoff',async()=>{
+it.each(['read','generation'] as const)('absolute %s deadline ends a response that keeps streaming below each inactivity cutoff',async method=>{
   let interval:ReturnType<typeof setInterval>|undefined;
   const {client,received}=await rawPeer((_req,res)=>{res.writeHead(200,{'content-type':'application/octet-stream'});res.write('X');interval=setInterval(()=>res.write('X'),1000);});
   vi.useFakeTimers();
   try {
-    const result=expect(localSecretSource(client).read('github')).rejects.toThrow(/^Local secret holder unavailable$/);
+    const result=expect((method === 'read' ? localSecretSource(client).read('github') : localSecretSource(client).generation())).rejects.toThrow(/^Local secret holder unavailable$/);
     await vi.waitFor(()=>expect(received.length).toBeGreaterThan(0));
     for(let n=0;n<3;n++) {const before=received.length;await vi.advanceTimersByTimeAsync(1000);await vi.waitFor(()=>expect(received.length).toBeGreaterThan(before));}
     await vi.advanceTimersByTimeAsync(2000);await result;
     expect(received.every(b=>b.every(v=>v===0))).toBe(true);
   } finally {clearInterval(interval);vi.useRealTimers();}
 });
-it('absolute deadline also bounds a peer that never completes TLS',async()=>{
+it.each(['read','generation'] as const)('absolute %s deadline also bounds a peer that never completes TLS',async method=>{
   const {client,server:config}=setup();const {createServer}=await import('node:net');
   let connected=false;const sockets:import('node:net').Socket[]=[];
   const peer=createServer(socket=>{connected=true;sockets.push(socket);});
@@ -277,7 +277,7 @@ it('absolute deadline also bounds a peer that never completes TLS',async()=>{
   closes.push(async()=>{for(const socket of sockets)socket.destroy();await new Promise<void>(resolve=>peer.close(()=>resolve()));});
   vi.useFakeTimers();
   try {
-    const result=expect(localSecretSource(client).read('github')).rejects.toThrow(/^Local secret holder unavailable$/);
+    const result=expect((method === 'read' ? localSecretSource(client).read('github') : localSecretSource(client).generation())).rejects.toThrow(/^Local secret holder unavailable$/);
     await vi.waitFor(()=>expect(connected).toBe(true));await vi.advanceTimersByTimeAsync(5000);await result;
   } finally {vi.useRealTimers();}
 });
@@ -332,4 +332,16 @@ it('refuses an overlong provider UUID before publishing generation bytes',async(
       minVersion:'TLSv1.3',agent:false,path:'/v1/generation'},res=>{let body='';res.on('data',b=>{body+=b;});res.once('end',()=>resolve({status:res.statusCode!,body}));});
     req.on('error',reject);req.end();
   });expect(result).toEqual({status:503,body:''});
+});
+
+it('bounds a stalled generation provider without reading a value',async()=>{
+  const {client,server}=setup();let finish!:(marker:string)=>void;
+  const generation=vi.fn(()=>new Promise<string>(resolve=>{finish=resolve;})),read=vi.fn(async()=>Buffer.from('MUST-NOT-READ'));
+  const holder=await listenLocalHolder(server,{read,generation});closes.push(holder.close);
+  vi.useFakeTimers();
+  try {
+    const rejected=expect(localSecretSource(client).generation()).rejects.toThrow(/^Local secret holder unavailable$/);
+    await vi.waitFor(()=>expect(generation).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(5000);await rejected;expect(read).not.toHaveBeenCalled();
+  } finally {finish('12345678-1234-4234-8234-123456789abc');vi.useRealTimers();}
 });
