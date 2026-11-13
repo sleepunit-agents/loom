@@ -81,11 +81,11 @@ it('derives six explicit inputs and private audiences from old-format fixtures w
 it('supports a household-only snapshot and reports an unregistered piece without pretending it was imported', async () => {
   const f = await fixture(false);
   expect(Object.keys(f.plan.importers)).toEqual(['household']);
-  f.plan.importers.comms = { paths: ['home/household.json'], options: { retained: { nested: [true, null, 42] } } };
+  f.plan.importers.future = { paths: ['home/household.json'], options: { retained: { nested: [true, null, 42] } } };
   f.plan.importers.constructor = { paths: ['home'], options: {} };
   const prepared = prepareMigrationPlan(f.root, f.plan);
-  expect(prepared).toMatchObject({ missing: ['comms','constructor'], blocked: [] });
-  expect(prepared.plan.importers.comms).toEqual(f.plan.importers.comms);
+  expect(prepared).toMatchObject({ missing: ['constructor','future'], blocked: [] });
+  expect(prepared.plan.importers.future).toEqual(f.plan.importers.future);
   expect(prepared.plan.importers.constructor).toEqual(f.plan.importers.constructor);
 });
 it('binds a plan to full snapshot contents and hashes every plan option with object order ignored', async () => {
