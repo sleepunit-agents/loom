@@ -257,3 +257,26 @@ sharing boundary in web-foundation.md. This operation uses the existing project
 rows, with no second list stored on the household member. It neither creates
 members nor changes owner authority or credentials. Setup and the generated
 household client remain tracked by t-2203.
+
+### Registering an existing agent
+
+`household.addAgent({agent})` registers an existing portable context under
+`HOME/agents/<agent>`. Only a household owner may call it. The name follows the
+existing lowercase agent-name format; the context and its `agents` parent must
+be real directories, not symlinks. Missing contexts and files are refused. An
+already registered agent is a successful no-op, matching the old CLI helper.
+The operation leaves the default agent, members, ownership, projects, unknown
+metadata, context contents and credentials intact. Wildcard household owners
+own the new agent automatically; scoped members gain no ownership. Registration,
+its retry receipt and live sharing/access notifications commit together.
+
+| Old command or route | New operation |
+| --- | --- |
+| `loom household add <agent>` | `household.addAgent({agent})` |
+| Page `add-agent`: register its newly bootstrapped context | `household.addAgent({agent})` |
+| Page `add-agent`: bootstrap identity/rules, choose appearance, create first token | Separate setup and credential operations; not part of registration |
+
+There is no registration job. This operation creates neither a context directory
+nor a creed or token. The Setup screen and generated CLI binding remain in the
+full household task; the legacy command and page retain their existing behavior
+until the coordinated move.
