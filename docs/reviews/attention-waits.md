@@ -10,4 +10,8 @@ Frozen implementation accc4ef7d4e3db4e1a429833985236f8fe78d3b2. TREE sha256:b4ab
 - Atomic nested success: an outer operation aborts after a real successful check; ask, both inner receipts and outer receipt roll back, no live publication. Success publishes only outside the transaction.
 - Original viewer and central grant: successful project-visible nonowner check asserts the actual nested viewer. A real service grant for checkWait alone cannot resolve; adding resolve allows the exact failed id to retry.
 
-Signed merge of verified main ff20b2ee26046ff2888366de6857c8aed3623b10 resolves only a changelog conflict; no Attention implementation change. Round 2 pending on the resulting frozen test update. Maximum three rounds, implementer judgment afterwards.
+Signed merge of verified main ff20b2ee26046ff2888366de6857c8aed3623b10 resolves only a changelog conflict; no Attention implementation change. No Attention implementation changes were needed for the findings.
+
+## Round 2 — CLEAR
+
+Frozen head 4de8812090e869de932e3150759a3b3be4b46f9b. TREE sha256:ce96d21682394922768da01c564dc4cfafa9590b3c59fcc3d369ff5a82489fef. Standards no findings; Spec one NIT: terminal-state fixtures asserted resolved without each exact explanation. Folded test-only by parameterizing all five expected explanations. No further review owed; stopped on CLEAR within the three-round bound. Implementer judgment: ship this bounded explicit operation after green exact-head CI; automatic member reconciliation and task-comment matching remain in docs/attention-piece.md and t-2205. No known hole in the shipped scope.

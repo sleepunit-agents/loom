@@ -49,10 +49,16 @@ it('does not confuse missing or hidden tasks with completion, even for a project
   raise('private',{task:'t-1'},{member:'jonathan'});
   expect(check('private',guest)).toMatchObject({code:'denied'});
 });
-it.each(['allowed','used','denied','expired','withdrawn'])('resolves terminal approval state %s with the original viewer and no human answer',async state=>{
+it.each([
+  ['allowed', 'the approval was allowed'],
+  ['used', 'the approval was allowed and used'],
+  ['denied', 'the approval was denied'],
+  ['expired', 'the approval was allowed, and expired unused'],
+  ['withdrawn', 'the approval was withdrawn unanswered (asked again with an up-to-date list)'],
+])('resolves terminal approval state %s with the original viewer and no human answer',async (state,resolution)=>{
   const approval=vi.fn(()=>({state})); const {raise,check}=await setup({approval});
   raise('approval',{approval:'a-12345678'});
-  expect(check('approval')).toMatchObject({ok:true,value:{state:'resolved'}});
+  expect(check('approval')).toMatchObject({ok:true,value:{state:'resolved',resolution}});
   expect(approval).toHaveBeenCalledExactlyOnceWith('a-12345678',owner);
 });
 it('keeps pending, unreadable, missing, throwing and unknown approval facts open',async()=>{
