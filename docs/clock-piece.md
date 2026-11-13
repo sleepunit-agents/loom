@@ -520,7 +520,9 @@ Committed approval, secret-request and access changes notify parked work through
 the live observer; Clock removes its observer on close. Restart uses the same
 roles and persisted park deadlines. Existing unpark messages distinguish Allow,
 Deny, expiry and the unanswered deadline. A secret Allow tells the new body to
-request again; it never carries a house grant forward. No answer read spends an
+request again; it never carries a house grant forward. Other resource questions
+report that their piece applied the access and ask the body to check it; they
+never give secret-house recovery instructions or spend an approval receipt. No answer read spends an
 approval or grants access, and runtime dispatch remains held until its owning
 implementation is composed. Local-wake filing/recovery/standing and vouch
 applications remain separate unfinished flows. This composition replaces the

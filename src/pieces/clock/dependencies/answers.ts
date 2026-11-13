@@ -12,7 +12,7 @@ export function clockAnswers(db: Db, operations: Operations, live: Live, sharing
       if (id.startsWith('a-') && operations.has('approvals.state')) return approvals.check(id, viewer);
       if (id.startsWith('q-') && operations.has('secrets.request')) {
         const answer = secrets.check(id, viewer);
-        return answer && { state: answer.state === 'revoked' ? 'cancelled' : answer.state };
+        return answer && { ...answer, state: answer.state === 'revoked' ? 'cancelled' : answer.state };
       }
     },
     subscribe(changed) {

@@ -49,7 +49,7 @@ export function secretAnswers(db: Db, sharing: () => Sharing) {
       if (!row) return;
       const request = JSON.parse(row.record) as GrantRequest;
       if (!maySee(viewer, { type: 'secret.request', agent: request.agent }, sharing())) return;
-      return { state: request.state };
+      return { state: request.state, ...(request.kind !== 'secret' ? { kind: request.kind } : {}) };
     },
   };
 }

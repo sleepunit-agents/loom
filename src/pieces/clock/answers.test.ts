@@ -195,3 +195,18 @@ it('uses current secret revocation before a queued Allow can resume work', async
   expect(wake(s.app.db,parked.id)?.prompt).not.toContain('approvals use');
   expect(s.app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
 });
+
+it('resumes an applied resource grant without giving secret-house or receipt-spending instructions', async () => {
+  const s = await setup(true);
+  const request = s.value<{id:string}>('secrets.request',{agent:'art',kind:'piece',target:'tasks',why:'work'},agent);
+  const parked = s.park(request.id); await s.flush();
+  s.value('attention.answer',{id:request.id,answer:{kind:'yes'}});
+  const grants = s.app.db.prepare('SELECT * FROM secrets_grants ORDER BY id').all();
+  await s.flush();
+  expect(wake(s.app.db,parked.id)).toMatchObject({state:'held',wait:{answer:'allowed'}});
+  expect(wake(s.app.db,parked.id)?.prompt).toContain('Check the requested access is available');
+  expect(wake(s.app.db,parked.id)?.prompt).not.toContain('request it again');
+  expect(wake(s.app.db,parked.id)?.prompt).not.toContain('approvals use');
+  expect(s.app.db.prepare('SELECT * FROM secrets_grants ORDER BY id').all()).toEqual(grants);
+  expect(grantsRole(s.app.db).mayUse('art',{kind:'piece',target:'tasks'},s.clock.now())).toBe(true);
+});
