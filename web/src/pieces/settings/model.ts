@@ -8,9 +8,16 @@ export interface Use extends LiveRecord { name:string; at:number; state:string; 
 export interface Change extends LiveRecord { name:string; at:number; action:string; by:string }
 export function warnings(name: SecretName, uses: readonly Use[], changes: readonly Change[], now: number): string[] {
   const events=changes.filter(c=>c.name===name.id&&c.action!=='removed');
-  const last=events.length?Math.max(...events.map(c=>c.at)):undefined;
+  const last=events.length?events.reduce((at,c)=>Math.max(at,c.at),-Infinity):undefined;
   return [...(!uses.some(u=>u.name===name.id&&u.state==='released')?['No recorded use']:[]),
     ...(last!==undefined&&now-last>=365*86400_000?['Not changed in a year']:[])];
 }
 export const revokeInput=(g:Grant)=>({agent:g.agent,kind:g.kind,target:g.target,...(g.scope?{scope:g.scope}:{})});
 export const activeGrant=(g:Grant,now:number)=>!g.movedTo&&(g.expiresAt===undefined||g.expiresAt>now);
+
+export const missingNames=(policy:Policy,names:readonly SecretName[])=>Object.keys(policy.secrets).filter(name=>!names.some(n=>n.id===name));
+export function grantLabel(grant:Grant,policy:Policy,now:number):string {
+  const rule=Object.hasOwn(policy.secrets,grant.target)?policy.secrets[grant.target]:undefined;
+  if((rule?.grant??policy.default)==='never')return 'Blocked by Never policy';
+  return activeGrant(grant,now)?'Granted':grant.movedTo?'Moved to another house':'Expired';
+}

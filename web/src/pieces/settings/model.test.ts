@@ -15,3 +15,12 @@ it('revokes exactly the displayed scoped grant and labels moved and expired gran
  expect(activeGrant({...g,movedTo:'q-1'},now-1)).toBe(false);
  expect(revokeInput({...g,scope:{house:'h-1'}})).toEqual({agent:'art',kind:'secret',target:'API',scope:{house:'h-1'}});
 });
+it('includes every missing policy name and lets Never override recorded grants',async()=>{
+ const {missingNames,grantLabel}=await import('./model');
+ const policy={id:'policy',default:'ask' as const,secrets:{API:{grant:'never' as const,houses:['art']},ASK:{grant:'ask' as const},DURATION:{minutes:30}}};
+ expect(missingNames(policy,[])).toEqual(['API','ASK','DURATION']);
+ expect(missingNames(policy,[name])).toEqual(['ASK','DURATION']);
+ const g:Grant={id:'g',agent:'art',kind:'secret',target:'API',by:'jonathan'};
+ expect(grantLabel(g,policy,now)).toBe('Blocked by Never policy');
+ expect(grantLabel({...g,target:'OTHER'},{id:'p',default:'never',secrets:{}},now)).toBe('Blocked by Never policy');
+});

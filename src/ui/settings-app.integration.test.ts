@@ -37,7 +37,8 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Settings keeps values wri
   await a.locator('input[name=value]').fill(sentinel);await a.getByRole('button',{name:'Save secret',exact:true}).click();
   await expect.poll(()=>row(b,'API').count()).toBe(1);expect(writes).toBe(1);expect(await a.locator('input[name=value]').inputValue()).toBe('');
   await row(b,'API').click();expect(await b.locator('input[name=value]').inputValue()).toBe('');
-  await b.getByRole('checkbox',{name:'Always allow art when asked',exact:true}).check();
+  await b.getByRole('checkbox',{name:'Always allow art when asked',exact:true}).click();
+  await expect.poll(()=>b.getByRole('checkbox',{name:'Always allow art when asked',exact:true}).isChecked()).toBe(true);
   await expect.poll(()=>app.db.prepare("SELECT value FROM secrets_meta WHERE key='policy'").get()).toMatchObject({value:expect.stringContaining('art')});
   const result=app.operations.call('direct',{kind:'agent',id:'mark'},'secrets.requestHouse',{agent:'mark',target:'API',scope:{house:'h-22'},why:'Fixture deployment',minutes:30},randomUUID());expect(result.ok).toBe(true);
   await a.goto(`${app.url}/p/settings-preview/requests`);await expect.poll(()=>row(a,'mark: API').count()).toBe(1);await row(a,'mark: API').click();
@@ -51,6 +52,13 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Settings keeps values wri
    await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
    await b.screenshot({path:join(shots,`settings-${look}-${width}.png`),fullPage:true,animations:'disabled'});
   }
+  expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.policy',{default:'ask',secrets:{API:{grant:'never',houses:['art']}}},randomUUID()).ok).toBe(true);
+  await expect.poll(()=>b.locator('body').textContent()).toContain('Blocked by Never policy');
+  expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.policy',{default:'ask',secrets:{}},randomUUID()).ok).toBe(true);
+  clock.advance(30*60_000);
+  await expect.poll(()=>b.locator('body').textContent()).toContain('Expired');
+  clock.advance(365*86400_000-30*60_000);
+  await expect.poll(()=>row(b,'API').textContent()).toContain('Not changed in a year');
   expect(await b.locator('body').textContent()).not.toContain(sentinel);
   expect(await b.locator('body').innerHTML()).not.toContain(sentinel);
   for(const table of (app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[]))expect(JSON.stringify(app.db.prepare(`SELECT * FROM "${table.name}"`).all())).not.toContain(sentinel);

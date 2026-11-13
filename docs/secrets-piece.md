@@ -463,3 +463,21 @@ The single two-window browser test uses a fixture-only synchronous holder, check
 cross-window updates, exact scoped revocation, restricted-member isolation and
 sentinel absence from the DOM and every database table. CI uploads six Settings
 screenshots (390, 1280, 1920; Neon Noir and Daylight) in the Settings evidence run.
+
+Settings mutations share one window-only call/lock across readers, navigation,
+app remounts and feed loss. An unavailable response keeps that exact call locked;
+only its original retry is offered. Value replacement and removal share the lock.
+No session draft or second value copy is added. A full browser reload discards
+in-memory retry state, matching the common data-client contract.
+
+Request rows start an explicit daemon read when opened. Direct links offer Check
+request. Allow/Deny controls appear only after that read confirms the same live
+pending record, and each answer repeats the daemon read immediately before the
+write. Navigation, feed loss, a changed request or a failed check cancels it.
+The backend still decides first-answer and current authorization atomically.
+
+The capability schedules its next refresh with Live's fake-clock-compatible
+expiry mechanism at the next grant expiry or year-old change boundary. New grants
+and changes invalidate it and reschedule that boundary. No screen timer/poller is
+added. Never policy overrides recorded grant labels and startup membership; every
+missing policy key is shown, including rules with no startup/request agents.
