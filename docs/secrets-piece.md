@@ -902,7 +902,9 @@ The persistent holder configuration accepts optional `previousIdentities` and
 `previousFingerprintKeys`, each an explicit list of absolute private file paths
 (at most 31). `identity` and `fingerprintKey` remain the active pair. Stop the
 holder, preserve all old files, and restart with the new active files and the old
-ones in these lists. No keys are generated or retired, and no real-home rotation
+ones in these lists. Both authenticated listeners bind before storage opens; their request gates refuse
+until storage is ready, so listener failures cannot commit a key-history change.
+No keys are generated or retired, and no real-home rotation
 is performed by this implementation. TLS certificates and their current pinned
 peer fingerprints remain separately configured; these lists contain age identities
 and receipt HMAC keys only.
@@ -922,7 +924,8 @@ original v1 binding) must be derivable from the supplied files, even if no value
 or receipts remain. Malformed history, duplicate material, unsafe files or omitted
 historical material refuse startup with a fixed error and leave stored data
 unchanged. An absent legacy history table is distinct from a missing row in an existing
-history table, which is refused. V1-only stores upgrade in the same transaction; no ciphertext or receipt
+history table, which is refused. Existing holder tables without their original
+v1 binding are also refused, including a damaged legacy store. V1-only stores upgrade in the same transaction; no ciphertext or receipt
 rewrite occurs. Explicit reactivation of an old pair is allowed with the complete
 ring. Keep every used identity and key separately from the ciphertext backup.
 This is retention-based rotation: existing ciphertext is not reencrypted, and old

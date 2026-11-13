@@ -162,3 +162,9 @@ it('keeps all active and retained key material out of holder/loom records, files
  expect(logs.flatMap(l=>l.mock.calls)).toEqual([]);
  for(const error of errors)expect((error as Error).message).toBe('Secret holder storage unavailable');
 });
+it('refuses damaged legacy stores missing the original binding instead of accepting replacement material',async()=>{
+ const f=await setup(),s=await f.open();await s.set(who(),'API',Buffer.from(sentinel),'add');s.close();
+ const db=new Database(join(f.directory,'holder.db'));try{db.exec('DROP TABLE holder_key_history; DELETE FROM holder_config');}finally{db.close();}
+ const before=snapshot(f.directory);await expect(f.open(1)).rejects.toThrow(/^Secret holder storage unavailable$/);expect(snapshot(f.directory)).toEqual(before);
+ await expect(f.open()).rejects.toThrow();expect(snapshot(f.directory)).toEqual(before);
+});

@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import { isAbsolute } from 'node:path';
 import { privateBytes, listenLocalHolder } from './local-holder.js';
-import { openHolderStore } from './holder-store.js';
+import { openHolderStore, type HolderStore } from './holder-store.js';
 import { listenHolderMutations } from './holder-mutations.js';
 import { holderTls, certificateFingerprint, remoteHolderAuthority } from './holder-authority.js';
 const path=z.string().refine(isAbsolute);
@@ -21,10 +21,17 @@ export async function startPersistentHolder(file:string) {
     const config=configSchema.parse(JSON.parse(bytes.toString('utf8')));
     if(new Set([config.read.socket,config.mutation.socket,config.authority.socket]).size!==3) throw Error();
     const authority=remoteHolderAuthority(config.authority,config.daemonFingerprint);
+    // Bind every fallible listener before committing key history. Until the
+    // store is assigned, real authenticated requests fail closed at the gate.
+    const ready=()=>{if(!store)throw new Error('Persistent secret holder unavailable');return store;};
+    reader=await listenLocalHolder(config.read,{read:name=>ready().read(name),generation:()=>ready().generation()},config.daemonFingerprint);
+    writer=await listenHolderMutations(config.mutation,{
+      set:(...args:Parameters<HolderStore['set']>)=>ready().set(...args),
+      remove:(...args:Parameters<HolderStore['remove']>)=>ready().remove(...args),
+      hasReceipt:(...args:Parameters<HolderStore['hasReceipt']>)=>ready().hasReceipt(...args),
+    },authority);
     store=await openHolderStore(config.directory,config.identity,config.fingerprintKey,
       {identities:config.previousIdentities,fingerprintKeys:config.previousFingerprintKeys});
-    reader=await listenLocalHolder(config.read,store,config.daemonFingerprint);
-    writer=await listenHolderMutations(config.mutation,store,authority);
     let closing:Promise<void>|undefined;
     return {close(){return closing??=cleanup();}};
   } catch {
