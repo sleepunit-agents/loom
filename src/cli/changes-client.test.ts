@@ -9,6 +9,7 @@ import { FakeClock,type Viewer } from '../core/index.js';
 import { installChanges } from '../pieces/changes/index.js';
 import { change } from '../pieces/changes/fixture.js';
 import { replaceChanges } from '../pieces/changes/store.js';
+import { runCli, runCliLocal } from './index.js';
 import { runChangesClient } from './changes-client.js';
 const dirs:string[]=[],close:(()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const fn of close.splice(0)) await fn();for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true});});
@@ -17,7 +18,7 @@ async function setup(){
  const app=await startLoom({home,clock,sharing:fixtureSharing,authenticate:()=>({viewer:owner,valid:()=>true}),install:app=>installChanges(app.db,app.operations,app.live,fixtureSharing)});close.push(app.close);
  const token=join(home,'token');writeFileSync(token,'fixture-token');
  const run=async(args:string[],request:typeof fetch=fetch)=>{let stdout='',stderr='';const bodies:string[]=[];const code=await runChangesClient(args,{stdout:s=>stdout+=s,stderr:s=>stderr+=s,stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:app.url,LOOM_TOKEN_FILE:token}},{request:async(url,init)=>{bodies.push(String(init?.body));return request(url,init);},retry:async()=>{}});return {code,stdout,stderr,bodies};};
- return {...app,clock,owner,run};
+ return {...app,home,clock,owner,run};
 }
 it('prints open list lines and refresh acknowledgement through the real HTTP operation',async()=>{
  const app=await setup();replaceChanges(app.db,[change(),change({id:'github:acme/app#4',number:4,state:'merged',closed:new Date(app.clock.now()).toISOString()})]);
@@ -60,4 +61,19 @@ it('does not turn hidden records into untracked thread links for a restricted me
  const answer=app.operations.call('direct',{kind:'member',id:'pollock'},'changes.thread-feed',{conversation:'cv-123456789abc',references:[change().id,'github:acme/app#4','github:public/app#99']});
  expect(answer).toMatchObject({ok:true,value:{items:[{ref:'github:acme/app#4'},{ref:'github:public/app#99',status:'Not tracked'}]}});
  if(answer.ok)expect((answer.value as {items:unknown[]}).items).toHaveLength(2);
+});
+
+it('routes loom changes to scoped operations despite a legacy executable and refuses HTTP CLI forwarding',async()=>{
+ const app=await setup();replaceChanges(app.db,[change()]);
+ const bin=mkdtempSync(join(tmpdir(),'changes-legacy-'));dirs.push(bin);
+ writeFileSync(join(bin,'loom-changes'),'#!/bin/sh\necho legacy-adapter\n',{mode:0o755});
+ let stdout='',stderr='';
+ const io={stdout:(s:string)=>stdout+=s,stderr:(s:string)=>stderr+=s,stdin:Readable.from([]),stdinIsTTY:false,
+  env:{PATH:bin,LOOM_URL:app.url,LOOM_TOKEN_FILE:join(app.home,'token')}};
+ expect(await runCli(['changes','list'],io)).toBe(0);
+ expect(stdout).toBe('github:acme/app#3  CI green, approved, Waiting on you  — A change\n');expect(stderr).toBe('');
+ stdout='';
+ expect(await runCliLocal(['changes','refresh'],io)).toBe(2);
+ expect(stdout).toBe('');expect(stderr).toContain('use /api/changes operations directly');
+ expect(app.db.prepare('SELECT due FROM changes_jobs').get()).toBeUndefined();
 });

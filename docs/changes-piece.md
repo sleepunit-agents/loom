@@ -10,7 +10,7 @@ untouched by this branch.
 
 | Old surface | Replacement | Behavior or deliberate change |
 | --- | --- | --- |
-| `loom-changes list` | Generated `loom-changes list` → `changes.list` | Open-only text output; direct operation readers receive rich records. |
+| `loom-changes list` | `loom changes list` / generated `loom-changes list` → `changes.list` | Open-only text output; direct operation readers receive rich records. |
 | `refresh` / refresh marker file | `changes.refresh` and durable `changes_jobs` row | Same acknowledgement, owner policy, operation-id retry; wakes the daemon job. |
 | `sync --once` | Root-owned job's `run()` | Internal lifecycle operation, not an agent command that discovers credentials. |
 | `sync` service / separate timer | `installChangesDaemon` → durable job | One process and clock; due time and pending refresh survive restart. |
@@ -26,7 +26,10 @@ untouched by this branch.
 The package supplies `loom-changes` as an API client. It uses `LOOM_URL` and
 `LOOM_TOKEN_FILE`, shares command metadata with operation registration, and retries
 writes using the same operation id. It does not wrap the Taskstore formatter.
-The core `loom changes` dispatcher has not been added.
+`loom changes ...` calls that same generated client directly. This built-in path
+wins over an installed legacy `loom-changes` program and never calls the old
+`/api/changes/run` adapter. The HTTP local-CLI endpoint refuses this command rather
+than forwarding a request through a second connection.
 
 ## Boundaries and choices
 
