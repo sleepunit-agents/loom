@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Bridges: add service-credential Slack API inspection with fresh paginated membership and staging read gates.
 - Add holder-owned age ciphertext storage with atomic, member-bound full-input retry receipts, ready for authenticated mutation composition.
 - Add the new runtime runner's bounded, commit-pinned Git snapshot reader for house build inspection.
 

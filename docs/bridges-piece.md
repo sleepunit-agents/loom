@@ -303,3 +303,31 @@ repair. Pending rows remain completion requirements for t-2210.
 Do not deploy, import real data, or retire old adapters from this slice. The whole
 new side is assembled beside the old one; the coordinator runs and verifies the
 final import/cutover with Jonathan when every bridge slice is complete.
+
+## Slack Web API inspection
+
+`slackApi` reads fresh `conversations.info`, every page of
+`conversations.members` for MPIMs, and `users.info` for every other member.
+It returns the complete member set only when workspace, human, guest/deleted/bot
+and channel checks pass. DMs bind the event sender to the authenticated IM peer.
+Malformed replies, incomplete/repeated pagination and temporary API failures wait;
+definite platform denials drop. Membership is bounded at 10,000 and each response
+at 1 MiB; larger conversations wait for explicit support rather than admitting a
+partial group. There is no inspection cache or automatic HTTP retry.
+
+The caller supplies the bridges service's `SecretUse` (composed with the real
+holder by the root), and a staging read gate. The gate runs before every request,
+then `withValue` checks current secret authority and confines the token to that
+request. Requests use only Slack's fixed HTTPS API origin, refuse redirects and
+time out after 15 seconds. Errors and returned inspection evidence contain no
+upstream response words or credentials. This client is not yet registered: Socket
+Mode, the engine's legacy credential seam, runtime admission and daemon lifecycle
+composition remain required before production activation. Fake HTTP tests do not
+claim live connectivity or end-to-end adapter readiness.
+
+A definite denial means the channel or requested user is unavailable to this bot
+(`channel_not_found`, `not_in_channel`, `user_not_found`, `user_not_visible`). Bot
+credential/configuration failures such as `missing_scope` and `account_inactive`
+wait for owner repair, as the legacy Slack check failures did; they do not prove
+that the sender is permanently ineligible. Malformed envelopes never imply a
+definite denial. The durable engine's transient intake budget still applies.
