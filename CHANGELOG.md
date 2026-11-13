@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add explicit `loom mcp --next` stdio composition for row-backed household metadata and offline per-agent continuity.
+
 - Add route creation, editing and confirmed removal to the next-mode Bridges preview, with pending-write and stale-draft guards.
 - Add next-mode assigned runner job claims and progress reports, with atomic retries and no input or credential delivery.
 
