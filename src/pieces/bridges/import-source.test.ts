@@ -182,14 +182,14 @@ it('inventories arbitrary note-key membership without retaining map values or gr
  const root=mkdtempSync(join(tmpdir(),'bridges-note-keys-'));roots.push(root);
  const path=join(root,'routes.json');
  writeFileSync(path,JSON.stringify({guild:'789',channels:{'300':{primary:'art'}},
-   'work / custom': ['300',400], scalar:300, mapped:{'300':'PRIVATE_UNUSED_VALUE','500':false},
+   'work / custom': ['300',400], scalar:300, scalarString:'300', mapped:{'300':'PRIVATE_UNUSED_VALUE','500':false},
    empty:[], objectEmpty:{}, ignored:true, _annotation:['300'],notify:{art:'300'}}));
  const route=readBridgeInventory([{name:'routes.json',path,kind:'routes'}]).routes[0];
- expect(route.noteChannels).toEqual({'work / custom':['300','400'],scalar:['300'],mapped:['300','500'],empty:[],objectEmpty:[]});
+ expect(route.noteChannels).toEqual({'work / custom':['300','400'],scalar:['300'],scalarString:['300'],mapped:['300','500'],empty:[],objectEmpty:[]});
  expect(JSON.stringify(route)).not.toContain('PRIVATE_UNUSED_VALUE');
  expect(route.channels[0]).not.toHaveProperty('notes');
- expect(bridgeSourceNoteKeys(route,'300')).toEqual(['mapped','scalar','work / custom']);
- expect(bridgeSourceNoteKeys(route,'400','300')).toEqual(['mapped','scalar','work / custom']);
+ expect(bridgeSourceNoteKeys(route,'300')).toEqual(['mapped','scalar','scalarString','work / custom']);
+ expect(bridgeSourceNoteKeys(route,'400','300')).toEqual(['mapped','scalar','scalarString','work / custom']);
  expect(bridgeSourceNoteKeys(route,'300','unknown')).toEqual([]);
 });
 it('refuses lossy note membership numbers with safe source-key diagnostics',()=>{

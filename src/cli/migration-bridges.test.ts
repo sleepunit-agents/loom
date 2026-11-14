@@ -21,14 +21,14 @@ async function fixture(budgetSource?:'file'|'store',notes=false){
  put(join(old,'household.json'),{v:1,agents:['art'],default:'art',owner:'jonathan'});
  put(join(instance,'shuttle.json'),{agent:{slug:'art'},discord:{token_file:'/never-open'}});
  put(join(instance,'people.json'),{people:{jonathan:{discord:['123']}}});
- put(join(instance,'routes.json'),{guild:'789',bots:{art:'100'},channels:{'300':{primary:'art'}},...(budgetSource==='file'?{peer_turns_each:0,...(notes?{'custom / note':['300'],mapped:{'400':1.25}}:{})}:{})});
+ put(join(instance,'routes.json'),{guild:'789',bots:{art:'100'},channels:{'300':{primary:'art'}},...(budgetSource==='file'?{peer_turns_each:0,...(notes?{'custom / note':['300'],scalarString:'300',mapped:{'400':1.25}}:{})}:{})});
  writeFileSync(join(instance,'credentials'),'do not collect');
  const storePath=join(old,'commons/stores/shuttle.db');mkdirSync(dirname(storePath),{recursive:true});const store=new Database(storePath);
  store.exec('CREATE TABLE docs(collection TEXT,key TEXT,doc TEXT,rev INTEGER,updated TEXT,by TEXT);CREATE TABLE revisions(id INTEGER,collection TEXT,key TEXT,doc TEXT,rev INTEGER,op TEXT,at TEXT,by TEXT)');
  store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('unknown','private','{"raw":9007199254740991.1}','today','owner');
  if(budgetSource==='store'){
   store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('routes','household','{"guild":"789","peer_turns_each":0}','today','owner');
-  store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('channels','art',JSON.stringify({bot:'100',answers:{'300':'work'},...(notes?{extra:{'custom / note':['300'],mapped:{'400':1.25}}}:{})}),'today','owner');
+  store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('channels','art',JSON.stringify({bot:'100',answers:{'300':'work'},...(notes?{extra:{'custom / note':['300'],scalarString:'300',mapped:{'400':1.25}}}:{})}),'today','owner');
  }
  store.close();
  await createSnapshot(old,snapshot,undefined,{bridges:[instance]});
@@ -173,7 +173,7 @@ for(const origin of ['file','store'] as const)it(`verifies arbitrary note member
  try{
   const row=d.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as {value:string};
   const evidence=JSON.parse(row.value);
-  expect(evidence.noteInventories[0]).toMatchObject({agent:'art',noteChannels:{'custom / note':['300'],mapped:['400']}});
+  expect(evidence.noteInventories[0]).toMatchObject({agent:'art',noteChannels:{'custom / note':['300'],scalarString:['300'],mapped:['400']}});
   expect((d.prepare('SELECT record FROM bridges_routes').all() as {record:string}[]).every(r=>JSON.parse(r.record).notes.length===0)).toBe(true);
   evidence.noteInventories[0].noteChannels['custom / note']=['999'];
   d.prepare("UPDATE bridges_meta SET value=? WHERE key='legacy-evidence'").run(JSON.stringify(evidence));
