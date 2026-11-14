@@ -1176,7 +1176,10 @@ exception in central policy.
 For public prompt work Runtime atomically creates the job, wake binding, input
 and monotonic sender history. A vacant lane place can be bound by this producer;
 unproved work cannot replace an occupied lane. Runtime preserves the original
-credential service separately from the dispatching Clock service. Runner input
+credential service separately from the dispatching Clock service, including
+restricted tokens without a live conversation. Runtime exposes credential
+restriction metadata separately from conversation/principal proof; losing a
+binding never turns a restricted source into an unrestricted body. Runner input
 issues the existing central body credential for this owning binding. The body
 reads scheduled words through `runtime.readConversation`; runner credentials,
 member tokens and unbound agent tokens cannot read that inbox. Current house,

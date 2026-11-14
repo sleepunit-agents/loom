@@ -37,7 +37,7 @@ async function setup(staging=false,sharing?:()=>Sharing){
   const input={agent:'art',title:'Fixture start',brief:'PRIVATE start words',source:{kind:'manual',id:'fixture'}};
   const jobOf=(r:ReturnType<typeof call>):string=>{expect(r.ok).toBe(true);return (r as {ok:true;value:{job:string}}).value.job;};
   const schedule=async(viewer=owner)=>{const r=call('clock.in',{agent:'art',prompt:'PRIVATE wake words',note:'fixture',when:'1s'},viewer);expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id;clock.advance(1000);await settle();return id;};
-  return {get app(){return app;},clock,call,post,input,jobOf,runner,other,member,schedule,
+  return {get app(){return app;},clock,call,post,input,jobOf,runner,other,member,schedule,token,
     get store(){return runtimeStore(app.db);},async restart(){await app.close();app=await startLoom({home,clock,next:true,staging,sharing,stdout:()=>{}});}};
 }
 it('offers real startBody over HTTP and preserves the source intent across new receipts and restart',async()=>{
@@ -375,6 +375,13 @@ it('creates a real wake binding and joins only after the authenticated body read
  expect(wake(f.app.db,after.value.id)?.authorship).toMatchObject({origin:'art',conversation:cv,principal:{for:'owner',people:[]}});
  expect(JSON.parse((f.app.db.prepare('SELECT record FROM runtime_provenance WHERE conversation=?').get(cv) as {record:string}).record).history).toMatchObject({owners:['jonathan'],owner:true,unknown:false});
 
+ const raced=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'raced-join',input:{agent:'art',prompt:'Cancelled during read preparation',note:'race',place:'lane:daily',when:'1s'}})})).json();
+ expect(raced.ok).toBe(true);f.clock.advance(1000);await settle();
+ const authenticated=signin(f.app).token(hash(body))!.viewer;
+ const prepared=f.app.operations.callAsync('direct',authenticated,'runtime.readConversation',{},'raced-read');
+ expect(f.call('clock.cancel',{id:raced.value.id}).ok).toBe(true);
+ expect(await prepared).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${raced.value.id}`)).toEqual({consumed:null});
  const box=f.store.read('box','a')!;
  f.app.db.transaction(()=>{const {changedAt:_,...b}=box;f.store.put('box',{...b,revokedAt:f.clock.now()},f.clock.now());})();
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
@@ -428,12 +435,10 @@ it('rechecks original Clock source authority at the words boundary, without acce
 });
 
 it('issues the original restricted service on the scheduled body credential, separately from Clock dispatch',async()=>{
- const f=await setup(),r=f.call('clock.in',{agent:'art',prompt:'Restricted scheduled input',note:'source',when:'1s'});
- expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id,scheduled=wake(f.app.db,id)!;
- // Owning stored source fixture: the credential issuer must preserve this service,
- // rather than silently issuing an unrestricted body or substituting Clock.
- scheduled.authorship!.service='restricted';
- f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(scheduled),id);
+ const f=await setup(),restricted=f.token('agent:art/restricted');
+ const r=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${restricted}`},body:JSON.stringify({id:'restricted-source',input:{agent:'art',prompt:'Restricted scheduled input',note:'source',when:'1s'}})})).json();
+ expect(r.ok).toBe(true);const id=r.value.id;
+ expect(wake(f.app.db,id)?.authorship).toMatchObject({origin:'art',service:'restricted',principal:{for:'?'}});
  f.clock.advance(1000);await settle();const job=f.store.ids('job')[0];
  expect(f.store.read('job',job)?.service).toBe('restricted');
  await f.post(f.runner,'claimJob',{job});const payload=await f.post(f.runner,'takeInput',{job});

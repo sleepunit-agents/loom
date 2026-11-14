@@ -23,6 +23,7 @@ const sourceRecord=(wake:Wake,attempt:string)=>JSON.stringify({text:wake.prompt,
 interface Proof {agent:string;job?:string;service?:string;valid():boolean}
 export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:OutsideEffects,proof:(v:Viewer)=>Proof|undefined) {
   const {db,operations}=app,store=runtimeStore(db),destination=clockDestination(app,sharing);
+  const reads=new WeakMap<object,{job:string;rows:Turn[]}>();
   const owners=()=>Object.entries(sharing().members).filter(([,m])=>m.owner).map(([id])=>id);
   const currentSource=(row:Turn,job:RuntimeRecords['job'])=>{
     const record=JSON.parse(row.record) as {text:string;attempt:string};
@@ -106,7 +107,9 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     })();
     if(rows.some(r=>r.released===null))effects.finish(`runtime:clock-read:${job.id}:${rows[0]?.seq}`);
     app.live.changed([{type:'runtime.job',id:job.id}]);
-    return {conversation:job.conversation,messages:rows.reverse().map(r=>({seq:r.seq,id:r.id,kind:'wake',text:(JSON.parse(r.record) as {text:string}).text}))};
+    const value={conversation:job.conversation,messages:[...rows].reverse().map(r=>({seq:r.seq,id:r.id,kind:'wake',text:(JSON.parse(r.record) as {text:string}).text}))};
+    reads.set(value,{job:job.id,rows});
+    return value;
   };
   operations.register(operation({name:'runtime.acknowledgeClockInput',doors:['http','direct'],write:true,recheckPolicy:true,
     input:z.object({through:z.number().int().positive()}).strict(),output:z.object({acknowledged:z.literal(true)}),
@@ -128,6 +131,10 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     return {agent:job.agent,conversation:job.conversation,project:job.project,service:job.service,principal:principalFromHistory(p.history,owners())};
   };
   return {valid,bound,read,clockProvenance,
+    currentRead(v:Viewer,value:unknown){
+      const snapshot=value&&typeof value==='object'?reads.get(value):undefined,job=bound(v);
+      return !!snapshot&&!!job&&snapshot.job===job.id&&snapshot.rows.every(row=>currentSource(row,job));
+    },
     job:(wake:string)=>(db.prepare('SELECT job FROM runtime_clock_turns WHERE id=?').get(`clock:${wake}`) as {job:string}|undefined)?.job,
     consumed:(source:string)=>{const row=db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(source) as {consumed:number|null}|undefined;return !!row&&row.consumed!==null;},
   };

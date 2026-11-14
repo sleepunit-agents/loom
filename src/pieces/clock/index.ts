@@ -64,6 +64,8 @@ function quotaDue(reset: unknown, now: number): number {
 export interface ClockOptions {
   /** Original principal/scope proof, separate from capacity and local approval Caller. */
   provenance?: ClockProvenanceReader;
+  /** Exact credential restriction only; never conversation or principal authority. */
+  credentialService?(viewer:Viewer):string|undefined;
   /** Runtime-owned current binding proof; capacity only, never authority. */
   capacityConversation?(viewer: Viewer): string | undefined;
   caller?(viewer: Viewer): import('../approvals/role.js').Caller | undefined;
@@ -94,7 +96,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       && create(w.by,w) && create({kind:'agent',id:w.agent},w)
       && (w.authorship?.principal.people??[]).every(id=>create({kind:'member',id},w)) ? structuredClone(w) : undefined;
   });
-  const prepareFiling = (v: Viewer, w: Work) => filing(v, w, sharing(), options.provenance);
+  const prepareFiling = (v: Viewer, w: Work) => {
+    const filed=filing(v,w,sharing(),options.provenance),service=options.credentialService?.(v);
+    if(filed?.authorship&&service!==undefined)filed.authorship.service=service;
+    return filed;
+  };
   const mayFile = (v: Viewer, w: Work) => {
     const filed = prepareFiling(v, w);
     return !!filed && (create(v, filed) || mayFilePrivateWork(v, { ...scope(filed),
