@@ -6,6 +6,7 @@ const { filesystemCall } = vi.hoisted(() => ({ filesystemCall: vi.fn(() => { thr
 vi.mock('node:fs', async importOriginal => {
   const original = await importOriginal<typeof import('node:fs')>();
   const guarded = Object.fromEntries(Object.entries(original).map(([key, value]) => [key, typeof value === 'function' ? filesystemCall : value]));
+  guarded.promises = Object.fromEntries(Object.entries(original.promises).map(([key, value]) => [key, typeof value === 'function' ? filesystemCall : value]));
   return { ...guarded, default: guarded };
 });
 vi.mock('node:fs/promises', async importOriginal => {
