@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,7 +22,7 @@ async function setup(raw:Record<string,unknown>={}) {
  const access:Sharing={members:{jonathan:{owner:true,agents:['art']},pollock:{owner:false,agents:['art']}},projects:{},services:{}};
  const starts:unknown[]=[];
  const open=async(importing=false)=>{
-  const app=await startLoom({home:join(dir,'new'),clock,install(app){
+  const app=await startLoom({home:join(dir,'new'),clock,authenticate:req=>({viewer:req.headers['x-fixture-agent']?{kind:'agent',id:'art'}:owner,valid:()=>true}),install(app){
    if(importing)importClock(app.db,from,clock.now());
    const jobs=installClock(app.db,app.operations,app.live,()=>access,{runtime:{async startBody(i){starts.push(i);return {state:'started',body:'fixture-body'};}}});app.onClose(jobs.close);
   }});
@@ -119,4 +121,27 @@ it('uses the daemon command grammar, and rechecks owner authority on command rec
  expect((result as {value:{stdout:string}}).value.stdout).toContain('schedule daily: next at');expect(wakes(s.app.db)).toHaveLength(1);
  expect(s.call('command',request,owner,receipt)).toEqual(result);
  s.access.members.jonathan.owner=false;expect(s.call('command',request,owner,receipt)).toMatchObject({ok:false,code:'denied'});
+});
+
+it('offers recovery only to the current owner and refreshes availability when linked work becomes uncertain',async()=>{
+ const s=await setup();const sockets:WebSocket[]=[];
+ try {
+  for(const agent of [false,true]) {
+   const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:agent?{'x-fixture-agent':'art'}:{}});sockets.push(ws);await once(ws,'open');
+   const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'schedule'}));const [raw]=await initial;
+   expect(JSON.parse(raw.toString()).records[0].canRecover).toBe(!agent);
+  }
+  // A wake change must invalidate the schedule's derived hint independently.
+  const row=schedules(s.app.db)[0];
+  const linked={...row,id:'w-linked',schedule:row.id,due:s.clock.now()+1000,state:'held',hold:'uncertain',failures:0,createdAt:s.clock.now()};
+  s.app.db.prepare('INSERT INTO clock_wakes (id,record,changed_at) VALUES (?,?,?)').run(linked.id,JSON.stringify(linked),s.clock.now());
+  let changed=once(sockets[0],'message');s.app.live.changed([{type:'wake',id:linked.id}]);let [raw]=await changed;
+  expect(JSON.parse(raw.toString()).record.canRecover).toBe(false);
+  s.app.db.prepare('DELETE FROM clock_wakes WHERE id=?').run(linked.id);
+  changed=once(sockets[0],'message');s.app.live.changed([{type:'wake',id:linked.id}]);[raw]=await changed;
+  expect(JSON.parse(raw.toString()).record.canRecover).toBe(true);
+  changed=once(sockets[0],'message');s.access.members.jonathan.owner=false;s.app.live.refreshAccess();[raw]=await changed;
+  expect(JSON.parse(raw.toString()).records[0].canRecover).toBe(false);
+  expect(s.call('scheduleRecover',input)).toMatchObject({ok:false,code:'denied'});
+ } finally {for(const ws of sockets){const closed=once(ws,'close');ws.terminate();await closed;}}
 });

@@ -132,6 +132,12 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const saved=schedule(db,input.id);
     return mayFile(v,input) && (!saved || (saved.laneDetails ? act(v,saved,true) : mayControl(v,saved)));
   };
+  const recoverableSchedule = (old:Schedule) => old.by.kind==='runner' && old.by.id==='clock-import:unverified'
+    && !old.enabled && old.importRecovery==='plain' && !!old.prompt && !old.file
+    && old.member===undefined && old.project===undefined && !old.lane && !old.laneDetails
+    && !old.model && !old.slot && !old.continuation && !old.approval && !old.place;
+  const recoveryBlocked = (id:string) => wakes(db).some(w=>w.schedule===id && active(w)
+    && (w.state==='firing' || w.hold==='uncertain' || !!w.attempt));
   const mayRecoverSchedule = (v:Viewer,input:Work & {id:string}) => {
     const saved=schedule(db,input.id);
     return v.kind==='member' && mayAct(v,{},sharing(),'household') && mayFile(v,input)
@@ -428,12 +434,10 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     mayRecoverSchedule,
     (ctx,input) => {
       const old=schedule(db,input.id)!;
-      if(old.by.kind!=='runner' || old.by.id!=='clock-import:unverified' || old.enabled || old.importRecovery!=='plain'
-        || old.agent!==input.agent || !old.prompt || old.file || old.member!==undefined || old.project!==undefined || old.lane || old.laneDetails
-        || old.model || old.slot || old.continuation || old.approval || old.place)
+      if(!recoverableSchedule(old) || old.agent!==input.agent)
         invalid('Only a plain disabled imported schedule can be recovered; refile other work through its owning flow');
       if(input.prompt.includes('<!-- house: local -->')) invalid('Local work needs its owning approval flow');
-      if(wakes(db).some(w=>w.schedule===old.id && active(w) && (w.state==='firing' || w.hold==='uncertain' || !!w.attempt)))
+      if(recoveryBlocked(old.id))
         invalid('Reconcile the imported schedule occurrence before recovering its schedule');
       const i=filedWork(ctx.viewer,input); newWork(i); calendar(()=>daysOf(i.days));
       // A complete new submission is fresh owner work, not a widening edit of
@@ -675,6 +679,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     for (const w of wakes(db).filter(w => w.state === 'firing')) { w.state = 'held'; w.hold = 'uncertain'; w.outcome = 'Restart interrupted dispatch; reconcile with runtime before retrying'; w.changedAt = clock.now(); db.prepare('UPDATE clock_wakes SET record=?,changed_at=? WHERE id=?').run(JSON.stringify(w), w.changedAt, w.id); }
   })();
   for (const type of ['wake', 'schedule'] as const) live.register({ name: type, privateWindowOnly:true,
+    refreshOn: change => type==='schedule' && change.type==='wake',
     ids: () => (type === 'wake' ? wakes(db) : schedules(db)).map(w => w.id),
     read(id, v) {
       const w = type === 'wake' ? wake(db, id) : schedule(db, id);
@@ -689,7 +694,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         && create(v, w)) {
         try { newWork(w); canAskVouch = true; } catch (e) { if (!(e instanceof OperationError) || e.code !== 'invalid') throw e; }
       }
-      return { ...publicWork(w), ...(type === 'wake' ? { canVouch, canAskVouch } : {}) };
+      return { ...publicWork(w), ...(type === 'wake' ? { canVouch, canAskVouch } : { canRecover: recoverableSchedule(w as Schedule) && !recoveryBlocked(w.id) && mayRecoverSchedule(v,{id:w.id,agent:w.agent,note:''}) }) };
     },
     inScope: (r, agent, now) => (!agent || r.agent === agent) && (type === 'schedule' || active(r as unknown as Wake) || Number(r.changedAt) + day > now),
     expires: r => type === 'wake' && !active(r as unknown as Wake) ? Number(r.changedAt) + day : undefined,
