@@ -1,3 +1,7 @@
+import * as runtimeRole from '../runtime/role.js';
+import Database from 'better-sqlite3';
+import {migrate} from '../../core/db/index.js';
+import {schema} from './schema/001.js';
 import {ticketAuthorityFixture} from '../../runtime-runner/ticket-authority.fixture.js';
 import {IncomingMessage} from 'node:http';
 import https from 'node:https';
@@ -9,7 +13,7 @@ import {join} from 'node:path';
 import {randomUUID,X509Certificate} from 'node:crypto';
 import {fixture} from '../../fixture.js';
 import {startLoom} from '../../foundation.js';
-import {FakeClock,type Viewer} from '../../core/index.js';
+import {FakeClock,type RecordType,type Viewer} from '../../core/index.js';
 import {HouseholdDatabase} from '../../core/household/document.js';
 import {SharingDatabase} from '../../core/household/sharing.js';
 import {signin,hash} from '../../core/signin/index.js';
@@ -18,9 +22,15 @@ import type {RuntimeRecords} from '../runtime/records.js';
 import {secretTickets} from './tickets.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
-async function setup(service?:string) {
+async function setup(service?:string,observe=false) {
  const home=mkdtempSync(join(tmpdir(),'runtime-secret-destination-'));closes.push(()=>rmSync(home,{recursive:true,force:true}));fixture(home);
- const clock=new FakeClock(),app=await startLoom({home,next:true,staging:true,clock,stdout(){}});closes.push(app.close);
+ const records:RecordType[]=[],stdout:string[]=[];
+ const clock=new FakeClock(),app=await startLoom({home,next:true,staging:true,clock,stdout(text){stdout.push(text);},install:a=>{
+  if(!observe)return;
+  const register=a.live.register.bind(a.live);
+  const spy=vi.spyOn(a.live,'register').mockImplementation(type=>{records.push(type);register(type);});
+  closes.push(()=>spy.mockRestore());
+ }});closes.push(app.close);
  const auth=signin(app),store=runtimeStore(app.db),id=randomUUID(),house={repo:'/synthetic/art',houseFile:'house/house.json'};
  app.db.transaction(()=>{
   auth.tokens.replace({v:1,tokens:[]},{});
@@ -43,7 +53,7 @@ async function setup(service?:string) {
  const admit=()=>tickets.admit(viewer,'API');
  const release=(ticket:string)=>call('core.releaseEffect',{id:`secrets:handoff:${ticket}`});
  const claim=()=>{const ticket=admit();expect(tickets.claim(ticket.id)).toBeNull();release(ticket.id);const c=tickets.claim(ticket.id);expect(c).not.toBeNull();return {ticket,c:c!};};
- return {home,app,clock,store,auth,id,viewer,token,job,box,sharing,call,tickets,admit,release,claim,grant};
+ return {home,app,clock,store,auth,id,viewer,token,job,box,sharing,call,tickets,admit,release,claim,grant,records,stdout};
 }
 it.each([undefined,'slack'])('holds before claim and consumes once for exact current service %s',async service=>{
  const f=await setup(service),{ticket,c}=f.claim();
@@ -332,4 +342,134 @@ it.each([false,true])('abandons the original daemon admission before/after claim
  expect(f.state(admission.id)).toEqual({state:'uncertain'});if(claim)expect(claim.current()).toBe(false);
  await expect(admission.dispatch()).rejects.toThrow();expect(f.tickets.claim(admission.id)).toBeNull();
  expect(()=>f.tickets.admitHandoff(f.viewer,'API',pending,holder)).toThrow();
+});
+
+
+it.each(['admitted','uncertain','released'] as const)('retains %s pending denial across independent roles and an actual database reopen',async state=>{
+ const f=await setup(),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ const ticket=f.tickets.admit(f.viewer,'API',request);
+ if(state!=='admitted') {expect(f.tickets.claim(ticket.id)).toBeNull();f.release(ticket.id);f.tickets.claim(ticket.id)!.finish(state==='released');}
+ const fresh=secretTickets(f.app,f.sharing,f.app.effects!);
+ expect(()=>fresh.admit(f.viewer,'API',request)).toThrow(/^Secret handoff unavailable$/);
+ expect(fresh.claim(ticket.id)).toBeNull();
+ await f.app.close();
+ const app=await startLoom({home:f.home,next:true,staging:true,clock:f.clock,stdout(){}});closes.push(app.close);
+ const viewer=signin(app).token(hash(f.token))!.viewer;
+ const sharing=()=>new SharingDatabase(app.db,f.home).sharing();
+ const reopened=secretTickets(app,sharing,app.effects!);
+ // Prove the real retained body/grant still permits a fresh request.
+ expect(reopened.admit(viewer,'API',{...request,id:randomUUID()})).toHaveProperty('id');
+ expect(()=>reopened.admit(viewer,'API',request)).toThrow(/^Secret handoff unavailable$/);
+ expect(reopened.claim(ticket.id)).toBeNull();
+ const rows=app.db.prepare('SELECT * FROM secrets_pending_tombstones').all();
+ expect(rows).toHaveLength(2);
+ for(const row of rows)expect(row).toEqual({digest:expect.stringMatching(/^[0-9a-f]{64}$/)});
+ expect(JSON.stringify(rows)).not.toContain(request.id);
+});
+it('canonicalizes UUID case for durable pending denial',async()=>{
+ const f=await setup(),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ f.tickets.admit(f.viewer,'API',request);
+ expect(()=>f.tickets.admit(f.viewer,'API',{...request,id:request.id.toUpperCase()})).toThrow(/^Secret handoff unavailable$/);
+ expect(f.app.db.prepare('SELECT count(*) AS n FROM secrets_pending_tombstones').get()).toEqual({n:1});
+});
+it('accepts more than 1024 lifetime admissions without forgetting retired pending ids',async()=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},first=randomUUID();
+ const holder=await testHolder(f,async()=>{});
+ for(let i=0;i<1025;i++) {
+  const t=f.tickets.admitHandoff(f.viewer,'API',{id:i===0?first:randomUUID(),binding},holder.client);t.abandon();
+ }
+ expect(holder.calls).not.toHaveBeenCalled();
+ expect(f.app.db.prepare('SELECT count(*) AS n FROM secrets_pending_tombstones').get()).toEqual({n:1025});
+ expect(()=>f.tickets.admit(f.viewer,'API',{id:first,binding})).toThrow(/^Secret handoff unavailable$/);
+});
+it('fails closed without a ticket or burned marker when durable denial cannot commit',async()=>{
+ const f=await setup(),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ f.app.db.exec("CREATE TRIGGER fail_marker BEFORE INSERT ON secrets_pending_tombstones BEGIN SELECT RAISE(ABORT,'private-detail'); END");
+ expect(()=>f.tickets.admit(f.viewer,'API',request)).toThrow(/^Secret handoff unavailable$/);
+ expect(f.app.db.prepare('SELECT * FROM secrets_tickets').all()).toEqual([]);
+ expect(f.app.db.prepare('SELECT * FROM secrets_pending_tombstones').all()).toEqual([]);
+ f.app.db.exec('DROP TRIGGER fail_marker');
+ expect(f.tickets.admit(f.viewer,'API',request)).toHaveProperty('id');
+});
+
+
+it('adds durable denial storage to schema 6 without changing old ticket rows and is repeatable',()=>{
+ const db=new Database(':memory:');
+ try {
+  db.exec('CREATE TABLE core_migrations (piece TEXT, number INTEGER, sql TEXT, PRIMARY KEY(piece,number))');
+  migrate(db,'secrets',schema.filter(m=>m.number<=6));
+  const old=[randomUUID(),'API','grant','{}','policy','{}',123,'uncertain'];
+  db.prepare('INSERT INTO secrets_tickets VALUES (?,?,?,?,?,?,?,?)').run(...old);
+  const before=db.prepare('SELECT * FROM secrets_tickets').all();
+  migrate(db,'secrets',schema);migrate(db,'secrets',schema);
+  expect(db.prepare('SELECT * FROM secrets_tickets').all()).toEqual(before);
+  expect(db.prepare('SELECT * FROM secrets_pending_tombstones').all()).toEqual([]);
+  expect(db.prepare("SELECT count(*) AS n FROM core_migrations WHERE piece='secrets'").get()).toEqual({n:7});
+ }finally {db.close();}
+});
+
+
+it('bounds 1024 simultaneous original proofs and does not burn the overflow request',async()=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},holder=await testHolder(f,async()=>{});
+ // Isolate pool capacity from quadratic repeated Runtime/Signin proof reads.
+ // All other lifecycle fixtures retain real original current checks.
+ const original=runtimeRole.runtimeHouseDestination(f.app,f.sharing,f.viewer)!;
+ expect(original.current()).toBe(true);
+ const source=vi.spyOn(runtimeRole,'runtimeHouseDestination').mockReturnValue(Object.freeze({...original,current:()=>true}));
+ // Cache compiled statements, never rows: every get/run still hits actual SQLite.
+ const prepare=f.app.db.prepare.bind(f.app.db),statements=new Map<string,ReturnType<typeof prepare>>();
+ const compile=vi.spyOn(f.app.db,'prepare').mockImplementation(sql=>{
+  let statement=statements.get(sql);if(!statement){statement=prepare(sql);statements.set(sql,statement);}return statement;
+ });
+ try {
+  const retained:Array<ReturnType<typeof f.tickets.admitHandoff>>=[];
+  for(let i=0;i<1024;i++)retained.push(f.tickets.admitHandoff(f.viewer,'API',{id:randomUUID(),binding},holder.client));
+  const overflow={id:randomUUID(),binding};
+  expect(()=>f.tickets.admitHandoff(f.viewer,'API',overflow,holder.client)).toThrow(/^Secret handoff unavailable$/);
+  expect(f.app.db.prepare('SELECT count(*) AS n FROM secrets_pending_tombstones').get()).toEqual({n:1024});
+  retained[0].abandon();
+  expect(f.tickets.admitHandoff(f.viewer,'API',overflow,holder.client)).toHaveProperty('id');
+  expect(holder.calls).not.toHaveBeenCalled();
+ }finally {source.mockRestore();compile.mockRestore();}
+},20_000);
+it('keeps durable denial after expired tickets and a long elapsed interval',async()=>{
+ const f=await setup(),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ const t=f.tickets.admit(f.viewer,'API',request);
+ f.clock.advance(30_000);
+ f.call('secrets.grant',{...f.grant,expiresAt:f.clock.now()+60_000});
+ const fresh=secretTickets(f.app,f.sharing,f.app.effects!);
+ expect(fresh.admit(f.viewer,'API',{...request,id:randomUUID()})).toHaveProperty('id');
+ expect(()=>fresh.admit(f.viewer,'API',request)).toThrow(/^Secret handoff unavailable$/);
+ expect(fresh.claim(t.id)).toBeNull();
+ await f.app.close();
+ // With all owning timers closed, advance a year without replaying daemon jobs.
+ f.clock.advance(366*86400_000);
+ const app=await startLoom({home:f.home,next:true,staging:true,clock:f.clock,stdout(){}});closes.push(app.close);
+ expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.grant',{...f.grant,expiresAt:f.clock.now()+60_000},'renew-after-year')).toMatchObject({ok:true});
+ // Original body credentials expire during the year. A newly issued original
+ // body may admit a fresh pending id, but never reuse the old denial identity.
+ const auth=signin(app),token=app.db.transaction(()=>auth.issueBody('art',f.id))();
+ const viewer=auth.token(hash(token))!.viewer,sharing=()=>new SharingDatabase(app.db,f.home).sharing();
+ const reopened=secretTickets(app,sharing,app.effects!);
+ expect(reopened.admit(viewer,'API',{...request,id:randomUUID()})).toHaveProperty('id');
+ expect(()=>reopened.admit(viewer,'API',request)).toThrow(/^Secret handoff unavailable$/);
+});
+it('keeps pending UUIDs and denial digests out of public records, results, stored results and logs',async()=>{
+ const f=await setup(undefined,true),logs:unknown[]=[],owner:Viewer={kind:'member',id:'jonathan'};
+ const spies=[vi.spyOn(console,'log'),vi.spyOn(console,'warn'),vi.spyOn(console,'error')].map(spy=>spy.mockImplementation((...args)=>{logs.push(args);}));
+ const notices:unknown[]=[];const stop=f.app.live.observe(changes=>notices.push(changes));
+ const request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ try {
+  const t=f.tickets.admit(f.viewer,'API',request);
+  expect(()=>f.tickets.admit(f.viewer,'API',request)).toThrow(/^Secret handoff unavailable$/);
+  const marker=f.app.db.prepare('SELECT digest FROM secrets_pending_tombstones').get() as {digest:string};
+  const records=f.records.filter(r=>r.name.startsWith('secret.')).flatMap(type=>type.ids(undefined).flatMap(id=>[owner,f.viewer].map(v=>type.read(id,v))));
+  expect(records.some(r=>r?.id==='API')).toBe(true);
+  const results=[f.call('secrets.list',{}),f.call('secrets.usage',{name:'API'}),f.call('secrets.history',{name:'API'}),f.call('secrets.command',{command:'list',json:true})];
+  const stored=f.app.db.prepare('SELECT result FROM core_operations').all();
+  expect(stored.length).toBeGreaterThan(0);
+  const publicOutput=JSON.stringify({records,results,stored,logs,stdout:f.stdout,notices,offered:f.app.operations.offered('socket')});
+  for(const privateId of [request.id,marker.digest])expect(publicOutput).not.toContain(privateId);
+  expect(f.tickets.claim(t.id)).toBeNull(); // staging still holds, no credential read
+ }finally {stop();for(const spy of spies)spy.mockRestore();}
 });

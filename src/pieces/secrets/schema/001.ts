@@ -50,4 +50,9 @@ END;
 CREATE TRIGGER secrets_ticket_name_deleted AFTER DELETE ON secrets_names BEGIN
  UPDATE secrets_tickets SET state='revoked' WHERE name=OLD.id AND state IN ('admitted','claimed');
 END;
+` }, { number: 7, sql: `
+-- Permanent denial markers, never release authority. No pending id, binding,
+-- ticket, value or key is stored here. Admission and marker commit together.
+-- No TTL or automatic deletion: old original requests must never become reusable.
+CREATE TABLE secrets_pending_tombstones (digest TEXT PRIMARY KEY NOT NULL CHECK(length(digest)=64)) WITHOUT ROWID;
 ` }];

@@ -1,7 +1,7 @@
 /** Trusted metadata-only admission. Unregistered until a real holder/runner
  * composition exists. An opaque ticket is neither a grant nor a destination. */
 import { secretInputBindingSchema, type SecretInputBinding } from './worker-binding.js';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { isClosing, type Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
@@ -35,9 +35,9 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
   // Completion never calls claim again or recreates proof from durable rows.
   const daemonOwned = new Set<string>();
   const claimed = new Map<string, {current():boolean; finish(acknowledged:boolean):void}>();
-  // Bounded non-expiring tombstones: this unactivated role fails closed after
-  // 1024 bound admissions in one lifetime rather than permitting request reuse.
-  const usedPending = new Set<string>();
+  // Durable, non-expiring replay guard, separate from live proof capacity.
+  // A digest is only a denial marker; it never reconstructs a pending sink.
+  const pendingDigest = (id:string) => createHash('sha256').update(`loom:secret-pending:v1:${id.toLowerCase()}`).digest('hex');
   const retireProof = (id:string) => {proofs.delete(id);pending.delete(id);claimed.delete(id);daemonOwned.delete(id);};
   const read = (id: string) => app.db.prepare('SELECT * FROM secrets_tickets WHERE id=?').get(id) as Ticket | undefined;
   const policy = () => (app.db.prepare("SELECT value FROM secrets_meta WHERE key='policy'").get() as {value:string}|undefined)?.value ?? '';
@@ -58,13 +58,15 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
           const t = read(id);
           if (!t || !['admitted','claimed'].includes(t.state) || !valid(t,d,t.state)) {claimed.get(id)?.finish(false);retireProof(id);}
         }
-        if (proofs.size >= 1024 || usedPending.size >= 1024) throw failed();
+        if (proofs.size >= 1024) throw failed();
         const d = runtimeHouseDestination(app,sharing,viewer);
         if (!d) throw failed();
         // Trusted composition only: this is not operation input. Snapshot the
         // original worker identity before admission; never rebind a ticket.
         const pendingId = request === undefined ? undefined : z.uuid().parse(request.id);
-        if (request && (usedPending.has(pendingId!) || identity(d) !== identity(secretInputBindingSchema.parse(request.binding)))) throw failed();
+        const digest = pendingId === undefined ? undefined : pendingDigest(pendingId);
+        if (request && (app.db.prepare('SELECT 1 FROM secrets_pending_tombstones WHERE digest=?').get(digest)
+          || identity(d) !== identity(secretInputBindingSchema.parse(request.binding)))) throw failed();
         const now = app.operations.clock.now(), scope = {house:d.job, ...(d.service === undefined ? {} : {service:d.service})};
         const resource = {kind:'secret' as const,target:name};
         const candidates = [grantId(d.agent,resource),grantId(d.agent,resource,scope)];
@@ -81,11 +83,12 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
           expires_at:Math.min(now+30_000,chosen.grant.expiresAt ?? Infinity),state:'admitted'};
         app.db.transaction(() => {
           if (!valid(t,d,'admitted')) throw failed();
+          if (digest) app.db.prepare('INSERT INTO secrets_pending_tombstones (digest) VALUES (?)').run(digest);
           app.db.prepare('INSERT INTO secrets_tickets VALUES (?,?,?,?,?,?,?,?)')
             .run(t.id,t.name,t.grant_id,t.grant_record,t.policy,t.destination,t.expires_at,t.state);
         })();
         proofs.set(t.id,d);
-        if (pendingId) {pending.set(t.id,pendingId);usedPending.add(pendingId);}
+        if (pendingId) pending.set(t.id,pendingId);
         return {id:t.id,expiresAt:t.expires_at};
       } catch { throw failed(); }
     },

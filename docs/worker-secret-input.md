@@ -40,10 +40,37 @@ Trusted admission can pass the original worker handle's `{id, binding}` to
 `secretTickets.admit`. It compares all assignment fields to Runtime's original
 body proof before inserting the ticket. The pending id is immutable in the
 original claim and its pinned holder metadata. It is never loaded from a durable
-row. A pending id can be admitted once per role lifetime, including after failed
-acknowledgement. The unactivated role keeps at most 1024 such tombstones and then
-fails closed; production lifecycle/capacity handling is still required before
-activation. Failed admission does not consume the pending id.
+row. With its durable database intact, a pending id can be admitted once across role
+and daemon lifetimes, including failed acknowledgement. Secrets migration 7 adds digest-only permanent denial
+markers; admission commits the marker and ticket in the same SQLite transaction.
+UUID letter case is canonicalized before the domain-separated SHA-256 digest.
+The digest cannot authorize release or reconstruct a pending stream. Failed
+admission rolls back both rows. Storage failure denies admission with a fixed
+error before any outside effect.
+
+Only live proof handles retain the 1024 capacity bound. Retirement releases those
+handles without forgetting the durable denial marker, so a daemon can process
+more than 1024 requests over its lifetime. Markers have no TTL or pruning API:
+ticket expiry, settlement, grant changes and restart never make an old pending
+request reusable. Disk growth is the deliberate tradeoff; disk exhaustion fails
+closed rather than dropping markers. Preserve these rows with the core database
+in recovery. A rollback to an older database requires fresh original workers;
+never reconnect old pending streams. Migration cannot recover pending ids lost
+by the prior unactivated in-memory role, so upgrading that source also requires
+retiring all original workers and starting fresh owners. No activation is added.
+
+**Unimplemented recovery boundary:** the central role cannot detect that an
+operator replaced its database with an older snapshot. Migration 7 starts with
+an empty marker table and does not revoke preexisting Signin credentials. The
+instructions above are requirements on the future owning upgrade/restore
+boundary, not enforcement supplied by this migration or role. Before activation,
+that owner must enforce retirement of previous original workers/pending streams
+and require fresh original generations; it must verify upgrade from schema 6
+and database rollback with surviving old credentials. The separate owner-encrypted
+recovery work (t-2203), and final move acceptance in t-2208, still own that missing
+carrier. Documentation alone does not satisfy it. This source unit guarantees
+persistent denial only while the committed marker survives; it does not claim
+anti-rollback recovery or installed upgrade safety.
 
 `listenTicketAuthority` accepts owner-configured worker certificate pins paired
 with exact assignments. These peers can only check the original retained claim
