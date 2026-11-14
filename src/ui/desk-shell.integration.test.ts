@@ -96,6 +96,9 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await a.unroute('**/faces/art/manifest.json*'); await b.unroute('**/faces/art/sheet.png*');
     new HouseholdRows(app.db,'settings').remove('agent-sprite:art');
     await a.getByRole('button',{name:'Home',exact:true}).click();
+    // Account actions belong to the registered app, never a floating corner toolbar.
+    expect(await a.getByRole('button',{name:'Add a passkey',exact:true}).count()).toBe(0);
+    expect(await a.getByRole('button',{name:'Sign out',exact:true}).count()).toBe(0);
     // Home shares Comms' durable draft and opens exactly the acknowledged thread.
     const homeComposer=b.locator('.desk-home-compose').first();
     await expect.poll(()=>homeComposer.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
@@ -325,6 +328,10 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await page.getByRole('button',{name:'Open your account',exact:true}).focus();
               await page.keyboard.press('Enter');
               await expect.poll(()=>page.locator('[data-tile=account]').count()).toBe(1);
+              const accountTile=page.locator('[data-tile=account]');
+              await expect.poll(()=>accountTile.getByRole('form',{name:'Add a passkey',exact:true}).count()).toBe(1);
+              await expect.poll(()=>accountTile.getByRole('button',{name:'Add a passkey',exact:true}).isEnabled()).toBe(true);
+              await expect.poll(()=>accountTile.getByRole('button',{name:'Sign out this device',exact:true}).isEnabled()).toBe(true);
               await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
               await page.getByRole('button',{name:'All apps',exact:true}).first().click();
               await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('profile');
