@@ -77,7 +77,7 @@ it('deduplicates 60 refs and refuses mismatched owning ids or arbitrary navigati
 });
 it('updates two exact-scope windows and clears on access loss, regrant and deletion',async()=>{
  const s=await setup();s.task('t-1');
- const scope=JSON.stringify({thread:s.thread,refs:['t-1']});
+ const scope=JSON.stringify({thread:s.thread,refs:['t-1',s.conversation]});
  async function window(scope?:string){
   const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan'}});
   const queue:any[]=[],waiters:((v:any)=>void)[]=[];
@@ -89,6 +89,8 @@ it('updates two exact-scope windows and clears on access loss, regrant and delet
  expect(await (await window()).next()).toMatchObject({kind:'set',records:[]});
  const a=await window(scope),b=await window(scope);
  for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'set',records:[{cards:{'t-1':{status:'Open'}}}]});
+ expect(await s.call('change',{thread:s.thread,action:'title',title:'Live conversation title'})).toMatchObject({ok:true});
+ for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{[s.conversation]:{kind:'conversation',title:'Live conversation title'}}}});
  s.app.operations.call('direct',{kind:'member',id:'other'},'tasks.close',{id:'t-1',actor:'art',at:new Date(s.clock.now()).toISOString()},'close');
  for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{'t-1':{status:'Done'}}}});
  s.sharing.members.jonathan.agents=[];s.app.live.refreshAccess();
@@ -112,4 +114,32 @@ it('answers all 60 distinct references and treats hostile dictionary keys as pla
   const unknown=await s.call('refCards',{thread:s.thread,refs:['__proto__','constructor','prototype']});
   expect(unknown.ok).toBe(true);if(unknown.ok)expect(JSON.stringify(unknown.value)).toContain('"__proto__":null');
  }finally{spy.mockRestore();}
+});
+
+it('conversation cards expose only consistent original-member metadata without decrypting',async()=>{
+ const s=await setup();await s.comms.referencesReady;
+ const other=await s.call('open',{agent:'art',id:'bbbbbbbbbbbbbbbb',text:'Other member words'},{kind:'member',id:'other'});
+ if(!other.ok)throw new Error('other open');
+ await s.comms.deliver('art',(other.value as {thread:string}).thread,1);
+ const opened=vi.spyOn(s.key,'open');
+ const result=()=>s.call('refCards',{thread:s.thread,refs:[s.conversation,'cv-000000000000']});
+ expect(await result()).toMatchObject({ok:true,value:{cards:{[s.conversation]:{kind:'conversation',title:'New thread with art',status:'Open',url:`/p/comms-preview/thread/${s.thread.slice(3)}`},'cv-000000000000':null}}});
+ expect(await s.call('change',{thread:s.thread,action:'title',title:'PRIVATE current title'})).toMatchObject({ok:true});
+ expect(await s.call('change',{thread:s.thread,action:'archive'})).toMatchObject({ok:true});
+ expect(await result()).toMatchObject({ok:true,value:{cards:{[s.conversation]:{title:'PRIVATE current title',status:'Archived'}}}});
+ // Another owner can use their own thread but cannot resolve this one's title.
+ expect(await s.call('refCards',{thread:(other.value as {thread:string}).thread,refs:[s.conversation]},{kind:'member',id:'other'})).toMatchObject({ok:true,value:{cards:{[s.conversation]:null}}});
+ expect(opened).not.toHaveBeenCalled();
+});
+for(const damage of ['ambiguous','relational','tombstone'] as const)it(`conversation cards refuse ${damage} target routing`,async()=>{
+ const s=await setup();await s.comms.referencesReady;
+ const t=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(s.thread) as {record:string}).record);
+ // Keep the source valid; damage only a separate referenced target.
+ const target={...t,id:'th:target',conversation:'cv-012345abcdef',title:'HIDDEN target title'};
+ s.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(target.id,target.member,target.agent,null,JSON.stringify(target));
+ if(damage==='ambiguous')s.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run('th:duplicate',target.member,target.agent,null,JSON.stringify({...target,id:'th:duplicate'}));
+ if(damage==='relational')s.app.db.prepare('UPDATE comms_threads SET member=? WHERE id=?').run('other',target.id);
+ if(damage==='tombstone')s.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run(target.id,target.member,target.agent,target.conversation,0);
+ const result=await s.call('refCards',{thread:s.thread,refs:[target.conversation]});
+ expect(result).toMatchObject({ok:true,value:{cards:{[target.conversation]:null}}});expect(JSON.stringify(result)).not.toContain('HIDDEN');
 });

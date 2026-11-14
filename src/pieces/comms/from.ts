@@ -23,3 +23,15 @@ export function installCommsFrom(o:Options) {
   refreshOn:change=>['thread','core.access','household.sharing'].includes(change.type),
  });
 }
+
+/** A chip may reveal metadata only to the thread's current original member. */
+export function ownedConversation(db:Db,sharing:Sharing,viewer:Viewer,id:string):Thread|undefined {
+ if(viewer.kind!=='member'||!/^cv-[0-9a-f]{12}$/.test(id))return;
+ const rows=db.prepare("SELECT id,agent,member,project,record FROM comms_threads WHERE json_extract(record,'$.conversation')=? LIMIT 2").all(id) as {id:string;agent:string;member:string;project:string|null;record:string}[];
+ if(rows.length!==1)return;
+ const {record,...row}=rows[0],t=JSON.parse(record) as Thread;
+ if(t.id!==row.id||t.agent!==row.agent||t.member!==row.member||(t.project??null)!==row.project||t.conversation!==id
+  ||!/^th:[a-z0-9-]+$/.test(t.id)||!mayUseThread(viewer,t,sharing)
+  ||db.prepare('SELECT 1 FROM comms_deleted WHERE conversation=? OR id=?').get(id,t.id))return;
+ return t;
+}

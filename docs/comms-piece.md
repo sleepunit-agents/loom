@@ -37,8 +37,8 @@ exact public GitHub issue URL in a new tab. Escape restores chip focus; outside
 click or transcript scrolling closes the card. No card data is separately cached.
 Bare repo#N has no default owner and stays text. The parser remains lazy with Comms.
 
-Approval, conversation, note, knowledge, project, person and agent card kinds
-remain unfinished, as does chip presentation within sealed questions. Unsupported
+Approval, ordinary venue conversation, note, knowledge, project, person and agent
+card kinds remain unfinished. Sealed questions now use the same scoped chips. Unsupported
 references answer null and remain plain words. The existing reference index and
 Work consumer are unchanged.
 
@@ -1318,3 +1318,20 @@ This completes reverse provenance only. Authorized chip cards, swipe/Undo, phone
 crowding and final imported/spawn/source privacy acceptance remain required. The
 single Comms browser proof follows an aged-out imported task back to its thread
 and captures the task reader at all six required look/width combinations.
+
+### Private conversation chip cards
+
+A retained `cv-…` reference now resolves a Comms thread card only for its current
+original member. The target conversation must have exactly one thread, matching
+relational and JSON routing, no deletion marker, and current central thread
+access. The card shows the current title (or agent fallback), Working/Open/Archived
+state and a fixed Comms reader route. It never decrypts messages. Another member,
+including another household owner, receives null; missing, ambiguous, tombstoned
+or inconsistent targets remain plain words. Target title/lifecycle and sharing
+changes refresh the exact scoped live record. Existing disconnect and scope
+checks remove cached titles in the browser.
+
+This unit covers ordinary and spawned **Comms thread** targets alike, not other
+venue conversations: their owning reader/metadata integration remains required.
+The existing single browser proof checks two windows, opening an earlier thread,
+and six additional conversation-card screenshots. No importer behavior changes.
