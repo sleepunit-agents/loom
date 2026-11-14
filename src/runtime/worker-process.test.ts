@@ -32,6 +32,13 @@ describe('worker command adapter (no child processes in tests)', () => {
     // A completed leader can leave descendants; cleanup still kills its group.
     expect(f.runtime.kill).toHaveBeenCalledOnce();
   });
+  it('preserves UTF-8 build identities split between output chunks', async () => {
+    const f = fixture(), result = f.executor.build(job, new AbortController().signal), child = f.children[0].child;
+    child.emit('spawn'); await flush();
+    const bytes = Buffer.from('{"build":"image:é"}'), split = bytes.indexOf(Buffer.from('é')) + 1;
+    child.stdout.emit('data', bytes.subarray(0, split)); child.stdout.emit('data', bytes.subarray(split));
+    child.emit('close', 0, null); expect(await result).toBe('image:é');
+  });
   it('holds body input until release and preserves model/account/harness independently', async () => {
     const f = fixture(), body = f.executor.start(job, 'image@sha', new AbortController().signal);
     const child = f.children[0]; child.child.emit('spawn'); await body.spawned;

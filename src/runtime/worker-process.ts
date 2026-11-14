@@ -4,6 +4,7 @@
  * runner reads {job,build} JSON on stdin after the running acknowledgement.
  * Harness/provider/model roles stay configuration, not hard-coded CLI guesses. */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
 export interface WorkerCommand {
   command: string;
@@ -49,16 +50,24 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
     try { runtime.kill(child); } catch (error) { killed = false; throw error; }
   };
   signal.addEventListener('abort', kill, { once: true });
-  const append = (chunk: Buffer | string) => { logTail = (logTail + chunk.toString()).slice(-16_384); };
-  child.stdout.on('data', chunk => {
-    append(chunk);
-    // Build output is a small protocol record; bounded even for a bad builder.
+  const outDecoder = new StringDecoder('utf8'), errorDecoder = new StringDecoder('utf8');
+  let outputBytes = 0;
+  const append = (text: string) => { logTail = (logTail + text).slice(-16_384); };
+  const output = (text: string, bytes: number) => {
+    append(text);
     if (!overflow) {
-      stdout += chunk.toString();
-      if (stdout.length > 65_536) { stdout = ''; overflow = true; }
+      outputBytes += bytes;
+      if (outputBytes > 65_536) { stdout = ''; overflow = true; }
+      else stdout += text;
     }
+  };
+  child.stdout.on('data', (chunk: Buffer | string) => {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    output(outDecoder.write(bytes), bytes.length);
   });
-  child.stderr.on('data', append);
+  child.stderr.on('data', (chunk: Buffer | string) => {
+    append(errorDecoder.write(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+  });
   // An early child exit can close stdin before release. Never emit an unhandled
   // stream error or misclassify it as another launch attempt.
   child.stdin.on('error', () => {});
@@ -74,6 +83,7 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   child.once('exit', (code) => { leaderExit = code ?? 1; kill(); });
   child.once('close', (code, _signal) => {
     closed = true;
+    output(outDecoder.end(), 0); append(errorDecoder.end());
     signal.removeEventListener('abort', kill);
     if (!spawned) spawnReject(new Error('Worker command did not spawn'));
     exitResolve({ exitCode: leaderExit ?? code ?? 1, logTail });
