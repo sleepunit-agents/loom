@@ -31,7 +31,7 @@ import { attentionRole } from './pieces/attention/role.js';
 import { conversationRuntime } from './pieces/runtime/conversations.js';
 import { spawnMetadata } from './pieces/runtime/spawn-metadata.js';
 import { MANIFEST, nextWorker } from './next-pwa.js';
-import { installMindActivity } from './pieces/mind/activity.js';
+import { installMindActivity, installedMindActivity } from './pieces/mind/activity.js';
 /** The sole composition root for --next. No old page routes or piece programs. */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
@@ -107,7 +107,6 @@ import { approvalAnswers } from './pieces/approvals/role.js';
 import { attentionThreadProject } from './pieces/attention/comms.js';
 import { attentionProjects } from './pieces/attention/projects.js';
 import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
-const memoryActivity = new WeakMap<Foundation, ReturnType<typeof installMindActivity>>();
 const memoryQueries = new WeakMap<Foundation, GraphQLFieldConfigMap<unknown, { viewer: Viewer }>>();
 const mindTransports = new WeakMap<Foundation, TouchSource[]>();
 export type NextSessionResolver = (req: IncomingMessage, transport?: 'upgrade') => Authentication | undefined;
@@ -267,17 +266,16 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('mind.activityList')) {
     const household = new HouseholdDatabase(app.db).household(options.home);
     const activity = installMindActivity(app.operations, app.live, {agents:inventory?.agents??[],sharing,owner:household?.owner,timezone:household?.tz,github:household?.github,conversations:hasSharedConversations?sharedActivityConversations(sharedMemory,{sharing,conversationHref}):undefined});
-    memoryActivity.set(app, activity);
     app.onClose(() => activity.close());
   }
   if (!memoryQueries.has(app)) {
-    const activity = memoryActivity.get(app);
+    const activity = installedMindActivity(app.operations);
     if (!activity) throw new Error('Memory queries require the installed Activity reader');
     const queries = memoryQueryFields(sharedMemory, {sources: inventory, sharing, now: () => app.operations.clock.now(),
       mind: mindRole(app.operations), activity, conversationHref,
       projectHref: (agent, slug) => `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}`});
     memoryQueries.set(app, queries.fields);
-    app.onClose(() => { queries.close(); memoryQueries.delete(app); memoryActivity.delete(app); });
+    app.onClose(() => { queries.close(); memoryQueries.delete(app); });
   }
   const sources = mindTouchSources(inventory);
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
