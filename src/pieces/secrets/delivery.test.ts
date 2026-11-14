@@ -75,20 +75,15 @@ describe('shared-schema secret delivery', () => {
     expect(f.call).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['queued', 'done', 'failed', 'stopped', 'lost'] as const)('rejects a %s job before dispatch', async state => {
+  it.each(['queued', 'starting', 'running', 'waiting', 'done', 'failed', 'stopped', 'lost'] as const)('uses the grant, without adding a %s job-state policy', async state => {
     const f = fixture(); f.allow(); f.db.update(jobs).set({ state }).run();
-    await expect(f.service.handTo('github-token', 'j-art')).rejects.toThrow('active job');
-    expect(f.call).not.toHaveBeenCalled(); expect(f.uses()).toEqual([]);
-  });
-
-  it.each(['starting', 'waiting'] as const)('can hand to a %s job with a current grant', async state => {
-    const f = fixture(); f.allow(); f.db.update(jobs).set({ state }).where(eq(jobs.id, 'j-art')).run();
     await expect(f.service.handTo('github-token', 'j-art')).resolves.toMatchObject({ state: 'released' });
+    expect(f.uses()[0].state).toBe('released');
   });
 
   it('rejects unknown jobs and refuses a surrounding transaction', async () => {
     const f = fixture(); f.allow();
-    await expect(f.service.handTo('github-token', 'missing')).rejects.toThrow('active job');
+    await expect(f.service.handTo('github-token', 'missing')).rejects.toThrow('existing job');
     f.client.exec('BEGIN');
     try { await expect(f.service.handTo('github-token', 'j-art')).rejects.toThrow('own transaction'); }
     finally { f.client.exec('ROLLBACK'); }

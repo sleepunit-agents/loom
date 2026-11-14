@@ -34,7 +34,7 @@ export class SecretDelivery {
     const id = `use-${randomUUID()}`;
     const destination = this.db.transaction(tx => {
       const target = tx.select().from(jobs).where(eq(jobs.id, job)).get();
-      if (!target || !['starting', 'running', 'waiting'].includes(target.state)) throw Error('Secret delivery needs an active job');
+      if (!target) throw Error('Secret delivery needs an existing job');
       if (!this.requests.grantFor(secret, target.agent, job)) throw Error('Secret delivery needs a current grant');
       tx.insert(secretUses).values({ id, secret, agent: target.agent, job, at: this.now(), state: 'started' }).run();
       return { agent: target.agent, job };
