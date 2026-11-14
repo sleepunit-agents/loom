@@ -20,7 +20,7 @@ async function fixture() {
   // policy deliberately tests current authority independently of recipient logic.
   const service = new InboxQueries(db, key, (viewer, f) => allowed && viewer.kind === 'member' ? eq(f.member, viewer.id) : sql`false`, () => now);
   const thread = comms.threads.open({ member: 'alice', agent: 'art', title: 'Private pump' });
-  const ask = await comms.ask(thread.id, 'art', 'ask-1', { words: 'Order the private pump?', answers: 'yes-no', why: 'Private reason', ifYes: 'Order it', ifNo: 'Skip it' });
+  const ask = await comms.ask(thread.id, 'art', 'ask-1', { words: 'Order the private pump?', answers: 'yes-no', why: 'Private reason', ifYes: 'Order it', ifNo: 'Skip it', link: 'https://example.test/private-question' });
   return { db, comms, service, thread, ask, key, opens: () => opens, revoke: () => { allowed = false; }, onOpen: (fn: () => void) => { onOpen = fn; }, time: (at: string) => { now = at; } };
 }
 const alice = { kind: 'member' as const, id: 'alice' };
@@ -28,7 +28,10 @@ it('queries all sources from the recipient mailbox, with bounded SQL filters, re
   const f = await fixture();
   const send = f.comms.threads.conversations;
   const notice = send.send({ toKind: 'person', to: 'alice', source: 'notice', sourceId: 'notice-1', fromKind: 'agent', fromId: 'art', words: 'Finished', member: 'alice', agent: 'art', refs: ['t-1'] });
-  send.send({ toKind: 'person', to: 'bob', source: 'notice', fromKind: 'agent', words: 'Bob only', member: 'alice' });
+  const other = send.send({ toKind: 'person', to: 'bob', source: 'notice', fromKind: 'agent', words: 'Bob only', member: 'alice', refs: ['t-2'] });
+  expect(f.service.item(alice, other.id)?.to).toBe('bob');
+  expect(f.service.refs(alice, other.id)).toEqual(['t-2']);
+  expect(await f.service.body(alice, other.id)).toMatchObject({ words: 'Bob only' });
   expect(f.service.list(alice)).toHaveLength(2);
   expect(f.service.list(alice, { state: 'waiting', source: 'notice', agent: 'art', limit: 1 }).map(i => i.id)).toEqual([notice.id]);
   expect(f.service.list(alice, { offset: 2 })).toEqual([]);
@@ -50,16 +53,18 @@ it('lazily selects private question bodies through the shared GraphQL field grou
   const contextValue = { viewer: alice };
   const metadata = await graphql({ schema, source: '{ inboxItems { id source answers read refs } }', contextValue });
   expect(metadata.errors).toBeUndefined(); expect(f.opens()).toBe(0);
-  const result = await graphql({ schema, source: '{ inboxItems { body { words why ifYes ifNo } } }', contextValue });
+  const result = await graphql({ schema, source: '{ inboxItems { body { words why ifYes ifNo link } } }', contextValue });
   expect(result.errors).toBeUndefined();
-  expect(JSON.parse(JSON.stringify(result.data))).toEqual({ inboxItems: [{ body: { words: 'Order the private pump?', why: 'Private reason', ifYes: 'Order it', ifNo: 'Skip it' } }] });
+  expect(JSON.parse(JSON.stringify(result.data))).toEqual({ inboxItems: [{ body: { words: 'Order the private pump?', why: 'Private reason', ifYes: 'Order it', ifNo: 'Skip it', link: 'https://example.test/private-question' } }] });
   expect(f.opens()).toBe(1);
   expect(JSON.stringify(f.db.select().from(inbox).all())).not.toContain('private pump');
 });
 it('withholds private bodies after changes to policy, item, ciphertext, deadline, household retention or thread', async () => {
-  for (const change of ['policy', 'item', 'ciphertext', 'deadline', 'household', 'delete'] as const) {
+  for (const change of ['policy', 'item', 'ciphertext', 'deadline', 'household', 'timestamp', 'kind', 'delete'] as const) {
     const f = await fixture();
     f.onOpen(() => {
+      if (change === 'timestamp') f.db.update(messages).set({ at: '2026-11-14T18:01:00.000Z' }).run();
+      if (change === 'kind') f.db.update(messages).set({ kind: 'reply' }).run();
       if (change === 'policy') f.revoke();
       if (change === 'item') f.db.update(inbox).set({ words: 'Changed' }).where(eq(inbox.id, f.ask.inboxItem!)).run();
       if (change === 'ciphertext') f.db.update(messages).set({ words: Buffer.from('Changed') }).run();
