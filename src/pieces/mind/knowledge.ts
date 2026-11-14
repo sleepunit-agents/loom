@@ -8,7 +8,7 @@ export interface KnowledgeRow { slug: string; title: string; domain: string; upd
   recent?: true }
 export interface KnowledgeOpen extends KnowledgeRow {
   body: string; sourcing?: string;
-  sources: Array<{ claim: string; kind: string; locator?: string; href?: string }>;
+  sources: Array<{ claim: string; kind: string; locator?: string; href?: string; excerpt: string; retrievedAt: string; createdAt: string }>;
   /** Other pages that link to this one ([[slug]], knowledge:slug, /knowledge/slug). */
   citedBy: Array<{ slug: string; title: string }>;
   /** Its last check's outcome, when there was one. */
@@ -50,8 +50,8 @@ export function knowledgeView(db: Database | undefined, nowMs: number, open?: st
       if (r) {
         let sources: KnowledgeOpen['sources'] = [];
         try {
-          sources = (db.prepare('SELECT claim, source_kind, source_locator FROM citations WHERE page_id = ? ORDER BY id').all(r.id) as Array<{ claim: string; source_kind: string; source_locator: string | null }>)
-            .map((c) => ({ claim: c.claim, kind: c.source_kind, ...(c.source_locator ? { locator: c.source_locator } : {}), ...(c.source_locator && /^https?:\/\//.test(c.source_locator) ? { href: c.source_locator } : {}) }));
+          sources = (db.prepare('SELECT claim, source_kind, source_locator, excerpt, retrieved_at, created FROM citations WHERE page_id = ? ORDER BY id').all(r.id) as Array<{ claim: string; source_kind: string; source_locator: string | null; excerpt: string; retrieved_at: string; created: string }>)
+            .map((c) => ({ claim: c.claim, kind: c.source_kind, excerpt: c.excerpt, retrievedAt: c.retrieved_at, createdAt: c.created, ...(c.source_locator ? { locator: c.source_locator } : {}), ...(c.source_locator && /^https?:\/\//.test(c.source_locator) ? { href: c.source_locator } : {}) }));
         } catch { /* no citations table */ }
         const esc = (x: string) => x.replace(/[\\%_]/g, (c) => `\\${c}`);
         const citedBy = db.prepare("SELECT slug, title FROM pages WHERE status = 'active' AND slug != ? AND (body LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\') ORDER BY title, slug")

@@ -27,16 +27,17 @@ it('lets a generated endpoint compose typed file-backed fields and return exactl
  const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
  const body='Fictional factual content. '.repeat(1000)+'Final fact.';
  await store.writePage({slug:'hose',title:'The hose',domain:'pond',body,citations:[{claim:'25 mm',source_kind:'web',source_locator:'https://example.com/hose',excerpt:'25 mm'}]});
+ await store.writePage({slug:'ref',title:'Referring fact',domain:'pond',body:'[[hose]]'});
  await store.verifyPages({slug:'hose',verified_at:'2026-11-13T00:00:00Z'});
  const f=fixture(path);
  expect((await graphql({schema:f.generated,source:'{ memoryKnowledge { total } }'})).errors?.[0].message).toContain('Cannot query field "memoryKnowledge"');
- const result=await f.query('{ tasks { id } memoryKnowledge { total checkDays pages { slug title fresh } } memoryKnowledgePage(slug:"hose") { body sources { claim locator } } }');
+ const result=await f.query('{ tasks { id } memoryKnowledge { total checkDays pages { slug title fresh } } memoryKnowledgePage(slug:"hose") { body sources { claim locator excerpt retrievedAt createdAt } citedBy { slug title } } }');
  expect(result.errors).toBeUndefined();
- expect(JSON.parse(JSON.stringify(result.data))).toEqual({tasks:[],memoryKnowledge:{total:1,checkDays:30,pages:[{slug:'hose',title:'The hose',fresh:'fresh'}]},memoryKnowledgePage:{body,sources:[{claim:'25 mm',locator:'https://example.com/hose'}]}});
+ expect(JSON.parse(JSON.stringify(result.data))).toEqual({tasks:[],memoryKnowledge:{total:2,checkDays:30,pages:expect.arrayContaining([{slug:'hose',title:'The hose',fresh:'fresh'},{slug:'ref',title:'Referring fact',fresh:'fresh'}])},memoryKnowledgePage:{body,sources:[{claim:'25 mm',locator:'https://example.com/hose',excerpt:'25 mm',retrievedAt:expect.any(String),createdAt:expect.any(String)}],citedBy:[{slug:'ref',title:'Referring fact'}]}});
  f.at(Date.parse('2026-12-14T18:00:00Z'));
  expect(await f.query('{ memoryKnowledgePage(slug:"hose") { fresh } }')).toMatchObject({data:{memoryKnowledgePage:{fresh:'due'}}});
  await store.archivePage({slug:'hose'});
- expect(await f.query('{ memoryKnowledgePage(slug:"hose") { title } memoryKnowledge { total } }')).toMatchObject({data:{memoryKnowledgePage:null,memoryKnowledge:{total:0}}});
+ expect(await f.query('{ memoryKnowledgePage(slug:"hose") { title } memoryKnowledge { total } }')).toMatchObject({data:{memoryKnowledgePage:null,memoryKnowledge:{total:1}}});
 });
 it('uses the current authenticated context and central sharing on every execution, with no viewer argument or mutations',async()=>{
  const f=fixture(join(home(),'absent.db'));

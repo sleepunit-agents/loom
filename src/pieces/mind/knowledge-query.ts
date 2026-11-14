@@ -19,7 +19,7 @@ const summaryFields = {
  verified_at:text, fresh:{type:new GraphQLNonNull(freshness)}, by:text, recent:{type:GraphQLBoolean},
 };
 const summary = new GraphQLObjectType({ name:'MemoryKnowledgeSummary', fields:summaryFields });
-const citation = new GraphQLObjectType({ name:'MemoryKnowledgeCitation', fields:{ claim:requiredText,kind:requiredText,locator:text,href:text } });
+const citation = new GraphQLObjectType({ name:'MemoryKnowledgeCitation', fields:{ claim:requiredText,kind:requiredText,locator:text,href:text,excerpt:requiredText,retrievedAt:requiredText,createdAt:requiredText } });
 const reference = new GraphQLObjectType({ name:'MemoryKnowledgeReference', fields:{ slug:requiredText,title:requiredText } });
 const check = new GraphQLObjectType({ name:'MemoryKnowledgeCheck', fields:{ at:requiredText,outcome:requiredText,by:text } });
 const page = new GraphQLObjectType({ name:'MemoryKnowledgePage', fields:{
