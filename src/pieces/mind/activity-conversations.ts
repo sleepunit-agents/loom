@@ -3,7 +3,7 @@
 import { and, asc, count, desc, eq, gte, lt, notExists, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { conversations, conversationPeople, digests, digestItems, inbox, turns } from '../../core/data/schema.js';
-import { maySee, type Sharing, type Viewer } from '../../policy.js';
+import { maySee, type Sharing, type Viewer } from '../../core/index.js';
 import type { ActivityConversation, ActivityConversations, ActivityRun } from './activity-role.js';
 
 type Conversation = typeof conversations.$inferSelect;
