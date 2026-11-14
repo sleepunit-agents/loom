@@ -7,7 +7,7 @@ The explicitly installed `src/pieces/attention` backend holds central asks, agen
 | Old surface | New operation or record | Behavior |
 |---|---|---|
 | `openNeeds`, Inbox asks from pieces | `attention.raise`, `attention.get`, `attention.ask` | Stable source-owned identity, original scope and wording; repeats do not reopen |
-| `answerNeeds`, Inbox done/dismiss/yes/no/reply | `attention.answer` | First person answer wins, central policy, retry receipt; delivery integration is still pending |
+| `answerNeeds`, Inbox done/dismiss/yes/no/reply | `attention.answer` | First person answer wins, central policy, retry receipt; owning public Clock delivery and encrypted Comms replies are composed below |
 | `needs-resolve` wait checks | `attention.checkWait` | Explicit per-ask reconciliation through visible Approvals/Tasks read roles, including matching owner-attributed task answers; no approval is spent |
 | `needs-resolve` external facts | `attention.resolve` | Closes open asks without inventing an answer |
 | Agent desk state | `attention.reportStatus`, `attention.agent` | Immutable audience, work/jobs/watches metadata |
@@ -29,7 +29,7 @@ Collection operations require a service operation grant through central mayAct, 
 
 The `dg-` identity remains the SHA-256 prefix of conversation, NUL, run. Each deliberate write replaces that run's digest and increments its revision. Its central ask id is `<digest>:<revision>`; a retry of the operation returns its receipt and does not reopen anything. An explicit rewrite can ask again. Every later write resolves prior open conversation asks, including when `needs_owner` is null; answered asks keep their human answer. The nested attention role retains the caller and central policy. If any nested raise/resolve is refused, the entire digest write rolls back. Commit order, stored as a conversation-local order, breaks same-clock ties. `attention.digests` returns newest first, bounded to 500, and the live type filters through central policy. Scope is inherited from the conversation. New digest ids use central mayCreate, including separate project and agent visibility; updates use mayAct on that immutable scope. The project's reference union is recomputed on replacement and never changes its policy project.
 
-Runtime identity binding remains the runtime adapter's responsibility before dispatch; this direct operation accepts an explicit conversation/run just as other registry operations accept their record ids. No legacy caller is wired to it in this unit. Public summaries may quote a line under the old contract; Comms must keep private message words encrypted and raise only opaque desk questions.
+Runtime identity binding remains the runtime adapter's responsibility before dispatch; this direct operation accepts an explicit conversation/run just as other registry operations accept their record ids. The public Clock adapter below derives those identities from authenticated owning records. Other destinations still require their owning adapter. Public summaries may quote a line under the old contract; Comms must keep private message words encrypted and raise only opaque desk questions.
 
 ## Retention and findings
 
@@ -92,7 +92,7 @@ Legacy timestamps with mixed fractional precision exposed an old lexical min/max
 
 Set explicit `LOOM_URL` (an HTTP or HTTPS origin) and `LOOM_TOKEN_FILE` (a token for that daemon), then use, for example, `node dist/attention-client.js conversations '{"agent":"art","limit":10}'`. Success prints the operation value as pretty JSON and exits 0; a daemon refusal, connection/configuration error or malformed envelope exits 1 with a generic stderr line and no data; malformed command/JSON usage exits 2. `--help` exits 0 without credentials or a daemon. Redirects are refused; retries are bounded to four attempts, retaining the same operation id and body for a write. The supplied bearer token is redacted from returned string values. It opens only the explicit token file, never a domain store or a legacy executable.
 
-There was no old `loom attention` executable to replace: conversation and digest tools were MCP bindings. This is the direct operation JSON surface, not an adapter for the old MCP envelope. MCP runtime identity/run binding and delivered answers remain separate final-composition obligations. The standalone launcher leaves existing commands and callers untouched until the whole-side move. During that move, compose Attention explicitly and point the launcher at the new daemon; no import receipt selects it. Projects reference lookup is composed through the Mind registry role in next mode. The thread-project metadata role and scoped encrypted Comms replies are wired through next mode; Runtime public delivery remains a final-composition obligation.
+There was no old `loom attention` executable to replace: conversation and digest tools were MCP bindings. This is the direct operation JSON surface, not an adapter for the old MCP envelope. The standalone launcher leaves existing commands and callers untouched until the whole-side move. During that move, compose Attention explicitly and point the launcher at the new daemon; no import receipt selects it. Projects reference lookup is composed through the Mind registry role in next mode. The thread-project metadata role, scoped encrypted Comms replies and owning public Clock answer consumer are wired through next mode. Public Clock body metadata uses the separate bound Runtime operations below; the raw Attention client does not establish that binding. Remaining destination adapters and grading still gate final composition.
 
 ## Project reference composition
 
@@ -406,8 +406,8 @@ needs actual runner facts (saved configuration is not execution); Runtime's old
 `deliveryNotices`, `relayNotices`, `boxNotices`, bridge outage/recovery and
 `watchNoticesOf` each need an owning replacement or an individually named
 retirement. Clock alerts, Approvals tell notices and registered-app action receipts
-are already covered above. These gaps, public Runtime answer acceptance and
-bound metadata/digests/grading still gate final t-2205 acceptance.
+are already covered above. These source gaps, remaining Runtime destination
+adapters, grading and whole-piece acceptance still gate final t-2205 acceptance.
 
 
 ## Public conversation answer acceptance
@@ -417,3 +417,49 @@ Runtime #1250 installs the trusted synchronous Attention conversation-answer con
 Inbox deliberately makes no per-row delivery promise from metadata: `attention.ask` exposes no trusted delivery/read acknowledgement. It says “Answer recorded” only after a successful operation, shows a refusal inline, and retains a refused words draft. The existing call retains its operation id over reconnect; rechecking an open ask precedes a new attempt. Accepted Runtime input is not evidence of body read or ACK: Runtime owns those operations and its staging release gate. Done/Dismiss send no input and require answer authority rather than work assignment; Yes/No/words additionally require Runtime’s central give-work check. Home retains its existing narrower ownership requirement. No callback, policy, visibility, receipt schema or generated client changes are needed.
 
 The ordinary Inbox CI browser fixture captures this explanation in both looks at all three widths. Mounted-reader tests cover refusal/draft/retry and acknowledgement semantics without inferring delivery from forged source names. Runtime’s owning public-input HTTP fixtures provide actual transactional acceptance/refusal/read/ACK coverage.
+
+## Runtime metadata and grading acceptance
+
+This reconciliation describes merged owning code, rather than capability inferred
+from an ask's source or venue. Runtime's `public-metadata.ts` installs
+`runtime.recordTurn` and `runtime.writeDigest` for a currently authenticated,
+running public nonservice Clock body. Its existing bound-body checks establish
+the job, credential, source, claim, box and policy before the nested Attention
+operation; Attention's own create/update policy still applies.
+
+| Surface | Merged owning path | Remaining acceptance |
+| --- | --- | --- |
+| Public Clock own reply/action/note | `runtime.recordTurn` derives agent/project, agent sender, operation time and job run; Attention stores metadata only | Own turns do not prove a message was delivered |
+| Public Clock accepted incoming input | Runtime #1271's `recordPublicIncoming` files a wordless wake or message inside the owning Clock ACK/native completion or public-answer ACK transaction | Uses central acceptance time and the saved member sender; queue/read alone never projects acceptance. Private/service sources stay with their owners |
+| Public Clock digest and question | `runtime.writeDigest` derives the canonical conversation and run, then calls Attention and records the owning answer destination in the same transaction | An own turn must exist first; managed `waits_on` decisions remain refused by this adapter |
+| Identity reconciliation | `attentionConversationId(agent, 'runtime-clock', runtimeConversation)` produces the central `cv-*`; Runtime keeps its opaque transport id | Neither id nor a reusable lane label grants authority; other destinations need their own binding |
+| Public Clock answers | Owning active input or eligible done/failed successor, as described above | Accepted, read and ACK are distinct; unsupported terminal states retain owning refusals |
+| Private Comms | Existing encrypted question/reply consumers and opaque Attention references | Public Clock metadata does not authorize private/service metadata or move private words into digests |
+| Bridges and spawned work | No path through the public Clock metadata adapter | Owning incoming/own-turn/digest adapters and their authenticated fixtures remain Runtime/Bridges work |
+| Grading | `attention.writeFinding` checks a retained own turn, one finding per conversation/UTC day, and central create policy | No Runtime-bound grader dispatch or review-token validation is installed; direct storage and a generated command are not grader authorization |
+
+`src/pieces/runtime/public-metadata.test.ts` exercises actual next-mode
+authenticated HTTP calls after Clock creation, runner claim and body credential
+issuance. It checks canonical ids, unchanged transport bindings, project scope,
+same-input retries, replacement conversations, rejected typed routing/words,
+authority drift, central create/update refusals and managed-question rollback.
+`public-inputs.test.ts` covers owning answer acceptance and continuation. These
+fixtures are evidence for their supported Clock path only.
+
+The merged incoming fixtures in those same files additionally check scheduled,
+active-answer and successor-answer acceptance, nested policy/SQL rollback and
+retry, staged restart, native completion, overlapping ACKs and exactly-once
+source order. The incoming projection uses the same canonical route and project
+as the own-turn writer; its central acceptance timestamp is deliberately not a
+claim about the original source creation time or human reading.
+
+`src/pieces/attention/retention.test.ts` covers findings, folding and policy;
+`client.test.ts` covers the generated direct-operation client. Neither establishes
+a trusted grader or binds a legacy MCP caller. The stopped Attention importer
+preserves historical turns, digests and findings under the explicit audience
+map; it grants no current body authority and does not replace a live producer.
+
+Final acceptance still requires the remaining destination adapters and grading,
+individually reconciled notice families, the owning Secrets display explanation,
+and the combined old-to-new/client/stopped-import/startup/screen evidence. No
+production move, real import or outside execution is implied by this table.
