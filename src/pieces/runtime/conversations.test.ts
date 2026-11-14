@@ -972,7 +972,7 @@ it.each(['imported','reset','writeoff','ended','binding','project','venue','arch
  })();
  const before=f.record();
  for(const [name,input,id] of writes)expect(f.app.operations.call('direct',viewer,`runtime.${name}`,input,id)).toMatchObject({ok:false});
- for(const [name,input] of [['readConversation',{}],['reply',{id:'held-reply',text:'PRIVATE held'}],['conversationStatus',{state:'working'}],['describeConversation',{}],['titleConversation',{title:'Forbidden title'}],['conversationActivity',{at:f.clock.now(),tokens:99}]] as const)
+ for(const [name,input] of [['askQuestion',{id:'held-question',question:{ask:'PRIVATE held'}}],['readConversation',{}],['reply',{id:'held-reply',text:'PRIVATE held'}],['conversationStatus',{state:'working'}],['describeConversation',{}],['titleConversation',{title:'Forbidden title'}],['conversationActivity',{at:f.clock.now(),tokens:99}]] as const)
   expect(await f.post(f.body,`runtime.${name}`,input)).toMatchObject({ok:false});
  expect(f.record()).toEqual(before);
 });
@@ -1159,6 +1159,169 @@ it.each(['runtime.binding','runtime.job'] as const)('honors central %s move refu
  expect(await f.socket('comms.change',{thread:f.thread,action:'project',project:'pond'})).toMatchObject({ok:false,code:'denied'});
  expect(move).toHaveBeenCalledWith({kind:'member',id:'jonathan'},expect.objectContaining({type,member:'jonathan',agent:'art'}),expect.objectContaining({type,member:'jonathan',agent:'art',project:'pond'}),expect.any(Object),'runtime.acceptConversation');
  expect(snapshot()).toEqual(before);expect(seen).toEqual([]);
+});
+
+it('binds private questions to the original body and seals words without publishing caller authority',async()=>{
+ const f=await setup(),thread=await f.open(),job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ const input={id:'question-1',question:{ask:'PRIVATE BODY QUESTION',why:'PRIVATE BODY WHY',if_yes:'PRIVATE BODY YES',refs:['private-body-reference'],answers:'words'}};
+ expect(await f.post(body,'runtime.askQuestion',input)).toMatchObject({ok:false});
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ for(const secret of [f.owner,f.runner,f.unbound,f.token('agent:art@another'),f.token(`agent:mark@${job}`),f.token(`agent:art/discord@${job}`)])
+  expect(await f.post(secret,'runtime.askQuestion',input)).toMatchObject({ok:false});
+ const viewer=signin(f.app).token(hash(body))!.viewer;
+ expect(await f.app.operations.callAsync('direct',{...viewer},'runtime.askQuestion',input,'copied-question')).toMatchObject({ok:false});
+ for(const extra of [{agent:'art'},{member:'jonathan'},{conversation:'forged'},{thread},{source:{kind:'conversation',id:'forged'}}])
+  expect(await f.post(body,'runtime.askQuestion',{...input,...extra})).toMatchObject({ok:false});
+ expect(await f.post(body,'runtime.askQuestion',{...input,question:{...input.question,waits_on:{approval:'forged'}}})).toMatchObject({ok:false});
+ expect(await f.socket('runtime.askQuestion',input)).toMatchObject({ok:false});
+ const ack=value<{ref:string;seq:number}>(await f.post(body,'runtime.askQuestion',input));
+ expect(Object.keys(ack).sort()).toEqual(['ref','seq']);
+ expect(await f.post(body,'runtime.askQuestion',input)).toEqual({ok:true,value:ack});
+ expect(await f.post(body,'runtime.askQuestion',{...input,question:{ask:'altered'}})).toMatchObject({ok:false,code:'conflict'});
+ expect(await f.socket('attention.get',{id:ack.ref})).toMatchObject({ok:true,value:{member:'jonathan',agent:'art',privateQuestion:{thread,seq:ack.seq},state:'open'}});
+ expect(await f.socket('comms.messages',{thread})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:input.question})])});
+ for(const table of ['attention_asks','core_operations','runtime_inputs','runtime_jobs','runtime_bindings','runtime_deliveries','comms_messages']){
+  const stored=JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all());
+  for(const word of [input.question.ask,input.question.why,input.question.if_yes,...input.question.refs])expect(stored).not.toContain(word);
+ }
+ expect(await f.socket('comms.replyToAsk',{ref:ack.ref,text:'PRIVATE QUESTION ANSWER'})).toMatchObject({ok:true});
+ expect(await f.post(body,'runtime.askQuestion',input)).toEqual({ok:true,value:ack});
+ expect(await f.socket('attention.get',{id:ack.ref})).toMatchObject({ok:true,value:{state:'answered'}});
+ await f.restart();
+ expect(await f.post(body,'runtime.askQuestion',input)).toEqual({ok:true,value:ack});
+ expect(await f.socket('attention.get',{id:ack.ref})).toMatchObject({ok:true,value:{state:'answered'}});
+});
+
+it.each(['credential','policy','archive','imported','reset','writeoff','ended','service','binding','duplicate','tombstone','member','box','hosting','house','membership','lending','relocation'] as const)('rejects a private question revoked during actual encryption by %s without partial persistence',async drift=>{
+ let armed=false,entered:()=>void=()=>{},release:()=>void=()=>{};
+ const sealing=new Promise<void>(r=>{entered=r;}),gate=new Promise<void>(r=>{release=r;});
+ vi.spyOn(commsCrypto,'loadKey').mockImplementation(async home=>{
+  const key=await realLoadKey(home);
+  return {...key,async seal(words){if(armed&&words.includes('PRIVATE INFLIGHT QUESTION')){entered();await gate;}return key.seal(words);}};
+ });
+ const f=await commsBodyFixture(drift==='membership'||drift==='lending'?'pollock':'jonathan'),viewer=signin(f.app).token(hash(f.body))!.viewer;
+ const relocated=drift==='relocation'?value<{thread:string}>(await f.socket('comms.open',{agent:'art',id:'relocationthread',text:'Separate owning private thread'})).thread:undefined;
+ if(relocated)await f.queued();
+ const snapshot=()=>['attention_asks','comms_messages'].map(table=>f.app.db.prepare(`SELECT * FROM ${table}`).all());
+ const before=snapshot();armed=true;
+ const pending=f.app.operations.callAsync('http',viewer,'runtime.askQuestion',{id:'inflight-question',question:{ask:'PRIVATE INFLIGHT QUESTION'}},'inflight-question');
+ try {
+ await sealing;
+ f.app.db.transaction(()=>{
+  const store=runtimeStore(f.app.db),{changedAt:_,...job}=store.read('job',f.job)!,t=f.record();
+  if(relocated){
+   const other=store.ids('binding').map(id=>store.read('binding',id)!).find(b=>b.place===relocated)!;
+   const {changedAt:__,...binding}=other;
+   store.put('binding',{...binding,job:f.job},f.clock.now());
+   store.put('job',{...job,conversation:binding.id},f.clock.now());
+  }
+  if(['box','hosting','lending'].includes(drift)){const {changedAt:__,...box}=store.read('box','a')!;store.put('box',{...box,...(drift==='box'?{revokedAt:f.clock.now()}:drift==='hosting'?{mayHost:[]}:{lentTo:[]})},f.clock.now());}
+  if(drift==='house'){const {changedAt:__,...settings}=store.read('settings','art')!;store.put('settings',{...settings,house:{repo:'/changed',houseFile:'house.json'}},f.clock.now());}
+  if(drift==='membership')new HouseholdDatabase(f.app.db).change(f.home,raw=>{(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person==='pollock')!.agents=[];});
+  if(drift==='credential')signin(f.app).tokens.change(ts=>ts.splice(ts.findIndex(t=>t.sha256===hash(f.body)),1));
+  if(drift==='policy')f.app.db.prepare('INSERT INTO runtime_body_policy (agent,record) VALUES (?,?)').run('art','{}');
+  if(drift==='archive'){t.archived=f.clock.now();f.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(t),f.thread);}
+  if(drift==='imported')store.put('job',{...job,imported:{history:'discard'}},f.clock.now());
+  if(drift==='reset')store.put('job',{...job,principalReset:{approval:'a-reset',by:'jonathan',at:f.clock.now()}},f.clock.now());
+  if(drift==='writeoff')store.put('job',{...job,writtenOff:{approval:'a-writeoff',by:'jonathan',at:f.clock.now()}},f.clock.now());
+  if(drift==='ended')store.put('job',{...job,endedAt:f.clock.now()},f.clock.now());
+  if(drift==='service')store.put('job',{...job,service:'discord'},f.clock.now());
+  if(drift==='binding'){const {changedAt:__,...binding}=store.read('binding',job.conversation!)!;store.put('binding',{...binding,job:'replacement'},f.clock.now());}
+  if(drift==='duplicate'){const copy={...t,id:'th:duplicate-question'};f.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(copy.id,copy.member,copy.agent,copy.project??null,JSON.stringify(copy));}
+  if(drift==='tombstone')f.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('th:deleted-question',t.member,t.agent,t.conversation,f.clock.now());
+  if(drift==='member'){t.member='pollock';f.app.db.prepare('UPDATE comms_threads SET member=?,record=? WHERE id=?').run(t.member,JSON.stringify(t),f.thread);}
+ })();
+ release();expect(await pending).toMatchObject({ok:false,code:'denied'});
+ expect(snapshot()).toEqual(before);
+ expect(f.app.db.prepare("SELECT * FROM core_operations WHERE name='runtime.askQuestion'").all()).toEqual([]);
+ }finally{release();await pending;}
+});
+
+it('keeps non-owner private questions with their original member instead of the household owner',async()=>{
+ const f=await commsBodyFixture('pollock');
+ const ack=value<{ref:string;seq:number}>(await f.post(f.body,'runtime.askQuestion',{id:'member-question',question:{ask:'PRIVATE MEMBER QUESTION'}}));
+ expect(await f.socket('attention.get',{id:ack.ref})).toMatchObject({ok:true,value:{member:'pollock',privateQuestion:{thread:f.thread,seq:ack.seq}}});
+ const owner=signin(f.app).token(hash(f.owner))!.viewer;
+ expect(f.app.operations.call('http',owner,'attention.get',{id:ack.ref})).toMatchObject({ok:false});
+});
+
+it('namespaces private question identities by the actual replacement job',async()=>{
+ const f=await commsBodyFixture(),input={id:'same-question-id',question:{ask:'PRIVATE FIRST JOB QUESTION'}};
+ const first=value<{ref:string;seq:number}>(await f.post(f.body,'runtime.askQuestion',input));
+ value(await f.post(f.runner,'runtime.finishJob',{job:f.job,state:'done'}));
+ value(await f.socket('comms.send',{thread:f.thread,id:'replacementwords',text:'Start the replacement turn'}));
+ const job=await f.queued();expect(job).not.toBe(f.job);
+ value(await f.post(f.runner,'runtime.claimJob',{job}));
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ value(await f.post(f.runner,'runtime.reportJob',{job,state:'running'}));
+ const second=value<{ref:string;seq:number}>(await f.post(body,'runtime.askQuestion',{...input,question:{ask:'PRIVATE SECOND JOB QUESTION'}}));
+ expect(second.ref).not.toBe(first.ref);expect(second.seq).toBeGreaterThan(first.seq);
+ expect(await f.post(f.body,'runtime.askQuestion',input)).toMatchObject({ok:false});
+ const messages=value<Array<{ask?:{ask:string}}>>(await f.socket('comms.messages',{thread:f.thread}));
+ expect(messages.filter(m=>m.ask).map(m=>m.ask!.ask)).toEqual(['PRIVATE FIRST JOB QUESTION','PRIVATE SECOND JOB QUESTION']);
+});
+
+it('enforces bounded private Question fields before encryption and accepts their exact limits',async()=>{
+ const f=await commsBodyFixture(),input={id:'bounded-question',question:{ask:'PRIVATE BOUNDED QUESTION'}};
+ const snapshot=()=>['attention_asks','comms_messages'].map(table=>f.app.db.prepare(`SELECT * FROM ${table}`).all());
+ const before=snapshot();
+ const invalid=[
+  {...input,id:''},{...input,id:'x'.repeat(201)},
+  ...['ask','why','if_yes','if_no'].flatMap(field=>['','x'.repeat(4001)].map(text=>({...input,question:{...input.question,[field]:text}}))),
+  {...input,question:{...input.question,href:'x'.repeat(2001)}},
+  {...input,question:{...input.question,refs:Array.from({length:101},()=> 'ref')}},
+  {...input,question:{...input.question,refs:['x'.repeat(201)]}},
+  {...input,question:{...input.question,refs:['']}},
+ ];
+ for(const candidate of invalid){
+  expect(await f.post(f.body,'runtime.askQuestion',candidate)).toMatchObject({ok:false,code:'invalid'});
+  expect(snapshot()).toEqual(before);
+ }
+ const maximum={id:'q'.repeat(200),question:{ask:'a'.repeat(4000),why:'w'.repeat(4000),if_yes:'y'.repeat(4000),if_no:'n'.repeat(4000),href:'h'.repeat(2000),refs:Array.from({length:100},()=> 'r'.repeat(200)),answers:'yes-no'}};
+ const ack=value<{ref:string;seq:number}>(await f.post(f.body,'runtime.askQuestion',maximum));
+ expect(await f.socket('comms.messages',{thread:f.thread})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:maximum.question})])});
+ expect(await f.socket('attention.get',{id:ack.ref})).toMatchObject({ok:true,value:{answers:'yes-no'}});
+});
+
+it('withholds a former-thread question acknowledgement if the same job moves after the authorized commit',async()=>{
+ const f=await commsBodyFixture(),other=value<{thread:string}>(await f.socket('comms.open',{agent:'art',id:'ackrelocatethrda',text:'Other private thread'})).thread;
+ await f.queued();let moved=false;
+ const stop=f.app.live.observe(changes=>{
+  if(moved||!changes.some(c=>c.type==='attention.ask'))return;
+  moved=true;expect(f.app.db.inTransaction).toBe(false);
+  f.app.db.transaction(()=>{
+   const store=runtimeStore(f.app.db),{changedAt:_,...job}=store.read('job',f.job)!;
+   const {changedAt:__,...binding}=store.ids('binding').map(id=>store.read('binding',id)!).find(b=>b.place===other)!;
+   store.put('binding',{...binding,job:f.job},f.clock.now());store.put('job',{...job,conversation:binding.id},f.clock.now());
+  })();
+ });cleanups.push(stop);
+ expect(await f.post(f.body,'runtime.askQuestion',{id:'former-thread-ack',question:{ask:'PRIVATE AUTHORIZED QUESTION'}})).toMatchObject({ok:false,code:'denied'});
+ expect(moved).toBe(true);
+ // The write was authorized when committed; only its late acknowledgement is withheld.
+ expect(f.app.db.prepare("SELECT thread FROM comms_messages WHERE kind='ask'").all()).toEqual([{thread:f.thread}]);
+ expect(await f.post(f.body,'runtime.describeConversation',{})).toMatchObject({ok:true});
+});
+
+it('preserves the original private question receipt and answered projection after authorized project filing and restart',async()=>{
+ const f=await commsBodyFixture(),input={id:'question-before-filing',question:{ask:'PRIVATE FILING QUESTION'}};
+ const first=value<{ref:string;seq:number}>(await f.post(f.body,'runtime.askQuestion',input));
+ value(await f.socket('comms.replyToAsk',{ref:first.ref,text:'PRIVATE FILING ANSWER'}));
+ const projection=value(await f.socket('attention.get',{id:first.ref}));
+ const ciphertext=f.app.db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(f.thread,first.seq);
+ value(await f.socket('comms.change',{thread:f.thread,action:'project',project:'pond'}));
+ const job=runtimeStore(f.app.db).read('job',f.job)!;
+ expect(job.project).toBe('pond');expect(runtimeStore(f.app.db).read('binding',job.conversation!)!.project).toBe('pond');
+ expect(await f.post(f.body,'runtime.askQuestion',input)).toEqual({ok:true,value:first});
+ expect(value(await f.socket('attention.get',{id:first.ref}))).toEqual(projection);
+ await f.restart();
+ expect(await f.post(f.body,'runtime.askQuestion',input)).toEqual({ok:true,value:first});
+ expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(f.thread,first.seq)).toEqual(ciphertext);
+ expect(value(await f.socket('attention.get',{id:first.ref}))).toEqual(projection);
+ expect(await f.post(f.body,'runtime.askQuestion',{...input,question:{ask:'Changed after filing'}})).toMatchObject({ok:false,code:'conflict'});
+ value(await f.socket('comms.change',{thread:f.thread,action:'archive'}));
+ expect(await f.post(f.body,'runtime.askQuestion',input)).toMatchObject({ok:false});
 });
 it('delivers a private restricted-service timer from a real member body and retains named steering through self-rearm',async()=>{
  const f=await setup(false,'pollock'),thread=await f.open(),source=await f.queued();
