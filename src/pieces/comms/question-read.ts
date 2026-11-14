@@ -31,7 +31,7 @@ export function installQuestionRead(o:Options & {closed():boolean}) {
  const decode=async(s:Snapshot)=>{
   const words=retained(s)?question.parse(JSON.parse(await o.key.open(s.row.words!))):null;
   const a=s.projection;
-  return {id:s.id,thread:s.route.id,seq:s.row.seq,state:a.state,createdAt:a.createdAt,changedAt:a.changedAt,
+  return {id:s.id,thread:s.route.id,member:a.member,agent:a.agent,seq:s.row.seq,state:a.state,createdAt:a.createdAt,changedAt:a.changedAt,
    ...(a.answer?{answer:a.answer}:{}),keepUntil:deadline(s),question:retained(s)?words:null};
  };
  o.operations.register(operation({name:'comms.question',doors:['socket'],windowOnly:true,input:z.object({ref}).strict(),output:z.unknown(),
@@ -52,4 +52,9 @@ export function installQuestionRead(o:Options & {closed():boolean}) {
   refreshOn:change=>change.type==='attention.ask'||change.type==='thread'||change.type==='message',
   expires:record=>record.retained?deadline(record.snapshot as Snapshot):undefined,
  });
+ return (row:MessageRow)=>{
+  const t=o.db.prepare('SELECT member FROM comms_threads WHERE id=?').get(row.thread) as {member:string}|undefined;
+  const s=t?lookup({kind:'member',id:t.member},row.id):undefined;
+  return !!s&&s.row.thread===row.thread&&s.row.seq===row.seq&&s.row.words?.equals(row.words??Buffer.alloc(0))===true;
+ };
 }

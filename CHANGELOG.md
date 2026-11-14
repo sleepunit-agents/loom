@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Read current sealed questions and send ephemeral private replies inline in next-mode Comms.
 - Expose private persistent-holder worker route replacement with complete selection preflight and retirement of original claims and clients.
 
 - Bind sealed typed Comms replies and retry receipts to the retained original encrypted question and owning route.
