@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createElement as h } from 'react';
+import { createElement as h, useMemo } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { Snapshot } from '../../data';
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>}));
+vi.mock('../../data/graphql',()=>({useDataQuery:()=>useMemo(()=>({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent']])}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>f.snapshots[type]}));
 vi.mock('../../ticker',()=>({Ticker:(props:unknown)=>h('ticker-test',props as object)}));
 import Bar from './bar';

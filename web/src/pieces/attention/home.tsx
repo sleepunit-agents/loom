@@ -1,3 +1,4 @@
+import { useDeskRoster } from './roster';
 import { stamp } from './time';
 import { agentPath } from './home-model';
 import { HomeSteps } from './home-steps';
@@ -12,7 +13,7 @@ import { AskReader, AnswerReceipt, type Guard } from './index';
 import { useWaitChecks } from './wait-checks';
 import { useMemberRetention } from './member-retention';
 import type { Ask } from './model';
-import { currentRuntimeJobs, type RuntimeJob, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, reportLink, type AgentPerson, type AgentStatus, type OwnedAgent, type ReportedItem } from './home-model';
+import { currentRuntimeJobs, type RuntimeJob, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, reportLink, type AgentPerson, type AgentStatus, type ReportedItem } from './home-model';
 import { deskJobs, agentNext } from '../../../../src/pieces/clock/desk';
 import { active, time, state, type Wake, type Clock } from '../clock/model';
 function Unavailable({ status, label }: { status: Snapshot['status']; label: string }) {
@@ -29,7 +30,7 @@ function ReportedItems({ title, empty, items, go }: { title: string; empty: stri
   </section>;
 }
 export default function Home({ go = path => location.assign(path) }: { go?: (path:string)=>void } = {}) {
-  const roster = useRecords<OwnedAgent>('attention.ownedAgent');
+  const roster = useDeskRoster();
   const activity = useRecords<ActivityWindow>('activity.window', 'recent');
   const displays = useAgentDisplays();
   const { reading:conversations, threads, status:threadStatus } = useHomeComms();

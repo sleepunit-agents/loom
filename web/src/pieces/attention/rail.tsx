@@ -1,8 +1,9 @@
+import { useDeskRoster } from './roster';
 import { useContext, useLayoutEffect, useRef, useState } from 'react';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import { Row } from '../../kit';
 import { useRecords, type LiveRecord } from '../../data';
-import { currentRuntimeJobs, type RuntimeJob, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus, type OwnedAgent } from './home-model';
+import { currentRuntimeJobs, type RuntimeJob, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus } from './home-model';
 import type { Ask } from './model';
 import './rail.css';
 import { RailContext } from '../../desk-rail';
@@ -16,7 +17,7 @@ function CompanionSlot({agent}:{agent:string}) {
 }
 /** Only policy-filtered feeds. No messages, local cache, direct fetch or answer controls. */
 export default function AgentRail({ go }: { go(path: string): void }) {
-  const roster = useRecords<OwnedAgent>('attention.ownedAgent');
+  const roster = useDeskRoster();
   const displays = useAgentDisplays();
   const people = useRecords<AgentPerson>('person');
   const statuses = useRecords<AgentStatus>('attention.agent');

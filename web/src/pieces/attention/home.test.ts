@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createElement as h, useSyncExternalStore } from 'react';
+import { createElement as h, useMemo, useSyncExternalStore } from 'react';
 // @ts-expect-error Existing renderer dependency has no bundled declarations.
 import { act, create } from 'react-test-renderer';
 import type { Ask } from './model';
@@ -8,6 +8,7 @@ import type { Call, CallState, Result, Snapshot } from '../../data';
 // Renderer nodes carry arbitrary DOM callbacks; snapshots mix three record types for the hook fake.
 type Node={children:Array<Node|string>;props:Record<string,any>};
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),call:vi.fn(),once:vi.fn()}));
+vi.mock('../../data/graphql',()=>({useDataQuery:()=>useMemo(()=>({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent']])}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]),call:f.call,callOnce:f.once}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import Home from './home';
@@ -31,11 +32,11 @@ function request<T>() {
 }
 beforeEach(()=>{f.call.mockReset();f.once.mockReset();f.once.mockReturnValue({result:new Promise(()=>{})});f.listeners.clear();f.snapshots={'activity.window':live([]),'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'thread':live([]),'household.agentDisplay':live([]),'person':live([]),'runtime.job':live([]),'wake':live([]),'clock':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
-it('keeps idle owned cards alphabetical by display name and id, without deriving agents from asks or work',async()=>{
+it('keeps idle owned cards in saved position order with stable id ties, without deriving agents from asks or work',async()=>{
   f.snapshots['attention.ask']=live([ask('foreign',{agent:'other'})]);
   await draw();expect(tree!.root.findAllByType('section').filter((n:Node)=>n.props['aria-label']?.endsWith(' card')).map((n:Node)=>n.props['aria-label'])).toEqual(['Art card','Mark card']);
   expect(text()).toContain('Nothing right now');expect(text()).not.toContain('other card');
-  expect(orderedAgents([{id:'z',name:'ALPHA'},{id:'a',name:'alpha'},{id:'b',name:'Beta'}]).map(a=>a.id)).toEqual(['a','z','b']);
+  expect(orderedAgents([{id:'z',name:'ALPHA',position:1},{id:'a',name:'alpha',position:0},{id:'b',name:'Beta',position:2}]).map(a=>a.id)).toEqual(['a','z','b']);
 });
 it('counts every central open ask, shows exactly the first three, and opens their exact Inbox reader',async()=>{
   f.snapshots['attention.ask']=live([ask('four',{createdAt:4}),ask('done',{state:'answered'}),ask('resolved',{state:'resolved'}),ask('three',{createdAt:3}),ask('one',{createdAt:1}),ask('two',{createdAt:2})]);
@@ -131,7 +132,7 @@ it('uses live directory agent names and People links without adding relationship
   f.snapshots['person']=live([person('art','Zulu Fish'),person('mark','ALPHA Mark'),person('pond-bot','Not owned'),person('art','Relationship name',{id:'mark:art',agent:'mark'}),person('outsider','Outside')]);
   const go=await draw();
   const cards=()=>tree!.root.findAllByType('section').filter((n:Node)=>n.props['aria-label']?.endsWith(' card')).map((n:Node)=>n.props['aria-label']);
-  expect(cards()).toEqual(['ALPHA Mark card','Zulu Fish card']);
+  expect(cards()).toEqual(['Zulu Fish card','ALPHA Mark card']);
   expect(text()).not.toContain('Relationship name');expect(text()).not.toContain('Not owned');
   await act(async()=>tree!.root.findByProps({'aria-label':'Zulu Fish in People'}).props.onClick());expect(go).toHaveBeenCalledWith('/p/people-preview/person/art');expect(f.call).not.toHaveBeenCalled();
   await publish('person',live([person('art','Beta Fish')]));

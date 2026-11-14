@@ -1,7 +1,8 @@
+import { useDeskRoster } from './roster';
 import type { ReactNode } from 'react';
 import { useRecords } from '../../data';
 import { Ticker, type TickPart } from '../../ticker';
-import { agentPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus, type OwnedAgent } from './home-model';
+import { agentPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus } from './home-model';
 import type { Ask } from './model';
 import './bar.css';
 import { BarClock, BarStatus } from './bar-system';
@@ -11,7 +12,7 @@ export interface BarProps { title: string; go(path: string): void; actions: Reac
 /** The bar reads the same policy-filtered facts as Home. No legacy shell or saved copy. */
 export default function AttentionBar({ title, go, actions }: BarProps) {
   const stats = useDeskStats();
-  const roster = useRecords<OwnedAgent>('attention.ownedAgent');
+  const roster = useDeskRoster();
   const people = useRecords<AgentPerson>('person');
   const statuses = useRecords<AgentStatus>('attention.agent');
   const asks = useRecords<Ask>('attention.ask');

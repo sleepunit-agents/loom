@@ -3,7 +3,7 @@ import type { RuntimeRecords } from '../../../../src/pieces/runtime/records';
 import type { Ask } from './model';
 import { listedAsks, safeHref } from './model';
 export interface ReportedItem { id: string; label: string; href?: string }
-export interface OwnedAgent extends LiveRecord { name: string }
+export interface OwnedAgent extends LiveRecord { name: string; position?: number }
 /** Only the shared directory identifies an agent; relationship cards are not its display identity. */
 export interface AgentPerson extends LiveRecord { slug: string; name: string; kind: 'person' | 'agent'; agent?: string }
 export function namedAgents(agents: readonly OwnedAgent[], people: readonly AgentPerson[]) {
@@ -28,7 +28,7 @@ export function reportLink(href?: string): { href: string; app: boolean } | unde
   if (external) return { href: external, app: false };
 }
 export const openAsks = (records: readonly Ask[]) => listedAsks(records).filter(ask => ask.state === 'open').sort((a,b) => a.createdAt-b.createdAt || a.id.localeCompare(b.id));
-export const orderedAgents = <T extends OwnedAgent>(records: readonly T[]) => [...records].sort((a,b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()) || a.id.localeCompare(b.id));
+export const orderedAgents = <T extends OwnedAgent>(records: readonly T[]) => [...records].sort((a,b) => (a.position ?? 0) - (b.position ?? 0) || a.id.localeCompare(b.id));
 /** Multiple scoped reporters may describe one agent. Newest visible report wins, then stable id. */
 export const latestStatus = (records: readonly AgentStatus[], agent: string) => records.filter(r => r.agent === agent).sort((a,b) => b.changedAt-a.changedAt || a.id.localeCompare(b.id))[0];
 export const inboxPath = (ask?: Ask) => ask ? `/p/inbox-preview/ask/${encodeURIComponent(ask.id)}` : '/p/inbox-preview';

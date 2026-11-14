@@ -1,11 +1,12 @@
+import { useDeskRoster } from './roster';
 import { useEffect } from 'react';
 import { useRecords, type LiveRecord } from '../../data';
-import { namedAgents, openAsks, orderedAgents, type OwnedAgent, type AgentPerson } from './home-model';
+import { namedAgents, openAsks, orderedAgents, type AgentPerson } from './home-model';
 import type { Ask } from './model';
 interface Thread extends LiveRecord {id:string;agent:string;archived:number|null;last:number;unread:boolean}
 /** Desk signals have no hidden UI or message words; all sources are policy-filtered. */
 export default function DeskSignals({go,onAttention}:{go(path:string):void;onAttention:(value:boolean)=>void}) {
-  const roster=useRecords<OwnedAgent>('attention.ownedAgent');
+  const roster=useDeskRoster();
   const people=useRecords<AgentPerson>('person');
   const asks=useRecords<Ask>('attention.ask');
   const threads=useRecords<Thread>('thread');

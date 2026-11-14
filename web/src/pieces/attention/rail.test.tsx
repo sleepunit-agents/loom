@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { createElement as h, useSyncExternalStore } from 'react';
+import { createElement as h, useMemo, useSyncExternalStore } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { Snapshot } from '../../data';
-const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>()}));
+const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),queryStatus:"live" as "live"|"offline"|"denied"}));
+vi.mock('../../data/graphql',()=>({useDataQuery:()=>useMemo(()=>({status:f.queryStatus,data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.queryStatus])}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])}));
 import Rail from './rail';
 import { RailContext } from '../../desk-rail';
@@ -14,7 +15,7 @@ const live=(records:object[])=>({records,status:'live' as const});
 const text=()=>JSON.stringify(tree.toJSON());
 async function publish(type:string,status:Snapshot['status'],records=f.snapshots[type].records){await act(async()=>{f.snapshots[type]={status,records};f.listeners.forEach(fn=>fn());});}
 let events:EventTarget;
-beforeEach(()=>{events=new EventTarget();vi.stubGlobal('addEventListener',events.addEventListener.bind(events));vi.stubGlobal('removeEventListener',events.removeEventListener.bind(events));f.listeners.clear();f.snapshots={
+beforeEach(()=>{f.queryStatus='live';events=new EventTarget();vi.stubGlobal('addEventListener',events.addEventListener.bind(events));vi.stubGlobal('removeEventListener',events.removeEventListener.bind(events));f.listeners.clear();f.snapshots={
  'attention.ownedAgent':live([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),
  'household.agentDisplay':live([]),'runtime.job':live([]),
  'person':live([]),'attention.ask':live([{id:'first',ask:'Proceed with backup?',agent:'art',state:'open',createdAt:1}]),
@@ -22,7 +23,7 @@ beforeEach(()=>{events=new EventTarget();vi.stubGlobal('addEventListener',events
  'thread':live([{id:'th:abc',agent:'art',title:'Unread conversation',unread:true,last:1,archived:null},{id:'th:recent',agent:'art',title:'Newest read thread',unread:false,last:2,archived:null}]),
 };});
 afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();});
-it('keeps only the owned roster alphabetical, opens the first unread thread and reads full asks in Inbox',async()=>{
+it('keeps only the owned roster in saved order, opens the first unread thread and reads full asks in Inbox',async()=>{
  const go=vi.fn();await act(async()=>{tree=create(h(Rail,{go}));});
  expect(tree.root.findAllByType('section').map((n:any)=>n.props['data-agent'])).toEqual(['art','mark']);
  expect(text()).toContain('Checking the backup');expect(text()).toContain('1 unread thread');
@@ -69,7 +70,7 @@ it('folds measured overflow, keeps talking before asks/unread, and unfolds when 
  } finally {await act(async()=>tree.unmount());vi.unstubAllGlobals();}
 });
 
-it('reports only live attention and opens alphabetical agents by shortcut while typing',async()=>{
+it('reports only live attention and opens agents in saved order by shortcut while typing',async()=>{
  const go=vi.fn(),onAttention=vi.fn();await act(async()=>{tree=create(h(DeskSignals,{go,onAttention}));});
  expect(onAttention).toHaveBeenLastCalledWith(true);
  const press=(code:string)=>{const event=new Event('keydown',{cancelable:true});Object.assign(event,{code,ctrlKey:true,shiftKey:true});return event;};
@@ -82,7 +83,7 @@ it('reports only live attention and opens alphabetical agents by shortcut while 
  await act(async()=>{events.dispatchEvent(press('Digit1'));});expect(go).not.toHaveBeenCalled();
 });
 
-it('puts the selected owned Comms companion above Needs you and returns it to alphabetical order',async()=>{
+it('puts the selected owned Comms companion above Needs you and returns it to saved order',async()=>{
  const go=vi.fn(),onAir=vi.fn();const view=(selected?:string)=>h(RailContext.Provider,{value:{onAir,shown:true,screen:null,selected}},h(Rail,{go}));
  await act(async()=>{tree=create(view('mark'));});
  expect(tree.root.findAllByType('section').map((n:any)=>n.props['data-agent'])).toEqual(['mark','art']);
@@ -108,4 +109,28 @@ it('lists each agent current jobs and drops stale jobs when disconnected',async(
  expect(text()).not.toContain('Finished job');expect(text()).not.toContain('Other agent job');
  await publish('runtime.job','offline');expect(text()).not.toContain('Compare pumps');expect(text()).toContain('Jobs unavailable');
  await publish('runtime.job','live',[]);expect(text()).toContain('No current jobs.');
+});
+it('uses saved positions for rail cards and keyboard shortcuts after a live reorder',async()=>{
+ const go=vi.fn();
+ f.snapshots['attention.ownedAgent']=live([{id:'art',name:'Art',position:4},{id:'mark',name:'Mark',position:1}]);
+ await act(async()=>{tree=create(h('div',null,h(Rail,{go}),h(DeskSignals,{go,onAttention:vi.fn()})));});
+ const order=()=>tree.root.findAllByType('section').map((n:any)=>n.props['data-agent']).filter(Boolean);
+ expect(order()).toEqual(['mark','art']);
+ const shortcut=()=>{const event=new Event('keydown',{cancelable:true});Object.assign(event,{ctrlKey:true,shiftKey:true,altKey:false,metaKey:false,code:'Digit1'});events.dispatchEvent(event);};
+ await act(async()=>shortcut());expect(go).toHaveBeenLastCalledWith('/p/comms-preview');
+ await publish('attention.ownedAgent','live',[{id:'art',name:'Art',position:0},{id:'mark',name:'Mark',position:1}]);
+ expect(order()).toEqual(['art','mark']);
+ await act(async()=>shortcut());expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
+});
+
+it.each(['offline','denied'] as const)('clears rail details and shortcuts when generated directory is %s, then accepts fresh order',async status=>{
+ const go=vi.fn();await act(async()=>{tree=create(h('div',null,h(Rail,{go}),h(DeskSignals,{go,onAttention:vi.fn()})));});
+ expect(text()).toContain('Art rail card');
+ f.queryStatus=status;
+ await publish('attention.ownedAgent','live');
+ expect(text()).not.toContain('Art rail card');expect(text()).not.toContain('Checking the backup');
+ const event=new Event('keydown',{cancelable:true});Object.assign(event,{ctrlKey:true,shiftKey:true,altKey:false,metaKey:false,code:'Digit1'});
+ go.mockClear();await act(async()=>events.dispatchEvent(event));expect(go).not.toHaveBeenCalled();
+ f.queryStatus='live';await publish('attention.ownedAgent','live',[{id:'mark',name:'Mark',position:0}]);
+ expect(text()).toContain('Mark rail card');expect(text()).not.toContain('Art rail card');
 });
