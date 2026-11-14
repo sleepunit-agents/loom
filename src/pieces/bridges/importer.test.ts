@@ -254,3 +254,24 @@ it('validates a malformed present flag even when another part is silent',()=>{
  ]);
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["channels"]["art"]["flags"]["300"]["peer"]');
 });
+
+for(const flags of [null,[],false,'PRIVATE'])it(`rejects a present malformed flags map (${JSON.stringify(flags)})`,()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',flags}],['channels','mark',{bot:'200'}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["channels"]["art"]["flags"]');
+});
+for(const pair of [1.5,9007199254740992])it(`rejects malformed numeric pair before serializing (${pair})`,()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',flags:{'300':{pair}}}],['channels','mark',{bot:'200'}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["channels"]["art"]["flags"]["300"]["pair"]');
+});
+it('keeps explicit default-only sparse flags runnable and blocks descendant mention fallback for non-default partial flags',()=>{
+ const f=fixture();f.store('shuttle',[
+ ['routes','household',{guild:'789'}],
+ ['channels','art',{bot:'100',answers:{'300':'work','400':'default'},flags:{'300':{peer:true},'400':{peer:false,pair:null,guest_venue:false,readers:[]}},threads:{'500':{parent:'300',primary:'art'}}}],
+ ['channels','mark',{bot:'200'}],
+ ]);
+ const result=readBridgeImport(f.sources,f.options,h,f.open);
+ expect(result.expected.routes.map(r=>r.channel)).toEqual(['400']);
+ const venue={...result.expected.venues[0],enabled:true};
+ for(const channel of ['300','500'])expect(addressed(venue,{id:'1',channel,...(channel==='500'?{parent:'300'}:{}),user:'123',text:'hello',mentions:['100'],bot:false,at:'2026-01-01T00:00:00.000Z'},undefined,[venue])).toBe(false);
+ expect(JSON.parse(result.evidence).retained.filter((r:{path?:string[]})=>r.path?.includes('400'))).toEqual([]);
+});

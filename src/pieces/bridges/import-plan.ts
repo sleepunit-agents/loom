@@ -68,9 +68,14 @@ function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|
   const defaults={peer:false,pair:null,guest_venue:false,readers:[]};
   const saved=[...parts].sort(([a],[b])=>a<b?-1:1).map(([a,raw])=>({agent:a,doc:parse(raw,['channels',a])}));
   const entries=new Map<string,{agent:string;flags:typeof defaults}[]>();
-  for(const p of saved)for(const [cid,value]of Object.entries(at(p.doc,'flags',['channels',p.agent]))){
+  for(const p of saved)for(const [cid,value]of Object.entries(Object.hasOwn(p.doc,'flags')?sourceObject(p.doc.flags,['channels',p.agent,'flags']):{})){
     const path=['channels',p.agent,'flags',cid];
     const raw=sourceObject(value,path);
+    const checkFlagNumbers=(value:unknown,at:PropertyKey[]):void=>{
+      if(typeof value==='number'&&!Number.isSafeInteger(value))throw new BridgeSourceError('shuttle-store',at);
+      if(value&&typeof value==='object')for(const [key,child]of Object.entries(value))checkFlagNumbers(child,[...at,Array.isArray(value)?Number(key):key]);
+    };
+    for(const key of flagKeys)checkFlagNumbers(raw[key],[...path,key]);
     // Validate even a rule that will be dropped. Diagnostics retain its origin.
     try{projectBridgeDocument(empty(),'flags','routes',JSON.stringify({channels:{[cid]:raw}}));}
     catch(error){if(error instanceof BridgeSourceError)throw new BridgeSourceError('shuttle-store',[...path,...error.path.slice(2)]);throw error;}

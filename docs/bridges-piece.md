@@ -1046,6 +1046,8 @@ A missing flags map or missing channel entry is silence, not a conflicting entry
 Only two present entries whose normalized fields disagree refuse; the error names
 shuttle.db, channels, the agent, channel and differing field, without values.
 Every present entry is validated before deciding whether it can be projected.
+A present null/non-object flags map refuses; invalid numeric lexemes refuse
+before serialization can turn their internal NaN marker into a nullable field.
 
 The new route is global; accepted flags were per agent. If a non-default flag has
 any silent part, the importer conservatively blocks the entire channel and its
