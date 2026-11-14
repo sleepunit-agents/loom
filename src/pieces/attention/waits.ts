@@ -47,19 +47,23 @@ export function installWaitChecks(db: Db, operations: Operations, sharing: () =>
     } catch { /* Owning role unavailable: hold. */ }
   };
   operations.register(coreOperation({ name: 'attention.sweepWaits', doors: ['direct'], write: true,
-    input: z.object({}).strict(), output: z.object({ pending: z.number(), resolved: z.number() }),
+    input: z.object({ after: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() }).strict(), output: z.object({ pending: z.number(), resolved: z.number(), next: z.number().optional() }),
     may: viewer => mayAct(viewer, { type: 'attention.ask' }, sharing(), 'act', 'attention.sweepWaits')
       && mayAct(viewer, { type: 'attention.ask' }, sharing(), 'act', 'attention.pendingWaits'),
-    run(ctx) {
+    run(ctx, input) {
       const held = sharing();
-      const pending = (statement(db, 'SELECT record FROM attention_asks ORDER BY id').all() as { record: string }[])
+      // Bound raw inventory too: hidden, resolved and managed rows cannot make a turn unbounded.
+      const rows = statement(db, 'SELECT rowid AS cursor, record FROM attention_asks WHERE rowid > ? ORDER BY rowid LIMIT 1001').all(input.after ?? 0) as { cursor: number; record: string }[];
+      const page = rows.slice(0, 1000);
+      const continuation = rows.length > 1000 ? { next: page[page.length - 1].cursor } : {};
+      const pending = page
         .map(row => JSON.parse(row.record) as Ask)
         .filter(ask => ask.state === 'open' && !ask.sourceManaged && !!ask.waits_on && maySee(ctx.viewer, { type: 'attention.ask', ...ask }, held));
       const eligible = pending.filter(ask => !ask.privateQuestion && mayAct(ctx.viewer, { type: 'attention.ask', ...ask }, held, 'act', 'attention.checkWait')
         && canResolveAsk(ask, ctx.viewer, held));
       // No cross-operation cache: all facts and policy share this transaction.
       let facts: AttentionWaits;
-      try { facts = waits.batch?.(eligible, ctx.viewer) ?? {}; } catch { return { pending: pending.length, resolved: 0 }; }
+      try { facts = waits.batch?.(eligible, ctx.viewer) ?? {}; } catch { return { pending: pending.length, resolved: 0, ...continuation }; }
       const save = statement(db, 'UPDATE attention_asks SET record=? WHERE id=?');
       let resolved = 0;
       for (const ask of eligible) {
@@ -67,7 +71,7 @@ export function installWaitChecks(db: Db, operations: Operations, sharing: () =>
         if (!reason) continue;
         resolveAsk(ctx, ask, reason, record => { save.run(JSON.stringify(record), record.id); }); resolved++;
       }
-      return { pending: pending.length, resolved };
+      return { pending: pending.length, resolved, ...continuation };
     },
   }));
   operations.register(operation({ name: 'attention.checkWait', write: true,
