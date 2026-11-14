@@ -1338,3 +1338,18 @@ whole-batch failure, original-conversation mismatch, malformed/capability-shaped
 input, unsafe/missing/invalid/local-marked files, acknowledged history and combined
 UTF-8 byte bounds. Existing next-mode Clock fixtures still require standalone
 files to create no Runtime job. Actual end-to-end file delivery remains unproved.
+
+### Captured Clock read destination
+
+Clock inbox reads pin the original job, agent/member/project/service,
+conversation and wake binding (including lane place), runner/box, claim time
+and claimed house across read preparation. Current authorization of a replacement
+destination cannot release words prepared for the prior destination. The same
+snapshot is checked after the outside-effects gate and at the operation's final
+transaction boundary. Progress, heartbeat and record timestamps do not replace
+that destination and remain free to advance.
+
+This is a check on the existing stored-prompt inbox, not a native execution
+lease. It supplies no authority after the read returns. Standalone files remain
+held; the owning worker consumer must still connect exact source/withdrawal and
+original-destination checks to native launch, with credentials and staging intact.

@@ -24,7 +24,18 @@ const sourceRecord=(wake:Wake,attempt:string)=>JSON.stringify({text:wake.prompt,
 interface Proof {agent:string;job?:string;service?:string;valid():boolean}
 export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:OutsideEffects,proof:(v:Viewer)=>Proof|undefined) {
   const {db,operations}=app,store=runtimeStore(db),destination=clockDestination(app,sharing);
-  const reads=new WeakMap<object,{job:string;rows:Turn[]}>();
+  const reads=new WeakMap<object,{job:string;destination:string;rows:Turn[]}>();
+  // Pin the owning route and claim, not mutable progress/heartbeat metadata.
+  // A replacement that is independently valid cannot authorize prepared words
+  // captured for the previous destination across the operation's async boundary.
+  const readDestination=(job:RuntimeRecords['job'])=>{
+    const binding=job.conversation?store.read('binding',job.conversation):undefined;
+    return JSON.stringify({job:job.id,agent:job.agent,member:job.member,project:job.project,
+      service:job.service,conversation:job.conversation,runner:job.runner,box:job.box,
+      claimedAt:job.claimedAt,made:job.made,
+      binding:binding&&{id:binding.id,agent:binding.agent,member:binding.member,
+        project:binding.project,venue:binding.venue,place:binding.place,job:binding.job}});
+  };
   const owners=()=>Object.entries(sharing().members).filter(([,m])=>m.owner).map(([id])=>id);
   const withdrawn=(row:Turn)=>clockDispatchWithdrawn(operations,row.id.slice('clock:'.length),(JSON.parse(row.record) as {attempt:string}).attempt);
   const currentSource=(row:Turn,job:RuntimeRecords['job'])=>{
@@ -96,6 +107,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   }));
   const read=(v:Viewer,before?:number)=>{
     const job=bound(v);if(!job)throw new OperationError('denied','Clock body binding ended');
+    const originalDestination=readDestination(job);
     const rows=(db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT 100').all(job.conversation,before??Number.MAX_SAFE_INTEGER) as Turn[]).filter(row=>!withdrawn(row));
     const currentSources=()=>rows.every(row=>currentSource(row,job));
     if(!currentSources())throw new OperationError('denied','Clock delivery authority ended');
@@ -103,14 +115,15 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     if(rows.some(r=>r.released===null)&&!effects.beforeOutside({id:`runtime:clock-read:${job.id}:${rows[0]?.seq}`,kind:'body-start',title:'Release scheduled conversation input'}))
       throw new OperationError('conflict','Scheduled input is held');
     // Recheck after the outside gate, before releasing any words or marking delivery.
-    if(bound(v)?.id!==job.id||!currentSources())throw new OperationError('denied','Clock body binding ended');
+    const currentJob=bound(v);
+    if(!currentJob||currentJob.id!==job.id||readDestination(currentJob)!==originalDestination||!currentSources())throw new OperationError('denied','Clock body binding ended');
     db.transaction(()=>{
       for(const row of rows){db.prepare('UPDATE runtime_clock_turns SET released=COALESCE(released,?) WHERE id=?').run(operations.clock.now(),row.id);}
     })();
     if(rows.some(r=>r.released===null))effects.finish(`runtime:clock-read:${job.id}:${rows[0]?.seq}`);
     app.live.changed([{type:'runtime.job',id:job.id}]);
     const value={conversation:job.conversation,messages:[...rows].reverse().map(r=>({seq:r.seq,id:r.id,kind:'wake',text:(JSON.parse(r.record) as {text:string}).text}))};
-    reads.set(value,{job:job.id,rows});
+    reads.set(value,{job:job.id,destination:originalDestination,rows});
     return value;
   };
   operations.register(operation({name:'runtime.acknowledgeClockInput',doors:['http','direct'],write:true,recheckPolicy:true,
@@ -136,7 +149,8 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   return {valid,bound,read,clockProvenance,
     currentRead(v:Viewer,value:unknown){
       const snapshot=value&&typeof value==='object'?reads.get(value):undefined,job=bound(v);
-      return !!snapshot&&!!job&&snapshot.job===job.id&&snapshot.rows.every(row=>currentSource(row,job));
+      return !!snapshot&&!!job&&snapshot.job===job.id&&snapshot.destination===readDestination(job)
+        &&snapshot.rows.every(row=>currentSource(row,job));
     },
     job:(wake:string)=>(db.prepare('SELECT job FROM runtime_clock_turns WHERE id=?').get(`clock:${wake}`) as {job:string}|undefined)?.job,
     consumed:(source:string)=>{const row=db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(source) as {consumed:number|null}|undefined;return !!row&&row.consumed!==null;},

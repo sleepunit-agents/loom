@@ -617,3 +617,43 @@ it.each([false,true].flatMap(staging=>['once','recurring','runNow'].map(mode=>({
   expect(wakes(f.app.db).find(w=>w.prompt==='After owner demotion')).toMatchObject({member:'jonathan',authorship:{principal:{for:'jonathan',people:['jonathan']}}});
  }
 });
+
+it.each(['place','claim','runner','house'] as const)('pins the original Clock %s across asynchronous read preparation',async changed=>{
+ const f=await setup(),id=await f.schedule(),job=f.store.ids('job')[0];
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const payload=await f.post(f.runner,'takeInput',{job});
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+ const viewer=signin(f.app).token(hash(payload.value.credential))!.viewer;
+ const before=f.store.read('job',job)!,binding=f.store.read('binding',before.conversation!)!;
+ const pending=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...j}=before;
+  if(changed==='place'){
+   const {changedAt:__,...b}=binding;f.store.put('binding',{...b,place:'lane:replacement'},f.clock.now());
+  }else if(changed==='claim')f.store.put('job',{...j,claimedAt:before.claimedAt!+1},f.clock.now());
+  else if(changed==='runner')f.store.put('job',{...j,runner:'b',box:'b'},f.clock.now());
+  else {
+   const settings=f.store.read('settings','art')!;
+   const {changedAt:__,...s}=settings;
+   const house={repo:'/fixture/replacement',houseFile:'house/house.json'};
+   f.store.put('settings',{...s,house},f.clock.now());
+   f.store.put('job',{...j,made:house},f.clock.now());
+  }
+ })();
+ expect(await pending).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${id}`)).toEqual({consumed:null});
+ // A new read can independently authorize the replacement; the stale prepared
+ // words never acquire authority from it. Ordinary progress is not a rebind.
+ expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'PRIVATE wake words'}]}});
+});
+
+it('allows Clock progress and heartbeat metadata to change during read preparation',async()=>{
+ const f=await setup();await f.schedule();const job=f.store.ids('job')[0];
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const payload=await f.post(f.runner,'takeInput',{job});
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+ const viewer=signin(f.app).token(hash(payload.value.credential))!.viewer;
+ const pending=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
+ expect(f.call('runtime.reportJob',{job,state:'waiting'},{kind:'runner',id:'a'})).toMatchObject({ok:true});
+ expect(await pending).toMatchObject({ok:true,value:{messages:[{text:'PRIVATE wake words'}]}});
+});
