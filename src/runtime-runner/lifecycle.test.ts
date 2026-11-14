@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -12,6 +12,8 @@ import { signin, hash } from '../core/signin/index.js';
 import { runtimeStore } from '../pieces/runtime/store.js';
 import { connectClaudeWorker, type WorkerControlRuntime } from './lifecycle.js';
 import { runClaudeJob } from './once.js';
+import { runClaudeWorker } from '../cli/claude-worker.js';
+import type { IOStreams } from '../cli/io.js';
 import type { SpawnClaude } from './session.js';
 const cleanups:Array<()=>unknown>=[];
 afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();});
@@ -31,21 +33,21 @@ async function setup() {
  app.operations.call('direct',{kind:'member',id:'jonathan'},'signin.setPrincipal',{kind:'runner',id:'r',active:true},'principal');
  auth.tokens.change(tokens=>tokens.push({role:'runner:r',label:'worker',sha256:hash(token),created:new Date(clock.now()).toISOString()}));
  const config={url:app.url,token,job:'j'};
- const calls:Array<{args:readonly string[];input:string;child:EventEmitter&{stdin:PassThrough;stdout:PassThrough;stderr:PassThrough;kill:()=>boolean;killed:boolean}}>=[];
+ const calls:Array<{command:string;options:unknown;args:readonly string[];input:string;child:EventEmitter&{stdin:PassThrough;stdout:PassThrough;stderr:PassThrough;kill:()=>boolean;killed:boolean}}>=[];
  const listeners:Array<()=>void>=[];
  const waitSpawn=(count:number)=>new Promise<void>(resolve=>{if(calls.length>=count)resolve();else listeners.push(()=>{if(calls.length>=count)resolve();});});
- const spawn:SpawnClaude=(_command,args)=>{
+ const spawn:SpawnClaude=(command,args,options)=>{
   const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough(),killed:false,kill(){this.killed=true;queueMicrotask(()=>this.emit('close',null));return true;}});
-  const call={args,input:'',child};child.stdin.on('data',data=>call.input+=data.toString());calls.push(call);for(const notify of listeners)notify();
+  const call={command,options,args,input:'',child};child.stdin.on('data',data=>call.input+=data.toString());calls.push(call);queueMicrotask(()=>child.emit('spawn'));for(const notify of listeners)notify();
   return child as ReturnType<SpawnClaude>;
  };
  const selected={command:'/worker/claude',env:{WORKER:'true'},checkout:'/fixture/art',house,binding,rules,spawn};
  let tick:(()=>void)|undefined;
- const runtime:WorkerControlRuntime={request:fetch,every(callback){tick=callback;return ()=>{tick=undefined;};}};
+ const runtime:WorkerControlRuntime={request:fetch,deadline:ms=>{expect(ms).toBe(1500);const controller=new AbortController();clock.at(clock.now()+ms,()=>controller.abort());return controller.signal;},every(callback,ms){expect(ms).toBe(1000);tick=callback;return ()=>{tick=undefined;};}};
  const update=(set:object)=>app.db.transaction(()=>{const {changedAt:_,...job}=store.read('job','j')!;store.put('job',{...job,...set},clock.now());})();
  const finish=()=>{const c=calls.at(-1)!;const flag=c.args.includes('--resume')?'--resume':'--session-id';c.child.stdout.write(JSON.stringify({type:'result',is_error:false,session_id:c.args[c.args.indexOf(flag)+1],result:'PRIVATE RESULT'}));c.child.emit('close',0);};
  const connect=async()=>{const worker=await connectClaudeWorker(config,selected,runtime);cleanups.push(worker.close);return worker;};
- return {app,clock,store,config,calls,selected,runtime,update,finish,connect,waitSpawn,tick:()=>tick?.()};
+ return {home,app,clock,store,config,calls,selected,runtime,update,finish,connect,waitSpawn,tick:()=>tick?.()};
 }
 it('actual API control wraps the real Claude argv/stdin path and retains only its own history',async()=>{
  const f=await setup(),worker=await f.connect();
@@ -75,7 +77,7 @@ it('a returning worker cannot start a written-off job, and a fresh connection ha
 });
 it('the external startup claims, takes one gated input, runs and finishes through the real API',async()=>{
  const f=await setup(),p=runClaudeJob(f.config,f.selected,f.runtime);
- await f.waitSpawn(1);expect(f.store.read('job','j')?.state).toBe('running');
+ await f.waitSpawn(1);
  expect(f.calls[0].input).toBe('OWNER FLOOR\nPRIVATE WORK');f.finish();await p;
  expect(f.store.read('job','j')?.state).toBe('done');
  await expect(runClaudeJob(f.config,f.selected,f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(1);
@@ -111,4 +113,38 @@ it('a new connection after an ordinary worker restart cannot resume the previous
 it.each(['house','model'] as const)('refuses unsupported or mismatched %s input without a process',async drift=>{
  const f=await setup();if(drift==='model')f.update({model:'some-model'});
  await expect(runClaudeJob(f.config,{...f.selected,...(drift==='house'?{house:{...house,repo:'/different'}}:{})},f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(0);
+});
+it('post-output acceptance reads authority after completion even when an earlier retain response is delayed',async()=>{
+ const f=await setup();let hold=false,release:()=>void=()=>{},observed:()=>void=()=>{};
+ const retained=new Promise<void>(resolve=>{observed=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{const response=await fetch(...args);if(hold){hold=false;observed();await gate;}return response;}};
+ const worker=await connectClaudeWorker(f.config,f.selected,runtime);cleanups.push(worker.close);
+ const p=worker.turn({binding,rules,message:'private',current:()=>true}),rejected=expect(p).rejects.toThrow();await f.waitSpawn(1);
+ hold=true;f.tick();await retained;f.update({principalReset:{approval:'a-owner',by:'jonathan',at:1},state:'stopped'});
+ f.finish();release();await rejected;
+ await expect(worker.turn({binding,rules,message:'late',current:()=>true})).rejects.toThrow();expect(f.calls).toHaveLength(1);
+});
+it('rejects a reset observed only by the post-output check',async()=>{
+ const f=await setup(),worker=await f.connect(),p=worker.turn({binding,rules,message:'private',current:()=>true}),rejected=expect(p).rejects.toThrow();
+ await f.waitSpawn(1);f.update({principalReset:{approval:'a-owner',by:'jonathan',at:1},state:'stopped'});f.finish();await rejected;
+});
+it('the control deadline cancels a hung read and kills foreground execution',async()=>{
+ const f=await setup();let hang=false,observed:()=>void=()=>{};
+ const pending=new Promise<void>(resolve=>{observed=resolve;});
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
+  if(!hang)return fetch(...args);
+  observed();return new Promise<Response>((_resolve,reject)=>{const signal=args[1]!.signal!;signal.addEventListener('abort',()=>reject(Error('deadline')),{once:true});});
+ }};
+ const worker=await connectClaudeWorker(f.config,f.selected,runtime);cleanups.push(worker.close);
+ const p=worker.turn({binding,rules,message:'private',current:()=>true}),rejected=expect(p).rejects.toThrow();await f.waitSpawn(1);
+ hang=true;const read=worker.refresh(),readRejected=expect(read).rejects.toThrow();await pending;
+ f.clock.advance(1499);expect(f.calls[0].child.killed).toBe(false);f.clock.advance(1);await readRejected;await rejected;expect(f.calls[0].child.killed).toBe(true);
+});
+it('the executable configuration boundary uses the selected token file, command, environment, checkout and rules',async()=>{
+ const f=await setup(),file=join(f.home,'worker-config.json'),tokenFile=join(f.home,'worker-token');
+ writeFileSync(tokenFile,f.config.token);writeFileSync(file,JSON.stringify({url:f.config.url,tokenFile,job:'j',agent:'art',command:f.selected.command,checkout:f.selected.checkout,house,env:{ONLY:'owner'},rules}));
+ let diagnostic='';const io:IOStreams={stdin:new PassThrough(),stdinIsTTY:false,env:{PRIVATE_RUNNER:'never inherited'},stdout:()=>{throw Error('unexpected stdout');},stderr:text=>{diagnostic+=text;}};
+ const p=runClaudeWorker([file],io,{...f.runtime,spawn:f.selected.spawn});await f.waitSpawn(1);
+ expect(f.calls[0]).toMatchObject({command:'/worker/claude',input:'OWNER FLOOR\nPRIVATE WORK',options:{cwd:'/fixture/art',env:{ONLY:'owner'},shell:false}});
+ expect(f.calls[0].args).toContain('mcp__secrets');f.finish();expect(await p).toBe(0);expect(diagnostic).toBe('');expect(f.store.read('job','j')?.state).toBe('done');
 });

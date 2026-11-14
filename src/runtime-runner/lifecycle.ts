@@ -11,9 +11,10 @@ export interface WorkerControlConfig {
 }
 export interface WorkerControlRuntime {
   request:typeof fetch;
+  deadline:(milliseconds:number)=>AbortSignal;
   every:(callback:()=>void,milliseconds:number)=>()=>void;
 }
-const defaults:WorkerControlRuntime={request:(...args)=>fetch(...args),every(callback,ms){const timer=setInterval(callback,ms);return ()=>clearInterval(timer);}};
+const defaults:WorkerControlRuntime={deadline:ms=>AbortSignal.timeout(ms),request:(...args)=>fetch(...args),every(callback,ms){const timer=setInterval(callback,ms);return ()=>clearInterval(timer);}};
 /** One connection, job and native session owner. No process adoption or caller
  * resume id. Losing authority is sticky, including while idle. A new connection
  * always starts a fresh native session, never revives this object's history. */
@@ -39,7 +40,7 @@ export async function connectClaudeWorker(config:WorkerControlConfig,
       try {
         const response=await runtime.request(new URL('/api/runtime/jobControl',base),{method:'POST',redirect:'error',
           headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({input:{job}}),
-          signal:AbortSignal.any([controller.signal,AbortSignal.timeout(1500)])});
+          signal:AbortSignal.any([controller.signal,runtime.deadline(1500)])});
         if(!response.ok)throw failed();
         const answer=control.parse(await response.json()).value;
         if(closed||answer.stop||answer.history!=='retain')throw failed();
@@ -51,6 +52,7 @@ export async function connectClaudeWorker(config:WorkerControlConfig,
     void work.finally(()=>{if(inFlight===work)inFlight=undefined;}).catch(()=>{});
     return work;
   };
+  const fresh=async()=>{if(inFlight)await inFlight;await refresh();};
   try {
     await refresh();
     cancel=runtime.every(()=>{void refresh().catch(()=>{});},1000);
@@ -58,10 +60,10 @@ export async function connectClaudeWorker(config:WorkerControlConfig,
       /** Checks original authority before input and after output. Polling also
        * kills an active child without waiting for that child to return. */
       async turn(input:WorkerTurn):Promise<TurnResult> {
-        await refresh();
+        await fresh();
         const current=input.current;
         const result=await session.turn({...input,current:()=>!closed&&active&&current()===true});
-        await refresh();
+        await fresh();
         if(closed)throw failed();
         return result;
       },

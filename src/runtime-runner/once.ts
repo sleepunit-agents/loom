@@ -1,5 +1,6 @@
 /** Explicit worker startup, not a daemon job. Local owner configuration supplies
  * the already-prepared checkout and compiled policy; no repository is fetched. */
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { buildIdentity } from '../pieces/runtime/records.js';
@@ -18,7 +19,13 @@ export async function runClaudeJob(config:WorkerControlConfig,
   config={...config};
   selected={...selected,env:{...selected.env},binding:{...selected.binding},house:structuredClone(selected.house),rules:structuredClone(selected.rules)};
   const house=buildIdentity.parse(selected.house),binding={...selected.binding},rules=structuredClone(selected.rules),checkout=selected.checkout;
-  const worker=await connectClaudeWorker(config,selected,runtime);
+  let startedResolve:()=>void=()=>{},startedReject:()=>void=()=>{};
+  const started=new Promise<void>((resolve,reject)=>{startedResolve=resolve;startedReject=()=>reject(failed());});
+  void started.catch(()=>{});
+  const launch=selected.spawn??spawn;
+  const worker=await connectClaudeWorker(config,{...selected,spawn:(...args)=>{
+    const child=launch(...args);child.once('spawn',startedResolve);child.once('error',startedReject);child.once('close',startedReject);return child;
+  }},runtime);
   const request=runtime?.request??fetch;
   // connectClaudeWorker validated and captured its connection; snapshot again
   // before any further await so configuration mutation cannot retarget writes.
@@ -27,7 +34,7 @@ export async function runClaudeJob(config:WorkerControlConfig,
     try {
       const response=await request(new URL(`/api/runtime/${name}`,base),{method:'POST',redirect:'error',
         headers:{'content-type':'application/json',authorization:`Bearer ${token}`},
-        body:JSON.stringify({input,...(write?{id:randomUUID()}:{})}),signal:AbortSignal.timeout(1500)});
+        body:JSON.stringify({input,...(write?{id:randomUUID()}:{})}),signal:runtime?.deadline(1500)??AbortSignal.timeout(1500)});
       if(!response.ok)throw failed();
       const result=z.object({ok:z.literal(true),value:z.unknown()}).strict().parse(await response.json());
       return result.value;
@@ -43,8 +50,8 @@ export async function runClaudeJob(config:WorkerControlConfig,
     if(input.job!==job||input.agent!==binding.agent||input.conversation!==undefined||input.credential!==undefined||input.model!==undefined
       ||JSON.stringify(input.house)!==JSON.stringify(house))throw failed();
     await worker.refresh();
-    z.object({job:z.literal(job),state:z.literal('running')}).strict().parse(await call('reportJob',{job,state:'running'},true));
-    await worker.turn({binding,rules,checkout,message:input.brief,current:()=>true});
+    await Promise.all([worker.turn({binding,rules,checkout,message:input.brief,current:()=>true}),
+      started.then(async()=>{z.object({job:z.literal(job),state:z.literal('running')}).strict().parse(await call('reportJob',{job,state:'running'},true));})]);
     await worker.refresh();
     z.object({job:z.literal(job),state:z.literal('done')}).strict().parse(await call('finishJob',{job,state:'done'},true));
   }catch {throw failed();}
