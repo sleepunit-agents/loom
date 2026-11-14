@@ -245,10 +245,16 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
    await b.setViewportSize({width,height:900});
    await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+   // A viewport change can scroll the tiny phone transcript. Finish that
+   // movement before a pointer opens the card, just as a visible chip is clicked.
+   await taskChip(b).scrollIntoViewIfNeeded();
+   await b.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
    await taskChip(b).click();await expect.poll(()=>taskCard.isVisible()).toBe(true);
+   await expect.poll(()=>taskCard.getByRole('link',{name:'Open',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
    expect(await taskCard.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;})).toBe(true);
    expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
    await b.screenshot({path:join(shots,`comms-chips-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+   expect(await taskCard.isVisible()).toBe(true);
    await b.keyboard.press('Escape');
   }
   const forgeChip=b.getByLabel('Thread messages').getByRole('button',{name:'Pull request acme/untracked#93: acme/untracked#93, Not tracked',exact:true}).last();

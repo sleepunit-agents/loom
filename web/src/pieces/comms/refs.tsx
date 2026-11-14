@@ -37,7 +37,7 @@ function CardPopup({card,at,close}:{card:Card;at:HTMLElement;close():void}){
   const place=()=>{const r=at.getBoundingClientRect(),width=Math.min(300,innerWidth-32),height=box.current?.offsetHeight??140;setPos({left:Math.max(16,Math.min(r.left,innerWidth-width-16)),top:r.bottom+height+8<innerHeight?r.bottom+6:Math.max(8,r.top-height-6)});};
   place();
   const outside=(e:PointerEvent)=>{if(!box.current?.contains(e.target as Node)&&!at.contains(e.target as Node))close();};
-  const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.stopPropagation();close();at.focus();}if(e.key==='Tab'){const nodes=box.current?.querySelectorAll<HTMLElement>('a,button');if(!nodes?.length)return;const first=nodes[0],last=nodes[nodes.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}};
+  const key=(e:KeyboardEvent)=>{if(e.key==='Escape'){e.stopPropagation();close();at.focus({preventScroll:true});}if(e.key==='Tab'){const nodes=box.current?.querySelectorAll<HTMLElement>('a,button');if(!nodes?.length)return;const first=nodes[0],last=nodes[nodes.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}};
   window.addEventListener('pointerdown',outside,true);window.addEventListener('keydown',key,true);window.addEventListener('resize',place);const scroller=at.closest('[aria-label="Thread messages"]');scroller?.addEventListener('scroll',close);
   return()=>{window.removeEventListener('pointerdown',outside,true);window.removeEventListener('keydown',key,true);window.removeEventListener('resize',place);scroller?.removeEventListener('scroll',close);};
  },[at,close]);
@@ -46,7 +46,7 @@ function CardPopup({card,at,close}:{card:Card;at:HTMLElement;close():void}){
  return createPortal(<div ref={box} role="dialog" aria-modal="true" aria-label={`${card.kind==='task'?'Task':'Pull request'}: ${card.title}`} className="comms-refcard" style={pos??{visibility:'hidden'}}>
   <p>{card.kind==='task'?'Task':'Pull request'}</p><strong>{card.title}</strong><p data-tone={card.tone}>{card.status}</p>
   <a href={card.url} onClick={e=>{if(go&&card.url.startsWith('/')&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey&&!e.altKey){e.preventDefault();close();go(card.url);}}} {...(card.url.startsWith('https:')?{target:'_blank',rel:'noopener noreferrer'}:{})}>{card.url.startsWith('https:')?'Open on GitHub ↗':'Open'}</a>
-  <Button variant="outline" onClick={()=>{close();at.focus();}}>Close</Button>
+  <Button variant="outline" onClick={()=>{close();at.focus({preventScroll:true});}}>Close</Button>
  </div>,document.body);
 }
 export function RefChip({refId,words}:{refId:string;words:string}){
