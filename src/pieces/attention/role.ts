@@ -69,7 +69,14 @@ export function registerPrivateQuestions(operations: Operations, create: (ctx: C
   if (privateQuestions.has(operations)) throw new Error('Private question role already installed');
   privateQuestions.set(operations, create);
 }
+export interface PrivateDecision extends PrivateReply { verdict: 'yes' | 'no' }
+const privateDecisions = new WeakMap<object, (ctx: Context, input: PrivateDecision) => Result>();
+export function registerPrivateDecisions(operations: Operations, decide: (ctx: Context, input: PrivateDecision) => Result): void {
+  if (privateDecisions.has(operations)) throw new Error('Private decision role already installed');
+  privateDecisions.set(operations, decide);
+}
 export interface Attention {
+  privateDecision(ctx: Context, input: PrivateDecision): Result;
   privateQuestion(ctx: Context, input: PrivateQuestion): Result;
   privateReply(ctx: Context, input: PrivateReply): Result;
   raise(viewer: Viewer, input: RaiseAsk, operationId: string): Result;
@@ -80,6 +87,7 @@ export interface Attention {
 }
 export function attentionRole(operations: Pick<Operations, 'call'>): Attention {
   return {
+    privateDecision: (ctx, input) => privateDecisions.get(operations)?.(ctx, input) ?? failure('unavailable', 'Private decision source is unavailable'),
     privateQuestion: (ctx, input) => privateQuestions.get(operations)?.(ctx, input) ?? failure('unavailable', 'Private question source is unavailable'),
     privateReply: (ctx, input) => privateReplies.get(operations)?.(ctx, input) ?? failure('unavailable', 'Private reply source is unavailable'),
     raise: (viewer, input, id) => operations.call('direct', viewer, 'attention.raise', input, id),

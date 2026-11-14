@@ -9,23 +9,25 @@ import {createHash} from 'node:crypto';
 import {attentionRole} from '../attention/role.js';
 import {installComms} from './index.js';
 import {loadKey} from './crypto.js';
+import {stagingHold,type Delivery,type Hold} from './role.js';
 const cleanup:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();vi.restoreAllMocks();});
-async function setup(){
+async function setup(hold:Hold=async f=>f()){
+ const deliveries:Delivery[]=[];
  const home=mkdtempSync(join(tmpdir(),'private-question-')),clock=new FakeClock(),key=await loadKey(home);
  const sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{}};
  let comms!:ReturnType<typeof installComms>;
  const app=await startLoom({home,clock,install:a=>{
   installAttention(a.db,a.operations,a.live,()=>sharing);
-  comms=installComms({...a,clock,key,sharing:()=>sharing,attention:attentionRole(a.operations),runtime:{deliver:async()=>{},end:async()=>{}},hold:async f=>f()});
+  comms=installComms({...a,clock,key,sharing:()=>sharing,attention:attentionRole(a.operations),runtime:{deliver:async d=>{deliveries.push(d);},end:async()=>{}},hold});
  }});
  cleanup.push(async()=>{await comms.close();await app.close();rmSync(home,{recursive:true,force:true});});
  const viewer={kind:'member',id:'jonathan'} as const;
- let n=0;const call=(name:string,input:unknown,v=viewer)=>app.operations.callAsync('socket',v,name,input,`test-${++n}`,true);
+ let n=0;const call=(name:string,input:unknown,v=viewer,id=`test-${++n}`)=>app.operations.callAsync('socket',v,name,input,id,true);
  const r=await call('comms.open',{agent:'art',id:'aaaaaaaaaaaaaaaa',text:'Hello'});if(!r.ok)throw Error(r.message);
  const place=(r.value as {thread:string}).thread;
  const attention=attentionRole(app.operations);
- return {app,clock,key,sharing,comms,call,place,attention,viewer};
+ return {app,clock,key,sharing,comms,call,place,attention,viewer,deliveries};
 }
 const question={ask:'PRIVATE QUESTION SENTINEL',why:'PRIVATE WHY SENTINEL',if_yes:'PRIVATE YES SENTINEL',href:'https://private.invalid',refs:['private-note'],answers:'words' as const};
 it('seals the whole question and atomically publishes only a metadata projection',async()=>{
@@ -128,6 +130,129 @@ it('rechecks independent project creation permission for an ordinary member',asy
  await expect(f.comms.ask('art',f.place,{id:'question',question})).rejects.toThrow();
  expect(f.app.db.prepare('SELECT * FROM attention_asks').all()).toEqual([]);
  expect(f.app.db.prepare("SELECT * FROM comms_messages WHERE kind='ask'").all()).toEqual([]);
+});
+
+it('delivers sealed yes/no outcomes as encrypted conversation messages with atomic Attention state',async()=>{
+ const f=await setup(),q={...question,answers:'yes-no' as const},r=await f.comms.ask('art',f.place,{id:'boolean',question:q});
+ const batches:unknown[]=[];const stop=f.app.live.observe(c=>batches.push(c));
+ const input={thread:f.place,ref:r.ref,verdict:'yes'},answer=await f.call('comms.answer',input);stop();
+ expect(answer).toMatchObject({ok:true});if(!answer.ok)throw Error('answer failed');const ack=answer.value as {thread:string;seq:number};
+ await f.comms.deliver('art',f.place,ack.seq);
+ const row=f.app.db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(f.place,ack.seq) as {kind:string;record:string;words:Buffer};
+ expect(row.kind).toBe('message');expect(JSON.parse(row.record).delivery).toBe('delivered');
+ expect(f.deliveries.filter(d=>d.seq===ack.seq)).toEqual([expect.objectContaining({thread:f.place,agent:'art',member:'jonathan',seq:ack.seq,text:`Yes, to: ${q.ask}\n\n${q.if_yes}`})]);
+ expect(JSON.parse(await f.key.open(row.words))).toEqual({text:`Yes, to: ${q.ask}\n\n${q.if_yes}`,ref:r.ref,verdict:'yes'});
+ expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{state:'answered',answer:{kind:'yes',by:f.viewer}}});
+ expect(batches).toContainEqual(expect.arrayContaining([{type:'message',id:`${f.place}/${ack.seq}`},{type:'attention.ask',id:r.ref}]));
+ expect(await f.call('comms.answer',input)).toEqual(answer);
+ await f.comms.deliver('art',f.place,ack.seq);expect(f.deliveries.filter(d=>d.seq===ack.seq)).toHaveLength(1);
+ expect(await f.call('comms.answer',{...input,verdict:'no'})).toMatchObject({ok:false,code:'conflict'});
+ for(const table of ['attention_asks','core_operations','comms_messages']){
+  const stored=JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all());
+  expect(stored).not.toContain(q.ask);expect(stored).not.toContain(q.if_yes);
+ }
+});
+it('rolls back a decision and its receipt when the encrypted reply cannot be appended',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}});
+ f.app.db.exec("CREATE TRIGGER fail_decision BEFORE INSERT ON comms_messages WHEN new.kind='message' BEGIN SELECT RAISE(ABORT,'interrupted'); END");
+ expect(await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'no'})).toMatchObject({ok:false});
+ expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{state:'open'}});
+ f.app.db.exec('DROP TRIGGER fail_decision');
+ expect(await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'no'})).toMatchObject({ok:true});
+});
+for(const drift of ['member','conversation','project','archive','delete','access','expired','answered','ciphertext'] as const)it(`refuses a sealed decision after ${drift} changes during crypto`,async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}}),seal=f.key.seal;
+ vi.spyOn(f.key,'seal').mockImplementation(async words=>{
+  const sealed=await seal(words);
+  if(drift==='access')f.sharing.members.jonathan.agents=[];
+  else if(drift==='ciphertext')f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=?').run(await seal(JSON.stringify({...question,answers:'yes-no',ask:'REPLACED QUESTION'})),f.place,r.seq);
+  else if(drift==='expired')f.clock.advance(14*86400_000);
+  else if(drift==='answered')expect(f.app.db.transaction(()=>f.attention.privateDecision({db:f.app.db,viewer:f.viewer,window:true,now:f.clock.now(),changed:()=>{}},{id:r.ref,conversation:JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(f.place) as {record:string}).record).conversation,agent:'art',member:f.viewer.id,thread:f.place,seq:r.seq,verdict:'no'}))()).toMatchObject({ok:true});
+  else if(drift==='archive'||drift==='delete')expect(await f.call('comms.change',{thread:f.place,action:drift})).toMatchObject({ok:true});
+  else {
+   const row=f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(f.place) as {record:string};const t=JSON.parse(row.record);
+   t[drift]=drift==='member'?'other':'changed';f.app.db.prepare('UPDATE comms_threads SET member=?,project=?,record=? WHERE id=?').run(t.member,t.project??null,JSON.stringify(t),f.place);
+  }
+  return sealed;
+ });
+ expect(await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'yes'})).toMatchObject({ok:false});
+ expect(f.app.db.prepare("SELECT * FROM comms_messages WHERE id=?").all(`answer:${r.ref}`)).toEqual([]);
+});
+it('refuses another owner, nonwindow and typed answers to sealed yes/no; words questions cannot be decided',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}}),i={thread:f.place,ref:r.ref,verdict:'yes'};
+ expect(await f.call('comms.answer',i,{kind:'member',id:'other'} as never)).toMatchObject({ok:false});
+ expect(await f.app.operations.callAsync('socket',f.viewer,'comms.answer',i,'nonwindow',false)).toMatchObject({ok:false});
+ expect(await f.call('comms.answer',{...i,words:'Private words'})).toMatchObject({ok:false});
+ const words=await f.comms.ask('art',f.place,{id:'words',question});
+ expect(await f.call('comms.answer',{...i,ref:words.ref})).toMatchObject({ok:false});
+});
+it('recovers held boolean delivery with the selected no outcome, once',async()=>{
+ let released=false;const f=await setup(stagingHold({beforeOutside:()=>released,finish:()=>{}}));
+ const r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no',if_no:'PRIVATE NO OUTCOME'}});
+ const answer=await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'no'});expect(answer.ok).toBe(true);if(!answer.ok)throw Error('answer failed');
+ const ack=answer.value as {seq:number};await f.comms.deliver('art',f.place,ack.seq);expect(f.deliveries).toEqual([]);
+ released=true;await f.comms.reconcileDeliveries();await f.comms.reconcileDeliveries();
+ expect(f.deliveries.filter(d=>d.seq===ack.seq)).toEqual([expect.objectContaining({text:`No, to: ${question.ask}\n\nPRIVATE NO OUTCOME`})]);
+});
+it('keeps imported comms-prefixed asks on their legacy source protocol',async()=>{
+ const f=await setup(),ref=`comms:${'a'.repeat(64)}`;
+ // Build the old-format imported projection: prefix alone is not provenance.
+ f.app.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run(ref,JSON.stringify({id:ref,member:f.viewer.id,agent:'art',source:{kind:'conversation',id:JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(f.place) as {record:string}).record).conversation},ask:'Imported legacy ask',answers:'yes-no',state:'open',createdAt:f.clock.now(),changedAt:f.clock.now()}));
+ await f.comms.post('art',f.place,{id:'legacy',ref,kind:'ask',text:'Legacy retained question'});
+ const r=await f.call('comms.answer',{thread:f.place,ref,verdict:'yes'});expect(r).toMatchObject({ok:true});if(!r.ok)throw Error('answer failed');
+ const seq=(r.value as {seq:number}).seq;await f.comms.deliver('art',f.place,seq);
+ expect(f.app.db.prepare('SELECT kind FROM comms_messages WHERE thread=? AND seq=?').get(f.place,seq)).toEqual({kind:'answer'});
+ expect(f.deliveries.filter(d=>d.seq===seq)).toEqual([]);
+});
+for(const drift of ['archive','expired','ciphertext'] as const)it(`refuses cached decision receipt after ${drift}`,async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}}),input={thread:f.place,ref:r.ref,verdict:'yes'};
+ expect(await f.call('comms.answer',input,f.viewer,'same-operation')).toMatchObject({ok:true});
+ if(drift==='archive')await f.call('comms.change',{thread:f.place,action:'archive'});
+ else if(drift==='expired')f.clock.advance(14*86400_000);
+ else f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=?').run(await f.key.seal(JSON.stringify({...question,answers:'yes-no',ask:'Replacement'})),f.place,r.seq);
+ expect(await f.call('comms.answer',input,f.viewer,'same-operation')).toMatchObject({ok:false});
+});
+it('refuses a competing cached receipt when the prepared question changed during crypto',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}}),input={thread:f.place,ref:r.ref,verdict:'yes'},seal=f.key.seal;
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(r=>release=r),began=new Promise<void>(r=>entered=r);let first=true;
+ vi.spyOn(f.key,'seal').mockImplementation(async words=>{if(first){first=false;entered();await gate;}return seal(words);});
+ const pending=f.call('comms.answer',input,f.viewer,'same-operation');await began;
+ f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=?').run(await seal(JSON.stringify({...question,answers:'yes-no',ask:'Replacement'})),f.place,r.seq);
+ expect(await f.call('comms.answer',input,f.viewer,'same-operation')).toMatchObject({ok:true});
+ release();expect(await pending).toMatchObject({ok:false,code:'denied'});
+});
+it('coalesces concurrent identical decisions across operation ids and on cached replay after crypto',async()=>{
+ for(const sameId of [false,true]){
+  const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}}),input={thread:f.place,ref:r.ref,verdict:'yes'},seal=f.key.seal;
+  let release!:()=>void,entered!:()=>void,count=0;const gate=new Promise<void>(r=>release=r),began=new Promise<void>(r=>entered=r);
+  vi.spyOn(f.key,'seal').mockImplementation(async words=>{if(++count===2)entered();await gate;return seal(words);});
+  const a=f.call('comms.answer',input,f.viewer,'one'),b=f.call('comms.answer',input,f.viewer,sameId?'one':'two');
+  await began;release();const results=await Promise.all([a,b]);expect(results[0]).toMatchObject({ok:true});expect(results[1]).toEqual(results[0]);
+  expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').all(`answer:${r.ref}`)).toHaveLength(1);
+ }
+});
+it('refuses the generic Attention answer bypass on every door and requires a window transaction for the decision capability',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}});
+ for(const door of ['direct','http','mcp','socket'] as const)for(const kind of ['yes','no','done','dismiss'] as const)
+  expect(await f.app.operations.callAsync(door,f.viewer,'attention.answer',{id:r.ref,answer:{kind}},`bypass-${door}-${kind}`,door==='socket')).toMatchObject({ok:false,code:'denied'});
+ const conversation=JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(f.place) as {record:string}).record).conversation;
+ const input={id:r.ref,conversation,agent:'art',member:f.viewer.id,thread:f.place,seq:r.seq,verdict:'yes' as const};
+ const ctx={db:f.app.db,viewer:f.viewer,window:true,now:f.clock.now(),changed:()=>{}};
+ expect(f.attention.privateDecision(ctx,input)).toMatchObject({ok:false});
+ for(const changed of [{window:false},{viewer:{kind:'member',id:'other'} as const}])
+  expect(f.app.db.transaction(()=>f.attention.privateDecision({...ctx,...changed},input))()).toMatchObject({ok:false});
+ for(const changed of [{thread:'other'},{seq:r.seq+1},{conversation:'other'},{member:'other'},{agent:'other'}])
+  expect(f.app.db.transaction(()=>f.attention.privateDecision(ctx,{...input,...changed}))()).toMatchObject({ok:false});
+ expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{state:'open'}});
+ expect(await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'yes'})).toMatchObject({ok:true});
+});
+it('refuses a preexisting generic answer receipt once its source is sealed',async()=>{
+ const f=await setup(),ref='legacy-receipt';
+ expect(f.attention.raise(f.viewer,{id:ref,agent:'art',member:f.viewer.id,source:{kind:'conversation',id:'legacy'},ask:'Legacy fixture',answers:'yes-no'},'raise-legacy')).toMatchObject({ok:true});
+ expect(f.attention.answer(f.viewer,{id:ref,answer:{kind:'yes'}},'old-receipt')).toMatchObject({ok:true});
+ const record=JSON.parse((f.app.db.prepare('SELECT record FROM attention_asks WHERE id=?').get(ref) as {record:string}).record);
+ record.privateQuestion={thread:f.place,seq:2};f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify(record),ref);
+ expect(f.attention.answer(f.viewer,{id:ref,answer:{kind:'yes'}},'old-receipt')).toMatchObject({ok:false,code:'denied'});
 });
 it('preserves a private question retry after filing but still rechecks current independent project authority',async()=>{
  const f=await setup(),input={id:'filed-question',question},first=await f.comms.ask('art',f.place,input);
