@@ -3,7 +3,7 @@ import { frozen, idle, createMutationStore } from '../../data/mutation';
 export const mutation=createMutationStore();
 
 /** Both confirmed forms keep the shared uncertain request and reset only on submission. */
-export function submitAccountChange(operation:string,input:unknown,reset:()=>void){
+export function submitAccountChange(operation:string,input:unknown,reset:()=>void,label=operation){
   if(frozen(mutation.getSnapshot().request?.getSnapshot()??idle))return;
-  mutation.set(call(operation,input),operation);reset();
+  mutation.set(call(operation,input),label);reset();
 }

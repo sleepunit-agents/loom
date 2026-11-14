@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Classify already owned Runtime spawn threads in Comms through original member metadata, preserving independent transport and execution holds.
 
+
 - New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
 - New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail.
 - Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
@@ -1231,6 +1232,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Account can register this browser for notifications and remove its own live notification devices, with confirmed removal and original-request retries. Sending remains pending.
 
 - Add staged, durable own-device test notification sending in next mode; Account test controls and routine announcement dispatch remain pending.
+
+- Account can queue a test notification for an exact device and follow private Live outcomes, preserving uncertain retries across navigation. Push acceptance is shown separately from device delivery.
 
 ## [0.16.1] - 2026-10-25
 
