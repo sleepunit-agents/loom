@@ -28,11 +28,31 @@ async function original(value: unknown, key: WordsKey): Promise<Buffer | null> {
 }
 async function project(paths: string[], key: WordsKey, identity: string): Promise<Tables> {
   const path = (name: string) => paths.find(p => basename(p) === name)!;
-  const [threads, deleted] = sourceRows(path('household.db'), ['comms_threads', 'comms_deleted']);
+  const [threads, deleted, references] = sourceRows(path('household.db'), ['comms_threads', 'comms_deleted', 'comms_refs']);
   const [messages, asks, steps] = sourceRows(path('comms.db'), ['comms_messages', 'comms_asks', 'conversation_steps']);
   const saltPath = path('comms.salt'), salt = saltPath ? readFileSync(saltPath) : undefined;
   if (salt && salt.length !== 32) throw Error('Invalid source Comms salt');
-  const checksum = createHash('sha256').update(json({threads,messages,asks,deleted,steps,key:identity,salt:salt?.toString('base64'),destinationKey:identity})).digest('hex');
+  const checksum = createHash('sha256').update(json({threads,messages,asks,deleted,steps,references,key:identity,salt:salt?.toString('base64'),destinationKey:identity})).digest('hex');
+  // Independent projection of the word-free index: no importer or destination
+  // state is used to determine what should have survived.
+  const mentioned=new Map<string,Row>();
+  const remember=(thread:string,ref:string,seq:number,pos:number,at:number,equal=false)=>{
+    const id=json([thread,ref]),old=mentioned.get(id);
+    if(!old||seq>Number(old.seq)||equal&&seq===old.seq)mentioned.set(id,{thread,ref,seq,pos,at});
+  };
+  for(const m of messages)if(m.text&&(m.kind==='message'||m.kind==='reply')){
+    const words=await key.open(m.text as Uint8Array),refs=new Set<string>();
+    const pattern=/(?<![\w./-])([\w.-]+)\/([\w.-]+)#(\d{1,10})\b|\b(t-\d{1,9})\b|(?:^|\s)note:([\w./-]+)/g;
+    for(const match of words.matchAll(pattern)){
+      let ref=match[3]?`github:${match[1]}/${match[2]}#${match[3]}`:match[4];
+      if(match[5]){const path=match[5].replace(/[./]+$/,'');if(path&&!path.split('/').includes('..'))ref=`note:${path}`;}
+      if(ref&&ref.length<=200)refs.add(ref);
+    }
+    [...refs].forEach((ref,pos)=>remember(String(m.thread),ref,Number(m.seq),pos,time(m.at)));
+  }
+  for(const r of references)remember(String(r.thread),String(r.ref),Number(r.seq),Number(r.pos),time(r.at),true);
+  const projectedRefs=threads.flatMap(t=>[...mentioned.values()].filter(r=>r.thread===t.id)
+    .sort((a,b)=>Number(b.seq)-Number(a.seq)||Number(b.pos)-Number(a.pos)||(String(a.ref)<String(b.ref)?-1:String(a.ref)>String(b.ref)?1:0)).slice(0,200));
   const next = new Map<string, number>(), rows: Row[] = [];
   for (const message of messages) {
     const place = String(message.thread), seq = Number(message.seq);
@@ -68,7 +88,7 @@ async function project(paths: string[], key: WordsKey, identity: string): Promis
   }
   return {
     comms_threads:projectedThreads,comms_messages:rows,comms_deleted:deleted.map(d => ({id:d.id,member:d.member,agent:d.agent,conversation:d.conversation ?? '',at:time(d.at)})),
-    comms_conversation_steps:projectedSteps,comms_meta:[...(salt ? [{key:'legacy-salt',value:salt.toString('base64')}] : []),{key:'source-checksum',value:checksum}],
+    comms_refs:projectedRefs,comms_conversation_steps:projectedSteps,comms_meta:[...(salt ? [{key:'legacy-salt',value:salt.toString('base64')}] : []),{key:'source-checksum',value:checksum}],
   };
 }
 function normalized(rows: Row[]): string {
