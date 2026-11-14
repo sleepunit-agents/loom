@@ -28,7 +28,7 @@ async function fixture(path: string) {
     installTouched(app.operations, (v, c) => v.kind === 'agent' && v.id === 'art' && c.type === 'knowledge' ? c : undefined);
   } });
   closes.push(() => { reader!.close(); }); closes.push(() => app.close());
-  return { app, clock };
+  return { app, clock, reader: reader! };
 }
 it('empty source is read-only and missing details return not-found; partial owners and agents are denied', async () => {
   const path = join(home(), 'missing.db'); const { app } = await fixture(path);
@@ -42,13 +42,14 @@ it('projects freshness, citations, referring pages, and stale checks without ren
   await store.writePage({ slug: 'fact', title: 'A fact', domain: 'systems', body: 'a'.repeat(20001), citations: [{ claim: 'One', source_kind: 'web', source_locator: 'https://example.com', excerpt: 'e' }] });
   await store.writePage({ slug: 'ref', title: 'Reference', domain: 'systems', body: '[[fact]]' });
   await store.verifyPages({ slug: 'fact', verified_at: '2026-11-10T00:00:00.000Z', verifier: 'art' });
-  const { app } = await fixture(path);
+  const { app, reader } = await fixture(path);
   const mind = mindRole(app.operations);
   const read = () => mind.call(owner, 'knowledgeRead', { slug: 'fact' });
   expect(mind.call({ kind: 'member', id: 'partial' }, 'knowledgeRead', { slug: 'fact' })).toMatchObject({ code: 'denied' });
   expect(read()).toMatchObject({ ok: true, value: { id: 'fact', fresh: 'fresh', recent: true, citedBy: [{ slug: 'ref' }], sources: [{ href: 'https://example.com' }] } });
   const result = read(); if (result.ok) expect((result.value as any).body).toBe('a'.repeat(20001));
   await store.verifyPages({ slug: 'fact', outcome: 'stale', verified_at: '2026-11-11T00:00:00.000Z' });
+  expect(reader.sweep('checker').open({ kind: 'agent', id: 'checker' })).toMatchObject([{ id: 'fact', openedAt: '2026-11-11T00:00:00.000Z' }]);
   expect(read()).toMatchObject({ value: { fresh: 'due', verified_at: '2026-11-10T00:00:00.000Z', checked: { outcome: 'stale' } } });
   await store.archivePage({ slug: 'fact' });
   expect(read()).toMatchObject({ code: 'not-found' });
