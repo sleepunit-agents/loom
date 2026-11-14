@@ -1,3 +1,4 @@
+import { installDispatchSource } from './dispatch-source.js';
 import { saveLocalReceipt } from './local-receipt.js';
 import { filing, replacementAuthorship, runAuthorship } from './authorship.js';
 import type { ClockProvenanceReader } from '../runtime/role.js';
@@ -63,6 +64,8 @@ function quotaDue(reset: unknown, now: number): number {
 export interface ClockOptions {
   /** Original principal/scope proof, separate from capacity and local approval Caller. */
   provenance?: ClockProvenanceReader;
+  /** Exact credential restriction only; never conversation or principal authority. */
+  credentialService?(viewer:Viewer):string|undefined;
   /** Runtime-owned current binding proof; capacity only, never authority. */
   capacityConversation?(viewer: Viewer): string | undefined;
   caller?(viewer: Viewer): import('../approvals/role.js').Caller | undefined;
@@ -72,8 +75,8 @@ export interface ClockOptions {
 }
 /** Install on the new side only. The composition root must close jobs before its database. */
 export function installClock(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ClockOptions = {}) {
-  registerBuiltinService(operations, 'clock', ['wake', 'schedule', 'clock', 'approval'], 'clock',
-    ['approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check']);
+  registerBuiltinService(operations, 'clock', ['wake', 'schedule', 'clock', 'approval', 'runtime.job'], 'clock',
+    ['runtime.acceptClock', 'approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check']);
   migrate(db, 'clock', schema);
   installPrivateExport(db);
   installLocalFiling(db, operations, sharing);
@@ -87,7 +90,17 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   const readSee=(ctx:Context,w:Work,type='wake')=>(!w.member||ctx.window)&&see(ctx.viewer,w,type);
   const act = (v: Viewer, w: Work, household = false) => mayAct(v, scope(w), sharing(), household ? 'household' : 'act');
   const create = (v: Viewer, w: Work) => mayCreate(v, scope(w), sharing()) && (v.kind !== 'member' || mayAct(v, scope(w), sharing(), 'give-work'));
-  const prepareFiling = (v: Viewer, w: Work) => filing(v, w, sharing(), options.provenance);
+  installDispatchSource(operations,(id,attempt,accepted)=>{
+    const w=wake(db,id);
+    return !closed && !!w && (w.state==='firing'||accepted&&w.state==='fired') && w.attempt===attempt && !w.member
+      && create(w.by,w) && create({kind:'agent',id:w.agent},w)
+      && (w.authorship?.principal.people??[]).every(id=>create({kind:'member',id},w)) ? structuredClone(w) : undefined;
+  },(id,attempt)=>{const w=wake(db,id);return !closed&&!!w&&w.attempt===attempt&&(!!w.withdrawn||w.state==='cancelled');});
+  const prepareFiling = (v: Viewer, w: Work) => {
+    const filed=filing(v,w,sharing(),options.provenance),service=options.credentialService?.(v);
+    if(filed?.authorship&&service!==undefined)filed.authorship.service=service;
+    return filed;
+  };
   const mayFile = (v: Viewer, w: Work) => {
     const filed = prepareFiling(v, w);
     return !!filed && (create(v, filed) || mayFilePrivateWork(v, { ...scope(filed),
@@ -300,7 +313,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   });
   register('cancel', idInput, true, (v, i) => !wake(db, i.id) || mayControl(v, get(i.id)), (ctx, i) => {
     const w = get(i.id); if (!active(w) || w.hold === 'uncertain') return w;
-    const firing = w.state === 'firing'; w.state = firing ? 'held' : 'cancelled'; if (firing) w.hold = 'uncertain'; w.outcome = firing ? 'Cancellation raced dispatch; a body may have started' : 'Cancelled';
+    const firing = w.state === 'firing'; w.withdrawn=true; w.state = firing ? 'held' : 'cancelled'; if (firing) w.hold = 'uncertain'; w.outcome = firing ? 'Cancellation raced dispatch; a body may have started' : 'Cancelled';
     saveWake(ctx, w); event(ctx, w, 'cancel');
     const s = w.schedule && schedule(db, w.schedule); if (s) next(ctx, s, Math.max(w.due, ctx.now)); return w;
   });

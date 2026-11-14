@@ -50,6 +50,8 @@ import { connectApprovalAttention, installApprovals } from './pieces/approvals/i
 import { installRunnerInput } from './pieces/runtime/input.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { clockRuntime } from './pieces/runtime/clock.js';
+import { runtimeStore } from './pieces/runtime/store.js';
+import { clockDelivery } from './pieces/runtime/clock-delivery.js';
 import { clockDestination } from './pieces/runtime/clock-destination.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { listenHolderAuthority, type AuthorityServerConfig } from './pieces/secrets/holder-authority.js';
@@ -241,8 +243,10 @@ export async function installNext(app: Foundation, options: NextOptions) {
   const effects = installEffects(app, sharing, !!options.staging);
   const notifications=installNotificationSending(app,effects,options.notifications);
   notificationClosers.set(app,notifications.close);
+  const clockBodies=clockDelivery(app,sharing,effects,v=>signin(app).agent(v));
+  conversations.connectClock(clockBodies);
   if (!app.operations.has('clock.list')) {
-    const jobs = installClock(app.db, app.operations, app.live, sharing, { provenance: conversations.clockProvenance, caller: conversations.approvalCaller, capacityConversation: conversations.capacityConversation, runtime: clockRuntime(app, effects, clockDestination(app, sharing)), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
+    const jobs = installClock(app.db, app.operations, app.live, sharing, { provenance: conversations.clockProvenance, credentialService: conversations.clockCredentialService, caller: conversations.approvalCaller, capacityConversation: conversations.capacityConversation, runtime: clockRuntime(app, effects, clockDestination(app, sharing), clockBodies), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
   if (options.bridges && !bridgeDaemons.has(app)) {
@@ -289,7 +293,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     app.onClose(()=>{void conversations.close();void comms.close();});
   }
   if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects,
-    {valid:id=>conversations.validInput(id)||bridgeBodies.valid(id),issue:(agent,job)=>signin(app).issueBody(agent,job)});
+    {valid:id=>conversations.validInput(id)||bridgeBodies.valid(id)||clockBodies.valid(id),issue:(agent,job)=>signin(app).issueBody(agent,job,runtimeStore(app.db).read('job',job)?.service)});
   if (options.secretAuthority && !secretAuthorities.has(app)) {
     const current = () => new SharingDatabase(app.db, options.home).sharing();
     secretAuthorities.set(app, await listenHolderAuthority(options.secretAuthority, member =>

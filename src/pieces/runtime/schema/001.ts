@@ -44,4 +44,8 @@ CREATE TABLE runtime_bridge_stops (id TEXT PRIMARY KEY);
 ` }, { number: 10, sql: `
 -- Private owner permission documents and exact pending proposal source rows.
 CREATE TABLE runtime_body_policy (agent TEXT PRIMARY KEY, record TEXT NOT NULL CHECK(json_valid(record)));
+` }, { number: 11, sql: `
+-- Owning scheduled words and permanent delivery receipt; words never enter live records.
+CREATE TABLE runtime_clock_turns (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, conversation TEXT NOT NULL, job TEXT NOT NULL REFERENCES runtime_jobs(id), record TEXT NOT NULL CHECK(json_valid(record)), released INTEGER, consumed INTEGER);
+CREATE INDEX runtime_clock_conversation ON runtime_clock_turns(conversation,seq);
 ` }];

@@ -1,3 +1,5 @@
+import { CLOCK_BRIEF } from './clock-delivery.js';
+import { builtinServices } from '../../core/services.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,7 +37,7 @@ async function setup(staging=false,sharing?:()=>Sharing){
   const input={agent:'art',title:'Fixture start',brief:'PRIVATE start words',source:{kind:'manual',id:'fixture'}};
   const jobOf=(r:ReturnType<typeof call>):string=>{expect(r.ok).toBe(true);return (r as {ok:true;value:{job:string}}).value.job;};
   const schedule=async(viewer=owner)=>{const r=call('clock.in',{agent:'art',prompt:'PRIVATE wake words',note:'fixture',when:'1s'},viewer);expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id;clock.advance(1000);await settle();return id;};
-  return {get app(){return app;},clock,call,post,input,jobOf,runner,other,member,schedule,
+  return {get app(){return app;},clock,call,post,input,jobOf,runner,other,member,schedule,token,
     get store(){return runtimeStore(app.db);},async restart(){await app.close();app=await startLoom({home,clock,next:true,staging,sharing,stdout:()=>{}});}};
 }
 it('offers real startBody over HTTP and preserves the source intent across new receipts and restart',async()=>{
@@ -77,7 +79,7 @@ it('keeps the wake firing through queue, wrong runner, claim and input; only con
   expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
   expect(wake(f.app.db,id)?.state).toBe('firing');
   expect(f.call('core.releaseEffect',{id:`runtime:input:${job}`}).ok).toBe(true);
-  expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:true,value:{brief:'PRIVATE wake words'}});
+  expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:true,value:{brief:CLOCK_BRIEF}});
   expect(wake(f.app.db,id)?.state).toBe('firing');
   expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});
   await settle();expect(wake(f.app.db,id)).toMatchObject({state:'fired',outcome:job});
@@ -109,15 +111,16 @@ it('does not requeue after restart during dispatch or after losing confirmation'
   expect(wake(f.app.db,id)).toMatchObject({state:'held',hold:'uncertain'});
   f.clock.advance(3600_000);await settle();expect(f.store.ids('job')).toEqual([job]);
 });
-it('waits for the real outcome and closes pending waiters without claiming a start',async()=>{
+it('holds an uncomposed bridge instead of executing a caller-supplied wake clone',async()=>{
   const f=await setup(),runtime=clockRuntime(f.app,f.app.effects!);
   const pending=runtime.startBody({viewer:owner,intent:'attempt',wake:{id:'w-fixture',agent:'art',prompt:'work',note:'fixture',due:1,state:'firing',createdAt:1,changedAt:1,by:owner,failures:0}});
-  await f.app.close();expect(await pending).toMatchObject({state:'uncertain'});
+  expect(await pending).toMatchObject({state:'held'});
+  expect(f.store.ids('job')).toEqual([]);await f.app.close();
 });
 it('never calls a rejected retry definitely unstarted when this wake already has an accepted intent',async()=>{
   const f=await setup(),id=await f.schedule(),original=wake(f.app.db,id)!;
-  const result=await clockRuntime(f.app,f.app.effects!).startBody({viewer:owner,intent:'different-attempt',wake:{...original,prompt:'changed work'}});
-  expect(result).toMatchObject({state:'uncertain'});
+  const result=await f.app.operations.callAsync('direct',{kind:'service',id:'clock'},'runtime.acceptClock',{wake:id,attempt:'different-attempt'},'bad-attempt');
+  expect(result).toMatchObject({ok:false,code:'denied'});
   expect(f.store.ids('job')).toHaveLength(1);
 });
 it('replays explicit placement without re-authorizing a revoked box and rejects changed placement intent',async()=>{
@@ -313,6 +316,7 @@ it('uses the destination reader in installed Clock dispatch and rechecks memberl
  const {clockDestination}=await import('./clock-destination.js');
  const {provenanceStore}=await import('./provenance-store.js');
  const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);
+ access.services=builtinServices(f.app.db);
  const job=f.jobOf(f.call('runtime.startBody',{...f.input,conversation:'cv-clock-lane',project:'pond'}));
  await f.post(f.runner,'claimJob',{job});await f.post(f.runner,'takeInput',{job});await f.post(f.runner,'reportJob',{job,state:'running'});
  const input={agent:'art',project:'pond',place:'lane:daily'};
@@ -329,6 +333,161 @@ it('uses the destination reader in installed Clock dispatch and rechecks memberl
  scheduled.authorship={origin:'art',conversation:'cv-clock-lane',project:'pond',principal:{for:'?',people:[]}};
  f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(scheduled),id);
  f.clock.advance(1000);await settle();
- expect(wake(f.app.db,id)).toMatchObject({state:'held',outcome:expect.stringContaining('conversation delivery')});
+ expect(wake(f.app.db,id)).toMatchObject({state:'held'});
+ expect(f.app.db.prepare('SELECT * FROM runtime_clock_turns').all()).toEqual([]);
  expect(f.store.ids('job')).toEqual([job]);
+});
+
+it('creates a real wake binding and joins only after the authenticated body reads the new input',async()=>{
+ const f=await setup();
+ const initial=f.call('clock.in',{agent:'art',prompt:'First lane input',note:'lane',place:'lane:daily',when:'1s'});
+ expect(initial.ok).toBe(true);f.clock.advance(1000);await settle();
+ const job=f.store.ids('job')[0];expect(job).toBeTruthy();
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const payload=await f.post(f.runner,'takeInput',{job});
+ expect(payload).toMatchObject({ok:true,value:{brief:CLOCK_BRIEF,credential:expect.any(String),conversation:expect.any(String)}});
+ const body=payload.value.credential;
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'}]}});
+ const cv=payload.value.conversation;
+ expect(f.store.read('binding',cv)).toMatchObject({venue:'wake',place:'lane:daily',job});
+ const filed=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'body-chain',input:{agent:'art',prompt:'Joined lane input',note:'chain',place:'lane:daily',when:'1s'}})})).json();
+ expect(filed.ok).toBe(true);
+ expect(wake(f.app.db,filed.value.id)?.authorship).toMatchObject({origin:'art',conversation:cv,principal:{for:'owner'}});
+ f.clock.advance(1000);await settle();
+ expect(f.store.ids('job')).toEqual([job]);expect(wake(f.app.db,filed.value.id)?.state).toBe('firing');
+ expect(await f.post(f.runner,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(f.member,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'},{text:'Joined lane input'}]}});
+ await settle();expect(wake(f.app.db,filed.value.id)?.state).toBe('firing');
+ expect(await f.post(f.runner,'acknowledgeClockInput',{through:2})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(body,'acknowledgeClockInput',{through:999})).toMatchObject({ok:false,code:'conflict'});
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'},{text:'Joined lane input'}]}});
+ expect(await f.post(body,'acknowledgeClockInput',{through:2})).toMatchObject({ok:true});
+ await settle();expect(wake(f.app.db,filed.value.id)).toMatchObject({state:'fired',outcome:job});
+ expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns').get()).toEqual({n:2});
+ expect(JSON.stringify(f.app.db.prepare('SELECT result FROM core_operations WHERE name LIKE ?').all('runtime.%'))).not.toContain('Joined lane input');
+ // The permanent sender history survives consumption and restart. A copied viewer gets none.
+ await f.restart();
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'},{text:'Joined lane input'}]}});
+ const after=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'after-restart',input:{agent:'art',prompt:'After restart',note:'history',when:'1h'}})})).json();
+ expect(after.ok).toBe(true);
+ expect(wake(f.app.db,after.value.id)?.authorship).toMatchObject({origin:'art',conversation:cv,principal:{for:'owner',people:[]}});
+ expect(JSON.parse((f.app.db.prepare('SELECT record FROM runtime_provenance WHERE conversation=?').get(cv) as {record:string}).record).history).toMatchObject({owners:['jonathan'],owner:true,unknown:false});
+
+ const raced=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'raced-join',input:{agent:'art',prompt:'Cancelled during read preparation',note:'race',place:'lane:daily',when:'1s'}})})).json();
+ expect(raced.ok).toBe(true);f.clock.advance(1000);await settle();
+ const authenticated=signin(f.app).token(hash(body))!.viewer;
+ const prepared=f.app.operations.callAsync('direct',authenticated,'runtime.readConversation',{},'raced-read');
+ expect(f.call('clock.cancel',{id:raced.value.id}).ok).toBe(true);
+ expect(await prepared).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${raced.value.id}`)).toEqual({consumed:null});
+ const following=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'following-join',input:{agent:'art',prompt:'Valid after cancellation',note:'following',place:'lane:daily',when:'1s'}})})).json();
+ expect(following.ok).toBe(true);f.clock.advance(1000);await settle();
+ const followingRead=await f.post(body,'readConversation',{});expect(followingRead.ok).toBe(true);
+ expect(followingRead.value.messages.map((m:{text:string})=>m.text)).toEqual(['First lane input','Joined lane input','Valid after cancellation']);
+ const through=followingRead.value.messages.at(-1).seq;
+ expect(await f.post(body,'acknowledgeClockInput',{through})).toMatchObject({ok:true});await settle();
+ expect(wake(f.app.db,following.value.id)).toMatchObject({state:'fired',outcome:job});
+ expect(f.store.ids('job')).toEqual([job]);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${raced.value.id}`)).toEqual({consumed:null});
+
+ const box=f.store.read('box','a')!;
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=box;f.store.put('box',{...b,revokedAt:f.clock.now()},f.clock.now());})();
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+});
+
+it('holds both initial and joined scheduled words behind staging, then confirms only the bound read',async()=>{
+ const f=await setup(true);
+ const initial=f.call('clock.in',{agent:'art',prompt:'Staged first input',note:'lane',place:'lane:staged',when:'1s'});
+ expect(initial.ok).toBe(true);f.clock.advance(1000);await settle();const job=f.store.ids('job')[0];
+ await f.post(f.runner,'claimJob',{job});
+ expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
+ expect(f.call('core.releaseEffect',{id:`runtime:input:${job}`}).ok).toBe(true);
+ const payload=await f.post(f.runner,'takeInput',{job}),body=payload.value.credential;
+ await f.post(f.runner,'reportJob',{job,state:'running'});await settle();
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'conflict'});
+ expect(f.call('core.releaseEffect',{id:`runtime:clock-read:${job}:1`}).ok).toBe(true);
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Staged first input'}]}});
+ const r=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'staged-chain',input:{agent:'art',prompt:'Staged joined input',note:'chain',place:'lane:staged',when:'1s'}})})).json();
+ expect(r.ok).toBe(true);f.clock.advance(1000);await settle();
+ expect(f.store.ids('job')).toEqual([job]);expect(wake(f.app.db,r.value.id)?.state).toBe('firing');
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'conflict'});
+ expect(await f.post(body,'acknowledgeClockInput',{through:2})).toMatchObject({ok:false,code:'conflict'});
+ expect(f.call('core.releaseEffect',{id:`runtime:clock-read:${job}:2`}).ok).toBe(true);
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Staged first input'},{text:'Staged joined input'}]}});
+ expect(await f.post(body,'acknowledgeClockInput',{through:2})).toMatchObject({ok:true});
+ await settle();expect(wake(f.app.db,r.value.id)).toMatchObject({state:'fired',outcome:job});
+});
+
+it('rechecks original Clock source authority at the words boundary, without accepting cloned source data',async()=>{
+ const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);access.services=builtinServices(f.app.db);
+ const r=f.call('clock.in',{agent:'art',prompt:'Revocable scheduled input',note:'source',place:'lane:revocable',when:'1s'});
+ expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id;
+ f.clock.advance(1000);await settle();const job=f.store.ids('job')[0],attempt=wake(f.app.db,id)!.attempt!;
+ expect(f.call('runtime.acceptClock',{wake:id,attempt,prompt:'forged words'},{kind:'service',id:'clock'})).toMatchObject({ok:false,code:'invalid'});
+ expect(f.call('runtime.acceptClock',{wake:id,attempt:'forged-attempt'},{kind:'service',id:'clock'})).toMatchObject({ok:false,code:'denied'});
+ await f.post(f.runner,'claimJob',{job});const payload=await f.post(f.runner,'takeInput',{job});
+ await f.post(f.runner,'reportJob',{job,state:'running'});await settle();
+ access.members.jonathan.agents=[];
+ expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns').get()).toEqual({consumed:null});
+ access.members.jonathan.agents=['art'];
+ expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Revocable scheduled input'}]}});
+ access.members.jonathan.agents=[];
+ expect(await f.post(payload.value.credential,'acknowledgeClockInput',{through:1})).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns').get()).toEqual({consumed:null});
+ access.members.jonathan.agents=['art'];
+ expect(await f.post(payload.value.credential,'acknowledgeClockInput',{through:1})).toMatchObject({ok:true});
+ access.members.jonathan.agents=[];
+ expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+
+});
+
+it('issues the original restricted service on the scheduled body credential, separately from Clock dispatch',async()=>{
+ const f=await setup(),restricted=f.token('agent:art/restricted');
+ const r=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${restricted}`},body:JSON.stringify({id:'restricted-source',input:{agent:'art',prompt:'Restricted scheduled input',note:'source',when:'1s'}})})).json();
+ expect(r.ok).toBe(true);const id=r.value.id;
+ expect(wake(f.app.db,id)?.authorship).toMatchObject({origin:'art',service:'restricted',principal:{for:'?'}});
+ f.clock.advance(1000);await settle();const job=f.store.ids('job')[0];
+ expect(f.store.read('job',job)?.service).toBe('restricted');
+ await f.post(f.runner,'claimJob',{job});const payload=await f.post(f.runner,'takeInput',{job});
+ expect(payload.ok).toBe(true);const viewer=signin(f.app).token(hash(payload.value.credential))!.viewer;
+ expect(signin(f.app).body(viewer)).toMatchObject({agent:'art',job,service:'restricted'});
+ await f.post(f.runner,'reportJob',{job,state:'running'});await settle();
+ expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Restricted scheduled input'}]}});
+});
+
+it('requires the exact Clock cross-piece type and operation grants before acceptance and replay',async()=>{
+ const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);access.services=builtinServices(f.app.db);
+ const r=f.call('clock.in',{agent:'art',prompt:'Granted scheduled input',note:'grant',when:'1s'});
+ expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id;
+ f.clock.advance(1000);const attempt=wake(f.app.db,id)!.attempt!,grant=access.services.clock;
+ for(const denied of [{...grant,types:grant.types.filter(t=>t!=='runtime.job')},{...grant,operations:grant.operations.filter(op=>op!=='runtime.acceptClock')}]){
+  access.services={...access.services,clock:denied};
+  expect(f.call('runtime.acceptClock',{wake:id,attempt},{kind:'service',id:'clock'})).toMatchObject({ok:false,code:'denied'});
+  expect(f.store.ids('job')).toEqual([]);expect(f.store.ids('binding')).toEqual([]);
+ }
+ access.services={...access.services,clock:grant};
+ const accepted=f.call('runtime.acceptClock',{wake:id,attempt},{kind:'service',id:'clock'},'grant-accept');
+ expect(accepted.ok).toBe(true);
+ access.services={...access.services,clock:{...grant,operations:[]}};
+ expect(f.call('runtime.acceptClock',{wake:id,attempt},{kind:'service',id:'clock'},'grant-accept')).toMatchObject({ok:false,code:'denied'});
+ expect(f.store.ids('job')).toHaveLength(1);
+ access.services={...access.services,clock:grant};await settle();
+});
+
+it('rolls back the complete owning acceptance after a late provenance write failure',async()=>{
+ const f=await setup(),r=f.call('clock.in',{agent:'art',prompt:'Atomic scheduled input',note:'atomic',place:'lane:atomic',when:'1s'});
+ expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id;
+ f.clock.advance(1000);const attempt=wake(f.app.db,id)!.attempt!;
+ f.app.db.exec("CREATE TEMP TRIGGER fail_clock_provenance BEFORE INSERT ON runtime_provenance_sources BEGIN SELECT RAISE(ABORT,'fixture interrupted acceptance'); END");
+ expect(f.call('runtime.acceptClock',{wake:id,attempt},{kind:'service',id:'clock'})).toMatchObject({ok:false,code:'unavailable'});
+ for(const table of ['runtime_bindings','runtime_jobs','runtime_inputs','runtime_clock_turns','runtime_provenance','runtime_provenance_sources'])
+  expect(f.app.db.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({n:0});
+ f.app.db.exec('DROP TRIGGER fail_clock_provenance');
+ expect(f.call('runtime.acceptClock',{wake:id,attempt},{kind:'service',id:'clock'}).ok).toBe(true);
+ expect(f.store.ids('job')).toHaveLength(1);expect(f.store.ids('binding')).toHaveLength(1);
+ expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns').get()).toEqual({n:1});
+ await settle();
 });

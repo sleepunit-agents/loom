@@ -17,11 +17,12 @@ Clock with `src/pieces/runtime/clock.ts`. The bridge accepts plain prompt wakes
 only after agent house configuration and waits for runner-confirmed running or
 waiting state. Queue acceptance alone is never reported as started. Missing
 features (lane files, continuations, slots, approvals, local wakes) remain held;
-private body delivery and account selection are refused. Conversation delivery
-and authenticated continuation resolution remain blocked on t-2209.
+private body delivery and account selection are refused. Public prompt conversation delivery is implemented below. Native transport
+interrupt/resume and authenticated continuation resolution remain unfinished.
 
-Runtime dispatch must also replace the existing ordinary-wake background use of
-`w.by` with the piece's service authority, retaining requester scope as data.
+Runtime now dispatches public prompt work as the Clock service, retaining
+requester scope as data. Clock intent/outcome operations retain their existing
+saved attribution policy checks; Runtime never invokes startBody as `w.by`.
 That pre-existing path is not used for newly supported private local dispatch;
 private local wakes are explicitly held before intent and before Runtime.
 
@@ -1153,14 +1154,58 @@ cannot issue the witness. Comms and bridge bindings are separate destinations.
 The witness contains routing metadata only and rechecks the binding on use; it
 confers no private read, principal, credential or start permission.
 
-Next mode supplies this reader to the Clock bridge. A verified join is held
-instead of calling the fresh-body start path: that path cannot feed an existing
-conversation. Actual delivery still must consume the same current witness at
-the asynchronous boundary, retain scope and add sender history atomically.
-Runtime does not yet create Clock `wake` bindings, so positive binding cases
-are owning-store fixtures, not evidence of an end-to-end delivered lane.
-Conversation joining therefore remains unfinished until that delivery is merged.
+Next mode supplies this reader to the Clock bridge. Public prompt joins now
+consume the witness in the owning Runtime delivery operation described below.
+Unsupported private/file/local/continuation work stays held; native interrupt
+and terminal-body resumption remain unfinished.
 
 | Old surface | New authorization boundary |
 | --- | --- |
 | `house_may_join`, `wake_place`, persisted `places.json` | `clockRoute` plus Runtime's current exact destination witness; never imported place strings or caller-selected bodies. Actual feed/resume remains held. |
+
+### Public prompt conversation delivery
+
+The next-mode Clock bridge now calls direct-only `runtime.acceptClock` as the
+Clock service. It supplies only the wake id and committed attempt; Clock's
+in-process owning reader supplies the current firing row and rechecks policy.
+Saved `by` remains attribution and Clock's existing intent/outcome policy input;
+it is never Runtime's execution caller. The service receives only an exact
+cross-piece operation and `runtime.job` type, with no generic service creation
+exception in central policy.
+
+For public prompt work Runtime atomically creates the job, wake binding, input
+and monotonic sender history. A vacant lane place can be bound by this producer;
+unproved work cannot replace an occupied lane. Runtime preserves the original
+credential service separately from the dispatching Clock service, including
+restricted tokens without a live conversation. Runtime exposes credential
+restriction metadata separately from conversation/principal proof; losing a
+binding never turns a restricted source into an unrestricted body. Runner input
+issues the existing central body credential for this owning binding. The body
+reads scheduled words through `runtime.readConversation`; runner credentials,
+member tokens and unbound agent tokens cannot read that inbox. Current house,
+box, binding, agent/project policy and body-policy holds are rechecked.
+
+A wake filed by that authenticated body can join the exact current lane through
+`clockRoute` and Runtime's destination witness. It queues words on the existing
+job, rather than starting a second body. Each input has a permanent source
+receipt. Joined delivery stays firing until the authenticated body reads it and calls
+`runtime.acknowledgeClockInput` through the last received sequence;
+queue acceptance, a read response that might be lost, and an already-running
+job do not count as delivery. Acknowledgement refuses unreleased sequences;
+re-reading released words is safe before acknowledgement. Input
+reads pass the central staging gate before words leave the process. A timeout
+or interrupted read remains uncertain. This is cooperative conversation input:
+it does not claim a native transport interrupt/resume mechanism.
+
+This slice does not support private, file, local, lane-version, approval, slot
+or continuation inputs. Those still hold. The old-to-new feed/resume obligation
+above is only satisfied for a running body reading its bound scheduled inbox;
+transport-triggered resume, terminal-lane reuse, private delivery and remaining
+features remain work under t-2201. No real data or installed pieces change.
+
+Clock records an owning withdrawal marker when cancellation races dispatch.
+Runtime excludes withdrawn inputs from later reads and acknowledgements; it
+retains their permanent receipts and monotonic sender history. Revoked permission
+or missing source evidence is a hold, never inferred to be a withdrawal. A read
+prepared before cancellation is refused at the final transaction boundary;
+subsequent valid input in the same lane can still be read and acknowledged.

@@ -17,6 +17,8 @@ export interface Wake extends Work {
   id: string; due: number; state: WakeState; createdAt: number; changedAt: number;
   by: Viewer; schedule?: string; attempt?: string; outcome?: string; hold?: string;
   failures: number; bypassPause?: boolean;
+  /** Owning withdrawal marker, including cancellation racing accepted dispatch. */
+  withdrawn?: true;
   /** Explicit lane run-now keeps its schedule link but consumes one-off capacity. */
   runNow?: boolean;
   /** Fixed-word safety wake from explicit composition configuration, never caller input. */

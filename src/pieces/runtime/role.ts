@@ -15,7 +15,7 @@ import { attentionRole, type AgentStatus } from '../attention/role.js';
 export interface ClockProvenance {
   agent: string;
   conversation: string;
-  member: string;
+  member?: string;
   project?: string;
   service?: string;
   principal: { for: string; people: string[] };

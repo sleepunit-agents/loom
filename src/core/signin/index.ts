@@ -89,10 +89,10 @@ export class Signin {
     return proof?.job ? {...proof,job:proof.job} : undefined;
   }
   /** Trusted composition role. Caller owns the same database transaction. */
-  issueBody(agent: string, job: string): string {
-    if (!this.app.db.inTransaction || !/^[a-z0-9-]+$/.test(agent) || !/^[a-z0-9-]+$/.test(job) || !this.household()?.agents.includes(agent)) throw new Error('Body credential unavailable');
+  issueBody(agent: string, job: string, service?: string): string {
+    if (!this.app.db.inTransaction || !/^[a-z0-9-]+$/.test(agent) || !/^[a-z0-9-]+$/.test(job) || !this.household()?.agents.includes(agent) || (service!==undefined && !/^[a-z0-9-]+$/.test(service))) throw new Error('Body credential unavailable');
     const secret=random(), now=this.app.operations.clock.now();
-    this.tokens.change(tokens=>tokens.push({role:`agent:${agent}@${job}`,sha256:hash(secret),label:`Body ${job}`,created:new Date(now).toISOString(),expires:new Date(now+24*3600_000).toISOString()}));
+    this.tokens.change(tokens=>tokens.push({role:`agent:${agent}${service===undefined?'':`/${service}`}@${job}`,sha256:hash(secret),label:`Body ${job}`,created:new Date(now).toISOString(),expires:new Date(now+24*3600_000).toISOString()}));
     return secret;
   }
   csrf(id: string) { return createHmac('sha256',this.key).update(`loom-next-csrf|${id}`).digest('hex'); }
