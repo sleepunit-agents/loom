@@ -3,19 +3,17 @@ import type { ClockBodies } from './clock-delivery.js';
 import type { Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
 import type { Runtime, StartResult } from '../clock/role.js';
-import { runtimeRole } from './role.js';
 import { runtimeStore } from './store.js';
 import { configuredHouse } from './builds.js';
-import { startJobId } from './start.js';
 import { clockRoute, type ClockDestinationReader } from '../clock/role.js';
 export const START_CONFIRM_MS = 60_000;
 export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'status'>, destination?: ClockDestinationReader, delivery?: ClockBodies): Runtime {
   const store=runtimeStore(app.db), waiting=new Set<(result:StartResult)=>void>();
   let closed=false;
   app.onClose(()=>{closed=true;for(const finish of [...waiting]) finish({state:'uncertain',reason:'Runtime closed before start confirmation'});});
-  return {async startBody({wake,viewer,intent}) {
+  return {async startBody({wake,intent}) {
     if(closed) return {state:'uncertain',reason:'Runtime is closed'};
-    const existing=()=>{const job=delivery?delivery.job(wake.id):startJobId(viewer,wake.agent,{kind:'wake',id:wake.id});return job?store.read('job',job):undefined;};
+    const existing=()=>{const job=delivery?.job(wake.id);return job?store.read('job',job):undefined;};
     const hold=(reason:string):StartResult=>({state:existing()?'uncertain':'held',reason});
     // A matching, current Runtime destination is necessary for lane reuse. The
     // startBody path cannot feed an existing conversation; never silently turn a
@@ -27,10 +25,9 @@ export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'stat
     // a path is a prompt or confer approval/continuation authority from text.
     if(!wake.prompt || wake.file || wake.laneVersion || wake.continuation || wake.slot || wake.approval || wake.prompt.includes('<!-- house: local -->'))
       return hold('This wake requires a runtime feature that is not installed');
-    const answer=delivery ? app.operations.call('direct',{kind:'service',id:'clock'},'runtime.acceptClock',{wake:wake.id,attempt:intent},`runtime:clock:${wake.id}:${intent}`) : runtimeRole(app.operations).startBody(viewer,{
-      agent:wake.agent,project:wake.project,member:wake.member,title:'Scheduled work',brief:wake.prompt,
-      model:wake.model,source:{kind:'wake',id:wake.id},
-    },`runtime:wake:${wake.id}`);
+    if(!delivery)return hold('Clock delivery composition is unavailable');
+    const answer=app.operations.call('direct',{kind:'service',id:'clock'},'runtime.acceptClock',
+      {wake:wake.id,attempt:intent},`runtime:clock:${wake.id}:${intent}`);
     if(!answer.ok) return existing()
       ? {state:'uncertain',reason:'This wake already has an accepted start intent; reconcile it before retrying'}
       : {state:'not-started',reason:answer.message};

@@ -111,10 +111,11 @@ it('does not requeue after restart during dispatch or after losing confirmation'
   expect(wake(f.app.db,id)).toMatchObject({state:'held',hold:'uncertain'});
   f.clock.advance(3600_000);await settle();expect(f.store.ids('job')).toEqual([job]);
 });
-it('waits for the real outcome and closes pending waiters without claiming a start',async()=>{
+it('holds an uncomposed bridge instead of executing a caller-supplied wake clone',async()=>{
   const f=await setup(),runtime=clockRuntime(f.app,f.app.effects!);
   const pending=runtime.startBody({viewer:owner,intent:'attempt',wake:{id:'w-fixture',agent:'art',prompt:'work',note:'fixture',due:1,state:'firing',createdAt:1,changedAt:1,by:owner,failures:0}});
-  await f.app.close();expect(await pending).toMatchObject({state:'uncertain'});
+  expect(await pending).toMatchObject({state:'held'});
+  expect(f.store.ids('job')).toEqual([]);await f.app.close();
 });
 it('never calls a rejected retry definitely unstarted when this wake already has an accepted intent',async()=>{
   const f=await setup(),id=await f.schedule(),original=wake(f.app.db,id)!;
@@ -359,6 +360,11 @@ it('creates a real wake binding and joins only after the authenticated body read
  expect(await f.post(f.runner,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
  expect(await f.post(f.member,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'},{text:'Joined lane input'}]}});
+ await settle();expect(wake(f.app.db,filed.value.id)?.state).toBe('firing');
+ expect(await f.post(f.runner,'acknowledgeClockInput',{through:2})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(body,'acknowledgeClockInput',{through:999})).toMatchObject({ok:false,code:'conflict'});
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'},{text:'Joined lane input'}]}});
+ expect(await f.post(body,'acknowledgeClockInput',{through:2})).toMatchObject({ok:true});
  await settle();expect(wake(f.app.db,filed.value.id)).toMatchObject({state:'fired',outcome:job});
  expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns').get()).toEqual({n:2});
  expect(JSON.stringify(f.app.db.prepare('SELECT result FROM core_operations WHERE name LIKE ?').all('runtime.%'))).not.toContain('Joined lane input');
@@ -386,8 +392,10 @@ it('holds both initial and joined scheduled words behind staging, then confirms 
  expect(r.ok).toBe(true);f.clock.advance(1000);await settle();
  expect(f.store.ids('job')).toEqual([job]);expect(wake(f.app.db,r.value.id)?.state).toBe('firing');
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'conflict'});
+ expect(await f.post(body,'acknowledgeClockInput',{through:2})).toMatchObject({ok:false,code:'conflict'});
  expect(f.call('core.releaseEffect',{id:`runtime:clock-read:${job}:2`}).ok).toBe(true);
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Staged first input'},{text:'Staged joined input'}]}});
+ expect(await f.post(body,'acknowledgeClockInput',{through:2})).toMatchObject({ok:true});
  await settle();expect(wake(f.app.db,r.value.id)).toMatchObject({state:'fired',outcome:job});
 });
 
@@ -405,4 +413,20 @@ it('rechecks original Clock source authority at the words boundary, without acce
  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns').get()).toEqual({consumed:null});
  access.members.jonathan.agents=['art'];
  expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Revocable scheduled input'}]}});
+});
+
+it('issues the original restricted service on the scheduled body credential, separately from Clock dispatch',async()=>{
+ const f=await setup(),r=f.call('clock.in',{agent:'art',prompt:'Restricted scheduled input',note:'source',when:'1s'});
+ expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id,scheduled=wake(f.app.db,id)!;
+ // Owning stored source fixture: the credential issuer must preserve this service,
+ // rather than silently issuing an unrestricted body or substituting Clock.
+ scheduled.authorship!.service='restricted';
+ f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(scheduled),id);
+ f.clock.advance(1000);await settle();const job=f.store.ids('job')[0];
+ expect(f.store.read('job',job)?.service).toBe('restricted');
+ await f.post(f.runner,'claimJob',{job});const payload=await f.post(f.runner,'takeInput',{job});
+ expect(payload.ok).toBe(true);const viewer=signin(f.app).token(hash(payload.value.credential))!.viewer;
+ expect(signin(f.app).body(viewer)).toMatchObject({agent:'art',job,service:'restricted'});
+ await f.post(f.runner,'reportJob',{job,state:'running'});await settle();
+ expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Restricted scheduled input'}]}});
 });

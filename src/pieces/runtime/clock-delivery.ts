@@ -13,10 +13,10 @@ import { principalFromHistory } from './provenance.js';
 import { currentExecution } from './control.js';
 import { bodyPolicyExecutionHeld } from './policy-store.js';
 import type { ClockProvenanceReader } from './role.js';
-export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation. New inputs may arrive in this conversation.';
+export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation. After reading, acknowledge through the last seq with runtime.acknowledgeClockInput. New inputs may arrive in this conversation.';
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,40);
 const id=z.string().min(1).max(200);
-interface Turn {seq:number;id:string;conversation:string;job:string;record:string;consumed:number|null}
+interface Turn {seq:number;id:string;conversation:string;job:string;record:string;released:number|null;consumed:number|null}
 interface Proof {agent:string;job?:string;service?:string;valid():boolean}
 export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:OutsideEffects,proof:(v:Viewer)=>Proof|undefined) {
   const {db,operations}=app,store=runtimeStore(db),destination=clockDestination(app,sharing);
@@ -92,19 +92,30 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     });
     if(!currentSources())throw new OperationError('denied','Clock delivery authority ended');
     // Central staging hold runs at the words boundary, including later joined turns.
-    if(rows.some(r=>r.consumed===null)&&!effects.beforeOutside({id:`runtime:clock-read:${job.id}:${rows[0]?.seq}`,kind:'body-start',title:'Release scheduled conversation input'}))
+    if(rows.some(r=>r.released===null)&&!effects.beforeOutside({id:`runtime:clock-read:${job.id}:${rows[0]?.seq}`,kind:'body-start',title:'Release scheduled conversation input'}))
       throw new OperationError('conflict','Scheduled input is held');
     // Recheck after the outside gate, before releasing any words or marking delivery.
     if(bound(v)?.id!==job.id||!currentSources())throw new OperationError('denied','Clock body binding ended');
     db.transaction(()=>{
-      for(const row of rows){db.prepare('UPDATE runtime_clock_turns SET consumed=COALESCE(consumed,?) WHERE id=?').run(operations.clock.now(),row.id);}
-      const keys=provenanceStore(db).read(job.conversation!)?.queue.map(r=>r.key)??[];
-      provenanceStore(db).consumed(job.conversation!,keys.filter(k=>rows.some(r=>k===r.id||k.startsWith(`${r.id}:person:`))));
+      for(const row of rows){db.prepare('UPDATE runtime_clock_turns SET released=COALESCE(released,?) WHERE id=?').run(operations.clock.now(),row.id);}
     })();
-    if(rows.some(r=>r.consumed===null))effects.finish(`runtime:clock-read:${job.id}:${rows[0]?.seq}`);
+    if(rows.some(r=>r.released===null))effects.finish(`runtime:clock-read:${job.id}:${rows[0]?.seq}`);
     app.live.changed([{type:'runtime.job',id:job.id}]);
     return {conversation:job.conversation,messages:rows.reverse().map(r=>({seq:r.seq,id:r.id,kind:'wake',text:(JSON.parse(r.record) as {text:string}).text}))};
   };
+  operations.register(operation({name:'runtime.acknowledgeClockInput',doors:['http','direct'],write:true,recheckPolicy:true,
+    input:z.object({through:z.number().int().positive()}).strict(),output:z.object({acknowledged:z.literal(true)}),
+    may:v=>!!bound(v),run(ctx,i){
+      const job=bound(ctx.viewer);if(!job)throw new OperationError('denied','Clock body binding ended');
+      const rows=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<=?').all(job.conversation,i.through) as Turn[];
+      if(!rows.some(row=>row.seq===i.through)||rows.some(row=>row.released===null))throw new OperationError('conflict','Input has not been released to this body');
+      for(const row of rows)db.prepare('UPDATE runtime_clock_turns SET consumed=COALESCE(consumed,?) WHERE id=?').run(ctx.now,row.id);
+      const keys=provenanceStore(db).read(job.conversation!)?.queue.map(row=>row.key)??[];
+      provenanceStore(db).consumed(job.conversation!,keys.filter(key=>rows.some(row=>key===row.id||key.startsWith(`${row.id}:person:`))));
+      ctx.changed('runtime.job',job.id);
+      return {acknowledged:true as const};
+    },
+  }));
   const clockProvenance:ClockProvenanceReader=v=>{
     const job=bound(v);if(!job?.conversation)return;
     const p=provenanceStore(db).read(job.conversation);if(!p)return;

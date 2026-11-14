@@ -91,7 +91,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   installDispatchSource(operations,(id,attempt,accepted)=>{
     const w=wake(db,id);
     return !closed && !!w && (w.state==='firing'||accepted&&w.state==='fired') && w.attempt===attempt && !w.member
-      && create(w.by,w) && create({kind:'agent',id:w.agent},w) ? structuredClone(w) : undefined;
+      && create(w.by,w) && create({kind:'agent',id:w.agent},w)
+      && (w.authorship?.principal.people??[]).every(id=>create({kind:'member',id},w)) ? structuredClone(w) : undefined;
   });
   const prepareFiling = (v: Viewer, w: Work) => filing(v, w, sharing(), options.provenance);
   const mayFile = (v: Viewer, w: Work) => {

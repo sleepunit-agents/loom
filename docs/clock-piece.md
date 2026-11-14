@@ -1185,8 +1185,11 @@ box, binding, agent/project policy and body-policy holds are rechecked.
 A wake filed by that authenticated body can join the exact current lane through
 `clockRoute` and Runtime's destination witness. It queues words on the existing
 job, rather than starting a second body. Each input has a permanent source
-receipt. Joined delivery stays firing until the authenticated body reads it;
-queue acceptance and an already-running job do not count as delivery. Input
+receipt. Joined delivery stays firing until the authenticated body reads it and calls
+`runtime.acknowledgeClockInput` through the last received sequence;
+queue acceptance, a read response that might be lost, and an already-running
+job do not count as delivery. Acknowledgement refuses unreleased sequences;
+re-reading released words is safe before acknowledgement. Input
 reads pass the central staging gate before words leave the process. A timeout
 or interrupted read remains uncertain. This is cooperative conversation input:
 it does not claim a native transport interrupt/resume mechanism.
