@@ -86,7 +86,11 @@ export function installNotificationAnnouncements(app:Foundation,effects:OutsideE
   function tick(){
     if(!active())return;
     try{admit();schedule();}catch{/* No partial admission or diagnostic leakage; retry the next sample. */}
-    finally{nextTick=clock.at(clock.now()+minute,tick);}
+    finally{
+      // Resume once at the current instant after sleep/clock jumps, never replay
+      // every elapsed minute or create a burst of old admission samples.
+      nextTick=clock.at(clock.now()+minute,()=>{queueMicrotask(tick);});
+    }
   }
   const unrelease=effects.onReleased(id=>{if(id.startsWith('notifications:announcement:'))schedule();});
   let nextTick:(()=>void)|undefined;

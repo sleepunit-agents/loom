@@ -883,7 +883,8 @@ notification-focused screenshots. No new CLI or backend operation is introduced.
 ### Routine notification daemon
 
 The new daemon samples current Inbox asks through Attention's metadata-only role
-and unread, not-in-front replies through the real Comms role every minute. Both
+and unread, not-in-front replies through the real Comms role every minute. Missed minutes after a sleep or clock jump coalesce into one current sample;
+the daemon never replays elapsed admission periods. Both
 roles apply current central member policy; no service grant or credential is
 created. Source words are never copied into the job records or payload. The
 worker still displays a fixed loom title and empty body; taps open the exact

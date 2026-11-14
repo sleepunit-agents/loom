@@ -3,27 +3,27 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import webpush from 'web-push';
-import { fixture } from '../../fixture.js';
+import { fixture, installFixture } from '../../fixture.js';
 import { startLoom } from '../../foundation.js';
 import { FakeClock } from '../clock.js';
 import { signin } from './index.js';
 import { changeHouseholdMember } from '../household/members.js';
 import type { Foundation } from '../app.js';
 import type { PushTransport } from './push-transport.js';
-import { attentionAnnouncements } from '../../pieces/attention/role.js';
+import { attentionAnnouncements, registerAttentionAnnouncements } from '../../pieces/attention/role.js';
 import { installComms } from '../../pieces/comms/index.js';
 import { loadKey } from '../../pieces/comms/crypto.js';
 import { SharingDatabase } from '../household/sharing.js';
 const cleanup:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{for(const fn of cleanup.splice(0).reverse())await fn();});
 const sub=(id='phone')=>({endpoint:`https://fcm.googleapis.com/${id}`,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}});
-async function setup(staging=true,withComms=false){
+async function setup(staging=true,withComms=false,fixtureJobs=false){
  const home=mkdtempSync(join(tmpdir(),'announcement-'));fixture(home);cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock(),send=vi.fn<PushTransport>().mockResolvedValue({});
  const key=withComms?await loadKey(home):undefined;let comms:ReturnType<typeof installComms>|undefined;
  const options={home,next:true,clock,staging,notifications:{send},stdout:()=>{},...(key?{install:(app:Foundation)=>{
    comms=installComms({...app,clock,key,sharing:()=>new SharingDatabase(app.db,home).sharing(),hold:async()=>{throw new Error('held');},runtime:{async deliver(){},async end(){}}});
- }}:{})};
+ }}:fixtureJobs?{install:installFixture}:{})};
  let app=await startLoom(options);cleanup.push(async()=>{await app.close();await comms?.close();});
  const seed=(id='phone',member='jonathan')=>signin(app).sessions.change(f=>{f.push??={};f.push.vapid??=webpush.generateVAPIDKeys();f.push.subs??={};const value=sub(id);f.push.subs[value.endpoint]={sub:value,member,session:'retained',at:signin(app).now()};});seed();
  let serial=0;
@@ -33,7 +33,7 @@ async function setup(staging=true,withComms=false){
  };
  const items=()=>app.db.prepare('SELECT * FROM notifications_announcements ORDER BY id').all() as Array<{id:string;member:string;key:string;state:string}>;
  const attempts=()=>app.db.prepare('SELECT * FROM notifications_announcement_attempts ORDER BY id').all() as Array<{id:string;state:string;ref:string}>;
- const settle=async()=>{await vi.waitFor(()=>{clock.advance(0);expect(attempts().every(a=>a.state!=='queued'||app.effects!.status(`notifications:announcement:${a.id}`)==='due')).toBe(true);});};
+ const settle=async()=>{await Promise.resolve();await vi.waitFor(()=>{clock.advance(0);expect(attempts().every(a=>a.state!=='queued'||app.effects!.status(`notifications:announcement:${a.id}`)==='due')).toBe(true);});};
  const tick=async()=>{clock.advance(60_000);await settle();};
  const release=async()=>{
    for(const a of attempts().filter(a=>app.effects!.status(`notifications:announcement:${a.id}`)==='due'))expect(app.operations.call('direct',{kind:'member',id:Object.entries(new SharingDatabase(app.db,'').sharing().members).find(([,m])=>m.owner)![0]},'core.releaseEffect',{id:`notifications:announcement:${a.id}`},`release-${++serial}`)).toMatchObject({ok:true});
@@ -105,11 +105,11 @@ it('releasing one exact device leaves the other attempt held',async()=>{
 it.each(['queued','held','released'] as const)('resumes %s work successfully after restart exactly once',async kind=>{
  const f=await setup();f.raise();
  if(kind==='queued'){
-   // Admission commits before the newly scheduled drain runs.
-   // Consume startup's empty drain first so it cannot defer this new one.
-   f.clock.advance(0);await Promise.resolve();await Promise.resolve();
-   // A source is sampled at the minute boundary; a same-time close prevents IO.
-   f.clock.at(f.clock.now()+60_000,()=>{void f.app.close();});f.clock.advance(60_000);
+   // The minute callback queues one sample after this clock turn; admission
+   // then commits without advancing the separately scheduled delivery drain.
+   f.clock.advance(60_000);await Promise.resolve();
+   expect(f.attempts()).toHaveLength(1);
+   expect(f.app.effects!.status(`notifications:announcement:${f.attempts()[0].id}`)).toBeUndefined();
    await f.app.close();
  }else{
    await f.tick();
@@ -136,4 +136,15 @@ it('rolls back the whole admission sample on a failed write and retries without 
  f.app.db.exec("CREATE TEMP TRIGGER fail_admission BEFORE INSERT ON notifications_announcement_attempts BEGIN SELECT RAISE(ABORT,'PRIVATE diagnostics'); END");
  await f.tick();expect(f.items()).toEqual([]);expect(f.attempts()).toEqual([]);expect(f.send).not.toHaveBeenCalled();
  f.app.db.exec('DROP TRIGGER fail_admission');await f.tick();expect(f.send).toHaveBeenCalledTimes(2);expect(f.items()).toHaveLength(2);
+});
+
+it('samples once at the current time after a long clock jump instead of replaying elapsed minutes',async()=>{
+ const f=await setup(false,false,true),read=vi.fn((_member:string)=>[]);
+ registerAttentionAnnouncements(f.app.operations,read);
+ f.clock.advance(31*86400_000);await f.settle();
+ const members=Object.keys(new SharingDatabase(f.app.db,'').sharing().members);
+ expect(read).toHaveBeenCalledTimes(members.length);
+ expect(read.mock.calls.map(call=>call[0]).sort()).toEqual(members.sort());
+ f.clock.advance(59_999);await f.settle();expect(read).toHaveBeenCalledTimes(members.length);
+ f.clock.advance(1);await f.settle();expect(read).toHaveBeenCalledTimes(2*members.length);
 });
