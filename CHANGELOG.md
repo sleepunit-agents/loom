@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Let a current private body ask an encrypted Comms question through its original member binding, with authority rechecked after encryption and a wordless acknowledgement.
 - Add pure worker-checkout preparation for scheduled file inputs, using bounded descriptor-pinned reads; executable Clock file delivery stays held pending owning runner integration.
+- Add owner-only next-mode backup configuration operations and Live status; saved configuration explicitly remains unscheduled pending the new runner.
 
 - Deliver private timed prompts through Runtime’s bound inbox, retaining member scope and current grants through runner confirmation, reads and acknowledgment.
 

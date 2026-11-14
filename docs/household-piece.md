@@ -926,3 +926,43 @@ The routine cadence and deliberate test-drain schedulers remain separate small
 lifecycles: only the routine scheduler coalesces minute samples. They share the
 credential-sensitive transport/deadline/result/cleanup lifecycle. Their distinct
 close, queued-work and restart behavior is covered by tests.
+
+## Next backup configuration (execution still pending)
+
+`household.backup`, `household.setBackup` and `household.backupOff` use the
+existing household-owner policy and `household_settings` document rows. Their
+generated bindings are `loom-household backup '{}'`, `setBackup '<JSON>'` and
+`backupOff '{}'`. The `household.backup` Live record is household-owner-only.
+The JSON settings are `target`, `recipients`, `at` (default `03:00`), `tz`
+(default `UTC`), `keep` (default 7), and `required` (default empty). Recipients
+and required pieces are deduplicated. Native age recipients must have a valid
+encoding/checksum; SSH recipients must have a complete public-key envelope.
+This is stricter than the old prefix-only check: malformed imported keys
+produce an invalid status instead of being treated as ready. Retention is 1–90 nights, as before.
+
+These operations reconcile **configuration only**: a configured next household
+reports `awaiting-runner` and explicitly says no backup is scheduled. There is
+no next-mode run, tick, last-good claim or drill key generation in this unit.
+`off` removes configuration without deleting any key or bundle. Imported
+configuration is projected only after schema and current local boundary validation; invalid settings return a
+generic status without echoing unknown fields or credentials. Old backup
+`state.json` is never read. Saving uses UTC unless the caller supplies a zone;
+it does not infer the daemon machine's local zone. Path targets may contain
+spaces; git URLs may not contain whitespace, credentials, query parameters
+or fragments; git URL backslashes and malformed percent escapes are refused to avoid ambiguous URL path normalization. Existing ancestor symlinks are resolved when checking that a
+local target is outside the household home; unresolved symlinks and local
+`..` path components (including encoded file-URL components) are refused. Execution must recheck that
+boundary before using a target; configuration validation is not an execution
+permit.
+
+Remaining backup acceptance: implement the next exporter and restore drill
+using `exportDatabase` and every owning piece's privacy filter, including
+context/artwork files and the external Secrets holder's stated recovery
+boundary; then encrypted path/git publication, retention, last-good/run
+records, restored-home local arming, staging holds, one daemon-clock job,
+failure/missed/recovery Attention, generated run/status commands, and Setup
+controls with screenshot evidence. Never reuse `backup.ts`, the old detached
+`loom backup tick`, old stores or installed piece programs in next mode.
+The final move must explicitly arm the new runner and demonstrate a successful
+encrypted restore drill before old backup retirement. Configuration alone
+satisfies none of those execution or retirement checks.
