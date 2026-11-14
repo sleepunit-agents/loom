@@ -381,7 +381,7 @@ it('keeps Approvals reported-step FYIs in FYI with an owning navigation action a
   const notice=ask('approval-notice:event',{ask:'Merge reported in Approvals',sourceManaged:true,source:{kind:'piece',id:'approvals-notices'},state:'resolved',answers:undefined,if_yes:undefined,if_no:undefined});
   expect(inFolder(notice,'fyi')).toBe(true);expect(inFolder(notice,'needs')).toBe(false);
   expect(decisionLink(notice)).toEqual({path:'/p/approvals-preview/notices',label:'Open Approvals'});
-  const go=vi.fn();await draw(h(AskReader,{ask:notice,go}));
+  const go=vi.fn();await draw(h(AskReader,{ask:notice,go,snapshot:{records:[notice],status:'live'}}));
   expect(text()).toContain('Open Approvals');expect(buttons('Yes')).toHaveLength(0);expect(buttons('No')).toHaveLength(0);
   await click('Open Approvals');expect(go).toHaveBeenCalledWith('/p/approvals-preview/notices');
 });
