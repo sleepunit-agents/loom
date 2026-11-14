@@ -76,3 +76,9 @@ it('matches complete capability values and pins the heartbeat boundary', () => {
   db.update(boxes).set({ lastSeenAt: '2026-11-14T19:57:59.999Z' }).where(eq(boxes.id, 'local')).run();
   expect(selectPlacement(db, input)).toBeUndefined();
 });
+it('honors configured preference positions even when they oppose identifier order', () => {
+  const { db, input } = fixture();
+  db.update(agentBoxes).set({ position: -1 }).where(eq(agentBoxes.box, 'remote')).run();
+  db.update(agentModels).set({ position: -1 }).where(eq(agentModels.model, 'backup')).run();
+  expect(selectPlacement(db, input)).toEqual({ box: 'remote', model: 'backup', account: 'shared', harness: 'other' });
+});
