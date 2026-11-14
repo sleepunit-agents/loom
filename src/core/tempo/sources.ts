@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { approvals, changes, inbox, jobs, secretRequests } from '../data/schema.js';
+import { approvals, changes, inbox, jobs, secretRequests, triggers } from '../data/schema.js';
 import type { TriggerEngine } from './triggers.js';
 
 /** Stable watch names shared by the source writers and trigger creators. */
@@ -19,6 +19,34 @@ export const tempoWatch = {
  * persists deduplication, including while the recipient is paused. */
 export class TempoSources {
   constructor(private db: DataDatabase, private engine: Pick<TriggerEngine, 'event'>) {}
+
+  /** Recover the commit-to-callback gap after restart. Only active watches are
+   * read; the normal event log deduplicates callbacks already delivered. Changes
+   * owns its revision: never invent one from the current snapshot or timestamp.
+   * This recovers the latest durable outcome, not intermediate offline changes.
+   */
+  recover(changeRevision?: (id: string) => string | undefined): void {
+    const watches = new Set<string>();
+    for (const row of this.db.select({ kind: triggers.sourceKind, watches: triggers.watches }).from(triggers).where(eq(triggers.enabled, true)).all()) {
+      if (!row.watches || row.kind === 'time') continue;
+      const key = JSON.stringify([row.kind, row.watches]);
+      if (watches.has(key)) continue;
+      watches.add(key);
+      const prefixes = row.kind === 'pull-request' ? ['change'] : row.kind === 'job' ? ['job'] : ['approval', 'question', 'secret-request'];
+      for (const prefix of prefixes) {
+        if (!row.watches.startsWith(`${prefix}:`)) continue;
+        const id = row.watches.slice(prefix.length + 1);
+        if (!id) continue;
+        if (prefix === 'change') {
+          const revision = changeRevision?.(id);
+          if (revision) this.change(id, revision);
+        } else if (prefix === 'approval') this.approval(id);
+        else if (prefix === 'question') this.question(id);
+        else if (prefix === 'secret-request') this.secret(id);
+        else this.job(id);
+      }
+    }
+  }
 
   change(id: string, revision: string): void {
     if (!revision) throw new Error('A change needs its durable source revision');

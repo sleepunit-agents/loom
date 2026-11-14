@@ -18,6 +18,8 @@ export interface TempoOptions {
   /** Commit a synchronous built-in operation on this same database. */
   operation(name: string, trigger: Trigger, occurrence: string): void;
   instructions?(file: string): string;
+  /** Read Changes' persisted occurrence revision during source recovery. */
+  changeRevision?(id: string): string | undefined;
   /** Publish committed table changes to the generated query subscriptions. */
   changed?(): void;
 }
@@ -43,10 +45,11 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
     instructions: options.instructions,
     changed() { settled.changed(); options.changed?.(); },
   });
+  const sources = new TempoSources(db, engine);
   return {
-    triggers: engine, inbox: settled, volume: settled.volume, sweep, sources: new TempoSources(db, engine),
+    triggers: engine, inbox: settled, volume: settled.volume, sweep, sources,
     /** Start after all sweep contributors and operation targets are installed. */
-    start() { engine.tick(); },
+    start() { sources.recover(options.changeRevision); engine.tick(); },
     /** Call after committed Inbox writes or a runtime capacity change. */
     changed() { settled.changed(); options.changed?.(); },
     close() { engine.close(); settled.close(); },
