@@ -14,6 +14,7 @@ export interface ContinuitySources {
   knowledge: Db | null;
   people: Db | null;
 }
+export interface ContinuityBudget { imageBytes: number; databaseBytes: number }
 export interface HouseholdContinuity {
   databases: PortableFile[];
   files: PortableFile[];
@@ -33,7 +34,8 @@ const hashPattern = /^[a-f0-9]{64}$/;
  * The caller owns every returned plaintext Buffer and must wipe after encryption.
  * Borrowed source connections remain open; no writes or caller transactions are committed.
  */
-export function captureHouseholdContinuity(home: string, sources: ContinuitySources): HouseholdContinuity {
+export function captureHouseholdContinuity(home: string, sources: ContinuitySources,
+  budget: ContinuityBudget = { imageBytes: MAX_IMAGE, databaseBytes: MAX_DATABASES_BYTES }): HouseholdContinuity {
   const databases: PortableFile[] = [], absent: string[] = [], selection: ContextFileSelection[] = [];
   const sizes = new Map<string, number>();
   let files: PortableFile[] = [], total = 0, accepted = false;
@@ -48,10 +50,10 @@ export function captureHouseholdContinuity(home: string, sources: ContinuitySour
         const count = Number(source.pragma('page_count', { simple: true }));
         const size = Number(source.pragma('page_size', { simple: true }));
         if (!Number.isSafeInteger(count) || !Number.isSafeInteger(size) || count < 0 || size <= 0
-          || count * size > MAX_IMAGE || total + count * size > MAX_DATABASES_BYTES) throw Error();
+          || count * size > budget.imageBytes || total + count * size > budget.databaseBytes) throw Error();
         bytes = source.serialize();
       })();
-      if (!bytes || bytes.length > MAX_IMAGE || total + bytes.length > MAX_DATABASES_BYTES) throw Error();
+      if (!bytes || bytes.length > budget.imageBytes || total + bytes.length > budget.databaseBytes) throw Error();
       // sqlite3_deserialize cannot open a WAL-mode header. SQLite documents
       // changing its read/write version bytes to rollback mode for this use.
       // The serialized image already contains the connection's committed WAL view.
@@ -84,6 +86,10 @@ export function captureHouseholdContinuity(home: string, sources: ContinuitySour
     }
   };
   try {
+    // A worker may lower the memory ceiling, never raise the format's caps.
+    budget = { ...budget };
+    if (![budget.imageBytes, budget.databaseBytes].every(value => Number.isSafeInteger(value) && value > 0)
+      || budget.imageBytes > MAX_IMAGE || budget.databaseBytes > MAX_DATABASES_BYTES) throw Error();
     const agents = sources.agents.map(item => ({ ...item }));
     if (new Set(agents.map(item => item.agent)).size !== agents.length || agents.some(item => !agentName.test(item.agent))) throw Error();
     for (const item of agents.sort((a, b) => a.agent.localeCompare(b.agent))) {

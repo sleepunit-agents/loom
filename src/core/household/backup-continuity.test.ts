@@ -7,6 +7,8 @@ import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { captureHouseholdContinuity, type ContinuitySources } from './backup-continuity.js';
 import { Notes } from '../../notes.js';
+import * as fs from 'node:fs';
+vi.mock('node:fs', async original => ({ ...await original<typeof fs>() }));
 
 const closers: (() => void)[] = [];
 afterEach(() => { vi.restoreAllMocks(); for (const close of closers.splice(0).reverse()) close(); });
@@ -34,6 +36,11 @@ function fixture() {
   const sources: ContinuitySources={agents:[{agent:'art',memories:memory,notes},{agent:'other',memories:null,notes:null}],knowledge,people};
   return { home, put, db, memory, notes, writer, hash, sources };
 }
+function trackImages() {
+  const images:Buffer[]=[], serialize=Database.prototype.serialize;
+  vi.spyOn(Database.prototype,'serialize').mockImplementation(function(this:Database.Database){const bytes=serialize.call(this);images.push(bytes);return bytes;});
+  return images;
+}
 it('captures complete virtual-table memory/WAL, notes and commons, pairs only snapshot-owned attachments, and preserves explicit absence', () => {
   const f=fixture(), before=f.memory.serialize();
   const result=captureHouseholdContinuity(f.home,f.sources);
@@ -46,9 +53,10 @@ it('captures complete virtual-table memory/WAL, notes and commons, pairs only sn
   expect(restored.prepare('SELECT rowid,embedding FROM vec_memories').get()).toEqual({rowid:1,embedding:Buffer.from(new Float32Array([1,2]).buffer)});
   expect(f.memory.serialize()).toEqual(before); expect(f.memory.inTransaction).toBe(false);
   expect(f.memory.prepare('SELECT count(*) AS n FROM memories').get()).toEqual({n:2});
-  for(const image of result.databases) {
+  for(const [image,table,words] of [[result.databases[1],'notes','NOTE_WORDS'],[result.databases[2],'pages','KNOWLEDGE_WORDS'],[result.databases[3],'people','PEOPLE_WORDS']] as const) {
     const db=new Database(image.bytes); sqliteVec.load(db);
-    expect(db.pragma('integrity_check',{simple:true})).toBe('ok'); db.close();
+    expect(db.pragma('integrity_check',{simple:true})).toBe('ok');
+    expect(db.prepare(`SELECT ${table==='notes'?'body':'words'} AS words FROM ${table}`).get()).toEqual({words}); db.close();
   }
 });
 it('uses references in the captured notes image even when the source references change after serialization', () => {
@@ -71,8 +79,7 @@ it.each(['missing','changed','size','malformed','conflicting'])('refuses %s refe
   if(kind==='size') f.notes.prepare('UPDATE note_files SET bytes=bytes+1').run();
   if(kind==='malformed') f.notes.prepare('UPDATE note_files SET sha256=?').run('../PRIVATE');
   if(kind==='conflicting') f.notes.prepare("INSERT INTO note_files SELECT path,'other',sha256,bytes+1,type,added FROM note_files").run();
-  const captured:Buffer[]=[]; const serialize=Database.prototype.serialize;
-  vi.spyOn(Database.prototype,'serialize').mockImplementation(function(this:Database.Database){const bytes=serialize.call(this);captured.push(bytes);return bytes;});
+  const captured=trackImages();
   expect(()=>captureHouseholdContinuity(f.home,f.sources)).toThrow(/^Household continuity capture failed$/);
   expect(captured.length).toBeGreaterThan(0); expect(captured.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
 });
@@ -98,10 +105,9 @@ it('wipes an allocated image if ending the read transaction fails before the sna
   expect(()=>captureHouseholdContinuity(f.home,f.sources)).toThrow(/^Household continuity capture failed$/);
   expect(bytes?.length).toBeGreaterThan(0); expect(bytes?.every(byte=>byte===0)).toBe(true);
 });
-it('wipes all images if reopening, integrity checking, or closing a restored connection fails', () => {
-  const f=fixture(), serialize=Database.prototype.serialize, close=Database.prototype.close;
-  const images:Buffer[]=[];
-  vi.spyOn(Database.prototype,'serialize').mockImplementation(function(this:Database.Database){const bytes=serialize.call(this);images.push(bytes);return bytes;});
+it('wipes all images if closing a restored connection fails', () => {
+  const f=fixture(), close=Database.prototype.close;
+  const images=trackImages();
   vi.spyOn(Database.prototype,'close').mockImplementation(function(this:Database.Database) { close.call(this); throw Error('PRIVATE_CLOSE_DETAIL'); });
   expect(()=>captureHouseholdContinuity(f.home,f.sources)).toThrow(/^Household continuity capture failed$/);
   expect(images.length).toBeGreaterThan(0); expect(images.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
@@ -115,4 +121,64 @@ it('refuses oversized page estimates before allocating a serialized image', () =
   const serialize=vi.spyOn(Database.prototype,'serialize');
   expect(()=>captureHouseholdContinuity(f.home,f.sources)).toThrow(/^Household continuity capture failed$/);
   expect(serialize).not.toHaveBeenCalled();
+});
+
+it.each(['integrity_check','foreign_key_check'])('refuses a restored %s failure and wipes images', check => {
+  const f=fixture(), pragma=Database.prototype.pragma, images=trackImages();
+  vi.spyOn(Database.prototype,'pragma').mockImplementation(function(this:Database.Database,sql:string,options?:Database.PragmaOptions){
+    if(![f.memory,f.notes,f.sources.knowledge,f.sources.people].includes(this) && sql===check) return check==='integrity_check'?'broken':[{table:'PRIVATE'}];
+    return pragma.call(this,sql,options);
+  });
+  expect(()=>captureHouseholdContinuity(f.home,f.sources)).toThrow(/^Household continuity capture failed$/);
+  expect(images.length).toBeGreaterThan(0); expect(images.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+});
+it('refuses a corrupted serialized image and clears it', () => {
+  const f=fixture(), serialize=Database.prototype.serialize; let bytes:Buffer|undefined;
+  vi.spyOn(Database.prototype,'serialize').mockImplementation(function(this:Database.Database){bytes=serialize.call(this);bytes.fill(255,0,100);return bytes;});
+  expect(()=>captureHouseholdContinuity(f.home,f.sources)).toThrow(/^Household continuity capture failed$/);
+  expect(bytes?.every(byte=>byte===0)).toBe(true);
+});
+it('deduplicates identical references with matching byte counts', () => {
+  const f=fixture(); f.notes.prepare("INSERT INTO note_files SELECT path,'second-name',sha256,bytes,type,added FROM note_files").run();
+  const result=captureHouseholdContinuity(f.home,f.sources);
+  expect(result.files.filter(file=>file.path.endsWith(f.hash))).toHaveLength(1);
+  const db=new Database(result.databases[1].bytes); closers.push(()=>db.close());
+  expect(db.prepare('SELECT count(*) AS n FROM note_files').get()).toEqual({n:2});
+});
+it('enforces a lower combined budget before serializing the next store', () => {
+  const f=fixture(), first=f.memory.serialize().length, second=f.notes.serialize().length;
+  const images=trackImages();
+  expect(()=>captureHouseholdContinuity(f.home,f.sources,{imageBytes:256*1024*1024,databaseBytes:first+second-1})).toThrow(/^Household continuity capture failed$/);
+  expect(images).toHaveLength(1); expect(images[0].every(byte=>byte===0)).toBe(true);
+});
+it.each(['image','combined'])('checks the %s budget after serialization as well as before it', kind => {
+  const f=fixture(), first=f.memory.serialize().length, second=f.notes.serialize().length, serialize=Database.prototype.serialize;
+  const images:Buffer[]=[];
+  vi.spyOn(Database.prototype,'serialize').mockImplementation(function(this:Database.Database){
+    const original=serialize.call(this);
+    // Simulate an image larger than its page-count preflight predicted.
+    const bytes=this===(kind==='image'?f.memory:f.notes)?Buffer.concat([original,Buffer.alloc(4096)]):original;
+    if(bytes!==original) original.fill(0);
+    images.push(bytes); return bytes;
+  });
+  expect(()=>captureHouseholdContinuity(f.home,f.sources,{
+    imageBytes:kind==='image'?first:256*1024*1024,
+    databaseBytes:kind==='combined'?first+second:512*1024*1024,
+  })).toThrow(/^Household continuity capture failed$/);
+  expect(images.length).toBe(kind==='image'?1:2); expect(images.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+});
+it.each([{imageBytes:256*1024*1024+1,databaseBytes:1},{imageBytes:1,databaseBytes:512*1024*1024+1},{imageBytes:0,databaseBytes:1},{imageBytes:1.5,databaseBytes:1}])('refuses invalid or raised memory budgets', budget => {
+  const f=fixture(), serialize=vi.spyOn(Database.prototype,'serialize');
+  expect(()=>captureHouseholdContinuity(f.home,f.sources,budget)).toThrow(/^Household continuity capture failed$/);
+  expect(serialize).not.toHaveBeenCalled();
+});
+
+it('wipes successfully captured portable files too when the snapshot size comparison later fails', () => {
+  const f=fixture(), read=fs.readSync, allocated:Buffer[]=[];
+  f.notes.prepare('UPDATE note_files SET bytes=bytes+1').run();
+  vi.spyOn(fs,'readSync').mockImplementation((...args:Parameters<typeof fs.readSync>)=>{
+    allocated.push(args[1] as Buffer); return Reflect.apply(read,fs,args);
+  });
+  expect(()=>captureHouseholdContinuity(f.home,f.sources)).toThrow(/^Household continuity capture failed$/);
+  expect(allocated.length).toBeGreaterThan(0); expect(allocated.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
 });

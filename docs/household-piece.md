@@ -1075,7 +1075,8 @@ the source stays unchanged. Each image is independently reopened with the
 existing sqlite-vec extension and checked for integrity and foreign keys.
 A source inside a caller transaction is refused without committing that
 transaction. Images are bounded to 256 MiB each and 512 MiB combined, with a
-page-count preflight before serialization and a byte-count check afterward.
+page-count preflight before serialization and a byte-count check afterward. A
+caller may supply a smaller image/combined memory budget, never raise those caps.
 
 Attachment hashes and lengths come from the corresponding captured notes
 image, never a later live query. The descriptor-pinned portable capture reads
