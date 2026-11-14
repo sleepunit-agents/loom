@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isInternalCaller } from '../../core/internal.js';
 import { mayAct, operation, OperationError, type Db, type Live, type Operations, type Sharing, type Viewer } from '../../core/index.js';
 import { beginSecretUsage } from './usage.js';
 import { grantsRole, grantId } from './index.js';
@@ -51,13 +52,27 @@ export function secretUseRole(db: Db, source: SecretValueSource, sharing: () => 
   const allowed = (name: string) => caller.kind === 'service' && Object.hasOwn(sharing().services, caller.id)
     && grantsRole(db).mayUse(principal(caller.id), {kind: 'secret', target: name}, now())
     && !!db.prepare('SELECT id FROM secrets_names WHERE id=?').get(name);
+  return credentialUse(db, source, allowed, caller.id, now, live);
+}
+
+/** Installed code uses its registry's live identity, with no inter-module grant.
+ * The holder transport and secret selection are supplied only by trusted composition.
+ */
+export function installedSecretUse(operations: Operations, source: SecretValueSource, live: Live, id: string): SecretUseAuthority {
+  const caller = operations.internal(id).viewer;
+  const allowed = (name: string) => isInternalCaller(caller, operations)
+    && !!operations.db.prepare('SELECT id FROM secrets_names WHERE id=?').get(name);
+  return credentialUse(operations.db, source, allowed, id, () => operations.clock.now(), live);
+}
+
+function credentialUse(db: Db, source: SecretValueSource, allowed: (name: string) => boolean, id: string, now: () => number, live: Live): SecretUseAuthority {
   return { mayUse: name => secretName.safeParse(name).success && allowed(name), async withValue<T>(name: string, use: (token: string) => Promise<T>): Promise<T> {
     if (!secretName.safeParse(name).success || !allowed(name)) throw new OperationError('denied', 'Secret use denied');
     let bytes: Uint8Array | undefined;
     let attempt: ReturnType<typeof beginSecretUsage> | undefined;
     let released = false;
     try {
-      attempt = beginSecretUsage(db, live, name, 'service-use', {kind: 'service', id: caller.id}, now());
+      attempt = beginSecretUsage(db, live, name, 'service-use', {kind: 'service', id}, now());
       bytes = await source.read(name);
       // Permission may have changed while the local transport was awaiting its reply.
       if (!allowed(name)) throw new Error('Access ended');
