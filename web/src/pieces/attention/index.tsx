@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { call, useRecords, type Call, type CallState, type Snapshot } from '../../data';
+import { call, useRecords, type Call, type CallState, type Snapshot, type LiveRecord } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, Textarea } from '../../kit';
 import { decisionLink, inFolder, matches, safeHref, type Ask, type Answer } from './model';
 import { useWaitChecks } from './wait-checks';
 import { useMemberRetention } from './member-retention';
+import { useReplyDraft, type ReplyDraft } from './drafts';
 const idle: CallState<unknown> = { pending:false, status:'done' };
 const noop = () => () => {};
 function useCall<T>(request?: Call<T>) {
@@ -23,10 +24,12 @@ type Confirmation = { records: readonly Ask[]; request: Call<Ask> };
 export function AnswerReceipt({ ask }: { ask: Ask }) {
   return ask.answer ? <section><h3>Answer</h3><p>{ask.answer.kind} · {ask.answer.by.id} · {stamp(ask.answer.at)}</p>{ask.answer.text && <p className="whitespace-pre-wrap">{ask.answer.text}</p>}</section> : null;
 }
-export function AskReader({ ask, snapshot, go, initialConfirmation, guard: sharedGuard, onOpened, requireOwnership = false }: { ask: Ask; snapshot: Snapshot<Ask>; go(path: string): void; initialConfirmation?: Confirmation; guard?: Guard; onOpened?():void; requireOwnership?: boolean }) {
+export function AskReader({ ask, snapshot, go, initialConfirmation, guard: sharedGuard, onOpened, requireOwnership = false, replyDraft }: { ask: Ask; snapshot: Snapshot<Ask>; go(path: string): void; initialConfirmation?: Confirmation; guard?: Guard; onOpened?():void; requireOwnership?: boolean; replyDraft?: ReplyDraft }) {
   const [confirmation,setConfirmation] = useState<Confirmation | undefined>(initialConfirmation);
   const [request,setRequest] = useState<Call<Ask>>();
-  const [checking,setChecking] = useState(false), [draft,setDraft] = useState('');
+  const [checking,setChecking] = useState(false), [localDraft,setLocalDraft] = useState('');
+  const draft = replyDraft?.value.text ?? localDraft;
+  const setDraft = replyDraft?.edit ?? setLocalDraft;
   const [message,setMessage] = useState('');
   const latest = useRef(snapshot); latest.current = snapshot;
   const localLock = useRef(false), mounted = useRef(true);
@@ -46,7 +49,7 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
   async function answer(value: Answer) {
     if (!confirmed || sending.current || busy || saving.pending) return;
     sending.current = true; guard.setBusy(true); setChecking(true); setMessage('');
-    const records = snapshot.records;
+    const records = snapshot.records, sentDraft = replyDraft?.value;
     try {
       // Always ask again immediately before the write. A reconnect, scope change or changed record invalidates it.
       const fresh = await call<Ask>('attention.get',{id:ask.id}).result;
@@ -56,7 +59,8 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
       }
       const write = call<Ask>('attention.answer',{id:ask.id,answer:value,...(requireOwnership ? {requireOwnership:true} : {})});
       setRequest(write); setConfirmation(undefined);
-      await write.result;
+      const result = await write.result;
+      if (result.ok && value.kind === 'words' && sentDraft) replyDraft?.acknowledged(sentDraft);
     } finally { sending.current = false; guard.setBusy(false); if (mounted.current) setChecking(false); }
   }
   const href = safeHref(ask.href);
@@ -72,6 +76,7 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
       {!confirmed && !saving.pending && <Button variant="outline" disabled={snapshot.status !== 'live' || checking || busy} onClick={()=>{const request=startCheck(guard,ask.id);if(request){setMessage('');setConfirmation({records:snapshot.records,request});}}}>Check again</Button>}
       {confirmed && <fieldset disabled={checking || saving.pending || busy} className="grid min-w-0 gap-3">
         <legend>Record your answer</legend>
+        {replyDraft && !replyDraft.persistent && <p role="status">Device storage is unavailable. Keep this window open to retain your draft.</p>}
         {ask.answers !== 'words' && <div className="flex flex-wrap gap-2"><Button disabled={!!draft.trim()} onClick={()=>void answer({kind:'yes'})}>Yes</Button><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'no'})}>No</Button></div>}
         {(!ask.sourceManaged || ask.answers === 'words') && <><label className="grid gap-1">{ask.answers === 'words' ? 'Your answer' : 'Or answer in your own words'}<Textarea value={draft} onChange={event=>setDraft(event.target.value)} rows={4} /></label><Button disabled={!draft.trim()} onClick={()=>void answer({kind:'words',text:draft})}>Record answer</Button></>}
         <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'done'})}>Mark done</Button><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'dismiss'})}>Dismiss</Button></div>
@@ -86,12 +91,25 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
     {(href || ask.refs?.length) && <section><h3>References</h3>{href && <a href={href} target="_blank" rel="noreferrer">Open reference</a>}{ask.refs?.length ? <ul>{ask.refs.map((ref,n)=><li key={n}>{ref}</li>)}</ul> : null}</section>}
   </article>;
 }
+function PersistentReader({ member, ...props }: Parameters<typeof AskReader>[0] & { member: string }) {
+  const replyDraft = useReplyDraft(member, props.ask.id);
+  return <AskReader {...props} replyDraft={replyDraft} />;
+}
+function InboxReader(props: Parameters<typeof AskReader>[0] & { member: string }) {
+  return props.ask.member ? <AskReader {...props} /> : <PersistentReader {...props} />;
+}
+interface ReadMark extends LiveRecord { ask: string; member: string; readAt: number }
+interface MemberPreferences extends LiveRecord { member: string }
 export default function InboxApp({ path: shellPath, go }: { path?: string; go?: (path:string)=>void } = {}) {
   const [localPath,setLocalPath] = useState(() => typeof location === 'undefined' ? '/p/inbox-preview' : location.pathname);
   const path = (shellPath ?? localPath).split('?')[0], base = path.split('/ask/')[0];
   let selected: string | undefined;
   try { selected = path.includes('/ask/') ? decodeURIComponent(path.slice(path.indexOf('/ask/')+5)) : undefined; } catch { /* Malformed paths select nothing. */ }
   const snapshot = useRecords<Ask>('attention.ask'), {records,status} = snapshot;
+  const identity = useRecords<MemberPreferences>('household.preferences');
+  const member = identity.status === 'live' ? identity.records[0]?.member : undefined;
+  const marks = useRecords<ReadMark>('attention.readMark');
+  const read = new Set(marks.status === 'live' && member ? marks.records.filter(mark => mark.member === member).map(mark => mark.ask) : []);
   useWaitChecks(snapshot);
   useMemberRetention(snapshot.status);
   const [folder,setFolder] = useState('needs'), [query,setQuery] = useState('');
@@ -113,6 +131,10 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
     window.addEventListener('popstate',pop); return () => window.removeEventListener('popstate',pop);
   },[go]);
   const current = status === 'live' ? records.find(a=>a.id===selected) : undefined;
+  // Reading is idempotent and independent of answering. Reconnect retries a refused read.
+  useEffect(() => {
+    if (current && member) void call('attention.markRead', {id:current.id}).result.catch(() => {});
+  }, [current?.id, member, status]);
   const shown = records.filter(a=>inFolder(a,folder) && matches(a,query)).sort((a,b)=>folder==='answered' ? b.changedAt-a.changedAt || a.id.localeCompare(b.id) : a.createdAt-b.createdAt || a.id.localeCompare(b.id));
   const agents = [...new Set(records.flatMap(a=>a.agent ? [a.agent] : []))].sort();
   return <Split className="h-full" label="Inbox" folder={folder} onFolder={id=>{setFolder(id);navigate();}}
@@ -120,7 +142,7 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
     search={<label className="grid gap-1">Search asks<Input type="search" value={query} onChange={e=>setQuery(e.target.value)} /></label>}
     listTop={busy ? <p role="status" className="p-3">An answer is still being checked or recorded. Other answers wait.</p> : undefined}
     listTitle={folder==='answered' ? 'Answered' : folder.startsWith('agent:') ? `From ${folder.slice(6)}` : 'Needs you'} listMeta={shown.length}
-    list={status==='loading' ? <Loading label="Opening Inbox…" /> : status!=='live' ? <Error text={status==='denied' ? 'Sign in to see your Inbox.' : 'Waiting for connection. Answers wait until loom is reachable.'} /> : <><List label="Ask list">{shown.map(ask=><Row key={ask.id} title={ask.ask} meta={ask.why} status={`${ask.agent ?? 'Household'} · ${ask.state}`} selected={ask.id===selected} onClick={()=>navigate(ask.id)} />)}</List>{!shown.length && <Empty title={query ? `Nothing matches “${query}”` : folder==='needs' ? 'Nothing needs you' : 'No asks here'} text={query ? 'Try another search.' : 'Asks from your agents appear here.'} />}</>}
-    reader={current ? <AskReader key={current.id} ask={current} snapshot={snapshot} go={openLink} initialConfirmation={opening?.id===current.id ? opening.confirmation : undefined} guard={guard} onOpened={()=>setOpening(undefined)} /> : selected ? <Empty title="This ask is no longer in view" text="It may have changed or become unavailable." /> : null}
+    list={status==='loading' ? <Loading label="Opening Inbox…" /> : status!=='live' ? <Error text={status==='denied' ? 'Sign in to see your Inbox.' : 'Waiting for connection. Answers wait until loom is reachable.'} /> : <><List label="Ask list">{shown.map(ask=><Row key={ask.id} title={ask.ask} meta={ask.why} unread={marks.status === 'live' && !!member && !read.has(ask.id)} status={`${ask.agent ?? 'Household'} · ${ask.state} · ${marks.status !== 'live' || !member ? 'Read state unavailable' : read.has(ask.id) ? 'Read' : 'Unread'}`} selected={ask.id===selected} onClick={()=>navigate(ask.id)} />)}</List>{!shown.length && <Empty title={query ? `Nothing matches “${query}”` : folder==='needs' ? 'Nothing needs you' : 'No asks here'} text={query ? 'Try another search.' : 'Asks from your agents appear here.'} />}</>}
+    reader={current && member ? <InboxReader key={`${member}:${current.id}:${current.member ?? "public"}`} member={member} ask={current} snapshot={snapshot} go={openLink} initialConfirmation={opening?.id===current.id ? opening.confirmation : undefined} guard={guard} onOpened={()=>setOpening(undefined)} /> : current ? <Loading label="Checking Inbox member…" /> : selected ? <Empty title="This ask is no longer in view" text="It may have changed or become unavailable." /> : null}
     open={!!selected} onBack={()=>navigate()} backLabel="Inbox" blank={<Empty title="Open an ask" text="Read the full question and what happens either way." />} />;
 }

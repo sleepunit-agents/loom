@@ -8,8 +8,8 @@ import type { ReactElement } from 'react';
 type Node = { children: Array<Node|string>; props: Record<string, any> };
 import type { Ask } from './model';
 import type { Call, CallState, Result, Snapshot } from '../../data';
-const f = vi.hoisted(() => ({ snapshot: {records:[] as Ask[],status:'live'} as Snapshot<Ask>, listeners:new Set<()=>void>(), call:vi.fn() }));
-vi.mock('../../data',()=>({useRecords:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshot),call:f.call}));
+const f = vi.hoisted(() => ({ snapshot: {records:[] as Ask[],status:'live'} as Snapshot<Ask>, listeners:new Set<()=>void>(), call:vi.fn(), markRead:vi.fn(), identity:{records:[{id:'jonathan',member:'jonathan'}],status:'live'} as Snapshot<any>, marks:{records:[],status:'live'} as Snapshot<any> }));
+vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>type==='household.preferences'?f.identity:type==='attention.readMark'?f.marks:f.snapshot),call:(op:string,input:unknown)=>op==='attention.markRead'?f.markRead(op,input):f.call(op,input)}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import InboxApp, { AskReader } from './index';
 import { decisionLink, safeHref } from './model';
@@ -28,7 +28,7 @@ const words=(n:Node|string):string=>typeof n==='string'?n:(n.children??[]).map(w
 const buttons=(label:string)=>tree!.root.findAllByType('button').filter((b:Node)=>words(b)===label);
 const click=async(label:string)=>act(async()=>{buttons(label)[0].props.onClick({preventDefault(){}});});
 async function publish(snapshot:Snapshot<Ask>) { await act(async()=>{f.snapshot=snapshot;f.listeners.forEach(fn=>fn());}); }
-beforeEach(()=>{f.call.mockReset();f.listeners.clear();f.snapshot={records:[ask()],status:'live'};});
+beforeEach(()=>{f.markRead.mockReset().mockReturnValue({result:Promise.resolve({ok:true})});f.identity={records:[{id:'jonathan',member:'jonathan'}],status:'live'};f.marks={records:[],status:'live'};f.call.mockReset();f.listeners.clear();f.snapshot={records:[ask()],status:'live'};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
 it('shows central needs, agent folders, answered history, full details and search, and clears the reader on scope loss',async()=>{
   const go=vi.fn();
@@ -176,4 +176,38 @@ it('automatically checks visible waits on Inbox arrival, each minute and reconne
     await act(async()=>tree!.unmount());tree=undefined;
     await act(async()=>{await vi.advanceTimersByTimeAsync(120_000);});expect(f.call).toHaveBeenCalledTimes(3);
   } finally {vi.useRealTimers();}
+});
+
+it('shows member read facts live without removing open asks, and marks a direct reader only as its authenticated member',async()=>{
+  f.call.mockReturnValue(request<Ask>().call);
+  await draw(h<{path?:string;go?:(path:string)=>void}>(InboxApp,{path:'/p/inbox-preview/ask/ask-1',go:vi.fn()}));
+  expect(f.markRead).toHaveBeenCalledExactlyOnceWith('attention.markRead',{id:'ask-1'});
+  const rows=()=>tree!.root.findAllByProps({'data-split-row':''});
+  expect(rows()[0].props['data-unread']).toBe(true);expect(buttons('Needs you1')).toHaveLength(1);
+  await act(async()=>{f.marks={records:[{id:'read',ask:'ask-1',member:'jonathan',readAt:2}],status:'live'};f.listeners.forEach(fn=>fn());});
+  expect(rows()[0].props['data-unread']).toBeUndefined();expect(words(rows()[0])).toContain('Read');expect(buttons('Needs you1')).toHaveLength(1);
+  await act(async()=>{f.marks={records:[],status:'offline'};f.listeners.forEach(fn=>fn());});
+  expect(words(rows()[0])).toContain('Read state unavailable');
+  await act(async()=>{f.identity={records:[],status:'denied'};f.listeners.forEach(fn=>fn());});
+  expect(text()).not.toContain('I continue.');expect(tree!.root.findAllByType('textarea')).toHaveLength(0);
+});
+
+it('keeps the persistent Inbox draft through failed answers and remounts, then clears only an acknowledged send',async()=>{
+  const data=new Map<string,string>();vi.stubGlobal('localStorage',{getItem:(k:string)=>data.get(k)??null,setItem:(k:string,v:string)=>data.set(k,v),removeItem:(k:string)=>data.delete(k)});
+  try {
+    const shown=request<Ask>(),fresh=request<Ask>(),write=request<Ask>();
+    f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call).mockReturnValueOnce(write.call);
+    const element=h<{path?:string;go?:(path:string)=>void}>(InboxApp,{path:'/p/inbox-preview/ask/ask-1',go:vi.fn()});
+    await draw(element);await shown.finish({ok:true,value:ask()});
+    await act(async()=>tree!.root.findByType('textarea').props.onChange({target:{value:'A saved answer'}}));
+    await click('Record answer');await fresh.finish({ok:true,value:ask()});await write.finish({ok:false,code:'denied',message:'Held'});
+    expect(data.size).toBe(1);
+    await act(async()=>tree!.unmount());tree=undefined;
+    const reopened=request<Ask>(),nextFresh=request<Ask>(),success=request<Ask>();
+    f.call.mockReturnValueOnce(reopened.call).mockReturnValueOnce(nextFresh.call).mockReturnValueOnce(success.call);
+    await draw(element);await reopened.finish({ok:true,value:ask()});
+    expect(tree!.root.findByType('textarea').props.value).toBe('A saved answer');
+    await click('Record answer');await nextFresh.finish({ok:true,value:ask()});await success.finish({ok:true,value:ask('ask-1',{state:'answered'})});
+    expect(data.size).toBe(0);
+  } finally {vi.unstubAllGlobals();}
 });
