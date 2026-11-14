@@ -1,11 +1,13 @@
 import { useCallback, useSyncExternalStore } from 'react';
 import { DataStore, type LiveRecord, type Snapshot, type Socket } from './store';
 export * from './store';
+export { newId } from './id';
+import { newId } from './id';
 let windowStore: DataStore | undefined;
 function store() {
   return windowStore ??= new DataStore({
     socket: () => new WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/live`) as unknown as Socket,
-    id: () => crypto.randomUUID(),
+    id: () => newId(),
     after: (ms, fn) => { const timer = setTimeout(fn, ms); return () => clearTimeout(timer); },
   });
 }
