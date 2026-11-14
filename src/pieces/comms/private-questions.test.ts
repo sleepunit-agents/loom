@@ -3,6 +3,7 @@ import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startLoom} from '../../foundation.js';
+import {fixture} from '../../fixture.js';
 import {FakeClock,type Sharing} from '../../core/index.js';
 import {installAttention,attentionSources} from '../attention/index.js';
 import {createHash} from 'node:crypto';
@@ -14,10 +15,11 @@ const cleanup:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();vi.restoreAllMocks();});
 async function setup(hold:Hold=async f=>f()){
  const deliveries:Delivery[]=[];
- const home=mkdtempSync(join(tmpdir(),'private-question-')),clock=new FakeClock(),key=await loadKey(home);
+ const home=mkdtempSync(join(tmpdir(),'private-question-')),clock=new FakeClock();
+ fixture(home);const key=await loadKey(home);
  const sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{}};
  let comms!:ReturnType<typeof installComms>;
- const app=await startLoom({home,clock,install:a=>{
+ const app=await startLoom({home,clock,next:true,staging:true,sharing:()=>sharing,stdout:()=>{},install:a=>{
   installAttention(a.db,a.operations,a.live,()=>sharing);
   comms=installComms({...a,clock,key,sharing:()=>sharing,attention:attentionRole(a.operations),runtime:{deliver:async d=>{deliveries.push(d);},end:async()=>{}},hold});
  }});
@@ -320,4 +322,21 @@ it('fails closed on pre-binding sealed reply receipts without changing their sav
  for(const op of ['pre-binding','pre-binding-fresh'])expect(await f.call('comms.replyToAsk',input,f.viewer,op)).toMatchObject({ok:false,code:'conflict'});
  expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').get(`private-reply:${r.ref}`)).toEqual(saved);
  expect(f.attention.get(f.viewer,{id:r.ref})).toEqual(answer);
+});
+
+
+for(const invalid of ['expired','missing','sender','metadata','member','agent','conversation','sequence'] as const)it(`rejects initially ${invalid} sealed source before encrypting a typed reply`,async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'typed',question});
+ if(invalid==='expired')f.clock.advance(14*86400_000);
+ else if(invalid==='missing')f.app.db.prepare('DELETE FROM comms_messages WHERE thread=? AND seq=?').run(f.place,r.seq);
+ else if(invalid==='sender')f.app.db.prepare('UPDATE comms_messages SET sender=? WHERE thread=? AND seq=?').run('other',f.place,r.seq);
+ else if(invalid==='metadata')f.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=? AND seq=?').run(JSON.stringify({encoding:'json',ref:r.ref}),f.place,r.seq);
+ else {const a=f.attention.get(f.viewer,{id:r.ref});if(!a.ok)throw Error('missing ask');const changed={...a.value as Record<string,unknown>};
+  if(invalid==='sequence')changed.privateQuestion={thread:f.place,seq:r.seq+1};
+  else if(invalid==='conversation')changed.source={kind:'conversation',id:'another-conversation'};
+  else changed[invalid]=invalid==='member'?'other':'different-agent';
+  f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify(changed),r.ref);
+ }
+ const seal=vi.spyOn(f.key,'seal');expect(await f.call('comms.replyToAsk',{ref:r.ref,text:'No plaintext preparation'})).toMatchObject({ok:false});
+ expect(seal).not.toHaveBeenCalled();expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').all(`private-reply:${r.ref}`)).toEqual([]);
 });
