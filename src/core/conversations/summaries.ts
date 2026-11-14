@@ -35,7 +35,7 @@ export class ConversationSummaries {
   /** Words are read only when the client selects lastAnswer. Recheck the exact
    * reply, retention and current sharing after the key operation yields. */
   async lastAnswer(viewer: Viewer, conversation: string): Promise<{ at: string; words: string } | null> {
-    const latest = () => this.db.select({ thread: messages.thread, seq: messages.seq, at: messages.at, words: messages.words })
+    const latest = () => this.db.select({ thread: messages.thread, seq: messages.seq, at: messages.at, keepUntil: messages.keepUntil, words: messages.words })
       .from(messages).innerJoin(threads, eq(threads.id, messages.thread))
       .innerJoin(conversations, eq(conversations.id, threads.conversation))
       .where(and(visible(viewer), eq(conversations.id, conversation), eq(messages.kind, 'reply'),
@@ -45,7 +45,7 @@ export class ConversationSummaries {
     if (!row?.words) return null;
     const words = await this.key.open(row.words);
     const current = latest();
-    if (!current?.words || current.thread !== row.thread || current.seq !== row.seq || !current.words.equals(row.words)) return null;
+    if (!current?.words || current.thread !== row.thread || current.seq !== row.seq || current.keepUntil !== row.keepUntil || !current.words.equals(row.words)) return null;
     return { at: row.at, words };
   }
 }
