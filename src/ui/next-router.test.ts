@@ -18,9 +18,9 @@ it('one router restores both app paths, focused/minimized/pinned states, and rej
   expect(restored.tiles.map(t=>[t.id,currentPath(t)])).toEqual([['tasks','/p/tasks-preview/task/t-12'],['example','/_dev/live-example/sub?filter=a']]);
   expect(restored.tiles[0].pinned).toBe(true);expect(restored.focused).toBe('example');
   r.remove('tasks',true);expect(readRoute(b.location.href,apps).tiles.find(t=>t.id==='tasks')?.minimized).toBe(true);
-  r.open('tasks');expect(currentPath(r.getSnapshot().tiles[0])).toBe('/p/tasks-preview/task/t-12');
-  r.travel('tasks',-1);expect(currentPath(r.getSnapshot().tiles[0])).toBe('/p/tasks-preview');
-  r.travel('tasks',1);expect(currentPath(r.getSnapshot().tiles[0])).toBe('/p/tasks-preview/task/t-12');
+  r.open('tasks');expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='tasks')!)).toBe('/p/tasks-preview/task/t-12');
+  r.travel('tasks',-1);expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='tasks')!)).toBe('/p/tasks-preview');
+  r.travel('tasks',1);expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='tasks')!)).toBe('/p/tasks-preview/task/t-12');
   b.pop('/?t=alien,*example&paths=%7B%22example%22%3A%22https%3A%2F%2Fevil%22%7D');
   expect(r.getSnapshot().tiles.map(t=>t.id)).toEqual(['example']);expect(currentPath(r.getSnapshot().tiles[0])).toBe('/_dev/live-example');r.close();
 });
@@ -41,4 +41,17 @@ it('cross-app links admit beside their source using the actual screen cap',()=>{
   expect(r.getSnapshot().tiles.filter(t=>!t.minimized).map(t=>t.id)).toEqual(['example','third']);
   expect(r.getSnapshot().tiles.find(t=>t.id==='tasks')?.minimized).toBe(true);
   expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='third')!)).toBe('/third/detail');r.close();
+});
+
+it('resize docks the least recently used tile even after it was made big, and navigation counts as use',()=>{
+  const all=[...apps,{...apps[1],id:'third',path:'/third'}];
+  const b=browser();const r=new DeskRouter(all,b as never);
+  r.fit({x:0,y:0,w:1800,h:1000},1920);
+  r.open('tasks');r.big('tasks');r.open('example');r.open('third');
+  r.go('example','/_dev/live-example/detail');
+  r.fit({x:0,y:0,w:1052,h:720},1100);
+  expect(r.getSnapshot().tiles.filter(t=>!t.minimized).map(t=>t.id)).toEqual(['example','third']);
+  expect(r.getSnapshot().tiles.find(t=>t.id==='tasks')).toMatchObject({minimized:true,pinned:false});
+  expect(currentPath(r.getSnapshot().tiles.find(t=>t.id==='example')!)).toBe('/_dev/live-example/detail');
+  r.close();
 });

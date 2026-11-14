@@ -1,4 +1,4 @@
-// The tiling rule (docs/specs/desk-tiling.md, "The rule", criteria 1 to 9): a pure function, so no browser.
+// The approved desk tiling rule, tested without a browser.
 import { describe, it, expect } from 'vitest';
 import { admit, capFor, GUTTER, layout, place, promote, railWidth, swap, underMinimum, type AppTile, type Rect } from '../../web/src/tiling/layout';
 import { AGENT_FIT, fitFor } from '../../web/src/tiling/fit';
@@ -68,8 +68,8 @@ describe('the tiling rule', () => {
     expect([noMax.apps.tasks.w, noMax.apps.comms.w]).toEqual([2170, 820]);
   });
 
-  it('4. a big app takes the big slot, unless the person made another the big one', () => {
-    expect(place([app('Comms')], app('Tasks')).map((a) => a.name)).toEqual(['Tasks', 'Comms']);
+  it('the first tile keeps the big slot until a person promotes another', () => {
+    expect(place([app('Comms')], app('Tasks')).map((a) => a.name)).toEqual(['Comms', 'Tasks']);
     expect(place([app('Tasks')], app('Comms')).map((a) => a.name)).toEqual(['Tasks', 'Comms']);
     const pinned = promote([app('Inbox'), app('Comms')], 'comms');
     expect(pinned.map((a) => [a.name, !!a.pinned])).toEqual([['Comms', true], ['Inbox', false]]);
@@ -87,7 +87,7 @@ describe('the tiling rule', () => {
     expect([1279, 1280, 1439, 1440, 1920, 2560].map(railWidth)).toEqual([0, 296, 296, 320, 320, 320]);
   });
 
-  it('7. too small: the least recently used app goes to the dock, never the one opened, the one it came from, or a pinned one', () => {
+  it('too small: the least recently used tile goes to the dock, including source and promoted tiles', () => {
     const A = area(1232, 597);
     const used = { tasks: 2, comms: 1 };
     const r = admit([app('Tasks'), app('Comms')], app('Changes'), A, 1280, { usedAt: used });
@@ -95,12 +95,12 @@ describe('the tiling rule', () => {
     expect(r.docked[0].why).toBe('Comms went to the dock to make room for Changes: it would have been under its 360 px minimum height');
     expect(underMinimum(r.apps, A, 1280)).toBeUndefined();
     for (const a of r.apps) { const l = layout(r.apps, A, 1280).apps[a.id]; expect(l.w).toBeGreaterThanOrEqual(a.fit.min[0]); expect(l.h).toBeGreaterThanOrEqual(a.fit.min[1]); }
-    // Comms is the one it came from: Tasks goes instead, though Comms was used less recently.
+    // A source tile follows the same least-recently-used rule.
     const from = admit([app('Tasks'), app('Comms')], app('Changes'), A, 1280, { usedAt: used, from: { tile: 'comms' } });
-    expect(from.docked.map((d) => d.why)).toEqual(['Tasks went to the dock to make room for Changes: Comms would have been under its 360 px minimum height']);
-    // Comms is pinned: Tasks goes.
+    expect(from.docked.map((d) => d.app.name)).toEqual(['Comms']);
+    // Making Comms big does not exempt it from docking.
     const pin = admit(promote([app('Tasks'), app('Comms')], 'comms'), app('Changes'), A, 1280, { usedAt: used });
-    expect(pin.docked.map((d) => d.app.name)).toEqual(['Tasks']);
+    expect(pin.docked.map((d) => d.app.name)).toEqual(['Comms']);
     expect(pin.apps.map((a) => a.name)).toContain('Changes');
   });
 
