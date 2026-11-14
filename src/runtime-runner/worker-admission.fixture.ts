@@ -38,7 +38,9 @@ export async function admissionFixture(closes:Array<()=>unknown>,releaseStaging=
   });
  }
  const marker=join(f.home,'consumer-metadata');
- const script="const fs=require('node:fs');let b=[];fs.createReadStream(null,{fd:3}).on('data',v=>b.push(v)).on('end',()=>{const ok=Buffer.concat(b).toString()==='synthetic-admitted-value';fs.writeFileSync(process.argv[1],ok?'accepted':'wrong');setTimeout(()=>process.exit(ok?0:1),200);});";
+ // An empty EOF from cancellation is not credential consumption. The child
+ // may observe EOF before SIGKILL, so only a valid value creates the marker.
+ const script="const fs=require('node:fs');let b=[];fs.createReadStream(null,{fd:3}).on('data',v=>b.push(v)).on('end',()=>{const ok=Buffer.concat(b).toString()==='synthetic-admitted-value';if(!ok){process.exit(1);return;}fs.writeFileSync(process.argv[1],'accepted');setTimeout(()=>process.exit(0),200);});";
  const config={command:process.execPath,args:['-e',script,marker],cwd:f.home,env:{},
   input:{...f.server,socket:input},holderFingerprint:f.fingerprint('holder'),authority:{...f.config,cert:f.server.cert,key:f.server.key},
   daemonFingerprint:f.fingerprint('daemon'),admission:{...f.config,socket,cert:f.server.cert,key:f.server.key}};
