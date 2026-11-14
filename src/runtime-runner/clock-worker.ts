@@ -68,17 +68,24 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
   };
   const completed=(async()=>{
     try {
-      let historyKey:string|undefined,previous:string|undefined;
+      let historyKey:string|undefined,previous:string|undefined,historyUntil=Infinity;
       for(let turn=0;turn<100;turn++){
         const generationId=++generation;
-        const started=clock.now(),input=begin.parse(await call('beginClockExecution',previous?{previous}:{}));
+        // Completion retires the per-turn expiry. Retained history still
+        // needs a timer while a successor admission is in flight.
+        if(previous){
+          if(clock.now()>=historyUntil)throw fail();
+          cancelExpiry=clock.at(historyUntil,fence);
+        }
+        const started=clock.now(),input=begin.parse(await call('beginClockExecution',previous?{previous}:{},historyUntil));
         if(input.job!==config.job||JSON.stringify(input.binding)!==JSON.stringify(config.binding)||JSON.stringify(input.assignment)!==JSON.stringify(config.assignment))throw fail();
         // Equality witness only: each source still requires its own admission.
         // Retained local history must not outlive original steering/root/claim.
         historyKey??=input.historyKey;if(input.historyKey!==historyKey)throw fail();
         // This deadline starts BEFORE the request. A delayed successful response
         // cannot mint a fresh local execution window from old authority.
-        const executionUntil=started+input.lifetime;
+        historyUntil=Math.min(historyUntil,started+input.lifetime);
+        const executionUntil=historyUntil;
         deadline=Math.min(started+input.ttl,executionUntil);
         const message=prepareClockInput(input.batch,config.binding.conversation,config.checkout);
         if(!message||!local())throw fail();

@@ -922,3 +922,47 @@ it.each(['direct','card'] as const)('fresh owner %s adoption supplies current au
  expect(adopted.authorship).toEqual({principal:{for:'owner',people:['jonathan']}});
  expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(1);
 });
+
+it('resuming cannot renew the original worker history lifetime even with a longer successor lease',async()=>{
+ const f=await setup();lowerExecutionLifetime();const worker=f.start();await f.ready;
+ const joined=await f.joinInput();f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+ expect(f.calls[1].args).toContain('--resume');
+ // The successor advertises another 1500 ms, but the original admission has
+ // only 500 ms left. A stalled active child must die at that original edge.
+ f.clock.advance(499);expect(f.calls[1].child.killed).toBe(false);
+ f.clock.advance(1);expect(f.calls[1].child.killed).toBe(true);expect(await worker.completed).toBe(false);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+});
+
+it.each([false,true])('retained history expires while successor admission is stalled (idle=%s)',async idle=>{
+ const f=await setup();lowerExecutionLifetime();const worker=f.start({...f.config,idleMs:idle?30_000:0});await f.ready;
+ const close=vi.spyOn(ClaudeWorkerSession.prototype,'close');
+ const held=holdResponse('beginClockExecution');
+ try{
+  let joined:string;
+  if(idle){await finishToIdle(f);joined=await f.joinInput();}
+  else{joined=await f.joinInput();f.finish();}
+  await held.ready;f.clock.advance(500);await settle();
+  expect(close).toHaveBeenCalled();expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(1);
+  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+  held.release();await settle();expect(f.calls).toHaveLength(1);
+ }finally{held.release();}
+});
+
+it('a completed successor cannot renew idle history beyond the first admission deadline',async()=>{
+ const f=await setup();lowerExecutionLifetime();const worker=f.start({...f.config,idleMs:30_000});await f.ready;
+ const joined=await f.joinInput();f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+ const intervals=vi.spyOn(globalThis,'setInterval'),close=vi.spyOn(ClaudeWorkerSession.prototype,'close');f.finish();
+ await vi.waitFor(()=>expect(intervals).toHaveBeenCalledWith(expect.any(Function),30_000));
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:expect.any(Number)});
+ f.clock.advance(500);await settle();expect(close).toHaveBeenCalled();expect(await worker.completed).toBe(true);expect(f.calls).toHaveLength(2);
+});
+
+it('the first successful admission lifetime starts before its delayed response',async()=>{
+ const f=await setup();lowerExecutionLifetime();const held=holdResponse('beginClockExecution'),worker=f.start();
+ try{
+  await held.ready;f.clock.advance(1000);held.release();await f.ready;
+  f.clock.advance(499);expect(f.calls[0].child.killed).toBe(false);
+  f.clock.advance(1);expect(f.calls[0].child.killed).toBe(true);expect(await worker.completed).toBe(false);expect(f.consumed().consumed).toBeNull();
+ }finally{held.release();}
+});
