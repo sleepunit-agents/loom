@@ -96,8 +96,9 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const privateMetadata=privateCipher?JSON.parse(await key.open(Buffer.from(privateCipher,'base64'))):{};
   const step=stepCipher?JSON.parse(await key.open(Buffer.from(stepCipher,'base64'))):undefined;
   // Crypto can cross the retention deadline. Never return any private field after it.
+  const sealedQuestion=isCurrentQuestion(r);
   const words=encoding==='text'?{text:plain}:encoding==='ask'?{ask:JSON.parse(plain),text:null}:JSON.parse(plain);
-  return settleStart(r,{id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,...(alive()?{...privateMetadata,...words,...(step===undefined?{}:{step})}:{text:null}),keepUntil:r.at+days*day});
+  return settleStart(r,{id:messageId(r.thread,r.seq),thread:r.thread,seq:r.seq,at:r.at,kind:r.kind,from:r.sender,...metadata,...(alive()?{...privateMetadata,...words,...(sealedQuestion?{sealedQuestion:true}:{}),...(step===undefined?{}:{step})}:{text:null}),keepUntil:r.at+days*day});
  };
  const retainedPage = (rows:MessageRow[],records:LiveRecord[]) => records.map((record,n)=>rows[n].at+days*day>clock.now()?settleStart(rows[n],record):{id:record.id,thread:rows[n].thread,seq:rows[n].seq,at:rows[n].at,kind:rows[n].kind,from:rows[n].sender,text:null});
  const sealedRecord = (r: MessageRow): LiveRecord => ({id:messageId(r.thread,r.seq),thread:r.thread,row:r,retained:r.words!==null&&r.at+days*day>clock.now()});
@@ -126,6 +127,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   read:(id,v)=> { const cut=id.lastIndexOf('/'), place=id.slice(0,cut), seq=Number(id.slice(cut+1)); if(!see(v,thread(db,place))) return; const r=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(place,seq) as MessageRow|undefined; return r ? sealedRecord(r) : undefined; },
   resolve: r=>decode(r.row as MessageRow),
   inScope:(r,scope)=>r.thread===scope,
+  refreshOn:change=>change.type==='attention.ask',
  });
  const output=z.unknown();
  const ack=z.object({thread:z.string(),seq:z.number().int().optional(),conversation:z.string().optional(),endGeneration:z.number().int().optional()});
@@ -307,7 +309,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const t=thread(db,value.thread); if(t)void deliver(t.agent,t.id,value.seq);
  }
  const decisions=privateDecisions({...o,closed:()=>closed});
- installQuestionRead({...o,closed:()=>closed});
+ const isCurrentQuestion=installQuestionRead({...o,closed:()=>closed});
  installPrivateReplies({...o,closed:()=>closed,changed:touched,after:sendAfter});
  operations.register(operation({name:'comms.open',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),
   input:z.object({agent:id,id:clientId,text,project:id.optional(),about:about.optional()}),output:ack,

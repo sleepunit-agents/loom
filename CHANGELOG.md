@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add an explicit external dedicated secret-command worker with authenticated Runtime stop/history checks and drained shutdown, reusing the Claude worker control owner.
 
+- Read current sealed questions and send ephemeral private replies inline in next-mode Comms.
 - Expose private persistent-holder worker route replacement with complete selection preflight and retirement of original claims and clients.
 
 - Bind sealed typed Comms replies and retry receipts to the retained original encrypted question and owning route.
@@ -64,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Inbox now separates self-cleared asks into searchable FYI history, keeping human answers in Answered.
 - Inbox: group Clock operational alerts, acknowledge them without changing scheduled work, and open Clock through its internal route.
 - Inbox: reply privately to conversation asks through encrypted Comms, keep private drafts in the window only, and link sealed questions and reply receipts to their owning thread.
+- Inbox reads sealed private questions and their retained history through scoped Comms records, with guarded encrypted replies.
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 - File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.

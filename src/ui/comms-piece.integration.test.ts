@@ -113,6 +113,15 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await b.getByLabel('Start retry').locator('time').getAttribute('datetime')).toBe(retryAt);
   expect(await b.getByLabel('Start retry').textContent()).toContain('CT');
   expect(await b.getByLabel('Start retry').textContent()).not.toContain('private fixture host reason');
+  // Imported-format encoding and comms-prefixed ids stay on the legacy reader.
+  const legacyRef='comms:'+'f'.repeat(64),legacy=await comms.post('art',place,{id:legacyRef,kind:'ask',ref:legacyRef,text:'Legacy imported question'});
+  loom.db.prepare('UPDATE comms_messages SET words=?,record=? WHERE thread=? AND seq=?').run(await key.seal(JSON.stringify({ask:'Legacy imported question',answers:'yes-no'})),JSON.stringify({encoding:'ask',ref:legacyRef}),place,legacy.seq);
+  loom.live.changed([{type:'message',id:`${place}/${legacy.seq}`}]);
+  for(const page of [a,b])await expect.poll(()=>page.getByText('Legacy imported question',{exact:true}).count()).toBe(1);
+  expect(await b.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(0);
+  await b.getByRole('button',{name:'Allow',exact:true}).click();
+  await expect.poll(()=>loom.db.prepare("SELECT count(*) AS n FROM comms_messages WHERE thread=? AND id=? AND kind='answer'").get(place,`answer:${legacyRef}`)).toEqual({n:1});
+  for(const page of [a,b])expect(await page.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(0);
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
   const capture=async(prefix:string,split=false)=>{for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');if(prefix==='comms-menu'||prefix==='comms-hold'){await b.getByRole('button',{name:'Actions for New thread with art',exact:true}).click();await expect.poll(()=>b.getByRole('menuitem',{name:prefix==='comms-hold'?'Unpin':'Pin',exact:true}).count()).toBe(1);}if(prefix==='comms-list'||prefix==='comms-menu'){expect(await row(b).locator('.comms-agent-letter').textContent()).toBe('A');expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});if(prefix==='comms-menu'||prefix==='comms-hold')await b.keyboard.press('Escape');}};
   await capture('comms',true);
@@ -482,6 +491,10 @@ async function proveNextComms(browser:Browser,webRoot:string) {
    expect(JSON.stringify(value(await post(input.credential,'runtime.readConversation',{})))).toContain(`${inbound} follow-up`);
    expect(value<{jobs:string[]}>(await post(runner,'runtime.claimableJobs',{})).jobs).toEqual([]);
    if(kind==='filed') {
+    const sealed=value<{ref:string}>(await post(input.credential,'runtime.askQuestion',{id:'inline-question',question:{ask:'Which fixture should I check next?',why:'Your answer stays in this private thread.',answers:'words'}}));
+    for(const page of [a,b])await expect.poll(()=>page.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(1);
+    await b.getByRole('textbox',{name:'Your private reply',exact:true}).fill('An unsaved private answer');
+    expect(await b.evaluate(()=>JSON.stringify(localStorage))).not.toContain('An unsaved private answer');
     const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]) {
      await b.setViewportSize({width,height:900});
@@ -502,8 +515,14 @@ async function proveNextComms(browser:Browser,webRoot:string) {
      });
      await expect.poll(async()=>(await b.getByLabel('Thread messages',{exact:true}).boundingBox())!.height,{message:JSON.stringify(layout)}).toBeGreaterThanOrEqual(100);
      await expect.poll(()=>b.locator('.comms-work-strip').isVisible()).toBe(width<1920);
+     await b.getByLabel('Thread messages',{exact:true}).evaluate(el=>{const q=el.querySelector('[aria-label="Private question"]')!;el.scrollTop+=q.getBoundingClientRect().top-el.getBoundingClientRect().top-16;el.dispatchEvent(new Event('scroll'));});
+     expect(await b.getByText('Which fixture should I check next?',{exact:true}).evaluate(el=>{const q=el.getBoundingClientRect(),reader=el.closest('[aria-label="Thread messages"]')!.getBoundingClientRect();return q.top>=reader.top&&q.bottom<=reader.bottom;})).toBe(true);
      await b.screenshot({path:join(shots,`comms-next-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
+    await b.getByRole('button',{name:'Send private reply',exact:true}).click();
+    for(const page of [a,b]){await expect.poll(()=>page.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(0);await expect.poll(()=>page.getByText('An unsaved private answer',{exact:true}).count()).toBe(1);}
+    expect(await socket(a,'attention.get',{id:sealed.ref})).toMatchObject({ok:true,value:{state:'answered'}});
+    for(const table of ['attention_asks','core_operations']){const stored=JSON.stringify(app.db.prepare(`SELECT * FROM ${table}`).all());expect(stored).not.toContain('Which fixture should I check next?');expect(stored).not.toContain('An unsaved private answer');}
    }
    expect(await post(runner,'runtime.finishJob',{job,state:'done'})).toMatchObject({ok:true});
    expect(await post(input.credential,'runtime.readConversation',{})).toMatchObject({ok:false});

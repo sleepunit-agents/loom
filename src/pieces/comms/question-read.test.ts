@@ -31,7 +31,7 @@ async function setup(){
 const question={ask:'SEALED question sentinel',why:'SEALED why sentinel',refs:['private-ref'],answers:'words' as const};
 it('reads the full sealed question and current kept answer from its owning window only',async()=>{
  const f=await setup(),r=await f.comms.ask('art',f.place,{id:'question',question});
- expect(await f.call('comms.question',{ref:r.ref})).toMatchObject({ok:true,value:{id:r.ref,thread:f.place,seq:r.seq,state:'open',question}});
+ expect(await f.call('comms.question',{ref:r.ref})).toMatchObject({ok:true,value:{id:r.ref,thread:f.place,member:'jonathan',agent:'art',seq:r.seq,state:'open',question}});
  expect(await f.call('comms.replyToAsk',{ref:r.ref,text:'Private answer'})).toMatchObject({ok:true});
  expect(await f.call('comms.question',{ref:r.ref})).toMatchObject({ok:true,value:{question,state:'answered',answer:{kind:'replied',by:f.viewer}}});
  expect(await f.call('comms.change',{thread:f.place,action:'archive'})).toMatchObject({ok:true});
