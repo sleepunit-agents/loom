@@ -1594,14 +1594,13 @@ replacement body cannot replay another body's receipt under a shared agent id.
 The writer rechecks current credential, job, source, binding, scope, box and
 policy authority, and refuses a withdrawn root source. It never launches work. Public `needs_owner` without `waits_on` now uses the
 owning answer inbox below; omitted/null `needs_owner` writes an ordinary
-summary. Managed decisions remain with their owning source. Incoming Clock
-metadata, grading, external bound execution and Bridges/spawn metadata remain
-unfinished.
+summary. Managed decisions remain with their owning source. Public Clock incoming metadata follows the owning acknowledgement path below.
+Grading, external bound execution and Bridges/spawn metadata remain unfinished.
 The importer remains unchanged.
 
 | Old body operation | New operation | Remaining |
 | --- | --- | --- |
-| public Clock own conversation turn | `runtime.recordTurn` derives current owning route, run and sender; Attention stores metadata | incoming source metadata and Bridges/spawn adapters |
+| public Clock own conversation turn | `runtime.recordTurn` derives current owning route, run and sender; Attention stores metadata | Bridges/spawn adapters |
 | public Clock conversation digest | `runtime.writeDigest` maps the Runtime binding to Attention's canonical conversation | grading |
 
 ### Public Clock answers and terminal continuation
@@ -1650,7 +1649,7 @@ No native process history is restored here. Chained continuations recheck all
 ancestors and their current original source, with a fail-closed 100-generation
 bound. Privacy taint follows links in both directions for filtered exports.
 
-Public incoming metadata, bridge/spawn answer consumers, native history and native
+Bridge/spawn metadata and answer consumers, grading, native history and native
 bound execution remain on the Runtime rebuild task. No importer, old store or
 live home is changed.
 
@@ -1658,3 +1657,34 @@ live home is changed.
 | --- | --- | --- |
 | Inbox reply to a public Clock question | Attention answer transaction → Runtime owning inbox → bound body read/ack | bridge/spawn consumers |
 | public answer staging hold | central body-start effect at the words boundary | native external bound execution |
+
+### Accepted public Clock incoming metadata
+
+`runtime.acknowledgeClockInput` and native `runtime.completeClockExecution`
+record one Attention `wake` turn for each newly accepted public scheduled input.
+`runtime.acknowledgePublicInputs` records one `message` turn for each newly
+accepted Inbox answer, including a terminal successor's answer. Queueing and
+reading alone do not record acceptance. The ACK's current owning body, source,
+claim, route, release and policy checks run first. Private and service Clock
+inputs do not enter this public projection.
+
+Runtime derives the canonical `runtime-clock` conversation and original project
+from the accepting job. Scheduled input is from `schedule`; an Inbox answer is
+from the saved authenticated member. The timestamp is acceptance time on the
+central clock, rather than a claim about source arrival or process execution.
+Attention's reply latency therefore measures from acceptance. No words, source
+label, run id, model or harness are copied into an incoming turn. This is
+metadata, never execution or source authority.
+
+Metadata, nested retry receipts, consumption and provenance acknowledgement share
+one transaction. Central Attention create/update policy still applies: a refused
+projection or SQL failure rolls the ACK back, leaving the released words pending.
+Retries and overlapping ACKs skip already consumed sources, including after a
+restart; they never count acceptance twice. The existing staging gates remain at
+the input and words boundaries, with no additional outside effect for metadata.
+No importer or native history behavior changes.
+
+| Old incoming turn | New owning path | Remaining |
+| --- | --- | --- |
+| scheduled public wake metadata | released source → owning ACK/native completion → Attention wake | bridge/spawn sources |
+| public Inbox member-message metadata | released answer → owning ACK → Attention message with saved member | bridge/spawn answer consumers |

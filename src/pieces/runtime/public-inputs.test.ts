@@ -501,3 +501,51 @@ it.each(['original-claim','new-claim','binding'] as const)('fences released succ
  expect(f.app.db.prepare('SELECT * FROM runtime_public_inputs').all()).toEqual(before);
  expect(f.app.db.prepare("SELECT * FROM core_operations WHERE id='successor-ack'").all()).toEqual(receipt);
 });
+
+it.each([false,true])('projects accepted public answers with their actual sender and successor=%s, surviving restart and retries',async successor=>{
+ const f=await setup('pond'),ask=await f.ask({ask:'What next?',answers:'words'}),text='  VERBATIM ACCEPTED SENTINEL\n';
+ if(successor)expect(await f.post(f.runner,'finishJob',{job:f.job,state:'done'})).toMatchObject({ok:true});
+ expect(await f.post(f.owner,'attention.answer',{id:ask,answer:{kind:'words',text}})).toMatchObject({ok:true});
+ let body=f.body,job=f.job;
+ if(successor){job=f.store.ids('job').find(id=>id!==f.job)!;expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});const input=await f.post(f.runner,'takeInput',{job});expect(input).toMatchObject({ok:true});body=input.value.credential;expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});}
+ const before=f.app.db.prepare('SELECT * FROM attention_turns').all();
+ await f.restart(true);
+ expect(await f.post(body,'readPublicInputs',{})).toMatchObject({ok:false,code:'conflict'});
+ const row=f.app.db.prepare('SELECT seq FROM runtime_public_inputs WHERE job=?').get(job) as {seq:number};
+ expect(await f.post(body,'acknowledgePublicInputs',{through:row.seq})).toMatchObject({ok:false});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual(before);
+ expect(f.call('core.releaseEffect',{id:`runtime:public-read:${job}:${row.seq}`})).toMatchObject({ok:true});
+ expect(await f.post(body,'readPublicInputs',{})).toMatchObject({ok:true,value:{messages:[{text}]}});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual(before);
+ f.clock.advance(765);
+ expect(await f.post(body,'acknowledgePublicInputs',{through:row.seq},'metadata-ack')).toMatchObject({ok:true});
+ await f.restart();f.clock.advance(1000);
+ expect(await f.post(body,'acknowledgePublicInputs',{through:row.seq},'metadata-ack')).toMatchObject({ok:true});
+ expect(await f.post(body,'acknowledgePublicInputs',{through:row.seq})).toMatchObject({ok:true});
+ const turns=f.app.db.prepare('SELECT record FROM attention_turns ORDER BY rowid').all() as {record:string}[];
+ expect(turns).toHaveLength(before.length+1);
+ const incoming=JSON.parse(turns.at(-1)!.record);
+ expect(incoming).toMatchObject({kind:'message',from:{kind:'person',slug:'jonathan'},project:'pond',agent:'art',venue:'runtime-clock',place:f.store.read('job',job)!.conversation,at:new Date(f.clock.now()-1000).toISOString()});
+ expect(incoming).not.toHaveProperty('run');expect(incoming).not.toHaveProperty('text');expect(JSON.stringify(turns)).not.toContain(text.trim());
+ expect(await f.post(body,'recordTurn',{kind:'reply',outcome:'answered'})).toMatchObject({ok:true,value:{latency_ms:1000}});
+});
+it('rolls back public answer acceptance and metadata on SQL failure, then retries once',async()=>{
+ const f=await setup(),ask=await f.ask();expect(await f.post(f.owner,'attention.answer',{id:ask,answer:{kind:'yes'}})).toMatchObject({ok:true});
+ const read=await f.post(f.body,'readPublicInputs',{});expect(read).toMatchObject({ok:true});const through=read.value.messages[0].seq;
+ const before=f.app.db.prepare('SELECT * FROM attention_turns').all();
+ f.app.db.exec("CREATE TRIGGER fail_public_incoming BEFORE UPDATE OF consumed ON runtime_public_inputs BEGIN SELECT RAISE(ABORT,'fixture ACK failure'); END");
+ expect(await f.post(f.body,'acknowledgePublicInputs',{through},'public-metadata-rollback')).toMatchObject({ok:false});
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_public_inputs').get()).toEqual({consumed:null});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual(before);
+ f.app.db.exec('DROP TRIGGER fail_public_incoming');
+ expect(await f.post(f.body,'acknowledgePublicInputs',{through},'public-metadata-rollback')).toMatchObject({ok:true});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(before.length+1);
+});
+it('retains central Attention policy when accepting a released public answer',async()=>{
+ const f=await setup(),ask=await f.ask();expect(await f.post(f.owner,'attention.answer',{id:ask,answer:{kind:'yes'}})).toMatchObject({ok:true});
+ const read=await f.post(f.body,'readPublicInputs',{});expect(read).toMatchObject({ok:true});const through=read.value.messages[0].seq,before=f.app.db.prepare('SELECT * FROM attention_turns').all();
+ const original=policy.mayAct;let denials=0;vi.spyOn(policy,'mayAct').mockImplementation((v,r,s,...rest)=>{if(r.type==='attention.conversation'){denials++;return false;}return original(v,r,s,...rest);});
+ expect(await f.post(f.body,'acknowledgePublicInputs',{through},'policy-incoming')).toMatchObject({ok:false,code:'denied'});expect(denials).toBeGreaterThan(0);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_public_inputs').get()).toEqual({consumed:null});expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual(before);
+ vi.restoreAllMocks();expect(await f.post(f.body,'acknowledgePublicInputs',{through},'policy-incoming')).toMatchObject({ok:true});
+});
