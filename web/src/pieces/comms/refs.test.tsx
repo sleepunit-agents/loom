@@ -73,3 +73,10 @@ it('accepts only bounded Comms reader routes for exact conversation ids',()=>{
  for(const ref of ['cv-other','cv-012345abcdeg','t-1'])expect(cardFor(ref,card)).toBeUndefined();
  for(const url of ['https://evil.example','/p/comms-preview/thread/../secrets','/p/comms-preview/thread/one?secret=yes','/p/comms-preview/thread/one/extra'])expect(cardFor('cv-012345abcdef',{...card,url})).toBeUndefined();
 });
+
+it('binds agent and at cards to their exact owning Agent reader',()=>{
+ const card={kind:'agent',title:'art',status:'Agent',url:'/p/agents-preview/agent/art'};
+ for(const ref of ['agent:art','at:art'])expect(cardFor(ref,card)).toEqual(card);
+ for(const ref of ['agent:mark','person:art','at:Art','agent:../art'])expect(cardFor(ref,card)).toBeUndefined();
+ for(const url of ['/p/agents-preview/agent/mark','/p/agents-preview/agent/art?x=yes','https://evil.example'])expect(cardFor('at:art',{...card,url})).toBeUndefined();
+});

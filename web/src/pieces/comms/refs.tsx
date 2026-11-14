@@ -4,9 +4,9 @@ import {useRecordScopes} from '../../data';
 import {Button} from '../../kit';
 import {refBatches,refBits} from './ref-bits';
 import {replyHtml} from './render';
-interface Card {kind:'task'|'pr'|'conversation';title:string;status:string;tone?:'bad'|'warn'|'ok';url:string}
+interface Card {kind:'task'|'pr'|'conversation'|'agent';title:string;status:string;tone?:'bad'|'warn'|'ok';url:string}
 interface CardsRow {id:string;thread:string;cards:Record<string,unknown>;[key:string]:unknown}
-const kindName=(kind:Card['kind'])=>kind==='task'?'Task':kind==='pr'?'Pull request':'Conversation';
+const kindName=(kind:Card['kind'])=>kind==='task'?'Task':kind==='pr'?'Pull request':kind==='agent'?'Agent':'Conversation';
 const Cards=createContext<ReadonlyMap<string,Card>>(new Map());
 /** Navigation comes from the ref's exact identity, never a source-controlled URL. */
 export function cardFor(ref:string,value:unknown):Card|undefined{
@@ -16,6 +16,8 @@ export function cardFor(ref:string,value:unknown):Card|undefined{
  let urls:string[]=[];
  if(c.kind==='task'&&/^t-\d{1,9}$/.test(ref))urls=[`/p/tasks-preview/task/${ref}`];
  if(c.kind==='conversation'&&/^cv-[0-9a-f]{12}$/.test(ref)&&/^\/p\/comms-preview\/thread\/[a-z0-9-]+$/.test(c.url))urls=[c.url];
+ const agent=/^(?:agent|at):([a-z][a-z0-9-]{0,39})$/.exec(ref);
+ if(c.kind==='agent'&&agent)urls=[`/p/agents-preview/agent/${agent[1]}`];
  const m=/^github:([A-Za-z0-9._-]{1,100})\/([A-Za-z0-9._-]{1,100})#([1-9][0-9]{0,9})$/.exec(ref);
  if(c.kind==='pr'&&m&&![m[1],m[2]].some(s=>s==='.'||s==='..'))urls=[`/p/changes-preview/change/${encodeURIComponent(ref.toLowerCase())}`,`https://github.com/${m[1].toLowerCase()}/${m[2].toLowerCase()}/issues/${m[3]}`];
  if(!urls.includes(c.url))return;

@@ -37,7 +37,7 @@ exact public GitHub issue URL in a new tab. Escape restores chip focus; outside
 click or transcript scrolling closes the card. No card data is separately cached.
 Bare repo#N has no default owner and stays text. The parser remains lazy with Comms.
 
-Approval, ordinary venue conversation, note, knowledge, project, person and agent
+Approval, ordinary venue conversation, note, knowledge, project and person
 card kinds remain unfinished. Sealed questions now use the same scoped chips. Unsupported
 references answer null and remain plain words. The existing reference index and
 Work consumer are unchanged.
@@ -1335,3 +1335,21 @@ This unit covers ordinary and spawned **Comms thread** targets alike, not other
 venue conversations: their owning reader/metadata integration remains required.
 The existing single browser proof checks two windows, opening an earlier thread,
 and six additional conversation-card screenshots. No importer behavior changes.
+
+### Agent and @ chip cards
+
+`agent:<id>` and `@<id>` now resolve the same fixed Agents reader card. The
+original member must pass the owning reader's central `give-work` roster check;
+project-only visibility is insufficient. The installed `household.profile`
+operation confirms the agent still exists under that original viewer. Missing,
+denied, unavailable and mismatched answers stay words. No private identity,
+description, status or person-store content is copied into the card: its title
+is the canonical agent id and its status is “Agent”. Display names and current
+work remain in the owning Agents reader. This keeps the small reference surface
+independent of optional Mind stores and introduces no status cache.
+
+Exact routes open in the owning Agents tile through the existing navigation
+capability. Target-only ownership changes withdraw and restore both spellings
+in two subscribed windows. The existing browser proof includes six agent-card
+captures and opening the owning Agents tile while preserving the Comms route.
+No importer behavior changes.

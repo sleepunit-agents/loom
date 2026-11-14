@@ -620,9 +620,10 @@ async function proveNextComms(browser:Browser,webRoot:string) {
     expect(await socket(a,'attention.get',{id:sealed.ref})).toMatchObject({ok:true,value:{state:'answered'}});
     for(const table of ['attention_asks','core_operations']){const stored=JSON.stringify(app.db.prepare(`SELECT * FROM ${table}`).all());expect(stored).not.toContain('Which fixture should I check next?');expect(stored).not.toContain('An unsaved private answer');}
     expect(earlier).toBeDefined();
-    expect(await post(input.credential,'runtime.reply',{id:'conversation-chip-reply',text:`Revisit ${earlier!.conversation} before continuing.`})).toMatchObject({ok:true});
+    expect(await post(input.credential,'runtime.reply',{id:'conversation-chip-reply',text:`Revisit ${earlier!.conversation} before continuing. Ask @art or agent:art.`})).toMatchObject({ok:true});
     const conversationChip=(page:Page)=>page.getByLabel('Thread messages',{exact:true}).getByRole('button',{name:`Conversation ${earlier!.conversation}: Earlier fixture thread, Open`,exact:true});
-    for(const page of [a,b])await expect.poll(()=>conversationChip(page).count()).toBe(1);
+    const agentChip=(page:Page)=>page.getByLabel('Thread messages',{exact:true}).getByRole('button',{name:'Agent @art: art, Agent',exact:true});
+    for(const page of [a,b]){await expect.poll(()=>conversationChip(page).count()).toBe(1);await expect.poll(()=>agentChip(page).count()).toBe(1);}
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]) {
      await b.setViewportSize({width,height:900});
      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';},look);
@@ -635,7 +636,22 @@ async function proveNextComms(browser:Browser,webRoot:string) {
      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
      await b.screenshot({path:join(shots,`comms-conversation-chips-${look}-${width}.png`),fullPage:true,animations:'disabled'});
      await b.keyboard.press('Escape');
+     await agentChip(b).scrollIntoViewIfNeeded();
+     await b.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+     await agentChip(b).click();
+     const agentCard=b.getByRole('dialog',{name:'Agent: art',exact:true});
+     await expect.poll(()=>agentCard.getByRole('link',{name:'Open',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
+     expect(await agentCard.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;})).toBe(true);
+     await b.screenshot({path:join(shots,`comms-agent-chips-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+     await b.keyboard.press('Escape');
     }
+    await agentChip(a).scrollIntoViewIfNeeded();
+    await a.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+    await agentChip(a).click();
+    await a.getByRole('dialog',{name:'Agent: art',exact:true}).getByRole('link',{name:'Open',exact:true}).click();
+    await expect.poll(()=>new URL(a.url()).pathname).toBe('/p/agents-preview/agent/art');
+    expect(JSON.parse(new URL(a.url()).searchParams.get('paths')??'{}').comms).toBe(`/p/comms-preview/thread/${thread.slice(3)}`);
+    await a.goto(`${app.url}/p/comms-preview/thread/${thread.slice(3)}`);
     await conversationChip(a).scrollIntoViewIfNeeded();
     await a.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
     await conversationChip(a).click();

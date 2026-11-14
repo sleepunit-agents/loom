@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Next Comms opens owned agent and @ references as scoped cards linking to the Agents reader.
+
 - Comms preview resolves private conversation references to current thread cards for their original member, with live state and fixed reader links.
 
 - Next Comms renders authorized reference chips in retained sealed questions, with live privacy fences and owning app navigation.
