@@ -69,7 +69,8 @@ export class BridgeSends {
     if (this.db.$client.inTransaction) throw new Error('Flush sends after committing the transaction');
     if (this.closed) return Promise.resolve();
     if (this.draining) return this.draining;
-    this.draining = this.drain().finally(() => { this.draining = undefined; });
+    // Publish the shared promise before a transport callback can reenter flush.
+    this.draining = Promise.resolve().then(() => this.drain()).finally(() => { this.draining = undefined; });
     return this.draining;
   }
 

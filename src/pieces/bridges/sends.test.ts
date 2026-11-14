@@ -100,6 +100,7 @@ describe('approved bridge reply queue', () => {
     f.sends.queue({ id: 'reply', incoming: 'in', text: 'Hello' });
     const drain = f.sends.flush();
     expect(f.sends.flush()).toBe(drain);
+    await Promise.resolve();
     expect(f.read().state).toBe('sending');
     let closed = false;
     const close = f.sends.close().then(() => { closed = true; });
@@ -119,6 +120,20 @@ describe('approved bridge reply queue', () => {
     })).toThrow('after committing');
     expect(f.read()).toBeUndefined();
     expect(f.post).not.toHaveBeenCalled();
+  });
+
+  it('shares the active drain with a reentrant transport callback', async () => {
+    const f = fixture();
+    let nested: Promise<void> | undefined;
+    f.post.mockImplementationOnce(async () => {
+      nested = f.sends.flush();
+      return { id: 'posted' };
+    });
+    f.sends.queue({ id: 'reply', incoming: 'in', text: 'Hello' });
+    const drain = f.sends.flush();
+    await drain;
+    expect(nested).toBe(drain);
+    expect(f.post).toHaveBeenCalledTimes(1);
   });
 
   it('uses existing chunking and records uncertainty after a partial reply', async () => {
