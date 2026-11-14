@@ -41,3 +41,16 @@ it('updates an agent status and a review score using their natural keys', () => 
   expect(db.select().from(findings).all()).toEqual([{ ...finding, score: 4 }]);
   expect(() => history.finding({ ...finding, score: 6 })).toThrow();
 });
+it('partitions medians by conversation and excludes non-replies and missing latency', () => {
+  const { db, service, history, cv, at } = fixture();
+  const other = service.open({ agent: 'art', venue: 'wake', place: 'morning', label: 'Morning' });
+  for (const latencyMs of [1, 3, 99]) service.turn({ conversation: cv.id, kind: 'reply', fromKind: 'agent', latencyMs });
+  service.turn({ conversation: cv.id, kind: 'action', fromKind: 'agent', latencyMs: 1000 });
+  service.turn({ conversation: cv.id, kind: 'reply', fromKind: 'agent' });
+  service.turn({ conversation: other.id, kind: 'reply', fromKind: 'agent', latencyMs: 200 });
+  at('2026-11-14T12:00:00.000Z');
+  expect(history.rollup()).toBe(6);
+  const days = db.select().from(conversationDays).all();
+  expect(days.find(day => day.conversation === cv.id)).toMatchObject({ replies: 4, actions: 1, medianLatencyMs: 3 });
+  expect(days.find(day => day.conversation === other.id)).toMatchObject({ replies: 1, actions: 0, medianLatencyMs: 200 });
+});

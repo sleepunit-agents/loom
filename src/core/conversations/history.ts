@@ -1,6 +1,6 @@
 /** Wordless history kept after detailed turns expire. Uses the same connection
  * and fake clock as conversation writes; no background process or separate DB. */
-import { and, eq, lt } from 'drizzle-orm';
+import { lt, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { agentStatus, conversationDays, findings, turns } from '../data/schema.js';
 
@@ -25,29 +25,29 @@ export class ConversationHistory {
   rollup(): number {
     const cutoff = new Date(Date.parse(this.now()) - 90 * 86400_000).toISOString().slice(0, 10) + 'T00:00:00.000Z';
     return this.db.transaction(() => {
-      const expired = this.db.select().from(turns).where(lt(turns.at, cutoff)).all();
-      const groups = new Map<string, typeof expired>();
-      for (const turn of expired) {
-        const key = JSON.stringify([turn.conversation, turn.at.slice(0, 10)]);
-        const group = groups.get(key) ?? []; group.push(turn); groups.set(key, group);
-      }
-      for (const group of groups.values()) {
-        const conversation = group[0].conversation, day = group[0].at.slice(0, 10);
-        // A second roll-up would lose the first group's median; reject late
-        // backdated writes instead of silently corrupting the historical total.
-        if (this.db.select().from(conversationDays).where(and(eq(conversationDays.conversation, conversation), eq(conversationDays.day, day))).get()) throw new Error('Day already rolled up');
-        const latencies = group.filter(t => t.kind === 'reply' && t.latencyMs !== null).map(t => t.latencyMs!).sort((a, b) => a - b);
-        const mid = Math.floor(latencies.length / 2);
-        const medianLatencyMs = latencies.length === 0 ? 0 : latencies.length % 2 ? latencies[mid] : (latencies[mid - 1] + latencies[mid]) / 2;
-        this.db.insert(conversationDays).values({ conversation, day,
-          messages: group.filter(t => t.kind === 'message').length,
-          replies: group.filter(t => t.kind === 'reply').length,
-          actions: group.filter(t => t.kind === 'action').length,
-          medianLatencyMs,
-        }).run();
-      }
-      this.db.delete(turns).where(lt(turns.at, cutoff)).run();
-      return expired.length;
+      const days = this.db.all<typeof conversationDays.$inferSelect>(sql`
+        WITH expired AS (
+          SELECT *, substr(at, 1, 10) AS day FROM turns WHERE at < ${cutoff}
+        ), ranked AS (
+          SELECT conversation, day, latency_ms,
+            row_number() OVER (PARTITION BY conversation, day ORDER BY latency_ms) AS position,
+            count(*) OVER (PARTITION BY conversation, day) AS total
+          FROM expired WHERE kind = 'reply' AND latency_ms IS NOT NULL
+        ), medians AS (
+          SELECT conversation, day, avg(latency_ms) AS latency
+          FROM ranked WHERE position IN ((total + 1) / 2, (total + 2) / 2)
+          GROUP BY conversation, day
+        )
+        SELECT e.conversation, e.day,
+          sum(e.kind = 'message') AS messages, sum(e.kind = 'reply') AS replies,
+          sum(e.kind = 'action') AS actions, coalesce(m.latency, 0) AS medianLatencyMs
+        FROM expired e LEFT JOIN medians m ON m.conversation = e.conversation AND m.day = e.day
+        GROUP BY e.conversation, e.day
+      `);
+      // Existing days reject late backdated records instead of silently losing
+      // the first group's median. Normal turn writes always use the current clock.
+      for (const day of days) this.db.insert(conversationDays).values(day).run();
+      return this.db.delete(turns).where(lt(turns.at, cutoff)).run().changes;
     });
   }
 }
