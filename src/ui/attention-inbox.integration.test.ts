@@ -167,7 +167,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await expect.poll(()=>noticeRow(b).getAttribute('data-unread')).toBe('true');
     await noticeRow(a).click();
     await expect.poll(()=>noticeRow(b).getAttribute('data-unread')).toBe(null);
-    await a.getByRole('button',{name:'Open Approvals',exact:true}).click();
+    await a.getByRole('region',{name:'Inbox tile',exact:true}).getByRole('button',{name:'Open Approvals',exact:true}).click();
     await expect.poll(()=>a.locator('[data-split-row]').filter({hasText:'Reported fixture page fix'}).count()).toBe(1);
     expect(new URL(a.url()).pathname).toBe('/p/approvals-preview/notices');
     await noticeRow(b).click();

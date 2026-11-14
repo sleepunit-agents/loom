@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { State } from './model.js';
 import type { ApprovalNotice, Ask } from '../attention/role.js';
-import { approvalNoticeRecord } from '../attention/approval-notices.js';
+import { approvalNoticeRecord } from '../attention/role.js';
 import { repoOf, hostOf } from './targets.js';
 /** Assign once in the owning write/import transaction. Original source fields
  * are retained; later source removal cannot renumber surviving events. */

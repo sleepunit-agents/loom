@@ -1,3 +1,4 @@
+export { approvalNoticeRecord } from './approval-notices.js';
 import { createHash } from 'node:crypto';
 /** The desk's seam. Other pieces raise/resolve asks here, never in their own tables. */
 import { migrate, failure, type Db } from '../../core/index.js';
