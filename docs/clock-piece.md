@@ -17,11 +17,12 @@ Clock with `src/pieces/runtime/clock.ts`. The bridge accepts plain prompt wakes
 only after agent house configuration and waits for runner-confirmed running or
 waiting state. Queue acceptance alone is never reported as started. Missing
 features (lane files, continuations, slots, approvals, local wakes) remain held;
-private body delivery and account selection are refused. Conversation delivery
-and authenticated continuation resolution remain blocked on t-2209.
+private body delivery and account selection are refused. Public prompt conversation delivery is implemented below. Native transport
+interrupt/resume and authenticated continuation resolution remain unfinished.
 
-Runtime dispatch must also replace the existing ordinary-wake background use of
-`w.by` with the piece's service authority, retaining requester scope as data.
+Runtime now dispatches public prompt work as the Clock service, retaining
+requester scope as data. Clock intent/outcome operations retain their existing
+saved attribution policy checks; Runtime never invokes startBody as `w.by`.
 That pre-existing path is not used for newly supported private local dispatch;
 private local wakes are explicitly held before intent and before Runtime.
 
@@ -1153,13 +1154,10 @@ cannot issue the witness. Comms and bridge bindings are separate destinations.
 The witness contains routing metadata only and rechecks the binding on use; it
 confers no private read, principal, credential or start permission.
 
-Next mode supplies this reader to the Clock bridge. A verified join is held
-instead of calling the fresh-body start path: that path cannot feed an existing
-conversation. Actual delivery still must consume the same current witness at
-the asynchronous boundary, retain scope and add sender history atomically.
-Runtime does not yet create Clock `wake` bindings, so positive binding cases
-are owning-store fixtures, not evidence of an end-to-end delivered lane.
-Conversation joining therefore remains unfinished until that delivery is merged.
+Next mode supplies this reader to the Clock bridge. Public prompt joins now
+consume the witness in the owning Runtime delivery operation described below.
+Unsupported private/file/local/continuation work stays held; native interrupt
+and terminal-body resumption remain unfinished.
 
 | Old surface | New authorization boundary |
 | --- | --- |

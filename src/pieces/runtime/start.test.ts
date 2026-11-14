@@ -361,11 +361,48 @@ it('creates a real wake binding and joins only after the authenticated body read
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'},{text:'Joined lane input'}]}});
  await settle();expect(wake(f.app.db,filed.value.id)).toMatchObject({state:'fired',outcome:job});
  expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns').get()).toEqual({n:2});
- expect(JSON.stringify(f.app.db.prepare('SELECT result FROM core_operations WHERE name LIKE \"runtime.%\"').all())).not.toContain('Joined lane input');
+ expect(JSON.stringify(f.app.db.prepare('SELECT result FROM core_operations WHERE name LIKE ?').all('runtime.%'))).not.toContain('Joined lane input');
  // The permanent sender history survives consumption and restart. A copied viewer gets none.
  await f.restart();
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'},{text:'Joined lane input'}]}});
  const box=f.store.read('box','a')!;
  f.app.db.transaction(()=>{const {changedAt:_,...b}=box;f.store.put('box',{...b,revokedAt:f.clock.now()},f.clock.now());})();
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+});
+
+it('holds both initial and joined scheduled words behind staging, then confirms only the bound read',async()=>{
+ const f=await setup(true);
+ const initial=f.call('clock.in',{agent:'art',prompt:'Staged first input',note:'lane',place:'lane:staged',when:'1s'});
+ expect(initial.ok).toBe(true);f.clock.advance(1000);await settle();const job=f.store.ids('job')[0];
+ await f.post(f.runner,'claimJob',{job});
+ expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
+ expect(f.call('core.releaseEffect',{id:`runtime:input:${job}`}).ok).toBe(true);
+ const payload=await f.post(f.runner,'takeInput',{job}),body=payload.value.credential;
+ await f.post(f.runner,'reportJob',{job,state:'running'});await settle();
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'conflict'});
+ expect(f.call('core.releaseEffect',{id:`runtime:clock-read:${job}:1`}).ok).toBe(true);
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Staged first input'}]}});
+ const r=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'staged-chain',input:{agent:'art',prompt:'Staged joined input',note:'chain',place:'lane:staged',when:'1s'}})})).json();
+ expect(r.ok).toBe(true);f.clock.advance(1000);await settle();
+ expect(f.store.ids('job')).toEqual([job]);expect(wake(f.app.db,r.value.id)?.state).toBe('firing');
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'conflict'});
+ expect(f.call('core.releaseEffect',{id:`runtime:clock-read:${job}:2`}).ok).toBe(true);
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Staged first input'},{text:'Staged joined input'}]}});
+ await settle();expect(wake(f.app.db,r.value.id)).toMatchObject({state:'fired',outcome:job});
+});
+
+it('rechecks original Clock source authority at the words boundary, without accepting cloned source data',async()=>{
+ const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);access.services=builtinServices(f.app.db);
+ const r=f.call('clock.in',{agent:'art',prompt:'Revocable scheduled input',note:'source',place:'lane:revocable',when:'1s'});
+ expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id;
+ f.clock.advance(1000);await settle();const job=f.store.ids('job')[0],attempt=wake(f.app.db,id)!.attempt!;
+ expect(f.call('runtime.acceptClock',{wake:id,attempt,prompt:'forged words'},{kind:'service',id:'clock'})).toMatchObject({ok:false,code:'invalid'});
+ expect(f.call('runtime.acceptClock',{wake:id,attempt:'forged-attempt'},{kind:'service',id:'clock'})).toMatchObject({ok:false,code:'denied'});
+ await f.post(f.runner,'claimJob',{job});const payload=await f.post(f.runner,'takeInput',{job});
+ await f.post(f.runner,'reportJob',{job,state:'running'});await settle();
+ access.members.jonathan.agents=[];
+ expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns').get()).toEqual({consumed:null});
+ access.members.jonathan.agents=['art'];
+ expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Revocable scheduled input'}]}});
 });

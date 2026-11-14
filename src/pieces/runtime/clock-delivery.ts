@@ -48,7 +48,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       const w=source(i.wake,i.attempt);if(!w)throw new OperationError('denied','Clock source ended');
       const key=`clock:${w.id}`,old=db.prepare('SELECT * FROM runtime_clock_turns WHERE id=?').get(key) as Turn|undefined;
       if(old){
-        if(old.record!==JSON.stringify({text:w.prompt,project:w.project,agent:w.agent,service:w.authorship?.service}))throw new OperationError('conflict','Wake source changed');
+        if(old.record!==JSON.stringify({text:w.prompt,project:w.project,agent:w.agent,service:w.authorship?.service,attempt:i.attempt}))throw new OperationError('conflict','Wake source changed');
         return {job:old.job,source:key,joined:old.conversation!==`clock-${hash(w.id)}`};
       }
       const route=clockRoute(w,destination);
@@ -70,7 +70,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
           service:w.authorship?.service,model:w.model},{brief:CLOCK_BRIEF});
       }
       db.prepare('INSERT INTO runtime_clock_turns(id,conversation,job,record) VALUES (?,?,?,?)').run(key,conversation,job,
-        JSON.stringify({text:w.prompt,project:w.project,agent:w.agent,service:w.authorship?.service}));
+        JSON.stringify({text:w.prompt,project:w.project,agent:w.agent,service:w.authorship?.service,attempt:i.attempt}));
       const principal=w.authorship?.principal;
       // Retain every named steering source; unknown stays unknown even if people are named.
       const provenance=provenanceStore(db);
@@ -83,11 +83,19 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   const read=(v:Viewer,before?:number)=>{
     const job=bound(v);if(!job)throw new OperationError('denied','Clock body binding ended');
     const rows=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT 100').all(job.conversation,before??Number.MAX_SAFE_INTEGER) as Turn[];
+    const pending=rows.filter(r=>r.consumed===null);
+    const currentSources=()=>pending.every(row=>{
+      const record=JSON.parse(row.record) as {text:string;attempt:string};
+      const source=clockDispatchSource(operations,row.id.slice('clock:'.length),record.attempt,true);
+      return !!source && source.prompt===record.text && source.agent===job.agent && source.member===job.member
+        && source.project===job.project && source.authorship?.service===job.service;
+    });
+    if(!currentSources())throw new OperationError('denied','Clock delivery authority ended');
     // Central staging hold runs at the words boundary, including later joined turns.
     if(rows.some(r=>r.consumed===null)&&!effects.beforeOutside({id:`runtime:clock-read:${job.id}:${rows[0]?.seq}`,kind:'body-start',title:'Release scheduled conversation input'}))
       throw new OperationError('conflict','Scheduled input is held');
     // Recheck after the outside gate, before releasing any words or marking delivery.
-    if(bound(v)?.id!==job.id)throw new OperationError('denied','Clock body binding ended');
+    if(bound(v)?.id!==job.id||!currentSources())throw new OperationError('denied','Clock body binding ended');
     db.transaction(()=>{
       for(const row of rows){db.prepare('UPDATE runtime_clock_turns SET consumed=COALESCE(consumed,?) WHERE id=?').run(operations.clock.now(),row.id);}
       const keys=provenanceStore(db).read(job.conversation!)?.queue.map(r=>r.key)??[];

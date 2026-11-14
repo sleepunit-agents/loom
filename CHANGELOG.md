@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Deliver public scheduled prompts into owning Runtime wake conversations, with service dispatch, authenticated joined reads and staging holds.
+
 - New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail.
 
 - Check Clock lane reuse against current Runtime destination metadata; hold verified joins until conversation delivery can feed the existing body safely.
