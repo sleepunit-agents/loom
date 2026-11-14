@@ -9,6 +9,7 @@ import { installBridges } from './index.js';
 import { venueSchema } from './model.js';
 import { put } from './store.js';
 import { slackInbox } from './slack-inbox.js';
+import { installBridgeRawRetention } from './raw-retention.js';
 import { slackDrain, type SlackDrainOptions } from './slack-drain.js';
 import { slackApi } from './slack-api.js';
 import { Bridges } from './engine.js';
@@ -166,9 +167,10 @@ describe('serialized Slack raw receipt normalization',()=>{
     expect(f.receive).toHaveBeenCalledTimes(65);expect(f.inbox.pending()).toEqual([]);
   });
   it('allows metadata begun within the raw budget to finish after the hour',async()=>{
-    const f=await fixture();await f.inbox.receive(payload());f.clock.advance(3_600_000);
+    const f=await fixture();installBridgeRawRetention(f.app);await f.inbox.receive(payload());f.clock.advance(3_600_000);
     const metadata=deferred<Awaited<ReturnType<SlackDrainOptions['inspect']>>>();f.inspect.mockReturnValue(metadata.promise);
-    const d=f.drain();const flush=d.flush();expect(f.inspect).toHaveBeenCalledOnce();f.clock.advance(1);
+    const d=f.drain();const flush=d.flush();expect(f.inspect).toHaveBeenCalledOnce();f.clock.advance(1);await settle();
+    expect(f.app.db.prepare('SELECT event,state FROM bridges_slack_receipts').get()).toEqual({event:null,state:'consumed'});
     metadata.resolve({kind:'allow',members:['U123','U200']});await flush;
     expect(f.receive).toHaveBeenCalledOnce();expect(f.inbox.pending()).toEqual([]);
   });
