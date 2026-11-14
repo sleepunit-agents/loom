@@ -1192,3 +1192,22 @@ unanswered source. Generic `attention.answer` refuses every sealed question on
 all doors, so it cannot strand a verdict without the encrypted Comms message.
 Imported historical done/dismiss states remain readable; legacy unsealed asks
 continue through their existing public/source protocols.
+
+
+## Sealed typed reply source fence
+
+`comms.replyToAsk` now distinguishes sealed questions by Attention's
+`privateQuestion` provenance, never by a `comms:` ref prefix. A sealed reply
+requires the exact original question row, ciphertext, sender, sequence,
+conversation/member/agent route and unexpired retention. It checks the source
+before preparation and after encryption, including when a competing call has
+committed an operation receipt. Both keyed operation fingerprints and encrypted
+reply hashes bind the immutable source snapshot. A changed source cannot reuse
+an older reply through a fresh operation id. Identical concurrent replies still
+coalesce into one message and one Attention answer.
+
+Legacy/imported private replies retain their existing hash and retry behavior,
+including acknowledgements after their reply words expire. Existing sealed
+replies written before this source binding fail closed on retry rather than
+claiming evidence they never stored; their saved message and answer remain.
+The inline editor and live current-question UI are still the next unit.
