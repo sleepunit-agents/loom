@@ -33,3 +33,30 @@ both the original central claim and the original worker request, bind the pendin
 id to its ticket, select configured transport from owning assignment, finish
 central claims as uncertain on any failure, and pass staging/value-free accounting
 checks before public get or typed-command access can activate.
+
+## Retained central proof for a pending request
+
+Trusted admission can pass the original worker handle's `{id, binding}` to
+`secretTickets.admit`. It compares all assignment fields to Runtime's original
+body proof before inserting the ticket. The pending id is immutable in the
+original claim and its pinned holder metadata. It is never loaded from a durable
+row. A pending id can be admitted once per role lifetime, including after failed
+acknowledgement. The unactivated role keeps at most 1024 such tombstones and then
+fails closed; production lifecycle/capacity handling is still required before
+activation. Failed admission does not consume the pending id.
+
+`listenTicketAuthority` accepts owner-configured worker certificate pins paired
+with exact assignments. These peers can only check the original retained claim
+for its bound pending id, through an empty `worker-current` response. They cannot
+claim or finish a ticket, supply an assignment, or choose an endpoint. Holder and
+worker pins must differ. `remoteWorkerTicketProof` retains a sticky check closure
+for the original ticket/pending pair. That closure can be the async authority
+check in `workerSecretInputs`; the synchronous local proof still fences the final
+write after the network await. A true remote result alone grants no input access.
+
+Tests compose actual ticket admission, retained holder claim, worker central
+check and pinned holder-to-worker delivery into an original private stream.
+This is protocol coverage, not standalone startup: trusted admission transport,
+owner-created standalone pending requests, configured holder routing,
+`listenHolderHandoff` completion/uncertainty wiring and staging/value-free
+accounting remain required. No public operation or installed startup is activated.

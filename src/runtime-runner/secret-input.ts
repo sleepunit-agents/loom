@@ -2,11 +2,9 @@
  * composed into standalone runner startup. No pending proof survives restart. */
 import { randomUUID } from 'node:crypto';
 import type { Writable } from 'node:stream';
-import { z } from 'zod';
 
-export const secretInputBindingSchema=z.object({agent:z.string().min(1).max(100),job:z.uuid(),runner:z.string().min(1).max(200),
-  box:z.string().min(1).max(200),claimedAt:z.number().finite(),service:z.string().min(1).max(200).optional()}).strict();
-export type SecretInputBinding=z.infer<typeof secretInputBindingSchema>;
+import { secretInputBindingSchema, type SecretInputBinding } from '../pieces/secrets/worker-binding.js';
+export { secretInputBindingSchema, type SecretInputBinding } from '../pieces/secrets/worker-binding.js';
 const failed=()=>new Error('Worker secret input unavailable');
 const identity=(binding:SecretInputBinding)=>JSON.stringify(secretInputBindingSchema.parse(binding));
 interface Pending {

@@ -161,3 +161,37 @@ it('requires exact grant service even when the house and agent match',async()=>{
  expect(f.admit).toThrow('Secret handoff unavailable');
  f.call('secrets.grant',f.grant);expect(f.admit()).toMatchObject({id:expect.any(String)});
 });
+
+it('binds an original worker request once, snapshots it and retains it only in the original claim',async()=>{
+ const f=await setup('slack');
+ const request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now(),service:'slack'}};
+ const original=request.id,t=f.tickets.admit(f.viewer,'API',request);
+ request.id=randomUUID();request.binding.runner='other';
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);const c=f.tickets.claim(t.id)!;expect(c.pendingId).toBe(original);expect(c.current()).toBe(true);
+ expect(secretTickets(f.app,f.sharing,f.app.effects!).claim(t.id)).toBeNull();
+ c.finish(false);
+ expect(()=>f.tickets.admit(f.viewer,'API',{id:original,binding:{...request.binding,runner:'worker'}})).toThrow();
+ expect(f.tickets.claim(t.id)).toBeNull();
+});
+it.each(['agent','job','runner','box','claimedAt','service','id'])('rejects mismatched pending %s before admission or outside IO',async field=>{
+ const f=await setup('slack');
+ const request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now(),service:'slack'}};
+ if(field==='id')request.id='not-a-request';
+ else Object.assign(request.binding,{[field]:field==='claimedAt'?123:field==='job'?randomUUID():'other'});
+ expect(()=>f.tickets.admit(f.viewer,'API',request)).toThrow(/^Secret handoff unavailable$/);
+ expect(f.app.db.prepare('SELECT * FROM secrets_tickets').all()).toEqual([]);
+});
+it('burns the pending binding across two admissions before claim and after failed acknowledgement',async()=>{
+ const f=await setup(),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ const t=f.tickets.admit(f.viewer,'API',request);
+ expect(()=>f.tickets.admit(f.viewer,'API',request)).toThrow();
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);f.tickets.claim(t.id)!.finish(false);
+ expect(()=>f.tickets.admit(f.viewer,'API',request)).toThrow();
+});
+it('does not burn the pending binding when admission itself rolls back',async()=>{
+ const f=await setup(),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ f.app.db.exec("CREATE TRIGGER fail_pending BEFORE INSERT ON secrets_tickets BEGIN SELECT RAISE(ABORT,'synthetic'); END");
+ expect(()=>f.tickets.admit(f.viewer,'API',request)).toThrow();
+ f.app.db.exec('DROP TRIGGER fail_pending');const t=f.tickets.admit(f.viewer,'API',request);
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);expect(f.tickets.claim(t.id)?.pendingId).toBe(request.id);
+});
