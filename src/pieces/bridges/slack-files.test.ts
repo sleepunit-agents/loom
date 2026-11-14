@@ -105,3 +105,9 @@ it.each(['second request','proof throws','holder rejects'])('erases owned buffer
  await expect(f.fetch()).rejects.toThrow(/^Bridge file fetch held$/);
  expect(owned).toHaveLength(1);expect(owned[0].every(byte=>byte===0)).toBe(true);
 });
+
+it.each(['agent','venue','workspace','channel','delivery','files'])('binds %s at transport creation, before any request',async key=>{
+ const f=fixture(),transport=slackFiles(venue,f.permit,f.secrets,()=>true,f.request);
+ Object.assign(f.permit,{[key]:key==='files'?[attachment(1)]:key==='channel'?'DOTHER':'other'});
+ await expect(transport.fetch()).rejects.toThrow();expect(f.secrets.withValue).not.toHaveBeenCalled();
+});

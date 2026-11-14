@@ -40,13 +40,20 @@ const safeName=(value:string)=>value.replace(/[^A-Za-z0-9._-]+/g,'_').slice(0,80
  * implement Runtime-bound retrieval and fourteen-day retention before wiring. */
 export function slackFiles(input:Venue, permit:SlackFilesPermit, secrets:SecretUse,
   beforeRead:()=>boolean, request:typeof fetch=fetch) {
+  let binding: {venue:Venue;scope:Pick<SlackFilesPermit,'agent'|'venue'|'workspace'|'channel'|'delivery'>;source:string}|undefined;
+  try {
+    binding={venue:venueSchema.parse(structuredClone(input)),
+      scope:{agent:permit.agent,venue:permit.venue,workspace:permit.workspace,channel:permit.channel,delivery:permit.delivery},
+      source:JSON.stringify(permit.files)};
+  }catch{ /* Invalid internal evidence fails with the same fixed error on fetch. */ }
   return {async fetch():Promise<FetchedSlackFile[]> {
     const completed:FetchedSlackFile[]=[], owned:Buffer[]=[];
     try {
-      const venue=venueSchema.parse(structuredClone(input));
-      const scope={agent:permit.agent,venue:permit.venue,workspace:permit.workspace,channel:permit.channel,delivery:permit.delivery};
-      const source=JSON.stringify(permit.files);
-      const selected=z.array(file).max(SLACK_FILES_PER_MESSAGE).parse(permit.files.slice(0,SLACK_FILES_PER_MESSAGE));
+      if(!binding)throw held();
+      const {venue,scope,source}=binding;
+      const descriptors:unknown=JSON.parse(source);
+      if(!Array.isArray(descriptors))throw held();
+      const selected=z.array(file).max(SLACK_FILES_PER_MESSAGE).parse(descriptors.slice(0,SLACK_FILES_PER_MESSAGE));
       const files=selected.map(f=>({...f,url:fileUrl(f.url)}));
       if(!venue.enabled||venue.platform!=='slack'||venue.agent!==scope.agent||venue.id!==scope.venue
         ||venue.workspace!==scope.workspace||!/^T[A-Z0-9]{1,199}$/.test(scope.workspace)
