@@ -127,3 +127,47 @@ it('leaves a successful delivery to daemon settlement across replacement and shu
  await c.replace([]);await c.close();
  expect(f.claim.finish).not.toHaveBeenCalled();expect(await d.current()).toBe(false);
 });
+it('all shutdown callers drain the original outstanding settlement',async()=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
+ await c.authority(randomUUID());
+ let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+ f.claim.finish.mockImplementationOnce(async()=>gate);
+ const first=c.close(),second=c.close();expect(second).toBe(first);
+ let drained=false;void second.then(()=>{drained=true;});await Promise.resolve();expect(drained).toBe(false);
+ release();await first;expect(drained).toBe(true);
+ expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
+});
+it('fences current itself when its original proof resolves after replacement',async()=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
+ const d=(await c.authority(randomUUID()))!;
+ let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+ f.claim.current.mockImplementationOnce(async()=>{await gate;return true;});
+ const current=d.current();await c.replace(f.configured);release();
+ expect(await current).toBe(false);expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
+ await c.close();
+});
+it('shutdown also drains settlements begun by an earlier route replacement',async()=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
+ await c.authority(randomUUID());
+ let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+ f.claim.finish.mockImplementationOnce(async()=>gate);
+ const replacing=c.replace([]),closing=c.close();
+ let drained=false;void closing.then(()=>{drained=true;});await Promise.resolve();expect(drained).toBe(false);
+ release();await Promise.all([replacing,closing]);expect(drained).toBe(true);
+ expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
+});
+it('sanitizes direct abandonment errors and never retries their settlement',async()=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured),d=(await c.authority(randomUUID()))!;
+ f.claim.finish.mockRejectedValueOnce(Error('PRIVATE-SETTLEMENT-SENTINEL'));
+ await expect(d.abandon()).rejects.toThrow(/^Secret handoff unavailable$/);
+ await d.abandon();await c.close();expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
+});
+it('empty replacement refuses fresh claims and changed routes use only the new transport',async()=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
+ await c.replace([]);
+ expect(await c.authority(randomUUID())).toBeNull();expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
+ const other=setup();await c.replace([{binding:f.binding,transport:other.transport}]);
+ const fresh=(await c.authority(randomUUID()))!;await fresh.handTo(Buffer.from('synthetic'));
+ expect(other.transport.deliver).toHaveBeenCalledOnce();expect(f.transport.deliver).not.toHaveBeenCalled();
+ await c.close();
+});

@@ -41,11 +41,18 @@ export function managedHolderAuthority(
   return routes;
   };
   let routes = snapshot(configured), generation = 0, closed = false;
+  let closing: Promise<void> | undefined;
   const retained = new Set<() => Promise<void>>();
+  const draining = new Set<Promise<void>>();
   const retire = async () => {
     const abandoned = [...retained];
     retained.clear();
-    await Promise.allSettled(abandoned.map(abandon => abandon()));
+    for (const abandon of abandoned) {
+      const pending = abandon();
+      draining.add(pending);
+      void pending.then(() => draining.delete(pending), () => draining.delete(pending));
+    }
+    await Promise.allSettled([...draining]);
   };
   const authority: HolderHandoffAuthority = async id => {
     if (closed) return null;
@@ -59,7 +66,7 @@ export function managedHolderAuthority(
       if (abandoned) return;
       abandoned = true; // Consume before IO, even when settlement loses its ack.
       retained.delete(abandon);
-      await claim.finish(false);
+      try { await claim.finish(false); } catch { throw failed(); }
     };
     try {
       if (closed || original !== generation) throw failed();
@@ -104,10 +111,10 @@ export function managedHolderAuthority(
       routes = next; generation++;
       await retire();
     },
-    async close() {
-      if (closed) return;
+    close() {
+      if (closing) return closing;
       closed = true; generation++; routes.clear();
-      await retire();
+      return closing = retire();
     },
   });
 }
