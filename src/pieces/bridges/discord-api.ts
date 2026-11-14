@@ -23,6 +23,7 @@ export function discordApi(secrets: SecretUse, beforeRead: () => boolean, reques
         method:'GET', redirect:'error', signal:AbortSignal.timeout(15_000),
         headers:{Authorization:`Bot ${token}`},
       });
+      if (!current()) { await response.body?.cancel(); throw Error('Discord read held'); }
       if (!response.ok) {
         await response.body?.cancel();
         // Only a completed platform refusal is final. Credential, rate-limit and
@@ -34,12 +35,16 @@ export function discordApi(secrets: SecretUse, beforeRead: () => boolean, reques
       const chunks: Uint8Array[] = []; let size = 0;
       try {
         while (true) {
-          const next = await reader.read(); if (next.done) break;
+          if (!current()) throw Error('Discord read held');
+          const next = await reader.read();
+          if (!current()) throw Error('Discord read held');
+          if (next.done) break;
           size += next.value.byteLength;
           if (size > 1024*1024) throw Error('Discord reply too large');
           chunks.push(next.value);
         }
       } finally { await reader.cancel(); }
+      if (!current()) throw Error('Discord read held');
       const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if (array ? !Array.isArray(parsed) : !object(parsed)) throw Error('Discord unavailable');
       return parsed as Json | unknown[];

@@ -85,7 +85,7 @@ it.each([403,404,401,429,500,302])('sanitizes history HTTP%s and never posts or 
  const f=fixture();f.request.mockResolvedValueOnce(Response.json({id:'300',guild_id:'1',type:0})).mockResolvedValueOnce(new Response('PRIVATE TEST-TOKEN',{status}));
  expect(await f.api.history(venue,{channel:'300',kind:'channel'},f.permit)).toBe([403,404].includes(status)?'drop':'wait');expect(f.request).toHaveBeenCalledTimes(2);
 });
-it.each([undefined,null,'not a time','1','2026-02-30T00:00:00Z'])('uses the original snowflake time if timestamp is invalid %s',async timestamp=>{
+it.each([undefined,null,123,true,{},'not a time','1','2026-02-30T00:00:00Z'])('uses the original snowflake time if timestamp is invalid %s',async timestamp=>{
  const f=fixture();f.request.mockResolvedValueOnce(Response.json({id:'300',guild_id:'1',type:0})).mockResolvedValueOnce(Response.json([{...msg(),timestamp}]));
  expect(await f.api.history(venue,{channel:'300',kind:'channel'},f.permit)).toEqual({messages:[expect.objectContaining({at:'2015-01-01T00:00:00.000Z'})]});
 });
@@ -133,4 +133,26 @@ it.each(['headers','body'])('expires stalled history %s at the request deadline'
   await vi.advanceTimersByTimeAsync(1);expect(await waiting).toBe('wait');expect(timeout).toHaveBeenCalledWith(15_000);
   if(phase==='body')expect(cancel).toHaveBeenCalledOnce();
  }finally{timeout.mockRestore();vi.useRealTimers();}
+});
+
+it.each([['agent','mark'],['workspace','2'],['channel','301'],['kind','thread']] as const)('rechecks a changed permit %s while proof stays true',async(field,value)=>{
+ for(const phase of ['holder','network']){
+  const f=fixture(),permit={...f.permit};expect(permit.current()).toBe(true);
+  if(phase==='holder')f.use.mockImplementationOnce(async(_name,callback)=>{Object.assign(permit,{[field]:value});return callback('TEST-TOKEN');});
+  else f.request.mockImplementationOnce(async()=>{Object.assign(permit,{[field]:value});return Response.json({id:'300',guild_id:'1',type:0});});
+  expect(await f.api.history(venue,{channel:'300',kind:'channel'},permit)).toBe('wait');
+  expect(permit.current()).toBe(true);expect(f.request).toHaveBeenCalledTimes(phase==='holder'?0:1);
+ }
+});
+it.each(['revoke','hold'] as const)('stops body consumption when %s happens at a network await',async change=>{
+ for(const phase of ['headers','stream']){
+  const f=fixture(),cancel=vi.fn(async()=>{}),read=vi.fn(async()=>{f[change]();return {done:false,value:Buffer.from(JSON.stringify([msg()]))};});
+  const getReader=vi.fn(()=>({read,cancel}));
+  f.request.mockResolvedValueOnce(Response.json({id:'300',guild_id:'1',type:0})).mockImplementationOnce(async()=>{
+   if(phase==='headers')f[change]();
+   return {ok:true,body:{cancel,getReader}} as unknown as Response;
+  });
+  expect(await f.api.history(venue,{channel:'300',kind:'channel'},f.permit)).toBe('wait');
+  expect(cancel).toHaveBeenCalledOnce();expect(read).toHaveBeenCalledTimes(phase==='headers'?0:1);expect(getReader).toHaveBeenCalledTimes(phase==='headers'?0:1);
+ }
 });

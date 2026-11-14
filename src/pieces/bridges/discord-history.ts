@@ -13,7 +13,7 @@ export interface DiscordHistoryPermit {
 }
 const message = z.object({id:snowflake,channel_id:snowflake,guild_id:snowflake.optional(),type:z.number().int(),
   author:z.object({id:snowflake,bot:z.boolean().optional()}),webhook_id:snowflake.optional(),
-  content:z.string().max(100_000),timestamp:z.string().nullish(),
+  content:z.string().max(100_000),timestamp:z.unknown().optional(),
   attachments:z.array(z.object({filename:z.string(),url:z.string().url()})).nullish(),
 });
 export interface DiscordHistoryMessage {id:string;at:string;user:string;bot:boolean;type:number;webhook?:string;text:string}
