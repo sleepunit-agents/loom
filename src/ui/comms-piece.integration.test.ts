@@ -235,7 +235,17 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>a.getByRole('link',{name:'Imported work link'}).count()).toBe(1);
   await a.getByRole('link',{name:'Imported work link'}).click();
   await expect.poll(()=>a.getByText('Imported work detail',{exact:true}).count()).toBe(1);
-  await a.goto(`${loom.url}/p/comms-preview/thread/${place.replace(/^th:/,'')}`);
+  const from=a.getByRole('link',{name:'From: New thread with art',exact:true});
+  await expect.poll(()=>from.count()).toBe(1);
+  expect(await from.getAttribute('href')).toBe(`/p/comms-preview/thread/${place.slice(3)}`);
+  for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
+   await a.setViewportSize({width,height:900});
+   await a.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+   expect(await from.isVisible()).toBe(true);
+   expect(await a.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+   await a.screenshot({path:join(shots,`comms-from-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+  }
+  await from.click();
   await expect.poll(()=>a.getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
   await b.clock.pauseAt(await b.evaluate(()=>Date.now()+1000));
   await b.evaluate(()=>{for(const socket of Reflect.get(window,'__fixtureSockets') as WebSocket[])socket.close();});

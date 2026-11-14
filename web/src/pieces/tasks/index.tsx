@@ -3,6 +3,7 @@ import { useRecords, call, type Call } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, type SplitFolder } from '../../kit';
 import { ActionForm, actionsFor, actionLabel, useAnswer, type Action } from './actions';
 import { taskId, taskSegment } from './route';
+import { FromConversation } from '../comms/from';
 import type { ChangeRecord } from '../changes/model';
 import { inFolder, matches, pullRequests, type Task, type TaskAnswer } from './model';
 
@@ -15,6 +16,7 @@ function Reader({ task, records, open, act }: { task: Task; records: readonly Ta
     <header><p>{task.id} · {task.type}</p><h1 className="text-2xl font-semibold">{task.title}</h1><p>{task.status.replace('_', ' ')} · P{task.priority}{task.assignee && ` · ${task.assignee}`}{task.project && ` · ${task.project}`}{task.blocked && ' · Blocked'}</p></header>
     <div role="group" aria-label="Task actions" className="flex flex-wrap gap-2">{actionsFor(task).map(action => <Button variant="outline" size="sm" key={action} type="button" onClick={() => act(action)}>{actionLabel[action]}</Button>)}</div>
     {([['Goal',task.goal],['Why',task.why],['Done when',task.doneWhen],['Description',task.description],['Question for Jonathan',task.ask],['If yes',task.ifYes],['If no',task.ifNo],['Closed because',task.closeReason]] as const).filter(([,text]) => text).map(([label,text]) => <section key={label}><h3>{label}</h3><p className="whitespace-pre-wrap break-words">{text}</p></section>)}
+    {task.source?.startsWith('conversation:')&&<FromConversation conversation={task.source.slice(13)}/>}
     <Relations label="Parent" ids={task.parent ? [task.parent] : []} tasks={records.filter(t => t.id === task.parent)} open={open} />
     <Relations label="Children" tasks={records.filter(t => t.parent === task.id)} open={open} />
     <Relations label="Blocked by" ids={task.dependsOn} tasks={records.filter(t => task.dependsOn.includes(t.id))} open={open} />

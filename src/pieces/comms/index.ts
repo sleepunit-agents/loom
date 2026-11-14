@@ -14,6 +14,7 @@ import { installQuestionRead } from './question-read.js';
 import { installPrivateReplies } from './private-replies.js';
 import { refsOf } from './refs.js';
 import { installCommsWork } from './work.js';
+import { installCommsFrom } from './from.js';
 import { backfillRefs } from './refs-backfill.js';
 import { about, aboutPointer, aboutIdentity, attachedText } from './about.js';
 import { HeldEffect, registerCommsMetadata } from './role.js';
@@ -43,6 +44,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void>; refe
  const see = (v: Viewer,t: Thread|undefined) => !!t && mayUseThread(v,t,o.sharing());
  const writable = (v: Viewer,input: {thread:string}) => see(v,thread(db,input.thread));
  installCommsWork({operations,live,clock,sharing:o.sharing,refs:id=>refsOf(db,id),thread:(viewer,id)=>{const t=thread(db,id);return !closed&&see(viewer,t)?t:undefined;}});
+ installCommsFrom({db,live,sharing:o.sharing,active:()=>!closed});
  registerCommsMetadata(operations, {
   privateThread(viewer, conversation) {
    if(closed||viewer.kind!=='member'||viewer.id!==conversation.member)return;
