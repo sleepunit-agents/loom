@@ -39,7 +39,7 @@ export function SealedQuestion({thread,seq,refId}:{thread:Owner;seq:number;refId
  const q=current.question;
  return <section aria-label="Private question" className="grid gap-2">
   <p>{q.ask}</p>{q.why&&<p>{q.why}</p>}{q.if_yes&&<p>Yes: {q.if_yes}</p>}{q.if_no&&<p>No: {q.if_no}</p>}
-  {current.state!=='open'?<p>Answered</p>:thread.archived!==null?<p>Unarchive this thread to answer.</p>:<fieldset disabled={busy} className="grid gap-2">
+  {current.state!=='open'?<p>{current.state==='resolved'?'Resolved':'Answered'}</p>:thread.archived!==null?<p>Unarchive this thread to answer.</p>:<fieldset disabled={busy} className="grid gap-2">
    {q.answers!=='words'&&<div className="flex flex-wrap gap-2"><Button disabled={!!draft.trim()} onClick={()=>void send('yes')}>Allow</Button><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void send('no')}>Deny</Button></div>}
    <label className="grid gap-1">Your private reply<Textarea value={draft} maxLength={4000} rows={3} onChange={e=>setDraft(e.target.value)}/></label>
    <Button disabled={!draft.trim()||draft.length>4000} onClick={()=>void send()}>Send private reply</Button>

@@ -53,3 +53,7 @@ for(const verdict of ['yes','no'])for(const stale of [false,true])it(`checks the
  const button=tree.root.findAllByType('Button').find((b:{props:{children:unknown}})=>b.props.children===(verdict==='yes'?'Allow':'Deny'));await act(async()=>{await button.props.onClick();});
  expect(f.once.mock.calls).toEqual(stale?[['comms.question',{ref:'sealed'}]]:[['comms.question',{ref:'sealed'}],['comms.answer',{thread:thread.id,ref:'sealed',verdict}]]);
 });
+
+it('renders the current resolved state distinctly and clears drafts on changed deadlines',async()=>{
+ await open();await type();await publish([{...row,keepUntil:25000}]);expect(editor().props.value).toBe('');await publish([{...row,state:'resolved'}]);expect(tree.root.findAllByType('Textarea')).toHaveLength(0);expect(JSON.stringify(tree.toJSON())).toContain('Resolved');expect(JSON.stringify(tree.toJSON())).not.toContain('Answered');
+});
