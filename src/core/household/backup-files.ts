@@ -64,9 +64,9 @@ export function capturePortableFiles(home: string, selection: readonly ContextFi
     if (process.platform !== 'linux' || !isAbsolute(home) || home.includes('\\') || home.includes('\0')) throw Error();
     const parts = home.split('/').filter(Boolean);
     if (parts.some(p => p === '.' || p === '..') || !parts.length) throw Error();
-    if (selection.length > 100 || new Set(selection.map(s => s.agent)).size !== selection.length) throw Error();
+    if (new Set(selection.map(s => s.agent)).size !== selection.length) throw Error();
     // Validate the entire selection before opening the home.
-    for (const item of selection) if (!name.test(item.agent) || item.noteHashes.length > MAX_FILES || item.noteHashes.some(h => !digest.test(h))) throw Error();
+    for (const item of selection) if (!name.test(item.agent) || item.noteHashes.some(h => !digest.test(h))) throw Error();
     let root = directory(undefined, '/')!;
     for (const part of parts) root = directory(root, part)!;
     const agents = directory(root, 'agents')!;

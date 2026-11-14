@@ -184,3 +184,26 @@ it('opens only allowlisted files, without write flags, writes, databases or proc
   const capture = capturePortableFiles(home, [{ agent: 'art', noteHashes: [] }]);
   expect(capture.map(f => f.bytes.toString())).toEqual(['CREED']); expect(opened).toEqual([join(agent, 'IDENTITY.md')]); expect(Database).not.toHaveBeenCalled();
 });
+it('refuses final line terminators in supplied names/hashes and never opens non-allowlisted section names', () => {
+  const { home, agent } = fixture(), hash = sha('ATTACHMENT');
+  for (const ending of ['\n','\r','\u2028','\u2029']) {
+    expect(() => capturePortableFiles(home, [{ agent: `art${ending}`, noteHashes: [] }])).toThrow(failure);
+    expect(() => capturePortableFiles(home, [{ agent: 'art', noteHashes: [`${hash}${ending}`] }])).toThrow(failure);
+    put(agent, `roles/private.md${ending}`, 'EXCLUDED_LINE_TERMINATOR');
+  }
+  const open = fs.openSync, opened: string[] = [];
+  vi.spyOn(fs, 'openSync').mockImplementation((...args: Parameters<typeof fs.openSync>) => {
+    const fd = Reflect.apply(open, fs, args); if (fs.fstatSync(fd).isFile()) opened.push(fs.realpathSync(`/proc/self/fd/${fd}`)); return fd;
+  });
+  expect(capturePortableFiles(home, [{ agent: 'art', noteHashes: [] }]).map(f => f.path)).toEqual(['agents/art/IDENTITY.md']);
+  expect(opened).toEqual([join(agent, 'IDENTITY.md')]);
+});
+it('applies file-count limits to captured files rather than agent count or repeated references', () => {
+  const { home, agent } = fixture(), hash = sha('ATTACHMENT');
+  put(agent, `note-files/${hash.slice(0, 2)}/${hash}`, 'ATTACHMENT');
+  const selection = [{ agent: 'art', noteHashes: Array<string>(4097).fill(hash) }];
+  for (let i = 0; i < 100; i++) { const id = `agent-${i}`; put(home, `agents/${id}/IDENTITY.md`, id); selection.push({ agent: id, noteHashes: [] }); }
+  const files = capturePortableFiles(home, selection);
+  expect(files).toHaveLength(102);
+  expect(files.filter(f => f.path.includes('/note-files/'))).toHaveLength(1);
+});
