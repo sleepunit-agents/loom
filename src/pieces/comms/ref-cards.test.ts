@@ -14,6 +14,17 @@ import { installComms } from './index.js';
 import { loadKey } from './crypto.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
+/** Only transport shape is needed; expectations narrow individual payloads. */
+interface Frame {kind:string;[key:string]:unknown}
+async function cardWindow(url:string,scope?:string){
+ const ws=new WebSocket(url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan'}});
+ const queue:Frame[]=[],waiters:((v:Frame)=>void)[]=[];
+ ws.on('message',raw=>{const v=JSON.parse(raw.toString()) as Frame,next=waiters.shift();if(next)next(v);else queue.push(v);});
+ const next=()=>queue.length?Promise.resolve(queue.shift()!):new Promise<Frame>(r=>waiters.push(r));
+ await once(ws,'open');cleanup.push(async()=>{if(ws.readyState===WebSocket.CLOSED)return;const done=once(ws,'close');ws.terminate();await done;});
+ ws.send(JSON.stringify({kind:'subscribe',type:'comms.refCards',...(scope?{scope}:{})}));return {next};
+}
+
 async function setup() {
  const home=mkdtempSync(join(tmpdir(),'comms-ref-cards-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const key=await loadKey(home), clock=new FakeClock();
@@ -78,14 +89,7 @@ it('deduplicates 60 refs and refuses mismatched owning ids or arbitrary navigati
 it('updates two exact-scope windows and clears on access loss, regrant and deletion',async()=>{
  const s=await setup();s.task('t-1');
  const scope=JSON.stringify({thread:s.thread,refs:['t-1',s.conversation]});
- async function window(scope?:string){
-  const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan'}});
-  const queue:any[]=[],waiters:((v:any)=>void)[]=[];
-  ws.on('message',raw=>{const v=JSON.parse(raw.toString()),next=waiters.shift();if(next)next(v);else queue.push(v);});
-  const next=()=>queue.length?Promise.resolve(queue.shift()):new Promise<any>(r=>waiters.push(r));
-  await once(ws,'open');cleanup.push(async()=>{if(ws.readyState===WebSocket.CLOSED)return;const done=once(ws,'close');ws.terminate();await done;});
-  ws.send(JSON.stringify({kind:'subscribe',type:'comms.refCards',...(scope?{scope}:{})}));return {next};
- }
+ const window=(scope?:string)=>cardWindow(s.app.url,scope);
  expect(await (await window()).next()).toMatchObject({kind:'set',records:[]});
  const a=await window(scope),b=await window(scope);
  for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'set',records:[{cards:{'t-1':{status:'Open'}}}]});
@@ -152,13 +156,7 @@ it('live target lifecycle and target-only ownership changes withdraw metadata in
  await s.comms.deliver('mark',target,1);
  const row=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(target) as {record:string}).record);
  const cv=row().conversation as string,scope=JSON.stringify({thread:s.thread,refs:[cv]});
- async function window(){
-  const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan'}});
-  const queue:any[]=[],waiters:((v:any)=>void)[]=[];
-  ws.on('message',raw=>{const v=JSON.parse(raw.toString()),next=waiters.shift();if(next)next(v);else queue.push(v);});
-  const next=()=>queue.length?Promise.resolve(queue.shift()):new Promise<any>(r=>waiters.push(r));
-  await once(ws,'open');cleanup.push(()=>ws.terminate());ws.send(JSON.stringify({kind:'subscribe',type:'comms.refCards',scope}));return {next};
- }
+ const window=()=>cardWindow(s.app.url,scope);
  const a=await window(),b=await window();
  for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'set',records:[{cards:{[cv]:{status:'Open'}}}]});
  const working=(state:boolean)=>s.comms.status('mark',target,state?'working':'done');
