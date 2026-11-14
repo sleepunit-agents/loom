@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { GraphQLObjectType, GraphQLSchema, GraphQLString } from 'graphql/index.js';
 import { afterEach, expect, it } from 'vitest';
 import { createDataSchema } from './database.js';
 import { dataQueries } from './queries.js';
@@ -84,4 +85,43 @@ it('ends a waiting selection when the data source closes', async () => {
   const { live, watch } = setup(), stream = watch(); await stream.next();
   const pending = stream.next(); live.close();
   await expect(pending).rejects.toThrow('access ended');
+});
+
+function heldSelection(update = false) {
+  let release!: (value: string) => void;
+  const result = new Promise<string>(resolve => { release = resolve; });
+  let first = true;
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    title: { type: GraphQLString, resolve: () => { if (update && first) { first = false; return 'Initial'; } return result; } },
+  } }) });
+  const live = new DataLive(); clean.push(() => { release('Late result'); live.close(); });
+  const stream = live.watch({ schema, query: '{ title }', valid: () => true });
+  return { live, stream, release };
+}
+
+it.each([false, true])('releases an executing selection on return before its resolver completes (update=%s)', async update => {
+  const { live, stream, release } = heldSelection(update);
+  if (update) { await stream.next(); live.changed(); }
+  const pending = stream.next();
+  await stream.return?.();
+  expect(await pending).toEqual({ done: true, value: undefined });
+  release('Late result');
+  expect(await stream.next()).toEqual({ done: true, value: undefined });
+});
+
+it.each([false, true])('ends an executing selection on close before its resolver completes (update=%s)', async update => {
+  const { live, stream, release } = heldSelection(update);
+  if (update) { await stream.next(); live.changed(); }
+  const pending = stream.next().then(value => value, error => error);
+  live.close();
+  const outcome = await pending;
+  expect(outcome).toBeInstanceOf(Error);
+  expect((outcome as Error).message).toContain('access ended');
+  release('Late result');
+  expect(await stream.next()).toEqual({ done: true, value: undefined });
+});
+
+it('refuses a new selection after shutdown', () => {
+  const { live, watch } = setup(); live.close();
+  expect(() => watch()).toThrow('access ended');
 });
