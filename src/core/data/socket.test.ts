@@ -170,3 +170,26 @@ it('sanitizes ordinary execution errors and observe failures without releasing p
   expect(JSON.stringify(messages)).not.toContain('PRIVATE');
   expect(messages.some(message=>message.type==='error'||message.payload?.errors?.length)).toBe(true);
 });
+
+it('isolates two authenticated socket viewers through interleaved reads and live refreshes', async () => {
+  const f = await setup(request => {
+    const id=request.headers.authorization;
+    return id==='owner'||id==='peer'?{viewer:{kind:'member',id},valid:()=>true}:undefined;
+  });
+  const { GraphQLString } = await import('graphql/index.js');
+  let revision=1;
+  f.setSchema(() => new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{
+    caller:{type:GraphQLString,resolve:(_source,_args,context)=>`${context.viewer.id}:${revision}`},
+  }})}));
+  const [owner,peer] = await Promise.all([f.open({authorization:'owner'}),f.open({authorization:'peer'})]);
+  const live={...selection,payload:{...selection.payload,variables:{query:'{ caller }'}}};
+  const initial=await Promise.all([owner,peer].map(ws=>read(ws,()=>ws.send(JSON.stringify(live)))));
+  expect(initial.map(result=>result.payload.data.observe.patches[0].value.caller)).toEqual(['owner:1','peer:1']);
+  revision=2;
+  const nextOwner=once(owner,'message'),nextPeer=once(peer,'message'); f.live.changed();
+  const changed=await Promise.all([nextOwner,nextPeer]);
+  expect(changed.map(raw=>JSON.parse(String(raw[0])).payload.data.observe.patches[0].value)).toEqual(['owner:2','peer:2']);
+  const ordinary={type:'subscribe',id:'read',payload:{query:'{ caller }'}};
+  const reads=await Promise.all([peer,owner].map(ws=>read(ws,()=>ws.send(JSON.stringify(ordinary)))));
+  expect(reads.map(result=>result.payload.data.caller)).toEqual(['peer:2','owner:2']);
+});
