@@ -120,5 +120,5 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
  live.register({name:'activity.window',ids:s=>s?[s]:[],read:window,inScope:(r,s)=>r.id===s,refreshOn:changed,expires:r=>(r as ActivityWindow).expires});
  live.register({name:'activity.entry',ids:s=>s?[s]:[],read,inScope:(r,s)=>r.id===s,refreshOn:changed,expires:r=>Math.min((r as ActivityOpen).expires??Infinity,startOf(dayBefore(isoDay(operations.clock.now(),tz),-1),tz))});
  live.register({name:'activity.access',ids:()=>['activity'],read:(_id,v)=>{const today=isoDay(operations.clock.now(),tz);return {id:'activity',allowed:agents(v).length>0,agents:agents(v).map(a=>a.agent),owner:ownerLabel(v),timezone:tz,today,windows:Array.from({length:11},(_,i)=>dayBefore(today,i*3)),expires:startOf(dayBefore(today,-1),tz)};},inScope:()=>true,refreshOn:changed,expires:r=>r.expires as number});
- return {close(){for(const db of sources.values())db.close();}};
+ return {window,read,close(){for(const db of sources.values())db.close();}};
 }
