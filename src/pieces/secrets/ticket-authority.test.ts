@@ -421,46 +421,23 @@ it.each(['released','uncertain'])('worker cannot settle an active claim via %s e
  expect(status).toBe(503);expect(f.state(t.id)).toEqual({state:'claimed'});expect(await c.current()).toBe(true);await c.finish(false);
 });
 
-it.each(['release','source','local','lost-worker-ack'] as const)('routes the original bound claim through real holder and worker channels: %s',async outcome=>{
+type RoutedOutcome='release'|'source'|'local'|'lost-worker-ack'|'lost-holder-ack'|'cancel';
+async function routedChannels(outcome:RoutedOutcome,daemon=false) {
  const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},inputs=workerSecretInputs();
  closes.push(()=>inputs.close());let local=true,proof:ReturnType<typeof remoteWorkerTicketProof>|undefined;
+ let entered!:()=>void,resume!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;}),wait=new Promise<void>(r=>{resume=r;});
  const writes:string[]=[];
- const pending=inputs.register(binding,new Writable({write(bytes,_encoding,done){writes.push(bytes.toString());done();}}),()=>local,async()=>proof?.current()??false,Date.now()+30_000);
- const t=f.tickets.admit(f.viewer,'API',pending);expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
- await f.authority.close();
- const central=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(central.close);
- proof=remoteWorkerTicketProof({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'),t.id,pending.id);closes.push(proof.close);
- const worker=await listenWorkerSecretInput({...f.server,socket:join(f.home,'input.sock')},f.fingerprint('holder'),inputs);closes.push(worker.close);
- const transport=workerSecretTransport({...f.config,socket:join(f.home,'input.sock')},f.fingerprint('daemon'));closes.push(transport.close);
- const authority=routedHolderAuthority(f.remote,[{binding,transport}]),bytes=Buffer.from('synthetic-routing-value');
- const read=vi.fn(async()=>{if(outcome==='source')throw Error('synthetic-private-error');return bytes;});
- const socket=join(f.home,'handoff.sock');
- const holder=await listenHolderHandoff({...f.config,socket}, {read}, f.fingerprint('daemon'),authority);closes.push(holder.close);
- const client=localHolderHandoff({...f.server,socket,servername:'holder.test'},f.fingerprint('holder'));closes.push(client.close);
- if(outcome==='local')local=false;
- const end=ServerResponse.prototype.end;
- const drop=outcome==='lost-worker-ack'?vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
-  if(this.req.url?.startsWith('/v1/input/'))this.socket?.destroy();return end.apply(this,args);
- }):undefined;
- try {
-  if(outcome==='release')await client.handTo(t.id);
-  else await expect(client.handTo(t.id)).rejects.toThrow(/^Secret handoff unavailable$/);
-  await holder.close();
-  expect(writes).toEqual(outcome==='release'||outcome==='lost-worker-ack'?['synthetic-routing-value']:[]);
-  expect(f.state(t.id)).toEqual({state:outcome==='release'?'claimed':'uncertain'});
-  expect(bytes.every(b=>b===0)).toBe(outcome!=='source');
-  await expect(client.handTo(t.id)).rejects.toThrow();
- }finally{drop?.mockRestore();bytes.fill(0);}
-});
-
-it.each(['release','source','local','lost-worker-ack','lost-holder-ack'] as const)('daemon completes the original claim across real holder and worker channels: %s',async outcome=>{
- const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},inputs=workerSecretInputs();
- closes.push(()=>inputs.close());let local=true,proof:ReturnType<typeof remoteWorkerTicketProof>|undefined;
- const writes:string[]=[];
- const pending=inputs.register(binding,new Writable({write(bytes,_encoding,done){writes.push(bytes.toString());done();}}),()=>local,async()=>proof?.current()??false,Date.now()+30_000);
+ const pending=inputs.register(binding,new Writable({write(bytes,_encoding,done){writes.push(bytes.toString());done();}}),()=>local,async()=>{
+  const current=await proof?.current()??false;
+  if(outcome==='cancel'){entered();await wait;}
+  return current;
+ },Date.now()+30_000);
  const socket=join(f.home,'handoff.sock');
  const client=localHolderHandoff({...f.server,socket,servername:'holder.test'},f.fingerprint('holder'));closes.push(client.close);
- const t=f.tickets.admitHandoff(f.viewer,'API',pending,client);expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ const completion=daemon?f.tickets.admitHandoff(f.viewer,'API',pending,client):undefined;
+ const t=completion??f.tickets.admit(f.viewer,'API',pending);
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
  await f.authority.close();
  const central=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(central.close);
  proof=remoteWorkerTicketProof({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'),t.id,pending.id);closes.push(proof.close);
@@ -474,13 +451,25 @@ it.each(['release','source','local','lost-worker-ack','lost-holder-ack'] as cons
  const drop=outcome==='lost-worker-ack'||outcome==='lost-holder-ack'?vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
   if(this.req.url?.startsWith(outcome==='lost-worker-ack'?'/v1/input/':'/v1/handoff/'))this.socket?.destroy();return end.apply(this,args);
  }):undefined;
+ const dispatch=()=>completion?completion.dispatch():client.handTo(t.id);
  try {
-  if(outcome==='release')await t.dispatch();
-  else await expect(t.dispatch()).rejects.toThrow(/^Secret handoff unavailable$/);
+  if(outcome==='release')await dispatch();
+  else if(outcome==='cancel') {
+   const rejected=expect(dispatch()).rejects.toThrow(/^Secret handoff unavailable$/);
+   await ready;
+   expect(f.state(t.id)).toEqual({state:'claimed'});expect(writes).toEqual([]);
+   pending.cancel();resume();await rejected;
+  }else await expect(dispatch()).rejects.toThrow(/^Secret handoff unavailable$/);
   await holder.close();
   expect(writes).toEqual(outcome==='release'||outcome==='lost-worker-ack'||outcome==='lost-holder-ack'?['synthetic-routing-value']:[]);
-  expect(f.state(t.id)).toEqual({state:outcome==='release'?'released':'uncertain'});
+  expect(f.state(t.id)).toEqual({state:outcome==='release'?(daemon?'released':'claimed'):'uncertain'});
   expect(bytes.every(b=>b===0)).toBe(outcome!=='source');
-  await expect(t.dispatch()).rejects.toThrow();
- }finally{drop?.mockRestore();bytes.fill(0);}
-});
+  if(outcome==='cancel') {
+   expect(await proof.current()).toBe(false);expect(await f.remote.claim(t.id)).toBeNull();
+   await expect(transport.deliver(pending.id,binding,Buffer.from('another-synthetic-value'))).rejects.toThrow();
+  }
+  await expect(dispatch()).rejects.toThrow();
+ }finally{resume();drop?.mockRestore();bytes.fill(0);}
+}
+it.each(['release','source','local','lost-worker-ack'] as const)('routes the original bound claim through real holder and worker channels: %s',outcome=>routedChannels(outcome));
+it.each(['release','source','local','lost-worker-ack','lost-holder-ack','cancel'] as const)('daemon completes the original claim across real holder and worker channels: %s',outcome=>routedChannels(outcome,true));
