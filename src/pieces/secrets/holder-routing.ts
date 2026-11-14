@@ -50,7 +50,8 @@ export function managedHolderAuthority(
   const authority: HolderHandoffAuthority = async id => {
     if (closed) return null;
     const original = generation;
-    const claim = await tickets.claim(id);
+    let claim: RemoteTicketClaim | null;
+    try { claim = await tickets.claim(id); } catch { return null; }
     if (!claim) return null;
     let invalid = false, attempted = false, abandoned = false;
     const abandon = async () => {

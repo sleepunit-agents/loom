@@ -104,3 +104,26 @@ it.each(['claim','current','delivery'] as const)('fences replacement across pend
  if(phase!=='delivery')expect(f.transport.deliver).not.toHaveBeenCalled();
  await c.close();
 });
+it('keeps acquisition diagnostics private',async()=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
+ f.tickets.claim.mockRejectedValueOnce(Error('PRIVATE-ACQUISITION-SENTINEL'));
+ expect(await c.authority(randomUUID())).toBeNull();
+ expect(f.transport.deliver).not.toHaveBeenCalled();expect(f.claim.finish).not.toHaveBeenCalled();
+ await c.close();
+});
+it('shutdown retires an outstanding destination exactly once',async()=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
+ const d=(await c.authority(randomUUID()))!;
+ await c.close();await c.close();await d.abandon();
+ expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
+ expect(await d.current()).toBe(false);
+ await expect(d.handTo(Buffer.from('synthetic'))).rejects.toThrow();
+ expect(f.transport.deliver).not.toHaveBeenCalled();
+});
+it('leaves a successful delivery to daemon settlement across replacement and shutdown',async()=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
+ const d=(await c.authority(randomUUID()))!;
+ await d.handTo(Buffer.from('synthetic'));
+ await c.replace([]);await c.close();
+ expect(f.claim.finish).not.toHaveBeenCalled();expect(await d.current()).toBe(false);
+});
