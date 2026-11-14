@@ -111,8 +111,17 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await a.bringToFront();
     await expect.poll(()=>a.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
     await a.evaluate(()=>document.fonts.ready);
-    await a.getByRole('link',{name:'Open art agent window',exact:true}).click();
+    const faceLink=a.getByRole('link',{name:'Open art agent window',exact:true});
+    // A live face preference can replace the pressed canvas before release. Navigation must survive it.
+    set({pixel:true},'agent-link-pixel');
+    await expect.poll(()=>faceLink.locator('canvas').count()).toBe(1);
+    const hit=await faceLink.boundingBox();if(!hit)throw Error('Agent link is not visible');
+    await a.mouse.move(hit.x+hit.width/2,hit.y+hit.height/2);await a.mouse.down();
+    set({pixel:false},'agent-link-drawn');
+    await expect.poll(()=>faceLink.locator('[data-slot=agent-face]').count()).toBe(1);
+    await a.mouse.up();
     await expect.poll(async()=>({path:new URL(a.url()).pathname,readers:await a.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]});
+    set({pixel:true},'agent-link-restore');
     await a.goto(app.url);
     // Exercise the real renderer through the database-backed display feed on both surfaces.
     const painted = async (page: typeof a, selector: string) => page.locator(selector).evaluateAll(nodes => nodes.some(node => {
