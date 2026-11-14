@@ -2,6 +2,7 @@ import {publicAncestors,PUBLIC_GENERATIONS,type PublicContinuation} from './publ
 import { runtimeDestination } from './destination.js';
 import { installPublicInputs } from './public-inputs.js';
 import { installPublicMetadata } from './public-metadata.js';
+import { recordPublicIncoming } from './public-incoming.js';
 import { rememberClockReceipt } from './private-export.js';
 import { installClockExecution } from './clock-execution.js';
 import type { Context } from '../../core/index.js';
@@ -157,7 +158,10 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       if(!native&&rows.some(hasFile))throw new OperationError('denied','File acknowledgement requires the native worker');
       if(!rows.every(row=>currentSource(row,job)))throw new OperationError('denied','Clock delivery authority ended');
       if(!rows.some(row=>row.seq===through)||rows.some(row=>row.released===null))throw new OperationError('conflict','Input has not been released to this body');
-      for(const row of rows)db.prepare('UPDATE runtime_clock_turns SET consumed=COALESCE(consumed,?) WHERE id=?').run(ctx.now,row.id);
+      for(const row of rows){
+        if(row.consumed===null)recordPublicIncoming(app,ctx,job,{id:row.id,kind:'wake'});
+        db.prepare('UPDATE runtime_clock_turns SET consumed=COALESCE(consumed,?) WHERE id=?').run(ctx.now,row.id);
+      }
       const keys=provenanceStore(db).read(job.conversation!)?.queue.map(row=>row.key)??[];
       provenanceStore(db).consumed(job.conversation!,keys.filter(key=>all.some(row=>key===row.id||key.startsWith(`${row.id}:person:`))));
       rememberClockReceipt(ctx,job);
