@@ -60,3 +60,56 @@ This is protocol coverage, not standalone startup: trusted admission transport,
 owner-created standalone pending requests, configured holder routing,
 `listenHolderHandoff` completion/uncertainty wiring and staging/value-free
 accounting remain required. No public operation or installed startup is activated.
+
+## Owner-configured holder routing and early failure retirement
+
+`routedHolderAuthority(remoteTicketAuthority(...), routes)` snapshots exact
+assignment-to-transport capabilities supplied by the owner. Each route contains
+an already pinned `workerSecretTransport`, never a caller endpoint. Duplicate
+assignments are rejected. Every assignment field, including an absent service,
+must match the original remote claim; legacy claims without a pending id are
+retired uncertain. The selected transport and pending id are retained for that
+original claim, and delivery is attempted at most once.
+
+The returned destination provides `abandon()`. `listenHolderHandoff` invokes it
+on every unsuccessful acquired destination, including invalid metadata, current
+checks, source failures, late authority resolution, timeout, disconnect and
+shutdown. It drains retirement on close, after any borrowed bytes have settled
+and been erased. Retirement is consumed before IO and is never retried after a
+lost settlement acknowledgement. Every destination must provide the retirement capability; malformed authority
+results without it are refused before source access.
+
+Successful holder delivery leaves the central ticket **claimed**. This unit does
+not implement the daemon's final completion/uncertainty protocol: that owner must
+retain the original ticket separately and settle it after the holder response,
+or uncertain on every missing/failed response. No success settlement is inferred
+from socket writes. The real TLS tests demonstrate source failure and local
+cancellation retiring the claim, and a lost worker acknowledgement retiring it
+uncertain even when the original stream received bytes. Trusted admission,
+standalone runner-owned input creation, daemon completion, production capacity
+and staging/value-free accounting remain prerequisites to activation.
+
+
+### Daemon-owned completion (unactivated)
+
+`secretTickets.admitHandoff(viewer, name, originalPending, configuredHolder)`
+returns the original central ticket metadata plus a one-use `dispatch()` closure.
+Retain that closure separately from the worker's original pending input. Supply
+an owner-configured pinned `localHolderHandoff` client, never a caller's endpoint
+or callback. Runtime provenance accepts only the original frozen client minted by
+`localHolderHandoff`; copied clients, wrappers and structural lookalikes are
+rejected before admission. The holder claims once through the existing authenticated authority;
+the daemon retains that exact original claim for completion. For these admissions
+the holder can only abandon, not settle success. The dispatch closure alone
+settles success after the complete authenticated empty holder acknowledgement and
+a synchronous check of the original central claim. Missing/failed responses,
+including a lost holder acknowledgement after a successful worker write, retire
+the original claim as uncertain without claiming again or retrying delivery.
+Early failure before claim also burns the original admission. Failed current
+proofs and staging holds cannot be overridden by a successful response.
+
+This API is not wired into daemon startup or a public operation. Real trusted
+worker admission transport and standalone runner-owned dedicated input creation
+remain prerequisites, along with production tombstone lifecycle/capacity and
+staging/value-free accounting evidence. Existing legacy `admit`/claim components
+remain unactivated and retain their prior holder-owned settlement behavior.

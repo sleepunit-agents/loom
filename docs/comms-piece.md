@@ -839,8 +839,13 @@ a job thread from authoritative same-agent spawn metadata. It preserves the
 supplied conversation instead of generating a normal Comms conversation. The
 first message is an encrypted, already-delivered agent brief, so assignment
 remains background until the member writes. Creation invokes no runtime start
-or end. The parent thread's member wins when they still own the agent; otherwise
-the first explicit agent owner receives an unparented job. Household-owner status
+or end. Trusted conversation metadata may supply an original `member`; creation
+and existing-thread retries must preserve that exact member. A private parent
+and any supplied ordinary-parent member must agree. Missing ownership refuses
+instead of falling back. Member and ownership changes during encryption refuse
+without creating a thread or parent links. Without that metadata field, the
+parent thread's member wins when they still own the agent; otherwise the first
+explicit agent owner receives an unparented job. Household-owner status
 alone never grants it. An authoritative optional label supplies the agent title.
 
 The job's deterministic first id and thread identity make concurrent creation and
@@ -1097,3 +1102,10 @@ The reply path uses Attention's synchronous metadata `get` role for routing.
 If a later public question getter decrypts asynchronously, retain an independent
 synchronous metadata read for this transaction path. Private question words
 continue to belong to Comms, not generic Attention rows or retry results.
+
+Original-member spawn metadata is a prerequisite only. Production still supplies
+no authoritative Runtime conversation lookup or trusted spawn producer. That
+producer must pass the original member and prove original parentage; it must
+never send a differently member-bound job through the absent-member fallback.
+This change grants no execution, private body access or principal authority,
+and does not alter imported/reset/write-off/policy execution holds.

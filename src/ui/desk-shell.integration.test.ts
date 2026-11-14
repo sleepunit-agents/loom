@@ -294,10 +294,35 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
             }else expect(await page.locator('.desk-rail-card[data-companion]').count()).toBe(0);
           }
           if(surface==='launcher') {
+            if(look==='neon'&&width===1280){
+              await page.getByRole('button',{name:'All apps',exact:true}).first().click();
+              await expect.poll(()=>page.getByRole('dialog').getByRole('region',{name:'Work',exact:true}).count()).toBe(1);
+              await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('system');
+              await expect.poll(()=>page.locator('.loom-lsec').count()).toBe(1);
+              await expect.poll(()=>page.locator('.loom-lsec__name').textContent()).toBe('System');
+              await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('passkey');
+              await expect.poll(()=>page.locator('.loom-lapp').count()).toBe(1);
+              // Enter on the account shortcut must activate it, never the search's first result.
+              await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('inbox');
+              await page.getByRole('button',{name:'Open your account',exact:true}).focus();
+              await page.keyboard.press('Enter');
+              await expect.poll(()=>page.locator('[data-tile=account]').count()).toBe(1);
+              await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
+              await page.getByRole('button',{name:'All apps',exact:true}).first().click();
+              await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('profile');
+              await page.keyboard.press('Enter');
+              expect(await page.locator('[data-tile=account]').count()).toBe(1);
+              await page.getByRole('button',{name:'All apps',exact:true}).first().click();
+              await page.getByRole('button',{name:'Close app launcher',exact:true}).focus();
+              await page.keyboard.press('Enter');
+              await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
+              await page.getByRole('button',{name:'Close Your account',exact:true}).click();
+              await expect.poll(()=>page.locator('[data-tile=account]').count()).toBe(0);
+            }
             await page.getByRole('button',{name:'All apps',exact:true}).first().click();
             await expect.poll(()=>page.getByRole('textbox',{name:'Find an app',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
             await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('inbox');
-            expect(await page.locator('.loom-lapp').count()).toBe(1);
+            await expect.poll(()=>page.locator('.loom-lapp').count()).toBe(1);
             await page.keyboard.press('Escape');
             await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
             await page.getByRole('button',{name:'All apps',exact:true}).first().click();

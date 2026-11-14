@@ -9,6 +9,7 @@ import type { Sharing, Viewer } from '../../core/index.js';
 import { runtimeHouseDestination, type HouseDestination } from '../runtime/role.js';
 import { grantId } from './grant-id.js';
 import { secretName } from './input.js';
+import { authenticatedHolderDispatch, type localHolderHandoff } from './holder-handoff.js';
 import { readSecretPolicy, requestDecision } from './policy.js';
 import type { Grant } from './role.js';
 
@@ -30,9 +31,14 @@ const effect = (id: string) => `secrets:handoff:${id}`;
 export function secretTickets(app: Foundation, sharing: () => Sharing, effects: OutsideEffects) {
   const proofs = new Map<string, HouseDestination>();
   const pending = new Map<string, string>();
+  // The daemon retains the SAME claim handed to its authenticated authority.
+  // Completion never calls claim again or recreates proof from durable rows.
+  const daemonOwned = new Set<string>();
+  const claimed = new Map<string, {current():boolean; finish(acknowledged:boolean):void}>();
   // Bounded non-expiring tombstones: this unactivated role fails closed after
   // 1024 bound admissions in one lifetime rather than permitting request reuse.
   const usedPending = new Set<string>();
+  const retireProof = (id:string) => {proofs.delete(id);pending.delete(id);claimed.delete(id);daemonOwned.delete(id);};
   const read = (id: string) => app.db.prepare('SELECT * FROM secrets_tickets WHERE id=?').get(id) as Ticket | undefined;
   const policy = () => (app.db.prepare("SELECT value FROM secrets_meta WHERE key='policy'").get() as {value:string}|undefined)?.value ?? '';
   function valid(t: Ticket, d: HouseDestination, state: Ticket['state']) {
@@ -43,14 +49,14 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
     const row = app.db.prepare('SELECT record FROM secrets_grants WHERE id=?').get(t.grant_id) as {record:string}|undefined;
     return row?.record === t.grant_record;
   }
-  return {
+  const tickets = {
     /** No operation input may supply agent, grant, job, runner, box or service. */
     admit(viewer: Viewer, name: string, request?: Readonly<{id:string; binding:SecretInputBinding}>): {id:string; expiresAt:number} {
       try {
         if (app.db.inTransaction || isClosing(app) || !secretName.safeParse(name).success) throw failed();
         for (const [id, d] of proofs) {
           const t = read(id);
-          if (!t || !['admitted','claimed'].includes(t.state) || !valid(t,d,t.state)) proofs.delete(id);
+          if (!t || !['admitted','claimed'].includes(t.state) || !valid(t,d,t.state)) {claimed.get(id)?.finish(false);retireProof(id);}
         }
         if (proofs.size >= 1024 || usedPending.size >= 1024) throw failed();
         const d = runtimeHouseDestination(app,sharing,viewer);
@@ -96,7 +102,8 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
           if (!fresh || !valid(fresh,d,'admitted') || app.db.prepare("UPDATE secrets_tickets SET state='claimed' WHERE id=? AND state='admitted'").run(id).changes !== 1) throw failed();
         })();
         let settled = false;
-        return Object.freeze({name:t.name, destination:d, ...(pending.has(id)?{pendingId:pending.get(id)!}:{}),
+        const owned=daemonOwned.has(id);
+        const original = Object.freeze({name:t.name, destination:d, ...(pending.has(id)?{pendingId:pending.get(id)!}:{}),
           current() {
             try {
               const fresh = read(id);
@@ -108,7 +115,7 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
           finish(acknowledged: boolean) {
             if (app.db.inTransaction) throw failed();
             if (settled) return;
-            settled = true; proofs.delete(id); pending.delete(id);
+            settled = true; retireProof(id);
             try {
               const fresh = read(id);
               const certain = acknowledged === true && !!fresh && valid(fresh,d,'claimed')
@@ -119,7 +126,63 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
             } catch { throw failed(); }
           },
         });
+        if(!owned)return original;
+        claimed.set(id,original);
+        return Object.freeze({...original,finish(acknowledged:boolean) {
+          // Holder may abandon, but only the daemon's original dispatch may
+          // acknowledge success after receiving the holder's authenticated ack.
+          if(acknowledged===true)throw failed();
+          original.finish(false);
+        }});
       } catch { return null; }
     },
+    /** Trusted daemon composition only. Retain this capability separately from
+     * the worker request. The holder capability must be the owner-configured
+     * pinned localHolderHandoff client; no public operation accepts it or a URL.
+     * A successful dispatch requires a complete authenticated empty holder ack
+     * AND the original still-current claim. Every other outcome burns admission.
+     * No retry, including after a lost response or settlement error.
+     */
+    admitHandoff(viewer:Viewer,name:string,request:Readonly<{id:string;binding:SecretInputBinding}>,
+      holder:ReturnType<typeof localHolderHandoff>) {
+      if(!request)throw failed();
+      const deliver=authenticatedHolderDispatch(holder);
+      const admitted=tickets.admit(viewer,name,request);
+      daemonOwned.add(admitted.id);
+      let attempted=false;
+      return Object.freeze({...admitted,
+        async dispatch():Promise<void> {
+          if(attempted||app.db.inTransaction)throw failed();
+          attempted=true;
+          let acknowledged=false;
+          try {
+            // The original admission proof remains live; never resolve a new
+            // Runtime destination while waiting for the holder.
+            const d=proofs.get(admitted.id),t=read(admitted.id);
+            if(!d||!t||!valid(t,d,'admitted'))throw failed();
+            await deliver(admitted.id);
+            const original=claimed.get(admitted.id);
+            if(!original?.current())throw failed();
+            original.finish(true);
+            acknowledged=true;
+          }catch {throw failed();}
+          finally {
+            if(!acknowledged) {
+              const original=claimed.get(admitted.id);
+              // Early holder failures may already have retired this claim.
+              // Missing holder responses still retire the retained original.
+              try {
+                if(original)original.finish(false);
+                else {
+                  retireProof(admitted.id);
+                  app.db.prepare("UPDATE secrets_tickets SET state='uncertain' WHERE id=? AND state='admitted'").run(admitted.id);
+                }
+              }catch { /* consumed; no reconstruction or retry */ }
+            }
+          }
+        },
+      });
+    },
   };
+  return tickets;
 }

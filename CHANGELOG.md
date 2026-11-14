@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
 - New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail.
+- Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
 
 - Check Clock lane reuse against current Runtime destination metadata; hold verified joins until conversation delivery can feed the existing body safely.
 - File spawned private Comms threads through unique owning metadata while preserving Runtime transport handles and execution holds.
@@ -25,11 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add unregistered one-use Secrets handoff tickets with durable claims, exact grant/Runtime fences and staging holds; real worker delivery remains disabled.
 
-- File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.
+- Bridges import accepts sparse per-agent channel flags, blocks unrepresentable differences with source field evidence, and identifies conflicting present entries.
 
 - Add member-private Inbox read facts without answering asks or copying draft words.
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
+- File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.
 - Clear private Comms working state from committed terminal Runtime jobs and recover missed completion notifications at startup.
 
 - Put the visible Comms thread’s agent above Needs you in the new rail, with selected priority and a short move.
@@ -1224,6 +1227,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 
 - Account can register this browser for notifications and remove its own live notification devices, with confirmed removal and original-request retries. Sending remains pending.
+
+- Add staged, durable own-device test notification sending in next mode; Account test controls and routine announcement dispatch remain pending.
 
 ## [0.16.1] - 2026-10-25
 

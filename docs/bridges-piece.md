@@ -930,7 +930,7 @@ tombstone without Runtime gates refuses. Routes use accepted routes/household an
 all agents' channels parts only when routes_for completeness permits it; otherwise
 they use the instance file. Offers affect completeness only; their flags never
 become accepted rules. Contradictory people, person/agent platform identities,
-channel primaries, threads, connection filters or per-agent channel flags refuse.
+channel primaries, threads, connection filters or contradictory present per-agent channel flags refuse.
 People readers remain person slugs. Unknown members/accounts and routes whose
 primary or readers cannot be projected remain private evidence (`retained`);
 the importer creates no member, grant, link or audience-widened route for them.
@@ -1039,3 +1039,26 @@ History response choice: the old Python reader treated null attachments as an
 empty list. The new REST transport refuses a supplied non-array attachment field
 (including null) as malformed evidence; an omitted field still means no
 attachments. This stricter source validation changes no reader authority.
+
+### Sparse accepted flags
+
+A missing flags map or missing channel entry is silence, not a conflicting entry.
+Only two present entries whose normalized fields disagree refuse; the error names
+shuttle.db, channels, the agent, channel and differing field, without values.
+Every present entry is validated before deciding whether it can be projected.
+A present null/non-object flags map refuses; invalid numeric lexemes refuse
+before serialization can turn their internal NaN marker into a nullable field,
+including any schema-recognized channel fields present in an accepted flag entry.
+Thread fields are validated before discarding their local permission flags for
+parent inheritance.
+
+The new route is global; accepted flags were per agent. If a non-default flag has
+any silent part, the importer conservatively blocks the entire channel and its
+threads for every imported Discord venue (ignore list), omitting its live route.
+This deliberately drops more traffic rather than widen peer, pair or reader
+permission. It does not discard readers or a pairing constraint into a runnable
+less restricted route. No silent part inherits another agent's rule. Explicit
+default-only entries need no block. Identical entries present in every part retain
+their rules. Private legacy-evidence.retained reports each dropped non-default
+field as source, collection, agent, channel and path; exact documents remain in
+stores. Review and repair these channels before removing their import blocks.

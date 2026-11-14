@@ -1,3 +1,4 @@
+import { installNotificationSending, type NotificationSendOptions } from './core/signin/notification-send.js';
 import { installAsyncSecretValuesFromFile, type SecretRetryKeyFiles } from './pieces/secrets/retry-key.js';
 import type { AsyncSecretMutations } from './pieces/secrets/async-values.js';
 import { startSecretReconciliation } from './pieces/secrets/reconciliation.js';
@@ -104,9 +105,10 @@ const secretMutationClosers = new WeakMap<Foundation, () => Promise<void>>();
 const secretAuthorities = new WeakMap<Foundation, Awaited<ReturnType<typeof listenHolderAuthority>>>();
 const bridgeDaemons = new WeakMap<Foundation, {close(): Promise<void>}>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
+const notificationClosers = new WeakMap<Foundation, () => Promise<void>>();
 const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
 export async function closeNext(app: Foundation) {
-  try { await secretMutationClosers.get(app)?.(); }
+  try { await notificationClosers.get(app)?.(); await secretMutationClosers.get(app)?.(); }
   finally {
     try { await bridgeDaemons.get(app)?.close(); }
     finally {
@@ -118,6 +120,7 @@ export async function closeNext(app: Foundation) {
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
+  notifications?: NotificationSendOptions;
   changes?: NextChangesOptions;
   secretAuthority?: AuthorityServerConfig;
   /** Trusted authenticated holder only; no discovery or automatic grants. */
@@ -235,6 +238,8 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
   mindTransports.set(app, sources);
   const effects = installEffects(app, sharing, !!options.staging);
+  const notifications=installNotificationSending(app,effects,options.notifications);
+  notificationClosers.set(app,notifications.close);
   if (!app.operations.has('clock.list')) {
     const jobs = installClock(app.db, app.operations, app.live, sharing, { provenance: conversations.clockProvenance, caller: conversations.approvalCaller, capacityConversation: conversations.capacityConversation, runtime: clockRuntime(app, effects, clockDestination(app, sharing)), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);

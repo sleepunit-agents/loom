@@ -1,8 +1,11 @@
-import {afterEach,expect,it} from 'vitest';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {IncomingMessage} from 'node:http';
+import https from 'node:https';
+import {localHolderHandoff} from './holder-handoff.js';
+import {afterEach,expect,it,vi} from 'vitest';
+import {mkdtempSync,rmSync,readFileSync,writeFileSync,chmodSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {randomUUID,X509Certificate} from 'node:crypto';
 import {fixture} from '../../fixture.js';
 import {startLoom} from '../../foundation.js';
 import {FakeClock,type Viewer} from '../../core/index.js';
@@ -194,4 +197,128 @@ it('does not burn the pending binding when admission itself rolls back',async()=
  expect(()=>f.tickets.admit(f.viewer,'API',request)).toThrow();
  f.app.db.exec('DROP TRIGGER fail_pending');const t=f.tickets.admit(f.viewer,'API',request);
  expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);expect(f.tickets.claim(t.id)?.pendingId).toBe(request.id);
+});
+
+
+async function testHolder(f:Awaited<ReturnType<typeof setup>>,run:(id:string)=>Promise<void>) {
+ const fixtureDir=new URL('./fixtures/lifecycle-tls/',import.meta.url);
+ for(const name of ['ca.pem','holder.pem','holder.key','daemon.pem','daemon.key'])writeFileSync(join(f.home,name),readFileSync(new URL(name,fixtureDir)),{mode:0o600});
+ const calls=vi.fn(run),socket=join(f.home,`holder-${randomUUID()}.sock`);
+ const server=https.createServer({ca:readFileSync(join(f.home,'ca.pem')),cert:readFileSync(join(f.home,'holder.pem')),key:readFileSync(join(f.home,'holder.key')),requestCert:true,rejectUnauthorized:true},(req,res)=>{
+  void (async()=>{
+   try {await calls(req.url!.split('/').at(-1)!);res.writeHead(204,{'content-length':0});res.end();}
+   catch {res.writeHead(503,{'content-length':0});res.end();}
+  })();
+ });
+ await new Promise<void>(resolve=>server.listen(socket,resolve));chmodSync(socket,0o600);
+ closes.push(()=>{server.closeAllConnections();return new Promise<void>(resolve=>server.close(()=>resolve()));});
+ const client=localHolderHandoff({socket,ca:join(f.home,'ca.pem'),cert:join(f.home,'daemon.pem'),key:join(f.home,'daemon.key'),servername:'holder.test'},new X509Certificate(readFileSync(join(f.home,'holder.pem'))).fingerprint256);
+ closes.push(client.close);return {client,calls};
+}
+it.each(['ack','missing-claim','lost-ack','source-failure','holder-settlement','runtime','grant','policy','expiry'] as const)('daemon owns one-use completion of the original admission: %s',async outcome=>{
+ const f=await setup(),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ let original:ReturnType<typeof f.tickets.claim>;
+ const holder=await testHolder(f,async(id:string)=>{
+  if(outcome==='missing-claim')return;
+  original=f.tickets.claim(id);expect(original).not.toBeNull();
+  if(outcome==='holder-settlement') {expect(()=>original!.finish(true)).toThrow();return;}
+  if(outcome==='source-failure') {original!.finish(false);throw Error('private-source-error');}
+  if(outcome==='lost-ack')throw Error('private-response-error');
+  if(outcome==='runtime')f.job({claimedAt:f.clock.now()+1});
+  if(outcome==='grant') {const {expiresAt:_,...revoke}=f.grant;f.call('secrets.revoke',revoke);}
+  if(outcome==='policy')f.call('secrets.policy',{default:'never',secrets:{}});
+  if(outcome==='expiry')f.clock.advance(30_000);
+ });
+ const t=f.tickets.admitHandoff(f.viewer,'API',request,holder.client),claim=vi.spyOn(f.tickets,'claim');
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);claim.mockClear();
+ const success=outcome==='ack'||outcome==='holder-settlement';
+ if(success)await t.dispatch();else await expect(t.dispatch()).rejects.toThrow(/^Secret handoff unavailable$/);
+ expect(holder.calls).toHaveBeenCalledExactlyOnceWith(t.id);
+ expect(claim).toHaveBeenCalledTimes(outcome==='missing-claim'?0:1);
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(t.id)).toEqual({state:success?'released':['grant','policy'].includes(outcome)?'revoked':'uncertain'});
+ expect(original?.current()??false).toBe(false);
+ await expect(t.dispatch()).rejects.toThrow();expect(holder.calls).toHaveBeenCalledTimes(1);
+ expect(f.tickets.claim(t.id)).toBeNull();
+ expect(()=>f.tickets.admit(f.viewer,'API',request)).toThrow();
+});
+it('burns an undispatched admission if its original Runtime assignment changes before dispatch',async()=>{
+ const f=await setup(),holder=await testHolder(f,async()=>{});
+ const t=f.tickets.admitHandoff(f.viewer,'API',{id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}},holder.client);
+ f.job({state:'done'});await expect(t.dispatch()).rejects.toThrow();
+ expect(holder.calls).not.toHaveBeenCalled();expect(f.tickets.claim(t.id)).toBeNull();
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets').get()).toEqual({state:'uncertain'});
+});
+it('retains the authenticated holder capability and rejects overlapping dispatch without a second IO',async()=>{
+ const f=await setup();let release!:()=>void,entered!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;});const wait=new Promise<void>(r=>{release=r;});
+ const holder=await testHolder(f,async(id:string)=>{expect(f.tickets.claim(id)).not.toBeNull();entered();await wait;});
+ const t=f.tickets.admitHandoff(f.viewer,'API',{id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}},holder.client);
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ expect(Object.isFrozen(holder.client)).toBe(true);
+ const dispatch=t.dispatch();await ready;await expect(t.dispatch()).rejects.toThrow();release();await dispatch;
+ expect(holder.calls).toHaveBeenCalledExactlyOnceWith(t.id);
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets').get()).toEqual({state:'released'});
+});
+it('never turns a staging hold into delivery or success and refuses dispatch within a transaction',async()=>{
+ const f=await setup(),holder=await testHolder(f,async(id:string)=>{expect(f.tickets.claim(id)).toBeNull();throw Error('held');});
+ const t=f.tickets.admitHandoff(f.viewer,'API',{id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}},holder.client);
+ let rejected!:Promise<void>;f.app.db.transaction(()=>{rejected=t.dispatch();})();
+ await expect(rejected).rejects.toThrow(/^Secret handoff unavailable$/);
+ expect(holder.calls).not.toHaveBeenCalled();
+ await expect(t.dispatch()).rejects.toThrow();
+ expect(f.app.effects!.status(`secrets:handoff:${t.id}`)).toBe('due');
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets').get()).toEqual({state:'uncertain'});
+ f.release(t.id);expect(f.tickets.claim(t.id)).toBeNull();await expect(t.dispatch()).rejects.toThrow();
+ expect(holder.calls).toHaveBeenCalledTimes(1);
+});
+it('does not retry a consumed original completion when persistence fails after holder acknowledgement',async()=>{
+ const f=await setup(),holder=await testHolder(f,async(id:string)=>{
+  expect(f.tickets.claim(id)).not.toBeNull();
+  f.app.db.exec("CREATE TRIGGER fail_completion BEFORE UPDATE ON secrets_tickets BEGIN SELECT RAISE(ABORT,'synthetic-private-error'); END");
+ });
+ const t=f.tickets.admitHandoff(f.viewer,'API',{id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}},holder.client);
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ await expect(t.dispatch()).rejects.toThrow(/^Secret handoff unavailable$/);
+ f.app.db.exec('DROP TRIGGER fail_completion');
+ expect(f.tickets.claim(t.id)).toBeNull();await expect(t.dispatch()).rejects.toThrow();
+ expect(holder.calls).toHaveBeenCalledTimes(1);expect(f.app.effects!.status(`secrets:handoff:${t.id}`)).toBe('started');
+ // Restart recovery marks interrupted started effects uncertain; persistence
+ // errors cannot authorize reconstruction of this consumed original proof.
+});
+it('rejects callback lookalikes and copied/wrapped holder clients before admission',async()=>{
+ const f=await setup(),holder=await testHolder(f,async()=>{}),fake=vi.fn(async(id:string)=>{f.tickets.claim(id);});
+ const request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ for(const client of [{handTo:fake,close:async()=>{}},{...holder.client},{handTo:holder.client.handTo,close:holder.client.close}]) {
+  expect(()=>f.tickets.admitHandoff(f.viewer,'API',request,client)).toThrow(/^Secret handoff unavailable$/);
+ }
+ expect(fake).not.toHaveBeenCalled();expect(holder.calls).not.toHaveBeenCalled();
+ expect(f.app.db.prepare('SELECT * FROM secrets_tickets').all()).toEqual([]);
+});
+
+it('waits for complete authenticated holder response processing before settling the original claim',async()=>{
+ const f=await setup(),holder=await testHolder(f,async(id:string)=>{expect(f.tickets.claim(id)).not.toBeNull();});
+ const t=f.tickets.admitHandoff(f.viewer,'API',{id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}},holder.client);
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ let entered!:()=>void,releaseEnd:(()=>void)|undefined;
+ const ready=new Promise<void>(r=>{entered=r;}),emit=IncomingMessage.prototype.emit;
+ // A zero-length 204 is complete on the wire at the header terminator. Hold
+ // client response-end processing, rather than pretending delayed server end
+ // delays that HTTP message, to distinguish resolving at headers from end.
+ const hold=vi.spyOn(IncomingMessage.prototype,'emit').mockImplementation(function(this:IncomingMessage,event:string|symbol,...args:unknown[]) {
+  const response=this as IncomingMessage&{req?:{path?:string}};
+  if(event==='end'&&response.req?.path===`/v1/handoff/${t.id}`) {
+   releaseEnd=()=>{emit.call(this,event,...args);};entered();return true;
+  }
+  return emit.call(this,event,...args);
+ });
+ let settled=false;const dispatch=t.dispatch().then(()=>{settled=true;});
+ try {
+  await ready;await Promise.resolve();
+  expect(settled).toBe(false);expect(holder.calls).toHaveBeenCalledExactlyOnceWith(t.id);
+  expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(t.id)).toEqual({state:'claimed'});
+  expect(f.app.effects!.status(`secrets:handoff:${t.id}`)).toBe('started');
+  releaseEnd!();await dispatch;expect(settled).toBe(true);
+  expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(t.id)).toEqual({state:'released'});
+  await expect(t.dispatch()).rejects.toThrow();expect(holder.calls).toHaveBeenCalledTimes(1);
+ }finally {hold.mockRestore();releaseEnd?.();await dispatch;}
 });
