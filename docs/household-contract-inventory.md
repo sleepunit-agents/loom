@@ -90,6 +90,7 @@ in [core/services.ts](../src/core/services.ts).
 | Token/session last use | Accepted next-mode HTTP/MCP admission, session status and incoming Live messages record throttled row-backed usage; pure validity checks and idle sockets do not |
 | Browser/session/token expiry checks | Sign-in enforces expiry at authentication; session-cap eviction happens at session creation. Link creation prunes expired links. No separate household expiry timer is installed |
 | Legacy HTTP push watch | **Pending** next notification job; do not start old `pushWatch` from next mode |
+| Legacy worker push display / notification tap | `nextWorker` displays a content-free loom notification and opens its same-origin destination (including next Comms threads), reusing a window when possible. Device registration, Account controls and daemon dispatch remain **pending** |
 | Legacy HTTP backup tick launching `loom backup tick` | **Pending** next backup job; do not call the detached old program from next mode |
 | Old per-listener settings/store discovery | No replacement poller; next composition selects row stores explicitly |
 
