@@ -66,6 +66,15 @@ it('deduplicates Slack retries with changed ACK ids and app_mention duplicates',
   expect(f.db.select().from(turns).all()).toHaveLength(1);
 });
 
+it.each(['discord', 'slack'] as const)('preserves %s receipt time across a delayed drain', platform => {
+  const f = fixture(), receivedAt = f.now();
+  if (platform === 'discord') f.receiver.discord(platform, f.discord(), f.checkpoint());
+  else f.receiver.slack(platform, f.slack());
+  f.clock.advance(15 * 60_000);
+  f.receiver.drain(platform);
+  expect(f.db.select().from(bridgeIncoming).get()).toMatchObject({ receivedAt, deliveredAt: f.now() });
+});
+
 it('retains a held receipt and retries current rules without blocking later events', () => {
   const f = fixture();
   f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'discord')).run();

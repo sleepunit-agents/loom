@@ -66,7 +66,7 @@ export class BridgeReceiver {
    * composition must report the failure, rather than spin an immediate retry. */
   drain(connection: string, limit = 64): number {
     const source = this.connection(connection);
-    return this.events.drain(connection, (_id, raw) => {
+    return this.events.drain(connection, (_id, raw, receivedAt) => {
       const payload = this.parse(raw);
       let message;
       if (source.platform === 'discord') {
@@ -86,7 +86,7 @@ export class BridgeReceiver {
         message = normalizeSlack(source, frame.payload, channel);
       }
       if (!message) return;
-      return this.incoming.receive(message, true).state !== 'held';
+      return this.incoming.receive(message, true, receivedAt).state !== 'held';
     }, limit);
   }
 

@@ -58,12 +58,14 @@ export class BridgeEvents {
    * receipt for retry, without blocking later rows in this pass. Throwing rolls
    * back that event's writes; earlier committed events stay consumed. The limit
    * bounds rows examined, and the return value counts receipts removed. */
-  drain(connection: string, consume: (id: string, event: Buffer) => void | boolean, limit = 64): number {
+  drain(connection: string, consume: (id: string, event: Buffer, receivedAt: string) => void | boolean, limit = 64): number {
     this.assertAvailable();
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 64) throw Error('Drain limit must be 1 through 64');
     this.sweep();
     const rows = this.db.select().from(bridgeRawEvents).where(eq(bridgeRawEvents.connection, connection))
-      .orderBy(sql`julianday(${bridgeRawEvents.receivedAt})`, bridgeRawEvents.id).limit(limit).all();
+      // Frames received in the same millisecond retain insertion order. Event
+      // ids (notably Discord sequence JSON) do not sort in arrival order.
+      .orderBy(sql`julianday(${bridgeRawEvents.receivedAt})`, sql`rowid`).limit(limit).all();
     let count = 0;
     for (const row of rows) {
       this.db.transaction(tx => {
@@ -71,7 +73,7 @@ export class BridgeEvents {
         const key = and(eq(bridgeRawEvents.connection, connection), eq(bridgeRawEvents.id, row.id));
         const current = tx.select().from(bridgeRawEvents).where(key).get();
         if (!current || Date.parse(current.expiresAt) <= this.clock.now()) return;
-        const result: unknown = consume(current.id, current.event);
+        const result: unknown = consume(current.id, current.event, current.receivedAt);
         if (result && typeof (result as PromiseLike<unknown>).then === 'function') throw Error('Event consumer must be synchronous');
         if (result === false) return;
         tx.delete(bridgeRawEvents).where(key).run();

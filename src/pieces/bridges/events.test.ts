@@ -27,6 +27,16 @@ function fixture() {
 
 const checkpoint = { session: 'session', sequence: 1, resumeUrl: 'wss://gateway.discord.gg/' };
 
+it('preserves arrival order for receipts retained in the same millisecond', () => {
+  const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
+  const ids = ['z', '2', '10', 'a'];
+  for (const id of ids) spool.retain('slack', id, f.input);
+  const seen: string[] = [];
+  spool.drain('slack', id => { seen.push(id); });
+  expect(seen).toEqual(ids);
+  spool.close();
+});
+
 it('commits held writes while retaining original bytes, bounds examined rows and skips past held rows', () => {
   const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
   spool.retain('slack', 'one', f.input);
