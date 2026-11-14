@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Exclude private dispatched Clock prompts and correlated Runtime/Sign-in copies from filtered exports and backups while preserving public records.
+
 - Add an explicit external dedicated secret-command worker with authenticated Runtime stop/history checks and drained shutdown, reusing the Claude worker control owner.
 
 - Read current sealed questions and send ephemeral private replies inline in next-mode Comms.

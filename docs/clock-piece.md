@@ -1431,7 +1431,11 @@ authorized Comms thread and revoke policy during preparation and at the gate.
 
 Runtime registers its own required export filter. A private Clock turn excludes
 its entire Runtime job/conversation chain, copied words, results, provenance,
-source receipts and matching Runtime effects/operation receipts. The original
+source receipts and matching Runtime effects/operation receipts. Wordless
+`acknowledgeClockInput` and `completeClockExecution` retry receipts (including
+public ACKs) are deliberately omitted: historical ACKs have no source/scope
+identity. Public work records remain; a restored retry cache is not execution
+evidence. The original
 turn's private scope still excludes the chain after a current job or binding
 summary changes. Clock continues to own exclusions for its own tables.
 

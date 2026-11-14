@@ -44,6 +44,10 @@ export function privateRuntimeExport(db: Db) {
  return {jobs,excludes(table:string,row:Record<string,unknown>){
   if(table==='core_effects')return effect(String(row.id));
   if(!table.startsWith('runtime_')&&table!=='core_operations')return false;
+  // Older ACK receipts have no private scope or source identity. Drop both
+  // wordless completion caches, including public ACKs, rather than inventing
+  // ownership for historical receipts or restoring them as execution evidence.
+  if(table==='core_operations'&&['runtime.acknowledgeClockInput','runtime.completeClockExecution'].includes(String(row.name)))return true;
   if(table==='core_operations'&&row.name==='core.releaseEffect'){
    const result=JSON.parse(String(row.result));if(effect(String(result?.value?.id)))return true;
   }

@@ -868,6 +868,14 @@ it.each(['original','cleared-summary','withdrawn','restarted'])('excludes a disp
   expect(turn).toBeTruthy();expect(await f.post(f.runner,'claimJob',{job:turn.job})).toMatchObject({ok:true});
   const input=await f.post(f.runner,'takeInput',{job:turn.job});expect(input).toMatchObject({ok:true});
   expect(await f.post(f.runner,'reportJob',{job:turn.job,state:'running'})).toMatchObject({ok:true});
+  if(mode==='original'||mode==='restarted'){
+   const admission=await f.post(input.value.credential,'beginClockExecution',{});expect(admission).toMatchObject({ok:true});
+   expect(await f.post(input.value.credential,'completeClockExecution',{execution:admission.value.execution})).toMatchObject({ok:true,value:{acknowledged:true}});
+  }else{
+   const read=await f.post(input.value.credential,'readConversation',{});expect(read).toMatchObject({ok:true});
+   const through=read.value.messages.at(-1).seq;
+   expect(await f.post(input.value.credential,'acknowledgeClockInput',{through})).toMatchObject({ok:true,value:{acknowledged:true}});
+  }
   return {id,...turn,credential:input.value.credential as string};
  };
  const secret=await file(true),publicTurn=await file(false);
@@ -877,10 +885,10 @@ it.each(['original','cleared-summary','withdrawn','restarted'])('excludes a disp
  // result after consumption and a read/native effect with a wordless receipt.
  f.app.db.prepare('INSERT INTO runtime_results VALUES (?,?)').run(secret.job,JSON.stringify({text:'PRIVATE_RESULT_COPY'}));
  for(const id of [`runtime:clock-read:${secret.job}:1`,`runtime:clock-native:clock:${secret.id}`]){
-  f.app.db.prepare('INSERT INTO core_effects VALUES (?,?,?,?)').run(id,'body-start','Synthetic held copy','due');
-  expect(f.call('core.releaseEffect',{id}).ok).toBe(true);
+  const inserted=f.app.db.prepare('INSERT OR IGNORE INTO core_effects VALUES (?,?,?,?)').run(id,'body-start','Synthetic held copy','due');
+  if(inserted.changes)expect(f.call('core.releaseEffect',{id}).ok).toBe(true);
  }
- f.app.db.prepare('UPDATE runtime_clock_turns SET consumed=1,released=1 WHERE job=?').run(secret.job);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE job=?').get(secret.job)).toEqual({consumed:expect.any(Number)});
  if(mode==='cleared-summary'){
   f.app.db.prepare("UPDATE runtime_jobs SET record=json_remove(record,'$.member','$.project') WHERE id=?").run(secret.job);
   f.app.db.prepare("UPDATE runtime_bindings SET record=json_remove(record,'$.member','$.project') WHERE id=?").run(secret.conversation);
@@ -888,7 +896,10 @@ it.each(['original','cleared-summary','withdrawn','restarted'])('excludes a disp
  if(mode==='withdrawn')expect(await f.app.operations.callAsync('socket',owner,'clock.cancel',{id:secret.id},'withdraw-private',true)).toMatchObject({ok:true});
  if(mode==='restarted')await f.restart();
  const before=f.app.db.prepare('SELECT * FROM runtime_clock_turns').all();
+ const acknowledgements=f.app.db.prepare("SELECT id FROM core_operations WHERE name IN ('runtime.acknowledgeClockInput','runtime.completeClockExecution')").all() as {id:string}[];
+ expect(acknowledgements).toHaveLength(2);
  const tables=exportDatabase(f.app.db),text=JSON.stringify(tables);
+ for(const {id} of acknowledgements)expect(tables.find(t=>t.name==='core_operations')!.rows.some(row=>row.id===id)).toBe(false);
  expect(text).toContain(publicWords);expect(text).not.toContain(privateWords);
  for(const table of tables.filter(t=>t.name.startsWith('runtime_')||['core_operations','core_effects'].includes(t.name))){
   const saved=JSON.stringify(table.rows);
