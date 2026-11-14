@@ -52,6 +52,21 @@ it('deduplicates all sources and lets only the running conversation job take and
   expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual(ids.slice(1));
   expect(() => service.send({ toKind: 'agent', to: 'mark', conversation: cv.id, source: 'handoff', fromKind: 'agent' })).toThrow('Recipient differs');
 });
+it('leaves muted mail waiting when a running job takes other mail in the same conversation', () => {
+  const { db, service, cv } = fixture();
+  const send = () => service.send({ toKind: 'agent', to: 'art', conversation: cv.id, source: 'trigger', fromKind: 'schedule' });
+  const muted = send(), dim = send();
+  db.update(inbox).set({ volume: 'mute' }).where(eq(inbox.id, muted.id)).run();
+  db.update(inbox).set({ volume: 'dim' }).where(eq(inbox.id, dim.id)).run();
+  db.insert(jobs).values({ id: 'job-1', agent: 'art', conversation: cv.id, title: 'Find pump', state: 'running', brief: '', model: 'model-1', startedByKind: 'member', startedBy: 'jonathan', houseRepository: '', houseFile: '', houseBranch: '', queuedAt: service.now() }).run();
+  db.update(conversations).set({ job: 'job-1' }).where(eq(conversations.id, cv.id)).run();
+  expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual([dim.id]);
+  expect(service.item(muted.id)).toMatchObject({ state: 'waiting', job: null, takenAt: null });
+  db.update(inbox).set({ volume: 'full' }).where(eq(inbox.id, muted.id)).run();
+  expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual([muted.id, dim.id]);
+  db.update(inbox).set({ volume: 'mute' }).where(eq(inbox.id, dim.id)).run();
+  expect(service.take(cv.id, 'job-1').map(i => i.id)).toEqual([muted.id]);
+});
 it('records one answer and read mark, and returns exactly one answer item to the agent', () => {
   const { db, service, cv, advance } = fixture();
   const question = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'thread', fromKind: 'agent', fromId: 'art', words: 'Order it?', answers: 'yes-no', ifYes: 'I order it today.', ifNo: 'I find a cheaper one.' });
@@ -68,9 +83,11 @@ it('keeps source decisions at their source and resolves linked questions without
   const { db, service, cv } = fixture();
   const item = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'task', sourceId: 't-1', fromKind: 'agent', words: 'Book the electrician?', answers: 'yes-no', waitsOnKind: 'task', waitsOnId: 't-1', link: '/tasks/t-1' });
   expect(() => service.answer(item.id, 'jonathan', 'yes')).toThrow('linked source');
+  const unlinked = service.send({ toKind: 'person', to: 'jonathan', source: 'task', sourceId: 't-2', fromKind: 'agent', words: 'Source owns this?', answers: 'yes-no' });
+  expect(() => service.answer(unlinked.id, 'jonathan', 'yes')).toThrow('linked source');
   expect(service.resolve('task', 't-1', 'Task closed')[0]).toMatchObject({ state: 'resolved', answer: null, resolution: 'Task closed' });
   expect(service.resolve('task', 't-1', 'Task closed')).toEqual([]);
-  expect(db.select().from(inbox).all()).toHaveLength(1);
+  expect(db.select().from(inbox).all()).toHaveLength(2);
 });
 it('revises digests by run, replaces lists, resolves old questions and rolls back a failed rewrite', () => {
   const { db, service, cv } = fixture();

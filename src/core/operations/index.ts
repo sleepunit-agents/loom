@@ -1,3 +1,4 @@
+import { internalCaller, isInternalCaller, wasInternalCaller, closeInternalCallers } from '../internal.js';
 import { statement } from '../db/index.js';
 import { invalidateBuiltinServices, unregisterBuiltinServices } from '../services.js';
 import { createHash } from 'node:crypto';
@@ -68,6 +69,9 @@ function canonical(value: unknown): string {
   if (value !== null && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`;
   return JSON.stringify(value);
 }
+function callerKey(viewer: Viewer): string {
+  return (wasInternalCaller(viewer) ? 'internal:' : '') + canonical(viewer);
+}
 export class Operations {
   // Heterogeneous schemas are erased only at registration; parsing restores each operation's input.
   private frames: Change[][] = [];
@@ -78,7 +82,7 @@ export class Operations {
     migrate(db, 'core', [{ number: 1, sql: 'CREATE TABLE core_operations (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))' }]);
     this.expire();
   }
-  close() { this.stopExpiry?.(); unregisterBuiltinServices(this); }
+  close() { closeInternalCallers(this); this.stopExpiry?.(); unregisterBuiltinServices(this); }
   private expire() {
     this.stopExpiry?.();
     statement(this.db, 'DELETE FROM core_operations WHERE expires <= ?').run(this.clock.now());
@@ -97,9 +101,10 @@ export class Operations {
    * must bind the complete identity and recheck the original caller's CURRENT
    * authority; neither admission, preparation nor run is invoked here. */
   recoverWrite(viewer: Viewer, receipt: Readonly<WriteReceipt>): Result {
+    if (this.invalidInternal('direct', viewer)) return failure('denied', 'Internal caller unavailable');
     if (this.db.inTransaction || this.frames.length) return failure('unavailable', 'Recovery must own the outer transaction');
     const op = this.ops.get(receipt.name);
-    if (!op?.write || !op.recover || canonical(viewer) !== receipt.viewer || !receipt.id || receipt.id.length > 200)
+    if (!op?.write || !op.recover || callerKey(viewer) !== receipt.viewer || !receipt.id || receipt.id.length > 200)
       return failure('unavailable', 'Recovery identity unavailable');
     const changes: Change[] = [];
     this.frames.push(changes);
@@ -136,8 +141,25 @@ export class Operations {
   }
   /** Trusted metadata for local post-call receipts. Never returns input or output. */
   retryDeadline(viewer: Viewer, id: string, name: string): number | undefined {
-    const row=statement(this.db, 'SELECT name,expires FROM core_operations WHERE viewer=? AND id=?').get(canonical(viewer),id) as {name:string;expires:number}|undefined;
+    const row=statement(this.db, 'SELECT name,expires FROM core_operations WHERE viewer=? AND id=?').get(callerKey(viewer),id) as {name:string;expires:number}|undefined;
     return row?.name===name && row.expires>this.clock.now() ? row.expires : undefined;
+  }
+  /** Installed modules use this local handle. No transport exposes it. Labels
+   * identify retry receipts; they are never evidence of internal authority. */
+  internal(id: string) {
+    if (!/^[a-z][a-z0-9-]*$/.test(id)) throw new Error('Invalid module name');
+    const viewer = internalCaller(this, id);
+    return {
+      viewer,
+      call: (name: string, input: unknown, id?: string) => this.call('direct', viewer, name, input, id),
+      callAsync: (name: string, input: unknown, id?: string) => this.callAsync('direct', viewer, name, input, id),
+    };
+  }
+  private mayCall(door: Door, viewer: Viewer, op: Operation<any>, input: unknown): boolean { // eslint-disable-line @typescript-eslint/no-explicit-any
+    return door === 'direct' && isInternalCaller(viewer, this) || op.may(viewer, input, this.db);
+  }
+  private invalidInternal(door: Door, viewer: Viewer): boolean {
+    return wasInternalCaller(viewer) && (door !== 'direct' || !isInternalCaller(viewer, this));
   }
   has(name: string) { return this.ops.has(name); }
   offered(door: Door) { return [...this.ops.values()].filter(o => !o.doors || o.doors.includes(door)).map(o => ({ name: o.name, input: o.input, output: o.output, write: !!o.write, cli: o.cli })); }
@@ -146,6 +168,7 @@ export class Operations {
     for (const op of this.offered('mcp')) register(op.name, op.input, (v, input, id) => this.call('mcp', v, op.name, input, id));
   }
   async callAsync(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, window = false, valid: () => boolean = () => true): Promise<Result> {
+    if (this.invalidInternal(door, viewer)) return failure('denied', 'Internal caller unavailable');
     if (!valid()) return failure('denied', 'Authentication ended');
     const op = this.ops.get(name);
     if (!op) return failure('not-found', 'Unknown operation');
@@ -162,7 +185,7 @@ export class Operations {
         const prior = this.execute(door, viewer, name, input, id, undefined, window, true);
         if (!(prior instanceof PreparationNeeded)) return prior;
         receipt = prior.receipt;
-      } else if (!op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
+      } else if (!this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
       const prepared = await op.prepare?.(parsed.data, {viewer, receipt});
       if (!valid()) return failure('denied', 'Authentication ended');
       return this.execute(door, viewer, name, input, id, prepared, window);
@@ -175,6 +198,7 @@ export class Operations {
   private execute(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, prepared?: unknown, window?: boolean): Result;
   private execute(door: Door, viewer: Viewer, name: string, input: unknown, id: string | undefined, prepared: unknown, window: boolean, preflight: true): Result | PreparationNeeded;
   private execute(door: Door, viewer: Viewer, name: string, input: unknown, id?: string, prepared?: unknown, window = false, preflight = false): Result | PreparationNeeded {
+    if (this.invalidInternal(door, viewer)) return failure('denied', 'Internal caller unavailable');
     const op = this.ops.get(name);
     if (!op) return failure('not-found', 'Unknown operation');
     if ((op.windowOnly && (!window || door !== 'socket' || viewer.kind !== 'member')) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
@@ -189,8 +213,8 @@ export class Operations {
     try {
       result = this.db.transaction((): Result | PreparationNeeded => {
         const now = this.clock.now();
-        if ((op.windowOnly || (typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy)) && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
-        const who = canonical(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, actor: viewer, input: parsed.data, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
+        if ((op.windowOnly || (typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy)) && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
+        const who = callerKey(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, actor: viewer, input: parsed.data, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
         if (op.write) {
           statement(this.db, 'DELETE FROM core_operations WHERE expires <= ?').run(now);
           const old = statement(this.db, 'SELECT * FROM core_operations WHERE viewer = ? AND id = ?').get(who, id) as { name: string; input_hash: string; result: string } | undefined;
@@ -206,7 +230,7 @@ export class Operations {
           recovered = recover(ctx);
           if (recovered) break;
         }
-        if (!recovered && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
+        if (!recovered && !this.mayCall(door, viewer, op, parsed.data)) return failure('denied', 'Permission denied');
         if (preflight && !recovered) {
           const admitted: unknown = op.admit?.(ctx, parsed.data);
           if (admitted instanceof Promise) { void admitted.catch(() => {}); throw new Error('Admission must be synchronous'); }

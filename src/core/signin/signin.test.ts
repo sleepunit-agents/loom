@@ -1,3 +1,6 @@
+import { z } from 'zod';
+import { maySee } from '../../policy.js';
+import { SharingDatabase } from '../household/sharing.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { randomBytes, generateKeyPairSync, createHash, sign } from 'node:crypto';
 import { once } from 'node:events';
@@ -305,4 +308,31 @@ it('records open-socket calls and unsubscriptions for browser and bearer credent
   expect(f.s.tokens.used()[hash(f.agent)]).toBe(new Date(f.clock.now()).toISOString());
   ws.send(JSON.stringify({kind:'unsubscribe',type:'task'}));ws.send('invalid JSON');await once(ws,'message');
   expect(f.s.sessions.get('sessions',hash(f.cookie))?.seenAt).toBe(f.clock.now()/1000);
+});
+
+it('keeps a same-name service token outside installed authority across HTTP, MCP and sockets',async()=>{
+ const f=await setup(),module=f.loom.operations.internal('changes');let writes=0;
+ const scope={type:'change',member:'pollock'},sharing=()=>new SharingDatabase(f.loom.db,f.home).sharing();
+ f.loom.operations.register({name:'changes.internalProbe',write:true,input:z.object({}),output:z.object({writes:z.number(),words:z.string()}),
+  may:v=>maySee(v,scope,sharing()),run:()=>({writes:++writes,words:'Private fixture words'})});
+ expect(module.call('changes.internalProbe',{},'same-id')).toEqual({ok:true,value:{writes:1,words:'Private fixture words'}});
+ const token=randomBytes(32).toString('hex');
+ f.s.tokens.change(tokens=>tokens.push({label:'outside-changes',role:'service:changes',sha256:hash(token),created:new Date(f.clock.now()).toISOString()}));
+ expect(f.loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.setPrincipal',{kind:'service',id:'changes',active:true},'activate')).toMatchObject({ok:true});
+ const viewer=f.s.token(hash(token))!.viewer;
+ expect(viewer).toEqual(module.viewer);expect(viewer).not.toBe(module.viewer);expect(maySee(viewer,scope,sharing())).toBe(false);
+ const headers={authorization:`Bearer ${token}`};
+ const http=await f.post('/api/changes/internalProbe',{input:{},id:'same-id'},headers);
+ expect(http.status).toBe(403);expect(await http.json()).toMatchObject({ok:false,code:'denied'});
+ const mcp=await f.post('/mcp',{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'changes.internalProbe',arguments:{input:{},id:'same-id'}}},{...headers,accept:'application/json, text/event-stream'});
+ expect(mcp.status).toBe(200);
+ const result=await mcp.json();expect(result.result.isError).toBe(true);
+ expect(JSON.parse(result.result.content[0].text)).toMatchObject({ok:false,code:'denied'});
+ const ws=await f.open(headers),answer=new Promise<unknown>(resolve=>{
+  const receive=(raw:unknown)=>{const message=JSON.parse(String(raw));if(message.kind==='result'&&message.request==='probe'){ws.off('message',receive);resolve(message);}};
+  ws.on('message',receive);
+ });
+ ws.send(JSON.stringify({kind:'call',request:'probe',name:'changes.internalProbe',input:{},id:'same-id'}));
+ expect(await answer).toMatchObject({kind:'result',request:'probe',result:{ok:false,code:'denied'}});
+ expect(writes).toBe(1);
 });

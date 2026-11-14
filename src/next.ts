@@ -1,3 +1,6 @@
+import { dataHttp } from './core/data/http.js';
+import { dataDatabase } from './core/data/database.js';
+import { dataAuthentication } from './core/data/authentication.js';
 import { installDiscordHistory, type HistoryAccess } from './pieces/bridges/history-operation.js';
 import { discordApi } from './pieces/bridges/discord-api.js';
 import { runtimeDiscordHistoryPermit } from './pieces/runtime/role.js';
@@ -77,7 +80,7 @@ import { migrateHouseholdTables } from './core/household/schema.js';
 import { HouseholdDatabase } from './core/household/document.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { installEffects } from './core/effects.js';
-import { signin, installSignin, sameOrigin } from './core/signin/index.js';
+import { signin, installSignin, sameOrigin, relyingParty } from './core/signin/index.js';
 import { signinRoutes } from './core/signin/routes.js';
 import { mindSources } from './pieces/mind/sources.js';
 import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
@@ -354,6 +357,11 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   const api = httpDoor(app, auth);
   const root = resolve(options.webRoot ?? resolve(import.meta.dirname, '../dist/web'));
   const routes = new Hono<{ Bindings: { incoming: IncomingMessage } }>();
+  // The generated door uses the SAME connection and fresh shared credentials.
+  // Existing homes are deliberately not bootstrapped or migrated here.
+  const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
+  const data = dataHttp(sharedData, dataAuthentication(sharedData, () => app.operations.clock.now()), relyingParty(process.env)?.origin);
+  routes.all('/graphql', c => data.fetch(c.req.raw));
   routes.route('/', signinRoutes(app));
   routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
   routes.all('/mcp', async c => {

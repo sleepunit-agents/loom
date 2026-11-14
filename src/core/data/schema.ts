@@ -872,6 +872,9 @@ export const jobs = sqliteTable('jobs', {
   state: text('state', { enum: ["queued", "starting", "running", "waiting", "done", "failed", "stopped", "lost"] }).notNull(),
   brief: text('brief').notNull(),
   model: text('model').notNull(),
+  // Actual placement, absent until an account/harness has been selected.
+  account: text('account').references((): AnySQLiteColumn => modelAccounts.id),
+  harness: text('harness'),
   startedByKind: text('started_by_kind').notNull(),
   startedBy: text('started_by').notNull(),
   retryOf: text('retry_of').references((): AnySQLiteColumn => jobs.id),
@@ -985,6 +988,29 @@ export const modelAccounts = sqliteTable('model_accounts', {
   check('model_accounts_resets_at_utc', utc(t.resetsAt)),
   check('model_accounts_has_room_boolean', sql`${t.hasRoom} in (0, 1)`),
   check('model_accounts_usage_range', sql`${t.usage} is null or ${t.usage} between 0 and 1`),
+]);
+
+/** Provider usage observations for every account/window, shared across agents.
+ * The site describes an account summary, but is silent on multiple simultaneous
+ * limits. Keep each provider window as named columns rather than an opaque blob.
+ * A missing observation is unknown; reset time alone is not fresh capacity.
+ */
+export const modelAccountWindows = sqliteTable('model_account_windows', {
+  account: text('account').notNull().references((): AnySQLiteColumn => modelAccounts.id),
+  window: text('window').notNull(),
+  usage: real('usage'),
+  usageReadAt: text('usage_read_at'),
+  resetsAt: text('resets_at'),
+  durationMs: real('duration_ms').notNull(),
+  reserve: real('reserve').notNull().default(0.05),
+}, t => [
+  primaryKey({ columns: [t.account, t.window] }),
+  check('model_account_windows_name', sql`length(trim(${t.window})) > 0`),
+  check('model_account_windows_usage_range', sql`${t.usage} is null or ${t.usage} between 0 and 1`),
+  check('model_account_windows_usage_read_at_utc', utc(t.usageReadAt)),
+  check('model_account_windows_resets_at_utc', utc(t.resetsAt)),
+  check('model_account_windows_duration_positive', sql`${t.durationMs} > 0 and ${t.durationMs} < 1e100`),
+  check('model_account_windows_reserve_range', sql`${t.reserve} between 0 and 1`),
 ]);
 
 /** Which worker machines an account is signed in on. */
@@ -1555,6 +1581,7 @@ export const jobsRelations = relations(jobs, ({ one, many }) => ({
   memberRow: one(members, { fields: [jobs.member], references: [members.id], relationName: 'jobs_member' }),
   boxRow: one(boxes, { fields: [jobs.box], references: [boxes.id], relationName: 'jobs_box' }),
   conversationRow: one(conversations, { fields: [jobs.conversation], references: [conversations.id], relationName: 'jobs_conversation' }),
+  accountRow: one(modelAccounts, { fields: [jobs.account], references: [modelAccounts.id], relationName: 'jobs_account' }),
   retryOfRow: one(jobs, { fields: [jobs.retryOf], references: [jobs.id], relationName: 'jobs_retry_of' }),
   jobsByRetryOf: many(jobs, { relationName: 'jobs_retry_of' }),
   endedByRow: one(members, { fields: [jobs.endedBy], references: [members.id], relationName: 'jobs_ended_by' }),
@@ -1596,8 +1623,14 @@ export const agentDeniedToolsRelations = relations(agentDeniedTools, ({ one, man
 }));
 
 export const modelAccountsRelations = relations(modelAccounts, ({ one, many }) => ({
+  jobsByAccount: many(jobs, { relationName: 'jobs_account' }),
+  modelAccountWindowsByAccount: many(modelAccountWindows, { relationName: 'model_account_windows_account' }),
   ownerRow: one(members, { fields: [modelAccounts.owner], references: [members.id], relationName: 'model_accounts_owner' }),
   modelAccountBoxesByAccount: many(modelAccountBoxes, { relationName: 'model_account_boxes_account' }),
+}));
+
+export const modelAccountWindowsRelations = relations(modelAccountWindows, ({ one }) => ({
+  accountRow: one(modelAccounts, { fields: [modelAccountWindows.account], references: [modelAccounts.id], relationName: 'model_account_windows_account' }),
 }));
 
 export const modelAccountBoxesRelations = relations(modelAccountBoxes, ({ one, many }) => ({
@@ -1838,6 +1871,7 @@ export const tables = {
   agentPeople,
   agentDeniedTools,
   modelAccounts,
+  modelAccountWindows,
   modelAccountBoxes,
   agentModels,
   bridgeConnections,
@@ -1916,6 +1950,7 @@ export const schema = { ...tables, ...plumbing,
   agentPeopleRelations,
   agentDeniedToolsRelations,
   modelAccountsRelations,
+  modelAccountWindowsRelations,
   modelAccountBoxesRelations,
   agentModelsRelations,
   bridgeConnectionsRelations,
