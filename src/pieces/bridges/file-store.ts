@@ -35,7 +35,7 @@ export function bridgeFileStore(db:Db, now:()=>number) {
   return {
     /** Internal fetch orchestration only: owned copies of still-live cached
      * files, or undefined for missing IDs. Never grants a body read. */
-    cached(permit:BridgeFileSavePermit):(FetchedSlackFile|undefined)[] {
+    cached(permit:BridgeFileSavePermit):((FetchedSlackFile & {expiresAt:number})|undefined)[] {
       const owned:Buffer[]=[];
       try {
         const scope=scopeKey(permit),delivery=word.parse(permit.delivery),deliveredAt=permit.deliveredAt;
@@ -54,7 +54,7 @@ export function bridgeFileStore(db:Db, now:()=>number) {
           if(Buffer.isBuffer(row.bytes))owned.push(row.bytes);
           if(row.name!==safeName(f.name)||!Buffer.isBuffer(row.bytes)||row.bytes.length>SLACK_FILE_BYTES||hash(row.bytes)!==row.digest
             ||tick(now)>=row.created+BRIDGE_FILE_RETENTION)throw held();
-          return {id:f.id,name:row.name,bytes:row.bytes};
+          return {id:f.id,name:row.name,bytes:row.bytes,expiresAt:row.created+BRIDGE_FILE_RETENTION};
         });
         if(!current()||tick(now)>=deliveredAt+BRIDGE_FILE_RETENTION)throw held();
         return result;

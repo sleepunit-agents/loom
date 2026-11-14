@@ -11,14 +11,15 @@ const held=()=>Error('Bridge file unavailable');
  * stop before save may repeat GET on restart. No network exactly-once claim. */
 export async function bridgeFilesOnce(db:Db,now:()=>number,permit:BridgeFileSavePermit,
  fetch:(permit:BridgeFileSavePermit)=>Promise<FetchedSlackFile[]>):Promise<void> {
- let fetched:FetchedSlackFile[]=[],cached:(FetchedSlackFile|undefined)[]=[];
+ let fetched:FetchedSlackFile[]=[],cached:((FetchedSlackFile & {expiresAt:number})|undefined)[]=[];
+ let cachedExpiry=Infinity;
  let release:(()=>void)|undefined,queue:Map<string,Promise<void>>|undefined,key:string|undefined,tail:Promise<void>|undefined;
  try {
   // Snapshot before waiting. A queued caller never inherits another's proof.
   const snapshot={agent:permit.agent,venue:permit.venue,workspace:permit.workspace,channel:permit.channel,delivery:permit.delivery,
    deliveredAt:permit.deliveredAt,files:structuredClone(permit.files)};
-  const frozen=JSON.stringify(snapshot);
-  const current=()=>permit.current()&&JSON.stringify({agent:permit.agent,venue:permit.venue,workspace:permit.workspace,channel:permit.channel,
+  const frozen=JSON.stringify(snapshot),proof=permit.current;
+  const current=()=>permit.current===proof&&proof.call(permit)&&now()<cachedExpiry&&JSON.stringify({agent:permit.agent,venue:permit.venue,workspace:permit.workspace,channel:permit.channel,
    delivery:permit.delivery,deliveredAt:permit.deliveredAt,files:permit.files})===frozen;
   if(!current())throw held();
   key=JSON.stringify([snapshot.agent,snapshot.venue,snapshot.workspace,snapshot.channel]);
@@ -28,6 +29,7 @@ export async function bridgeFilesOnce(db:Db,now:()=>number,permit:BridgeFileSave
   await previous;
   const trusted={...snapshot,current};
   const store=bridgeFileStore(db,now);cached=store.cached(trusted);
+  cachedExpiry=Math.min(...cached.map(f=>f?.expiresAt??Infinity));
   const missing=snapshot.files.slice(0,5).filter((_,i)=>!cached[i]);
   if(missing.length)fetched=await fetch({...trusted,files:missing});
   // Save validates the full original manifest and current proof atomically.

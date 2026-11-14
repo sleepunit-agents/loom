@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,4 +89,44 @@ it('keeps scopes independent and rolls back a failed save before a successful re
 it('rejects extra fetched results before committing any bytes',async()=>{
  const f=await fixture();await expect(f.run(f.permit,async p=>[...await f.fetch(p),...await f.fetch(p)])).rejects.toThrow();
  expect(f.app.db.prepare('SELECT count(*) n FROM bridges_files').get()).toEqual({n:0});expect(f.fetched.every(b=>b.equals(Buffer.alloc(4)))).toBe(true);
+});
+it('refuses cached bytes that expire while another missing file is being fetched',async()=>{
+ const f=await fixture();await f.run();f.clock.advance(BRIDGE_FILE_RETENTION-1);
+ const p={...f.permit,delivery:'two',deliveredAt:f.clock.now(),files:[...f.permit.files,{...f.permit.files[0],id:'FDEF'}]};
+ await expect(f.run(p,async input=>{f.clock.advance(1);return f.fetch(input);})).rejects.toThrow();
+ expect(f.app.db.prepare("SELECT created FROM bridges_files WHERE file='FABC'").get()).toEqual({created:1000});
+ expect(f.app.db.prepare("SELECT count(*) n FROM bridges_file_deliveries WHERE delivery='two'").get()).toEqual({n:0});
+});
+
+it('refuses replacement of the queued Runtime revocation predicate',async()=>{
+ const f=await fixture();let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+ const first=f.run(f.permit,async p=>{await gate;return f.fetch(p);});
+ const p={...f.permit,delivery:'two',current:()=>false};
+ // Admit it initially, then revoke the captured predicate and substitute one.
+ let allowed=true;p.current=()=>allowed;const second=f.run(p);allowed=false;p.current=()=>true;
+ release();await first;await expect(second).rejects.toThrow();
+ expect(f.app.db.prepare("SELECT count(*) n FROM bridges_file_deliveries WHERE delivery='two'").get()).toEqual({n:0});
+});
+for(const refuse of [false,true])it(`erases observed cached buffers on ${refuse?'refusal':'successful reuse'}`,async()=>{
+ const f=await fixture();await f.run();const owned:Buffer[]=[];
+ const prepare=f.app.db.prepare.bind(f.app.db);
+ const spy=vi.spyOn(f.app.db,'prepare').mockImplementation((sql:string)=>{
+  const statement=prepare(sql);
+  if(sql.startsWith('SELECT name,bytes,digest,created')){
+   const get=statement.get.bind(statement);vi.spyOn(statement,'get').mockImplementation((...args:unknown[])=>{
+    const row=get(...args) as {bytes:Buffer}|undefined;if(row)owned.push(row.bytes);return row;
+   });
+  }return statement;
+ });
+ try {
+  const p={...f.permit,delivery:'two',files:refuse?[...f.permit.files,{...f.permit.files[0],id:'FDEF'}]:f.permit.files};
+  const result=f.run(p,async input=>{const batch=await f.fetch(input);f.facts.policy=false;return batch;});
+  if(refuse)await expect(result).rejects.toThrow();else await result;
+  expect(owned).toHaveLength(1);expect(owned[0]).toEqual(Buffer.alloc(4));
+ }finally{spy.mockRestore();}
+});
+it('finishes an independent scope while another scope is still fetching',async()=>{
+ const f=await fixture();let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
+ const first=f.run(f.permit,async p=>{await gate;return f.fetch(p);});
+ try{await f.run({...f.permit,channel:'D2'});expect(f.calls()).toBe(1);}finally{release();await first;}
 });
