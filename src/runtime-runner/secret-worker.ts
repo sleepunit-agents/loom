@@ -22,7 +22,8 @@ const failed=()=>new Error('Secret worker unavailable');
  * fence synchronously, including while process/listener startup is awaiting IO.
  * Configuration is explicit authority for this dedicated command only; it does
  * not import a grant from the daemon or create permission for public callers. */
-export function startSecretWorker(config:{policy:readonly string[];grants:readonly {binding:SecretInputBinding;name:string;expiresAt:number}[];jobs:readonly SecretWorkerJob[]}) {
+export interface SecretWorkerSelection {policy:readonly string[];grants:readonly {binding:SecretInputBinding;name:string;expiresAt:number}[];jobs:readonly SecretWorkerJob[]}
+export function startSecretWorker(config:SecretWorkerSelection) {
   const policy={allowed:new Set(config.policy.map(name=>secretName.parse(name)))};
   const grants=config.grants.map(g=>({binding:Object.freeze(secretInputBindingSchema.parse(g.binding)),
     name:secretName.parse(g.name),expiresAt:g.expiresAt,active:true}));

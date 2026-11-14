@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add an explicit external dedicated secret-command worker with authenticated Runtime stop/history checks and drained shutdown, reusing the Claude worker control owner.
+
 - Read current sealed questions and send ephemeral private replies inline in next-mode Comms.
 - Expose private persistent-holder worker route replacement with complete selection preflight and retirement of original claims and clients.
 
