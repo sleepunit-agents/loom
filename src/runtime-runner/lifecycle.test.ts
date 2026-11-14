@@ -221,3 +221,33 @@ it.each(['false','throws'] as const)('rechecks the original local proof after an
  hold=true;f.finish();await waiting;current=false;release();await rejected;
  await expect(worker.turn({binding,rules,message:'late',current:()=>true})).rejects.toThrow();
 });
+
+it('refuses an otherwise valid credential-bearing input without launching a process',async()=>{
+ const f=await setup(),operations:string[]=[];
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
+  const name=new URL(String(args[0])).pathname.split('/').at(-1)!;operations.push(name);
+  const response=await fetch(...args);
+  if(name!=='takeInput')return response;
+  const result=await response.json();return Response.json({...result,value:{...result.value,credential:'synthetic-body-input'}});
+ }};
+ await expect(runClaudeJob(f.config,f.selected,runtime)).rejects.toThrow();
+ expect(f.calls).toHaveLength(0);expect(operations).not.toContain('reportJob');expect(operations).not.toContain('finishJob');
+ expect(inspectWorkerReceipts(f.selected.receipts)).toMatchObject([{phase:'input-attempt'}]);
+});
+it.each(['claimJob','reportJob','finishJob'] as const)('rejects a mismatched %s acknowledgement without further lifecycle advancement',async bad=>{
+ const f=await setup(),operations:string[]=[];
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
+  const name=new URL(String(args[0])).pathname.split('/').at(-1)!;operations.push(name);
+  const response=await fetch(...args);
+  if(name!==bad)return response;
+  const result=await response.json();return Response.json({...result,value:{...result.value,job:'replacement'}});
+ }};
+ const p=runClaudeJob(f.config,f.selected,runtime),rejected=expect(p).rejects.toThrow();
+ if(bad==='finishJob'){await f.waitSpawn(1);f.finish();}
+ await rejected;
+ expect(operations.filter(name=>name===bad)).toHaveLength(1);
+ if(bad==='claimJob'){expect(f.calls).toHaveLength(0);expect(operations).not.toContain('takeInput');}
+ if(bad==='reportJob'){expect(operations).not.toContain('finishJob');expect(f.calls[0].child.killed).toBe(true);}
+ expect(inspectWorkerReceipts(f.selected.receipts)).toMatchObject([{phase:bad==='claimJob'?'claim-attempt':bad==='reportJob'?'running-attempt':'finish-attempt'}]);
+ const before=[...operations];await expect(runClaudeJob(f.config,f.selected,runtime)).rejects.toThrow();expect(operations).toEqual(before);
+});

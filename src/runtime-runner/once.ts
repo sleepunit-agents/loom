@@ -1,12 +1,12 @@
 /** Explicit worker startup, not a daemon job. Local owner configuration supplies
  * the already-prepared checkout and compiled policy; no repository is fetched. */
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { buildIdentity } from '../pieces/runtime/records.js';
 import { connectClaudeWorker, type WorkerControlConfig, type WorkerControlRuntime } from './lifecycle.js';
 import type { RunnerBinding, SpawnClaude } from './session.js';
 import { reserveWorkerReceipt } from './receipts.js';
+import { runtimeJobTransport } from './job-transport.js';
 const inputSchema=z.object({job:z.string(),agent:z.string(),house:buildIdentity,brief:z.string(),needs:z.array(z.string()),
   model:z.string().optional(),account:z.string().optional(),conversation:z.string().optional(),credential:z.string().optional()}).strict();
 const failed=()=>new Error('Runtime worker start unavailable; reconcile the job before retrying');
@@ -33,25 +33,12 @@ export async function runClaudeJob(config:WorkerControlConfig,
         catch {child.kill('SIGKILL');startedReject();}
       });child.once('error',startedReject);child.once('close',startedReject);return child;
     }},runtime);
-    const request=runtime?.request??fetch;
-    // connectClaudeWorker validated and captured its connection; snapshot again
-    // before any further await so configuration mutation cannot retarget writes.
-    const base=new URL(config.url),token=config.token,job=config.job;
-    const call=async(name:string,input:unknown,write=false)=>{
-      try {
-        const response=await request(new URL(`/api/runtime/${name}`,base),{method:'POST',redirect:'error',
-          headers:{'content-type':'application/json',authorization:`Bearer ${token}`},
-          body:JSON.stringify({input,...(write?{id:randomUUID()}:{})}),signal:runtime?.deadline(1500)??AbortSignal.timeout(1500)});
-        if(!response.ok)throw failed();
-        const result=z.object({ok:z.literal(true),value:z.unknown()}).strict().parse(await response.json());
-        return result.value;
-      }catch {throw failed();}
-    };
+    const job=config.job,call=runtimeJobTransport(config,runtime);
     // Refuse unsupported routing before a claim or input release. The local
     // configuration is owner authority, never an operation or model response.
     if(binding.venue!=='worker'||binding.place!==job||binding.conversation!==job)throw failed();
     receipt.advance('claim-attempt');
-    const claimed=await call('claimJob',{job},true);
+    const claimed=await call('claimJob',{job});
     z.object({job:z.literal(job),state:z.literal('starting')}).strict().parse(claimed);
     receipt.advance('claimed');
     receipt.advance('input-attempt');
@@ -64,13 +51,13 @@ export async function runClaudeJob(config:WorkerControlConfig,
     const [result]=await Promise.all([worker.turn({binding,rules,checkout,message:input.brief,current:()=>true}),
       started.then(async()=>{
         receipt.advance('running-attempt');
-        z.object({job:z.literal(job),state:z.literal('running')}).strict().parse(await call('reportJob',{job,state:'running'},true));
+        z.object({job:z.literal(job),state:z.literal('running')}).strict().parse(await call('reportJob',{job,state:'running'}));
         receipt.advance('running');
       })]);
     receipt.advance('output-returned');
     await worker.refresh();
     receipt.advance('finish-attempt');
-    z.object({job:z.literal(job),state:z.literal('done')}).strict().parse(await call('finishJob',{job,state:'done',exit:0,log:result.text.slice(-4000)},true));
+    z.object({job:z.literal(job),state:z.literal('done')}).strict().parse(await call('finishJob',{job,state:'done',exit:0,log:result.text.slice(-4000)}));
     receipt.advance('finished');
   }catch {throw failed();}
   finally {try {worker?.close();}finally {receipt.close();}}
