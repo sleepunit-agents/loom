@@ -1109,3 +1109,30 @@ producer must pass the original member and prove original parentage; it must
 never send a differently member-bound job through the absent-member fallback.
 This change grants no execution, private body access or principal authority,
 and does not alter imported/reset/write-off/policy execution holds.
+
+## Sealed question creation
+
+The trusted in-process `Comms.ask(agent, thread, {id, question})` owns creation
+of an unmanaged private question. It is not a registry operation or a body tool.
+The full question (wording, explanation, outcomes, links and refs) is sealed in
+one ordinary retained Comms ask row, using the existing imported-ask encoding.
+Its stable id is namespaced to its owning thread; its equality hash is keyed.
+An enclosing transaction creates Attention's metadata projection with the same
+original member, agent, conversation and project, a generic label and the exact
+thread/sequence pointer. A failed projection rolls back the message and sequence.
+The creator rechecks current ownership and routing after encryption. Replays
+preserve the first sequence, ciphertext, retention deadline and answered state;
+changed questions conflict. Swept questions cannot resurrect their words.
+
+Generic `attention.raise` cannot claim the reserved `comms:` namespace and
+`attention.resolve` cannot rewrite these source-owned projections. Original-member
+answer policy and the private typed-reply seam still apply. Waiting approvals
+and tasks are deliberately excluded: they keep their owning source protocols.
+Attention's synchronous getter returns only the projection. This introduces no
+new schema, registry command, execution capability or runtime routing authority.
+
+This unit supplies creation only. Runtime must expose the trusted producer
+through its own original-member body proof before agents can use it. Inbox must
+resolve the encrypted projection through an owning Comms window read, and the
+inline card must join current state/history. Those are subsequent obligations;
+no words may be added to Attention to complete them.
