@@ -172,18 +172,19 @@ it('preserves distinct valid malformed UTF-16 ids without URI errors or lossy ha
   for(const id of ids)expect(s.ask(id)).toMatchObject({ok:true,value:{source:{kind:'task',id},state:'open'}});
 });
 
-it('holds startup and membership reconciliation on actual service denial, reports only a code, and keeps authorized Tasks writes working',async()=>{
+it('reconciles startup and membership changes without service grants while keeping outside Tasks policy',async()=>{
   const first=await setup(),id=first.create({why:'Sensitive source wording'}),before=first.ask(id);
   await first.app.close();closes.pop();
   const warnings=vi.spyOn(console,'warn').mockImplementation(()=>{});
   try {
     const s=await setup(first.home,false,true);
     expect(s.ask(id)).toEqual(before);
-    expect(warnings.mock.calls).toEqual([['Task filing failed (denied)']]);
+    expect(warnings.mock.calls).toEqual([]);
     const other=s.create({assignee:'pollock'});expect(s.ask(other).ok).toBe(false);
     expect(s.call('household.setMember',{person:'pollock',agents:'*'})).toMatchObject({ok:true});
-    expect(s.ask(other).ok).toBe(false);expect(s.ask(id)).toEqual(before);
-    expect(warnings.mock.calls).toEqual([['Task filing failed (denied)'],['Task filing failed (denied)']]);
+    expect(s.ask(other)).toMatchObject({ok:true,value:{state:'open'}});expect(s.ask(id)).toEqual(before);
+    expect(warnings.mock.calls).toEqual([]);
+    expect(s.call('tasks.reconcileAttention',{}, {kind:'service',id:'tasks'})).toMatchObject({ok:false,code:'denied'});
     expect(s.call('tasks.update',{id:other,set:{why:'Changed through owning authorization'},actor:'art',at:'2026-11-13T00:01:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
     expect(s.ask(other)).toMatchObject({ok:true,value:{state:'open',why:'Changed through owning authorization'}});
   } finally {warnings.mockRestore();}
