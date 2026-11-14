@@ -112,6 +112,16 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     expect(await b.locator('.desk-agent-rail').locator(':scope > *').first().getAttribute('data-agent')).toBe('art');
     await expect.poll(()=>b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
     expect(await b.locator('.comms-thread .next-comm-screen').count()).toBe(0);
+    // Overlay rails never steal the portrait. Returning to Always show moves it back once.
+    await b.locator('.next-rail').click({button:'right'});
+    await b.getByRole('menuitem',{name:'Minimize to strip',exact:true}).click();
+    await expect.poll(()=>b.locator('.comms-thread .next-comm-screen').count()).toBe(1);
+    await b.getByRole('button',{name:'Show agents rail',exact:true}).click();
+    expect(await b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(0);
+    await b.locator('.next-rail').click({button:'right'});
+    await b.getByRole('menuitem',{name:'Always show',exact:true}).click();
+    await expect.poll(()=>b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
+    expect(await b.locator('.next-comm-screen').count()).toBe(1);
     await b.getByRole('button',{name:'Open Inbox',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(1);
     // Observe real FLIP requests while exercising full and reduced motion, without racing260ms.

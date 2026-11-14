@@ -36,12 +36,12 @@ export function CommPortrait({agent,messages,connected,working,thinking,on}:{age
   const timer=setTimeout(()=>setRun(run.signal?{...run,signal:false}:null),duration);
   return()=>clearTimeout(timer);
  },[run,reply?.text?.length]);
- const retained=connected&&reply?.seq===run?.seq;
+ const retained=connected&&!!run&&reply?.seq===run.seq;
  const face=base==='error'||base==='needs-input'?base:retained&&!run?.signal?'talking':base;
  const word=!connected||face==='error'?'NO CARRIER':face==='needs-input'?'WAITING ON YOU':face==='talking'?'TALKING':face==='working'?'WORKING':face==='thinking'?'THINKING':'DONE';
  const into=rail?.shown&&rail.screen?.agent===agent?rail.screen.el:null;
  const screen=<section className="next-comm-screen" data-face={face} data-signal={retained&&run?.signal||undefined} aria-label={`${agent}'s comm screen`}>
-  <div className="next-comm-glass"><AgentFace display={display} name={agent} state={face} size={192}/><span className="next-comm-scan" aria-hidden="true"/></div>
+  <div className="next-comm-glass"><AgentFace display={display} name={agent} state={face} size={192} dark/><span className="next-comm-scan" aria-hidden="true"/></div>
   <footer>{agent.toUpperCase()} · {word}{on&&` · ON ${on.toUpperCase()}`}<span className="next-comm-meter" aria-label={`signal ${connected?4:0} of 4`}>{[1,2,3,4].map(i=><i key={i} data-on={connected||undefined}/>)}</span></footer>
  </section>;
  return into?createPortal(screen,into):<div className="next-comm-portrait">{screen}</div>;
