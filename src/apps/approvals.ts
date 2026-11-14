@@ -10,7 +10,7 @@ const request = z.object({
   what: z.string().trim().min(1), why: z.string().trim().min(1), agent: z.string().min(1),
   askedFrom: z.string().min(1), actingFor: z.string().min(1), project: z.string().min(1).nullable().default(null),
   member: z.string().min(1).nullable().default(null), conversation: z.string().min(1).nullable().default(null),
-  minutes: z.number().int().positive().max(10080).default(30), ask: z.string().trim().min(1),
+  minutes: z.number().int().positive().default(30), ask: z.string().trim().min(1),
   ifYes: z.string().trim().min(1), ifNo: z.string().trim().min(1), details: z.string().default(''),
   operation: z.string().min(1).nullable().default(null), changeSummary: z.string().trim().min(1).nullable().default(null),
 });

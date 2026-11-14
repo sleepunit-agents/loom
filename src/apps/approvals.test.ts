@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema, type DataDatabase } from '../core/data/database.js';
-import { agents, members, tempoSettings } from '../core/data/schema.js';
+import { agents, members, tempoSettings, projects, conversations } from '../core/data/schema.js';
 import { approvalService, type ApprovalRequest } from './approvals.js';
 
 let client: Database.Database, db: DataDatabase, at: string, service: ReturnType<typeof approvalService>;
@@ -63,4 +63,22 @@ it('leaves a failed change pending without a partial database edit or an Allow/u
   expect(service.record(row.id).map(r => r.event)).toEqual(['request']);
   expect(() => service.withdraw(row.id, 'other')).toThrow();
   expect(service.withdraw(row.id, 'art').state).toBe('withdrawn');
+});
+
+it('preserves the labels and exact proposal and records the answerer and allowance times', () => {
+  db.insert(projects).values({ id: 'pond', name: 'Pond' }).run();
+  db.insert(conversations).values({ id: 'cv-pond', agent: 'art', member: 'jonathan', project: 'pond', venue: 'loom', place: 'thread', label: 'Pump', startedAt: at, lastAt: at, turnCount: 0 }).run();
+  const row = service.request({ ...proposal(), member: 'jonathan', project: 'pond', conversation: 'cv-pond', minutes: 10081, changeSummary: 'Merge this head', details: 'Pump script' });
+  expect(service.get(row.id)).toMatchObject({ member: 'jonathan', project: 'pond', conversation: 'cv-pond', changeSummary: 'Merge this head', details: 'Pump script', askedAt: at, minutes: 10081 });
+  at = '2026-11-14T20:01:00.000Z';
+  expect(service.allow(row.id, 'jonathan')).toMatchObject({ decidedBy: 'jonathan', decidedAt: at, expiresAt: '2026-11-21T20:02:00.000Z' });
+  expect(service.record(row.id)[1]).toMatchObject({ event: 'allow', note: 'jonathan', at });
+});
+
+it('keeps reported steps as named facts and lists them in time order', () => {
+  const step = service.report({ agent: 'art', kind: 'command', target: 'worker:one', what: 'Rebuilt the test image' });
+  expect(step).toMatchObject({ agent: 'art', kind: 'command', target: 'worker:one', what: 'Rebuilt the test image', at });
+  at = '2026-11-14T20:01:00.000Z';
+  const second = service.report({ agent: 'art', kind: 'merge', target, what: 'Merged the pump script' });
+  expect(service.notices()).toEqual([step, second]);
 });
