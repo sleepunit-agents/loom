@@ -1007,5 +1007,7 @@ filters or other identities. This does not relax validation of other keys or
 array entries. Original file bytes stay in the private completed snapshot and
 source digests; exact store JSON stays in the private evidence archive.
 Configuration schema refusals report the source file kind and JSON field path,
-without values or parser/filesystem exception text. Malformed JSON reports the
-file root `$`, since there is no validated field path.
+without values or parser/filesystem exception text. Malformed instance JSON
+reports the file root `$`; malformed stored JSON identifies its document field.
+Accepted-route diagnostics map assembled fields back to their original store
+collection/key/field.
