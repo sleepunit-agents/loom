@@ -116,9 +116,9 @@ it('queues the exact device once, retains an uncertain test through navigation a
   await act(async()=>retry().props.onClick());expect(r.handle.retry).toHaveBeenCalledOnce();expect(mutation.getSnapshot().request).toBe(r.handle);expect(f.call).toHaveBeenCalledOnce();
   await r.finish({ok:true,value:{id:'test-receipt',state:'queued'}});
   expect(JSON.stringify(tree.toJSON())).toContain('Queued for a test attempt. Waiting for live status');
-  await act(async()=>{f.tests={status:'live',records:[{id:'different-id',member:'jonathan',ref:'c'.repeat(64),at:1760000000,state:'sent'},{id:'test-receipt',member:'jonathan',ref:'wrong-ref',at:1760000000,state:'sent'}]};tree.update(h(Account));});
+  await act(async()=>{f.tests={status:'live',records:[{id:'different-id',member:'jonathan',ref:'c'.repeat(64),at:1760000000000,state:'sent'},{id:'test-receipt',member:'jonathan',ref:'wrong-ref',at:1760000000000,state:'sent'}]};tree.update(h(Account));});
   expect(JSON.stringify(tree.toJSON())).toContain('Waiting for live status');
-  await act(async()=>{f.tests={status:'live',records:[{id:'test-receipt',member:'jonathan',ref:'c'.repeat(64),at:1760000000,state:'sent',endpoint:'PRIVATE_ENDPOINT',keys:{auth:'PRIVATE_AUTH'}}]};tree.update(h(Account));});
+  await act(async()=>{f.tests={status:'live',records:[{id:'test-receipt',member:'jonathan',ref:'c'.repeat(64),at:1760000000000,state:'sent',endpoint:'PRIVATE_ENDPOINT',keys:{auth:'PRIVATE_AUTH'}}]};tree.update(h(Account));});
   const rendered=JSON.stringify(tree.toJSON());expect(rendered).toContain('Current test: Accepted by the push service. Device delivery is not confirmed.');expect(rendered).not.toContain('Waiting for live status');expect(rendered).not.toContain('PRIVATE_ENDPOINT');expect(rendered).not.toContain('PRIVATE_AUTH');
   await act(async()=>{f.tests={...f.tests,status:'denied'};tree.update(h(Account));});
   expect(JSON.stringify(tree.toJSON())).not.toContain('Accepted by the push service');expect(JSON.stringify(tree.toJSON())).not.toContain('Test request saved');expect(send().props.disabled).toBe(true);
@@ -131,8 +131,8 @@ it('disables test actions offline or inactive and retains final outcomes after a
     expect(send().props.disabled).toBe(true);await act(async()=>send().props.onClick());expect(f.call).not.toHaveBeenCalled();
   }
   for(const state of ['queued','sent','gone','failed','uncertain','cancelled']){
-    await act(async()=>{f.tests={status:'live',records:[{id:state,member:'jonathan',ref:'removed-device',at:1760000000,state}]};tree.update(h(Account));});
-    const rendered=JSON.stringify(tree.toJSON());expect(rendered).toContain('removed-device');expect(rendered).toContain(new Date(1760000000*1000).toLocaleString());
+    await act(async()=>{f.tests={status:'live',records:[{id:state,member:'jonathan',ref:'removed-device',at:1760000000000,state}]};tree.update(h(Account));});
+    const rendered=JSON.stringify(tree.toJSON());expect(rendered).toContain('removed-device');expect(rendered).toContain(new Date(1760000000000).toLocaleString());
     const meanings:Record<string,string>={queued:'Queued for a test attempt',sent:'Accepted by the push service. Device delivery is not confirmed.',gone:'Device is no longer available.',failed:'The push service refused this attempt.',uncertain:'The outcome is unknown. This attempt will not be sent again automatically.',cancelled:'Cancelled because the device or access changed.'};
     expect(rendered).toContain(meanings[state]);
   }

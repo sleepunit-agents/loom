@@ -96,6 +96,8 @@ it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account re
     // newly scheduled due work as well as the release callback, without time sleeps.
     await expect.poll(()=>{clock.advance(0);return attempts()[0].state;}).toBe('sent');expect(send).toHaveBeenCalledOnce();
     for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain('Accepted by the push service. Device delivery is not confirmed.');
+    const expectedTestTime=await b.evaluate(time=>new Date(time).toLocaleString(),clock.now());
+    await expect.poll(()=>b.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain(`Test ${expectedTestTime}:`);
     const payload=JSON.parse(send.mock.calls[0][1]);expect(payload).toEqual({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'});expect(send.mock.calls[0][0]).toEqual({endpoint:extraEndpoint,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}});
     await extra.getByRole('checkbox').check();await extra.getByRole('button',{name:'Remove notification device',exact:true}).click();await expect.poll(()=>extra.count()).toBe(0);
     const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
