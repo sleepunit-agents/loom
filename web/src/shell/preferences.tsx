@@ -47,7 +47,12 @@ export default function Preferences() {
           <option value="follow">Follow this device</option><option value="on">On</option><option value="off">Off</option>
         </select>
       </label>)}
-      <label><input type="checkbox" checked={prefs?.zoom === true} disabled={disabled} onChange={e => save({ zoom: e.target.checked })} />Allow zoom</label>
+      {([
+        ['sound', 'Sound', false], ['pixel', 'Pixel faces', true],
+        ['icons', 'Pixel icons', false], ['haptics', 'Haptics', true],
+        ['oneWindow', 'One window at a time', false], ['zoom', 'Allow zoom', false],
+      ] as const).map(([key, label, fallback]) => <label key={key}><input type="checkbox" aria-label={label} checked={prefs?.[key] ?? fallback} disabled={disabled}
+        onChange={e => save({ [key]: e.target.checked })} />{label}</label>)}
       <p role="status">{snapshot.status === 'denied' ? 'Sign in again to change appearance.'
         : snapshot.status === 'offline' || state.status === 'offline' ? 'Offline. Changes will resume when connected.'
         : snapshot.status === 'loading' ? 'Loading appearance…'

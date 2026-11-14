@@ -1,5 +1,5 @@
 import { Component, Suspense, useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
-import { DeskRouter, currentPath, type AppRegistration, type Tile } from './router';
+import { DeskRouter, currentPath, presentedTiles, type AppRegistration, type Tile } from './router';
 import { ContextMenu, type MenuAt } from '../tiling/menu';
 import { layout, railWidth, type Rect } from '../tiling/layout';
 import { Loading, Error, Button, Empty } from '../kit';
@@ -12,6 +12,8 @@ import Launcher from './launcher';
 import { useHiding } from './hiding';
 import { useCompanion } from './companion';
 import { RailContext } from '../desk-rail';
+import { useRecords, type LiveRecord } from '../data';
+import { oneWindowKept, type Prefs } from '../look';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean; visible?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -27,6 +29,12 @@ export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }
 export default function Shell({ apps, surfaces = {} }: { apps: readonly RegisteredApp[]; surfaces?: ShellSurfaces }) {
   const [router] = useState(() => new DeskRouter(apps, window));
   const route = useSyncExternalStore(router.subscribe,router.getSnapshot);
+  const preferences = useRecords<LiveRecord & { prefs: Prefs }>('household.preferences');
+  const [keptOneWindow] = useState(oneWindowKept);
+  const lastOneWindow = useRef(keptOneWindow);
+  if (preferences.status === 'live') lastOneWindow.current = preferences.records[0]?.prefs.oneWindow === true;
+  else if (preferences.status === 'denied') lastOneWindow.current = false;
+  const oneWindow = lastOneWindow.current;
   // Pick a shell once. Resizing relays layout room, never replaces its navigation owner.
   const [phone] = useState(() => innerWidth < 1024);
   const ground = useRef<HTMLDivElement>(null);
@@ -50,10 +58,12 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const { Home, Rail, Bar, Signals } = surfaces;
   const companion = useCompanion(!phone&&!!Rail&&visible.length>0&&railAs==='always');
   const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railAs==='always'?railWidth(width)+10:railAs==='strip'?24:0) : 0)) };
-  useEffect(() => { if(!phone) {const notices=router.fit(workArea,width);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,router]);
-  const boxes = layout(router.asTiles(),workArea,width).apps;
+  useEffect(() => { if(!phone) {const notices=router.fit(workArea,width,oneWindow);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,oneWindow,router]);
+  const focused = visible.find(t => t.id === route.focused) ?? visible[0];
+  const presented = presentedTiles(route,phone||oneWindow);
+  const boxes = layout(router.asTiles(presented),workArea,width).apps;
   const open = (id: string) => {
-    const gone = router.open(id,phone ? undefined : workArea,phone ? 1920 : width);
+    const gone = router.open(id,phone ? undefined : workArea,phone ? 1920 : width,undefined,oneWindow);
     setNotice(gone?.map(t => t.why).join('. ') ?? ''); setLauncher(false);
     if (document.documentElement.dataset.sound === 'on') void import('../sound').then(s => s.chime('done'));
   };
@@ -75,15 +85,14 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
       else if(e.shiftKey&&(e.code==='Comma'||e.code==='Period')){const n=visible.findIndex(t=>t.id===tile.id);const other=visible[n+(e.code==='Comma'?-1:1)];if(other)router.swap(tile.id,other.id);}
       else if(e.shiftKey&&key.startsWith('arrow')) {
         const here=boxes[tile.id];const cx=here.x+here.w/2,cy=here.y+here.h/2;
-        const candidates=visible.filter(t=>t.id!==tile.id).filter(t=>{const r=boxes[t.id];return key==='arrowleft'?r.x+r.w<=here.x:key==='arrowright'?r.x>=here.x+here.w:key==='arrowup'?r.y+r.h<=here.y:r.y>=here.y+here.h;});
+        const candidates=visible.filter(t=>t.id!==tile.id&&boxes[t.id]).filter(t=>{const r=boxes[t.id];return key==='arrowleft'?r.x+r.w<=here.x:key==='arrowright'?r.x>=here.x+here.w:key==='arrowup'?r.y+r.h<=here.y:r.y>=here.y+here.h;});
         candidates.sort((a,b)=>{const dist=(id:string)=>{const r=boxes[id];return (r.x+r.w/2-cx)**2+(r.y+r.h/2-cy)**2;};return dist(a.id)-dist(b.id);});
         if(candidates[0]){router.focus(candidates[0].id);document.querySelector<HTMLElement>(`[data-tile="${candidates[0].id}"]`)?.focus();}
       } else acted=false;
       if(acted)e.preventDefault();
     };
     window.addEventListener('keydown',key); return () => window.removeEventListener('keydown',key);
-  },[visible,route.focused,router]);
-  const focused = visible.find(t => t.id === route.focused) ?? visible[0];
+  },[visible,route.focused,router,boxes]);
   return <RailContext.Provider value={phone?null:companion}><div className="next-shell" data-shell={phone ? 'phone' : 'desk'} data-dock-mode={phone?'always':hiding.modes.dock}>
     {Bar ? <Bar title={apps.find(a => a.id === focused?.id)?.title ?? 'Home'} go={path => {
       if(path === '/') {router.home();return;}
@@ -101,7 +110,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
         </aside>
       </>}
       {route.tiles.map(tile => {
-        const shown=!tile.minimized&&(!phone||tile.id===focused?.id);
+        const shown=presented.some(t => t.id === tile.id);
         const app = apps.find(a => a.id === tile.id)!;
         const box = boxes[tile.id];
         return <section key={tile.id} className="next-tile" data-tint={tintOf(app.title)} data-tile={shown?tile.id:undefined} hidden={!shown} tabIndex={-1} data-focused={route.focused === tile.id || undefined} aria-label={`${app.title} tile`}

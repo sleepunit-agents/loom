@@ -63,3 +63,19 @@ it('surfaces a failed save and retries the original handle without inventing ano
   await r.finish({ ok: false, code: 'unavailable', message: 'Try again' }); expect(JSON.stringify(tree.toJSON())).toContain('Try again');
   await act(async () => tree.root.findByType('button').props.onClick()); expect(r.handle.retry).toHaveBeenCalledOnce(); expect(f.call).toHaveBeenCalledOnce();
 });
+it.each([
+  ['Sound', 'sound', false], ['Pixel faces', 'pixel', true],
+  ['Pixel icons', 'icons', false], ['Haptics', 'haptics', true],
+  ['One window at a time', 'oneWindow', false], ['Allow zoom', 'zoom', false],
+] as const)('saves %s as one member choice and waits for its live record', async (label, key, fallback) => {
+  f.snapshot = live({}); const r = request(); f.call.mockReturnValue(r.handle); await draw();
+  const field = () => tree.root.findByProps({'aria-label':label});
+  expect(field().props.checked).toBe(fallback);
+  await act(async () => field().props.onChange({target:{checked:!fallback}}));
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('household.setPreferences',{[key]:!fallback});
+  expect(field().props.checked).toBe(fallback);
+  expect(field().props.disabled).toBe(true);
+  await r.finish({ok:true,value:{[key]:!fallback}});
+  await publish(live({[key]:!fallback}));
+  expect(field().props.checked).toBe(!fallback);
+});
