@@ -22,3 +22,7 @@
 
 .desk-home-compact{min-width:0;border:1px solid var(--v-border);background:color-mix(in srgb,var(--v-canvas) 88%,transparent)}
 .desk-home-flags{display:flex;gap:8px;align-items:center;font:500 10px var(--font-data,monospace);color:var(--v-blue)}
+
+.desk-home-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--v-text-3)}
+.desk-home-dot[data-state=working]{background:var(--v-blue)}
+.desk-home-dot[data-state=waiting]{background:var(--v-yellow)}

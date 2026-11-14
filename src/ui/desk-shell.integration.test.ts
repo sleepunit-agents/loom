@@ -333,6 +333,17 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
             else { await reference.keyboard.press('Control+Shift+Space'); await expect.poll(()=>reference.getByRole('textbox',{name:'Find an app',exact:true}).count()).toBe(1); }
           }
           await page.evaluate(()=>document.fonts.ready);await reference.evaluate(()=>document.fonts.ready);
+          if(surface==='home'&&width===390) {
+            // The long full question stays intact. Also show the rows below it, not just a top-of-page claim.
+            await page.locator('.desk-home-compact').last().scrollIntoViewIfNeeded();
+            await reference.locator('.loom-phome .loom-rrow').last().scrollIntoViewIfNeeded();
+            const oldRows=await reference.screenshot({path:join(shots,`old-home-agents-${look}-${width}.png`),animations:'disabled'});
+            const newRows=await page.screenshot({path:join(shots,`new-home-agents-${look}-${width}.png`),animations:'disabled'});
+            await board.setViewportSize({width:width*2,height:932});
+            await board.setContent(`<body style="margin:0;background:#17151e;color:#fff;font:14px monospace"><div style="display:flex"><section><p style="height:16px;margin:8px">OLD · Home agents · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${oldRows.toString('base64')}"></section><section><p style="height:16px;margin:8px">NEW · Home agents · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${newRows.toString('base64')}"></section></div></body>`);
+            await board.screenshot({path:join(shots,`compare-home-agents-${look}-${width}.png`)});
+            for(const [p,selector] of [[page,'.desk-home'],[reference,'.loom-phome']] as const)await p.locator(selector).evaluate(el=>{let node:HTMLElement|null=el as HTMLElement;while(node){node.scrollTop=0;node=node.parentElement;}});
+          }
           const before=await reference.screenshot({path:join(shots,`old-${surface}-${look}-${width}.png`),animations:'disabled'});
           const after=await page.screenshot({path:join(shots,`new-${surface}-${look}-${width}.png`),animations:'disabled'});
           await board.setViewportSize({width:width*2,height:932});

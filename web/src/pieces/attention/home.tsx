@@ -71,7 +71,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
               return <section key={agent.id} className="desk-home-compact" data-agent={agent.id} aria-label={`${agent.name} card`}>
                 <Row aria-label={`Open ${agent.name} conversation`} title={agent.name} meta={word}
                   icon={<AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state,!!first)} size={32}/>}
-                  trailing={<span className="desk-home-flags">{first&&<span>ASK</span>}<span aria-label={threadStatus==='live'?`${unread.length} unread threads`:'Conversations unavailable'}>{threadStatus==='live'?(unread.length?`${unread.length} unread`:''):'?'}</span></span>}
+                  trailing={<span className="desk-home-flags"><span role="img" className="desk-home-dot" data-state={status?.state} aria-label={word}/>{first&&<span>ASK</span>}<span aria-label={threadStatus==='live'?`${unread.length} unread threads`:'Conversations unavailable'}>{threadStatus==='live'?(unread.length?`${unread.length} unread`:''):'?'}</span></span>}
                   onClick={()=>go(thread?threadPath(thread.id):'/p/comms-preview')} />
               </section>;
             }
