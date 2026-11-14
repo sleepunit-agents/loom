@@ -25,7 +25,7 @@ export interface TempoOptions {
 }
 
 export function createTempo(db: DataDatabase, clock: Clock, options: TempoOptions) {
-  const settled = new SettledInbox(db, clock, options.admit);
+  const settled = new SettledInbox(db, clock, options.admit, options.changed);
   const sweep = new Sweep(clock, delivery => {
     const conversation = delivery.who.kind === 'agent' ? options.conversations.open({ agent: delivery.who.id, venue: 'wake', place: `sweep:${delivery.who.id}`, label: 'The sweep' }).id : undefined;
     options.conversations.send({ toKind: delivery.who.kind, to: delivery.who.id, conversation, source: 'notice', sourceId: delivery.id, fromKind: 'schedule', words: delivery.words });
