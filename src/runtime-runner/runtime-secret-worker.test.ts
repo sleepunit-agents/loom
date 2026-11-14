@@ -15,10 +15,12 @@ afterEach(async()=>{vi.restoreAllMocks();vi.unstubAllEnvs();for(const close of c
 async function setup(releaseStaging=true,autoComplete=true) {
  const f=await admissionFixture(closes,releaseStaging);
  // No credential literal in child argv, and no wall-clock completion delay.
+ // The marker promises completion readiness, so install the handler first.
  const digest=createHash('sha256').update('synthetic-admitted-value').digest('hex');
  f.config.args[1]=f.config.args[1].replace("const ok=Buffer.concat(b).toString()==='synthetic-admitted-value'",
   "const credential=Buffer.concat(b).toString();const ok=credential.length>0&&!process.argv.some(v=>v.includes(credential))&&!Object.values(process.env).some(v=>v&&v.includes(credential))&&require('node:crypto').createHash('sha256').update(Buffer.concat(b)).digest('hex')==='"+digest+"'")
-  .replace('setTimeout(()=>process.exit(0),200)',"process.on('SIGUSR2',()=>process.exit(0));setInterval(()=>{},10000)");
+  .replace("fs.writeFileSync(process.argv[1],'accepted');setTimeout(()=>process.exit(0),200)",
+   "process.on('SIGUSR2',()=>process.exit(0));setInterval(()=>{},10000);fs.writeFileSync(process.argv[1],'accepted')");
  let child!:ChildProcess,started!:()=>void,exited!:()=>void;
  const closed=new Promise<void>(resolve=>{exited=resolve;});
  const spawned=new Promise<void>(resolve=>{started=resolve;}),emit=ChildProcess.prototype.emit;
@@ -48,6 +50,14 @@ it('composes actual Runtime control, original admission, remote proof and a real
  expect(await worker.delivery).toBe(true);expect(await worker.completed).toBe(true);
  expect(readFileSync(f.marker,'utf8')).toBe('accepted');expect(f.state(await f.admitted())).toEqual({state:'released'});
  await f.stopped;
+});
+it('accepts completion signalled immediately when the consumer publishes readiness',async()=>{
+ const f=await setup(true,false);
+ // Model a parent observing the marker at the first possible instant. The
+ // signal must already have a handler when readiness becomes externally visible.
+ f.config.args[1]=f.config.args[1].replace("fs.writeFileSync(process.argv[1],'accepted');","fs.writeFileSync(process.argv[1],'accepted');process.kill(process.pid,'SIGUSR2');");
+ const worker=await f.start();expect(await worker.delivery).toBe(true);expect(await worker.completed).toBe(true);
+ expect(readFileSync(f.marker,'utf8')).toBe('accepted');
 });
 it.each(['stop','reset','lost','offline'] as const)('kills the owned command from scheduled control alone after %s during held final worker proof',async reason=>{
  const f=await setup(),held=holdAdmissionResponse('/worker-current'),write=vi.spyOn(Duplex.prototype,'end');
