@@ -99,7 +99,7 @@ it.each(['withdrawn','credential','job','binding','box','policy','service','priv
 
 it('retains the owning project and isolates a replacement Runtime conversation at the same lane',async()=>{
  const f=await setup(false,'pond');
- expect(await f.post(f.body,'recordTurn',turn)).toMatchObject({ok:true,value:{conversation:f.canonical}});
+ expect(await f.post(f.body,'recordTurn',turn,'identity-turn')).toMatchObject({ok:true,value:{conversation:f.canonical}});
  expect(await f.post(f.body,'writeDigest',{digest})).toMatchObject({ok:true,value:{project:'pond',agent:'art'}});
  const first=f.canonical;
  expect(await f.post(f.runner,'finishJob',{job:f.job,state:'done'})).toMatchObject({ok:true});
@@ -109,6 +109,7 @@ it('retains the owning project and isolates a replacement Runtime conversation a
  expect(await f.post(f.runner,'claimJob',{job:next})).toMatchObject({ok:true});
  const input=await f.post(f.runner,'takeInput',{job:next});expect(input).toMatchObject({ok:true});
  expect(await f.post(f.runner,'reportJob',{job:next,state:'running'})).toMatchObject({ok:true});
+ expect(await f.post(input.value.credential,'recordTurn',turn,'identity-turn')).toMatchObject({ok:false,code:'conflict'});
  const second=await f.post(input.value.credential,'recordTurn',turn);expect(second).toMatchObject({ok:true});
  expect(second.value.conversation).not.toBe(first);
  expect(await f.post(input.value.credential,'writeDigest',{digest:{...digest,summary:'Replacement summary'}})).toMatchObject({ok:true,value:{conversation:second.value.conversation,project:'pond'}});

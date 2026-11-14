@@ -2,6 +2,7 @@
  * Runtime ids and native transport ids remain opaque; only Attention derives cv ids.
  * Private Comms and service work deliberately have no path through this adapter.
  */
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { operation, OperationError, type Viewer } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
@@ -23,11 +24,21 @@ export function installPublicMetadata(app:Foundation,bound:(viewer:Viewer)=>Runt
   // lane label. A replacement lane cannot inherit another conversation's asks.
   return {job,venue:'runtime-clock',place:binding.id};
  };
+ // Registry retry keys are shared by agent, not by body credential. Bind the
+ // fingerprint to the original destination so another valid body/claim/scope
+ // cannot replay its predecessor's metadata receipt with the same typed input.
+ const inputHash=(input:string,{actor}:{actor:Viewer})=>{
+  const d=destination(actor),j=d?.job,b=j?.conversation?store.read('binding',j.conversation):undefined;
+  return createHash('sha256').update(JSON.stringify({input,destination:j&&{
+   job:j.id,agent:j.agent,project:j.project,conversation:j.conversation,runner:j.runner,box:j.box,
+   claimedAt:j.claimedAt,made:j.made,binding:b&&{id:b.id,agent:b.agent,member:b.member,project:b.project,venue:b.venue,place:b.place,job:b.job}
+  }})).digest('hex');
+ };
  const unwrap=(result:ReturnType<typeof operations.call>)=>{
   if(!result.ok)throw new OperationError(result.code,result.message);
   return result.value;
  };
- operations.register(operation({name:'runtime.recordTurn',doors:['http','direct'],write:true,recheckPolicy:true,
+ operations.register(operation({name:'runtime.recordTurn',doors:['http','direct'],write:true,recheckPolicy:true,inputHash,
   input:z.object({kind:z.enum(['reply','action','note']),outcome:z.enum(['answered','progressed','deferred','failed','none']),model:printable(120).optional(),harness:printable(120).optional()}).strict(),output:z.unknown(),
   may:v=>!!destination(v),run(ctx,input){
    const d=destination(ctx.viewer);if(!d)throw new OperationError('denied','Public Clock body binding ended');
@@ -36,7 +47,7 @@ export function installPublicMetadata(app:Foundation,bound:(viewer:Viewer)=>Runt
    hearJob(db,d.job.id,ctx.now);return result;
   },
  }));
- operations.register(operation({name:'runtime.writeDigest',doors:['http','direct'],write:true,recheckPolicy:true,
+ operations.register(operation({name:'runtime.writeDigest',doors:['http','direct'],write:true,recheckPolicy:true,inputHash,
   input:digestInput.pick({digest:true}),output:z.unknown(),may:v=>!!destination(v),run(ctx,input){
    const d=destination(ctx.viewer);if(!d)throw new OperationError('denied','Public Clock body binding ended');
    // Until the owning public answer consumer is installed, do not create an

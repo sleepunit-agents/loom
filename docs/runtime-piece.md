@@ -1588,6 +1588,8 @@ The returned `cv-*` is metadata identity only, never a body or source capability
 Private Comms, private Clock and service bodies cannot use these operations;
 their words and questions remain with their owning consumers.
 
+Retry fingerprints include the original job, claim, house, route and scope; a
+replacement body cannot replay another body's receipt under a shared agent id.
 The writer rechecks current credential, job, source, binding, scope, box and
 policy authority, and refuses a withdrawn root source. It never launches or
 releases work. Actionable `needs_owner` is explicitly unavailable until public
