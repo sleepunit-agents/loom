@@ -57,7 +57,7 @@ export class Live {
   }
   /** Trusted composition hook for completed signed-in window calls. Inputs are
    * deliberately absent; consumers must opt in to safe, bounded summaries. */
-  observeWindowCalls(fn: (event: {viewer: Viewer; name: string; id?: string; result: Result}) => void): () => void {
+  observeWindowCalls(fn: (event: {viewer: Viewer; name: string; id?: string; retryUntil?: number; result: Result}) => void): () => void {
     this.emitter.on('windowCall', fn); return () => { this.emitter.off('windowCall', fn); };
   }
   changed(changes: Change[]) {
@@ -161,7 +161,7 @@ export class Live {
           const result = await this.ops.callAsync('socket', c.viewer, op.data.name, op.data.input, op.data.id, auth.window === true, () => auth.valid());
           if (!auth.valid()) { ws.close(1008, 'Session ended'); return; }
           if (auth.window && c.viewer.kind === 'member') {
-            try { this.emitter.emit('windowCall', {viewer:c.viewer,name:op.data.name,id:op.data.id,result}); }
+            try { this.emitter.emit('windowCall', {viewer:c.viewer,name:op.data.name,id:op.data.id,retryUntil:op.data.id ? this.ops.retryDeadline(c.viewer,op.data.id,op.data.name) : undefined,result}); }
             catch { /* A failed optional notice cannot change an action's committed result. */ }
           }
           c.send({ kind: 'result', request: op.data.request, result });

@@ -158,3 +158,24 @@ it('preserves committed action and socket result when the optional notice transa
   expect(await client.call('tasks.create',{cli:true,title:'Keep this task',goal:'goal',why:'why'},'survive')).toEqual(result);
   expect(list()).toMatchObject([{operation:'tasks.create',ok:true}]);
 });
+
+it('uses the original retry deadline when a notice is repaired late, then captures reused-id work',async()=>{
+  const {app,clock,list,socket}=await setup(),client=await socket();
+  const input={cli:true,title:'Delayed notice task',goal:'goal',why:'why'};
+  app.db.exec("CREATE TRIGGER reject_late_notice BEFORE INSERT ON attention_outcomes BEGIN SELECT RAISE(ABORT, 'Fixture notice failure'); END;");
+  const first=await client.call('tasks.create',input,'late-repair');expect(first).toMatchObject({ok:true,value:{result:{ok:true}}});expect(list()).toEqual([]);
+  clock.advance(29*86400_000);app.db.exec('DROP TRIGGER reject_late_notice');
+  expect(await client.call('tasks.create',input,'late-repair')).toEqual(first);expect(list()).toHaveLength(1);
+  const originalDeadline=app.operations.retryDeadline(alice,'late-repair','tasks.create')!;
+  expect(app.db.prepare('SELECT expires FROM attention_outcome_seen').get()).toEqual({expires:originalDeadline});
+  clock.advance(86400_000);
+  const second=await client.call('tasks.create',input,'late-repair');expect(second.value.result.id).not.toBe(first.value.result.id);expect(list()).toHaveLength(2);
+});
+it('retains a later success for the same id after an unreceipted rejection',async()=>{
+  const {app,list,socket}=await setup(),client=await socket();
+  const input={id:'later-ask',answer:{kind:'yes'}};
+  expect(await client.call('attention.answer',input,'recover-rejected')).toMatchObject({ok:false});
+  app.operations.call('direct',alice,'attention.raise',{id:'later-ask',agent:'art',ask:'Continue?',source:{kind:'piece',id:'test'}},'raise-later');
+  expect(await client.call('attention.answer',input,'recover-rejected')).toMatchObject({ok:true});
+  expect(list().map(item=>item.ok)).toEqual([true,false]);
+});

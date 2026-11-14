@@ -132,6 +132,11 @@ export class Operations {
     }
     return result;
   }
+  /** Trusted metadata for local post-call receipts. Never returns input or output. */
+  retryDeadline(viewer: Viewer, id: string, name: string): number | undefined {
+    const row=this.db.prepare('SELECT name,expires FROM core_operations WHERE viewer=? AND id=?').get(canonical(viewer),id) as {name:string;expires:number}|undefined;
+    return row?.name===name && row.expires>this.clock.now() ? row.expires : undefined;
+  }
   has(name: string) { return this.ops.has(name); }
   offered(door: Door) { return [...this.ops.values()].filter(o => !o.doors || o.doors.includes(door)).map(o => ({ name: o.name, input: o.input, output: o.output, write: !!o.write, cli: o.cli })); }
   /** MCP registration is a hook; it dispatches exactly like the other doors. */

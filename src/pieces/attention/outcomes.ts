@@ -27,11 +27,11 @@ export function installOutcomes(db: Db, operations: Operations, live: Live, shar
     const row=db.prepare('SELECT record FROM attention_outcomes WHERE id=?').get(id) as {record:string}|undefined;
     return row && JSON.parse(row.record) as ActionOutcome;
   };
-  live.observeWindowCalls(({viewer,name,id,result}) => {
+  live.observeWindowCalls(({viewer,name,id,retryUntil,result}) => {
     const action=Object.hasOwn(actions,name) ? actions[name] : undefined;
     if (name==='attention.answer' && !result.ok && result.code==='conflict' && result.message==='Ask is no longer open') return;
     if (!action || !can(viewer) || !id || id.length>200) return;
-    const key=`outcome-${createHash('sha256').update(JSON.stringify([viewer.id,id])).digest('hex')}`;
+    const key=`outcome-${createHash('sha256').update(JSON.stringify([viewer.id,id,retryUntil ?? 'attempt'])).digest('hex')}`;
     const changes: {type:string;id:string}[]=[];
     db.transaction(() => {
       const now=operations.clock.now();
@@ -42,7 +42,7 @@ export function installOutcomes(db: Db, operations: Operations, live: Live, shar
       const inserted=db.prepare('INSERT INTO attention_outcomes(id,member,record) VALUES (?,?,?)').run(record.id,viewer.id,JSON.stringify(record));
       record.order=Number(inserted.lastInsertRowid);
       db.prepare('UPDATE attention_outcomes SET record=? WHERE id=?').run(JSON.stringify(record),record.id);
-      db.prepare('INSERT INTO attention_outcome_seen VALUES (?,?)').run(key,now+30*86400_000);
+      db.prepare('INSERT INTO attention_outcome_seen VALUES (?,?)').run(key,retryUntil ?? now+30*86400_000);
       changes.push({type:'attention.outcome',id:record.id});
       const excess=db.prepare('SELECT id FROM attention_outcomes WHERE member=? ORDER BY ordinal DESC LIMIT -1 OFFSET 50').all(viewer.id) as {id:string}[];
       for (const row of excess) { db.prepare('DELETE FROM attention_outcomes WHERE id=?').run(row.id); changes.push({type:'attention.outcome',id:row.id}); }
