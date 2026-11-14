@@ -26,12 +26,13 @@ export function installQuestionRead(o:Options & {closed():boolean}) {
   return {id:key,route,projection:a,row};
  };
  type Snapshot=NonNullable<ReturnType<typeof lookup>>;
- const retained=(s:Snapshot)=>s.row.words!==null&&s.row.at+(o.days??14)*86400_000>o.clock.now();
+ const deadline=(s:Snapshot)=>s.row.at+(o.days??14)*86400_000;
+ const retained=(s:Snapshot)=>s.row.words!==null&&deadline(s)>o.clock.now();
  const decode=async(s:Snapshot)=>{
   const words=retained(s)?question.parse(JSON.parse(await o.key.open(s.row.words!))):null;
   const a=s.projection;
   return {id:s.id,thread:s.route.id,seq:s.row.seq,state:a.state,createdAt:a.createdAt,changedAt:a.changedAt,
-   ...(a.answer?{answer:a.answer}:{}),keepUntil:s.row.at+(o.days??14)*86400_000,question:retained(s)?words:null};
+   ...(a.answer?{answer:a.answer}:{}),keepUntil:deadline(s),question:retained(s)?words:null};
  };
  o.operations.register(operation({name:'comms.question',doors:['socket'],windowOnly:true,input:z.object({ref}).strict(),output:z.unknown(),
   may:(viewer,input)=>!!lookup(viewer,input.ref),
@@ -49,6 +50,6 @@ export function installQuestionRead(o:Options & {closed():boolean}) {
   resolve:async(record:LiveRecord)=>decode(record.snapshot as Snapshot),
   inScope:(record,scope)=>record.id===scope,
   refreshOn:change=>change.type==='attention.ask'||change.type==='thread'||change.type==='message',
-  expires:record=>record.retained?(record.snapshot as Snapshot).row.at+(o.days??14)*86400_000:undefined,
+  expires:record=>record.retained?deadline(record.snapshot as Snapshot):undefined,
  });
 }
