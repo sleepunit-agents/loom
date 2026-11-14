@@ -1453,3 +1453,33 @@ it('does not return prepared Clock words through a separately valid replacement 
  expect(await f.post(payload.credential,'runtime.describeConversation',{})).toMatchObject({ok:true});
  expect(await f.post(payload.credential,'runtime.readConversation',{})).toMatchObject({ok:true,value:{messages:[expect.objectContaining({text:'PRIVATE inbound sentinel'})]}});
 });
+
+
+it.each(['read','reply'] as const)('fences an in-flight private %s when the same job moves to another valid conversation',async action=>{
+ let armed=false,entered:()=>void=()=>{},release:()=>void=()=>{};
+ const waiting=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+ vi.spyOn(commsCrypto,'loadKey').mockImplementation(async home=>{
+  const key=await realLoadKey(home);
+  return {...key,async open(blob){if(armed&&action==='read'){entered();await gate;}return key.open(blob);},
+   async seal(words){if(armed&&action==='reply'&&words.includes('PRIVATE relocated reply')){entered();await gate;}return key.seal(words);}};
+ });
+ const f=await commsBodyFixture(),viewer=signin(f.app).token(hash(f.body))!.viewer;
+ const other=value<{thread:string}>(await f.socket('comms.open',{agent:'art',id:'relocationthread',text:'PRIVATE other source'})).thread;
+ await f.queued();
+ const before=f.app.db.prepare('SELECT * FROM comms_messages WHERE thread=?').all(f.thread);
+ armed=true;
+ const pending=f.app.operations.callAsync('http',viewer,action==='read'?'runtime.readConversation':'runtime.reply',action==='read'?{}:{id:'relocated-reply',text:'PRIVATE relocated reply'});
+ try {
+  await waiting;
+  f.app.db.transaction(()=>{
+   const store=runtimeStore(f.app.db),{changedAt:_,...job}=store.read('job',f.job)!;
+   const {changedAt:__,...binding}=store.ids('binding').map(id=>store.read('binding',id)!).find(b=>b.place===other)!;
+   store.put('binding',{...binding,job:f.job},f.clock.now());
+   store.put('job',{...job,conversation:binding.id},f.clock.now());
+  })();
+  // Establish the replacement really is independently valid, not merely revoked.
+  expect(await f.post(f.body,'runtime.describeConversation',{})).toMatchObject({ok:true});
+  release();expect(await pending).toMatchObject({ok:false,code:'denied'});
+  expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE thread=?').all(f.thread)).toEqual(before);
+ }finally{release();await pending;}
+});
