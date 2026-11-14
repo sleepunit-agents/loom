@@ -96,8 +96,14 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       && create(w.by,w) && create({kind:'agent',id:w.agent},w)
       && (w.authorship?.principal.people??[]).every(id=>create({kind:'member',id},w)) ? structuredClone(w) : undefined;
   },(id,attempt)=>{const w=wake(db,id);return !closed&&!!w&&w.attempt===attempt&&(!!w.withdrawn||w.state==='cancelled');});
+  const provenance = (v:Viewer) => {
+    const proof=options.provenance?.(v);
+    if(proof&&options.credentialService&&proof.service!==options.credentialService(v))
+      throw new OperationError('denied','Conversation and credential service evidence disagree');
+    return proof;
+  };
   const prepareFiling = (v: Viewer, w: Work) => {
-    const filed=filing(v,w,sharing(),options.provenance),service=options.credentialService?.(v);
+    const filed=filing(v,w,sharing(),provenance),service=options.credentialService?.(v);
     if(filed?.authorship&&service!==undefined)filed.authorship.service=service;
     return filed;
   };
@@ -109,7 +115,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   // Saved evidence limits a fresh caller; it never supplies a Viewer or a grant.
   const mayControl = (v: Viewer, w: Work) => {
     if (v.kind !== 'agent') return act(v, w);
-    return mayControlAuthoredWork(v,scope(w),sharing(),w.authorship,options.provenance?.(v));
+    return mayControlAuthoredWork(v,scope(w),sharing(),w.authorship,provenance(v));
   };
   const maySetSchedule = (v:Viewer, input:Work & {id:string}) => {
     const saved=schedule(db,input.id);
@@ -132,7 +138,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   const publicWork = <T extends Work>(work: T): Omit<T,'authorship'> => { const {authorship: _internal, ...record} = work; return record; };
   const output = z.unknown();
   const filingHash = (body: string, identity: { actor: Viewer }) => {
-    const proof = options.provenance?.(identity.actor);
+    const proof = provenance(identity.actor);
     const service=options.credentialService?.(identity.actor);
     return createHash('sha256').update(proof ? JSON.stringify([body,
       [proof.agent,proof.conversation,proof.member,proof.project,proof.service,proof.principal]])
@@ -142,7 +148,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const ordinaryFiling = ['at','in','park'].includes(name);
     const control = ['scheduleSet','scheduleRun','scheduleRemove','cancel'].includes(name);
     operations.register(operation({ name: `clock.${name}`, input, output, write,
-      recheckPolicy: control || (write && ordinaryFiling ? (viewer:Viewer) => !!options.provenance?.(viewer) : false),
+      recheckPolicy: control || (write && ordinaryFiling ? (viewer:Viewer) => !!provenance(viewer) : false),
       inputHash: ordinaryFiling || control ? filingHash : undefined,
       requiresWindow: internal ? undefined : (i,v)=>{
         const input=i as {id?:string;member?:string};
@@ -283,11 +289,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       for (const s of schedules(db)) {
         if (!s.enabled || s.continuation || s.approval || s.place || s.agent !== i.agent || s.project !== i.project || s.member !== i.member
           || (s.laneDetails?.source ?? s.file) !== i.file) continue;
-        if(s.by.kind==='member') {
+        if (s.by.kind === 'member') {
           if(!readSee(ctx,s,'schedule') || !mayAct(s.by,{},sharing(),'household') || !create(s.by,s)
             || !(ctx.viewer.kind==='agent'&&ctx.viewer.id===i.agent || ctx.viewer.kind==='member'&&ctx.viewer.id===s.by.id)) continue;
-        }else{
-          if(!mayReuseAuthoredWork(ctx.viewer,scope(s),sharing(),s.authorship,options.provenance?.(ctx.viewer)))continue;
+        } else {
+          if (!mayReuseAuthoredWork(ctx.viewer,scope(s),sharing(),s.authorship,provenance(ctx.viewer))) continue;
         }
         const occurrence = wakes(db).filter(w => w.schedule === s.id && w.state === 'pending' && !w.runNow && !w.bypassPause
           && !w.continuation && !w.approval && !w.place
@@ -499,7 +505,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         return control.operation==='cancel' ? mayControl(viewer,saved) : mayScheduleControl(viewer,control.operation,saved as Schedule);
       }
       const oneOff = oneOffCommandInput(viewer,input);
-      return oneOff && options.provenance?.(viewer) ? mayFile(viewer,oneOff) && (!oneOff.on || !!options.approvals?.check(oneOff.on,viewer))
+      return oneOff && provenance(viewer) ? mayFile(viewer,oneOff) && (!oneOff.on || !!options.approvals?.check(oneOff.on,viewer))
         : viewer.kind === 'member' || viewer.kind === 'agent';
     },
     run: (ctx,input) => {

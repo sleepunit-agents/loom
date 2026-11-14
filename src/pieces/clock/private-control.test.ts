@@ -14,12 +14,13 @@ const body:Viewer={kind:'agent',id:'art'},owner:Viewer={kind:'member',id:'jonath
 const input={agent:'art',id:'art/daily',at:'13:17',prompt:'PRIVATE_WORDS',note:'PRIVATE_NOTE'};
 async function setup(privateWork=true){
  const home=mkdtempSync(join(tmpdir(),'clock-private-control-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
+ let credentialOverride:{value?:string}|undefined;
  let proof:ClockProvenance|undefined={agent:'art',conversation:'cv-original',...(privateWork?{member:'jonathan'}:{}),principal:{for:'pollock',people:['pollock']}};
  const access:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['jonathan'],agents:['art']}},services:{}};
- const app=await startLoom({home,clock:new FakeClock(),install(app){const jobs=installClock(app.db,app.operations,app.live,()=>access,{provenance:v=>v===body?proof:undefined});app.onClose(jobs.close);}});cleanup.push(app.close);
+ const app=await startLoom({home,clock:new FakeClock(),install(app){const jobs=installClock(app.db,app.operations,app.live,()=>access,{provenance:v=>v===body?proof:undefined,capacityConversation:v=>v===body?'cv-original':undefined,credentialService:v=>v===body?(credentialOverride?credentialOverride.value:proof?.service):undefined});app.onClose(jobs.close);}});cleanup.push(app.close);
  const call=(name:string,data:object,viewer=body,id=randomUUID())=>app.operations.call('direct',viewer,'clock.'+name,data,id);
  const snapshot=()=>JSON.stringify({s:schedules(app.db),w:wakes(app.db),e:app.db.prepare('SELECT * FROM clock_events').all()});
- return {app,call,snapshot,access,get proof(){return proof;},set proof(p:ClockProvenance|undefined){proof=p;}};
+ return {app,call,snapshot,access,get proof(){return proof;},set proof(p:ClockProvenance|undefined){proof=p;},set credentialService(value:string|undefined){credentialOverride={value};}};
 }
 it('creates and replaces private schedules without flattening scope or exposing words, including receipts and export',async()=>{
  const f=await setup(),id=randomUUID(),ack=f.call('scheduleSet',input,body,id);
@@ -185,6 +186,8 @@ it.each([true,false])('suppresses an agent-authored file rearm only for its curr
  f.proof={...original,principal:{for:'owner',people:['jonathan']}};
  expect(f.call('in',request,body,receipt)).toMatchObject({ok:false,code:'conflict'});
  expect(count()).toBe(before);f.proof=original;
+ for(const delta of [-6,6])expect(f.call('in',{...request,when:`${(occurrence.due+delta*3600_000-f.app.operations.clock.now())/1000}s`})).toMatchObject({ok:true,value:{alreadyScheduled:true}});
+ for(const delta of [-1,1])expect(f.call('in',{...request,when:`${(occurrence.due+delta*(6*3600_000+1000)-f.app.operations.clock.now())/1000}s`})).toMatchObject({ok:true,value:{state:'pending'}});
  for(const proof of [{...original,conversation:'cv-other'},{...original,service:'other-service'},
   {...original,principal:{for:'owner',people:['jonathan']}},{...original,principal:{for:'?',people:['pollock']}}]){
   f.proof=proof;expect(f.call('in',request)).toMatchObject({ok:true,value:{state:'pending'}});
@@ -219,4 +222,50 @@ it.each(['owner','?'])('uses exact %s steering with the legacy conversation-or-o
  expect(f.call('in',request)).toMatchObject({ok:true,value:{alreadyScheduled:true}});
  f.proof={...original,conversation:'cv-other'};
  expect(f.call('in',request)).toMatchObject({ok:true,value:principal==='owner'?{alreadyScheduled:true}:{state:'pending'}});
+});
+
+it('never uses capacity-only conversation metadata as original authority',async()=>{
+ const f=await setup(false);f.proof={...f.proof!,principal:{for:'?',people:[]}};
+ const scheduleInput={...input,prompt:undefined,file:'routines/capacity-only.md'};
+ expect(f.call('scheduleSet',scheduleInput).ok).toBe(true);
+ const occurrence=wakes(f.app.db)[0],request={agent:'art',file:scheduleInput.file,note:'rearm',when:`${(occurrence.due-f.app.operations.clock.now())/1000}s`};
+ expect(f.call('in',request)).toMatchObject({ok:true,value:{alreadyScheduled:true}});
+ f.proof=undefined; // capacityConversation still returns the original cv.
+ const explicit=f.call('in',request);expect(explicit).toMatchObject({ok:true,value:{state:'pending'}});
+ const id=(explicit as {ok:true;value:{id:string}}).value.id;
+ expect(wakes(f.app.db).find(w=>w.id===id)?.authorship?.conversation).toBeUndefined();
+});
+
+it('requires bound proof and the independent credential service to agree',async()=>{
+ const f=await setup();f.proof={...f.proof!,service:'restricted'};f.credentialService='restricted';
+ const scheduleInput={...input,prompt:undefined,file:'routines/restricted-rearm.md'};
+ expect(f.call('scheduleSet',scheduleInput).ok).toBe(true);
+ const occurrence=wakes(f.app.db)[0],request={agent:'art',file:scheduleInput.file,note:'rearm',when:`${(occurrence.due-f.app.operations.clock.now())/1000}s`};
+ expect(f.call('in',request)).toMatchObject({ok:true,value:{alreadyScheduled:true}});
+ const before=f.snapshot();f.credentialService='other-service';
+ expect(f.call('in',request)).toMatchObject({ok:false,code:'denied'});expect(f.snapshot()).toBe(before);
+ f.proof={...f.proof!,service:'other-service'};
+ const explicit=f.call('in',request);expect(explicit).toMatchObject({ok:true,value:{state:'pending'}});
+ const id=(explicit as {ok:true;value:{id:string}}).value.id;
+ expect(wakes(f.app.db).find(w=>w.id===id)?.authorship?.service).toBe('other-service');
+});
+
+it('binds unbound filing retries to the independent credential restriction',async()=>{
+ const f=await setup(false);f.proof=undefined;f.credentialService='restricted';
+ const request={agent:'art',file:'routines/unbound-rearm.md',note:'restriction',when:'1h'},receipt=randomUUID();
+ const first=f.call('in',request,body,receipt);expect(first).toMatchObject({ok:true,value:{state:'pending'}});
+ expect(f.call('in',request,body,receipt)).toEqual(first);
+ f.credentialService='other-service';
+ expect(f.call('in',request,body,receipt)).toMatchObject({ok:false,code:'conflict'});
+ expect(wakes(f.app.db)).toHaveLength(1);
+ expect(wakes(f.app.db)[0].authorship).toMatchObject({service:'restricted',principal:{for:'?'}});
+});
+
+it.each(['disabled','stale-revision'])('does not substitute an agent schedule with %s occurrence',async kind=>{
+ const f=await setup(false),scheduleInput={...input,prompt:undefined,file:'routines/stale-rearm.md'};
+ expect(f.call('scheduleSet',scheduleInput).ok).toBe(true);
+ const occurrence=wakes(f.app.db)[0],request={agent:'art',file:scheduleInput.file,note:'rearm',when:`${(occurrence.due-f.app.operations.clock.now())/1000}s`};
+ const saved=schedules(f.app.db)[0];if(kind==='disabled')saved.enabled=false;else saved.scheduleRevision='new-revision';
+ f.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(saved),saved.id);
+ expect(f.call('in',request)).toMatchObject({ok:true,value:{state:'pending'}});
 });

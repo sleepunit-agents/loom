@@ -62,12 +62,12 @@ export function mayFilePrivateWork(v: Viewer, r: RecordScope, s: Sharing): boole
 
 /** Owning metadata only: these functions do not authenticate a caller or issue
  * proof. Runtime supplies current evidence, separately from stored authorship. */
-export interface WorkAuthority {
-  agent:string; conversation:string; member?:string; project?:string; service?:string;
-  principal:{for:string;people:readonly string[]};
+export interface WorkPrincipal {for:string;people:string[]}
+export interface WorkAuthority extends Scope {
+  agent:string; conversation:string; service?:string; principal:WorkPrincipal;
 }
-export interface WorkAuthorship {
-  origin?:string; conversation?:string; service?:string; principal?:{for:string};
+export interface WorkAuthorship extends Pick<Scope,'member'|'project'> {
+  origin?:string; conversation?:string; service?:string; principal?:WorkPrincipal;
 }
 export function mayControlAuthoredWork(v:Viewer,r:RecordScope,s:Sharing,original:WorkAuthorship|undefined,current:WorkAuthority|undefined):boolean {
   return v.kind==='agent'&&!!current&&current.agent===v.id&&r.agent===v.id&&original?.origin===v.id
@@ -78,6 +78,7 @@ export function mayControlAuthoredWork(v:Viewer,r:RecordScope,s:Sharing,original
 /** A body cannot substitute another principal's or service's scheduled work. */
 export function mayReuseAuthoredWork(v:Viewer,r:RecordScope,s:Sharing,original:WorkAuthorship|undefined,current:WorkAuthority|undefined):boolean {
   return !!original?.principal&&!!current&&original.principal.for===current.principal.for&&original.service===current.service
+    &&original.member===r.member&&original.project===r.project
     &&mayControlAuthoredWork(v,r,s,original,current);
 }
 
