@@ -834,6 +834,8 @@ CREATE TABLE `jobs` (
 	`state` text NOT NULL,
 	`brief` text NOT NULL,
 	`model` text NOT NULL,
+	`account` text,
+	`harness` text,
 	`started_by_kind` text NOT NULL,
 	`started_by` text NOT NULL,
 	`retry_of` text,
@@ -855,6 +857,7 @@ CREATE TABLE `jobs` (
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`account`) REFERENCES `model_accounts`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`retry_of`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`ended_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "jobs_retry_at_utc" CHECK("jobs"."retry_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."retry_at") = "jobs"."retry_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."retry_at") = "jobs"."retry_at", 0)),
@@ -948,6 +951,24 @@ CREATE TABLE `model_accounts` (
 	CONSTRAINT "model_accounts_resets_at_utc" CHECK("model_accounts"."resets_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_accounts"."resets_at") = "model_accounts"."resets_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_accounts"."resets_at") = "model_accounts"."resets_at", 0)),
 	CONSTRAINT "model_accounts_has_room_boolean" CHECK("model_accounts"."has_room" in (0, 1)),
 	CONSTRAINT "model_accounts_usage_range" CHECK("model_accounts"."usage" is null or "model_accounts"."usage" between 0 and 1)
+);
+
+CREATE TABLE `model_account_windows` (
+	`account` text NOT NULL,
+	`window` text NOT NULL,
+	`usage` real,
+	`usage_read_at` text,
+	`resets_at` text,
+	`duration_ms` real NOT NULL,
+	`reserve` real DEFAULT 0.05 NOT NULL,
+	PRIMARY KEY(`account`, `window`),
+	FOREIGN KEY (`account`) REFERENCES `model_accounts`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "model_account_windows_name" CHECK(length(trim("model_account_windows"."window")) > 0),
+	CONSTRAINT "model_account_windows_usage_range" CHECK("model_account_windows"."usage" is null or "model_account_windows"."usage" between 0 and 1),
+	CONSTRAINT "model_account_windows_usage_read_at_utc" CHECK("model_account_windows"."usage_read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_account_windows"."usage_read_at") = "model_account_windows"."usage_read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_account_windows"."usage_read_at") = "model_account_windows"."usage_read_at", 0)),
+	CONSTRAINT "model_account_windows_resets_at_utc" CHECK("model_account_windows"."resets_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_account_windows"."resets_at") = "model_account_windows"."resets_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_account_windows"."resets_at") = "model_account_windows"."resets_at", 0)),
+	CONSTRAINT "model_account_windows_duration_positive" CHECK("model_account_windows"."duration_ms" > 0 and "model_account_windows"."duration_ms" < 1e100),
+	CONSTRAINT "model_account_windows_reserve_range" CHECK("model_account_windows"."reserve" between 0 and 1)
 );
 
 CREATE TABLE `model_account_boxes` (

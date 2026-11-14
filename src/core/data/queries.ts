@@ -1,10 +1,11 @@
 import type Database from 'better-sqlite3';
-import { and, createTableRelationsHelpers, getOperators, getTableName, is, Relations, type AnyColumn, SQL, sql } from 'drizzle-orm';
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { and, createTableRelationsHelpers, getOperators, getTableColumns, getTableName, is, Relations, type AnyColumn, SQL, sql } from 'drizzle-orm';
 import type { AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { buildSchema } from 'drizzle-graphql';
-import { GraphQLError, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
-import { schema, tables } from './schema.js';
+import { GraphQLError, GraphQLInt, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
+import { schema, tables, taskComments } from './schema.js';
 
 type TableName = keyof typeof tables;
 type Fields = Record<string, AnyColumn>;
@@ -14,6 +15,10 @@ type ReadConfig = {
   with?: Record<string, ReadConfig | boolean | undefined>;
   [key: string]: unknown;
 };
+// One context carrier, with independent stores for concurrent root resolvers.
+// dataQueries is also constructed per HTTP request; do not allocate hook
+// instances that would need a later disable() for each generated schema.
+const querySelection = new AsyncLocalStorage<GraphQLResolveInfo>();
 
 /** Required SQL predicates, keyed by application table name. Never use a JS row
  * filter here: the predicate must constrain filtering, sorting, pagination and
@@ -63,11 +68,23 @@ export function dataQueries(client: Database.Database, options: {
       Object.entries(value.config(createTableRelationsHelpers(value.table))).map(([key, relation]) => [key, names.get(getTableName(relation.referencedTable))!]),
     ));
   }
-  function constrain(name: TableName, input: ReadConfig | true): ReadConfig {
+  function constrain(name: TableName, input: ReadConfig | true, sets = querySelection.getStore()?.fieldNodes.flatMap(node => node.selectionSet ? [node.selectionSet] : []) ?? []): ReadConfig {
     const config = input === true ? {} : input;
     const predicate = visibility[name]!;
+    const fieldsSelected = selectedFields(sets, querySelection.getStore()!);
     return {
       ...config,
+      ...(name === 'tasks' && selected.has('taskComments') && fieldsSelected.has('commentCount') ? {
+        extras: (fields: Fields) => {
+          const allowed = visibility.taskComments!(getTableColumns(taskComments));
+          if (!is(allowed, SQL)) throw new Error('SQL visibility required for taskComments');
+          // Defer rendering past Drizzle's alias rewrite, as with row policies.
+          // The parent fields are already aliased; the count's inner tables
+          // and policy subqueries must retain their own column identities.
+          const count = sql`(select count(*) from ${taskComments} where ${taskComments.task} = ${fields.id} and ${allowed})`;
+          return { commentCount: sql`${{ getSQL: () => count }}`.mapWith(Number).as('data_comment_count') };
+        },
+      } : {}),
       where: (fields: Fields, operators: ReturnType<typeof getOperators>) => {
         const allowed = predicate(fields);
         // An accidental undefined from a policy must fail closed, never become
@@ -84,7 +101,7 @@ export function dataQueries(client: Database.Database, options: {
         if (!nested) return [key, nested];
         const target = relations.get(name)?.[key];
         if (!target) throw new Error(`Unknown query relation: ${name}.${key}`);
-        return [key, constrain(target, nested)];
+        return [key, constrain(target, nested, fieldsSelected.get(key) ?? [])];
       })),
     };
   }
@@ -102,14 +119,59 @@ export function dataQueries(client: Database.Database, options: {
     query.findFirst = ((config: ReadConfig = {}) => first(constrain(name, config))) as typeof query.findFirst;
   }
   const generated = buildSchema(db, { mutations: false, relationsDepthLimit: depth }).schema;
+  // Relation output types are distinct generated objects. Walk their actual
+  // edges rather than guessing type names or defining a second task shape.
+  const visited = new Set<object>();
+  function addCounts(name: TableName, output: ReturnType<typeof getNamedType>) {
+    if (!output || !isObjectType(output) || visited.has(output)) return;
+    visited.add(output);
+    const fields = output.getFields();
+    if (name === 'tasks' && selected.has('taskComments')) fields.commentCount = {
+      name: 'commentCount', type: new GraphQLNonNull(GraphQLInt), args: [],
+      description: 'Number of visible comments on this task, counted in the same SQL statement.',
+      resolve: row => row.commentCount,
+      extensions: {}, astNode: undefined, deprecationReason: undefined,
+    };
+    for (const [key, target] of Object.entries(relations.get(name) ?? {})) {
+      if (fields[key]) addCounts(target, getNamedType(fields[key].type));
+    }
+  }
+  for (const name of selected) for (const key of [name, `${name}Single`]) {
+    addCounts(name, getNamedType(generated.getQueryType()!.getFields()[key].type));
+  }
   for (const field of Object.values(generated.getQueryType()!.getFields())) {
     const resolve = field.resolve!;
     field.resolve = (source, args, context, info) => {
       rejectRelationAliases(info);
-      return resolve(source, args, context, info);
+      return querySelection.run(info, () => resolve(source, args, context, info));
     };
   }
   return generated;
+}
+
+/** Merge field selections by schema field name: scalar aliases, directives
+ * and fragments must request the same SQL extra. */
+function selectedFields(sets: readonly SelectionSetNode[], info: GraphQLResolveInfo) {
+  const fields = new Map<string, SelectionSetNode[]>();
+  const fragments = new Set<string>();
+  function visit(set: SelectionSetNode) {
+    for (const node of set.selections) {
+      if (getDirectiveValues(GraphQLSkipDirective, node, info.variableValues)?.if === true ||
+          getDirectiveValues(GraphQLIncludeDirective, node, info.variableValues)?.if === false) continue;
+      if (node.kind === Kind.FIELD) {
+        const nested = fields.get(node.name.value) ?? [];
+        if (node.selectionSet) nested.push(node.selectionSet);
+        fields.set(node.name.value, nested);
+      } else if (node.kind === Kind.INLINE_FRAGMENT) visit(node.selectionSet);
+      else if (!fragments.has(node.name.value)) {
+        fragments.add(node.name.value);
+        const fragment = info.fragments[node.name.value];
+        if (fragment) visit(fragment.selectionSet);
+      }
+    }
+  }
+  sets.forEach(visit);
+  return fields;
 }
 
 /** drizzle-graphql 0.8.5 conflates relation aliases, using only one alias's

@@ -82,3 +82,18 @@ it('honors configured preference positions even when they oppose identifier orde
   db.update(agentModels).set({ position: -1 }).where(eq(agentModels.model, 'backup')).run();
   expect(selectPlacement(db, input)).toEqual({ box: 'remote', model: 'backup', account: 'shared', harness: 'other' });
 });
+it('uses the persisted provider quota summary for all agents sharing the subscription', async () => {
+  const { recordAccountUsage } = await import('./account-usage.js');
+  const { db, input } = fixture();
+  db.insert(agents).values({ id: 'mark', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(memberAgents).values({ member: 'owner', agent: 'mark' }).run();
+  db.insert(agentBoxes).values({ agent: 'mark', box: 'local', position: 0 }).run();
+  db.insert(agentModels).values({ agent: 'mark', model: 'preferred', position: 0 }).run();
+  const other = { ...input, agent: 'mark' };
+  expect(selectPlacement(db, input)?.account).toBe('shared');
+  expect(selectPlacement(db, other)?.account).toBe('shared');
+  recordAccountUsage(db, { account: 'shared', owner: 'owner', provider: 'provider', now: input.now,
+    windows: [{ name: 'week', usage: 1, readAt: input.now, resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 7 * 86400_000 }] });
+  expect(selectPlacement(db, input)).toBeUndefined();
+  expect(selectPlacement(db, other)).toBeUndefined();
+});

@@ -242,6 +242,7 @@ have fallen behind.
 | `src/backends/embedding-runtime.ts` | Vendored ONNX + tokenizer runtime |
 | `src/backends/sqlite-knowledge.ts` | Knowledge store |
 | `src/backends/people-creation.ts` | Synchronous create-only person card halves on supplied existing stores |
+| `src/backends/knowledge-revisions.ts` | Save and retain the newest ten Knowledge body versions inside the caller's transaction |
 | `src/backends/knowledge-verification.ts` | Synchronous verification transaction over an open knowledge store; shared SLA and body cap rules |
 | `src/backends/migrations.ts` | Versioned schema migrations for `memories.db` |
 | `src/backends/salience.ts` | Temperature and the Top of Mind digest |

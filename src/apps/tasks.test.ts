@@ -1,16 +1,17 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it } from 'vitest';
-import { createDataSchema } from '../core/data/database.js';
-import { members } from '../core/data/schema.js';
+import { createDataSchema, type DataDatabase } from '../core/data/database.js';
+import { members, agents, inbox, inboxRefs } from '../core/data/schema.js';
+import { Conversations } from '../core/conversations/index.js';
 import { taskService, type TaskService } from './tasks.js';
 
-let client: Database.Database, tasks: TaskService;
+let client: Database.Database, db: DataDatabase, tasks: TaskService;
 const actor = { kind: 'member', id: 'jonathan' } as const;
 const other = { kind: 'member', id: 'amelia' } as const;
 const at = '2026-11-14T20:00:00.000Z';
 beforeEach(() => {
   client = new Database(':memory:');
-  const db = createDataSchema(client, () => at);
+  db = createDataSchema(client, () => at);
   db.insert(members).values([actor, other].map(p => ({ id: p.id, role: 'member' as const, joinedAt: at }))).run();
   tasks = taskService(db, () => at);
 });
@@ -71,4 +72,64 @@ it('records a person’s answer and returns the work to whoever asked', () => {
   expect(() => tasks.answer(task.id, 'yes', '', other)).toThrow('needs words');
   tasks.answer(task.id, 'words', 'The middle model', other);
   expect(tasks.get(task.id).comments.map(c => c.text)).toEqual(['Yes, to: Spend up to $180?\nI order it', 'The middle model']);
+});
+
+it('puts a task question in Inbox, resolves it at the source and delivers the answer back to its conversation', () => {
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  const mail = new Conversations(db, () => at);
+  const conversation = mail.open({ agent: 'art', venue: 'loom', place: 'pond', label: 'Pond' });
+  const asker = { kind: 'agent', id: 'art' } as const;
+  const task = tasks.create({ title: 'Order pump', goal: 'Pump ordered', why: 'Old pump failed', owner: asker, source: { kind: 'conversation', id: conversation.id } }, asker);
+  tasks.ask(task.id, { to: actor, ask: 'Spend $180?', ifYes: 'I order it', ifNo: 'I look again' }, asker);
+  const question = db.select().from(inbox).get()!;
+  expect(question).toMatchObject({ toKind: 'person', to: actor.id, source: 'task', conversation: conversation.id, words: 'Spend $180?', answers: 'yes-no', ifYes: 'I order it', waitsOnKind: 'task', waitsOnId: task.id, state: 'waiting' });
+  expect(db.select().from(inboxRefs).all()).toEqual([{ item: question.id, ref: task.id }]);
+  expect(() => mail.answer(question.id, actor.id, 'yes')).toThrow('linked source');
+  expect(() => tasks.answer(task.id, 'yes', '', other)).toThrow('No question');
+  expect(mail.item(question.id).state).toBe('waiting');
+  tasks.answer(task.id, 'yes', '', actor);
+  expect(mail.item(question.id)).toMatchObject({ state: 'resolved', resolution: 'yes' });
+  expect(db.select().from(inbox).all()[1]).toMatchObject({ toKind: 'agent', to: 'art', source: 'answer', sourceId: question.id, conversation: conversation.id, words: 'Yes, to: Spend $180?\nI order it', state: 'waiting' });
+  expect(() => tasks.answer(task.id, 'yes', '', actor)).toThrow('No question');
+  expect(db.select().from(inbox).all()).toHaveLength(2);
+});
+
+it('retires replaced and closed task questions, keeping old Inbox history', () => {
+  const task = file('Order pump');
+  const ask = (text: string) => tasks.ask(task.id, { to: other, ask: text, ifYes: 'Order it', ifNo: 'Wait' }, actor);
+  ask('First choice?'); ask('Second choice?');
+  expect(db.select().from(inbox).all().map(i => [i.words, i.state, i.resolution])).toEqual([
+    ['First choice?', 'resolved', 'Question replaced'], ['Second choice?', 'waiting', null],
+  ]);
+  expect(() => tasks.claim(task.id, actor)).toThrow('outstanding question');
+  tasks.close(task.id, 'cancelled');
+  expect(db.select().from(inbox).all()[1]).toMatchObject({ state: 'resolved', resolution: 'cancelled' });
+  expect(() => tasks.answer(task.id, 'yes', '', other)).toThrow('No question');
+  tasks.reopen(task.id);
+  expect(tasks.get(task.id).ask).toBeNull();
+  expect(() => tasks.answer(task.id, 'yes', '', other)).toThrow('No question');
+});
+
+it('rolls back the task edit and prior question resolution when Inbox delivery fails', () => {
+  const task = file('Order pump');
+  tasks.ask(task.id, { to: other, ask: 'First?', ifYes: 'Order', ifNo: 'Wait' }, actor);
+  client.exec("CREATE TRIGGER reject_question BEFORE INSERT ON inbox BEGIN SELECT RAISE(ABORT, 'delivery failed'); END");
+  expect(() => tasks.ask(task.id, { to: actor, ask: 'Replacement?', ifYes: 'Order', ifNo: 'Wait' }, other)).toThrow('delivery failed');
+  expect(tasks.get(task.id)).toMatchObject({ ask: 'First?', assignee: other.id, askedBy: actor.id });
+  expect(db.select().from(inbox).all()).toHaveLength(1);
+  expect(db.select().from(inbox).get()).toMatchObject({ state: 'waiting', words: 'First?' });
+});
+
+it('rolls back an answer and its comment if delivering the answer fails', () => {
+  const task = file('Choose model');
+  tasks.claim(task.id, actor);
+  tasks.ask(task.id, { to: other, ask: 'Which model?', ifYes: 'Order', ifNo: 'Wait', answers: 'words' }, actor);
+  expect(() => tasks.unclaim(task.id)).toThrow('outstanding question');
+  client.exec("CREATE TRIGGER reject_answer BEFORE INSERT ON inbox WHEN NEW.source = 'answer' BEGIN SELECT RAISE(ABORT, 'answer delivery failed'); END");
+  expect(() => tasks.answer(task.id, 'words', 'Middle model', other)).toThrow('answer delivery failed');
+  expect(tasks.get(task.id)).toMatchObject({ ask: 'Which model?', assignee: other.id, comments: [] });
+  expect(db.select().from(inbox).get()).toMatchObject({ state: 'waiting' });
+  client.exec('DROP TRIGGER reject_answer');
+  tasks.answer(task.id, 'words', 'Middle model', other);
+  expect(db.select().from(inbox).all()[1]).toMatchObject({ to: actor.id, toKind: 'person', conversation: null, words: 'Middle model' });
 });

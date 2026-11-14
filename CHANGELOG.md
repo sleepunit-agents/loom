@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- CI: test shards 1 and 2 run on loom's own runners and 3 and 4 on GitHub's when the runner switch is on; CodeQL runs nightly and on request instead of on every pull request and push.
+
 - Docs: the how-it-works site is published to GitHub Pages from `docs/how-it-works/site` on every merge to main.
 
 - Docs: `docs/how-it-works/` is the approved description of the finished product and the goal of the web rebuild; `docs/specs/web-foundation.md` is superseded where it differs.
