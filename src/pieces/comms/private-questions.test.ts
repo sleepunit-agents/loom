@@ -35,7 +35,9 @@ it('seals the whole question and atomically publishes only a metadata projection
   const stored=JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all());
   for(const word of [question.ask,question.why,question.if_yes,question.href,...question.refs])expect(stored).not.toContain(word);
  }
- const page=await f.call('comms.messages',{thread:f.place});expect(page).toMatchObject({ok:true});expect(JSON.stringify(page)).toContain(question.ask);
+ const page=await f.call('comms.messages',{thread:f.place});expect(page).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:question})])});
+ const sealed=f.app.db.prepare('SELECT hash FROM comms_messages WHERE thread=? AND seq=?').get(f.place,r.seq) as {hash:string};
+ expect(sealed.hash).toBe(f.key.hash(JSON.stringify({id:'question',question})));
  expect(batches).toContainEqual(expect.arrayContaining([{type:'message',id:`${f.place}/${r.seq}`},{type:'attention.ask',id:r.ref}]));
  expect(await f.call('attention.get',{id:r.ref},{kind:'member',id:'other'} as never)).toMatchObject({ok:false});
  expect(f.attention.raise(f.viewer,{id:r.ref,ask:'overwrite',source:{kind:'conversation',id:'fake'}},'overwrite')).toMatchObject({ok:false});
@@ -89,4 +91,15 @@ it('coalesces simultaneous identical creations and rejects changed concurrent qu
  const results=await Promise.allSettled([f.comms.ask('art',f.place,{id:'other',question}),f.comms.ask('art',f.place,{id:'other',question:{...question,why:'Changed'}})]);
  expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
  expect(f.app.db.prepare("SELECT * FROM comms_messages WHERE kind='ask'").all()).toHaveLength(2);
+});
+
+it('namespaces caller ids to their original thread rather than impersonating a source',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'approval:fake',question});
+ expect(r.ref).toMatch(/^comms:[0-9a-f]{64}$/);
+ const opened=await f.call('comms.open',{agent:'art',id:'bbbbbbbbbbbbbbbb',text:'Other thread'});if(!opened.ok)throw Error(opened.message);
+ const other=(opened.value as {thread:string}).thread;
+ const second=await f.comms.ask('art',other,{id:'approval:fake',question});expect(second.ref).not.toBe(r.ref);
+ expect(f.attention.get(f.viewer,{id:second.ref})).toMatchObject({ok:true,value:{privateQuestion:{thread:other}}});
+ const nested=await f.comms.ask('art',other,{id:r.ref,question});expect(nested.ref).not.toBe(r.ref);
+ expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{privateQuestion:{thread:f.place}}});
 });
