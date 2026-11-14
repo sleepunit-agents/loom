@@ -1204,7 +1204,7 @@ it is never Runtime's execution caller. The service receives only an exact
 cross-piece operation and `runtime.job` type, with no generic service creation
 exception in central policy.
 
-For public prompt work Runtime atomically creates the job, wake binding, input
+For public prompt work, including stored household lane prompts, Runtime atomically creates the job, wake binding, input
 and monotonic sender history. A vacant lane place can be bound by this producer;
 unproved work cannot replace an occupied lane. Runtime preserves the original
 credential service separately from the dispatching Clock service, including
@@ -1228,7 +1228,14 @@ reads pass the central staging gate before words leave the process. A timeout
 or interrupted read remains uncertain. This is cooperative conversation input:
 it does not claim a native transport interrupt/resume mechanism.
 
-This slice does not support private, file, local, lane-version, approval, slot
+Stored household lane prompts now use this same delivery, including lanes whose
+text was filed from a source file. Clock already stores that text; Runtime neither
+opens the source path nor duplicates a file loader. `laneVersion` remains
+supersession metadata and does not confer authority. Run-now and recurring lane
+occurrences retain their original prompt and current source-policy checks. Long
+lane prompts retain the existing `clock.laneText` instruction.
+
+This slice does not support private, standalone file-path, local, approval, slot
 or continuation inputs. Those still hold. The old-to-new feed/resume obligation
 above is only satisfied for a running body reading its bound scheduled inbox;
 transport-triggered resume, terminal-lane reuse, private delivery and remaining
@@ -1240,3 +1247,18 @@ retains their permanent receipts and monotonic sender history. Revoked permissio
 or missing source evidence is a hold, never inferred to be a withdrawal. A read
 prepared before cancellation is refused at the final transaction boundary;
 subsequent valid input in the same lane can still be read and acknowledged.
+
+
+### Stored household lane delivery
+
+The Runtime supported-input check accepts `laneVersion` with an ordinary public
+prompt. All other capability holds remain shared by composition and owning
+admission. The in-process start fixtures deliver the exact stored prompt through
+the authenticated inbox, with normal and staging starts, body-only reads and ACK;
+local and slotted lane negatives still create no job. This closes the stored
+file-backed lane hold, not standalone file-path delivery or native resume.
+
+| Old surface | New delivery |
+| --- | --- |
+| Household lane with filed inline/file text, no local marker or slot | Existing Clock service acceptance, Runtime runner start, bound conversation read and ACK; stored text, no daemon file access |
+| Standalone `wake in --file` | Still held: worker-checkout file delivery remains work |
