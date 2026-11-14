@@ -119,6 +119,19 @@ describe('optional OpenTelemetry measuring', () => {
     expect(clock.at).not.toHaveBeenCalled();
   });
 
+  it('does not rearm retention when diagnostics close measuring during expiry', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 10, 14));
+    const schedule = vi.spyOn(clock, 'at');
+    let closing: Promise<void> | undefined;
+    const prune = vi.fn().mockImplementationOnce(() => {}).mockImplementation(() => {throw new Error('busy');});
+    const m = await createMeasuring(enabled, targets, {add(){}, prune}, () => {closing = m.close();}, clock);
+    clock.advance(86400_000);
+    await closing;
+    expect(schedule).toHaveBeenCalledTimes(1);
+    clock.advance(86400_000);
+    expect(prune).toHaveBeenCalledTimes(2);
+  });
+
   it('uses one span for local and OTLP destinations, with bounded batches and no application payload', async () => {
     sent.options.length=0; sent.spans.length=0;
     const {store,rows}=storage();

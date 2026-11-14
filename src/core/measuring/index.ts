@@ -113,7 +113,7 @@ export async function createMeasuring(
     catch { report(); }
     finally { writing = false; }
     // Expire idle stores too, without a polling interval or a process keepalive.
-    cancelRetention = clock.at((Math.floor(now / 86400_000) + 1) * 86400_000, retain);
+    if (active) cancelRetention = clock.at((Math.floor(now / 86400_000) + 1) * 86400_000, retain);
   };
   retain();
   const tracer: Tracer = provider.getTracer('loom.measuring');
