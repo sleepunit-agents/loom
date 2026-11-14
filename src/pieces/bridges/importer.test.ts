@@ -149,3 +149,25 @@ it('permits only explicitly incomplete Slack setup from the named source workspa
  expect(JSON.parse(source.evidence).incomplete).toEqual([expect.objectContaining({workspace:'TWORK',bundle:'slack-onterris.env'})]);
  for(const patch of [{platform:'discord'},{workspace:'TOTHER'},{bot:'U1'},{tokenSecret:'invented'},{appSecret:'invented'},{setupIncomplete:undefined}])expect(()=>readBridgeImport(f.sources,{...options,connections:[{...incomplete,...patch}]},h,f.open)).toThrow();
 });
+
+it('refuses known/unknown person collisions before filtering household membership',()=>{
+ const f=fixture();writeFileSync(f.sources.files[1].path,JSON.stringify({people:{jonathan:{discord:['123']},guest:{discord:['123']}}}));
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+});
+it('retains Slack identities outside reviewed complete or incomplete workspaces',()=>{
+ const f=fixture();writeFileSync(f.sources.files[1].path,JSON.stringify({people:{jonathan:{discord:['123'],slack:{TOTHER:['U1']}}}}));
+ const source=readBridgeImport(f.sources,f.options,h,f.open);
+ expect(source.expected.links.map(l=>l.platform)).toEqual(['discord']);
+ expect(JSON.parse(source.evidence).retained).toContainEqual(expect.objectContaining({kind:'person',owner:'jonathan',reason:'no projectable workspace'}));
+});
+it('an unprojectable route claim cannot be shadowed by another source or a thread',()=>{
+ const f=fixture();
+ // A second local instance supplies a less restricted copy of the same channel.
+ const extra=(kind:'shuttle'|'people'|'routes',doc:unknown)=>{const name=`mark/${kind}.json`,path=join(f.root,name);mkdirSync(dirname(path),{recursive:true});writeFileSync(path,JSON.stringify(doc));f.sources.files.push({name,path,kind});return name;};
+ const instance={shuttle:extra('shuttle',{agent:{slug:'mark'}}),people:extra('people',{}),routes:extra('routes',{guild:'789',bots:{mark:'200'},channels:{'300':{primary:'art'}},threads:{'500':{parent:'300',primary:'art'}}})};
+ writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100'},channels:{'300':{primary:'art',readers:['guest']}}}));
+ const options={instances:[...f.options.instances,instance],connections:[...f.options.connections,{agent:'mark',platform:'discord',workspace:'789',bot:'200',tokenSecret:'mark-discord'}]};
+ const source=readBridgeImport(f.sources,options,h,f.open);
+ expect(source.expected.routes).toEqual([]);
+ expect(JSON.parse(source.evidence).retained).toContainEqual(expect.objectContaining({kind:'route',channel:'500'}));
+});

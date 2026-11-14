@@ -81,7 +81,16 @@ it('rehearses the household shape: one local root, three bots, a work Slack bund
  put(join(instance,'routes.json'),{_comment:'fixture',_updated:'today',guild:'789',bots:{art:'100',mark:'200',fez:'250'},_bot_roles_note:'fixture',bot_roles:{art:['101'],mark:['201'],fez:['251']},webhook_peers:{_comment:'fixture',one:'800',two:'801',three:'802'},peer_turns_each:null,_peer_turns_note:'fixture',_ids_note:'fixture',ignore:{'900':true},channels:{'300':{primary:'art'},'301':{primary:'mark'},'302':{primary:'fez'},'303':{primary:'art',readers:['guest']}},threads:{'304':{primary:'art',parent:'303'}}});
  writeFileSync(join(instance,'slack-onterris.env'),'NEVER_OPEN_BUNDLE');
  const store=(kind:string,docs:[string,string,unknown][])=>{const path=join(old,`commons/stores/${kind}.db`);mkdirSync(dirname(path),{recursive:true});const d=new Database(path);d.exec('CREATE TABLE docs(collection TEXT,key TEXT,doc TEXT,rev INTEGER,updated TEXT,by TEXT);CREATE TABLE revisions(id INTEGER,collection TEXT,key TEXT,doc TEXT,rev INTEGER,op TEXT,at TEXT,by TEXT)');for(const[c,k,v]of docs)d.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run(c,k,JSON.stringify(v),'today','owner');d.close();};
- store('shuttle',[]);store('runtime',[]);
+ const legacyPeople=JSON.parse(readFileSync(join(instance,'people.json'),'utf8'));
+ const commonFlags={'303':{readers:['guest']}};
+ store('shuttle',[
+  ['moved','art',{}],['people','art',{people:{stale:{discord:['999']}}}],
+  ['routes','household',{guild:'789',channel_names:{'300':'Art','301':'Mark','302':'Fez','303':'Guest'}}],
+  ['channels','art',{bot:'100',bot_role:['101'],answers:{'300':'Art','303':'Guest'},flags:commonFlags,threads:{'304':{primary:'art',parent:'303'}}}],
+  ['channels','mark',{bot:'200',bot_role:['201'],answers:{'301':'Mark'},flags:commonFlags}],
+  ['channels','fez',{bot:'250',bot_role:['251'],answers:{'302':'Fez'},flags:commonFlags}],
+ ]);
+ store('runtime',[['gates','art',legacyPeople]]);
  const state=join(root,'runtime'),data=join(root,'runtime-data');mkdirSync(state);mkdirSync(data);
  await createSnapshot(old,snapshot,undefined,{bridges:[instance],runtime:state,'runtime-data':data});
  const plan=prepareMigrationPlan(snapshot).plan;

@@ -123,10 +123,12 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
       projectBridgeDocument(effective,`accepted:${a}`,'routes',resolved);routeOwners.set(`accepted:${a}`,a);
     }
     const venues:Venue[]=[],routes:Route[]=[],links:PersonLink[]=[];
-    const incomplete:unknown[]=[];
+    const incomplete:{agent:string;platform:string;workspace:string;bundle:string;reason:string}[]=[];
+    const blockedRoutes=new Set<string>();
     const retained:unknown[]=[];
     for(const c of options.connections){
       if(!household.agents.includes(c.agent)||!required.delete(`${c.agent}:${c.platform}`))throw Error();
+      if(c.workspace==='0')throw Error();
       if(c.setupIncomplete){
         if(c.platform!=='slack'||c.bot!==undefined||c.tokenSecret!==undefined||c.appSecret!==undefined)throw Error();
         const config=effective.instances.find(s=>s.agent===c.agent);
@@ -150,14 +152,14 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
       if(!r.guild){if(r.channels.length)throw Error();continue;}
       if(!venues.some(v=>v.platform==='discord'&&v.workspace===r.guild))throw Error();
       for(const c of r.channels){
-        if(c.primary&&!household.agents.includes(c.primary)||c.readers.some(p=>!household.members.includes(p))){retained.push({kind:'route',source:r.source,channel:c.channel,reason:'audience is not projectable to this household'});continue;}
+        if(c.primary&&!household.agents.includes(c.primary)||c.readers.some(p=>!household.members.includes(p))){blockedRoutes.add(`legacy:discord:${r.guild}:${c.channel}`);retained.push({kind:'route',source:r.source,channel:c.channel,reason:'audience is not projectable to this household'});continue;}
         const {thread,...fields}=c;
         if(thread){
           const parent=r.channels.find(p=>!p.thread&&p.channel===c.parent);
           if(!parent)throw Error();
           Object.assign(fields,{peer:parent.peer,pair:parent.pair,guest:parent.guest,readers:parent.readers});
         }
-        if(fields.readers.some(p=>!household.members.includes(p))){retained.push({kind:'route',source:r.source,channel:c.channel,reason:'parent audience is not projectable to this household'});continue;}
+        if(fields.readers.some(p=>!household.members.includes(p))){blockedRoutes.add(`legacy:discord:${r.guild}:${c.channel}`);retained.push({kind:'route',source:r.source,channel:c.channel,reason:'parent audience is not projectable to this household'});continue;}
         const record=routeSchema.parse({id:`legacy:discord:${r.guild}:${c.channel}`,platform:'discord',workspace:r.guild,...fields,notes:[]});
         // thread is source classification, not a setup field.
         routes.push(record);
@@ -175,17 +177,21 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     }
     for(const a of effective.accounts){
       if(a.kind!=='person')continue;
+      if(effective.accounts.some(b=>b.kind==='person'&&b.platform===a.platform&&b.user===a.user&&b.owner!==a.owner&&(a.platform==='discord'||b.workspace===a.workspace)))throw Error();
       if(venues.some(v=>v.platform===a.platform&&v.bot===a.user&&(a.platform==='discord'||v.workspace===a.workspace))||effective.routes.some(r=>a.platform==='discord'&&Object.values(r.bots).includes(a.user))||effective.accounts.some(b=>b.kind==='agent'&&b.platform===a.platform&&b.user===a.user&&(a.platform==='discord'||b.workspace===a.workspace)))throw Error();
       if(a.user==='0')throw Error();
       if(!household.members.includes(a.owner)){retained.push({kind:'person',source:a.source,owner:a.owner,reason:'not a household member'});continue;}
-      const workspaces=a.platform==='slack'?[a.workspace!]:[...new Set(venues.filter(v=>v.platform==='discord').map(v=>v.workspace))];
+      const workspaces=a.platform==='slack'?(venues.some(v=>v.platform==='slack'&&v.workspace===a.workspace)||incomplete.some(v=>v.workspace===a.workspace)?[a.workspace!]:[]):[...new Set(venues.filter(v=>v.platform==='discord').map(v=>v.workspace))];
       if(!workspaces.length){retained.push({kind:'person',source:a.source,owner:a.owner,reason:'no projectable workspace'});continue;}
       for(const workspace of workspaces)links.push(linkSchema.parse({id:`legacy:${a.platform}:${workspace}:${a.user}`,platform:a.platform,workspace,user:a.user,person:a.owner}));
     }
     const unique=<T extends{id:string}>(records:T[]):T[]=>{
       const out=new Map<string,T>();for(const r of records){const old=out.get(r.id);if(old&&canonical(old)!==canonical(r))throw Error();out.set(r.id,r);}return [...out.values()].sort((a,b)=>a.id<b.id?-1:1);
     };
-    const expected={venues:unique(venues),routes:unique(routes),links:unique(links)};
+    // A retained unprojectable claim must not be shadowed by another source's
+    // less restricted row, or by a thread inheriting that parent.
+    for(const r of routes)if(r.parent&&blockedRoutes.has(`legacy:discord:${r.workspace}:${r.parent}`)){blockedRoutes.add(r.id);retained.push({kind:'route',channel:r.channel,reason:'parent has an unprojectable source claim'});}
+    const expected={venues:unique(venues),routes:unique(routes.filter(r=>!blockedRoutes.has(r.id))),links:unique(links)};
     const evidence=JSON.stringify({inventory,stores,incomplete,retained}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping]));
     return {expected,evidence,mapping,checksum};
   }catch{throw Error('Invalid offline Bridges import mapping or sources');}
