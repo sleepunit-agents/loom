@@ -965,8 +965,8 @@ Still tracked in the open:
 - [v0.4 roadmap discussion](https://github.com/sleepunit-agents/loom/discussions/10) —
   the arc: why v0.4 exists, what's in scope, how the pieces fit.
 
-Historical per-feature specs and plans live under `docs/archive/specs/`
-and `docs/archive/plans/` — implementation history, frozen after merge.
+The approved [How loom works](docs/how-it-works/README.md) pages describe
+the rebuild goal. Retired feature plans and ceremony fixtures remain in git history.
 
 ## Docs
 
@@ -989,8 +989,7 @@ and `docs/archive/plans/` — implementation history, frozen after merge.
   trusted publishing (OIDC, no stored token), the one-time first publish,
   and the tag-push flow for everything after.
 - [`docs/archive/`](docs/archive/) — historical material: the rebirth
-  letter and rescue notes from the v0.3.1 sqlite-vec migration, and
-  per-feature specs and plans from the v0.4 arc.
+  letter and rescue notes from the v0.3.1 sqlite-vec migration.
 
 ## Trust & security
 
