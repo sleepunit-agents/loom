@@ -20,15 +20,16 @@ async function keys() {
 }
 it('encrypts only filtered fresh pages; independent owner and drill can restore actual ciphertext', async () => {
   const db=source(), original=db.serialize(), k=await keys();
-  const result=await encryptDatabaseImage(db,[k.recipient,k.recipient],k.drill);
+  const secondOwner=await generateX25519Identity();
+  const result=await encryptDatabaseImage(db,[k.recipient,k.recipient,await identityToRecipient(secondOwner)],k.drill);
   expect(db.serialize()).toEqual(original);
   expect(Object.keys(result).sort()).toEqual(['bytes','coverage','drill','tables']);
   expect(result.coverage).toBe('database-only'); expect(result.drill).toEqual({database:true});
   expect(result.tables).toHaveLength(3);
   for(const table of result.tables) expect(table).toEqual({name:expect.any(String),rows:expect.any(Number),sha256:expect.stringMatching(/^[0-9a-f]{64}$/)});
   expect(result.bytes.toString('ascii',0,21)).toBe('age-encryption.org/v1');
-  for (const word of ['SURVIVING_WORDS','FILTERED_WORDS','COMMS_SECRET',k.owner,k.drill]) expect(result.bytes.includes(Buffer.from(word))).toBe(false);
-  for (const identity of [k.owner,k.drill]) {
+  for (const word of ['SURVIVING_WORDS','FILTERED_WORDS','COMMS_SECRET',k.owner,secondOwner,k.drill]) expect(result.bytes.includes(Buffer.from(word))).toBe(false);
+  for (const identity of [k.owner,secondOwner,k.drill]) {
     const decrypt=new Decrypter(); decrypt.addIdentity(identity);
     const plain=await decrypt.decrypt(result.bytes);
     expect(Buffer.from(plain).includes(Buffer.from('COMMS_SECRET'))).toBe(false);
