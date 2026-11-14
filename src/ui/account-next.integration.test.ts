@@ -17,7 +17,14 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes 
   const base=loom.url.replace('127.0.0.1','localhost');vi.stubEnv('LOOM_PUBLIC_URL',base);
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
-    const context=await browser.newContext({viewport:{width:1280,height:1000},serviceWorkers:'block'}),otherContext=await browser.newContext({viewport:{width:1280,height:1000},serviceWorkers:'block'}),a=await context.newPage(),b=await otherContext.newPage();
+    const context=await browser.newContext({userAgent:'Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36',viewport:{width:1280,height:1000},serviceWorkers:'block'}),otherContext=await browser.newContext({viewport:{width:1280,height:1000},serviceWorkers:'block'}),a=await context.newPage(),b=await otherContext.newPage();
+    await a.addInitScript(()=>{
+      let sub:unknown=null;
+      const manager={getSubscription:async()=>sub,subscribe:async()=>{sub={toJSON:()=>({endpoint:'https://fcm.googleapis.com/account-browser-proof',expirationTime:null,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}}),unsubscribe:async()=>{sub=null;return true;}};return sub;}};
+      Object.defineProperty(navigator.serviceWorker,'getRegistration',{value:async()=>({pushManager:manager})});
+      Object.defineProperty(window,'PushManager',{value:function(){}});
+      Object.defineProperty(window,'Notification',{value:{permission:'granted',requestPermission:async()=> 'granted'}});
+    });
     const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));b.on('pageerror',e=>errors.push(e.message));
     const cdp=await context.newCDPSession(a);await cdp.send('WebAuthn.enable');await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
     const link=loom.operations.call('direct',{kind:'member',id:'jonathan'},'signin.link',{member:'jonathan'});if(!link.ok)throw Error('Fixture sign-in failed');
@@ -34,12 +41,23 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes 
     const ref=(read.value as {sessions:Array<{ref:string;label?:string}>}).sessions.find(x=>x.label==='Temporary browser')!.ref;
     const end=a.getByRole('form',{name:`Sign out session ${ref}`,exact:true});await expect.poll(()=>end.count()).toBe(1);await end.getByRole('button').click();expect(s.session(temporary)).toBeDefined();
     await end.getByRole('checkbox').check();await end.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:`Sign out session ${ref}`,exact:true}).count()).toBe(0);expect(s.session(temporary)).toBeUndefined();
+    const notifications=a.getByRole('region',{name:'Notifications',exact:true});
+    await expect.poll(()=>notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).isEnabled()).toBe(true);
+    await notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
+    const deviceRead=()=>loom.operations.call('direct',{kind:'member',id:'jonathan'},'notifications.read',{});
+    await expect.poll(()=>{const r=deviceRead();return r.ok?(r.value as {devices:unknown[]}).devices.length:0;}).toBe(1);
+    const devices=deviceRead();if(!devices.ok)throw Error();const device=(devices.value as {devices:Array<{ref:string;session:string}>}).devices[0];
+    const remote=b.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true});await expect.poll(()=>remote.count()).toBe(1);
+    expect(await remote.textContent()).toContain(device.session);
     const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'household.setPreferences',{look},`account-look-${look}-${width}`).ok).toBe(true);
       await b.setViewportSize({width,height:1000});await b.reload();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(1);await expect.poll(()=>b.locator('html').getAttribute('data-look')).toBe(look);
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+      await b.getByRole('region',{name:'Notifications',exact:true}).scrollIntoViewIfNeeded();expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
+    await remote.getByRole('button').click();expect(s.sessions.read().push?.subs?.['https://fcm.googleapis.com/account-browser-proof']).toBeDefined();
+    await remote.getByRole('checkbox').check();await remote.getByRole('button').click();await expect.poll(()=>a.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true}).count()).toBe(0);
+    await expect.poll(()=>notifications.textContent()).toContain('This browser: Off');
     const remove=a.getByRole('form',{name:'Remove passkey Browser passkey',exact:true});await remove.getByRole('button').click();expect(Object.keys(s.sessions.read().passkeys??{})).toHaveLength(1);
     await remove.getByRole('checkbox').check();await remove.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(0);expect(s.sessions.read().passkeys??{}).toEqual({});
     clock.advance(601_000);

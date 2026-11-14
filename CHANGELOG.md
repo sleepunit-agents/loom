@@ -1217,6 +1217,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add next-mode member-private notification device operations with cookie-bound registration and persistent removal; Account controls and delivery remain pending.
 
 
+- Account can register this browser for notifications and remove its own live notification devices, with confirmed removal and original-request retries. Sending remains pending.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

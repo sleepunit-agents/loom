@@ -4,7 +4,7 @@ import { createElement as h } from 'react';
 import { act, create } from 'react-test-renderer';
 import type { CallState, Result, Snapshot } from '../../data';
 const f=vi.hoisted(()=>({snapshot:{status:'live',records:[]} as Snapshot,call:vi.fn(),once:vi.fn()}));
-vi.mock('../../data',()=>({useRecords:()=>f.snapshot,call:f.call,callOnce:f.once}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>type==='notifications.devices'?{status:f.snapshot.status,records:f.snapshot.records.length?[{id:'jonathan',member:'jonathan',devices:[{ref:'c'.repeat(64),session:'b'.repeat(64),device:'Kitchen tablet',at:1760000000,seenAt:1760009000}]}]:[]}:f.snapshot,call:f.call,callOnce:f.once}));
 vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':'div',props)])));
 import Account from './index';
 import { mutation } from './model';
@@ -61,4 +61,20 @@ it('wires device links to the correct member and clears them through actual app 
   await act(async()=>{f.snapshot={...f.snapshot,status:'live'};tree.update(h(Account));});
   expect(JSON.stringify(tree.toJSON())).not.toContain('app-integration-marker');
 
+});
+
+it('removes the exact live notification device and keeps its original uncertain retry while inactive or offline',async()=>{
+  const r=request();f.call.mockReturnValue(r.handle);
+  await act(async()=>{tree=create(h(Account));});const reset=vi.fn(),e={preventDefault:vi.fn(),currentTarget:{reset}};
+  const form=()=>tree.root.findByProps({'aria-label':`Remove notification device ${'c'.repeat(64)}`});
+  expect(JSON.stringify(tree.toJSON())).toContain('Kitchen tablet');
+  await act(async()=>form().props.onSubmit(e));expect(f.call).toHaveBeenCalledExactlyOnceWith('notifications.remove',{ref:'c'.repeat(64)});expect(reset).toHaveBeenCalledOnce();
+  await act(async()=>form().props.onSubmit(e));expect(f.call).toHaveBeenCalledOnce();await r.finish({ok:false,code:'unavailable',message:'Uncertain'});
+  await act(async()=>tree.unmount());await act(async()=>{tree=create(h(Account,{active:false}));});
+  const retry=()=>tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Retry this change');
+  expect(retry().props.disabled).toBe(true);await act(async()=>retry().props.onClick());expect(r.handle.retry).not.toHaveBeenCalled();
+  await act(async()=>{f.snapshot={...f.snapshot,status:'offline'};tree.update(h(Account));});expect(form().findByType('fieldset').props.disabled).toBe(true);
+  await act(async()=>retry().props.onClick());expect(r.handle.retry).not.toHaveBeenCalled();
+  await act(async()=>{f.snapshot={...f.snapshot,status:'live'};tree.update(h(Account));});await act(async()=>retry().props.onClick());expect(r.handle.retry).toHaveBeenCalledOnce();expect(f.call).toHaveBeenCalledOnce();
+  await act(async()=>{f.snapshot={...f.snapshot,status:'denied'};tree.update(h(Account));});expect(tree.root.findAllByProps({'aria-label':'Notifications'})).toHaveLength(0);
 });
