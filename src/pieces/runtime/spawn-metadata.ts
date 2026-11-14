@@ -1,7 +1,8 @@
 /** Internal Comms metadata, not execution or parentage authority. Spawn transport
  * places remain Runtime's; Comms resolves its own independently owned thread.
  * Only an already owned thread is classified; this cannot bootstrap a spawn.
- * No ordinary conversation lookup is supplied until its audience proof exists. */
+ * Private loom parents require their exact owning thread place. Public venue
+ * lookup remains unavailable until its complete audience proof exists. */
 import { createHash, randomUUID } from 'node:crypto';
 import { isClosing, type Foundation } from '../../core/app.js';
 import { mayUseThread, type Sharing } from '../../core/index.js';
@@ -21,16 +22,16 @@ export function spawnMetadata(app: Foundation, sharing:()=>Sharing): (id:string)
   try {
    if(isClosing(app))return;
    const binding=store.read('binding',id);
-   if(!binding||binding.venue!=='spawn'||!binding.member||!binding.job)return;
+   if(!binding||!['spawn','loom'].includes(binding.venue)||!binding.member||!binding.job)return;
    const job=store.read('job',binding.job);
    if(!job||job.conversation!==id||job.agent!==binding.agent||job.member!==binding.member||job.project!==binding.project
     ||!mayUseThread({kind:'member',id:binding.member},{agent:binding.agent,member:binding.member},sharing()))return;
    const owner=commsMetadata(app.operations)?.privateThread({kind:'member',id:binding.member},{id,agent:binding.agent,member:binding.member});
-   if(!owner||owner.project!==binding.project)return;
+   if(!owner||owner.project!==binding.project||(binding.venue==='loom'&&binding.place!==owner.id))return;
    // Full records catch same-clock edits; the notification epoch also changes
    // on identical replacement and restarts, per the Comms version contract.
    const version=createHash('sha256').update(JSON.stringify([epoch,revision,binding,job,owner])).digest('hex');
-   return {agent:binding.agent,member:binding.member,venue:'spawn',label:job.title,version};
+   return {agent:binding.agent,member:binding.member,venue:binding.venue,label:job.title,version};
   }catch{return;}
  };
 }

@@ -1340,3 +1340,20 @@ issues no execution or body capability and changes no hold. Missing owners do no
 fall back to the first agent owner or create a thread. Trusted spawn creation with
 original parentage and project scope, ordinary conversation metadata, private spawn
 body access and standalone execution remain required work on t-2209.
+
+
+### Private parent metadata lookup
+
+The next Comms conversation metadata callback also resolves a private `loom`
+parent when its binding and referenced job agree on the original agent, member,
+conversation and project, and the unique nondeleted Comms owner has that same
+project and exact binding place. It retains the original member and venue.
+Missing, ambiguous, revoked or mismatched ownership fails closed. Committed
+Runtime changes invalidate Comms metadata; versions include full records and the
+reader epoch/revision, including same-clock replacement.
+
+This is metadata only, including imported, archived or terminal records. Comms
+continues to exclude private loom conversations from ordinary conversation steps.
+Public venue metadata remains absent until complete audience proof exists.
+Trusted spawn production/parentage, acceptance, private body access and standalone
+execution remain required on t-2209; all execution holds remain in place.
