@@ -1,3 +1,4 @@
+import { isInternalCaller } from './core/internal.js';
 /** The ordered household rule. Transport credentials never imply ownership. */
 export type Viewer =
   | { kind: 'member'; id: string }
@@ -14,6 +15,7 @@ export interface Sharing {
 export type Action = 'act' | 'give-work' | 'agent-setup' | 'household' | 'answer-person' | 'report-job' | 'report-box';
 const entry = <T>(map: Record<string, T>, id: string): T | undefined => Object.hasOwn(map, id) ? map[id] : undefined;
 export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
+  if (isInternalCaller(v)) return true;
   if (v.kind === 'runner') return r.member === undefined && r.type === 'runtime.job' && r.runner === v.id;
   if (v.kind === 'service') return r.member === undefined && !!r.type && !!entry(s.services, v.id)?.types.includes(r.type);
   const m = v.kind === 'member' ? entry(s.members, v.id) : undefined;
@@ -31,6 +33,7 @@ export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
   return false;
 }
 export function mayAct(v: Viewer, r: RecordScope, s: Sharing, action: Action = 'act', operation?: string): boolean {
+  if (isInternalCaller(v)) return true;
   // A runner may update its own box report without gaining registry read access.
   if (action === 'report-box') return v.kind === 'runner' && r.type === 'runtime.box' && r.runner === v.id && r.member === undefined;
   // Control of an assigned job reveals no private words or registry visibility.
@@ -46,12 +49,14 @@ export function mayAct(v: Viewer, r: RecordScope, s: Sharing, action: Action = '
 }
 /** New fields must be visible separately; project access cannot smuggle in an agent. */
 export function mayCreate(v: Viewer, r: RecordScope, s: Sharing, operation?: string): boolean {
+  if (isInternalCaller(v)) return true;
   if (r.member !== undefined && (v.kind !== 'member' || r.member !== v.id)) return false;
   return mayAct(v, r, s, 'act', operation)
     && (r.project === undefined || maySee(v, { project: r.project }, s))
     && (r.agent === undefined || maySee(v, { agent: r.agent }, s));
 }
 export function mayMove(v: Viewer, before: RecordScope, after: RecordScope, s: Sharing, operation?: string): boolean {
+  if (isInternalCaller(v)) return true;
   return before.member === after.member && mayAct(v, before, s, 'act', operation) && mayCreate(v, after, s, operation);
 }
 /** Filing private words never grants a read or borrows the member's authority.
