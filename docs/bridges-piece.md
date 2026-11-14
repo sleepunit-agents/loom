@@ -1352,6 +1352,8 @@ retry on the next minute. Shutdown cancels the timer and fences queued work.
 no credentials), exact boundary/young-row preservation, tombstones/checkpoints,
 per-pass limits, coalescing, the installed UPDATE index plans, populated version-005
 upgrade/repeated migration, enclosing-transaction refusal/retry, preservation of
-existing normalized/Runtime work, atomic failure/retry and shutdown.
+existing normalized/Runtime work, atomic failure/retry and shutdown from the
+instant close begins. Both drain fixtures prove already-started metadata can finish
+after the installed sweep erases its durable raw words.
 Permanent obsolete-binding/checkpoint cleanup still needs its separate lifecycle
 and outstanding-work reconciliation; this sweep does not close that required row.

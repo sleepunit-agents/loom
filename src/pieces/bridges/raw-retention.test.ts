@@ -93,8 +93,13 @@ it('recovers a failed startup sweep and cancels queued work on shutdown', async 
   g.app.db.exec('DROP TRIGGER fail_raw'); g.clock.advance(MINUTE); await settle();
   expect(g.rows('discord')[0]).toMatchObject({ state: 'consumed', event: null });
   const prepare = vi.spyOn(g.app.db, 'prepare');
-  g.clock.advance(MINUTE); await g.close(); const calls = prepare.mock.calls.length;
-  g.clock.advance(MINUTE); await settle(); expect(prepare.mock.calls).toHaveLength(calls);
+  g.clock.advance(MINUTE);
+  const calls = prepare.mock.calls.filter(([sql]) => sql.startsWith('UPDATE bridges_')).length;
+  const closing = g.close(); // beginClosing is synchronous; queued sweep must stop immediately.
+  await settle();
+  expect(prepare.mock.calls.filter(([sql]) => sql.startsWith('UPDATE bridges_'))).toHaveLength(calls);
+  await closing; g.clock.advance(MINUTE); await settle();
+  expect(prepare.mock.calls.filter(([sql]) => sql.startsWith('UPDATE bridges_'))).toHaveLength(calls);
 });
 it('uses partial age indexes in the installed UPDATE rather than scanning permanent tombstones', async () => {
   const f = await fixture();

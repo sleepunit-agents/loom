@@ -116,7 +116,8 @@ describe('serialized Discord raw normalization',()=>{
   it('allows metadata begun within the raw budget to finish after the hour',async()=>{
     const f=await fixture();await f.add();f.clock.advance(3_600_000);
     const metadata=deferred<Awaited<ReturnType<DiscordDrainOptions['channel']>>>();f.channel.mockReturnValue(metadata.promise);
-    const d=f.drain();const flush=d.flush();expect(f.channel).toHaveBeenCalledOnce();f.clock.advance(1);
+    const d=f.drain();const flush=d.flush();expect(f.channel).toHaveBeenCalledOnce();f.clock.advance(1);await settle();
+    expect(f.app.db.prepare('SELECT event,state FROM bridges_discord_receipts').get()).toEqual({event:null,state:'consumed'});
     metadata.resolve({id:'400',kind:'channel'});await flush;
     expect(f.receive).toHaveBeenCalledOnce();expect(f.inbox.pending()).toEqual([]);
   });
