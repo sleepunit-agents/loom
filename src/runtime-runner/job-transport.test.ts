@@ -45,3 +45,16 @@ it.each(['success','transport','status','json'] as const)('keeps input and diagn
   expect(request).toHaveBeenCalledTimes(1);for(const sink of sinks)expect(sink).not.toHaveBeenCalled();
  }finally {for(const sink of sinks)sink.mockRestore();}
 });
+it('gives every write attempt a fresh id and omits ids from input reads',async()=>{
+ const bodies:Array<{input:unknown;id?:string}>=[];
+ const request:typeof fetch=async(_url,init)=>{
+  bodies.push(JSON.parse(String(init?.body)));return Response.json({ok:true,value:{}});
+ };
+ const call=runtimeJobTransport(config,{request,deadline:()=>new AbortController().signal,every:()=>()=>{}});
+ for(const name of ['claimJob','reportJob','finishJob'] as const){await call(name,{job:'original'});await call(name,{job:'original'});}
+ await call('takeInput',{job:'original'});await call('takeInput',{job:'original'});
+ const ids=bodies.slice(0,6).map(body=>body.id);
+ for(const id of ids)expect(id).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+ expect(new Set(ids).size).toBe(6);
+ expect(bodies.slice(6)).toEqual([{input:{job:'original'}},{input:{job:'original'}}]);
+});
