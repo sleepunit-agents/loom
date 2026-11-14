@@ -26,6 +26,10 @@ const parse=(raw:string,path:PropertyKey[]=[]):Record<string,unknown>=>{
     if(typeof v==='number'&&(!c?.source||!/^(0|[1-9]\d*)$/.test(c.source)||!Number.isSafeInteger(v)))return NaN;return v;
   })),path);}catch(error){if(error instanceof BridgeSourceError)throw error;throw new BridgeSourceError('shuttle-store',path);}
 };
+const checkSourceNumbers=(value:unknown,path:PropertyKey[],sourcePath:(path:PropertyKey[])=>PropertyKey[]=p=>p):void=>{
+  if(typeof value==='number'&&!Number.isSafeInteger(value))throw new BridgeSourceError('shuttle-store',sourcePath(path));
+  if(value&&typeof value==='object')for(const [key,child]of Object.entries(value))checkSourceNumbers(child,[...path,Array.isArray(value)?Number(key):key],sourcePath);
+};
 const empty=():LegacyBridgeInventory=>({checksum:'',sources:[],instances:[],settings:[],accounts:[],routes:[]});
 /** Resolve the pinned shuttle routes_for/assemble contract, refusing lossy conflicts. */
 function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|undefined,parts:Map<string,string>, dropped:{agent:string;channel:string;path:PropertyKey[]}[]):((result:LegacyBridgeInventory)=>void)|undefined {
@@ -71,11 +75,7 @@ function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|
   for(const p of saved)for(const [cid,value]of Object.entries(Object.hasOwn(p.doc,'flags')?sourceObject(p.doc.flags,['channels',p.agent,'flags']):{})){
     const path=['channels',p.agent,'flags',cid];
     const raw=sourceObject(value,path);
-    const checkFlagNumbers=(value:unknown,at:PropertyKey[]):void=>{
-      if(typeof value==='number'&&!Number.isSafeInteger(value))throw new BridgeSourceError('shuttle-store',at);
-      if(value&&typeof value==='object')for(const [key,child]of Object.entries(value))checkFlagNumbers(child,[...at,Array.isArray(value)?Number(key):key]);
-    };
-    for(const key of flagKeys)checkFlagNumbers(raw[key],[...path,key]);
+    for(const key of ['name','primary','parent',...flagKeys])checkSourceNumbers(raw[key],[...path,key]);
     // Validate even a rule that will be dropped. Diagnostics retain its origin.
     try{projectBridgeDocument(empty(),'flags','routes',JSON.stringify({channels:{[cid]:raw}}));}
     catch(error){if(error instanceof BridgeSourceError)throw new BridgeSourceError('shuttle-store',[...path,...error.path.slice(2)]);throw error;}
@@ -98,11 +98,7 @@ function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|
   Object.assign(out,{bots,bot_roles:roles,channels,threads});
   // Extras never override the assembled accepted map. Unknown fields remain in private store evidence.
   for(const [k,v]of Object.entries(at(own,'extra',['channels',agent])))if(!Object.hasOwn(out,k)){out[k]=v;origin([k],['channels',agent,'extra',k]);}
-  const checkNumbers=(value:unknown,path:PropertyKey[]):void=>{
-    if(typeof value==='number'&&!Number.isSafeInteger(value))throw new BridgeSourceError('shuttle-store',sourcePath(path));
-    if(value&&typeof value==='object')for(const [key,child]of Object.entries(value))checkNumbers(child,[...path,Array.isArray(value)?Number(key):key]);
-  };
-  checkNumbers(out,[]);
+  checkSourceNumbers(out,[],sourcePath);
   const source=JSON.stringify(out);
   return result=>{
     try{projectBridgeDocument(result,`accepted:${agent}`,'routes',source);}

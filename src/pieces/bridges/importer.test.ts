@@ -275,3 +275,8 @@ it('keeps explicit default-only sparse flags runnable and blocks descendant ment
  for(const channel of ['300','500'])expect(addressed(venue,{id:'1',channel,...(channel==='500'?{parent:'300'}:{}),user:'123',text:'hello',mentions:['100'],bot:false,at:'2026-01-01T00:00:00.000Z'},undefined,[venue])).toBe(false);
  expect(JSON.parse(result.evidence).retained.filter((r:{path?:string[]})=>r.path?.includes('400'))).toEqual([]);
 });
+
+for(const field of ['name','primary','parent'])it(`validates recognized ${field} before sparse entry serialization`,()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',flags:{'300':{[field]:1.5}}}],['channels','mark',{bot:'200'}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(`shuttle.db at $["channels"]["art"]["flags"]["300"]["${field}"]`);
+});
