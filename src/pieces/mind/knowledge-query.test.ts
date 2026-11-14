@@ -63,13 +63,13 @@ it('keeps absent files absent and hides source failures from callers without vis
 });
 it('matches complete backlink targets and keeps an uncited page provisional in query output',async()=>{
  const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
- await store.writePage({slug:'hose',title:'The hose',domain:'pond',body:'Uncited fictional fact',sourcing:'provisional'});
+ await store.writePage({slug:'hose',title:'The hose',domain:'pond',body:'Uncited fictional fact'});
  await store.writePage({slug:'prefix',title:'Prefix only',domain:'pond',body:'knowledge:hose-adapter /knowledge/hose-adapter [[hose-adapter]]'});
  await store.writePage({slug:'wiki',title:'Wiki alias',domain:'pond',body:'[[hose|the pump hose]]'});
  await store.writePage({slug:'exact',title:'Exact reference',domain:'pond',body:'knowledge:hose and /knowledge/hose?from=pond'});
- const f=fixture(path),result=await f.query('{ memoryKnowledgePage(slug:"hose") { sourcing citedBy { slug } } }');
+ const f=fixture(path),result=await f.query('{ memoryKnowledgePage(slug:"hose") { sourcing sources { claim } citedBy { slug } } }');
  expect(result.errors).toBeUndefined();
- expect(result.data).toEqual({memoryKnowledgePage:{sourcing:'provisional',citedBy:[{slug:'exact'},{slug:'wiki'}]}});
+ expect(result.data).toEqual({memoryKnowledgePage:{sourcing:'provisional',sources:[],citedBy:[{slug:'exact'},{slug:'wiki'}]}});
 });
 it('selects the newest ten prior versions without changing the current page',async()=>{
  const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());

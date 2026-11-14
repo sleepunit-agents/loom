@@ -60,7 +60,8 @@ export function knowledgeView(db: Database | undefined, nowMs: number, open?: st
           .all(r.slug, `%[[${esc(r.slug)}%`, `%knowledge:${esc(r.slug)}%`, `%/knowledge/${esc(r.slug)}%`) as Array<{ slug: string; title: string; body: string }>)
           .filter(page => refers.test(page.body)).map(({slug,title}) => ({slug,title}));
         const checked = last.get(r.id);
-        out.open = { ...line(r), body: r.body ?? '', ...(r.sourcing ? { sourcing: r.sourcing } : {}), sources, citedBy, ...(checked ? { checked } : {}) };
+        const sourcing = sources.some(source => source.kind !== 'conversation') ? r.sourcing ?? 'sourced' : 'provisional';
+        out.open = { ...line(r), body: r.body ?? '', sourcing, sources, citedBy, ...(checked ? { checked } : {}) };
       }
     }
     return out;
