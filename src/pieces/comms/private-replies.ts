@@ -20,6 +20,7 @@ export function installPrivateReplies(o:Options & {closed():boolean;changed(t:Th
   return {ask:a,thread:matches[0]};
  };
  const row=(place:string,ref:string)=>db.prepare("SELECT * FROM comms_messages WHERE thread=? AND kind='message' AND id=?").get(place,`private-reply:${ref}`) as MessageRow|undefined;
+ const question=({state:_,changedAt:__,answer:___,...rest}:Record<string,unknown>)=>JSON.stringify(rest);
  const route=(t:Thread)=>[t.id,t.member,t.agent,t.conversation,t.project,t.archived];
  operations.register(operation({name:'comms.replyToAsk',doors:['socket'],windowOnly:true,write:true,
   inputHash:value=>key.hash(`comms-operation\0${value}`),
@@ -31,17 +32,26 @@ export function installPrivateReplies(o:Options & {closed():boolean;changed(t:Th
    if(old&&(before.ask.state!=='answered'||old.sender!==before.thread.member))throw new OperationError('conflict','Private reply state changed');
    if(old&&old.hash!==hash)throw new OperationError('conflict','This ask already has a different reply');
    if(!old&&before.ask.state!=='open')throw new OperationError('conflict','Ask is no longer open');
-   return {before,old,hash,words:old?undefined:await key.seal(JSON.stringify({text:input.text}))};
+   return {before,old,hash,words:old?undefined:await key.seal(JSON.stringify({text:input.text,ref:input.ref}))};
   },
   run(ctx,input,prepared) {
    const p=prepared as {before:ReturnType<typeof lookup>;old:MessageRow|undefined;hash:string;words:Buffer|undefined};
    const current=lookup(ctx.viewer,input.ref),t=current.thread;
-   if(JSON.stringify(route(t))!==JSON.stringify(route(p.before.thread))||JSON.stringify(current.ask)!==JSON.stringify(p.before.ask)
-     ||JSON.stringify(row(t.id,input.ref))!==JSON.stringify(p.old))throw new OperationError('conflict','Ask changed; check it again');
+   if(JSON.stringify(route(t))!==JSON.stringify(route(p.before.thread)))throw new OperationError('conflict','Thread changed; check it again');
+   const existing=row(t.id,input.ref);
+   const unchanged=JSON.stringify(current.ask)===JSON.stringify(p.before.ask)&&JSON.stringify(existing)===JSON.stringify(p.old);
    let seq=p.old?.seq;
-   if(!seq){
-    seq=append(db,t,{id:`private-reply:${input.ref}`,kind:'message',at:ctx.now,sender:t.member,words:p.words!,hash:p.hash,record:JSON.stringify({delivery:'sending',attempted:false})}).seq;
+   if(!unchanged){
+    // A concurrent identical first answer is a receipt, not a competing answer.
+    // Delivery metadata may move, but an observed reply's identity/words cannot.
+    const stable=(r:MessageRow)=>[r.thread,r.seq,r.id,r.kind,r.at,r.sender,r.hash];
+    const sameWords=!p.old||!!existing&&JSON.stringify(stable(existing))===JSON.stringify(stable(p.old))
+     &&(p.old.words===null?existing.words===null:!!existing.words?.equals(p.old.words)||existing.words===null&&existing.at+(o.days??14)*86400_000<=ctx.now);
+    if(!existing||existing.hash!==p.hash||existing.sender!==t.member||current.ask.state!=='answered'
+     ||question(current.ask)!==question(p.before.ask)||!sameWords)throw new OperationError('conflict','Ask changed; check it again');
+    seq=existing.seq;
    }
+   if(!seq)seq=append(db,t,{id:`private-reply:${input.ref}`,kind:'message',at:ctx.now,sender:t.member,words:p.words!,hash:p.hash,record:JSON.stringify({delivery:'sending',attempted:false})}).seq;
    const answer=o.attention.privateReply!(ctx,{id:input.ref,conversation:t.conversation,agent:t.agent,member:t.member,thread:t.id,seq});
    if(!answer.ok)throw new OperationError(answer.code,answer.message);
    ctx.changed('thread',t.id);ctx.changed('message',messageId(t.id,seq));

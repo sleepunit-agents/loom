@@ -1068,7 +1068,8 @@ household owners, bearer callers and non-socket doors are refused. Archived
 threads require an explicit unarchive. Waiting/managed asks keep their source's
 decision protocol; typed words cannot authorize an approval or finish a task.
 
-The words are encrypted before the transaction. Commit rechecks thread routing,
+The words and their ask reference are encrypted before the transaction, so the
+bound body can identify which question the normal member message answers. Commit rechecks thread routing,
 current ownership, the exact ask snapshot and an existing reply row. One normal
 member message and Attention's `replied` acknowledgement commit together; the
 latter holds only member/time and a thread/sequence reference. Its in-process
@@ -1078,7 +1079,11 @@ Public `attention.answer` continues to refuse member-private typed words.
 
 Replies enter the ordinary Comms delivery/staging/receipt path. Same-input
 retries, including after restart or word expiry, keep the original sequence and
-ciphertext; changed words conflict. A competing answer wins once, and rejection
+ciphertext, including overlapping identical calls with different operation ids.
+Delivery-only metadata movement may be acknowledged without changing the message;
+observed message identity/ciphertext and question/routing remain checked, with
+only exact-deadline word clearing allowed. Changed words conflict. A competing
+answer wins once, and rejection
 rolls back message, status and retry receipt together. Core retry fingerprints
 are keyed; neither Attention rows nor generic retry receipts contain reply words.
 

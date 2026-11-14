@@ -42,7 +42,7 @@ it('seals a private answer and atomically acknowledges only its reference in Att
  for(const table of ['attention_asks','attention_digests','core_operations','runtime_inputs','runtime_jobs'])expect(JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain(words);
  expect(JSON.stringify(f.messages())).not.toContain(words);
  await expect.poll(()=>JSON.parse((f.messages()[0] as {record:string}).record).delivery).toBe('held');
- const page=value<Array<{text:string|null;seq:number}>>(await f.call('comms.messages',{thread:f.t.id}));expect(page.find(m=>m.seq===answer.seq)?.text).toBe(words);
+ const page=value<Array<{text:string|null;seq:number;ref?:string}>>(await f.call('comms.messages',{thread:f.t.id}));expect(page.find(m=>m.seq===answer.seq)).toMatchObject({text:words,ref:f.ref});
 });
 it('deduplicates the same reply across operation ids and refuses changed words',async()=>{
  const f=await setup(),input={ref:f.ref,text:'Private retry words'};
@@ -73,15 +73,17 @@ it('rolls back encrypted reply and retry receipt when Attention acknowledgement 
  expect(f.messages()).toHaveLength(1);expect(f.getAsk()).toMatchObject({state:'answered'});
 });
 it('rechecks ownership, thread routing and ask state after asynchronous encryption',async()=>{
- for(const drift of ['owner','project','resolved','answered','archived','ask-source'] as const){
+ for(const drift of ['owner','project','resolved','answered','archived','ask-source','question','member','agent'] as const){
   const f=await setup(),seal=f.key.seal;
   let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(r=>release=r),ready=new Promise<void>(r=>entered=r);
-  vi.spyOn(f.key,'seal').mockImplementation(async text=>{entered();await gate;return seal(text);});
+  vi.spyOn(f.key,'seal').mockImplementation(async text=>{expect(f.app.db.inTransaction).toBe(false);entered();await gate;return seal(text);});
   const pending=f.call('comms.replyToAsk',{ref:f.ref,text:'Must not survive drift'});await ready;
   if(drift==='owner')f.held.members.jonathan.agents=[];
   else if(drift==='project')expect(await f.call('comms.change',{thread:f.t.id,action:'project',project:'pond'})).toMatchObject({ok:true});
   else if(drift==='archived')expect(await f.call('comms.change',{thread:f.t.id,action:'archive'})).toMatchObject({ok:true});
   else if(drift==='answered')expect(f.attention.answer(owner,{id:f.ref,answer:{kind:'done'}},'first-answer')).toMatchObject({ok:true});
+  else if(drift==='question'){const a=f.getAsk();f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify({...a,ask:'A different question'}),f.ref);}
+  else if(drift==='member'||drift==='agent'){const t={...thread(f.app.db,f.t.id)!};if(drift==='member')t.member='other';else t.agent='mark';f.app.db.prepare('UPDATE comms_threads SET member=?,agent=?,record=? WHERE id=?').run(t.member,t.agent,JSON.stringify(t),t.id);}
   else if(drift==='ask-source'){const ask=f.getAsk() as {source:{id:string}};ask.source.id='another-conversation';f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify(ask),f.ref);}
   else expect(f.attention.resolve(owner,{id:f.ref,reason:'No longer needed'},'resolved')).toMatchObject({ok:true});
   release();expect(await pending).toMatchObject({ok:false});expect(f.messages()).toEqual([]);
@@ -118,7 +120,7 @@ it('keeps the same opaque receipt and encrypted words across restart',async()=>{
 it('lets one of two concurrent typed replies win without a partial answer or second message',async()=>{
  const f=await setup(),seal=f.key.seal;let release!:()=>void,ready!:()=>void,count=0;
  const gate=new Promise<void>(r=>release=r),entered=new Promise<void>(r=>ready=r);
- vi.spyOn(f.key,'seal').mockImplementation(async words=>{if(++count===2)ready();await gate;return seal(words);});
+ vi.spyOn(f.key,'seal').mockImplementation(async words=>{expect(f.app.db.inTransaction).toBe(false);if(++count===2)ready();await gate;return seal(words);});
  const pending=['First private answer','Second private answer'].map(text=>f.call('comms.replyToAsk',{ref:f.ref,text}));
  await entered;release();const results=await Promise.all(pending);
  expect(results.filter(r=>r.ok)).toHaveLength(1);expect(results.filter(r=>!r.ok)).toHaveLength(1);
@@ -150,7 +152,7 @@ it('refuses zero or ambiguous conversation threads, including a duplicate create
   if(when==='before')duplicate();
   const seal=f.key.seal;let release!:()=>void,ready!:()=>void;
   const gate=new Promise<void>(r=>release=r),entered=new Promise<void>(r=>ready=r);
-  if(when==='during')vi.spyOn(f.key,'seal').mockImplementation(async text=>{ready();await gate;return seal(text);});
+  if(when==='during')vi.spyOn(f.key,'seal').mockImplementation(async text=>{expect(f.app.db.inTransaction).toBe(false);ready();await gate;return seal(text);});
   const pending=f.call('comms.replyToAsk',{ref:f.ref,text:'No ambiguous routing'});
   if(when==='during'){await entered;duplicate();release();}
   expect(await pending).toMatchObject({ok:false,code:'denied'});expect(f.messages()).toEqual([]);
@@ -183,4 +185,24 @@ it('preserves ordinary public word answers and legacy private boolean answers',a
  f.app.db.transaction(()=>append(f.app.db,thread(f.app.db,f.t.id)!,{id:ref,kind:'ask',at:f.clock.now(),sender:'art',words,hash:f.key.hash(ref),record:JSON.stringify({ref})}))();
  expect(await f.call('comms.answer',{thread:f.t.id,ref,verdict:'yes'})).toMatchObject({ok:true});
  expect(f.attention.get(owner,{id:ref})).toMatchObject({ok:true,value:{answer:{kind:'yes',by:owner}}});
+});
+
+it('returns one acknowledgement for two concurrent identical replies with distinct operation ids',async()=>{
+ const f=await setup(),seal=f.key.seal;let release!:()=>void,ready!:()=>void,count=0;
+ const gate=new Promise<void>(r=>release=r),entered=new Promise<void>(r=>ready=r);
+ vi.spyOn(f.key,'seal').mockImplementation(async words=>{expect(f.app.db.inTransaction).toBe(false);if(++count===2)ready();await gate;return seal(words);});
+ const input={ref:f.ref,text:'Identical concurrent words'},a=f.call('comms.replyToAsk',input),b=f.call('comms.replyToAsk',input);
+ await entered;release();const results=await Promise.all([a,b]);expect(results[0]).toMatchObject({ok:true});expect(results[1]).toEqual(results[0]);expect(f.messages()).toHaveLength(1);
+});
+it('allows delivery-only movement but rejects replacement words while a retry prepares',async()=>{
+ for(const changed of ['delivery','words'] as const){
+  const f=await setup(),input={ref:f.ref,text:'Original stable reply'};
+  const first=await f.call('comms.replyToAsk',input);expect(first.ok).toBe(true);
+  await expect.poll(()=>JSON.parse((f.messages()[0] as {record:string}).record).delivery).toBe('held');
+  const replacement=await f.key.seal(JSON.stringify({text:'Unrelated ciphertext'}));
+  const pending=f.call('comms.replyToAsk',input);
+  if(changed==='delivery')f.app.db.prepare("UPDATE comms_messages SET record=? WHERE thread=? AND id=?").run(JSON.stringify({delivery:'delivered',attempted:true}),f.t.id,`private-reply:${f.ref}`);
+  else f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND id=?').run(replacement,f.t.id,`private-reply:${f.ref}`);
+  expect(await pending).toMatchObject({ok:changed==='delivery'});expect(f.messages()).toHaveLength(1);vi.restoreAllMocks();
+ }
 });
