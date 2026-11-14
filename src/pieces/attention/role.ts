@@ -92,7 +92,14 @@ export interface TaskAskFiling {
   /** Read-only projection comparison; no receipt or live publication. */
   pending(ctx: Context, asks: Array<Omit<RaiseAsk, 'source'> & {active:boolean}>): boolean;
 }
+export const approvalAskId = (id: string) => `approval:${createHash('sha256').update(id, 'utf16le').digest('hex')}`;
+export interface ApprovalAskFiling {
+  sync(ctx: Context, asks: Array<Omit<RaiseAsk, 'source'> & {active:boolean}>): void;
+  pending(ctx: Context, asks: Array<Omit<RaiseAsk, 'source'> & {active:boolean}>): boolean;
+}
 export interface AttentionSources {
+  /** Approval decisions stay in their owning window operation. */
+  approvals(current: (ask: Ask) => boolean): ApprovalAskFiling;
   /** Task decisions remain in Tasks; this never creates an answer capability. */
   tasks(): TaskAskFiling;
   register(name: string, answer: (ctx: Context, ask: Ask) => void): HouseholdAskSource;

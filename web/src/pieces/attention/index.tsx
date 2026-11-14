@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { call, useRecords, type Call, type CallState, type Snapshot, type LiveRecord } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, Textarea } from '../../kit';
-import { decisionLink, inFolder, matches, safeHref, type Ask, type Answer } from './model';
+import { listedAsks, decisionLink, inFolder, matches, safeHref, type Ask, type Answer } from './model';
 import { useWaitChecks } from './wait-checks';
 import { useMemberRetention } from './member-retention';
 import { useReplyDraft, type ReplyDraft } from './drafts';
@@ -135,10 +135,11 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   useEffect(() => {
     if (current && member) void call('attention.markRead', {id:current.id}).result.catch(() => {});
   }, [current?.id, member, status]);
-  const shown = records.filter(a=>inFolder(a,folder) && matches(a,query)).sort((a,b)=>folder==='answered' ? b.changedAt-a.changedAt || a.id.localeCompare(b.id) : a.createdAt-b.createdAt || a.id.localeCompare(b.id));
+  const listed = listedAsks(records);
+  const shown = listed.filter(a=>inFolder(a,folder) && matches(a,query)).sort((a,b)=>folder==='answered' ? b.changedAt-a.changedAt || a.id.localeCompare(b.id) : a.createdAt-b.createdAt || a.id.localeCompare(b.id));
   const agents = [...new Set(records.flatMap(a=>a.agent ? [a.agent] : []))].sort();
   return <Split className="h-full" label="Inbox" folder={folder} onFolder={id=>{setFolder(id);navigate();}}
-    folders={[{id:'needs',label:'Needs you',count:records.filter(a=>a.state==='open').length},{id:'answered',label:'Answered',count:records.filter(a=>a.state!=='open').length},{heading:'By agent'},...agents.map(agent=>({id:`agent:${agent}`,label:agent,count:records.filter(a=>a.agent===agent && a.state==='open').length}))]}
+    folders={[{id:'needs',label:'Needs you',count:listed.filter(a=>a.state==='open').length},{id:'answered',label:'Answered',count:listed.filter(a=>a.state!=='open').length},{heading:'By agent'},...agents.map(agent=>({id:`agent:${agent}`,label:agent,count:listed.filter(a=>a.agent===agent && a.state==='open').length}))]}
     search={<label className="grid gap-1">Search asks<Input type="search" value={query} onChange={e=>setQuery(e.target.value)} /></label>}
     listTop={busy ? <p role="status" className="p-3">An answer is still being checked or recorded. Other answers wait.</p> : undefined}
     listTitle={folder==='answered' ? 'Answered' : folder.startsWith('agent:') ? `From ${folder.slice(6)}` : 'Needs you'} listMeta={shown.length}
