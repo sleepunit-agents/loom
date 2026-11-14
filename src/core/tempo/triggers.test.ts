@@ -88,3 +88,10 @@ it('skips missing DST wall times and runs a repeated time at its first instant o
   expect(new Date(nextTime('02:30', null, Date.parse('2026-03-08T00:00:00Z'), 'America/Chicago')).toISOString()).toBe('2026-03-09T07:30:00.000Z');
   expect(new Date(nextTime('01:30', null, Date.parse('2026-11-01T06:31:00Z'), 'America/Chicago')).toISOString()).toBe('2026-11-02T07:30:00.000Z');
 });
+it('holds an agent-owned operation with no inbox recipient and coalesces missed calendar occurrences', () => {
+  const { engine, clock, base, operations, row } = fixture();
+  const t = engine.set({ ...base, targetKind: 'operation', target: 'tasks.reconcile', toKind: null, to: null, times: '12:01', lifespan: 'until-stopped' });
+  engine.pause('art'); clock.advance(2 * 86_400_000); expect(operations).toEqual([]);
+  engine.resume('art'); expect(operations).toEqual(['tasks.reconcile']);
+  expect(row(t.id).nextDueAt).toBe('2026-11-16T18:01:00.000Z');
+});

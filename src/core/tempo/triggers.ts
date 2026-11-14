@@ -45,8 +45,10 @@ export class TriggerEngine {
     if (!t) throw new Error('Trigger not found');
     return t;
   }
+  private agent(t: Trigger) { return t.toKind === 'agent' ? t.to : !t.toKind && t.ownerKind === 'agent' ? t.owner : null; }
   private paused(t: Trigger) {
-    return t.toKind === 'agent' && !!t.to && !!this.db.select().from(agentPauses).where(eq(agentPauses.agent, t.to)).get();
+    const agent = this.agent(t);
+    return !!agent && !!this.db.select().from(agentPauses).where(eq(agentPauses.agent, agent)).get();
   }
   set(value: NewTrigger): Trigger {
     this.open();
@@ -82,7 +84,7 @@ export class TriggerEngine {
     this.open();
     this.db.transaction(() => {
       this.db.insert(agentPauses).values({ agent, since: this.now() }).onConflictDoNothing().run();
-      for (const t of this.active().filter(t => t.toKind === 'agent' && t.to === agent && t.state !== 'held')) {
+      for (const t of this.active().filter(t => this.agent(t) === agent && t.state !== 'held')) {
         this.db.update(triggers).set({ state: 'held', changedAt: this.now() }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'held');
       }
     }); this.tick();
@@ -91,7 +93,7 @@ export class TriggerEngine {
     this.open();
     this.db.transaction(() => {
     this.db.delete(agentPauses).where(eq(agentPauses.agent, agent)).run();
-    for (const t of this.active().filter(t => t.toKind === 'agent' && t.to === agent && t.state === 'held')) {
+    for (const t of this.active().filter(t => this.agent(t) === agent && t.state === 'held')) {
       this.db.update(triggers).set({ state: 'standing', changedAt: this.now() }).where(eq(triggers.id, t.id)).run(); this.log(t.id, 'resumed');
     }
     }); this.tick();
