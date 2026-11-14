@@ -40,10 +40,11 @@ describe('worker command adapter (no child processes in tests)', () => {
     child.emit('close', 0, null); expect(await result).toBe('image:é');
   });
   it('holds body input until release and preserves model/account/harness independently', async () => {
-    const f = fixture(), body = f.executor.start(job, 'image@sha', new AbortController().signal);
+    const configured = { ...job, run: { nestedContainers: true, gpu: true, ports: [{ address: '127.0.0.1', port: 8080 }] } };
+    const f = fixture(), body = f.executor.start(configured, 'image@sha', new AbortController().signal);
     const child = f.children[0]; child.child.emit('spawn'); await body.spawned;
     expect(child.input()).toBe(''); await body.release();
-    expect(JSON.parse(child.input())).toEqual({ job, build: 'image@sha' });
+    expect(JSON.parse(child.input())).toEqual({ job: configured, build: 'image@sha' });
     await expect(body.release()).rejects.toThrow('unavailable');
     child.child.stderr.emit('data', 'error '); child.child.stdout.emit('data', 'result'); child.child.emit('close', 9, null);
     expect(await body.exited).toEqual({ exitCode: 9, logTail: 'error result' });
