@@ -1391,3 +1391,7 @@ this holder process and its abort signal, and the single-use Runtime assignment
 and worker drain. Normal daemon startup, installed configuration and deployment
 are unchanged. The full task remains open until that composition and the other
 listed lifecycle/parity/move requirements are merged.
+The process fixtures also cover missing readiness/replacement/close replies,
+independent abnormal child exit after a valid close acknowledgement, and shutdown
+during a held replacement. These failures keep the original owner burned and
+join its child before rejected settlement; a late reply cannot restore it.

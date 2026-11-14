@@ -83,3 +83,47 @@ it('rejects invalid paths and synchronous spawn failures generically',()=>{
   vi.mocked(processes.fork).mockImplementation(()=>{throw Error('private-value');});
   expect(()=>startHolderProcess('/private/holder.json')).toThrow('Secret holder process unavailable');
 });
+it.each(['startup','idle'] as const)('fences an independent child closure during %s',async(phase)=>{
+  vi.useFakeTimers();const {child,owner}=setup();
+  const ready=phase==='startup'?expect(owner.ready).rejects.toThrow('Secret holder process unavailable'):undefined;
+  if(phase==='idle'){child.reply('ready',0);await owner.ready;}
+  child.end(1);expect(owner.signal.aborted).toBe(true);
+  const closing=expect(owner.close()).rejects.toThrow('Secret holder process unavailable');
+  await vi.advanceTimersByTimeAsync(5000);await closing;await ready;
+  await expect(owner.replaceWorkers([])).rejects.toThrow('Secret holder process unavailable');
+  expect(processes.fork).toHaveBeenCalledOnce();
+});
+it.each([[1,null],[null,'SIGTERM']] as const)('rejects independent abnormal exit after a valid close ack (%s,%s)',async(code,signal)=>{
+  const {child,owner}=setup();child.reply('ready',0);await owner.ready;
+  const closing=owner.close(),rejected=expect(closing).rejects.toThrow('Secret holder process unavailable');
+  await turn();child.reply('closed',1);await turn();
+  // Neither protocol nor parent has failed. The OS outcome alone must fail it.
+  child.end(code,signal);await rejected;
+});
+it.each(['ready','replace','close'] as const)('missing %s acknowledgement burns the owner and joins the killed original child',async(op)=>{
+  vi.useFakeTimers();const {child,owner}=setup();
+  if(op!=='ready'){child.reply('ready',0);await owner.ready;}
+  const pending=op==='ready'?owner.ready:op==='replace'?owner.replaceWorkers([]):owner.close();
+  let settled=false;void pending.catch(()=>{settled=true;});
+  const rejected=expect(pending).rejects.toThrow('Secret holder process unavailable');
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(owner.signal.aborted).toBe(true);expect(child.kill).toHaveBeenCalledWith('SIGKILL');
+  expect(settled).toBe(false);
+  await expect(owner.replaceWorkers([])).rejects.toThrow('Secret holder process unavailable');
+  child.end(null,'SIGKILL');await rejected;
+  await expect(owner.close()).rejects.toThrow('Secret holder process unavailable');
+  expect(processes.fork).toHaveBeenCalledOnce();
+});
+it('shutdown during a held replacement poisons both operations and shares the original child join',async()=>{
+  const {child,owner}=setup();child.reply('ready',0);await owner.ready;
+  const replacing=owner.replaceWorkers([]);let replaced=false;void replacing.catch(()=>{replaced=true;});
+  const replacementRejected=expect(replacing).rejects.toThrow('Secret holder process unavailable');
+  await turn();expect(child.sent).toEqual([{op:'replace',seq:1,workers:[]}]);
+  const closing=owner.close();expect(owner.close()).toBe(closing);
+  let closed=false;void closing.catch(()=>{closed=true;});
+  const closeRejected=expect(closing).rejects.toThrow('Secret holder process unavailable');
+  await turn();expect(owner.signal.aborted).toBe(true);
+  expect(child.kill).toHaveBeenCalledWith('SIGKILL');expect(replaced).toBe(false);expect(closed).toBe(false);
+  child.reply('replaced',1);await turn();expect(replaced).toBe(false);expect(closed).toBe(false);
+  child.end(null,'SIGKILL');await Promise.all([replacementRejected,closeRejected]);
+});
