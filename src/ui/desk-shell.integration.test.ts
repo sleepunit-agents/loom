@@ -110,6 +110,18 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     // A visible Comms thread is the companion even while another app has focus.
     await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').getAttribute('data-agent')).toBe('art');
     expect(await b.locator('.desk-agent-rail').locator(':scope > *').first().getAttribute('data-agent')).toBe('art');
+    await expect.poll(()=>b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
+    expect(await b.locator('.comms-thread .next-comm-screen').count()).toBe(0);
+    // Overlay rails never steal the portrait. Returning to Always show moves it back once.
+    await b.locator('.next-rail').click({button:'right'});
+    await b.getByRole('menuitem',{name:'Minimize to strip',exact:true}).click();
+    await expect.poll(()=>b.locator('.comms-thread .next-comm-screen').count()).toBe(1);
+    await b.getByRole('button',{name:'Show agents rail',exact:true}).click();
+    expect(await b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(0);
+    await b.locator('.next-rail').click({button:'right'});
+    await b.getByRole('menuitem',{name:'Always show',exact:true}).click();
+    await expect.poll(()=>b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
+    expect(await b.locator('.next-comm-screen').count()).toBe(1);
     await b.getByRole('button',{name:'Open Inbox',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(1);
     // Observe real FLIP requests while exercising full and reduced motion, without racing260ms.
@@ -248,7 +260,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(true);
               await page.keyboard.press('Escape');
               await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(false);
-              await page.locator('.next-dock-edge').click({button:'right'});
+              await page.locator('.next-dock-edge').click({button:'right',force:true});
               await page.getByRole('menuitem',{name:'Always show',exact:true}).click();
               await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(true);
               }
@@ -269,6 +281,13 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
             await reference.goto(old.base+'/comms/'+oldThread.id.slice(3)+(width<1024?'':'?t=*comms'));
             await expect.poll(()=>reference.locator('.comms-thread').count()).toBe(1);
             await expect.poll(()=>reference.locator('.comms-screen').isVisible()).toBe(true);
+            await expect.poll(()=>page.locator('.next-comm-screen').count()).toBe(1);
+            if(width>=1280){
+              await expect.poll(()=>page.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
+              expect(await page.locator('.comms-thread .next-comm-screen').count()).toBe(0);
+            }else{
+              expect(await page.locator('.comms-thread .next-comm-screen').count()).toBe(1);
+            }
             if(width>=1024){
               await expect.poll(()=>page.locator('.desk-rail-card[data-companion]').getAttribute('data-agent')).toBe('art');
               expect(await page.locator('.desk-agent-rail').locator(':scope > *').first().getAttribute('data-agent')).toBe('art');

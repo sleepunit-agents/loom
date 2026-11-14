@@ -72,7 +72,7 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | POST `/login/passkey/options`, `/login/passkey` | Existing expiring challenge, signature, verification and counter checks |
 | GET `/faces/AGENT/…`, `/pixel-icons/APP.png` | **Pending** new-side asset serving with appropriate household/agent access; file import alone does not mount these routes |
 | Appearance/accessibility preferences and per-member saved settings | `household.preferences`, `household.setPreferences` and member-private Live records preserve imported choices. Shell controls apply look, reduced motion, contrast and zoom across windows; **pending** ground, sound, pixel faces/icons, haptics and one-window layout integration |
-| Push subscription/device controls, `push-test`, `push-remove` | `notifications.key/subscribe/unsubscribe` (cookie window), `notifications.read/remove` and private `notifications.devices` Live. Account controls and staged `push-test` delivery **pending**; retained rows alone do not send |
+| Push subscription/device controls, `push-test`, `push-remove` | `notifications.key/subscribe/unsubscribe` (cookie window), `notifications.read/remove` and private `notifications.devices` Live. Account browser enable/disable and confirmed live-device removal implemented; staged `push-test` delivery **pending**. Registering a device alone does not send |
 | Piece `settings.json` reads/writes | Rows are imported into `household_piece_settings`; **pending** settings operation/record/client coverage. Built-in service registration is an in-process authority seam, not a settings editor |
 
 Household project Live records and post-commit sharing/access refreshes already

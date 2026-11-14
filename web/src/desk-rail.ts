@@ -12,6 +12,8 @@ export type RailLink = {
   onAir: (who: OnAir, from: object) => void;
   /** The rail is shown beside the tiles now (so a thread's comm screen goes there, not in its band). */
   shown: boolean;
+  /** The owned companion card supplies its destination; late cleanup is source fenced. */
+  setScreen?: (screen: {agent: string; el: HTMLElement} | null, from: object) => void;
   /** Where the comm screen goes: that agent's rail card, while the rail is shown; null keeps it in the band. */
   screen: { agent: string; el: HTMLElement } | null;
 };

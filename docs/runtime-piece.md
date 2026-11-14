@@ -1301,3 +1301,29 @@ identity when deriving their own caller/provenance. It still treats binding.plac
 spawn transport handles through every consumer, preserving the original binding
 and member/parent proof, remains on t-2209; this prerequisite does not activate
 imported execution or remove any policy hold.
+
+
+### Filing a spawned private thread
+
+The Comms project-filing callback resolves the unique current thread from the
+binding's original conversation, agent and member through `CommsMetadata`.
+It checks the owning thread id and its previous project against the binding;
+a referenced job must exist and agree on conversation, agent, member and previous
+project. Missing, deleted, ambiguous or inconsistent ownership refuses the whole
+filing operation. Central `mayMove` checks both old and new scopes for the binding
+and job in the same transaction as Comms, its receipt and committed notifications.
+
+A `spawn` binding keeps its exact transport place, including `job-h-N` and `sp-*`
+handles; a `loom` binding still requires its explicit thread place. Other venues
+refuse this callback. A binding without a job can be filed without inventing one.
+This is metadata maintenance: it preserves imported/history/reset/write-off and
+policy holds, body credentials and input/delivery receipts. It does not enable
+spawn acceptance, private body reads/replies, standalone execution or trusted
+spawn creation. Those remaining consumers and original member/parent proof stay
+on t-2209; no metadata refile may be used as execution authority.
+
+The spawn-filing tests prove hold preservation by exact job/policy record equality
+through restart. Their access denials encounter multiple fences together; the
+bound-body drift matrix separately isolates reset, write-off and policy enforcement.
+This keeps the filing fixture faithful to held imported spawn metadata without
+using it to claim individual-fence enforcement or spawned execution readiness.

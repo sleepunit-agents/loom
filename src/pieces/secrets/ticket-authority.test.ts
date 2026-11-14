@@ -1,3 +1,6 @@
+import {Writable} from 'node:stream';
+import {workerSecretInputs} from '../../runtime-runner/secret-input.js';
+import {listenWorkerSecretInput,workerSecretTransport} from '../../runtime-runner/secret-transport.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,mkdirSync,existsSync,rmSync,chmodSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -16,7 +19,7 @@ import https from 'node:https';
 import {ServerResponse,type IncomingMessage} from 'node:http';
 import {Socket,connect as netConnect} from 'node:net';
 import {connect as tlsConnect} from 'node:tls';
-import {listenTicketAuthority,remoteTicketAuthority} from './ticket-authority.js';
+import {listenTicketAuthority,remoteTicketAuthority,remoteWorkerTicketProof} from './ticket-authority.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.useRealTimers();for(const close of closes.splice(0).reverse())await close();vi.restoreAllMocks();});
 async function setup(service?:string) {
@@ -54,7 +57,7 @@ async function setup(service?:string) {
  const remote=remoteTicketAuthority(config,fingerprint('daemon'));closes.push(remote.close);
  const admitted=()=>{const ticket=admit();expect(tickets.claim(ticket.id)).toBeNull();release(ticket.id);return ticket;};
  const state=(ticket:string)=>app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(ticket);
- return {home,app,clock,id,job,call,tickets,admit,release,grant,server,config,fingerprint,authority,remote,admitted,state};
+ return {home,app,clock,id,viewer,job,call,tickets,admit,release,grant,server,config,fingerprint,authority,remote,admitted,state};
 }
 async function fakeAuthority(f:Awaited<ReturnType<typeof setup>>,handler:(req:IncomingMessage,res:ServerResponse)=>void) {
  await f.authority.close();
@@ -278,4 +281,140 @@ it.each(['directory','socket'])('rejects accessible client %s before transmittin
   expect(f.state(t.id)).toEqual({state:'admitted'});
  }finally {chmodSync(path,target==='directory'?0o700:0o600);}
  const c=await remote.claim(t.id);expect(c).not.toBeNull();await c!.finish(false);
+});
+
+it('carries the original bound pending id across pinned TLS without accepting a holder replacement',async()=>{
+ const f=await setup('slack'),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now(),service:'slack'}};
+ const t=f.tickets.admit(f.viewer,'API',request);expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ const c=(await f.remote.claim(t.id))!;
+ expect(c.pendingId).toBe(request.id);expect(Object.isFrozen(c)).toBe(true);
+ expect(c.destination).toEqual(request.binding);expect(await c.current()).toBe(true);
+ f.job({claimedAt:f.clock.now()+1});expect(await c.current()).toBe(false);
+ await expect(c.finish(true)).rejects.toThrow();expect(f.state(t.id)).toEqual({state:'uncertain'});
+ expect(await f.remote.claim(t.id)).toBeNull();
+});
+
+it.each(['agent','job','runner','box','claimedAt','service','service-absent','pending','pin','unbound','revoked','restart'] as const)('worker current proof rejects %s and cannot claim or finish',async change=>{
+ const f=await setup('slack'),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now(),service:'slack'},pendingId=randomUUID();
+ const t=f.tickets.admit(f.viewer,'API',change==='unbound'?undefined:{id:pendingId,binding});
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ await f.authority.close();
+ const assigned={...binding};
+ if(['agent','runner','box','service'].includes(change))Object.assign(assigned,{[change]:'other'});
+ if(change==='job')assigned.job=randomUUID();
+ if(change==='claimedAt')assigned.claimedAt++;
+ const {service:_,...withoutService}=assigned;
+ const server=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding:change==='service-absent'?withoutService:assigned}]);closes.push(server.close);
+ const c=(await f.remote.claim(t.id))!;expect(c).not.toBeNull();
+ const workerConfig={...f.config,cert:f.server.cert,key:f.server.key};
+ const worker=remoteWorkerTicketProof(change==='pin'?f.config:workerConfig,f.fingerprint('daemon'),t.id,change==='pending'?randomUUID():pendingId);closes.push(worker.close);
+ if(change==='revoked')f.job({claimedAt:f.clock.now()+1});
+ if(change==='restart'){await server.close();const restarted=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(restarted.close);}
+ expect(await worker.current()).toBe(false);
+ const elevated=remoteTicketAuthority(workerConfig,f.fingerprint('daemon'));closes.push(elevated.close);
+ expect(await elevated.claim(t.id)).toBeNull();
+ // A worker cannot settle the retained central claim even with the ticket id.
+ const status=await new Promise<number|undefined>((resolve,reject)=>{
+  const req=https.request({socketPath:f.config.socket,servername:f.config.servername,ca:readFileSync(f.config.ca),cert:readFileSync(workerConfig.cert),key:readFileSync(workerConfig.key),method:'POST',path:`/v1/tickets/${t.id}/released`,headers:{'content-length':0}},res=>{res.resume();res.once('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end();
+ });expect(status).toBe(503);
+});
+it('checks the original retained central claim for its exact worker and pending id; failure is sticky',async()=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},pendingId=randomUUID();
+ const t=f.tickets.admit(f.viewer,'API',{id:pendingId,binding});expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ await f.authority.close();
+ const configured={fingerprint:f.fingerprint('daemon'),binding:{...binding}};
+ const server=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[configured]);closes.push(server.close);
+ configured.binding.runner='replacement';
+ const workerClient=remoteTicketAuthority({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'));closes.push(workerClient.close);
+ expect(await workerClient.claim(t.id)).toBeNull();expect(f.state(t.id)).toEqual({state:'admitted'});
+ const c=(await f.remote.claim(t.id))!;
+ const worker=remoteWorkerTicketProof({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'),t.id,pendingId);closes.push(worker.close);
+ expect(await worker.current()).toBe(true);
+ const end=ServerResponse.prototype.end;
+ const drop=vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
+  if(this.req.url?.endsWith('/worker-current'))this.socket?.destroy();return end.apply(this,args);
+ });
+ try {expect(await worker.current()).toBe(false);}finally {drop.mockRestore();}
+ expect(await c.current()).toBe(true);expect(await worker.current()).toBe(false);
+ await c.finish(false);expect(f.state(t.id)).toEqual({state:'uncertain'});
+});
+
+it.each(['release','grant','local'] as const)('fences a real worker stream against original central and local proofs: %s',async outcome=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},inputs=workerSecretInputs();
+ closes.push(()=>inputs.close());let local=true,proof:ReturnType<typeof remoteWorkerTicketProof>|undefined;
+ const writes:string[]=[];
+ const input=new Writable({write(bytes,_encoding,done){writes.push(bytes.toString());done();}});
+ const pending=inputs.register(binding,input,()=>local,async()=>proof?.current()??false,Date.now()+30_000);
+ const t=f.tickets.admit(f.viewer,'API',pending);expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ await f.authority.close();
+ const central=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(central.close);
+ proof=remoteWorkerTicketProof({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'),t.id,pending.id);closes.push(proof.close);
+ const workerServer=await listenWorkerSecretInput({...f.server,socket:join(f.home,'input.sock')},f.fingerprint('holder'),inputs);closes.push(workerServer.close);
+ const transport=workerSecretTransport({...f.config,socket:join(f.home,'input.sock')},f.fingerprint('daemon'));closes.push(transport.close);
+ const c=(await f.remote.claim(t.id))!;expect(c.pendingId).toBe(pending.id);
+ if(outcome==='grant'){const {expiresAt:_,...revoke}=f.grant;f.call('secrets.revoke',revoke);}
+ if(outcome==='local')local=false;
+ const bytes=Buffer.from('synthetic-test-value');
+ try {
+  if(outcome==='release'){await transport.deliver(c.pendingId!,c.destination,bytes);await c.finish(true);}
+  else {await expect(transport.deliver(c.pendingId!,c.destination,bytes)).rejects.toThrow();try {await c.finish(false);}catch { /* authority may already prune */ }}
+  expect(writes).toEqual(outcome==='release'?['synthetic-test-value']:[]);
+  expect(f.state(t.id)).toEqual({state:outcome==='release'?'released':outcome==='grant'?'revoked':'uncertain'});
+  await expect(transport.deliver(pending.id,binding,bytes)).rejects.toThrow();
+ }finally {bytes.fill(0);}
+});
+it('rejects holder/worker pin aliasing before listening',async()=>{
+ const f=await setup();
+ await expect(listenTicketAuthority({...f.server,socket:join(f.home,'alias.sock')},f.fingerprint('holder'),f.tickets,
+  [{fingerprint:f.fingerprint('holder'),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}}])).rejects.toThrow(/^Secret ticket authority unavailable$/);
+ expect(existsSync(join(f.home,'alias.sock'))).toBe(false);
+});
+
+it.each(['idle','in-flight'] as const)('worker proof shutdown fences %s successful checks permanently',async phase=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},pendingId=randomUUID();
+ const t=f.tickets.admit(f.viewer,'API',{id:pendingId,binding});expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ await f.authority.close();
+ const server=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(server.close);
+ const c=(await f.remote.claim(t.id))!;
+ const worker=remoteWorkerTicketProof({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'),t.id,pendingId);closes.push(worker.close);
+ expect(await worker.current()).toBe(true);
+ if(phase==='idle')await worker.close();
+ else {
+  let entered!:()=>void,release!:()=>void;const ready=new Promise<void>(resolve=>{entered=resolve;});
+  const end=ServerResponse.prototype.end;
+  const hold=vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
+   if(this.req.url?.endsWith('/worker-current')){release=()=>{end.apply(this,args);};entered();return this;}
+   return end.apply(this,args);
+  });
+  try {const pending=worker.current();await ready;await worker.close();release();expect(await pending).toBe(false);}
+  finally {hold.mockRestore();release?.();}
+ }
+ expect(await c.current()).toBe(true);expect(await worker.current()).toBe(false);expect(await worker.current()).toBe(false);
+ await c.finish(false);
+});
+
+it('worker checks never settle stale original or unrelated retained claims through pruning',async()=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},pendingId=randomUUID();
+ const t=f.tickets.admit(f.viewer,'API',{id:pendingId,binding}),other=f.tickets.admit(f.viewer,'API',{id:randomUUID(),binding});
+ for(const ticket of [t,other]){expect(f.tickets.claim(ticket.id)).toBeNull();f.release(ticket.id);}
+ await f.authority.close();
+ const server=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(server.close);
+ expect(await f.remote.claim(t.id)).not.toBeNull();expect(await f.remote.claim(other.id)).not.toBeNull();
+ const worker=remoteWorkerTicketProof({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'),t.id,pendingId);closes.push(worker.close);
+ f.app.effects!.finish(`secrets:handoff:${other.id}`,false);
+ expect(await worker.current()).toBe(true);expect(f.state(other.id)).toEqual({state:'claimed'});
+ f.app.effects!.finish(`secrets:handoff:${t.id}`,false);
+ expect(await worker.current()).toBe(false);
+ expect(f.state(t.id)).toEqual({state:'claimed'});expect(f.state(other.id)).toEqual({state:'claimed'});
+});
+it.each(['released','uncertain'])('worker cannot settle an active claim via %s even before rejecting',async action=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()};
+ const t=f.tickets.admit(f.viewer,'API',{id:randomUUID(),binding});expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ await f.authority.close();
+ const server=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(server.close);
+ const c=(await f.remote.claim(t.id))!;
+ const status=await new Promise<number|undefined>((resolve,reject)=>{
+  const req=https.request({socketPath:f.config.socket,servername:f.config.servername,ca:readFileSync(f.config.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),method:'POST',path:`/v1/tickets/${t.id}/${action}`,headers:{'content-length':0}},res=>{res.resume();res.once('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end();
+ });
+ expect(status).toBe(503);expect(f.state(t.id)).toEqual({state:'claimed'});expect(await c.current()).toBe(true);await c.finish(false);
 });
