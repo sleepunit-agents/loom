@@ -119,7 +119,12 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   const read=(v:Viewer,before?:number,native=false)=>{
     const job=bound(v);if(!job)throw new OperationError('denied','Clock body binding ended');
     const originalDestination=readDestination(job);
-    const rows=(db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT 100').all(job.conversation,before??Number.MAX_SAFE_INTEGER) as Turn[]).filter(row=>!withdrawn(row));
+    // Native execution needs one oldest pending source, independently of the
+    // generic conversation history window. A backlog cannot hide that source.
+    const candidates=(native
+      ? db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND consumed IS NULL ORDER BY seq LIMIT 1').all(job.conversation)
+      : db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT 100').all(job.conversation,before??Number.MAX_SAFE_INTEGER)) as Turn[];
+    const rows=candidates.filter(row=>!withdrawn(row));
     if(!native&&rows.some(hasFile))throw new OperationError('denied','File input requires the native worker');
     const currentSources=()=>rows.every(row=>currentSource(row,job));
     if(!currentSources())throw new OperationError('denied','Clock delivery authority ended');
@@ -187,16 +192,23 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       return !!source&&known(source.authorship?.principal)&&source.model===undefined&&supportedClockInput(source);
     };
     if(!originalSteering||!nativeSource(root)||!nativeSource(row))throw new OperationError('denied','Native scheduled source is unsupported');
-    return {job:job.id,assignment:{runner:job.runner,box:job.box,claimedAt:job.claimedAt,house:job.made},
+    return {historyKey:createHash('sha256').update(JSON.stringify([readDestination(job),rootKey,originalSteering])).digest('hex'),
+      more:()=>!!(db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND consumed IS NULL ORDER BY seq').all(job.conversation) as Turn[]).find(r=>!withdrawn(r)),
+      job:job.id,assignment:{runner:job.runner,box:job.box,claimedAt:job.claimedAt,house:job.made},
       binding:{agent:job.agent,conversation:job.conversation!,venue:'wake' as const,place:binding.place},
       message:{seq:row.seq,id:row.id,kind:'wake' as const,...(turnInput(row))},
-      current(caller:Viewer){
+      retainedCurrent(){
+        const live=db.prepare('SELECT * FROM runtime_clock_turns WHERE id=?').get(row.id) as Turn|undefined;
+        return !!live&&live.consumed!==null&&identity(live)===rowKey
+          &&currentSource(row,job)&&nativeSource(row)&&!withdrawn(row);
+      },
+      current(caller:Viewer,completed=false){
         const callerJob=bound(caller);
         const live=db.prepare('SELECT * FROM runtime_clock_turns WHERE id=?').get(row.id) as Turn|undefined;
         const liveRoot=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(job.conversation) as Turn|undefined;
         return callerJob?.id===job.id&&callerJob.model===undefined&&callerJob.account===undefined
           &&steering()===originalSteering&&nativeSource(root)&&nativeSource(row)&&currentRead(viewer,value)&&!withdrawn(root)&&!withdrawn(row)
-          &&identity(liveRoot)===rootKey&&identity(live)===rowKey&&live?.consumed===null;
+          &&identity(liveRoot)===rootKey&&identity(live)===rowKey&&!!live&&(completed?live.consumed!==null:live.consumed===null);
       },
       acknowledge(ctx:Context){acknowledge(ctx,row.seq,true);},
     };
