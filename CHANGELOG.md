@@ -1227,6 +1227,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Account can register this browser for notifications and remove its own live notification devices, with confirmed removal and original-request retries. Sending remains pending.
 
+- Add staged, durable own-device test notification sending in next mode; Account test controls and routine announcement dispatch remain pending.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

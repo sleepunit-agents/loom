@@ -58,9 +58,12 @@ it('validates real push hosts, rejects URL credentials, ports, fragments, bad ke
   expect(await a('subscribe',{sub:{...sub('browser-json'),expirationTime:null}})).toMatchObject({ok:true});expect(f.s.sessions.read().push!.subs![sub('browser-json').endpoint].sub).toEqual(sub('browser-json'));
   for(const host of ['fcm.googleapis.com','updates.push.services.mozilla.com','web.push.apple.com','wns2-by3p.notify.windows.com'])expect(await a('subscribe',{sub:{...sub(),endpoint:`https://${host}/valid`}})).toMatchObject({ok:true});
 });
-it('keeps device through logout, cap, expiry and sign-in; remote removal blocks quiet again until explicit enable',async()=>{
+it('keeps device through logout, expiry and sign-in; remote removal blocks quiet again until explicit enable',async()=>{
   const f=await setup(),a=await f.socket(f.cookie);await a('subscribe',{sub:sub()});const first=f.read().devices[0];f.s.end(f.cookie);expect(f.read().devices[0]).toEqual(first);
-  for(let i=0;i<55;i++){f.clock.advance(1000);f.s.createSession(hash('jonathan'));}expect(f.s.sessions.read().sessions[hash(f.cookie)]).toBeUndefined();expect(f.read().devices[0]).toEqual(first);
+  // Cap survival has an independent still-present subscribed-session case below.
+  // Repeating 55 sign-ins after end() already deleted this session added SQLite
+  // churn and advanced every daemon job without exercising another invariant.
+  expect(f.s.sessions.read().sessions[hash(f.cookie)]).toBeUndefined();
   f.s.sessions.change(file=>{for(const session of Object.values(file.sessions))session.issuedAt-=31*86400;});expect(f.s.session(f.otherCookie)).toBeUndefined();expect(f.read().devices[0]).toEqual(first);
   const next=f.s.createSession(hash('jonathan'),{device:'Safari on iPhone'}),b=await f.socket(next);expect(await b('subscribe',{sub:sub(),again:true})).toMatchObject({ok:true});expect(f.read().devices[0]).toMatchObject({ref:first.ref,at:first.at,seenAt:f.s.now(),session:hash(`account-session:${hash(next)}`)});
   expect(f.call('remove',{ref:first.ref},owner,'remove')).toEqual({ok:true,value:{removed:true}});expect(await b('subscribe',{sub:sub(),again:true})).toEqual({ok:true,value:{status:'removed'}});expect(f.read().devices).toEqual([]);
