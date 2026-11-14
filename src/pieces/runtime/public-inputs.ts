@@ -50,11 +50,11 @@ export function installPublicInputs(app:Foundation,sharing:()=>Sharing,effects:O
   if(!q||q.conversation!==owner.conversation||q.job!==owner.job||q.question!==questionShape(ask))fail('Public question has no owning destination');
   const job=current(q.job);
   if(!job||destination(job)!==q.destination||job.agent!==ask.agent||job.project!==ask.project)fail('Original public answer destination ended');
-  if(ctx.viewer.kind!=='member'||ask.answer?.by.kind!=='member'||ask.answer.by.id!==ctx.viewer.id
-   ||!mayAct(ctx.viewer,{type:'runtime.job',agent:job.agent,project:job.project},sharing(),'give-work'))fail('Public answer sender cannot give this work');
+  if(ctx.viewer.kind!=='member'||ask.answer?.by.kind!=='member'||ask.answer.by.id!==ctx.viewer.id)fail('Public answer sender unavailable');
   const answer=ask.answer!;
   // Done/dismiss acknowledge the ask without assigning work or sending words.
   if(answer.kind==='done'||answer.kind==='dismiss')return true;
+  if(!mayAct(ctx.viewer,{type:'runtime.job',agent:job.agent,project:job.project},sharing(),'give-work'))fail('Public answer sender cannot give this work');
   let text:string;
   if(answer.kind==='words')text=answer.text;
   else if(answer.kind==='yes'||answer.kind==='no')text=`${answer.kind==='yes'?'Yes':'No'}, to: ${ask.ask}${(answer.kind==='yes'?ask.if_yes:ask.if_no)?`\n${answer.kind==='yes'?ask.if_yes:ask.if_no}`:''}`;

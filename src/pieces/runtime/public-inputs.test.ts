@@ -253,3 +253,18 @@ it.each(['claim','house','binding','scope'] as const)('refuses fresh acknowledge
  expect(f.app.db.prepare('SELECT id,released,consumed FROM runtime_public_inputs ORDER BY seq').all()).toEqual(before);
  expect(f.app.db.prepare("SELECT * FROM core_operations WHERE id='replacement-ack'").all()).toEqual([]);
 });
+it.each(['done','dismiss','yes','no','words'] as const)('lets a project member %s only when the answer assigns no work',async kind=>{
+ const f=await setup('pond'),ask=await f.ask(kind==='words'?{ask:'What next?',answers:'words'}:f.question),member=f.token('owner','pollock');
+ const scope={type:'attention.ask',agent:'art',project:'pond'};
+ expect(policy.mayAct({kind:'member',id:'pollock'},scope,f.sharing,'answer-person')).toBe(true);
+ expect(policy.mayAct({kind:'member',id:'pollock'},scope,f.sharing,'give-work')).toBe(false);
+ const answer=kind==='words'?{kind,text:'New work'}:{kind};
+ const result=await f.post(member,'attention.answer',{id:ask,answer},`project-${kind}`);
+ if(kind==='done'||kind==='dismiss')expect(result).toMatchObject({ok:true,value:{answer:{kind,by:{kind:'member',id:'pollock'}}}});
+ else {
+  expect(result).toMatchObject({ok:false,code:'denied'});
+  expect(f.call('attention.get',{id:ask})).toMatchObject({ok:true,value:{state:'open'}});
+  expect(f.app.db.prepare('SELECT * FROM core_operations WHERE id=?').all(`project-${kind}`)).toEqual([]);
+ }
+ expect(f.app.db.prepare('SELECT * FROM runtime_public_inputs').all()).toEqual([]);
+});

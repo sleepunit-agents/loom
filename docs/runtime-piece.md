@@ -1617,7 +1617,9 @@ An actual member's Yes/No becomes the original question plus its matching
 outcome line; words remain verbatim, with a 40000-character limit. Done/dismiss
 acknowledge without sending work. Agent, project and destination come from the
 asking body; sender and timestamp come from the member's authenticated answer.
-Current central give-work policy is checked before enqueueing. Text never
+Current central give-work policy is checked before enqueueing. Project members
+who can answer the ask may choose Done/dismiss without owning the agent, since
+those acknowledgements enqueue nothing. Text never
 executes an approval, grants access, launches a job or calls another piece.
 
 The bound body reads `runtime.readPublicInputs({})` and accepts released inputs
