@@ -1,5 +1,6 @@
 /** Private holder -> worker transport. Owner configuration supplies both peers'
- * endpoint and pin. Not a daemon door, and not installed by runner startup. */
+ * endpoint and pin. secret-command starts this for its original process input;
+ * no public daemon door or installed startup activates it. */
 import https from 'node:https';
 import type { ClientRequest } from 'node:http';
 import { checkServerIdentity, type TLSSocket } from 'node:tls';
