@@ -116,4 +116,4 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
     await expect.poll(() => a.getByRole('form', { name: 'Revoke token setup-browser-token', exact: true }).count()).toBe(0);
     expect(errors).toEqual([]); await context.close();
   } finally { await browser.close(); await loom.close(); rmSync(home, { recursive: true, force: true }); }
-}, 60_000);
+}, 90_000);

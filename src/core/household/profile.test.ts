@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,7 +17,7 @@ afterEach(async () => { for (const close of closes.splice(0).reverse()) await cl
 const owner: Viewer = { kind: 'member', id: 'jonathan' }, art: Viewer = { kind: 'agent', id: 'art' };
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'profile-')); fixture(home);
-  const clock = new FakeClock(), app = await startLoom({ home, next: true, clock, install: installFixture, stdout: () => {} });
+  const clock = new FakeClock(), app = await startLoom({ home, next: true, clock, install: installFixture, stdout: () => {}, authenticate: () => ({ viewer: owner, valid: () => true }) });
   closes.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
   const db = new HouseholdDatabase(app.db);
   const call = (viewer: Viewer, name: string, input: unknown, id = randomUUID()) => app.operations.call('direct', viewer, `household.${name}`, input, id);
@@ -86,4 +88,23 @@ it('projects safe scoped Live records and schedules expiry without a poller', as
   clock.advance(24 * 3_600_000); expect(type.read('art', art)).toEqual({ id: 'art', agent: 'art' });
   db.change(home, raw => { (raw.members as Array<{ person: string; agents: string[] }>).find(m => m.person === 'pollock')!.agents = []; });
   expect(type.read('pond-bot', { kind: 'member', id: 'pollock' })).toBeUndefined();
+});
+
+it('keeps a scoped Live subscription isolated from other agents and refreshes request expiry', async () => {
+  const { app, call, clock } = await setup();
+  const ws = new WebSocket(app.url.replace('http:', 'ws:') + '/live');
+  closes.push(async () => { ws.terminate(); });
+  const messages: unknown[] = [], pending: ((v: unknown) => void)[] = [];
+  ws.on('message', raw => { const v: unknown = JSON.parse(raw.toString()); const receive = pending.shift(); if (receive) receive(v); else messages.push(v); });
+  const next = () => messages.length ? Promise.resolve(messages.shift()) : new Promise<unknown>(resolve => pending.push(resolve));
+  await once(ws, 'open'); ws.send(JSON.stringify({ kind: 'subscribe', type: 'household.profile', scope: 'art' }));
+  expect(await next()).toMatchObject({ kind: 'set', scope: 'art', records: [{ id: 'art', agent: 'art' }] });
+  expect(call(owner, 'setProfile', { agent: 'mark', text: 'Mark only.' }).ok).toBe(true);
+  expect(call(owner, 'setProfile', { agent: 'art', text: 'Art only.' }).ok).toBe(true);
+  // The Art put is an ordered barrier: an erroneous earlier Mark put fails here.
+  expect(await next()).toMatchObject({ kind: 'put', scope: 'art', record: { id: 'art', description: 'Art only.' } });
+  expect(call(owner, 'requestProfile', { agent: 'art' }).ok).toBe(true);
+  expect(await next()).toMatchObject({ kind: 'put', record: { id: 'art', requestedAt: new Date(clock.now()).toISOString() } });
+  clock.advance(24 * 3_600_000);
+  expect(await next()).toEqual({ kind: 'put', type: 'household.profile', scope: 'art', record: { id: 'art', agent: 'art', description: 'Art only.' } });
 });
