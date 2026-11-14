@@ -132,7 +132,7 @@ it('keeps the trusted dispatch import graph free of process and credential I/O',
   const { dirname, resolve } = await import('node:path');
   const { fileURLToPath } = await import('node:url');
   const { init, parse } = await import('es-module-lexer');
-  await init;
+  await init();
   const seen = new Set<string>();
   const walk = async (path: string): Promise<void> => {
     if (seen.has(path)) return; seen.add(path);
