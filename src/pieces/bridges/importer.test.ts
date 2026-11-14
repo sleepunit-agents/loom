@@ -399,3 +399,14 @@ it('refuses document attribution to a non-household accepted route owner even wi
  const path=join(f.root,'selected.md');writeFileSync(path,'PRIVATE');f.sources.documents=[{name:'bridges-documents/0.md',path}];
  expect(()=>readBridgeImport(f.sources,{...f.options,documents:[{path:'bridges-documents/0.md',agent:'fez',key:'work'}]},h,f.open)).toThrow('Invalid offline');
 });
+
+it.each(['','x'.repeat(201)])('preserves source note-key vocabulary in selected document attribution (%j)',key=>{
+ const f=fixture();writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100'},[key]:['300']}));
+ const path=join(f.root,'selected.md');writeFileSync(path,'PRIVATE exact context');f.sources.documents=[{name:'bridges-documents/0.md',path}];
+ const options={...f.options,documents:[{path:'bridges-documents/0.md',agent:'art',key}]};
+ expect(JSON.parse(readBridgeImport(f.sources,options,h,f.open).evidence).selectedDocuments[0]).toMatchObject({agent:'art',key,content:'PRIVATE exact context'});
+ const {db,close}=openDb(join(f.root,'new'));try{
+  expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(true);
+  expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(false);
+ }finally{close();}
+});

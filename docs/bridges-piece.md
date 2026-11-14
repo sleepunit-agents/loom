@@ -1368,7 +1368,8 @@ valid UTF-8 and preserves BOMs and line endings exactly.
 
 The Bridges mapping may contain `documents: [{path, agent, key}]`: `path` is the
 snapshot-relative document name, `agent` a household agent, and `key` an existing
-note-membership key in that agent's effective routes. Every collected document
+note-membership key in that agent's effective routes (including empty or long
+source keys). Every collected document
 must be mapped exactly once; missing documents, unknown agents and missing keys
 are refused. Exact content, byte count, SHA-256 and selection attribution live
 in the private import evidence and source checksum. Interrupted/repeated imports

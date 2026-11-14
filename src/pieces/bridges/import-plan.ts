@@ -9,7 +9,7 @@ import { venueSchema, routeSchema, linkSchema, type Venue, type Route, type Pers
 const name=z.string().min(1).max(200);
 export const bridgeImportOptions=z.object({
   instances:z.array(z.object({shuttle:name,people:name,routes:name}).strict()),
-  documents:z.array(z.object({path:name,agent:name,key:name}).strict()).max(128).optional(),
+  documents:z.array(z.object({path:name,agent:name,key:z.string()}).strict()).max(128).optional(),
   connections:z.array(z.object({agent:name,platform:z.enum(['discord','slack']),workspace:name,bot:name.optional(),tokenSecret:name.optional(),appSecret:name.optional(),setupIncomplete:z.literal(true).optional()}).strict()),
 }).strict();
 export type BridgeImportOptions=z.infer<typeof bridgeImportOptions>;
