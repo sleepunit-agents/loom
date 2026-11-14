@@ -213,3 +213,5 @@ Approvals registry writes, source filing, receipts and live changes commit toget
 |---|---|---|
 | Approval cards in Inbox | `attention.ask` source `approval`, owning Open approval action | Decisions and history remain in Approvals, preserving its actual principal and window rules |
 | Private approval wording in Inbox | Fixed private label + member-scoped source link | Details are read only in the owning Approvals window; no duplicate private wording |
+
+A visible open conversation wait represents its pending source approval once in Inbox/Home lists and counts only when source id and agent/project/member audience all match. Different audiences remain separate; no hidden source is consulted. Raw records stay available for direct source navigation and fresh checks; historical facts remain separate. This preserves the old Inbox single-decision count without copying the owning approval controls.

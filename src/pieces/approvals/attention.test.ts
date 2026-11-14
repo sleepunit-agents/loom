@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { startLoom } from '../../foundation.js';
 import { fixture } from '../../fixture.js';
@@ -16,12 +16,15 @@ const dirs:string[]=[],closes:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const close of closes.splice(0))await close();for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true});});
 const owner:Viewer={kind:'member',id:'jonathan'}, pollock:Viewer={kind:'member',id:'pollock'};
 const card=(extra:Partial<Approval>={}):Approval=>({id:'a-12345678',kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,what:'Review a fix',why:'It repairs the page',ask:'Merge the fix?',if_yes:'I merge it',if_no:'I hold it',who:{agent:'art',where:'h-1'},for:'owner',minutes:30,at:'2026-11-13T00:00:00Z',state:'pending',...extra});
-async function setup(home?:string) {
+async function setup(home?:string, denied=false) {
   if(!home){home=mkdtempSync(join(tmpdir(),'approval-attention-'));dirs.push(home);fixture(home);}
   const types=new Map<string,RecordType>();
-  const app=await startLoom({home,next:true,staging:true,clock:new FakeClock(1_800_000_000_000),stdout:()=>{},install:a=>{
+  let coreDb:import('../../core/index.js').Db;
+  const access=()=>{const held=new SharingDatabase(coreDb,home!).sharing();return denied?{...held,services:{...held.services,approvals:{...held.services.approvals,operations:[]}}}:held;};
+  const app=await startLoom({home,next:true,staging:true,clock:new FakeClock(1_800_000_000_000),stdout:()=>{},sharing:access,install:a=>{
+    coreDb=a.db;
     const register=a.live.register.bind(a.live);a.live.register=t=>{types.set(t.name,t);register(t);};
-    installApprovals(a.db,a.operations,a.live,()=>new SharingDatabase(a.db,home!).sharing(),{caller:v=>({who:{agent:v.id,where:'h-test'},for:'owner',project:'pond'})});
+    installApprovals(a.db,a.operations,a.live,access,{caller:v=>({who:{agent:v.id,where:'h-test'},for:'owner',project:'pond'})});
   }});closes.push(app.close);
   const call=(name:string,input:unknown,viewer=owner,id=randomUUID())=>app.operations.call('direct',viewer,name,input,id);
   app.operations.register(operation({name:'fixture.approval',write:true,input:z.unknown(),output:z.null(),may:()=>true,run(ctx,raw){
@@ -106,4 +109,17 @@ it('holds colliding source identity and rolls an owning request back',async()=>{
   expect(s.call('approvals.answer',{id,action:'deny'})).toMatchObject({ok:false,code:'conflict'});
   expect(s.call('approvals.check',{id})).toMatchObject({ok:true,value:{state:'pending'}});
   expect(s.ask(id)).toMatchObject({ok:true,value:{ask:'Keep me'}});
+});
+
+it('holds startup reconciliation on actual service denial, without altering owning write policy',async()=>{
+  const first=await setup();first.seed(card({why:'Sensitive wording'}));await first.app.close();closes.pop();
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  try{
+    const s=await setup(first.home,true);
+    expect(warn.mock.calls).toEqual([['Approval filing failed (denied)']]);
+    expect(s.call('approvals.attentionPending',{}, {kind:'service',id:'approvals'})).toMatchObject({ok:false,code:'denied'});
+    expect(s.call('approvals.reconcileAttention',{}, {kind:'service',id:'approvals'})).toMatchObject({ok:false,code:'denied'});
+    expect(s.call('approvals.answer',{id:'a-12345678',action:'deny'}).ok).toBe(true);
+    expect(s.ask()).toMatchObject({ok:true,value:{state:'resolved'}});
+  }finally{warn.mockRestore();}
 });

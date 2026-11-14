@@ -29,3 +29,11 @@ export function safeHref(href?: string) {
   if (!href) return undefined;
   try { const url = new URL(href); return ['https:', 'http:'].includes(url.protocol) ? url.href : undefined; } catch { return undefined; }
 }
+
+/** One visible decision: a same-audience conversation wait represents its source
+ * approval. Raw records remain available for direct navigation/fresh checks. */
+export function listedAsks(records: readonly Ask[]): Ask[] {
+  const represented = new Set(records.filter(a=>a.state==='open' && !a.sourceManaged && a.waits_on && 'approval' in a.waits_on)
+    .map(a=>JSON.stringify([a.waits_on && 'approval' in a.waits_on ? a.waits_on.approval:undefined,a.agent,a.project,a.member])));
+  return records.filter(a=>!(a.state==='open' && a.sourceManaged && a.source.kind==='approval' && represented.has(JSON.stringify([a.source.id,a.agent,a.project,a.member]))));
+}

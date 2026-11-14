@@ -12,7 +12,7 @@ const f = vi.hoisted(() => ({ snapshot: {records:[] as Ask[],status:'live'} as S
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>type==='household.preferences'?f.identity:type==='attention.readMark'?f.marks:f.snapshot),call:(op:string,input:unknown)=>op==='attention.markRead'?f.markRead(op,input):f.call(op,input)}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import InboxApp, { AskReader } from './index';
-import { decisionLink, safeHref } from './model';
+import { listedAsks, decisionLink, safeHref } from './model';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 const ask = (id='ask-1', fields:Partial<Ask>={}):Ask=>({id,agent:'art',ask:'Continue the work?',why:'A useful result',if_yes:'I continue.',if_no:'I stop.',answers:'yes-no',source:{kind:'piece',id:'test'},state:'open',createdAt:1,changedAt:1,...fields});
 function request<T>() {
@@ -210,4 +210,13 @@ it('keeps the persistent Inbox draft through failed answers and remounts, then c
     await click('Record answer');await nextFresh.finish({ok:true,value:ask()});await success.finish({ok:true,value:ask('ask-1',{state:'answered'})});
     expect([...data.values()]).not.toContain('A saved answer');
   } finally {vi.unstubAllGlobals();}
+});
+
+it('counts a same-audience approval wait once and retains different/private audiences and direct records',()=>{
+  const approval=ask('source',{source:{kind:'approval',id:'a-12345678'},sourceManaged:true,project:'pond'});
+  const wait=ask('wait',{source:{kind:'conversation',id:'cv-one'},project:'pond',waits_on:{approval:'a-12345678'}});
+  expect(listedAsks([approval,wait])).toEqual([wait]);
+  for(const changed of [{agent:'mark'},{project:'other'},{member:'jonathan'},{state:'resolved' as const},{sourceManaged:true}])expect(listedAsks([approval,{...wait,...changed}])).toHaveLength(2);
+  expect(listedAsks([{...approval,state:'resolved'},wait])).toHaveLength(2);
+  expect([approval,wait]).toHaveLength(2);
 });

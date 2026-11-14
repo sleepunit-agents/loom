@@ -8,9 +8,7 @@ import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { fixture, fixtureSharing, installFixture } from '../fixture.js';
 import { approvalAskId, taskAskId } from '../pieces/attention/role.js';
-import { z } from 'zod';
-import { operation } from '../core/index.js';
-import { load, persist } from '../pieces/approvals/store.js';
+import { installApprovals } from '../pieces/approvals/index.js';
 import { TokenDatabase } from '../core/household/tokens.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
@@ -18,7 +16,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
   const home=mkdtempSync(join(tmpdir(),'loom-inbox-browser-')); fixture(home);
   const clock=new FakeClock(Date.parse('2026-11-13T06:00:00Z'));
   const owner={kind:'member' as const,id:'jonathan'};
-  const loom=await startLoom({home,clock,next:true,sharing:fixtureSharing,webRoot:root,install:app=>{installFixture(app);app.db.transaction(()=>new TokenDatabase(app.db).replace({v:1,tokens:[]},{}))();}});
+  const loom=await startLoom({home,clock,next:true,sharing:fixtureSharing,webRoot:root,install:app=>{installApprovals(app.db,app.operations,app.live,fixtureSharing,{caller:v=>({who:{agent:v.id,where:'h-browser'},for:'owner',project:'pond'})});installFixture(app);app.db.transaction(()=>new TokenDatabase(app.db).replace({v:1,tokens:[]},{}))();}});
   let serial=0;
   const raise=(input:object)=>{const result=loom.operations.call('direct',owner,'attention.raise',{agent:'art',answers:'yes-no',source:{kind:'piece',id:'fixture'},...input},`raise:${++serial}`);expect(result.ok).toBe(true);};
   raise({id:'public',ask:'Continue the Attention rebuild?',why:'The shared Inbox should show one current question in every window.',if_yes:'I build the remaining Home cards.',if_no:'I stop and keep this preview available.',refs:['t-2205','sleepunit-agents/loom#912']});
@@ -118,14 +116,11 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     const fact=loom.operations.call('direct',owner,'attention.get',{id:'closed-task'});
     if(!fact.ok)throw Error('Missing wait');expect(fact.value).not.toHaveProperty('answer');
     // One actual central approval, with the owning page's action and two-window withdrawal.
-    loom.operations.register(operation({name:'fixture.approval',write:true,input:z.object({}),output:z.null(),may:()=>true,run(ctx){
-      const state=load(ctx.db);state.approvals.push({id:'a-12345678',kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,what:'Review a fix',why:'The source card keeps the exact decision and receipt.',ask:'Merge the Inbox source fix?',if_yes:'I merge the fix.',if_no:'I hold it.',who:{agent:'art',where:'h-test'},for:'owner',minutes:30,at:'2026-11-13T06:00:00Z',state:'pending',project:'pond'});
-      for(const c of persist(ctx.db,state,ctx.now))ctx.changed(c.type,c.id);return null;
-    }}));
-    expect(loom.operations.call('direct',owner,'fixture.approval',{},'inbox-seed-approval').ok).toBe(true);
-    expect(loom.operations.call('direct',{kind:'service',id:'approvals'},'approvals.reconcileAttention',{},'inbox-file-approval').ok).toBe(true);
+    const requested=loom.operations.call('direct',{kind:'agent',id:'art'},'approvals.request',{kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,ask:'Merge the Inbox source fix?',why:'The source card keeps the exact decision and receipt.',if_yes:'I merge the fix.',if_no:'I hold it.'},'inbox-request-approval');
+    expect(requested.ok).toBe(true);if(!requested.ok)throw Error(requested.message);
+    const approvalId=(requested.value as {id:string}).id;
     for(const page of [a,b]){
-      await page.goto(`${loom.url}/p/inbox-preview/ask/${approvalAskId('a-12345678')}`);
+      await page.goto(`${loom.url}/p/inbox-preview/ask/${approvalAskId(approvalId)}`);
       await page.getByRole('button',{name:'Open approval',exact:true}).waitFor();
       expect(await yes(page).count()).toBe(0);
     }
@@ -137,8 +132,8 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       await b.screenshot({path:join(shots,`inbox-approval-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     await a.getByRole('button',{name:'Open approval',exact:true}).click();
-    await expect.poll(()=>new URL(a.url()).pathname).toBe('/p/approvals-preview/approval/a-12345678');
-    expect(loom.operations.call('direct',owner,'approvals.answer',{id:'a-12345678',action:'deny'},'inbox-deny-approval').ok).toBe(true);
+    await expect.poll(()=>new URL(a.url()).pathname).toBe(`/p/approvals-preview/approval/${approvalId}`);
+    expect(loom.operations.call('direct',owner,'approvals.answer',{id:approvalId,action:'deny'},'inbox-deny-approval').ok).toBe(true);
     await b.getByRole('heading',{name:'Approval no longer needs you',exact:true}).waitFor();
     await member.close();
   } finally {await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
