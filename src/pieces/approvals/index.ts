@@ -181,7 +181,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('standing-off',true,(s,i,c,v)=>{ const j=s.standing.find(j=>j.id===i.id); if(!j) throw new OperationError('not-found','no such standing job'); j.off ??= {at:iso(c.now),by:v.id}; return j; },{owner:true});
   register('grant',true,(s,i,c,v)=>{const principal=typeof i.person==='string'?i.person:'owner'; if(i.person==='owner'||!person.test(principal)) invalid('--person is the slug of whom it is for; leave it out for owner');return grant(s,String(i.kind),String(i.target),String(i.for),v.id,!!i.deny,principal,c.now);},{owner:true});
   register('tell',true,recordNotice);
-  register('notices',false,(s,i,c,v)=>({notices:s.notices.filter(n=>!n.member&&maySee(v,{type:'approval',agent:n.agent},sharing()))}));
+  register('notices',false,(s,i,c,v)=>({notices:s.notices.slice(0,50).filter(n=>!n.member&&maySee(v,{type:'approval',agent:n.agent},sharing()))}));
   register('state',false,(s,i,c,v)=>({approvals:Object.fromEntries(s.approvals.filter(a=>Array.isArray(i.ids)&&i.ids.includes(a.id)&&c.canRead?.(a)).map(a=>[a.id,{state:stateOf(a,c.now),agent:a.who.agent,kind:a.kind,conversation:a.conversation??null,...(ownerAnswered.has(a.kind)?{target:a.target}:{})}]))}));
   // Services share the same registration, validation and scope checks as body operations.
   register('piece-request',true,(s,i,c)=>{

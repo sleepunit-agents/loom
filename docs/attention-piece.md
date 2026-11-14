@@ -351,10 +351,11 @@ records a source claim; it does not prove execution. FYIs never count as
 needs-you, accept answers, spend approvals or deliver replies.
 
 New events receive permanent random ids, independent of numeric storage rows
-and registry retry receipts. Pre-identity imported events receive a deterministic
-content/occurrence key once in the owning write transaction (identical legacy
-events remain distinct); this key is persisted before filing and never
-recomputed after source removal. Prepending
+and registry retry receipts. Stopped imports receive deterministic
+content/occurrence keys namespaced to the immutable source checksum; existing
+pre-identity database rows and later unidentified offline additions receive
+random event ids. All ids are persisted before filing and never recomputed
+after source removal. A later identical event cannot reuse a retired read key. Prepending
 and bounded trimming cannot shift retained identities. The existing importer
 keeps original notices losslessly and leaves the source untouched; startup
 uses the same owning snapshot capability to file offline/imported facts.

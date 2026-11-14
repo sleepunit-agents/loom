@@ -64,6 +64,6 @@ export function readApprovalsImport(from: string, options: { projects?: Record<s
       expected.audit.push({at:a.at,event:'retire-agent-grant',id:a.id,kind:a.kind,target:a.target,who:a.who,reason});
     }
   }
-  identifyNotices(expected);
+  identifyNotices(expected,checksum);
   return { expected, checksum, approvals };
 }

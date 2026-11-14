@@ -309,6 +309,31 @@ it('reserves identified legacy keys and bounds oversized stopped imports before 
   expect(readFileSync(path,'utf8')).toBe(document);expect(load(s.app.db).notices).toHaveLength(60);
   const retained=load(s.app.db).notices;expect(retained[0].id).toBe(identified.id);expect(retained[1].id).not.toBe(identified.id);
   await s.app.close();const restarted=await setup(s.home);
+  expect(restarted.call('approvals.notices',{})).toMatchObject({ok:true,value:{notices:expect.any(Array)}});
+  const listed=restarted.call('approvals.notices',{});if(!listed.ok)throw Error('Notice list failed');
+  expect((listed.value as {notices:unknown[]}).notices).toHaveLength(50);
   expect(restarted.types.get('approval.notice')!.ids()).toHaveLength(50);
   expect(restarted.types.get('attention.ask')!.ids().filter(id=>id.startsWith('approval-notice:'))).toHaveLength(50);
+});
+
+it('never reuses a retired legacy read identity for a later unidentified identical event',async()=>{
+  const s=await setup(),n={at:'2026-11-13T00:00:00Z',agent:'art',kind:'merge',target:card().target,what:'Identical source words'};
+  let state=load(s.app.db);state.notices=[{...n}];s.app.db.transaction(()=>persist(s.app.db,state,s.app.operations.clock.now()))();expect(s.reconcile().ok).toBe(true);
+  const retiredId=load(s.app.db).notices[0].id!;
+  const {approvalNoticeId}=await import('../attention/approval-notices.js');const oldKey=approvalNoticeId(retiredId);
+  expect(s.call('attention.markRead',{id:oldKey}).ok).toBe(true);
+  state=load(s.app.db);state.notices=[];s.app.db.transaction(()=>persist(s.app.db,state,s.app.operations.clock.now()))();expect(s.reconcile().ok).toBe(true);
+  state=load(s.app.db);state.notices=[{...n}];s.app.db.transaction(()=>persist(s.app.db,state,s.app.operations.clock.now()))();expect(s.reconcile().ok).toBe(true);
+  const newId=load(s.app.db).notices[0].id!;expect(newId).not.toBe(retiredId);expect(s.call('attention.get',{id:oldKey}).ok).toBe(false);
+  expect(s.call('attention.get',{id:approvalNoticeId(newId)}).ok).toBe(true);
+  expect(s.app.db.prepare('SELECT ask FROM attention_read_marks').all()).toEqual([{ask:oldKey}]);
+});
+
+it('retains actual answered verdicts in owning History after live retention, distinct from central clearing facts',async()=>{
+  const s=await setup();s.seed();s.seed(card({state:'used',decided:'2026-11-13T00:01:00Z',used:'2026-11-13T00:02:00Z',by:'jonathan'}));
+  s.app.db.prepare('UPDATE approvals_approvals SET changed_at=?').run(s.app.operations.clock.now()-8*86400_000);
+  const type=s.types.get('approval')!,row=type.read('a-12345678',owner)!;expect(type.inScope(row,undefined,s.app.operations.clock.now())).toBe(false);
+  expect(s.call('approvals.history',{})).toMatchObject({ok:true,value:{approvals:[{id:'a-12345678',state:'used',by:'jonathan',used:'2026-11-13T00:02:00Z'}]}});
+  expect(s.ask()).toMatchObject({ok:true,value:{ask:'Approval no longer needs you',state:'resolved'}});
+  expect(JSON.stringify(s.ask())).not.toContain('used');
 });
