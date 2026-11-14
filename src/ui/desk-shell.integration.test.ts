@@ -109,7 +109,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await expect.poll(()=>reference.locator('.loom-aghead__desc').getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
     for(const page of [a,b])await page.goto(app.url);
     await a.evaluate(()=>document.fonts.ready);
-    await a.getByRole('button',{name:'Open art agent window',exact:true}).click();
+    await a.getByRole('link',{name:'Open art agent window',exact:true}).click();
     await expect.poll(async()=>({path:new URL(a.url()).pathname,readers:await a.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]});
     await a.goto(app.url);
     // Exercise the real renderer through the database-backed display feed on both surfaces.
@@ -402,7 +402,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
             await page.keyboard.press('Escape');await page.goto(app.url);
             // A fresh Home can still be loading its web fonts; settle its geometry before pointer activation.
             await page.evaluate(()=>document.fonts.ready);
-            await page.getByRole('button',{name:'Open art agent window',exact:true}).click();
+            await page.getByRole('link',{name:'Open art agent window',exact:true}).click();
             await expect.poll(async()=>({path:new URL(page.url()).pathname,readers:await page.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]});
             await expect.poll(()=>page.getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
             expect(await page.getByRole('button',{name:'Edit profile in Setup',exact:false}).count()).toBe(1);
