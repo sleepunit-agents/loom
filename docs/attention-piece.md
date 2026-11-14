@@ -163,3 +163,15 @@ The schedule is installed once per registry and cancelled before database shutdo
 |---|---|
 | `needs-resolve` checks while no page is open | Daemon clock checks public waits every minute as Attention, through explicitly granted owning read roles |
 | Private wait checks | Authenticated member-page checks; no unattended service can see member-private facts |
+
+## Member Inbox read facts
+
+`attention.markRead({id})` records the signed-in member's first read time for a currently visible ask. It never answers or resolves the ask, so Needs you still counts it. The caller cannot choose a member. The `attention.readMark` live type contains only ask id, member and read time, with both central private-member visibility and current ask visibility checked. Another household owner, an agent or a service cannot read someone else's mark. Scope loss hides retained marks; restored ask access shows the same fact again. Writes and live changes share the foundation transaction/retry boundary. The generated client offers markRead; no local database access is added to the client.
+
+| Old Inbox behavior | New side |
+|---|---|
+| `/inbox/read` records this reader's opened item | `attention.markRead` and member-private `attention.readMark` live facts |
+| Old item-hash opened history | Starts unread on the new side: old item hashes have no reliable mapping to central ask ids; source history remains untouched |
+| Drafts kept on the browser device | Required Inbox client follow-up; no draft words enter these read-mark rows |
+
+Schema six adds only `attention_read_marks` with a reference to its owning ask. It upgrades version-five homes without changing ask bytes. New read facts survive reopen. There is no legacy read-mark import or real-data migration in this change. Inbox client consumption and persistent member/ask-partitioned device drafts remain required before t-2205 closes; this backend alone does not claim that UI is finished.
