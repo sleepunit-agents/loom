@@ -25,7 +25,7 @@ const question = z.object({
 }).strict();
 const answer = z.union([
   z.object({ kind: z.enum(['yes', 'no', 'done', 'dismiss']) }).strict(),
-  z.object({ kind: z.literal('words'), text: z.string().trim().min(1) }).strict(),
+  z.object({ kind: z.literal('words'), text: z.string().min(1).refine(text => !!text.trim()) }).strict(),
 ]);
 const link = z.object({ id, label: z.string(), href: z.string().optional() });
 const status = z.object({ id, ...scopeFields, agent: id, state: z.enum(['working', 'waiting', 'idle', 'offline']), work: z.string(), jobs: z.array(link), watched: z.array(link) }).strict();
@@ -158,8 +158,13 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       if (input.answer.kind === 'words' && record.member !== undefined) return failure('invalid', 'Reply in the private conversation');
       if (input.answer.kind === 'words' && managed(record) && record.answers !== 'words') return failure('invalid', 'Ask does not accept words');
       if ((input.answer.kind === 'yes' || input.answer.kind === 'no') && record.answers === 'words') return failure('invalid', 'Ask needs words');
+      const publicConversation = record.source.kind === 'conversation' ? db.prepare('SELECT record FROM attention_conversations WHERE id=?').get(record.source.id) as {record:string}|undefined : undefined;
+      const publicClock = !!publicConversation && JSON.parse(publicConversation.record).venue === 'runtime-clock';
+      // The owning public inbox carries verbatim input. Other existing answer
+      // sources retain their established normalized wording contract.
+      const recordedAnswer = input.answer.kind === 'words' && !publicClock ? {...input.answer, text: input.answer.text.trim()} : input.answer;
       record.state = 'answered'; record.changedAt = ctx.now;
-      record.answer = { ...input.answer, by: ctx.viewer, at: ctx.now };
+      record.answer = { ...recordedAnswer, by: ctx.viewer, at: ctx.now };
       saveAsk(record); ctx.changed('attention.ask', record.id);
       const hook = managed(record) && record.source.kind === 'piece' ? sources.get(record.source.id) : undefined;
       if (managed(record) && !hook) throw new OperationError('unavailable', 'Ask source is not installed');
@@ -167,8 +172,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
         const result: unknown = hook(ctx, record);
         if (result instanceof Promise) { void result.catch(() => {}); throw new OperationError('unavailable', 'Source answer must be synchronous'); }
       }
-      const publicConversation = record.source.kind === 'conversation' ? db.prepare('SELECT record FROM attention_conversations WHERE id=?').get(record.source.id) as {record:string}|undefined : undefined;
-      deliverConversationAnswer(operations, ctx, record, !!publicConversation && JSON.parse(publicConversation.record).venue === 'runtime-clock');
+      deliverConversationAnswer(operations, ctx, record, publicClock);
       return record;
     },
   }));

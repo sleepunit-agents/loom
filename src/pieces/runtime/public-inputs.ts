@@ -6,7 +6,7 @@ import type {Foundation} from '../../core/app.js';
 import type {OutsideEffects} from '../../core/effects.js';
 import {registerConversationAnswers,attentionConversationId,type Ask} from '../attention/role.js';
 import type {RuntimeRecords} from './records.js';
-import {runtimeStore} from './store.js';
+import {runtimeDestination} from './destination.js';
 import {provenanceStore} from './provenance-store.js';
 import {hearJob} from './heartbeat.js';
 type Job=RuntimeRecords['job'];
@@ -19,13 +19,8 @@ const questionShape=(ask:Ask)=>{
 };
 export function installPublicInputs(app:Foundation,sharing:()=>Sharing,effects:OutsideEffects,
  bound:(v:Viewer)=>Job|undefined,current:(job:string)=>Job|undefined){
- const {db,operations}=app,store=runtimeStore(db);
- const destination=(job:Job)=>{
-  const b=job.conversation?store.read('binding',job.conversation):undefined;
-  return JSON.stringify({job:job.id,agent:job.agent,project:job.project,member:job.member,service:job.service,
-   conversation:job.conversation,runner:job.runner,box:job.box,claimedAt:job.claimedAt,made:job.made,
-   binding:b&&{id:b.id,agent:b.agent,project:b.project,member:b.member,venue:b.venue,place:b.place,job:b.job}});
- };
+ const {db,operations}=app;
+ const destination=(job:Job)=>runtimeDestination(db,job);
  const canonical=(job:Job)=>attentionConversationId(job.agent,'runtime-clock',job.conversation!);
  const checkTransaction=(ctx:Context)=>{if(ctx.db!==db||!db.inTransaction)fail('Public input requires its owning transaction');};
  const conversation=(ctx:Context,job:Job)=>{

@@ -12,10 +12,17 @@ import {signin,hash} from '../../core/signin/index.js';
 import {runtimeStore} from './store.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
-async function setup(project?:string,privateInput=false){
+async function setup(project?:string,privateInput=false,afterRead?:()=>void){
  const home=mkdtempSync(join(tmpdir(),'runtime-public-input-'));fixture(home);closes.push(()=>rmSync(home,{recursive:true,force:true}));
  const sharing=structuredClone(fixtureSharing()),clock=new FakeClock();
- let app=await startLoom({home,clock,next:true,sharing:()=>sharing,stdout(){}});closes.push(()=>app.close());sharing.services=builtinServices(app.db);
+ let app=await startLoom({home,clock,next:true,sharing:()=>sharing,stdout(){},install(app){
+  if(!afterRead)return;
+  const register=app.operations.register.bind(app.operations);
+  vi.spyOn(app.operations,'register').mockImplementation(op=>{
+   if(op.name==='runtime.readPublicInputs'){const prepare=op.prepare!;register({...op,async prepare(...args){const value=await prepare(...args);afterRead();return value;}});}
+   else register(op);
+  });
+ }});closes.push(()=>app.close());sharing.services=builtinServices(app.db);
  let n=0;
  const call=(name:string,input:unknown,viewer:Viewer={kind:'member',id:'jonathan'})=>app.operations.call('direct',viewer,name,input,`fixture-${++n}`);
  const put=(kind:'job'|'binding',record:Record<string,unknown>)=>{const {changedAt:_,...value}=record;app.db.transaction(()=>runtimeStore(app.db).put(kind,value as never,clock.now()))();};
@@ -51,13 +58,15 @@ async function setup(project?:string,privateInput=false){
 it.each(['yes','no','words'] as const)('delivers the actual member %s answer to the original public body and deduplicates it',async kind=>{
  const f=await setup('pond'),ask=await f.ask(kind==='words'?{ask:'What next?',answers:'words'}:f.question);
  f.clock.advance(271);
- const answer=kind==='words'?{kind,text:'PUBLIC owner words'}:{kind};
+ const answer=kind==='words'?{kind,text:'  PUBLIC owner words\n\n'}:{kind};
  const result=await f.post(f.owner,'attention.answer',{id:ask,answer},'answer-once');expect(result).toMatchObject({ok:true});
  expect(await f.post(f.owner,'attention.answer',{id:ask,answer},'answer-once')).toEqual(result);
  expect(await f.post(f.owner,'attention.answer',{id:ask,answer})).toMatchObject({ok:false,code:'conflict'});
  const read=await f.post(f.body,'readPublicInputs',{});expect(read).toMatchObject({ok:true,value:{conversation:f.store.read('job',f.job)!.conversation,messages:[{id:`public-answer:${ask}`,from:{kind:'person',slug:'jonathan'},agent:'art',project:'pond',at:new Date(f.clock.now()).toISOString()}]}});
+ expect(await f.post(f.body,'readPublicInputs',{})).toEqual(read);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_public_inputs').get()).toEqual({consumed:null});
  const message=read.value.messages[0];
- expect(message.text).toBe(kind==='words'?'PUBLIC owner words':`${kind==='yes'?'Yes':'No'}, to: ${f.question.ask}\n${kind==='yes'?f.question.if_yes:f.question.if_no}`);
+ expect(message.text).toBe(kind==='words'?'  PUBLIC owner words\n\n':`${kind==='yes'?'Yes':'No'}, to: ${f.question.ask}\n${kind==='yes'?f.question.if_yes:f.question.if_no}`);
  expect(await f.post(f.body,'acknowledgePublicInputs',{through:message.seq},'ack-once')).toMatchObject({ok:true,value:{job:f.job,acknowledged:true}});
  expect(await f.post(f.body,'acknowledgePublicInputs',{through:message.seq},'ack-once')).toMatchObject({ok:true});
  expect(await f.post(f.body,'readPublicInputs',{})).toMatchObject({ok:true,value:{messages:[]}});
@@ -190,4 +199,27 @@ it('denies a real service Clock body even when all owning source and credential 
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true});
  expect(await f.post(body,'readPublicInputs',{})).toMatchObject({ok:false,code:'denied'});
  expect(await f.post(body,'acknowledgePublicInputs',{through:1})).toMatchObject({ok:false,code:'denied'});
+});
+
+it.each([40000,40001])('enforces the public answer words boundary transactionally at %i characters',async length=>{
+ const f=await setup(),ask=await f.ask({ask:'What next?',answers:'words'}),text='x'.repeat(length);
+ const result=await f.post(f.owner,'attention.answer',{id:ask,answer:{kind:'words',text}},'boundary-answer');
+ if(length===40000){
+  expect(result).toMatchObject({ok:true});
+  const read=await f.post(f.body,'readPublicInputs',{});expect(read).toMatchObject({ok:true,value:{messages:[{text}]}});
+ }else{
+  expect(result).toMatchObject({ok:false,code:'invalid'});
+  expect(f.call('attention.get',{id:ask})).toMatchObject({ok:true,value:{state:'open'}});
+  expect(f.app.db.prepare('SELECT * FROM runtime_public_inputs').all()).toEqual([]);
+  expect(f.app.db.prepare("SELECT * FROM core_operations WHERE id='boundary-answer'").all()).toEqual([]);
+ }
+});
+
+it('rejects a separately valid replacement claim after preparation instead of returning the old prepared words',async()=>{
+ let drift=()=>{};const f=await setup(undefined,false,()=>drift()),ask=await f.ask();
+ expect(await f.post(f.owner,'attention.answer',{id:ask,answer:{kind:'yes'}})).toMatchObject({ok:true});
+ drift=()=>{const job=f.store.read('job',f.job)!;f.put('job',{...job,claimedAt:job.claimedAt!+1});};
+ const result=await f.post(f.body,'readPublicInputs',{});expect(result).toMatchObject({ok:false,code:'denied'});
+ expect(JSON.stringify(result)).not.toContain('Yes, to:');
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_public_inputs').get()).toEqual({consumed:null});
 });

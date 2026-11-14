@@ -1,3 +1,4 @@
+import { runtimeDestination } from './destination.js';
 import { installPublicInputs } from './public-inputs.js';
 import { installPublicMetadata } from './public-metadata.js';
 import { rememberClockReceipt } from './private-export.js';
@@ -38,14 +39,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   // Pin the owning route and claim, not mutable progress/heartbeat metadata.
   // A replacement that is independently valid cannot authorize prepared words
   // captured for the previous destination across the operation's async boundary.
-  const readDestination=(job:RuntimeRecords['job'])=>{
-    const binding=job.conversation?store.read('binding',job.conversation):undefined;
-    return JSON.stringify({job:job.id,agent:job.agent,member:job.member,project:job.project,
-      service:job.service,conversation:job.conversation,runner:job.runner,box:job.box,
-      claimedAt:job.claimedAt,made:job.made,
-      binding:binding&&{id:binding.id,agent:binding.agent,member:binding.member,
-        project:binding.project,venue:binding.venue,place:binding.place,job:binding.job}});
-  };
+  const readDestination=(job:RuntimeRecords['job'])=>runtimeDestination(db,job);
   const owners=()=>Object.entries(sharing().members).filter(([,m])=>m.owner).map(([id])=>id);
   const withdrawn=(row:Turn)=>clockDispatchWithdrawn(operations,row.id.slice('clock:'.length),(JSON.parse(row.record) as {attempt:string}).attempt);
   const currentSource=(row:Turn,job:RuntimeRecords['job'])=>{
