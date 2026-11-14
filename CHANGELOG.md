@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Clock native workers can opt into a bounded idle wait and resume later prompts in the same worker lifetime after fresh owning checks.
 - Next Comms: Tasks and Changes resolve reverse From links through Comms for the original viewer, with private labels hidden from other owners and on disconnect.
 
 - Clock native workers can resolve standalone scheduled files in their own checkout, with exact source checks and native-only acknowledgement.
