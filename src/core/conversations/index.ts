@@ -108,7 +108,7 @@ export class Conversations {
       if (item.thread) throw new Error('Answer through encrypted Comms');
       if (item.state === 'answered') return item;
       if (item.state !== 'waiting') throw new Error('Question is already settled');
-      if (item.source === 'approval' || item.source === 'secret-request' || item.waitsOnKind) throw new Error('Answer at the linked source');
+      if (item.source === 'task' || item.source === 'approval' || item.source === 'secret-request' || item.waitsOnKind) throw new Error('Answer at the linked source');
       if ((answer === 'yes' || answer === 'no') && item.answers !== 'yes-no') throw new Error('Question needs words');
       if ((answer === 'words' || answer === 'replied') && !words?.trim()) throw new Error('Answer needs words');
       const at = this.now();
