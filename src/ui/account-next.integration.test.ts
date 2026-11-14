@@ -8,6 +8,7 @@ import { startLoom } from '../foundation.js';
 import { fixture } from '../fixture.js';
 import { FakeClock } from '../core/clock.js';
 import type { PushTransport } from '../core/signin/push-transport.js';
+import { deviceRef } from '../core/signin/notifications.js';
 import { signin } from '../core/signin/index.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
@@ -19,7 +20,7 @@ it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account re
   const base=loom.url.replace('127.0.0.1','localhost');vi.stubEnv('LOOM_PUBLIC_URL',base);
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
-    const context=await browser.newContext({userAgent:'Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36',viewport:{width:1280,height:1000},serviceWorkers:'block'}),otherContext=await browser.newContext({viewport:{width:1280,height:1000},serviceWorkers:'block'}),a=await context.newPage(),b=await otherContext.newPage();
+    const context=await browser.newContext({userAgent:'Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36',viewport:{width:1280,height:1000},serviceWorkers:'block'}),otherContext=await browser.newContext({userAgent:'Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36',viewport:{width:1280,height:1000},serviceWorkers:'block'}),a=await context.newPage(),b=await otherContext.newPage();
     await a.addInitScript(()=>{
       let sub:unknown=null;
       const manager={getSubscription:async()=>sub,subscribe:async()=>{sub={toJSON:()=>({endpoint:'https://fcm.googleapis.com/account-browser-proof',expirationTime:null,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}}),unsubscribe:async()=>{sub=null;return true;}};return sub;}};
@@ -27,6 +28,18 @@ it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account re
       Object.defineProperty(navigator.serviceWorker,'getRegistration',{value:async()=>({pushManager:manager})});
       Object.defineProperty(window,'PushManager',{value:function(){}});
       Object.defineProperty(window,'Notification',{value:{permission:'granted',requestPermission:async()=> 'granted'}});
+    });
+    // Model one lost operation reply, preserving the actual cookie-authenticated
+    // backend connection, operation identity, Live publications and queued write.
+    const testCalls:Array<{id:string;request:string;input:{ref:string}}>=[];let lostReply=false;
+    await b.routeWebSocket('**/live',socket=>{
+      const server=socket.connectToServer();
+      socket.onMessage(raw=>{const message=JSON.parse(String(raw));if(message.kind==='call'&&message.name==='notifications.test')testCalls.push(message);server.send(raw);});
+      server.onMessage(raw=>{const message=JSON.parse(String(raw));
+        if(!lostReply&&message.kind==='result'&&testCalls.some(c=>c.request===message.request)){
+          lostReply=true;socket.send(JSON.stringify({...message,result:{ok:false,code:'unavailable',message:'Test reply was lost'}}));
+        }else socket.send(raw);
+      });
     });
     const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));b.on('pageerror',e=>errors.push(e.message));
     const cdp=await context.newCDPSession(a);await cdp.send('WebAuthn.enable');await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
@@ -56,17 +69,33 @@ it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account re
     await notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
     await expect.poll(()=>notifications.textContent()).toContain('This browser: Enabled');
     const devices=deviceRead();if(!devices.ok)throw Error();const device=(devices.value as {devices:Array<{ref:string;session:string}>}).devices[0];
+    const extraEndpoint='https://fcm.googleapis.com/other-account-device';
+    s.sessions.change(f=>{const existing=f.push!.subs!['https://fcm.googleapis.com/account-browser-proof'];f.push!.subs![extraEndpoint]={...existing,sub:{...existing.sub,endpoint:extraEndpoint}};});
+    loom.live.changed([{type:'notifications.devices',id:'jonathan'}]);
+    const extra=b.getByRole('form',{name:`Remove notification device ${deviceRef(extraEndpoint)}`,exact:true});await expect.poll(()=>extra.count()).toBe(1);
     const remote=b.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true});await expect.poll(()=>remote.count()).toBe(1);
     expect(await remote.textContent()).toContain(device.session);
     await remote.getByRole('button',{name:'Send test notification',exact:true}).click();
     const attempts=()=>loom.db.prepare('SELECT id,ref,state FROM notifications_tests').all() as Array<{id:string;ref:string;state:string}>;
     await expect.poll(()=>attempts().length).toBe(1);const attempt=attempts()[0];expect(attempt.ref).toBe(device.ref);
+    await expect.poll(()=>b.getByRole('button',{name:'Retry this change',exact:true}).count()).toBe(1);
+    expect(testCalls).toHaveLength(1);expect(testCalls[0].input).toEqual({ref:device.ref});
+    expect(await remote.getByRole('button',{name:'Send test notification',exact:true}).isDisabled()).toBe(true);
+    expect(await extra.getByRole('button',{name:'Send test notification',exact:true}).isDisabled()).toBe(true);
+    // A disabled competing click cannot replace the original request.
+    await extra.getByRole('button',{name:'Send test notification',exact:true}).evaluate(button=>(button as HTMLButtonElement).click());
+    expect(testCalls).toHaveLength(1);expect(attempts()).toHaveLength(1);
+    await b.getByRole('button',{name:'Home',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(0);await b.goBack();
+    await expect.poll(()=>b.getByRole('button',{name:'Retry this change',exact:true}).isEnabled()).toBe(true);
+    await b.getByRole('button',{name:'Retry this change',exact:true}).click();await expect.poll(()=>testCalls.length).toBe(2);
+    expect(testCalls[1]).toEqual(testCalls[0]);expect(attempts()).toHaveLength(1);
     await expect.poll(()=>notifications.textContent()).toContain('Queued for a test attempt');
     expect(send).not.toHaveBeenCalled();clock.advance(0);
     expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:`notifications:test:${attempt.id}`},'account-release-test').ok).toBe(true);
     clock.advance(0);await expect.poll(()=>attempts()[0].state).toBe('sent');expect(send).toHaveBeenCalledOnce();
     for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain('Accepted by the push service. Device delivery is not confirmed.');
     const payload=JSON.parse(send.mock.calls[0][1]);expect(payload).toMatchObject({title:'loom',body:'',url:'/p/account-preview'});
+    await extra.getByRole('checkbox').check();await extra.getByRole('button',{name:'Remove notification device',exact:true}).click();await expect.poll(()=>extra.count()).toBe(0);
     const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'household.setPreferences',{look},`account-look-${look}-${width}`).ok).toBe(true);

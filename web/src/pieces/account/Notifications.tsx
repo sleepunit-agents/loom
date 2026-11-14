@@ -17,13 +17,14 @@ export default function Notifications({enabled}:{enabled:boolean}){
   const testRef=held.label?.startsWith('notifications.test:')?held.label.slice('notifications.test:'.length):undefined;
   const receipt=request.result?.ok&&testRef?request.result.value as {id:string;state:'queued'}:undefined;
   const currentTest=tests.status==='denied'?undefined:tests.records.find(t=>t.id===receipt?.id&&t.ref===testRef&&t.member===record?.member);
+  const retryConnected=connected&&(!testRef||tests.status==='live');
   const can=connected&&!state.busy&&!frozen(request);
   useEffect(()=>{notifications.setEnabled(connected);return()=>notifications.setEnabled(false);},[connected]);
   return <section aria-label="Notifications" className="grid min-w-0 gap-4">
     <h2 className="text-xl font-semibold">Notifications</h2>
     <p>Notifications belong to you and stay enabled after ordinary sign-out. Signing out a browser from the list above stops its notifications. Send a test to check a device. Acceptance by the push service does not confirm that the device displayed it.</p>
     {feed.status==='loading'?<Loading label="Opening notification devices…"/>:!record?<p>Notification devices are unavailable.</p>:<>
-      {held.label?.startsWith('notifications.')&&(!testRef||tests.status!=='denied')&&<section aria-live="polite">{request.pending?<Loading label="Saving notification change…"/>:request.result?.ok?<p role="status">{testRef?'Test request saved':'Saved'}</p>:request.result&&<><ErrorView text={request.result.message}/>{request.result.code==='unavailable'&&<Button disabled={!connected} onClick={()=>{if(connected)held.request?.retry?.();}}>Retry this change</Button>}</>}</section>}
+      {held.label?.startsWith('notifications.')&&(!testRef||tests.status!=='denied')&&<section aria-live="polite">{request.pending?<Loading label="Saving notification change…"/>:request.result?.ok?<p role="status">{testRef?'Test request saved':'Saved'}</p>:request.result&&<><ErrorView text={request.result.message}/>{request.result.code==='unavailable'&&<Button disabled={!retryConnected} onClick={()=>{if(retryConnected)held.request?.retry?.();}}>Retry this change</Button>}</>}</section>}
       {testRef&&receipt&&tests.status!=='denied'&&<p role="status">{currentTest?`Current test: ${testStatus[currentTest.state]}`:'Queued for a test attempt. Waiting for live status…'}</p>}
       {tests.status==='offline'&&<p>Test status is offline. Reconnect for the current outcome.</p>}
       {feed.status!=='live'&&<ErrorView text="Connection lost. Notification changes are disabled."/>}

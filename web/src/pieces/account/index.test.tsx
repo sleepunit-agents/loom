@@ -108,7 +108,10 @@ it('queues the exact device once, retains an uncertain test through navigation a
   await act(async()=>tree.unmount());await act(async()=>{tree=create(h(Account,{active:false}));});
   const retry=()=>tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Retry this change');
   expect(retry().props.disabled).toBe(true);await act(async()=>retry().props.onClick());expect(r.handle.retry).not.toHaveBeenCalled();
-  await act(async()=>tree.update(h(Account,{active:true})));
+  await act(async()=>tree.root.findByProps({'aria-label':'Remove passkey Phone'}).props.onSubmit({preventDefault:vi.fn(),currentTarget:{reset:vi.fn()}}));expect(f.call).toHaveBeenCalledOnce();expect(mutation.getSnapshot().request).toBe(r.handle);
+  await act(async()=>{f.tests={status:'offline',records:[]};tree.update(h(Account,{active:true}));});
+  expect(retry().props.disabled).toBe(true);await act(async()=>retry().props.onClick());expect(r.handle.retry).not.toHaveBeenCalled();
+  await act(async()=>{f.tests={status:'live',records:[]};tree.update(h(Account));});
   await act(async()=>retry().props.onClick());expect(r.handle.retry).toHaveBeenCalledOnce();expect(mutation.getSnapshot().request).toBe(r.handle);expect(f.call).toHaveBeenCalledOnce();
   await r.finish({ok:true,value:{id:'test-receipt',state:'queued'}});
   expect(JSON.stringify(tree.toJSON())).toContain('Queued for a test attempt. Waiting for live status');
@@ -129,6 +132,7 @@ it('disables test actions offline or inactive and retains final outcomes after a
   for(const state of ['queued','sent','gone','failed','uncertain','cancelled']){
     await act(async()=>{f.tests={status:'live',records:[{id:state,member:'jonathan',ref:'removed-device',at:1760000000,state}]};tree.update(h(Account));});
     const rendered=JSON.stringify(tree.toJSON());expect(rendered).toContain('removed-device');expect(rendered).toContain(new Date(1760000000*1000).toLocaleString());
-    if(state==='uncertain')expect(rendered).toContain('will not be sent again automatically');
+    const meanings:Record<string,string>={queued:'Queued for a test attempt',sent:'Accepted by the push service. Device delivery is not confirmed.',gone:'Device is no longer available.',failed:'The push service refused this attempt.',uncertain:'The outcome is unknown. This attempt will not be sent again automatically.',cancelled:'Cancelled because the device or access changed.'};
+    expect(rendered).toContain(meanings[state]);
   }
 });
