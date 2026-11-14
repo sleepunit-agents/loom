@@ -63,9 +63,9 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | `fact-add`, `knowledge-verify`, `knowledge-recheck` | `mind.knowledgeAdd`, `mind.knowledgeVerify`, `mind.knowledgeRecheck`; Knowledge screen handles the new-side forms |
 | GET `/a/AGENT/setup` | `/p/setup-preview` now provides member ownership/removal, project lists, account attribution and existing-context registration via Live/call; token/session administration via `signin.admin` and socket calls; **pending** read-only identity, health and full bootstrap coverage |
 | GET `/new-agent`, GET `/members` | Setup member forms and existing-context registration implemented; fresh context bootstrap via `household.bootstrapAgent` and Setup |
-| GET `/account`, GET `/passkeys` | `/p/account-preview`: own passkey and browser metadata, named registration, confirmed removal/session end and this-device logout; notification/device links remain **pending** |
+| GET `/account`, GET `/passkeys` | `/p/account-preview`: own passkey and browser metadata, named registration, confirmed removal/session end and this-device logout; device links are implemented below; notification controls remain **pending** |
 | `passkey-remove` (including descendants), `session-revoke` | `account.removePasskey`, `account.revokeSession`, `account.read` and member-private `account.self`; Account controls and generated `loom-account` client. Cascade follows same-member digest ancestry; shared legacy key tokens are retained |
-| `signin-link`, `member-link` | `signin.link` and the explicit next link client cover owner link issuance; **pending** Account/Setup UI. Browser sessions cannot mint links through its HTTP door |
+| `signin-link`, `member-link` | `signin.browserLink` on cookie-authenticated sockets: Account self link and Setup member link controls; ten-minute single use, inherited source freshness including repeated hops. The separate operator `signin.link` remains fresh and bearer-only |
 | GET/POST `/login/CODE` | Existing confirmation-only GET and atomic POST spend/session creation |
 | POST `/logout` | Existing same-origin, CSRF-protected own-session logout and access refresh |
 | POST `/passkeys/options`, `/passkeys` | Existing fresh-session, CSRF-protected registration |

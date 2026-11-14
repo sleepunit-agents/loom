@@ -12,7 +12,8 @@ const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
 it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes a passkey, signs out a browser and fits both looks across windows',async()=>{
   const home=mkdtempSync(join(tmpdir(),'account-browser-'));fixture(home);
-  const loom=await startLoom({home,next:true,staging:true,clock:new FakeClock(Date.parse('2026-11-12T12:00:00Z')),webRoot:root});
+  const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
+  const loom=await startLoom({home,next:true,staging:true,clock,webRoot:root});
   const base=loom.url.replace('127.0.0.1','localhost');vi.stubEnv('LOOM_PUBLIC_URL',base);
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
@@ -40,8 +41,15 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes 
       expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     const remove=a.getByRole('form',{name:'Remove passkey Browser passkey',exact:true});await remove.getByRole('button').click();expect(Object.keys(s.sessions.read().passkeys??{})).toHaveLength(1);
-    await remove.getByRole('checkbox').check();await remove.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(0);expect(s.sessions.read().passkeys??{}).toEqual({});await a.getByRole('button',{name:'Sign out this device',exact:true}).click();
+    await remove.getByRole('checkbox').check();await remove.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(0);expect(s.sessions.read().passkeys??{}).toEqual({});
+    clock.advance(601_000);
+    const deviceLink=a.getByRole('region',{name:'Sign in another device',exact:true});await deviceLink.getByRole('button',{name:'Make sign-in link',exact:true}).click();
+    const value=deviceLink.locator('[data-signin-link]');await expect.poll(()=>value.count()).toBe(1);const url=(await value.textContent())!;
+    await b.goto(url);await b.getByRole('button',{name:'Sign in',exact:true}).click();await b.goto(base+'/p/account-preview');
+    const stale=b.getByRole('form',{name:'Add a passkey',exact:true});await expect.poll(()=>stale.getByRole('textbox').isEnabled()).toBe(true);await stale.getByRole('textbox').fill('Must refuse');await stale.getByRole('button',{name:'Add a passkey',exact:true}).click();await expect.poll(()=>stale.getByRole('status').textContent()).toBe('Sign in again before adding a passkey');expect(s.sessions.read().passkeys??{}).toEqual({});
+    await deviceLink.getByRole('button',{name:'Hide sign-in link',exact:true}).click();expect(await value.count()).toBe(0);
+    await a.getByRole('button',{name:'Sign out this device',exact:true}).click();
     await expect.poll(()=>a.getByRole('button',{name:'Sign in with a passkey',exact:true}).count()).toBe(1);expect((await (await context.request.get(base+'/auth/session')).json()).viewer).toBeNull();expect((await (await otherContext.request.get(base+'/auth/session')).json()).viewer).toEqual({kind:'member',id:'jonathan'});
     expect(errors).toEqual([]);await context.close();await otherContext.close();
   }finally{await browser.close();await loom.close();vi.unstubAllEnvs();rmSync(home,{recursive:true,force:true});}
-},60_000);
+},90_000);

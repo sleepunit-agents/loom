@@ -98,6 +98,14 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
     await expect.poll(() => b.getByRole('form', { name: `Revoke session ${hash(temporary).slice(0, 16)}`, exact: true }).count()).toBe(0);
     expect(auth.session(temporary)).toBeUndefined();
     expect((loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'sessions.list', {}) as { value: { ref: string }[] }).value.some(x => x.ref === active)).toBe(true);
+    const memberLink = a.getByRole('region', { name: 'Sign-in link for pollock', exact: true });
+    await memberLink.getByRole('button', { name: 'Make sign-in link', exact: true }).click();
+    await expect.poll(() => memberLink.locator('[data-signin-link]').count()).toBe(1);
+    const path = new URL((await memberLink.locator('[data-signin-link]').textContent())!).pathname;
+    const linked = auth.sessions.get('links', hash(path.split('/').pop()!));
+    expect(auth.token(linked!.secret)?.viewer).toEqual({kind:'member',id:'pollock'});
+    await memberLink.getByRole('button', { name: 'Hide sign-in link', exact: true }).click();
+    expect(await memberLink.locator('[data-signin-link]').count()).toBe(0);
     const shots = resolve('artifacts/household-setup'); mkdirSync(shots, { recursive: true });
     for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
       expect(loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'household.setPreferences', { look }, `look-${look}-${width}`).ok).toBe(true);
@@ -105,7 +113,7 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
       await expect.poll(() => b.getByRole('form', { name: 'Save accounts for art', exact: true }).getByRole('textbox').inputValue()).toBe('art-bot');
       await expect.poll(() => b.locator('html').getAttribute('data-look')).toBe(look);
       expect(await b.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await b.getByRole('form', { name: 'Save description for art', exact: true }).scrollIntoViewIfNeeded();
+      await b.getByRole('region', { name: 'Sign-in link for jonathan', exact: true }).scrollIntoViewIfNeeded();
       await b.screenshot({ path: join(shots, `setup-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
     }
     await revokeToken.getByRole('button').click();

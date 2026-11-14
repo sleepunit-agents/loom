@@ -3,8 +3,8 @@ import { createElement as h } from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
 import { act, create } from 'react-test-renderer';
 import type { CallState, Result, Snapshot } from '../../data';
-const f = vi.hoisted(() => ({ snapshot: { status: 'live', records: [] } as Snapshot, call: vi.fn(), profileStatus: 'live' as Snapshot['status'], profiles: [] as Array<{ id: string; agent: string; description: string; canEdit: boolean }> }));
-vi.mock('../../data', () => ({ useRecords: (type: string) => type === 'household.sharing' ? f.snapshot : { status: type === 'household.profile' ? f.profileStatus : 'live', records: type === 'household.profile' ? f.profiles : [] }, call: f.call }));
+const f = vi.hoisted(() => ({ snapshot: { status: 'live', records: [] } as Snapshot, call: vi.fn(), once: vi.fn(), profileStatus: 'live' as Snapshot['status'], profiles: [] as Array<{ id: string; agent: string; description: string; canEdit: boolean }> }));
+vi.mock('../../data', () => ({ useRecords: (type: string) => type === 'household.sharing' ? f.snapshot : { status: type === 'household.profile' ? f.profileStatus : 'live', records: type === 'household.profile' ? f.profiles : [] }, call: f.call, callOnce: f.once }));
 vi.mock('../../kit', () => Object.fromEntries(['AppFrame', 'Button', 'Input', 'Empty', 'Error', 'Loading'].map(name => [name, (props: object) => h(name === 'Button' ? 'button' : name === 'Input' ? 'input' : 'div', props)])));
 import Setup from './index';
 import { mutation } from './model';
@@ -89,4 +89,32 @@ it('shows scoped profile controls independently of household administration and 
   expect(tree.root.findAllByProps({ 'aria-label': 'Save accounts for art' })).toHaveLength(0);
   await act(async () => { f.profiles = [{ ...f.profiles[0], canEdit: false }]; tree.update(h(Setup)); });
   expect(tree.root.findAllByProps({ 'aria-label': 'Save description for art' })).toHaveLength(0);
+});
+
+it('wires device links to the correct member and clears them through actual app inactive/offline/denied states',async()=>{
+  vi.stubGlobal('location',{origin:'https://loom.example'});
+  f.once.mockReturnValue({result:Promise.resolve({ok:true,value:{path:'/login/app-integration-marker'}})});
+  await act(async()=>{tree=create(h(Setup));});
+  const section=()=>tree.root.findByProps({'aria-label':'Sign-in link for jonathan'});
+  await act(async()=>section().findByType('button').props.onClick());
+  expect(f.once).toHaveBeenCalledExactlyOnceWith('signin.browserLink',{member:'jonathan'});
+  expect(JSON.stringify(tree.toJSON())).toContain('app-integration-marker');
+  await act(async()=>tree.update(h(Setup,{active:false})));
+  expect(JSON.stringify(tree.toJSON())).not.toContain('app-integration-marker');
+  expect(section().findByType('button').props.disabled).toBe(true);
+  await act(async()=>section().findByType('button').props.onClick());expect(f.once).toHaveBeenCalledOnce();
+  await act(async()=>tree.update(h(Setup,{active:true})));
+  expect(JSON.stringify(tree.toJSON())).not.toContain('app-integration-marker');
+  await act(async()=>section().findByType('button').props.onClick());expect(f.once).toHaveBeenCalledTimes(2);
+  await act(async()=>{f.snapshot={...f.snapshot,status:'offline'};tree.update(h(Setup));});
+  expect(JSON.stringify(tree.toJSON())).not.toContain('app-integration-marker');expect(section().findByType('button').props.disabled).toBe(true);
+  await act(async()=>section().findByType('button').props.onClick());expect(f.once).toHaveBeenCalledTimes(2);
+  await act(async()=>{f.snapshot={...f.snapshot,status:'live'};tree.update(h(Setup));});
+  await act(async()=>section().findByType('button').props.onClick());expect(f.once).toHaveBeenCalledTimes(3);
+  expect(JSON.stringify(tree.toJSON())).toContain('app-integration-marker');
+  await act(async()=>{f.snapshot={...f.snapshot,status:'denied'};tree.update(h(Setup));});
+  expect(tree.root.findAllByProps({'aria-label':'Sign-in link for jonathan'})).toHaveLength(0);
+  await act(async()=>{f.snapshot={...f.snapshot,status:'live'};tree.update(h(Setup));});
+  expect(JSON.stringify(tree.toJSON())).not.toContain('app-integration-marker');
+
 });
