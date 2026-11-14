@@ -41,6 +41,7 @@ describe('shared-schema secret requests and grants', () => {
     expect(f.db.select().from(inbox).all().every(i => i.state === 'resolved' && i.resolution === 'allowed')).toBe(true);
     expect(f.service.grantFor('github-token', 'art')).toBeDefined();
     expect(f.service.grantFor('github-token', 'mark')).toBeUndefined();
+    expect(f.service.grantFor('another-token', 'art')).toBeUndefined();
     f.advance(30 * 60000 - 1); expect(f.service.grantFor('github-token', 'art')).toBeDefined();
     f.advance(1); expect(f.service.grantFor('github-token', 'art')).toBeUndefined();
   });
