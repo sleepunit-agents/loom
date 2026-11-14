@@ -50,15 +50,35 @@ describe('shared-schema bridge ingress', () => {
     expect(f.ingress.receive({ ...f.message, user: 'stranger' })).toMatchObject({ state: 'delivered', member: null });
     expect(f.db.select().from(inbox).get()).toMatchObject({ fromKind: 'unknown', fromId: null });
   });
-  it('requires a known addressed bot and an enabled bot channel rule', () => {
+  it('requires a known bot and an enabled bot channel rule', () => {
     const f = fixture();
     expect(f.ingress.receive({ ...f.message, id: 'self', user: 'bot-art' }).reason).toBe('Own message');
     expect(f.ingress.receive({ ...f.message, id: 'disabled', user: 'bot-mark', bot: true, mentions: ['bot-art'] }).state).toBe('dropped');
     f.db.update(bridgeChannels).set({ botsMayTalk: true }).run();
     expect(f.ingress.receive({ ...f.message, id: 'unknown', user: 'alien-bot', bot: true, mentions: ['bot-art'] }).state).toBe('dropped');
-    expect(f.ingress.receive({ ...f.message, id: 'unaddressed', user: 'bot-mark', bot: true }).state).toBe('dropped');
+    expect(f.ingress.receive({ ...f.message, id: 'unaddressed', user: 'bot-mark', bot: true }).state).toBe('delivered');
+    f.db.update(bridgeChannels).set({ answers: 'mark' }).run();
+    expect(f.ingress.receive({ ...f.message, id: 'other-default', user: 'bot-mark', bot: true }).state).toBe('dropped');
     expect(f.ingress.receive({ ...f.message, id: 'known', user: 'bot-mark', mentions: ['bot-art'] }).state).toBe('delivered');
     expect(f.db.select().from(inbox).get()).toMatchObject({ fromKind: 'agent', fromId: 'mark' });
+  });
+  it('holds conflicting bot-to-agent assignments instead of guessing', () => {
+    const f = fixture();
+    f.db.insert(bridgeConnections).values({ id: 'conflict', platform: 'discord', agent: 'art', workspace: 'w', botUser: 'bot-mark', tokenSecret: 'bot', enabled: true, state: 'connected', stateAt: f.now() }).run();
+    f.db.update(bridgeChannels).set({ botsMayTalk: true }).run();
+    expect(f.ingress.receive({ ...f.message, user: 'bot-mark', mentions: ['bot-art'] })).toMatchObject({ state: 'held', reason: 'Ambiguous bot identity', conversation: null });
+    expect(f.db.select().from(inbox).all()).toHaveLength(0);
+  });
+  it('scopes person links to both platform and workspace', () => {
+    const f = fixture();
+    f.db.insert(members).values({ id: 'other', role: 'member', joinedAt: f.now() }).run();
+    f.db.delete(bridgePeople).run();
+    f.db.insert(bridgePeople).values([
+      { platform: 'slack', workspace: 'w', user: 'outside', member: 'other' },
+      { platform: 'discord', workspace: 'another', user: 'outside', member: 'other' },
+      { platform: 'discord', workspace: 'w', user: 'outside', member: 'jonathan' },
+    ]).run();
+    expect(f.ingress.receive(f.message).member).toBe('jonathan');
   });
   it('applies only and ignore filters to a thread parent', () => {
     const f = fixture();

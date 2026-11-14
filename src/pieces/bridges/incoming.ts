@@ -44,16 +44,17 @@ export class BridgeIncoming {
       const route = this.db.select().from(bridgeChannels).where(and(eq(bridgeChannels.platform, connection.platform), eq(bridgeChannels.workspace, connection.workspace), eq(bridgeChannels.channel, channel))).get();
       const filters = this.db.select().from(bridgeChannelFilters).where(eq(bridgeChannelFilters.connection, connection.id)).all();
       const peers = this.db.select().from(bridgeConnections).where(and(eq(bridgeConnections.platform, connection.platform), eq(bridgeConnections.workspace, connection.workspace))).all();
-      const sender = peers.find(p => p.botUser === message.user);
+      const senders = peers.filter(p => p.botUser === message.user);
+      const sender = senders[0];
       const link = this.db.select().from(bridgePeople).where(and(eq(bridgePeople.platform, connection.platform), eq(bridgePeople.workspace, connection.workspace), eq(bridgePeople.user, message.user))).get();
       let state: 'held' | 'dropped' | 'delivered' = 'delivered';
       let reason: string | null = null;
       if (!connection.enabled) { state = 'held'; reason = 'Connection disabled'; }
       else if (filters.some(f => f.rule === 'ignore' && f.channel === channel) || (filters.some(f => f.rule === 'only') && !filters.some(f => f.rule === 'only' && f.channel === channel))) { state = 'dropped'; reason = 'Channel filtered'; }
       else if (message.user === connection.botUser) { state = 'dropped'; reason = 'Own message'; }
-      else if (message.bot || message.webhook || sender) {
-        if (!sender || !route?.botsMayTalk || !message.mentions.includes(connection.botUser)) { state = 'dropped'; reason = 'Bot not addressed or bots disabled'; }
-      } else if (!message.isDm && !message.mentions.includes(connection.botUser)) {
+      else if (new Set(senders.map(p => p.agent)).size > 1) { state = 'held'; reason = 'Ambiguous bot identity'; }
+      else if ((message.bot || message.webhook || sender) && (!sender || !route?.botsMayTalk)) { state = 'dropped'; reason = 'Unknown bot or bots disabled'; }
+      else if (!message.isDm && !message.mentions.includes(connection.botUser)) {
         if (peers.some(p => message.mentions.includes(p.botUser)) || route?.answers !== connection.agent) { state = 'dropped'; reason = 'Another agent or no channel answer'; }
       }
       const at = this.now();
