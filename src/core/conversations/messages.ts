@@ -123,10 +123,16 @@ export class CommsMessages {
   /** Expired words stay unavailable even before the periodic sweep runs. */
   async words(thread: string, seq: number): Promise<string | null> {
     const row = this.db.select().from(messages).where(and(eq(messages.thread, thread), eq(messages.seq, seq))).get();
-    if (!row?.words || !row.keepUntil || row.keepUntil <= this.now()) return null;
+    const keepDays = () => this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+    const retained = (message: Message | undefined, days: number) => !!message?.words && !!message.keepUntil
+      && Number.isInteger(days) && days >= 1 && days <= 14
+      && message.keepUntil > this.now() && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
+    const days = keepDays();
+    if (!retained(row, days) || !row?.words) return null;
     const words = await this.key.open(row.words);
     const current = this.db.select().from(messages).where(and(eq(messages.thread, thread), eq(messages.seq, seq))).get();
-    return current?.words && current.keepUntil && current.keepUntil > this.now() ? words : null;
+    return retained(current, keepDays()) && keepDays() === days && current?.words
+      && current.at === row.at && current.keepUntil === row.keepUntil && current.words.equals(row.words) ? words : null;
   }
 
   expire(): number {
