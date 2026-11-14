@@ -180,8 +180,11 @@ it.each([true,false])('suppresses an agent-authored file rearm only for its curr
  expect(f.call('scheduleSet',scheduleInput).ok).toBe(true);
  const occurrence=wakes(f.app.db)[0],request={agent:'art',file:scheduleInput.file,note:'rearm',when:`${(occurrence.due-f.app.operations.clock.now())/1000}s`};
  const count=()=>wakes(f.app.db).length,original=f.proof!,before=count();
- const suppressed=f.call('in',request);expect(suppressed).toEqual({ok:true,value:{alreadyScheduled:true,schedule:input.id,due:occurrence.due}});
+ const receipt=randomUUID(),suppressed=f.call('in',request,body,receipt);expect(suppressed).toEqual({ok:true,value:{alreadyScheduled:true,schedule:input.id,due:occurrence.due}});
  expect(count()).toBe(before);expect(JSON.stringify(suppressed)).not.toMatch(/PRIVATE_|pollock|cv-original|member|authorship/);
+ f.proof={...original,principal:{for:'owner',people:['jonathan']}};
+ expect(f.call('in',request,body,receipt)).toMatchObject({ok:false,code:'conflict'});
+ expect(count()).toBe(before);f.proof=original;
  for(const proof of [{...original,conversation:'cv-other'},{...original,service:'other-service'},
   {...original,principal:{for:'owner',people:['jonathan']}},{...original,principal:{for:'?',people:['pollock']}}]){
   f.proof=proof;expect(f.call('in',request)).toMatchObject({ok:true,value:{state:'pending'}});
@@ -191,17 +194,20 @@ it.each([true,false])('suppresses an agent-authored file rearm only for its curr
  const saved=schedules(f.app.db)[0];delete saved.authorship;
  f.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(saved),saved.id);
  expect(f.call('in',request)).toMatchObject({ok:true,value:{state:'pending'}});
+ const partial={...saved,authorship:{origin:'art',conversation:original.conversation}};
+ f.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(partial),saved.id);
+ expect(f.call('in',request)).toMatchObject({ok:true,value:{state:'pending'}});
 });
 
-it('keeps private schedule suppression acknowledgements and retries out of exports',async()=>{
- const f=await setup(),scheduleInput={...input,prompt:undefined,file:'routines/private-rearm.md'};
+it.each([true,false])('exports only public suppression acknowledgements (private=%s)',async privateWork=>{
+ const f=await setup(privateWork),scheduleInput={...input,prompt:undefined,file:'routines/private-rearm.md'};
  expect(f.call('scheduleSet',scheduleInput).ok).toBe(true);
  const occurrence=wakes(f.app.db)[0],request={agent:'art',file:scheduleInput.file,note:'rearm',when:`${(occurrence.due-f.app.operations.clock.now())/1000}s`},receipt=randomUUID();
  const answer=f.call('in',request,body,receipt);expect(answer).toMatchObject({ok:true,value:{alreadyScheduled:true}});
  expect(f.call('in',request,body,receipt)).toEqual(answer);
  expect(f.app.db.prepare('SELECT id FROM core_operations WHERE id=?').get(receipt)).toEqual({id:receipt});
  const snapshot=exportDatabase(f.app.db),receipts=snapshot.find(table=>table.name==='core_operations')!.rows;
- expect(receipts.some(row=>row.id===receipt)).toBe(false);
+ expect(receipts.some(row=>row.id===receipt)).toBe(!privateWork);
  f.proof=undefined;expect(f.call('in',request,body,receipt).ok).toBe(false);
 });
 

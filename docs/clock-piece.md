@@ -435,6 +435,11 @@ work for a known requester. Matching unknown steering in its original conversati
 is supported, as in the pinned legacy contract. Saved Viewer, API capacity and
 historical records without original evidence cannot satisfy this branch.
 
+Suppression retries bind the current steering principal and credential restriction
+in their fingerprint; a changed authority context conflicts instead of returning
+a stale no-op. Shared authored-work control and substitution decisions live in
+central policy; Clock selects calendar/file candidates only.
+
 Private body suppression returns only schedule id and deadline, never schedule
 words or original people. Its acknowledgement and retries are omitted from exports,
 including the schedule-id reference which has no ordinary Work member field.

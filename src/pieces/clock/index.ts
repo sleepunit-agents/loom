@@ -13,7 +13,7 @@ import { command, controlCommandInput, localCommandInput, oneOffCommandInput } f
 import { registerBuiltinService } from '../../core/services.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, mayFilePrivateWork, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
+import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, mayFilePrivateWork, mayControlAuthoredWork, mayReuseAuthoredWork, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { wakes, schedules, wake, schedule, saveWake, saveSchedule, rememberPrivateId, event, paused, active, type Wake, type Work, type Schedule } from './store.js';
 import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
@@ -109,11 +109,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   // Saved evidence limits a fresh caller; it never supplies a Viewer or a grant.
   const mayControl = (v: Viewer, w: Work) => {
     if (v.kind !== 'agent') return act(v, w);
-    const proof = options.provenance?.(v);
-    return !!proof && proof.agent === v.id && w.agent === v.id && w.authorship?.origin === v.id
-      && (!!proof.conversation && proof.conversation === w.authorship.conversation || proof.principal.for === 'owner')
-      && proof.member === w.member && proof.project === w.project
-      && mayFile(v, w);
+    return mayControlAuthoredWork(v,scope(w),sharing(),w.authorship,options.provenance?.(v));
   };
   const maySetSchedule = (v:Viewer, input:Work & {id:string}) => {
     const saved=schedule(db,input.id);
@@ -137,8 +133,10 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   const output = z.unknown();
   const filingHash = (body: string, identity: { actor: Viewer }) => {
     const proof = options.provenance?.(identity.actor);
+    const service=options.credentialService?.(identity.actor);
     return createHash('sha256').update(proof ? JSON.stringify([body,
-      [proof.agent,proof.conversation,proof.member,proof.project,proof.service]]) : body).digest('hex');
+      [proof.agent,proof.conversation,proof.member,proof.project,proof.service,proof.principal]])
+      : service===undefined?body:JSON.stringify([body,['service',service]])).digest('hex');
   };
   function register<I>(name: string, input: z.ZodType<I>, write: boolean, may: (v: Viewer, i: I) => boolean, run: (ctx: Context, i: I) => unknown, internal = false) {
     const ordinaryFiling = ['at','in','park'].includes(name);
@@ -289,10 +287,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
           if(!readSee(ctx,s,'schedule') || !mayAct(s.by,{},sharing(),'household') || !create(s.by,s)
             || !(ctx.viewer.kind==='agent'&&ctx.viewer.id===i.agent || ctx.viewer.kind==='member'&&ctx.viewer.id===s.by.id)) continue;
         }else{
-          const proof=options.provenance?.(ctx.viewer);
-          if(ctx.viewer.kind!=='agent' || !proof || s.authorship?.origin!==i.agent
-            || proof.principal.for!==s.authorship.principal.for || proof.service!==s.authorship.service
-            || !mayControl(ctx.viewer,s)) continue;
+          if(!mayReuseAuthoredWork(ctx.viewer,scope(s),sharing(),s.authorship,options.provenance?.(ctx.viewer)))continue;
         }
         const occurrence = wakes(db).filter(w => w.schedule === s.id && w.state === 'pending' && !w.runNow && !w.bypassPause
           && !w.continuation && !w.approval && !w.place
