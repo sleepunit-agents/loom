@@ -147,13 +147,13 @@ it('requires its own transaction, including rejecting reentrant drain', () => {
   spool.close();
 });
 
-it('retains expiry scheduling when a timer fires inside a rolled-back transaction', () => {
+it('cleans at the same clock time after a synchronous transaction rolls back', async () => {
   const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
   spool.retain('slack', 'one', f.input);
   f.db.$client.exec('BEGIN');
   f.clock.advance(HOUR);
   f.db.$client.exec('ROLLBACK');
-  f.clock.advance(1);
+  await Promise.resolve();
   expect(f.rows()).toEqual([]);
   spool.close();
 });

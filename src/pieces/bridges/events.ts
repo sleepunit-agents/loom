@@ -9,14 +9,16 @@ const HOUR = 3_600_000;
 /** Trusted adapter spool. Receipt and Discord cursor commit before platform ack.
  * Drain callbacks are synchronous and use this same database connection, so
  * normalisation and receipt removal either both commit or both roll back.
+ * Raw reads reject expired events. Physical cleanup waits for any unrelated
+ * SQL transaction to finish; callers must not hold transactions across awaits.
  */
 export class BridgeEvents {
   private closed = false;
   private cancel?: () => void;
-  constructor(private db: DataDatabase, private clock: Clock) { this.open(); this.sweep(); }
+  constructor(private db: DataDatabase, private clock: Clock) { this.assertAvailable(); this.sweep(); }
 
   retain(connection: string, id: string, event: Buffer, checkpoint?: BridgeCheckpoint): void {
-    this.open();
+    this.assertAvailable();
     if (!id.trim()) throw Error('Event needs an id');
     const now = this.clock.now();
     this.db.transaction(tx => {
@@ -42,20 +44,20 @@ export class BridgeEvents {
   }
 
   checkpoint(connection: string): BridgeCheckpoint | undefined {
-    this.open();
+    this.assertAvailable();
     const row = this.db.select().from(bridgeResume).where(eq(bridgeResume.connection, connection)).get();
     return row && { session: row.session, sequence: row.sequence, resumeUrl: row.resumeUrl };
   }
 
   reset(connection: string): void {
-    this.open();
+    this.assertAvailable();
     this.db.delete(bridgeResume).where(eq(bridgeResume.connection, connection)).run();
   }
 
   /** One bounded pass. Throwing leaves the failed event and its writes intact
    * for retry; successfully committed earlier events stay consumed. */
   drain(connection: string, consume: (id: string, event: Buffer) => void, limit = 64): number {
-    this.open();
+    this.assertAvailable();
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 64) throw Error('Drain limit must be 1 through 64');
     this.sweep();
     const rows = this.db.select().from(bridgeRawEvents).where(eq(bridgeRawEvents.connection, connection))
@@ -77,7 +79,7 @@ export class BridgeEvents {
     return count;
   }
 
-  private open(): void {
+  private assertAvailable(): void {
     if (this.closed) throw Error('Bridge events closed');
     if (this.db.$client.inTransaction) throw Error('Bridge events require their own transaction');
   }
@@ -88,6 +90,10 @@ export class BridgeEvents {
     // transaction. Never let its rollback restore bytes after losing our timer.
     if (this.db.$client.inTransaction) {
       this.cancel = this.clock.at(this.clock.now() + 1, () => this.sweep());
+      // Finish at the same clock time once a synchronous transaction unwinds.
+      // If a caller holds it across an await, keep the fallback timer instead
+      // of spinning microtasks or joining that transaction.
+      queueMicrotask(() => { if (!this.db.$client.inTransaction) this.sweep(); });
       return;
     }
     const now = new Date(this.clock.now()).toISOString();
