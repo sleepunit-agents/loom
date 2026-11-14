@@ -1236,3 +1236,36 @@ the eventual composition after save; returned read buffers belong to that caller
 | `Files.take` scoped bytes, digest and safe name | Internal delivery/body-proof retrieval with no output path; actual Runtime issuer and generated file command pending |
 | `Files.prune` fourteen-day expiry | Exact expiry on every read plus transactional prune; daemon job pending |
 | Private on-disk file copies | Private `loom.db` BLOBs, excluded from owning export/backup; no legacy file read |
+
+### Slack describe platform evidence (internal only)
+
+`slack-describe.ts` is an unregistered service transport for the platform part of
+legacy `send --describe` (`loom-slack` pinned at `4acf0562`,
+`test/test_describe.py`). An explicit trusted exact agent/venue/workspace/place
+permit authorizes fresh reads; there is no installed Runtime issuer or public
+operation. DM places are human user ids; group places are existing MPIM ids.
+Nothing opens a DM, posts, starts a body or writes a receipt.
+
+A DM checks the exact user's same-workspace human eligibility. A group checks
+fresh channel kind, complete bounded paginated members, this bot's membership
+and at least two other participants, then checks every participant independently.
+Any guest, bot, deleted/foreign/unknown human, incomplete/duplicate pagination,
+platform failure or changed proof refuses the whole result. Every HTTP request
+reacquires the service SecretUse and rechecks staging and the captured proof
+before/after credential acquisition and across streaming. Replies are bounded
+at 1 MiB per request and fifteen seconds including body consumption; pagination
+is bounded at fifty pages of at most 200 members. No retry or intake cache.
+
+Only sorted platform human ids and exact place/kind leave the transport, without
+profile words or policy fields. Runtime still must map these ids to current
+people and determine tiers, restrictions, lowest group tier, owner-present and
+project/field/group briefs before wiring a public operation or generated client.
+Tests use an explicitly fake owning permit; actual Secrets service-grant and
+buffer-erasure fixtures do not claim actual Runtime authority. The old fresh
+membership-cache optimization becomes fresh platform reads here; the same
+all-human requirement is retained. Describe support is still incomplete.
+
+Describe fixtures independently refuse initially mismatched agent, venue and
+workspace before acquiring credentials. They also revoke each owning fact,
+staging or a captured proof field after the credential callback completes but
+before SecretUse returns, proving no subsequent membership read is issued.
