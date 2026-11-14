@@ -29,3 +29,6 @@ it('requires every pinned rule/card/restriction-bearing slot individually',()=>{
   }
  }
 });
+it('retains unique references in first-use order, excluding escaped occurrences',()=>{
+ expect(validateBridgeTemplate('discord','discord','$new $$notes ${context} $notes $new ${notes} $where $context')).toEqual(['new','context','notes','where']);
+});

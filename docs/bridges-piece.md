@@ -1447,12 +1447,15 @@ group restriction. All other provided slots may be unused, as on the old side.
 
 Private `templateFamilies` evidence binds the selected instance, agent and
 platform to each template's snapshot path, exact UTF-8 content, byte count,
-SHA-256 and ordered unique slot references. The existing combined document
+SHA-256 and ordered unique slot references (first actual use wins, repeated
+references and escaped occurrences add no new entry). The existing combined document
 limits apply across channel documents and templates: 128 files, 1 MiB per file,
 8 MiB total. BOM/CRLF and dollar text remain exact. Both source-derived
 verifiers and repeat import compare this evidence, including slot references;
 interrupted all-import resumes without making the templates public records.
-No legacy configured brief directory or command is read or executed.
+Integration fixtures use synthetic local files and SQLite databases; platform,
+secret-holder and network IO stay fake. No legacy configured brief directory or
+command is read or executed.
 
 This completes offline family selection and slot validation only. Runtime must
 still compose templates once with actual authenticated scope/tiers, owner and

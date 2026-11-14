@@ -468,11 +468,12 @@ it('captures a complete selected template family privately without a route-note 
  const {default:families}=await import('./__fixtures__/template-families.json',{with:{type:'json'}});
  const f=fixture(),briefs:Record<string,string>={};
  f.sources.documents=Object.entries(families.discord).map(([brief,content],i)=>{
-  const path=join(f.root,`${i}.md`),name=`bridges-documents/${i}.md`;writeFileSync(path,content);briefs[brief]=name;return {name,path};
+  const path=join(f.root,`${i}.md`),name=`bridges-documents/${i}.md`;writeFileSync(path,brief==='discord'?content+' $new $where':content);briefs[brief]=name;return {name,path};
  });
  const family={shuttle:'instance/shuttle.json',platform:'discord' as const,briefs},options={...f.options,templateFamilies:[family]};
  const result=readBridgeImport(f.sources,options,h,f.open),evidence=JSON.parse(result.evidence);
- expect(evidence.templateFamilies).toEqual([{source:family.shuttle,agent:'art',platform:'discord',briefs:Object.entries(families.discord).map(([brief,content])=>({brief,path:briefs[brief],sha256:expect.stringMatching(/^[a-f0-9]{64}$/),bytes:Buffer.byteLength(content),content,references:expect.any(Array)}))}]);
+ expect(evidence.templateFamilies).toEqual([{source:family.shuttle,agent:'art',platform:'discord',briefs:Object.entries(families.discord).map(([brief,content])=>({brief,path:briefs[brief],sha256:expect.stringMatching(/^[a-f0-9]{64}$/),bytes:Buffer.byteLength(brief==='discord'?content+' $new $where':content),content:brief==='discord'?content+' $new $where':content,references:expect.any(Array)}))}]);
+ expect(evidence.templateFamilies[0].briefs[0].references).toEqual(['where','chan_id','chan_name','notes','new','context','send','owner_line']);
  expect(result.expected.routes[0].notes).toEqual([]);expect(result.expected.venues[0].enabled).toBe(false);
  expect(evidence.selectedDocuments).toBeUndefined();
  for(const templateFamilies of [[{...family,shuttle:'unknown'}],[family,family],[{...family,platform:'slack'}],[{...family,briefs:{...briefs,unknown:briefs.discord}}],[{...family,briefs:{...briefs,'discord-pair':briefs.discord}}]])expect(()=>readBridgeImport(f.sources,{...options,templateFamilies},h,f.open)).toThrow('Invalid offline');
@@ -493,7 +494,7 @@ it('captures a complete selected template family privately without a route-note 
  const {['discord-guest']:_,...missing}=briefs;
  expect(()=>readBridgeImport(f.sources,{...options,templateFamilies:[{...family,briefs:missing}]},h,f.open)).toThrow('Invalid offline');
  writeFileSync(f.sources.documents[0].path,'$notes $unknown');expect(()=>readBridgeImport(f.sources,options,h,f.open)).toThrow('Invalid offline');
- writeFileSync(f.sources.documents[0].path,families.discord.discord);
+ writeFileSync(f.sources.documents[0].path,families.discord.discord+' $new $where');
  const {db,close}=openDb(join(f.root,'new'));try{
   expect(()=>importBridges(db,f.sources,options,h,f.open,{interrupt:()=>{throw Error('interrupted');}})).toThrow('interrupted');
   expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(true);expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(false);
@@ -501,4 +502,18 @@ it('captures a complete selected template family privately without a route-note 
   saved.templateFamilies[0].briefs[0].content='tampered';db.prepare("UPDATE bridges_meta SET value=? WHERE key='legacy-evidence'").run(JSON.stringify(saved));
   expect(()=>importBridges(db,f.sources,options,h,f.open)).toThrow('content differ');
  }finally{close();}
+});
+
+it('requires a mapped platform even for a complete otherwise valid selected Slack family',async()=>{
+ const {default:families}=await import('./__fixtures__/template-families.json',{with:{type:'json'}});
+ const f=fixture(),briefs:Record<string,string>={};
+ f.sources.documents=Object.entries(families.slack).map(([brief,content],i)=>{
+  const path=join(f.root,`${i}.md`),name=`bridges-documents/${i}.md`;writeFileSync(path,content);briefs[brief]=name;return {name,path};
+ });
+ const options={...f.options,templateFamilies:[{shuttle:'instance/shuttle.json',platform:'slack',briefs}]};
+ expect(()=>readBridgeImport(f.sources,options,h,f.open)).toThrow('Invalid offline');
+ writeFileSync(f.sources.files[0].path,JSON.stringify({agent:{slug:'art'},discord:{token_file:'never'},slack:{secrets_env:'never-open',workspaces:{TWORK:'work'}}}));
+ const connected={...options,connections:[...options.connections,{agent:'art',platform:'slack',workspace:'TWORK',setupIncomplete:true}]};
+ const result=readBridgeImport(f.sources,connected,h,f.open);
+ expect(JSON.parse(result.evidence).templateFamilies[0]).toMatchObject({agent:'art',platform:'slack',briefs:expect.arrayContaining([expect.objectContaining({brief:'slack-dm',content:families.slack['slack-dm']})])});
 });
