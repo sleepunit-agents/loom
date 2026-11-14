@@ -121,7 +121,7 @@ function rejectRelationAliases(info: GraphQLResolveInfo) {
   function check(set: SelectionSetNode | undefined) {
     for (const selection of set?.selections ?? []) {
       if (selection.kind === Kind.FIELD) {
-        if (selection.selectionSet && selection.alias && selection.alias.value !== selection.name.value) {
+        if (selection.selectionSet && selection.alias) {
           throw new GraphQLError('Nested relation aliases are not supported; use the relation field name');
         }
         check(selection.selectionSet);

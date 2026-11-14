@@ -120,7 +120,7 @@ describe('generated SQL reads', () => {
       visibility: {
         // No task id is a project id. Rewriting projects.id to tasks.id
         // would turn this deny-all policy into an allow-all policy.
-        tasks: fields => sql`${fields.id} in (select ${projects.id} from ${projects} where ${projects.name} = ${'Pond'})`,
+        tasks: fields => sql`${fields.id} in (select ${projects.id} from ${projects} where ${'allowed'} = ${'allowed'})`,
         projects: () => sql`true`,
       },
     });
@@ -144,6 +144,7 @@ describe('generated SQL reads', () => {
     for (const source of [
       '{ tasks { first: taskCommentsByTask(where: {seq: {eq: 1}}) { text } second: taskCommentsByTask(where: {seq: {eq: 2}}) { text } } }',
       'query { tasks { ...Comments } } fragment Comments on TasksSelectItem { first: taskCommentsByTask { text } }',
+      '{ tasks { taskCommentsByTask: taskCommentsByTask { text } } }',
       '{ tasks { ... on TasksSelectItem { first: taskCommentsByTask { text } } } }',
     ]) {
       const result = await graphql({ schema, source });
@@ -154,6 +155,28 @@ describe('generated SQL reads', () => {
     expect(valid.errors).toBeUndefined();
     expect(valid.data).toEqual({ selected: { key: 'a', taskCommentsByTask: [{ body: 'excluded-comment' }] } });
     expect(statements).toHaveLength(1);
+  });
+
+  it('binds policy subquery parameters and still returns allowed root and connected rows', async () => {
+    const { client } = fixture();
+    for (const [name, ids] of [['Pond', ['a', 'b']], ['Private', ['hidden']]] as const) {
+      const schema = dataQueries(client, {
+        tables: ['tasks', 'projects'],
+        visibility: {
+          tasks: fields => sql`${fields.project} in (select ${projects.id} from ${projects} where ${projects.name} = ${name})`,
+          projects: () => sql`true`,
+        },
+      });
+      const root = await graphql({ schema, source: '{ tasks(orderBy: {id: {direction: asc, priority: 0}}) { id } }' });
+      expect(root.errors).toBeUndefined();
+      expect(root.data).toEqual({ tasks: ids.map(id => ({ id })) });
+      const nested = await graphql({ schema, source: '{ projects(orderBy: {id: {direction: asc, priority: 0}}) { id tasksByProject { id } } }' });
+      expect(nested.errors).toBeUndefined();
+      expect(nested.data).toEqual({ projects: [
+        { id: 'pond', tasksByProject: name === 'Pond' ? [{ id: 'a' }, { id: 'b' }] : [] },
+        { id: 'secret', tasksByProject: name === 'Private' ? [{ id: 'hidden' }] : [] },
+      ] });
+    }
   });
 
 });
