@@ -157,7 +157,7 @@ Next mode checks open, unmanaged public asks with waits on the next daemon clock
 
 The daemon obtains visible candidate ids through the policy-filtered `attention.pendingWaits` operation; it never reads app tables outside operations. Each check calls the existing `attention.checkWait` as service `attention` with a fresh operation id. Nested resolution retains that identity, central policy, transactions and live publication. Missing/invisible dependencies hold. Revoked read grants hold until restored and a later sweep succeeds. Source-managed notices and already answered/resolved asks are skipped. Member-private asks are excluded, and a public ask cannot reveal a private dependency. Member pages still reconcile their own private waits through the existing authenticated path. No unattended member-private maintenance is added.
 
-The schedule is installed once per registry and cancelled before database shutdown. It runs in staging too: these are local metadata facts with no delivery, approval consumption or outside effect. Failures log only a result code, never ids or wording. There is no host timer, copied dependency store or owner impersonation.
+The schedule is installed once per registry and cancelled before database shutdown. Empty candidate inventories pause the minute timer; an Attention live change restarts it. Open waits and refused inventories retain minute retries. The live observer stops before database shutdown. It runs in staging too: these are local metadata facts with no delivery, approval consumption or outside effect. Failures log only a result code, never ids or wording. There is no host timer, copied dependency store or owner impersonation.
 
 | Old background behavior | New side |
 |---|---|

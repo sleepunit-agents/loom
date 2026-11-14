@@ -109,3 +109,23 @@ it.each(['inventoryRead', 'askType'] as const)('holds all unattended work when %
   expect(read('public')).toMatchObject({ value: { state: 'resolved' } });
   expect(read('private')).toMatchObject({ value: { state: 'open' } });
 });
+
+it('stops inventory work while empty, resumes on a new ask and stops its observer on close', async () => {
+  const { app, clock, call, raise, close, read } = await setup();
+  const calls = vi.spyOn(app.operations, 'call');
+  clock.advance(5 * 60_000);
+  expect(calls.mock.calls.filter(c => c[2] === 'attention.pendingWaits')).toHaveLength(1);
+  raise('later', { task: 't-1' }); close(); clock.advance(0);
+  expect(read('later')).toMatchObject({ value: { state: 'resolved' } });
+  clock.advance(0);
+  const count = calls.mock.calls.filter(c => c[2] === 'attention.pendingWaits').length;
+  clock.advance(5 * 60_000);
+  expect(calls.mock.calls.filter(c => c[2] === 'attention.pendingWaits')).toHaveLength(count);
+  const closeDb = app.db.close.bind(app.db);
+  vi.spyOn(app.db, 'close').mockImplementation(() => {
+    app.live.changed([{ type: 'attention.ask', id: 'after-close' }]);
+    const before = calls.mock.calls.length; clock.advance(60_000);
+    expect(calls).toHaveBeenCalledTimes(before); return closeDb();
+  });
+  await app.close();
+});
