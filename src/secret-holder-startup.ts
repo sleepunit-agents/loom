@@ -14,6 +14,7 @@ import { workerSecretTransport } from './runtime-runner/secret-transport.js';
 const clientTls=holderTls.extend({servername:z.hostname()});
 const handoffSchema=z.object({listen:holderTls,authority:clientTls,
   workers:z.array(z.object({binding:secretInputBindingSchema,config:clientTls,fingerprint:certificateFingerprint}).strict()).max(1024)}).strict();
+export type PersistentHolderWorkers=z.infer<typeof handoffSchema>['workers'];
 const path=z.string().refine(isAbsolute);
 const configSchema=z.object({read:holderTls,mutation:holderTls,authority:holderTls.extend({servername:z.hostname()}),
   directory:path,identity:path,fingerprintKey:path,previousIdentities:z.array(path).max(31).optional(),
@@ -29,11 +30,14 @@ export async function startPersistentHolder(file:string) {
   let routes:ReturnType<typeof managedHolderAuthority>|undefined;
   const transports:ReturnType<typeof workerSecretTransport>[]=[];
   let available=false;
+  let closing:Promise<void>|undefined;
+  const replacements=new Set<Promise<void>>();
   const cleanup=async()=>{
     available=false;
     // Fence routes immediately, while original settlement authority still lives.
     // Drain ALL listeners/continuations before closing transports or storage.
     const listeners=await Promise.allSettled([routes?.close(),handoff?.close(),writer?.close(),reader?.close()]);
+    await Promise.allSettled([...replacements]);
     const clients=await Promise.allSettled(transports.map(t=>t.close()).concat(tickets?[tickets.close()]:[]));
     store?.close();
     if([...listeners,...clients].some(r=>r.status==='rejected'))throw new Error('Persistent secret holder could not close');
@@ -41,8 +45,10 @@ export async function startPersistentHolder(file:string) {
   try {
     bytes=privateBytes(file);
     const config=configSchema.parse(JSON.parse(bytes.toString('utf8')));
-    const endpoints=[config.read,config.mutation,config.authority,
-      ...(config.handoff?[config.handoff.listen,config.handoff.authority,...config.handoff.workers.map(w=>w.config)]:[])];
+    const reserved=[config.read,config.mutation,config.authority,
+      ...(config.handoff?[config.handoff.listen,config.handoff.authority]:[])];
+    const preflight=(workers:PersistentHolderWorkers)=>{
+    const endpoints=[...reserved,...workers.map(w=>w.config)];
     // Reject lexical and filesystem aliases before comparing selections. A
     // not-yet-bound socket may be absent; its private parent must already exist.
     for(const endpoint of endpoints) {
@@ -59,12 +65,23 @@ export async function startPersistentHolder(file:string) {
     for(const endpoint of endpoints) {
       const material=tlsMaterial(endpoint);for(const bytes of Object.values(material))bytes.fill(0);
     }
-    if(config.handoff) {
-      tickets=remoteTicketAuthority(config.handoff.authority,config.daemonFingerprint);
-      routes=managedHolderAuthority(tickets,config.handoff.workers.map(w=>{
+    };
+    preflight(config.handoff?.workers??[]);
+    const select=(workers:PersistentHolderWorkers)=>{
+      const start=transports.length;
+      try {return workers.map(w=>{
         const transport=workerSecretTransport(w.config,w.fingerprint);transports.push(transport);
         return {binding:w.binding,transport};
-      }));
+      });}catch {
+        const partial=transports.splice(start);
+        const cleanup=Promise.allSettled(partial.map(t=>t.close())).then(()=>{});
+        replacements.add(cleanup);void cleanup.then(()=>replacements.delete(cleanup));
+        throw Error();
+      }
+    };
+    if(config.handoff) {
+      tickets=remoteTicketAuthority(config.handoff.authority,config.daemonFingerprint);
+      routes=managedHolderAuthority(tickets,select(config.handoff.workers));
     }
     const authority=remoteHolderAuthority(config.authority,config.daemonFingerprint);
     // Bind every fallible listener before committing key history. Until the
@@ -81,8 +98,33 @@ export async function startPersistentHolder(file:string) {
     store=await openHolderStore(config.directory,config.identity,config.fingerprintKey,
       {identities:config.previousIdentities,fingerprintKeys:config.previousFingerprintKeys});
     available=true;
-    let closing:Promise<void>|undefined;
-    return {close(){return closing??=cleanup();}};
+    return Object.freeze({
+      /** Private owner lifecycle capability, never exposed by an operation or
+       * file watcher. Equal selections retire original outstanding claims too.
+       * This does not mint Runtime assignments, grants or worker proofs. */
+      replaceWorkers(selected:PersistentHolderWorkers):Promise<void> {
+        try {
+          if(!available||closing||!routes)throw Error();
+          const workers=handoffSchema.shape.workers.parse(selected);
+          // Validate the whole new selection before constructing any client or
+          // fencing the old generation. No await before the generation changes.
+          preflight(workers);
+          const keys=workers.map(w=>JSON.stringify(w.binding));
+          if(new Set(keys).size!==keys.length)throw Error();
+          const retired=transports.slice();
+          const next=select(workers);
+          transports.splice(0,retired.length);
+          const replacement=(async()=>{
+            try {await routes!.replace(next);}
+            finally {await Promise.all(retired.map(t=>t.close()));}
+          })();
+          replacements.add(replacement);
+          void replacement.then(()=>replacements.delete(replacement),()=>replacements.delete(replacement));
+          return replacement;
+        }catch {return Promise.reject(new Error('Persistent secret holder routes unavailable'));}
+      },
+      close(){return closing??=cleanup();},
+    });
   } catch {
     try {await cleanup();} catch { /* Keep startup errors private. */ }
     throw new Error('Persistent secret holder could not start');

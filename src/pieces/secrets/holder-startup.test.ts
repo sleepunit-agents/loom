@@ -186,3 +186,52 @@ it('failed startup drains an original authenticated mutation authority await bef
  }finally {respond();reply.mockRestore();expect(await starting).toEqual(Error('Persistent secret holder could not start'));}
  expect(clientClose).toHaveBeenCalledOnce();expect(stopped).toBe(true);
 });
+
+it('owner replacement installs a fresh pinned route without restarting persistent storage',async()=>{
+ const f=await setup();const selected=f.config.handoff.workers.map(w=>({...w,config:{...w.config},binding:{...w.binding}}));
+ f.config.handoff.workers=[];f.save();const holder=await f.start();await f.put();
+ await holder.replaceWorkers(selected);
+ // Owner input is a snapshot, never a retained mutable endpoint or assignment.
+ selected[0].config.socket='/missing';selected[0].binding.claimedAt++;
+ const id=await f.admit();await f.admission.dispatch();
+ expect(f.received).toEqual(['SYNTHETIC-PERSISTENT-HANDOFF']);
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(id)).toEqual({state:'released'});
+});
+it.each(['empty','equal'] as const)('owner %s replacement fences a held original source read',async kind=>{
+ const f=await setup(),actual=storage.openHolderStore;let entered!:()=>void,resume!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{resume=r;});
+ vi.spyOn(storage,'openHolderStore').mockImplementation(async(...args)=>{
+  const store=await actual(...args);return {...store,async read(name:string){const bytes=await store.read(name);entered();await hold;return bytes;}};
+ });
+ const holder=await f.start();await f.put();const id=await f.admit();const delivery=f.admission.dispatch().catch(e=>e);await ready;
+ try {
+  await holder.replaceWorkers(kind==='empty'?[]:f.config.handoff.workers);
+  expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(id)).toEqual({state:'uncertain'});
+ }finally{resume();}
+ expect(await delivery).toBeInstanceOf(Error);expect(f.received).toEqual([]);
+});
+it.each(['duplicate','reserved','alias','directory','file','symlink','tls','pin','unknown'] as const)('invalid dynamic %s selection leaves original routes usable',async kind=>{
+ const f=await setup(),holder=await f.start();await f.put();
+ const selected=f.config.handoff.workers.map(w=>({...w,config:{...w.config},binding:{...w.binding}}));
+ const w=selected[0];
+ if(kind==='duplicate')selected.push({...w});
+ if(kind==='reserved')w.config.socket=f.config.read.socket;
+ if(kind==='alias')w.config.socket=f.home+'/./input.sock';
+ if(kind==='directory'){mkdirSync(join(f.home,'public'),{mode:0o755});chmodSync(join(f.home,'public'),0o755);w.config.socket=join(f.home,'public','input.sock');}
+ if(kind==='file'){w.config.socket=join(f.home,'file.sock');writeFileSync(w.config.socket,'occupied',{mode:0o600});}
+ if(kind==='symlink'){w.config.socket=join(f.home,'alias.sock');symlinkSync(f.config.handoff.workers[0].config.socket,w.config.socket);}
+ if(kind==='tls')w.config.key=join(f.home,'missing-key');
+ if(kind==='pin')w.fingerprint='bad-pin';
+ if(kind==='unknown')Object.assign(w,{extra:true});
+ await expect(holder.replaceWorkers(selected)).rejects.toThrow(/^Persistent secret holder routes unavailable$/);
+ await f.admit();await f.admission.dispatch();expect(f.received).toEqual(['SYNTHETIC-PERSISTENT-HANDOFF']);
+});
+it('closed persistent holder cannot install routes or reopen clients',async()=>{
+ const f=await setup(),holder=await f.start();await holder.close();
+ await expect(holder.replaceWorkers(f.config.handoff.workers)).rejects.toThrow(/^Persistent secret holder routes unavailable$/);
+});
+it('persistent startup without handoff never gains a handoff listener by owner replacement',async()=>{
+ const f=await setup();const {handoff:_,...config}=f.config;writeFileSync(f.file,JSON.stringify(config),{mode:0o600});
+ const holder=await f.start();await expect(holder.replaceWorkers(f.config.handoff.workers)).rejects.toThrow();
+ expect(existsSync(f.config.handoff.listen.socket)).toBe(false);
+});

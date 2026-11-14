@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Expose private persistent-holder worker route replacement with complete selection preflight and retirement of original claims and clients.
+
 - Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
 
 - Deliver sealed Comms yes/no decisions back to the owning private conversation through staged encrypted message delivery.
