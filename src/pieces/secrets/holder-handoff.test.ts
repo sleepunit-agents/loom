@@ -28,11 +28,12 @@ async function setup() {
  const fingerprint=(name:string)=>new X509Certificate(readFileSync(join(home,`${name}.pem`))).fingerprint256;
  const id=randomUUID(), bytes=Buffer.from('HANDOFF-SECRET-SENTINEL');
  const read=vi.fn(async()=>bytes),current=vi.fn(async()=>true),handTo=vi.fn(async(_b:Uint8Array)=>{});
- const destination:HolderDestination={name:'API',current,handTo};
+ const abandon=vi.fn(async()=>{});
+ const destination:HolderDestination={name:'API',current,handTo,abandon};
  const authority=vi.fn(async(ticket:string)=>ticket===id?destination:null);
  const holder=await listenHolderHandoff(server,{read},fingerprint('daemon'),authority);closes.push(holder.close);
  const client=localHolderHandoff(config,fingerprint('holder'));closes.push(client.close);
- return {home,config,server,fingerprint,id,bytes,read,current,handTo,destination,authority,holder,client};
+ return {home,config,server,fingerprint,id,bytes,read,current,handTo,abandon,destination,authority,holder,client};
 }
 it('hands bytes only to the authorized destination and acknowledges metadata through real pinned mutual TLS',async()=>{
  const f=await setup(),received=deferred<void>(),release=deferred<void>();
@@ -41,7 +42,7 @@ it('hands bytes only to the authorized destination and acknowledges metadata thr
  expect(f.bytes.toString()).toBe('HANDOFF-SECRET-SENTINEL');
  release.resolve();expect(await pending).toBeUndefined();
  expect(f.bytes.every(b=>b===0)).toBe(true);expect(f.authority).toHaveBeenCalledExactlyOnceWith(f.id);
- expect(f.read).toHaveBeenCalledExactlyOnceWith('API');expect(f.current).toHaveBeenCalledTimes(2);
+ expect(f.read).toHaveBeenCalledExactlyOnceWith('API');expect(f.current).toHaveBeenCalledTimes(2);expect(f.abandon).not.toHaveBeenCalled();
 });
 it('refuses absent tickets, wrong peer pins, untrusted TLS and malformed tickets before reading',async()=>{
  const f=await setup();
@@ -147,6 +148,7 @@ it('client close independently aborts a live request and disconnect fences late 
  // setting its closed flag until the disconnected handler has already ended.
  await vi.waitFor(()=>expect(f.bytes.every(b=>b===0)).toBe(true));
  expect(f.handTo).not.toHaveBeenCalled();expect(f.current).toHaveBeenCalledOnce();
+ await vi.waitFor(()=>expect(f.abandon).toHaveBeenCalledOnce());
  // A separate client still uses the same live holder.
  f.read.mockResolvedValueOnce(Buffer.from('FRESH'));
  const next=localHolderHandoff(f.config,f.fingerprint('holder'));closes.push(next.close);
@@ -175,7 +177,7 @@ it.each(['authority','source','transfer'])('holder deadline fences late %s settl
   if(phase==='transfer')expect(f.bytes.toString()).toBe('HANDOFF-SECRET-SENTINEL');
   release.resolve();
   if(phase!=='authority')await vi.waitFor(()=>expect(f.bytes.every(b=>b===0)).toBe(true));
-  await f.holder.close();expect(Buffer.concat(raw.responses).length).toBe(0);
+  await f.holder.close();expect(Buffer.concat(raw.responses).length).toBe(0);expect(f.abandon).toHaveBeenCalledOnce();
   expect(f.handTo).toHaveBeenCalledTimes(phase==='transfer'?1:0);
   if(phase==='authority')expect(f.read).not.toHaveBeenCalled();
  }finally{release.resolve();raw.peer.destroy();vi.useRealTimers();}
@@ -225,4 +227,30 @@ it('fences source settlement synchronously at the accepted deadline before socke
    expect(raw.closed()).toBe(false);expect(f.handTo).not.toHaveBeenCalled();
   }finally{destroy.mockRestore();}
  }finally{release.resolve(f.bytes);raw.peer.destroy();vi.useRealTimers();}
+});
+
+it.each(['name','current','read','bytes','delivery','settlement'] as const)('abandons the acquired original claim after %s failure',async phase=>{
+ const f=await setup();
+ if(phase==='name')f.destination.name='../invalid';
+ if(phase==='current')f.current.mockRejectedValueOnce(Error('private'));
+ if(phase==='read')f.read.mockRejectedValueOnce(Error('private'));
+ if(phase==='bytes')f.read.mockResolvedValueOnce(Buffer.alloc(0));
+ if(phase==='delivery')f.handTo.mockRejectedValueOnce(Error('private'));
+ if(phase==='settlement'){f.current.mockResolvedValueOnce(false);f.abandon.mockRejectedValueOnce(Error('private'));}
+ await expect(f.client.handTo(f.id)).rejects.toThrow(/^Secret handoff unavailable$/);
+ await f.holder.close();expect(f.abandon).toHaveBeenCalledOnce();
+});
+it('shutdown drains uncertain settlement after a late original authority result',async()=>{
+ const f=await setup(),entered=deferred<void>(),release=deferred<void>(),settling=deferred<void>(),settled=deferred<void>();
+ f.authority.mockImplementationOnce(async()=>{entered.resolve();await release.promise;return f.destination;});
+ f.abandon.mockImplementationOnce(async()=>{settling.resolve();await settled.promise;});
+ const pending=f.client.handTo(f.id).catch(e=>e);await entered.promise;
+ let done=false;const closing=f.holder.close().then(()=>{done=true;});await f.client.close();release.resolve();await settling.promise;
+ expect(done).toBe(false);expect(f.read).not.toHaveBeenCalled();settled.resolve();await closing;await pending;expect(f.abandon).toHaveBeenCalledOnce();
+});
+
+it('refuses a malformed authority destination without retirement capability before reading',async()=>{
+ const f=await setup();delete (f.destination as Partial<HolderDestination>).abandon;
+ await expect(f.client.handTo(f.id)).rejects.toThrow(/^Secret handoff unavailable$/);
+ expect(f.read).not.toHaveBeenCalled();expect(f.handTo).not.toHaveBeenCalled();
 });

@@ -4,8 +4,10 @@ import type { ConversationWriteBinding, ConversationCard } from './role.js';
 import type { WordsKey } from './crypto.js';
 
 /** Supplied by the new conversation store, never from page input or a legacy store.
- * version must change on replacement, including deletion/recreation with the same id. */
-export interface StepConversation { agent: string; venue: string; version: string; label?: string }
+ * version must change on replacement, including deletion/recreation with the same id.
+ * member, when present, is the original private owner. Spawn must preserve it;
+ * only trusted owning-store metadata may supply it, never public tool arguments. */
+export interface StepConversation { agent: string; venue: string; version: string; label?: string; member?: string }
 interface Row { seq: number; conversation: string; at: number; words: Buffer | null; record: Buffer | null }
 interface Options {
  db: Db; operations: Operations; live: Live; clock: Clock; key: WordsKey; days: number;
