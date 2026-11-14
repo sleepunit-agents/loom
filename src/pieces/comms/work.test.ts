@@ -197,7 +197,7 @@ it('retains word-free refs across the actual Comms expiry sweep',async()=>{
 it('resolves cited work with the original viewer and leaves notes as pointers without opening their contents',async()=>{
  const s=await setup();
  s.task('t-12','cv-000000000000');s.task('t-13','cv-000000000000','hidden');s.task('t-14');
- replaceChanges(s.app.db,[change({project:'pond',agent:'art',conflicts:true}),change({id:'github:secret/app#4',repo:'github:secret/app',number:4,page:'c/github/secret/app/4',project:'hidden',agent:'art',title:'HIDDEN TITLE'})]);
+ replaceChanges(s.app.db,[change({project:'pond',agent:'mark',conflicts:true}),change({id:'github:secret/app#4',repo:'github:secret/app',number:4,page:'c/github/secret/app/4',project:'hidden',agent:'mark',title:'HIDDEN TITLE'})]);
  await s.call('send',{thread:s.thread,id:'eeeeeeeeeeeeeeee',text:'PLANTED t-12 t-13 acme/app#3 secret/app#4 new/repo#5 note:pond/plan'});
  const result=await s.call('work',{thread:s.thread});expect(result.ok).toBe(true);if(!result.ok)return;
  const items=(result.value as {items:Record<string,unknown>[]}).items;

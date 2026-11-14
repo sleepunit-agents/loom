@@ -73,7 +73,8 @@ it('reads persisted sharing, preserves raw fields, and applies the owner example
   expect(sharing.members).toEqual({ jonathan: { owner: true, agents: ['art', 'mark', 'pond-bot'] }, pollock: { owner: false, agents: ['pond-bot'] }, guest: { owner: false, agents: [] } });
   for (const viewer of [pollock, bot]) {
     expect(maySee(viewer, { project: 'pond', agent: 'art' }, sharing)).toBe(true);
-    expect(maySee(viewer, { project: 'other', agent: 'pond-bot' }, sharing)).toBe(false);
+    expect(maySee(viewer, { project: 'other', agent: 'pond-bot' }, sharing)).toBe(true);
+    expect(maySee(viewer, { type: 'task', project: 'other', agent: 'pond-bot' }, sharing)).toBe(false);
     expect(maySee(viewer, { agent: 'pond-bot' }, sharing)).toBe(true);
     expect(maySee(viewer, { member: 'jonathan', project: 'pond' }, sharing)).toBe(false);
     expect(mayAct(viewer, {}, sharing, 'household')).toBe(false);
@@ -82,7 +83,7 @@ it('reads persisted sharing, preserves raw fields, and applies the owner example
   expect(mayAct(pollock, { project: 'pond', agent: 'art' }, sharing, 'give-work')).toBe(false);
   expect(mayAct(bot, { agent: 'pond-bot' }, sharing, 'give-work')).toBe(false);
   expect(maySee(pollock, { member: 'pollock' }, sharing)).toBe(true);
-  expect(maySee(owner, { member: 'pollock' }, sharing)).toBe(false);
+  expect(maySee(owner, { member: 'pollock' }, sharing)).toBe(true);
   expect(mayAct(owner, {}, sharing, 'household')).toBe(true);
   expect(readdirSync(h).filter(n => n.endsWith('.json'))).toEqual([]);
 });

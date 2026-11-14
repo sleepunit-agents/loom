@@ -5,7 +5,7 @@ export type Viewer =
   | { kind: 'runner'; id: string }
   | { kind: 'service'; id: string };
 export interface Scope { project?: string; agent?: string; member?: string }
-export interface RecordScope extends Scope { type?: string; runner?: string; /** Trusted runtime binding proof; never an input field. */ privateControl?: boolean }
+export interface RecordScope extends Scope { type?: string; runner?: string; /** Source provenance carried by materialized questions. */ source?: unknown; sourceManaged?: boolean; /** Trusted runtime binding proof; never an input field. */ privateControl?: boolean }
 export interface Sharing {
   members: Record<string, { owner: boolean; agents: string[] }>;
   projects: Record<string, { members: string[]; agents: string[] }>;
@@ -16,12 +16,16 @@ const entry = <T>(map: Record<string, T>, id: string): T | undefined => Object.h
 export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
   if (v.kind === 'runner') return r.member === undefined && r.type === 'runtime.job' && r.runner === v.id;
   if (v.kind === 'service') return r.member === undefined && !!r.type && !!entry(s.services, v.id)?.types.includes(r.type);
-  if (r.member !== undefined) return v.kind === 'member' && v.id === r.member && !!entry(s.members, v.id);
   const m = v.kind === 'member' ? entry(s.members, v.id) : undefined;
   if (m?.owner) return true;
+  if (r.member !== undefined) return v.kind === 'member' && v.id === r.member && !!m;
   if (r.project !== undefined) {
     const p = entry(s.projects, r.project);
-    return !!p && (v.kind === 'member' ? !!m && p.members.includes(v.id) : p.agents.includes(v.id));
+    const inProject = !!p && (v.kind === 'member' ? !!m && p.members.includes(v.id) : p.agents.includes(v.id));
+    // Tasks explicitly share by project first; other records also share by agent.
+    const taskQuestion = r.type === 'attention.ask' && r.sourceManaged === true
+      && typeof r.source === 'object' && r.source !== null && 'kind' in r.source && r.source.kind === 'task';
+    if (inProject || r.type === 'task' || taskQuestion) return inProject;
   }
   if (r.agent !== undefined) return v.kind === 'agent' ? v.id === r.agent : !!m?.agents.includes(r.agent);
   return false;

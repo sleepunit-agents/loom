@@ -42,7 +42,7 @@ it('real cookie sockets register only their devices with safe private metadata a
   expect(f.call('remove',{ref:f.read(other).devices[0].ref})).toMatchObject({ok:false,code:'not-found'});
   expect(await a('unsubscribe',{sub:sub('other')})).toEqual({ok:true,value:{removed:false}});
   for(const v of [{kind:'agent',id:'art'},{kind:'service',id:'signin'},{kind:'runner',id:'one'},{kind:'member',id:'gone'}] as Viewer[])expect(f.call('read',{},v)).toMatchObject({ok:false,code:'denied'});
-  const ws=new WebSocket(f.app.url.replace('http:','ws:')+'/live',{headers:{authorization:'Bearer jonathan'}});cleanup.push(()=>ws.terminate());await once(ws,'open');ws.send(JSON.stringify({kind:'subscribe',type:'notifications.devices'}));const first=JSON.parse(String((await once(ws,'message'))[0]));expect(first.records).toHaveLength(1);expect(first.records[0].member).toBe('jonathan');
+  const ws=new WebSocket(f.app.url.replace('http:','ws:')+'/live',{headers:{authorization:'Bearer jonathan'}});cleanup.push(()=>ws.terminate());await once(ws,'open');ws.send(JSON.stringify({kind:'subscribe',type:'notifications.devices'}));const first=JSON.parse(String((await once(ws,'message'))[0]));expect(first.records).toHaveLength(2);expect(first.records[0].member).toBe('jonathan');
   const change=once(ws,'message');expect(f.call('remove',{ref:mine.devices[0].ref})).toMatchObject({ok:true});expect(JSON.parse(String((await change)[0])).record.devices).toEqual([]);
 });
 it('refuses bearer plus cookie, synthetic viewers, other doors, headless and agent cookie sessions',async()=>{

@@ -34,13 +34,27 @@ it('reads active episodes only and keeps absent files absent, with explicit miss
  expect(read(app,'e~art~m-visible')).toMatchObject({value:{story:expect.stringContaining('complete story'),tasks:[{label:'t-12',href:'/p/tasks-preview/task/t-12'}],prs:[{label:'loom#941'}]}});
  expect(list(app,owner,'2026-10-14').days).toEqual(['2026-10-14']);expect(app.operations.call('direct',owner,'mind.activityList',{to:'2026-02-30'})).toMatchObject({code:'not-found'});expect(app.operations.call('direct',owner,'mind.activityList',{to:'2026-10-13'})).toMatchObject({code:'not-found'});
 });
-it('uses private agent policy without project scope and blocks another member’s Comms even to owner',async()=>{
+it('opens the complete episode and resolves references beyond the first twenty thousand characters',async()=>{
+ const a=source(),content=`${'A long fictional episode. '.repeat(1000)}Finished t-998 and sleepunit-agents/loom#998. Final detail.`;
+ a.add('long',{content});
+ const app=await fixture(a.path);
+ expect(read(app,'e~art~long')).toMatchObject({value:{story:content,tasks:[{label:'t-998'}],prs:[{label:'loom#998'}]}});
+ expect(JSON.stringify(list(app))).not.toContain(content);
+});
+it('checks conversation references at the end of a long episode before listing or opening it',async()=>{
+ const a=source();
+ a.add('long-private',{content:`${'Fictional detail. '.repeat(1500)}Its conversation is cv-222222222222`});
+ const app=await fixture(a.path,undefined,role([run('private',{conversation:conv('cv-222222222222',{member:'owner',venue:'loom'})})]));
+ expect(list(app,partial).entries).toEqual([]);
+ expect(read(app,'e~art~long-private',partial)).toMatchObject({code:'not-found'});
+});
+it('uses private agent policy and includes other members’ private conversations for household owners',async()=>{
  const a=source(),b=source();a.add('m-art');b.add('m-other');
  const rows=[run('dg-visible'),run('dg-private',{conversation:conv('cv-222222222222',{venue:'loom',member:'partial',label:'Partial private thread'})}),run('dg-malformed-comms',{conversation:conv('cv-333333333333',{venue:'loom',label:'No member'})})];
  a.add('m-comms',{metadata:JSON.stringify({where:'loom:thread',conversation:'cv-222222222222'})});a.add('m-mislabeled',{metadata:JSON.stringify({where:'terminal',conversation:'cv-222222222222'})});a.add('m-unknown',{metadata:JSON.stringify({where:'terminal',conversation:'cv-444444444444'})});
- const app=await fixture(a.path,b.path,role(rows));expect(list(app).entries.map(e=>e.id)).toEqual(['d~art~dg-visible','e~other~m-other']);
+ const app=await fixture(a.path,b.path,role(rows));expect(list(app).entries.map(e=>e.id)).toEqual(['d~art~dg-private','d~art~dg-visible','e~other~m-other']);
  expect(list(app,partial).entries.map(e=>e.id)).toEqual(expect.arrayContaining(['d~art~dg-private','d~art~dg-visible']));expect(list(app,partial).entries.some(e=>e.agent==='other')).toBe(false);
- expect(read(app,'d~art~dg-private')).toMatchObject({code:'not-found'});expect(read(app,'e~art~m-mislabeled')).toMatchObject({code:'not-found'});expect(read(app,'e~other~m-other',partial)).toMatchObject({code:'not-found'});
+ expect(read(app,'d~art~dg-private')).toMatchObject({ok:true});expect(read(app,'e~art~m-mislabeled')).toMatchObject({ok:true});expect(read(app,'e~other~m-other',partial)).toMatchObject({code:'not-found'});
  expect(app.operations.call('direct',{kind:'member',id:'outsider'},'mind.activityList',{})).toMatchObject({code:'denied'});expect(list(app,{kind:'agent',id:'art'}).entries.some(e=>e.agent==='other')).toBe(false);
 });
 it('deduplicates moved conversations and covered episodes; readers preserve stories, refs, own needs and card-only steps',async()=>{

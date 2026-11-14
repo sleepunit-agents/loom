@@ -81,15 +81,13 @@ describe('loom knowledge', () => {
     });
 
     it('rejects an invalid write in the flag-first position (t-665)', async () => {
-      // The same argv minus the citation. The broken form exited 0 here
-      // too: it never reached validation at all.
+      // Missing required body must still fail after global flag parsing.
       const { code } = await runCliCaptured([
         '--context-dir', tempDir,
         'knowledge', 'write',
         '--title', 'No Citation',
         '--domain', 'test/dispatch',
-        '--body', 'no citation supplied',
-      ]);
+              ]);
       expect(code).not.toBe(0);
     });
 
@@ -111,7 +109,7 @@ describe('loom knowledge', () => {
       expect(stdout).toMatch(/provisional/i);
     });
 
-    it('returns error when citation is missing', async () => {
+    it('stores an uncited page as provisional', async () => {
       const { stdout, code } = await runCliCaptured([
         'knowledge', 'write',
         '--title', 'Missing Citations',
@@ -119,9 +117,10 @@ describe('loom knowledge', () => {
         '--body', 'Some body.',
         '--context-dir', tempDir,
       ]);
-      expect(code).toBe(1);
-      expect(stdout).toMatch(/Error/i);
-      expect(stdout).toMatch(/citation/i);
+      expect(code).toBe(0);
+      expect(stdout).toMatch(/Sourcing: provisional/);
+      const read = await runCliCaptured(['knowledge', 'recall', 'Missing Citations', '--context-dir', tempDir, '--json']);
+      expect(JSON.parse(read.stdout)[0]).toMatchObject({ sourcing: 'provisional', body: 'Some body.', citations: [] });
     });
 
     it('emits JSON on --json', async () => {
@@ -174,8 +173,8 @@ describe('loom knowledge', () => {
       expect(pages[0].sourcing).toBe('provisional');
     });
 
-    it('--json with no citations returns exit 1', async () => {
-      const { stderr, code } = await runCliCaptured([
+    it('--json stores a page without citations as provisional', async () => {
+      const { stdout, code } = await runCliCaptured([
         'knowledge', 'write',
         '--title', 'No Citations JSON',
         '--domain', 'test',
@@ -183,8 +182,10 @@ describe('loom knowledge', () => {
         '--context-dir', tempDir,
         '--json',
       ]);
-      expect(code).toBe(1);
-      expect(stderr).toMatch(/citation/i);
+      expect(code).toBe(0);
+      expect(JSON.parse(stdout)).toMatchObject({ slug: 'no-citations-json', citationsAdded: 0 });
+      const read = await runCliCaptured(['knowledge', 'recall', 'No Citations JSON', '--context-dir', tempDir, '--json']);
+      expect(JSON.parse(read.stdout)[0]).toMatchObject({ sourcing: 'provisional', citations: [] });
     });
   });
 

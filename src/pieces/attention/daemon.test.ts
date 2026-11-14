@@ -109,7 +109,7 @@ it('rechecks real central service grants on every sweep without impersonating a 
   expect(turns()).toHaveLength(0);
 });
 
-it('member retention folds its own private metadata after service retention, leaving other members private turns held', async () => {
+it('household owner retention folds all private metadata after service retention', async () => {
   const { app, clock, write, turns } = await setup();
   write('public'); write('owner-private', 'owner');
   expect(app.operations.call('direct', { kind: 'member', id: 'other' }, 'attention.recordTurn', {
@@ -119,11 +119,11 @@ it('member retention folds its own private metadata after service retention, lea
   expect(turns().map(t => t.member).sort()).toEqual(['other', 'owner']);
   const changed = vi.spyOn(app.live, 'changed');
   const result = app.operations.call('direct', { kind: 'member', id: 'owner' }, 'attention.retain', {}, 'member-retain');
-  expect(result).toEqual({ ok: true, value: { days: 1, turns: 1 } });
-  expect(turns()).toMatchObject([{ member: 'other' }]);
+  expect(result).toEqual({ ok: true, value: { days: 2, turns: 2 } });
+  expect(turns()).toEqual([]);
   expect(changed).toHaveBeenCalledOnce();
   const days = app.db.prepare('SELECT record FROM attention_days').all().map(r => JSON.parse((r as { record: string }).record));
-  expect(days).toHaveLength(2);
+  expect(days).toHaveLength(3);
   const own = days.find(d => d.member === 'owner');
   expect(own).toMatchObject({ member: 'owner', counts: { message: 1 } });
   expect(app.operations.call('direct', { kind: 'member', id: 'other' }, 'attention.days', { conversation: own.conversation })).toMatchObject({ code: 'denied' });

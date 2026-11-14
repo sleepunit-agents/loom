@@ -72,7 +72,7 @@ it('rejects other owners, non-window callers, removed ownership and oversized in
  s.sharing.members.jonathan.agents=[];expect(await s.call('refCards',input)).toMatchObject({ok:false,code:'denied'});
 });
 it('uses owning Changes metadata and its explicit not-found, never a hidden-record fallback',async()=>{
- const s=await setup();replaceChanges(s.app.db,[change({project:'pond',agent:'art'}),change({id:'github:secret/app#4',repo:'github:secret/app',number:4,page:'c/github/secret/app/4',project:'hidden'})]);
+ const s=await setup();replaceChanges(s.app.db,[change({project:'pond',agent:'art'}),change({id:'github:secret/app#4',repo:'github:secret/app',number:4,page:'c/github/secret/app/4',project:'hidden',agent:'mark'})]);
  const result=await s.call('refCards',{thread:s.thread,refs:['github:acme/app#3','github:secret/app#4','github:unknown/app#5','github:../app#1','bare#1','github:acme/app#0']});
  expect(result).toMatchObject({ok:true,value:{cards:{'github:acme/app#3':{kind:'pr',url:'/p/changes-preview/change/github%3Aacme%2Fapp%233'},'github:secret/app#4':null,'github:unknown/app#5':{status:'Not tracked',url:'https://github.com/unknown/app/issues/5'},'github:../app#1':null,'bare#1':null,'github:acme/app#0':null}}});
 });
