@@ -1,3 +1,7 @@
+import type { GraphQLFieldConfigMap } from 'graphql/index.js';
+import type { Viewer } from './core/index.js';
+import { memoryQueryFields } from './transport/memory-queries.js';
+import { sharedActivityConversations } from './pieces/mind/activity-conversations.js';
 import { dataHttp } from './core/data/http.js';
 import { dataDatabase } from './core/data/database.js';
 import { dataAuthentication } from './core/data/authentication.js';
@@ -103,6 +107,8 @@ import { approvalAnswers } from './pieces/approvals/role.js';
 import { attentionThreadProject } from './pieces/attention/comms.js';
 import { attentionProjects } from './pieces/attention/projects.js';
 import { installAttention, attentionSources as installedAttentionSources } from './pieces/attention/index.js';
+const memoryActivity = new WeakMap<Foundation, ReturnType<typeof installMindActivity>>();
+const memoryQueries = new WeakMap<Foundation, GraphQLFieldConfigMap<unknown, { viewer: Viewer }>>();
 const mindTransports = new WeakMap<Foundation, TouchSource[]>();
 export type NextSessionResolver = (req: IncomingMessage, transport?: 'upgrade') => Authentication | undefined;
 /** t-2203 plugs the loom.db session resolver in here. No legacy fallback. */
@@ -233,6 +239,9 @@ export async function installNext(app: Foundation, options: NextOptions) {
       staging: options.staging, interval: credentials?.interval, request: credentials?.request});
   }
   const inventory = mindSources(app.db, options.home);
+  const sharedMemory = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
+  const hasSharedConversations = !!app.db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='conversations'").get();
+  const conversationHref = (id: string) => `/p/comms-preview/conversation/${encodeURIComponent(id)}`;
   if (!app.operations.has('mind.knowledgeList')) {
     const path = inventory?.commons.knowledge;
     const reader = installMindKnowledge(app.operations, app.live, { path, sharing });
@@ -257,8 +266,18 @@ export async function installNext(app: Foundation, options: NextOptions) {
   }
   if (!app.operations.has('mind.activityList')) {
     const household = new HouseholdDatabase(app.db).household(options.home);
-    const activity = installMindActivity(app.operations, app.live, {agents:inventory?.agents??[],sharing,owner:household?.owner,timezone:household?.tz,github:household?.github});
+    const activity = installMindActivity(app.operations, app.live, {agents:inventory?.agents??[],sharing,owner:household?.owner,timezone:household?.tz,github:household?.github,conversations:hasSharedConversations?sharedActivityConversations(sharedMemory,{sharing,conversationHref}):undefined});
+    memoryActivity.set(app, activity);
     app.onClose(() => activity.close());
+  }
+  if (!memoryQueries.has(app)) {
+    const activity = memoryActivity.get(app);
+    if (!activity) throw new Error('Memory queries require the installed Activity reader');
+    const queries = memoryQueryFields(sharedMemory, {sources: inventory, sharing, now: () => app.operations.clock.now(),
+      mind: mindRole(app.operations), activity, conversationHref,
+      projectHref: (agent, slug) => `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}`});
+    memoryQueries.set(app, queries.fields);
+    app.onClose(() => { queries.close(); memoryQueries.delete(app); memoryActivity.delete(app); });
   }
   const sources = mindTouchSources(inventory);
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
@@ -360,7 +379,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   // The generated door uses the SAME connection and fresh shared credentials.
   // Existing homes are deliberately not bootstrapped or migrated here.
   const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
-  const data = dataHttp(sharedData, dataAuthentication(sharedData, () => app.operations.clock.now()), relyingParty(process.env)?.origin);
+  const data = dataHttp(sharedData, dataAuthentication(sharedData, () => app.operations.clock.now()), relyingParty(process.env)?.origin, memoryQueries.get(app));
   routes.all('/graphql', c => data.fetch(c.req.raw));
   routes.route('/', signinRoutes(app));
   routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
