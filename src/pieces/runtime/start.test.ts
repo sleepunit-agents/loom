@@ -580,6 +580,8 @@ it.each([false,true].flatMap(staging=>['once','recurring','runNow'].map(mode=>({
  }
  const read=await f.post(body,'readConversation',{});
  expect(read).toMatchObject({ok:true,value:{messages:[{text:work.prompt}]}});
+ const ack=async()=> (await fetch(`${f.app.url}/api/runtime/acknowledgeClockInput`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'private-ack-replay',input:{through:read.value.messages[0].seq}})})).json();
+ expect(await ack()).toMatchObject({ok:true});
  const committed=wake(f.app.db,work.id)!;
  f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify({...committed,member:'pollock'}),work.id);
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
@@ -587,11 +589,13 @@ it.each([false,true].flatMap(staging=>['once','recurring','runNow'].map(mode=>({
  f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(committed),work.id);
  // Revocation is checked on both read and ACK, including a replay receipt.
  access.members.jonathan.agents=[];
+ expect(await ack()).toMatchObject({ok:false,code:'denied'});
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
  expect(await f.post(body,'acknowledgeClockInput',{through:read.value.messages[0].seq})).toMatchObject({ok:false,code:'denied'});
  access.members.jonathan.agents=['art'];access.projects.pond.agents=[];
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
  access.projects.pond.agents=['art'];
+ expect(await ack()).toMatchObject({ok:true});
  expect(await f.post(body,'acknowledgeClockInput',{through:read.value.messages[0].seq})).toMatchObject({ok:true});
  // A self-rearm inherits member/project from the owning Clock body.
  const chain=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'private-chain',input:{agent:'art',prompt:'PRIVATE chained words',note:'chain',when:'1s'}})})).json();
