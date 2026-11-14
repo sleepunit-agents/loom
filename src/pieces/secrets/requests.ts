@@ -1,6 +1,6 @@
 /** Trusted metadata service. External operations authenticate callers and check
  * Settings ownership before invoking answer/setRule/revoke. No value enters it. */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, sql, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
@@ -97,6 +97,39 @@ export class SecretRequests {
   grantFor(secret: string, agent: string, job?: string): typeof secretGrants.$inferSelect | undefined {
     const at = this.now();
     return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent), sql`julianday(${secretGrants.expiresAt}) > julianday(${at})`, sql`julianday(${secretGrants.grantedAt}) <= julianday(${at})`, or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
+  }
+
+  /** Trusted job-start composition only: derive the agent from the saved job.
+   * Explicit at_start permission is separate from on_request auto permission;
+   * 'ask' permits an explicitly listed startup agent; 'never' denies it. Household
+   * defaults and house alias configuration alone do not grant startup access.
+   * No values leave here: composition commits, then uses SecretDelivery for each
+   * selected house secret. It binds the authenticated sink and job lifecycle.
+   * Retries keep the original deadline, including after expiry or a rule edit.
+   * Existing grants survive rule edits; revoke them separately if needed. */
+  grantAtStart(jobId: string): (typeof secretGrants.$inferSelect)[] {
+    z.string().min(1).max(200).parse(jobId);
+    return this.db.transaction(() => {
+      const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
+      if (!job) throw new Error('Unknown startup job');
+      const at = this.now();
+      const rules = this.db.select({ secret: secretRules.secret, minutes: secretRules.minutes })
+        .from(secretRules).innerJoin(secretRuleAgents, eq(secretRules.secret, secretRuleAgents.secret))
+        .where(and(eq(secretRuleAgents.agent, job.agent), eq(secretRuleAgents.when, 'at_start'),
+          or(eq(secretRules.answer, 'ask'), eq(secretRules.answer, 'auto')))).all();
+      const result: (typeof secretGrants.$inferSelect)[] = [];
+      for (const rule of rules) {
+        const minutes = duration.parse(rule.minutes);
+        const id = `sg-start-${createHash('sha256').update(JSON.stringify([jobId, rule.secret])).digest('hex')}`;
+        this.db.insert(secretGrants).values({ id, secret: rule.secret, agent: job.agent, job: jobId,
+          grantedBy: 'rule', grantedAt: at, expiresAt: new Date(Date.parse(at) + minutes * 60000).toISOString() })
+          .onConflictDoNothing({ target: secretGrants.id }).run();
+        const grant = this.db.select().from(secretGrants).where(eq(secretGrants.id, id)).get()!;
+        if (grant.secret !== rule.secret || grant.agent !== job.agent || grant.job !== jobId || grant.request !== null || grant.grantedBy !== 'rule') throw new Error('Startup grant identity changed');
+        if (Date.parse(grant.grantedAt) <= Date.parse(at) && Date.parse(at) < Date.parse(grant.expiresAt)) result.push(grant);
+      }
+      return result;
+    });
   }
 
   private read(id: string): Request {
