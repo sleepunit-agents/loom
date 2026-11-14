@@ -42,14 +42,14 @@ it('claims once, rejects other workers, takes mail only when running and preserv
   expect(f.runtime.claim(job.id, 'worker')).toBeUndefined();
   expect(() => f.comms.take(f.conversation.id, job.id)).toThrow();
   expect(() => f.runtime.started(job.id, 'foreign', 'image')).toThrow();
-  f.runtime.started(job.id, 'worker', 'image');
+  expect(f.runtime.started(job.id, 'worker', 'image').build).toBe('image');
   expect(f.comms.take(f.conversation.id, job.id).map(row => row.id)).toEqual([mail.id]);
   f.comms.confirm(mail.id, job.id);
   f.tick(100);
   expect(f.runtime.heartbeat(job.id, 'worker', 'waiting')).toMatchObject({ state: 'waiting', heardAt: f.now() });
   f.tick(100);
   expect(f.runtime.heartbeat(job.id, 'worker', 'running')).toMatchObject({ state: 'running', heardAt: f.now() });
-  expect(f.runtime.finish(job.id, 'worker', 0).job.state).toBe('done');
+  expect(f.runtime.finish(job.id, 'worker', 0, 'complete').job).toMatchObject({ state: 'done', exitCode: 0, logTail: 'complete', build: 'image' });
   expect(f.db.select().from(inbox).get()?.state).toBe('done');
   expect(f.db.select().from(conversations).get()?.job).toBeNull();
   expect(() => f.runtime.heartbeat(job.id, 'worker', 'running')).toThrow();
@@ -63,6 +63,8 @@ it('retries a failed start three times as new linked jobs, without retrying the 
     expect(result.job.state).toBe('failed');
     if (n === 3) { expect(result.retry).toBeUndefined(); break; }
     expect(result.retry).toMatchObject({ retryOf: job.id, houseFile: 'Housefile', model: 'primary', box: null, state: 'queued' });
+    expect(f.db.select().from(conversations).get()?.job).toBe(result.retry!.id);
+    expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: result.retry!.id });
     expect(f.runtime.admit(f.conversation.id)?.id).toBe(result.retry!.id);
     expect(f.runtime.claim(result.retry!.id, 'worker')).toBeUndefined();
     job = result.retry!; f.tick(10_000);
@@ -77,9 +79,11 @@ it('does not retry process failures after starting and returns unconfirmed mail 
   const job = f.runtime.admit(f.conversation.id)!;
   f.runtime.claim(job.id, 'worker'); f.runtime.started(job.id, 'worker', 'image');
   f.comms.take(f.conversation.id, job.id);
-  expect(f.runtime.finish(job.id, 'worker', 2).retry).toBeUndefined();
-  expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: job.id, takenAt: null });
-  expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+  const result = f.runtime.finish(job.id, 'worker', 2, 'x'.repeat(20_000));
+  expect(result.retry).toBeUndefined();
+  expect(result.job).toMatchObject({ exitCode: 2, logTail: 'x'.repeat(16_384) });
+  expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: null, takenAt: null });
+  expect(f.runtime.admit(f.conversation.id)?.state).toBe('queued');
 });
 it('admits new mail during failure and in the same clock tick after termination', () => {
   const f = fixture(); f.send(); const job = f.runtime.admit(f.conversation.id)!;
@@ -108,6 +112,7 @@ it('marks silent jobs lost after the boundary and rejects late worker events', (
   expect(f.runtime.get(job.id).state).toBe('lost');
   expect(() => f.runtime.finish(job.id, 'worker', 0)).toThrow();
   expect(f.db.select().from(inbox).get()?.state).toBe('waiting');
+  expect(f.runtime.admit(f.conversation.id)?.state).toBe('queued');
 });
 it('keeps a building worker alive without allowing heartbeat to skip or reverse startup', () => {
   const f = fixture(); f.send(); const job = f.runtime.admit(f.conversation.id)!;

@@ -17,7 +17,7 @@ export class Jobs {
   }
 
   /** Called after inbox settling. Repeated admission returns the same active job.
-   * Exhausted/aborted work needs fresh mail before it is admitted again. */
+   * Exhausted starts and manually stopped work need fresh mail to resume. */
   admit(conversationId: string): Job | undefined {
     return this.db.transaction(() => {
       const conversation = this.db.select().from(conversations).where(eq(conversations.id, conversationId)).get();
@@ -131,7 +131,9 @@ export class Jobs {
     // Unconfirmed mail survives a dead body, with no receipt fabricated for it.
     this.db.update(inbox).set({ state: 'waiting', takenAt: null, changedAt: this.now() })
       .where(and(eq(inbox.job, job.id), eq(inbox.state, 'taken'))).run();
-    if (state === 'done') this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).run();
+    if (state === 'done' || (state !== 'stopped' && job.state !== 'starting')) {
+      this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).run();
+    }
     if (job.conversation) this.db.update(conversations).set({ job: null })
       .where(and(eq(conversations.id, job.conversation), eq(conversations.job, job.id))).run();
     return ended;
