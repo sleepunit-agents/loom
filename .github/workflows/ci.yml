@@ -43,9 +43,11 @@ jobs:
 
   test:
     name: build + test
-    # Both pools at once: shards 1 and 2 go to our own runners and shards 3 and 4 stay on GitHub's, so a
+    # Both pools at once: shard 1 goes to our own runners and shards 2, 3 and 4 stay on GitHub's (six runners of ours against
+    # GitHub's twenty slots: one shard each way keeps the two queues about even), so a
     # pull request never waits on one queue alone. (A job's runs-on is fixed when it is created; there is
     # no "whichever is free".) "CI results" has no shard and takes ours.
+    # A pull request to next is one short job and goes to GitHub's pool whole (base_ref is empty on a push).
     # Fork safety (the one runs-on that may name self-hosted; scripts/ci-runners.test.ts holds it to
     # exactly this). Our own runners take only trusted runs: a push or a merge-queue group, which only
     # people with write access can start, or a pull request from a branch in this repository that a person
@@ -55,7 +57,7 @@ jobs:
     # is still this repository's, so neither this nor the runner group is the lock: the runners' own
     # job-started hook (scripts/ci-runner-hook.sh) refuses a fork's code, behind the approval every outside
     # contributor's run needs.
-    runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && matrix.shard != 3 && matrix.shard != 4 && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && github.base_ref != 'next' && matrix.shard != 2 && matrix.shard != 3 && matrix.shard != 4 && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -63,9 +65,16 @@ jobs:
         # ever turned back on, also tests 22. Only
         # "CI results" is a required check, so the queue doesn't wait on a matrix name a PR never ran.
         node-version: ${{ github.event_name == 'merge_group' && fromJSON('["22.x", "24.x"]') || fromJSON('["24.x"]') }}
-        shard: [1, 2, 3, 4]
+        # A pull request to next runs one job: the whole-program build (type check) and only the tests
+        # that the changed files reach (vitest --changed). Its pull requests are small and many, and the
+        # full suite on each cost about 26 runner-minutes. The full suite, in four shards, runs on every
+        # push to next and on anything headed to main: that is where a cross-break shows.
+        shard: ${{ github.event_name == 'pull_request' && github.base_ref == 'next' && fromJSON('[1]') || fromJSON('[1, 2, 3, 4]') }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The pull request's merge commit and its first parent, the base it is tested against.
+          fetch-depth: 2
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v7
@@ -129,8 +138,17 @@ jobs:
 
       - name: Test
         env:
-          LOOM_CI_SHARD: ${{ matrix.shard }}/4
-        run: npm test -- --shard=${{ matrix.shard }}/4 --reporter=default --reporter=blob --reporter=json --reporter=./scripts/flaky-reporter.ts --outputFile.json=artifacts/vitest.json --outputFile.blob=artifacts/shard.blob.json
+          LOOM_CI_SHARD: ${{ github.event_name == 'pull_request' && github.base_ref == 'next' && 'affected' || format('{0}/4', matrix.shard) }}
+          AFFECTED_ONLY: ${{ github.event_name == 'pull_request' && github.base_ref == 'next' }}
+        run: |
+          reporters=(--reporter=default --reporter=blob --reporter=json --reporter=./scripts/flaky-reporter.ts --outputFile.json=artifacts/vitest.json --outputFile.blob=artifacts/shard.blob.json)
+          if [ "$AFFECTED_ONLY" = true ]; then
+            echo "Affected tests only, against $(git rev-parse --short HEAD^1):"
+            git diff --name-only HEAD^1 HEAD | sed 's/^/  /' | head -60 || true
+            npm test -- --changed HEAD^1 --passWithNoTests "${reporters[@]}"
+          else
+            npm test -- --shard=${{ matrix.shard }}/4 "${reporters[@]}"
+          fi
 
       - name: Keep shard reports and retry ledger
         if: always()
@@ -202,7 +220,7 @@ jobs:
     # is still this repository's, so neither this nor the runner group is the lock: the runners' own
     # job-started hook (scripts/ci-runner-hook.sh) refuses a fork's code, behind the approval every outside
     # contributor's run needs.
-    runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && matrix.shard != 3 && matrix.shard != 4 && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && github.base_ref != 'next' && matrix.shard != 2 && matrix.shard != 3 && matrix.shard != 4 && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('["self-hosted","Linux","X64","loom"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

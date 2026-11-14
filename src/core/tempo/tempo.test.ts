@@ -2,9 +2,33 @@ import { expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { and, eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
-import { agents, approvals, conversations, inbox, triggerLog } from '../data/schema.js';
+import { agents, approvals, conversations, inbox, members, triggerLog } from '../data/schema.js';
 import { FakeClock } from '../clock.js';
 import { createTempo, type TempoConversations } from './tempo.js';
+
+it('publishes committed dim and mute expiry to subscriptions without an unrelated trigger or inbox write', () => {
+  const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock();
+  const at = new Date(clock.now()).toISOString();
+  db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: at }).run();
+  for (const id of ['dimmed', 'muted']) db.insert(inbox).values({ id, toKind: 'person', to: 'jonathan', source: 'notice', fromKind: 'unknown', words: id, at, changedAt: at, state: 'waiting' }).run();
+  const snapshots: string[][] = [];
+  const tempo = createTempo(db, clock, {
+    conversations: { open: () => { throw new Error('No trigger'); }, send: () => { throw new Error('No trigger'); } },
+    admit: () => true, operation: () => { throw new Error('No operation'); },
+    changed: () => { snapshots.push(db.select().from(inbox).all().map(item => item.volume)); },
+  });
+  try {
+    const who = { kind: 'person' as const, id: 'jonathan' };
+    const until = new Date(clock.now() + 10_000).toISOString();
+    tempo.volume.set(who, 'dimmed', 'dim', until);
+    tempo.volume.set(who, 'muted', 'mute', until);
+    tempo.start(); snapshots.length = 0;
+    clock.advance(9_999); expect(snapshots).toEqual([]);
+    clock.advance(1); expect(snapshots).toEqual([['full', 'full']]);
+    expect(db.select().from(inbox).all().every(item => item.quietUntil === null && item.changedAt === at)).toBe(true);
+    clock.advance(60_000); expect(snapshots).toHaveLength(1);
+  } finally { tempo.close(); client.close(); }
+});
 it('composes trigger/sweep delivery through conversations and only admits a settled inbox', () => {
   const client = new Database(':memory:');
   const db = createDataSchema(client), clock = new FakeClock(), at = () => new Date(clock.now()).toISOString();
