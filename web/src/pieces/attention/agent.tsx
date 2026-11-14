@@ -40,8 +40,8 @@ export default function AgentApp({ path = '/p/agents-preview', go = p => locatio
       <div className="desk-home-columns"><div className="grid min-w-0 content-start gap-5">
         <section className="grid gap-2" aria-label={`${agent.name} current work`}><h3>Now</h3><p className="whitespace-pre-wrap">{statuses.status!=='live'?'Status unavailable.':status?.work||'Nothing right now'}</p></section>
         <section className="grid gap-2" aria-label={`${agent.name} questions`}><h3>Needs you</h3>{asks.status!=='live'?<p>Questions unavailable.</p>:open.length?<List label={`${agent.name} open questions`}>{open.map(ask=><Row key={ask.id} title={ask.ask} meta={ask.why} onClick={()=>go(inboxPath(ask))}/>)}</List>:<p>Nothing needs you.</p>}</section>
-        <section className="grid gap-2"><h3>Explore</h3><List label={`${agent.name} apps`}>{links.map(link=><Row key={link.title} title={link.title} meta={link.meta} onClick={()=>go(link.href)}/>)}</List></section>
-      </div><HomeSteps agent={agent.id} name={agent.name} activity={activity} go={go}/></div>
+      </div><div className="grid min-w-0 content-start"><HomeSteps agent={agent.id} name={agent.name} activity={activity} go={go}/></div></div>
+      <section className="grid gap-2"><h3>Explore</h3><List label={`${agent.name} apps`}>{links.map(link=><Row key={link.title} title={link.title} meta={link.meta} onClick={()=>go(link.href)}/>)}</List></section>
     </article></div>:id?<Empty title="Agent not available" text="Choose one of your agents."/>:agents.length?<List label="Your agents">{agents.map(a=><Row key={a.id} title={a.name} onClick={()=>go(agentPath(a.id))}/>)}</List>:<Empty title="No agents of your own" text="Agents you own appear here."/>)}
   </AppFrame></div></div>;
 }
