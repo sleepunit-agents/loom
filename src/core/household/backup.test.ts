@@ -92,13 +92,13 @@ it('rejects credentials, bad schedule/keys/retention and targets inside the home
   const alias = join(outside, 'link'); symlinkSync(home, alias);
   mkdirSync(join(home, 'subdir'));
   const nested = join(outside, 'nested'); symlinkSync(join(home, 'subdir'), nested);
-  const traversal = [`path:${nested}/../bundles`, `git:${nested}/../repo`, `git:file://${nested}/../repo`, `git:FILE://${nested}/%2E%2E/repo`];
+  const traversal = [`path:${nested}/../bundles`, `git:${nested}/../repo`, `git:file://${nested}/../repo`, `git:FILE://${nested}/%2E%2E/repo`, `git:file://${nested}/..\\repo`];
   const dangling = join(outside, 'dangling'); symlinkSync(join(home, 'missing-parent'), dangling);
   for (const patch of [
     ...traversal.map(target => ({ target })),
     { target: `path:${home}/bundles` }, { target: `git:file://${home}/repo` }, { target: `git:FILE://${home}/repo` }, { target: `path:${alias}/missing/deep` }, { target: `path:${dangling}/deep` },
     { target: 'git:https://user:secret@example.com/repo' }, { target: 'git:https://example.com/repo?token=secret' },
-    { target: 'git:ssh://user:secret@example.com/repo' }, { target: 'path:relative' }, { target: 'git:file:///tmp/%ZZ' }, { target: 'git:file:///tmp/%00' }, { target: 'git:-user@example.com:repo' },
+    { target: 'git:ssh://user:secret@example.com/repo' }, { target: 'path:relative' }, { target: 'git:file:///tmp/%ZZ' }, { target: 'git:https://example.com/%ZZ' }, { target: 'git:ssh://git@example.com/%GG' }, { target: 'git:file:///tmp/%00' }, { target: 'git:-user@example.com:repo' },
     { at: '24:00' }, { tz: 'no/such-zone' }, { recipients: [] }, { recipients: ['private key'] }, { recipients: ['age1' + 'a'.repeat(40)] }, { recipients: [config.recipients[0].slice(0, -1) + 'a'] }, { recipients: ['ssh-ed25519 ' + 'A'.repeat(44)] }, { keep: 0 }, { keep: 91 }, { required: ['../secret'] },
     { alertCommand: 'never run' },
   ]) expect(call('setBackup', { ...config, ...patch })).toMatchObject({ ok: false, code: 'invalid' });

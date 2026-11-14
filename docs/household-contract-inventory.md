@@ -60,7 +60,7 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | `face-set`, `mark-set` | **Pending** appearance operations/records and Setup controls |
 | `about-set`, `about-ask` | `household.setProfile` / `household.requestProfile`, generated `loom-household` bindings and agent-owner Setup controls; `household.describeSelf` answers once as the authenticated agent. Explicit offline `describe_self` still refuses app access |
 | `identity-set`, `identity-section-set`, `identity-section-add` | **Pending** Setup/identity behavior reconciliation; no next page editor. The household spec describes Setup identity as read-only |
-| `backup-set`, Setup health/backup status | `household.backup/setBackup/backupOff` and owner-only `household.backup` Live reconcile row-backed configuration; generated `loom-household` JSON bindings. Configured status explicitly says no backup is scheduled. **Pending** Setup controls, exporter/drill, arming, execution and run/health status; no invocation of the old backup program |
+| `backup-set`, Setup health/backup status | `household.backup/setBackup/backupOff` and owner-only `household.backup` Live reconcile row-backed configuration; generated `loom-household` JSON bindings. Configured status explicitly says no backup is scheduled. **Pending** Setup controls, exporter/drill, local arming, staging holds, execution, failure/missed/recovery Attention and run/health status; no invocation of the old backup program |
 | `person-add` | `mind.personAdd`; People screen handles the new-side form |
 | `fact-add`, `knowledge-verify`, `knowledge-recheck` | `mind.knowledgeAdd`, `mind.knowledgeVerify`, `mind.knowledgeRecheck`; Knowledge screen handles the new-side forms |
 | GET `/a/AGENT/setup` | `/p/setup-preview` now provides member ownership/removal, project lists, account attribution and existing-context registration via Live/call; token/session administration via `signin.admin` and socket calls; **pending** read-only identity, health and full bootstrap coverage |
@@ -93,7 +93,7 @@ in [core/services.ts](../src/core/services.ts).
 | Browser/session/token expiry checks | Sign-in enforces expiry at authentication; session-cap eviction happens at session creation. Link creation prunes expired links. No separate household expiry timer is installed |
 | Legacy HTTP push watch | `installNotificationAnnouncements`: daemon-clock minute job, current Attention/Comms roles, durable per-member dedupe and exact-device staged effects; never starts old `pushWatch` |
 | Legacy worker push display / notification tap | `nextWorker` displays a content-free loom notification and opens its same-origin destination (including next Comms threads), reusing a window when possible. Row-backed device registration is implemented; Account controls and deliberate tests are implemented; routine daemon dispatch is implemented |
-| Legacy HTTP backup tick launching `loom backup tick` | **Pending** next backup job; do not call the detached old program from next mode |
+| Legacy HTTP backup tick launching `loom backup tick` | **Pending** next backup job with local arming, staging holds and failure/missed/recovery Attention; do not call the detached old program from next mode |
 | Old per-listener settings/store discovery | No replacement poller; next composition selects row stores explicitly |
 
 Sources for the legacy background work are

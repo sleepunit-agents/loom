@@ -10,10 +10,13 @@ export function parseBackupTarget(value: string): { localPath?: string } | undef
   if (value.startsWith('path:')) return localTarget(value.slice(5));
   if (!value.startsWith('git:') || /\s/.test(value)) return;
   const url = value.slice(4);
+  // WHATWG file URLs also normalize raw backslashes as path separators.
+  if (url.includes('\\')) return;
   if (url.startsWith('-')) return;
   if (url.startsWith('/')) return localTarget(url);
   if (/^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\s]+$/.test(url)) return {};
   try {
+    if (/%(?![0-9a-f]{2})/i.test(url)) return;
     const parsed = new URL(url);
     if (!['https:', 'ssh:', 'file:'].includes(parsed.protocol) || parsed.password || parsed.search || parsed.hash
       || parsed.protocol !== 'ssh:' && parsed.username) return;

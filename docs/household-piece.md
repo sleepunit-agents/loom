@@ -949,7 +949,7 @@ generic status without echoing unknown fields or credentials. Old backup
 `state.json` is never read. Saving uses UTC unless the caller supplies a zone;
 it does not infer the daemon machine's local zone. Path targets may contain
 spaces; git URLs may not contain whitespace, credentials, query parameters
-or fragments. Existing ancestor symlinks are resolved when checking that a
+or fragments; git URL backslashes and malformed percent escapes are refused to avoid ambiguous URL path normalization. Existing ancestor symlinks are resolved when checking that a
 local target is outside the household home; unresolved symlinks and local
 `..` path components (including encoded file-URL components) are refused. Execution must recheck that
 boundary before using a target; configuration validation is not an execution
