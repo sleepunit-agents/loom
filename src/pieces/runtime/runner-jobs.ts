@@ -3,6 +3,7 @@ import { finishStartAttempt } from './start-retries.js';
 import { hearJob } from './heartbeat.js';
 import { provenanceStore } from './provenance-store.js';
 import { assignedRunner } from './control.js';
+import { executionAssertion, assertUnboundExecution } from './unbound-execution.js';
 /** Metadata protocol only: claiming never dispatches a body or discloses inputs. */
 import { z } from 'zod';
 import { operation, OperationError, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
@@ -23,9 +24,10 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
     return { job: id, state };
   }
   operations.register(operation({
-    name:'runtime.jobControl',doors:['http','direct'],input,output:z.object({stop:z.boolean(),history:z.enum(['retain','discard','unknown'])}),
+    name:'runtime.jobControl',doors:['http','direct'],input:input.extend({execution:executionAssertion.optional()}).strict(),output:z.object({stop:z.boolean(),history:z.enum(['retain','discard','unknown'])}),
     may:(viewer,{job})=>assigned(viewer,job),
-    run(_ctx,{job:id}){
+    run(_ctx,{job:id,execution}){
+      assertUnboundExecution(db,sharing(),id,execution);
       const job=store.read('job',id)!;
       if(job.writtenOff||job.principalReset)return {stop:true,history:'discard' as const};
       if(job.conversation&&store.read('binding',job.conversation)?.venue.startsWith('bridge:')&&bodyPolicyExecutionHeld(db,job.agent))return {stop:true,history:'discard' as const};
@@ -51,9 +53,10 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
   }));
   operations.register(operation({
     name: 'runtime.finishJob', write: true,
-    input: input.extend({ state: z.enum(['done', 'failed']), startFailure: z.literal('not-started').optional(), ...resultFields }).strict(), output,
+    input: input.extend({ execution:executionAssertion.optional(), state: z.enum(['done', 'failed']), startFailure: z.literal('not-started').optional(), ...resultFields }).strict(), output,
     may: (viewer, { job }) => assigned(viewer, job),
-    run(ctx, { job: id, state, startFailure, exit, log }) {
+    run(ctx, { job: id, execution, state, startFailure, exit, log }) {
+      assertUnboundExecution(db,sharing(),id,execution);
       const { changedAt: _, ...job } = store.read('job', id)!;
       if (!['starting', 'running', 'waiting'].includes(job.state)) throw new OperationError('conflict', 'Job has not been claimed or has ended');
       if (startFailure && (state !== 'failed' || job.state !== 'starting')) throw new OperationError('conflict', 'Final start failure requires an unconfirmed failed claim');
@@ -73,9 +76,10 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
   }));
   operations.register(operation({
     name: 'runtime.reportJob', write: true,
-    input: input.extend({ state: z.enum(['running', 'waiting']), build: z.string().max(120).optional(), ...resultFields }).strict(), output,
+    input: input.extend({ execution:executionAssertion.optional(), state: z.enum(['running', 'waiting']), build: z.string().max(120).optional(), ...resultFields }).strict(), output,
     may: (viewer, { job }) => assigned(viewer, job),
-    run(ctx, { job: id, state, build, exit, log }) {
+    run(ctx, { job: id, execution, state, build, exit, log }) {
+      assertUnboundExecution(db,sharing(),id,execution);
       const before = store.read('job', id)!;
       if (!['starting', 'running', 'waiting'].includes(before.state)) throw new OperationError('conflict', 'Job has not been claimed or has ended');
       hearJob(db,id,ctx.now);

@@ -21,6 +21,7 @@ export async function connectWorkerControl(config:WorkerControlConfig,revoked:()
     ||base.protocol==='http:'&&!['localhost','127.0.0.1','[::1]'].includes(base.hostname)
     ||!token||/[\r\n]/.test(token)||!job||job.length>200)throw failed();
   let closed=false,active=false,inFlight:Promise<void>|undefined,cancel:(()=>void)|undefined;
+  let execution:string|undefined;
   const requests=new Set<AbortController>();
   const close=()=>{
     if(closed)return;
@@ -31,15 +32,17 @@ export async function connectWorkerControl(config:WorkerControlConfig,revoked:()
     if(closed)return Promise.reject(failed());
     if(inFlight)return inFlight;
     const controller=new AbortController();requests.add(controller);
+    const expected=execution;
     const work=(async()=>{
       try {
         const response=await runtime.request(new URL('/api/runtime/jobControl',base),{method:'POST',redirect:'error',
-          headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({input:{job}}),
+          headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({input:{job,...(expected?{execution:expected}:{})}}),
           signal:AbortSignal.any([controller.signal,runtime.deadline(1500)])});
         if(!response.ok)throw failed();
         const answer=control.parse(await response.json()).value;
         if(closed||answer.stop||answer.history!=='retain')throw failed();
-        active=true;
+        // An older unpinned read cannot activate a newly pinned execution.
+        if(expected===execution)active=true;
       }catch {close();throw failed();}
       finally {requests.delete(controller);}
     })();
@@ -51,6 +54,11 @@ export async function connectWorkerControl(config:WorkerControlConfig,revoked:()
   try {
     await refresh();
     cancel=runtime.every(()=>{void refresh().catch(()=>{});},1000);
-    return Object.freeze({refresh,fresh,current:()=>!closed&&active,close});
+    return Object.freeze({refresh,fresh,current:()=>!closed&&active,close,
+      pinExecution(value:string){
+        if(closed||execution!==undefined||!/^[a-f0-9]{64}$/.test(value)){close();throw failed();}
+        execution=value;active=false;
+      },
+    });
   }catch {close();throw failed();}
 }

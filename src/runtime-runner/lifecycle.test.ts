@@ -13,6 +13,7 @@ import { signin, hash } from '../core/signin/index.js';
 import { jobResults } from '../pieces/runtime/results.js';
 import { runtimeStore } from '../pieces/runtime/store.js';
 import { connectClaudeWorker, type WorkerControlRuntime } from './lifecycle.js';
+import { connectWorkerControl } from './control.js';
 import { runClaudeJob } from './once.js';
 import { runClaudeWorker } from '../cli/claude-worker.js';
 import type { IOStreams } from '../cli/io.js';
@@ -93,6 +94,70 @@ it('the external startup claims, takes one gated input, runs and finishes throug
 it('does not launch an input with a conversation that lacks owning policy delivery',async()=>{
  const f=await setup();f.update({conversation:'cv-bridge'});
  await expect(runClaudeJob(f.config,f.selected,f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(0);
+});
+it.each(['conversation','model','account','claimedAt','brief'] as const)('refuses original input after same-job %s changes before launch',async field=>{
+ const f=await setup();
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
+  const response=await fetch(...args);
+  if(String(args[0]).endsWith('/takeInput')) {
+   if(field==='brief')f.app.db.prepare('UPDATE runtime_inputs SET brief=? WHERE job=?').run('REPLACEMENT WORK','j');
+   else f.update({[field]:field==='claimedAt'?f.clock.now()+1:'replacement'});
+  }
+  return response;
+ }};
+ const p=runClaudeJob(f.config,f.selected,runtime),rejected=expect(p).rejects.toThrow();
+ // Baseline may launch; complete it so the regression fails without hanging.
+ const observed=Promise.race([p.catch(()=>{}),f.waitSpawn(1)]);await observed;
+ if(f.calls.length)f.finish();await rejected;expect(f.calls).toHaveLength(0);
+});
+it.each(['reportJob','finishJob'] as const)('refuses a changed original source at the final %s write',async boundary=>{
+ const f=await setup();let changed=false;
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
+  if(String(args[0]).endsWith('/'+boundary)){f.update({model:'replacement'});changed=true;}
+  return fetch(...args);
+ }};
+ const p=runClaudeJob(f.config,f.selected,runtime),rejected=expect(p).rejects.toThrow();
+ await f.waitSpawn(1);f.finish();
+ await rejected;expect(changed).toBe(true);expect(f.store.read('job','j')?.state).toBe(boundary==='reportJob'?'starting':'running');
+ expect(jobResults(f.app.db).read('j')).toBeNull();
+});
+it.each(['conversation','model','account','brief','policy','capabilities'] as const)('the pinned watchdog kills active unbound execution after %s changes',async field=>{
+ const f=await setup();
+ if(field==='capabilities') {
+  f.app.db.prepare('UPDATE runtime_inputs SET needs=? WHERE job=?').run('["gpu"]','j');
+  f.app.db.transaction(()=>{const {changedAt:_,...box}=f.store.read('box','r')!;f.store.put('box',{...box,facts:['gpu']},f.clock.now());})();
+ }
+ let reported:()=>void=()=>{};const running=new Promise<void>(resolve=>{reported=resolve;});
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
+  const response=await fetch(...args);if(String(args[0]).endsWith('/reportJob')){expect(response.ok).toBe(true);reported();}return response;
+ }};
+ const p=runClaudeJob(f.config,f.selected,runtime),rejected=expect(p).rejects.toThrow();await f.waitSpawn(1);await running;
+ if(field==='brief')f.app.db.prepare('UPDATE runtime_inputs SET brief=? WHERE job=?').run('REPLACEMENT WORK','j');
+ else if(field==='policy')expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'runtime.configureBodyPolicy',
+  {agent:'art',revision:0,gates:{people:{}},policy:{}},'new-policy')).toMatchObject({ok:true});
+ else if(field==='capabilities')f.app.db.transaction(()=>{const {changedAt:_,...box}=f.store.read('box','r')!;f.store.put('box',{...box,facts:[]},f.clock.now());})();
+ else f.update({[field]:'replacement'});
+ f.tick();await rejected;expect(f.calls[0].child.killed).toBe(true);expect(jobResults(f.app.db).read('j')).toBeNull();
+});
+it('holds configured body policy before unbound input release rather than using copied local rules',async()=>{
+ const f=await setup();expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'runtime.configureBodyPolicy',
+  {agent:'art',revision:0,gates:{people:{}},policy:{}},'policy')).toMatchObject({ok:true});
+ await expect(runClaudeJob(f.config,f.selected,f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(0);
+ expect(f.app.db.prepare('SELECT id FROM core_effects WHERE id=?').get('runtime:input:j')).toBeUndefined();
+});
+it('an old unpinned control response cannot activate the original input assertion',async()=>{
+ const f=await setup();let hold=false,release:()=>void=()=>{},observed:()=>void=()=>{},revoked=false;
+ const gate=new Promise<void>(resolve=>{release=resolve;}),waiting=new Promise<void>(resolve=>{observed=resolve;});
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
+  const response=await fetch(...args);if(hold){hold=false;observed();await gate;}return response;
+ }};
+ const control=await connectWorkerControl(f.config,()=>{revoked=true;},runtime);cleanups.push(control.close);
+ expect(await f.app.operations.callAsync('direct',{kind:'runner',id:'r'},'runtime.claimJob',{job:'j'},'claim-pin')).toMatchObject({ok:true});
+ const answer=await f.app.operations.callAsync('direct',{kind:'runner',id:'r'},'runtime.takeInput',{job:'j',pinUnbound:true});
+ if(!answer.ok)throw Error('fixture input unavailable');const {execution}=answer.value as {execution:string};
+ hold=true;const old=control.refresh();await waiting;control.pinExecution(execution);expect(control.current()).toBe(false);
+ release();await old;expect(control.current()).toBe(false);await control.fresh();expect(control.current()).toBe(true);
+ expect(()=>control.pinExecution(execution)).toThrow();expect(revoked).toBe(true);expect(control.current()).toBe(false);
 });
 it('does not start after an uncertain input response and never retries that request',async()=>{
  const f=await setup();let takes=0;

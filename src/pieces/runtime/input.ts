@@ -8,6 +8,7 @@ import { canHost } from './boxes.js';
 import { configuredHouse, sameHouse } from './builds.js';
 import { meets } from './placement.js';
 import { buildIdentity } from './records.js';
+import { executionAssertion, unboundExecution } from './unbound-execution.js';
 
 export function installRunnerInput(db: Db, operations: Operations, sharing: () => Sharing, effects: OutsideEffects, body?: { issue(agent: string, job: string): string; valid(job: string): boolean; inputCurrent?(job: string): () => boolean }) {
   const store = runtimeStore(db);
@@ -35,11 +36,12 @@ export function installRunnerInput(db: Db, operations: Operations, sharing: () =
   };
   operations.register(operation({
     name: 'runtime.takeInput', doors: ['http', 'direct'],
-    input: z.object({ job: z.string().min(1).max(200) }).strict(),
-    output: z.object({ job: z.string(), agent: z.string(), house: buildIdentity, brief: z.string(), needs: z.array(z.string()), model:z.string().optional(), account:z.string().optional(), conversation:z.string().optional(), credential:z.string().optional() }),
+    input: z.object({ job: z.string().min(1).max(200), pinUnbound:z.literal(true).optional() }).strict(),
+    output: z.object({ job: z.string(), agent: z.string(), house: buildIdentity, brief: z.string(), needs: z.array(z.string()), model:z.string().optional(), account:z.string().optional(), conversation:z.string().optional(), credential:z.string().optional(), execution:executionAssertion.optional() }),
     may: (viewer, input) => assigned(viewer, input.job),
     async prepare(input, { viewer }) {
       const value = snapshot(viewer, input.job);
+      const execution=input.pinUnbound?unboundExecution(db,sharing(),input.job):undefined;
       const current = body?.inputCurrent?.(input.job) ?? (() => true);
       if (!current()) throw new OperationError('denied', 'Owning input authority ended');
       if (!effects.beforeOutside({ id: `runtime:input:${input.job}`, kind: 'body-start', title: 'Release claimed runtime input' }))
@@ -48,14 +50,15 @@ export function installRunnerInput(db: Db, operations: Operations, sharing: () =
       // A lost response is uncertain, never an automatic second execution.
       effects.finish(`runtime:input:${input.job}`);
       if (!current()) throw new OperationError('denied', 'Owning input authority ended');
-      return {value,current};
+      return {value,current,execution};
     },
     run(ctx, input, prepared) {
-      const before=prepared as {value:ReturnType<typeof snapshot>;current:()=>boolean};
+      const before=prepared as {value:ReturnType<typeof snapshot>;current:()=>boolean;execution?:string};
       if (!before.current()) throw new OperationError('denied', 'Owning input authority ended');
       const current = snapshot(ctx.viewer, input.job);
       if (JSON.stringify(current) !== JSON.stringify(before.value)) throw new OperationError('conflict', 'Input changed during release');
-      return {...current,...(body?.valid(input.job)?{conversation:store.read('job',input.job)!.conversation,credential:body.issue(current.agent,input.job)}:{})};
+      if(input.pinUnbound&&unboundExecution(db,sharing(),input.job)!==before.execution)throw new OperationError('denied','Original unbound execution authority ended');
+      return {...current,...(before.execution?{execution:before.execution}:{}),...(body?.valid(input.job)?{conversation:store.read('job',input.job)!.conversation,credential:body.issue(current.agent,input.job)}:{})};
     },
   }));
 }
