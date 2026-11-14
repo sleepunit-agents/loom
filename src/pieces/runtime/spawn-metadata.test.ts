@@ -7,6 +7,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Sharing } from '../../core/index.js';
 import { fixtureSharing } from '../../fixture.js';
+import * as commsModule from '../comms/index.js';
+import type { StepConversation } from '../comms/role.js';
 import { saveThread, thread } from '../comms/store.js';
 import { runtimeStore } from './store.js';
 import { spawnMetadata } from './spawn-metadata.js';
@@ -88,4 +90,18 @@ it('keeps the original second member and treats archived threads as metadata',as
   f.store.put('binding',{...b,member:'second'},f.clock.now());f.store.put('job',{...j,member:'second'},f.clock.now());
  })();
  expect(f.read('cv-child')).toMatchObject({member:'second',venue:'spawn'});
+});
+
+it('changes the composed reader version after an identical same-clock binding replacement',async()=>{
+ const realInstall=commsModule.installComms;let composed:((id:string)=>StepConversation|undefined)|undefined;
+ vi.spyOn(commsModule,'installComms').mockImplementation(options=>{composed=options.conversation;return realInstall(options);});
+ const f=await setup(),before=composed!('cv-child')!;
+ const {changedAt:_,...binding}=f.store.read('binding','cv-child')!;
+ f.app.db.transaction(()=>{
+  f.app.db.prepare('DELETE FROM runtime_bindings WHERE id=?').run(binding.id);
+  f.store.put('binding',binding,f.clock.now());
+ })();
+ f.app.live.changed([{type:'runtime.binding',id:binding.id}]);
+ expect(composed!('cv-child')).toMatchObject({member:'jonathan',agent:'art',venue:'spawn'});
+ expect(composed!('cv-child')!.version).not.toBe(before.version);
 });

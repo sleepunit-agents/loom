@@ -5,8 +5,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { isClosing, type Foundation } from '../../core/app.js';
 import { mayUseThread, type Sharing } from '../../core/index.js';
-import { commsMetadata } from '../comms/role.js';
-import type { StepConversation } from '../comms/conversation-steps.js';
+import { commsMetadata, type StepConversation } from '../comms/role.js';
 import { runtimeStore } from './store.js';
 export function spawnMetadata(app: Foundation, sharing:()=>Sharing): (id:string)=>StepConversation|undefined {
  const store=runtimeStore(app.db),epoch=randomUUID();let revision=0;
