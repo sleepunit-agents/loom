@@ -766,7 +766,12 @@ it.each(['place','claim','conversation','runner','box','house'] as const)('denie
  })();
  const body=f.app.db.transaction(()=>signin(f.app).issueBody('art',job))();
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'PRIVATE wake words'}]}});
- expect((await f.post(f.runner,'takeInput',{job})).ok).toBe(false);
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...j}=f.store.read('job',job)!;
+  f.store.put('job',{...j,state:'starting',runner:'a',box:'a'},f.clock.now());
+ })();
+ expect(f.app.effects!.status(`runtime:input:${job}`)).toBe('done');
+ expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
 });
 
 it.each(['withdrawal','place','policy'] as const)('denies Clock input after %s at the final asynchronous boundary',async change=>{
@@ -825,4 +830,24 @@ it('allows advancing Clock heartbeat and non-authority metadata during runner in
  expect(f.store.read('job',job)!.changedAt).toBeGreaterThan(before.changedAt);
  expect(jobHeard(f.app.db,job)).toBeGreaterThan(heard);
  expect(await pending).toMatchObject({ok:true,value:{brief:CLOCK_BRIEF,credential:expect.any(String)}});
+});
+
+it.each(['before-input','final-release'] as const)('denies public Clock input after owning source policy revocation at %s',async boundary=>{
+ const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);access.services=builtinServices(f.app.db);
+ // Keep runner/box execution independently valid after source ownership is
+ // revoked, so generic input checks cannot satisfy this source regression.
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...box}=f.store.read('box','a')!;
+  f.store.put('box',{...box,lentTo:['art']},f.clock.now());
+ })();
+ await f.schedule();const job=f.store.ids('job')[0];
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const credentials=signin(f.app).tokens.document();
+ const pending=boundary==='final-release'?f.app.operations.callAsync('direct',{kind:'runner',id:'a'},'runtime.takeInput',{job}):undefined;
+ if(pending)expect(f.app.effects!.status(`runtime:input:${job}`)).toBe('done');
+ access.members.jonathan.agents=[];
+ expect(await (pending??f.post(f.runner,'takeInput',{job}))).toMatchObject({ok:false,code:'denied'});
+ expect(signin(f.app).tokens.document()).toEqual(credentials);
+ expect(f.app.effects!.status(`runtime:input:${job}`)).toBe(pending?'done':undefined);
+ expect(f.app.db.prepare('SELECT released,consumed FROM runtime_clock_turns').get()).toEqual({released:null,consumed:null});
 });
