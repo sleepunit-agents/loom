@@ -17,7 +17,7 @@ export function createDataSchema(client: Database.Database): DataDatabase {
   if (client.inTransaction) throw new Error('Create the data schema outside a transaction');
   client.pragma('foreign_keys = ON');
   client.transaction(() => {
-    const existing = client.prepare("SELECT name FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' LIMIT 1").get();
+    const existing = client.prepare("SELECT name FROM sqlite_schema LIMIT 1").get();
     if (existing) throw new Error('Data schema requires an empty database; existing data must go through the separate move');
     client.exec(readFileSync(new URL('../../../assets/data/schema.sql', import.meta.url), 'utf8'));
     client.prepare('INSERT INTO migrations (number, applied_at) VALUES (?, ?)').run(1, new Date().toISOString());

@@ -5,6 +5,11 @@
 import { relations, sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, real, blob, primaryKey, check, index, uniqueIndex, foreignKey, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 
+/** Canonical UTC timestamps, with either whole seconds or milliseconds. */
+function utc(column: AnySQLiteColumn) {
+  return sql`${column} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${column}) = ${column} or strftime('%Y-%m-%dT%H:%M:%fZ', ${column}) = ${column}, 0)`;
+}
+
 /** One row per person in the household. */
 export const members = sqliteTable('members', {
   id: text('id').primaryKey().notNull(),
@@ -13,7 +18,7 @@ export const members = sqliteTable('members', {
   position: integer('position').notNull().default(0),
   joinedAt: text('joined_at').notNull(),
 }, t => [
-  check('members_joined_at_utc', sql`${t.joinedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.joinedAt}) = ${t.joinedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.joinedAt}) = ${t.joinedAt}, 0)`),
+  check('members_joined_at_utc', utc(t.joinedAt)),
   check('members_role_choice', sql`${t.role} in ('owner', 'member')`),
   check('members_full_owner_boolean', sql`${t.fullOwner} in (0, 1)`),
   check('members_full_owner_role', sql`not ${t.fullOwner} or ${t.role} = 'owner'`),
@@ -31,7 +36,7 @@ export const agents = sqliteTable('agents', {
   faceEyes: text('face_eyes', { enum: ["dot", "oval"] }).notNull(),
   spriteVersion: text('sprite_version'),
 }, t => [
-  check('agents_about_asked_at_utc', sql`${t.aboutAskedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.aboutAskedAt}) = ${t.aboutAskedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.aboutAskedAt}) = ${t.aboutAskedAt}, 0)`),
+  check('agents_about_asked_at_utc', utc(t.aboutAskedAt)),
   check('agents_about_length', sql`length(${t.about}) <= 600`),
   check('agents_face_shape_choice', sql`${t.faceShape} in ('pebble', 'trefoil', 'clover', 'drop')`),
   check('agents_face_eyes_choice', sql`${t.faceEyes} in ('dot', 'oval')`),
@@ -131,7 +136,7 @@ export const memberPreferences = sqliteTable('member_preferences', {
   contrast: text('contrast', { enum: ["follow", "on", "off"] }).notNull(),
   changedAt: text('changed_at').notNull(),
 }, t => [
-  check('member_preferences_changed_at_utc', sql`${t.changedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.changedAt}) = ${t.changedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.changedAt}) = ${t.changedAt}, 0)`),
+  check('member_preferences_changed_at_utc', utc(t.changedAt)),
   check('member_preferences_look_choice', sql`${t.look} in ('neon', 'lowlight', 'daylight')`),
   check('member_preferences_ground_choice', sql`${t.ground} in ('depth', 'contours', 'wash')`),
   check('member_preferences_sound_boolean', sql`${t.sound} in (0, 1)`),
@@ -159,10 +164,10 @@ export const tokens = sqliteTable('tokens', {
   revokedAt: text('revoked_at'),
   lastUsedAt: text('last_used_at'),
 }, t => [
-  check('tokens_created_at_utc', sql`${t.createdAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.createdAt}) = ${t.createdAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.createdAt}) = ${t.createdAt}, 0)`),
-  check('tokens_expires_at_utc', sql`${t.expiresAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.expiresAt}) = ${t.expiresAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.expiresAt}) = ${t.expiresAt}, 0)`),
-  check('tokens_revoked_at_utc', sql`${t.revokedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.revokedAt}) = ${t.revokedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.revokedAt}) = ${t.revokedAt}, 0)`),
-  check('tokens_last_used_at_utc', sql`${t.lastUsedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.lastUsedAt}) = ${t.lastUsedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.lastUsedAt}) = ${t.lastUsedAt}, 0)`),
+  check('tokens_created_at_utc', utc(t.createdAt)),
+  check('tokens_expires_at_utc', utc(t.expiresAt)),
+  check('tokens_revoked_at_utc', utc(t.revokedAt)),
+  check('tokens_last_used_at_utc', utc(t.lastUsedAt)),
   check('tokens_identity', sql`(${t.kind} = 'owner' and ${t.member} is not null and ${t.agent} is null and ${t.box} is null and ${t.job} is null) or (${t.kind} = 'agent' and ${t.agent} is not null and ${t.member} is null and ${t.box} is null) or (${t.kind} = 'runner' and ${t.box} is not null and ${t.member} is null and ${t.agent} is null and ${t.job} is null)`),
   check('tokens_kind_choice', sql`${t.kind} in ('owner', 'agent', 'runner')`),
   uniqueIndex('tokens_live_label_unique').on(t.label).where(sql`${t.revokedAt} is null`),
@@ -180,9 +185,9 @@ export const sessions = sqliteTable('sessions', {
   seenAt: text('seen_at').notNull(),
   provedAt: text('proved_at').notNull(),
 }, t => [
-  check('sessions_issued_at_utc', sql`${t.issuedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.issuedAt}) = ${t.issuedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.issuedAt}) = ${t.issuedAt}, 0)`),
-  check('sessions_seen_at_utc', sql`${t.seenAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.seenAt}) = ${t.seenAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.seenAt}) = ${t.seenAt}, 0)`),
-  check('sessions_proved_at_utc', sql`${t.provedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.provedAt}) = ${t.provedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.provedAt}) = ${t.provedAt}, 0)`),
+  check('sessions_issued_at_utc', utc(t.issuedAt)),
+  check('sessions_seen_at_utc', utc(t.seenAt)),
+  check('sessions_proved_at_utc', utc(t.provedAt)),
   check('sessions_via_choice', sql`${t.via} in ('link', 'passkey', 'token')`),
   check('sessions_is_agent_boolean', sql`${t.isAgent} in (0, 1)`),
 ]);
@@ -194,7 +199,7 @@ export const signinLinks = sqliteTable('signin_links', {
   label: text('label').notNull(),
   expiresAt: text('expires_at').notNull(),
 }, t => [
-  check('signin_links_expires_at_utc', sql`${t.expiresAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.expiresAt}) = ${t.expiresAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.expiresAt}) = ${t.expiresAt}, 0)`),
+  check('signin_links_expires_at_utc', utc(t.expiresAt)),
 ]);
 
 /** Passkeys people have registered. */
@@ -207,8 +212,8 @@ export const passkeys = sqliteTable('passkeys', {
   createdAt: text('created_at').notNull(),
   lastUsedAt: text('last_used_at'),
 }, t => [
-  check('passkeys_created_at_utc', sql`${t.createdAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.createdAt}) = ${t.createdAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.createdAt}) = ${t.createdAt}, 0)`),
-  check('passkeys_last_used_at_utc', sql`${t.lastUsedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.lastUsedAt}) = ${t.lastUsedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.lastUsedAt}) = ${t.lastUsedAt}, 0)`),
+  check('passkeys_created_at_utc', utc(t.createdAt)),
+  check('passkeys_last_used_at_utc', utc(t.lastUsedAt)),
 ]);
 
 /** Phones and browsers that receive notifications. */
@@ -221,8 +226,8 @@ export const notificationDevices = sqliteTable('notification_devices', {
   createdAt: text('created_at').notNull(),
   seenAt: text('seen_at').notNull(),
 }, t => [
-  check('notification_devices_created_at_utc', sql`${t.createdAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.createdAt}) = ${t.createdAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.createdAt}) = ${t.createdAt}, 0)`),
-  check('notification_devices_seen_at_utc', sql`${t.seenAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.seenAt}) = ${t.seenAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.seenAt}) = ${t.seenAt}, 0)`),
+  check('notification_devices_created_at_utc', utc(t.createdAt)),
+  check('notification_devices_seen_at_utc', utc(t.seenAt)),
 ]);
 
 /** One row per task. */
@@ -260,10 +265,10 @@ export const tasks = sqliteTable('tasks', {
   changedAt: text('changed_at').notNull(),
   position: integer('position').notNull().default(0),
 }, t => [
-  check('tasks_created_at_utc', sql`${t.createdAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.createdAt}) = ${t.createdAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.createdAt}) = ${t.createdAt}, 0)`),
-  check('tasks_started_at_utc', sql`${t.startedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.startedAt}) = ${t.startedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.startedAt}) = ${t.startedAt}, 0)`),
-  check('tasks_closed_at_utc', sql`${t.closedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.closedAt}) = ${t.closedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.closedAt}) = ${t.closedAt}, 0)`),
-  check('tasks_changed_at_utc', sql`${t.changedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.changedAt}) = ${t.changedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.changedAt}) = ${t.changedAt}, 0)`),
+  check('tasks_created_at_utc', utc(t.createdAt)),
+  check('tasks_started_at_utc', utc(t.startedAt)),
+  check('tasks_closed_at_utc', utc(t.closedAt)),
+  check('tasks_changed_at_utc', utc(t.changedAt)),
   check('tasks_type_choice', sql`${t.type} in ('task', 'bug', 'feature', 'epic')`),
   check('tasks_status_choice', sql`${t.status} in ('open', 'in_progress', 'closed')`),
   check('tasks_owner_kind_choice', sql`${t.ownerKind} in ('member', 'agent', 'household')`),
@@ -274,6 +279,7 @@ export const tasks = sqliteTable('tasks', {
   check('tasks_priority_range', sql`${t.priority} between 0 and 4`),
   check('tasks_owner_required', sql`(${t.ownerKind} = 'household' and ${t.owner} is null) or (${t.ownerKind} <> 'household' and ${t.owner} is not null)`),
   check('tasks_assignee_pair', sql`(${t.assigneeKind} is null) = (${t.assignee} is null)`),
+  uniqueIndex('tasks_spec_line_unique').on(t.specItem, t.criterion).where(sql`${t.specItem} is not null and ${t.criterion} is not null`),
   index('tasks_status_priority_position_idx').on(t.status, t.priority, t.position),
   index('tasks_project_status_idx').on(t.project, t.status),
   index('tasks_owner_kind_owner_idx').on(t.ownerKind, t.owner),
@@ -301,7 +307,7 @@ export const taskComments = sqliteTable('task_comments', {
   at: text('at').notNull(),
   text: text('text').notNull(),
 }, t => [
-  check('task_comments_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
+  check('task_comments_at_utc', utc(t.at)),
   primaryKey({ columns: [t.task, t.seq] }),
   check('task_comments_actor_kind_choice', sql`${t.actorKind} in ('member', 'agent')`),
 ]);
@@ -320,8 +326,8 @@ export const conversations = sqliteTable('conversations', {
   lastAt: text('last_at').notNull(),
   turnCount: integer('turn_count').notNull(),
 }, t => [
-  check('conversations_started_at_utc', sql`${t.startedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.startedAt}) = ${t.startedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.startedAt}) = ${t.startedAt}, 0)`),
-  check('conversations_last_at_utc', sql`${t.lastAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.lastAt}) = ${t.lastAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.lastAt}) = ${t.lastAt}, 0)`),
+  check('conversations_started_at_utc', utc(t.startedAt)),
+  check('conversations_last_at_utc', utc(t.lastAt)),
   check('conversations_venue_choice', sql`${t.venue} in ('loom', 'discord', 'slack', 'wake', 'handoff')`),
   uniqueIndex('conversations_place_unique').on(t.agent, t.venue, t.place),
   index('conversations_project_idx').on(t.project),
@@ -352,7 +358,7 @@ export const turns = sqliteTable('turns', {
   outcome: text('outcome', { enum: ["answered", "progressed", "deferred", "failed", "none"] }),
   latencyMs: real('latency_ms'),
 }, t => [
-  check('turns_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
+  check('turns_at_utc', utc(t.at)),
   primaryKey({ columns: [t.conversation, t.seq] }),
   check('turns_kind_choice', sql`${t.kind} in ('message', 'reply', 'action', 'wake', 'note', 'refused')`),
   check('turns_from_kind_choice', sql`${t.fromKind} in ('person', 'agent', 'schedule', 'unknown')`),
@@ -370,7 +376,7 @@ export const digests = sqliteTable('digests', {
   inboxItem: text('inbox_item').references((): AnySQLiteColumn => inbox.id),
 }, t => [
   check('digests_summary_length', sql`length(${t.summary}) <= 600`),
-  check('digests_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
+  check('digests_at_utc', utc(t.at)),
 ]);
 
 /** The lists inside a digest. */
@@ -390,7 +396,7 @@ export const agentStatus = sqliteTable('agent_status', {
   work: text('work').notNull(),
   changedAt: text('changed_at').notNull(),
 }, t => [
-  check('agent_status_changed_at_utc', sql`${t.changedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.changedAt}) = ${t.changedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.changedAt}) = ${t.changedAt}, 0)`),
+  check('agent_status_changed_at_utc', utc(t.changedAt)),
   check('agent_status_state_choice', sql`${t.state} in ('working', 'waiting', 'idle', 'offline')`),
 ]);
 
@@ -457,12 +463,12 @@ export const inbox = sqliteTable('inbox', {
   resolution: text('resolution'),
   changedAt: text('changed_at').notNull(),
 }, t => [
-  check('inbox_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
-  check('inbox_quiet_until_utc', sql`${t.quietUntil} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.quietUntil}) = ${t.quietUntil} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.quietUntil}) = ${t.quietUntil}, 0)`),
-  check('inbox_taken_at_utc', sql`${t.takenAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.takenAt}) = ${t.takenAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.takenAt}) = ${t.takenAt}, 0)`),
-  check('inbox_done_at_utc', sql`${t.doneAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.doneAt}) = ${t.doneAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.doneAt}) = ${t.doneAt}, 0)`),
-  check('inbox_answered_at_utc', sql`${t.answeredAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.answeredAt}) = ${t.answeredAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.answeredAt}) = ${t.answeredAt}, 0)`),
-  check('inbox_changed_at_utc', sql`${t.changedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.changedAt}) = ${t.changedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.changedAt}) = ${t.changedAt}, 0)`),
+  check('inbox_at_utc', utc(t.at)),
+  check('inbox_quiet_until_utc', utc(t.quietUntil)),
+  check('inbox_taken_at_utc', utc(t.takenAt)),
+  check('inbox_done_at_utc', utc(t.doneAt)),
+  check('inbox_answered_at_utc', utc(t.answeredAt)),
+  check('inbox_changed_at_utc', utc(t.changedAt)),
   foreignKey({ columns: [t.thread, t.messageSeq], foreignColumns: [messages.thread, messages.seq] }),
   check('inbox_message_pair', sql`${t.messageSeq} is null or ${t.thread} is not null`),
   check('inbox_to_kind_choice', sql`${t.toKind} in ('person', 'agent')`),
@@ -492,7 +498,7 @@ export const inboxReads = sqliteTable('inbox_reads', {
   member: text('member').notNull().references((): AnySQLiteColumn => members.id),
   readAt: text('read_at').notNull(),
 }, t => [
-  check('inbox_reads_read_at_utc', sql`${t.readAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.readAt}) = ${t.readAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.readAt}) = ${t.readAt}, 0)`),
+  check('inbox_reads_read_at_utc', utc(t.readAt)),
   primaryKey({ columns: [t.item, t.member] }),
 ]);
 
@@ -506,8 +512,8 @@ export const actionResults = sqliteTable('action_results', {
   page: text('page').notNull(),
   readAt: text('read_at'),
 }, t => [
-  check('action_results_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
-  check('action_results_read_at_utc', sql`${t.readAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.readAt}) = ${t.readAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.readAt}) = ${t.readAt}, 0)`),
+  check('action_results_at_utc', utc(t.at)),
+  check('action_results_read_at_utc', utc(t.readAt)),
   check('action_results_ok_boolean', sql`${t.ok} in (0, 1)`),
 ]);
 
@@ -527,11 +533,11 @@ export const threads = sqliteTable('threads', {
   workingBeat: text('working_beat'),
   stopRequested: integer('stop_requested', { mode: 'boolean' }).notNull(),
 }, t => [
-  check('threads_archived_at_utc', sql`${t.archivedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.archivedAt}) = ${t.archivedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.archivedAt}) = ${t.archivedAt}, 0)`),
-  check('threads_opened_at_utc', sql`${t.openedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.openedAt}) = ${t.openedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.openedAt}) = ${t.openedAt}, 0)`),
-  check('threads_last_at_utc', sql`${t.lastAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.lastAt}) = ${t.lastAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.lastAt}) = ${t.lastAt}, 0)`),
-  check('threads_working_since_utc', sql`${t.workingSince} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.workingSince}) = ${t.workingSince} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.workingSince}) = ${t.workingSince}, 0)`),
-  check('threads_working_beat_utc', sql`${t.workingBeat} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.workingBeat}) = ${t.workingBeat} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.workingBeat}) = ${t.workingBeat}, 0)`),
+  check('threads_archived_at_utc', utc(t.archivedAt)),
+  check('threads_opened_at_utc', utc(t.openedAt)),
+  check('threads_last_at_utc', utc(t.lastAt)),
+  check('threads_working_since_utc', utc(t.workingSince)),
+  check('threads_working_beat_utc', utc(t.workingBeat)),
   check('threads_titled_by_choice', sql`${t.titledBy} in ('member', 'agent')`),
   check('threads_title_length', sql`length(${t.title}) <= 60`),
   check('threads_pinned_boolean', sql`${t.pinned} in (0, 1)`),
@@ -557,8 +563,8 @@ export const messages = sqliteTable('messages', {
   cardState: text('card_state', { enum: ["running", "done", "failed"] }),
   clientId: text('client_id'),
 }, t => [
-  check('messages_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
-  check('messages_keep_until_utc', sql`${t.keepUntil} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.keepUntil}) = ${t.keepUntil} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.keepUntil}) = ${t.keepUntil}, 0)`),
+  check('messages_at_utc', utc(t.at)),
+  check('messages_keep_until_utc', utc(t.keepUntil)),
   primaryKey({ columns: [t.thread, t.seq] }),
   check('messages_kind_choice', sql`${t.kind} in ('message', 'reply', 'card', 'ask', 'answer', 'notice')`),
   check('messages_delivery_choice', sql`${t.delivery} in ('sending', 'held', 'failed', 'delivered')`),
@@ -584,7 +590,7 @@ export const deletedThreads = sqliteTable('deleted_threads', {
   conversation: text('conversation').notNull(),
   at: text('at').notNull(),
 }, t => [
-  check('deleted_threads_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
+  check('deleted_threads_at_utc', utc(t.at)),
 ]);
 
 /** One row per request for permission. */
@@ -615,10 +621,10 @@ export const approvals = sqliteTable('approvals', {
   usedAt: text('used_at'),
   overriddenBy: text('overridden_by').references((): AnySQLiteColumn => approvals.id),
 }, t => [
-  check('approvals_asked_at_utc', sql`${t.askedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.askedAt}) = ${t.askedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.askedAt}) = ${t.askedAt}, 0)`),
-  check('approvals_decided_at_utc', sql`${t.decidedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.decidedAt}) = ${t.decidedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.decidedAt}) = ${t.decidedAt}, 0)`),
-  check('approvals_expires_at_utc', sql`${t.expiresAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.expiresAt}) = ${t.expiresAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.expiresAt}) = ${t.expiresAt}, 0)`),
-  check('approvals_used_at_utc', sql`${t.usedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.usedAt}) = ${t.usedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.usedAt}) = ${t.usedAt}, 0)`),
+  check('approvals_asked_at_utc', utc(t.askedAt)),
+  check('approvals_decided_at_utc', utc(t.decidedAt)),
+  check('approvals_expires_at_utc', utc(t.expiresAt)),
+  check('approvals_used_at_utc', utc(t.usedAt)),
   check('approvals_kind_choice', sql`${t.kind} in ('merge', 'command', 'setting', 'dangerous')`),
   check('approvals_state_choice', sql`${t.state} in ('pending', 'allowed', 'denied', 'used', 'withdrawn', 'expired')`),
 ]);
@@ -632,7 +638,7 @@ export const approvalRules = sqliteTable('approval_rules', {
   setBy: text('set_by').notNull().references((): AnySQLiteColumn => members.id),
   setAt: text('set_at').notNull(),
 }, t => [
-  check('approval_rules_set_at_utc', sql`${t.setAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.setAt}) = ${t.setAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.setAt}) = ${t.setAt}, 0)`),
+  check('approval_rules_set_at_utc', utc(t.setAt)),
   primaryKey({ columns: [t.kind, t.scope, t.person] }),
   check('approval_rules_kind_choice', sql`${t.kind} in ('merge', 'command', 'setting', 'dangerous')`),
   check('approval_rules_tier_choice', sql`${t.tier} in ('do', 'tell', 'ask')`),
@@ -647,7 +653,7 @@ export const approvalNotices = sqliteTable('approval_notices', {
   what: text('what').notNull(),
   at: text('at').notNull(),
 }, t => [
-  check('approval_notices_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
+  check('approval_notices_at_utc', utc(t.at)),
 ]);
 
 /** The permanent record: every request, answer and use, never edited. */
@@ -659,7 +665,7 @@ export const approvalRecord = sqliteTable('approval_record', {
   agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
   note: text('note').notNull(),
 }, t => [
-  check('approval_record_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
+  check('approval_record_at_utc', utc(t.at)),
   check('approval_record_event_choice', sql`${t.event} in ('request', 'allow', 'deny', 'use', 'withdraw', 'grant', 'refused-use')`),
 ]);
 
@@ -688,10 +694,10 @@ export const triggers = sqliteTable('triggers', {
   createdAt: text('created_at').notNull(),
   changedAt: text('changed_at').notNull(),
 }, t => [
-  check('triggers_next_due_at_utc', sql`${t.nextDueAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.nextDueAt}) = ${t.nextDueAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.nextDueAt}) = ${t.nextDueAt}, 0)`),
-  check('triggers_last_fired_at_utc', sql`${t.lastFiredAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.lastFiredAt}) = ${t.lastFiredAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.lastFiredAt}) = ${t.lastFiredAt}, 0)`),
-  check('triggers_created_at_utc', sql`${t.createdAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.createdAt}) = ${t.createdAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.createdAt}) = ${t.createdAt}, 0)`),
-  check('triggers_changed_at_utc', sql`${t.changedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.changedAt}) = ${t.changedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.changedAt}) = ${t.changedAt}, 0)`),
+  check('triggers_next_due_at_utc', utc(t.nextDueAt)),
+  check('triggers_last_fired_at_utc', utc(t.lastFiredAt)),
+  check('triggers_created_at_utc', utc(t.createdAt)),
+  check('triggers_changed_at_utc', utc(t.changedAt)),
   check('triggers_owner_required', sql`(${t.ownerKind} = 'household' and ${t.owner} is null) or (${t.ownerKind} <> 'household' and ${t.owner} is not null)`),
   check('triggers_target_required', sql`(${t.targetKind} = 'operation' and ${t.target} is not null and length(${t.target}) > 0) or (${t.targetKind} = 'inbox' and ${t.toKind} is not null and ${t.to} is not null)`),
   check('triggers_owner_kind_choice', sql`${t.ownerKind} in ('member', 'agent', 'household')`),
@@ -712,7 +718,7 @@ export const triggerLog = sqliteTable('trigger_log', {
   event: text('event').notNull(),
   note: text('note').notNull(),
 }, t => [
-  check('trigger_log_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
+  check('trigger_log_at_utc', utc(t.at)),
 ]);
 
 /** Agents whose triggers are being held. */
@@ -720,7 +726,7 @@ export const agentPauses = sqliteTable('agent_pauses', {
   agent: text('agent').primaryKey().notNull().references((): AnySQLiteColumn => agents.id),
   since: text('since').notNull(),
 }, t => [
-  check('agent_pauses_since_utc', sql`${t.since} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.since}) = ${t.since} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.since}) = ${t.since}, 0)`),
+  check('agent_pauses_since_utc', utc(t.since)),
 ]);
 
 /** Tempo's timings, for each person or agent that has changed them. Everyone else gets the defaults. */
@@ -759,9 +765,9 @@ export const changes = sqliteTable('changes', {
   updatedAt: text('updated_at').notNull(),
   closedAt: text('closed_at'),
 }, t => [
-  check('changes_opened_at_utc', sql`${t.openedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.openedAt}) = ${t.openedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.openedAt}) = ${t.openedAt}, 0)`),
-  check('changes_updated_at_utc', sql`${t.updatedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.updatedAt}) = ${t.updatedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.updatedAt}) = ${t.updatedAt}, 0)`),
-  check('changes_closed_at_utc', sql`${t.closedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.closedAt}) = ${t.closedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.closedAt}) = ${t.closedAt}, 0)`),
+  check('changes_opened_at_utc', utc(t.openedAt)),
+  check('changes_updated_at_utc', utc(t.updatedAt)),
+  check('changes_closed_at_utc', utc(t.closedAt)),
   check('changes_state_choice', sql`${t.state} in ('open', 'merged', 'closed')`),
   check('changes_draft_boolean', sql`${t.draft} in (0, 1)`),
   check('changes_checks_choice', sql`${t.checks} in ('passing', 'failing', 'running', 'none')`),
@@ -805,8 +811,8 @@ export const changeSync = sqliteTable('change_sync', {
   failed: integer('failed', { mode: 'boolean' }).notNull(),
   nextAt: text('next_at'),
 }, t => [
-  check('change_sync_read_at_utc', sql`${t.readAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.readAt}) = ${t.readAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.readAt}) = ${t.readAt}, 0)`),
-  check('change_sync_next_at_utc', sql`${t.nextAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.nextAt}) = ${t.nextAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.nextAt}) = ${t.nextAt}, 0)`),
+  check('change_sync_read_at_utc', utc(t.readAt)),
+  check('change_sync_next_at_utc', utc(t.nextAt)),
   check('change_sync_singleton', sql`${t.singleton} = 1`),
   check('change_sync_failed_boolean', sql`${t.failed} in (0, 1)`),
 ]);
@@ -824,9 +830,9 @@ export const boxes = sqliteTable('boxes', {
   lastSeenAt: text('last_seen_at'),
   revokedAt: text('revoked_at'),
 }, t => [
-  check('boxes_enrolled_at_utc', sql`${t.enrolledAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.enrolledAt}) = ${t.enrolledAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.enrolledAt}) = ${t.enrolledAt}, 0)`),
-  check('boxes_last_seen_at_utc', sql`${t.lastSeenAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.lastSeenAt}) = ${t.lastSeenAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.lastSeenAt}) = ${t.lastSeenAt}, 0)`),
-  check('boxes_revoked_at_utc', sql`${t.revokedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.revokedAt}) = ${t.revokedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.revokedAt}) = ${t.revokedAt}, 0)`),
+  check('boxes_enrolled_at_utc', utc(t.enrolledAt)),
+  check('boxes_last_seen_at_utc', utc(t.lastSeenAt)),
+  check('boxes_revoked_at_utc', utc(t.revokedAt)),
   check('boxes_same_machine_as_loom_boolean', sql`${t.sameMachineAsLoom} in (0, 1)`),
   check('boxes_hosts_any_boolean', sql`${t.hostsAny} in (0, 1)`),
   check('boxes_report_only_boolean', sql`${t.reportOnly} in (0, 1)`),
@@ -883,11 +889,11 @@ export const jobs = sqliteTable('jobs', {
   heardAt: text('heard_at'),
   endedAt: text('ended_at'),
 }, t => [
-  check('jobs_retry_at_utc', sql`${t.retryAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.retryAt}) = ${t.retryAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.retryAt}) = ${t.retryAt}, 0)`),
-  check('jobs_queued_at_utc', sql`${t.queuedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.queuedAt}) = ${t.queuedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.queuedAt}) = ${t.queuedAt}, 0)`),
-  check('jobs_claimed_at_utc', sql`${t.claimedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.claimedAt}) = ${t.claimedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.claimedAt}) = ${t.claimedAt}, 0)`),
-  check('jobs_heard_at_utc', sql`${t.heardAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.heardAt}) = ${t.heardAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.heardAt}) = ${t.heardAt}, 0)`),
-  check('jobs_ended_at_utc', sql`${t.endedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.endedAt}) = ${t.endedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.endedAt}) = ${t.endedAt}, 0)`),
+  check('jobs_retry_at_utc', utc(t.retryAt)),
+  check('jobs_queued_at_utc', utc(t.queuedAt)),
+  check('jobs_claimed_at_utc', utc(t.claimedAt)),
+  check('jobs_heard_at_utc', utc(t.heardAt)),
+  check('jobs_ended_at_utc', utc(t.endedAt)),
   check('jobs_state_choice', sql`${t.state} in ('queued', 'starting', 'running', 'waiting', 'done', 'failed', 'stopped', 'lost')`),
   check('jobs_ended_reason_choice', sql`${t.endedReason} in ('reset', 'write-off')`),
   uniqueIndex('jobs_one_active_unique').on(t.conversation).where(sql`${t.state} in ('queued', 'starting', 'running', 'waiting')`),
@@ -975,8 +981,8 @@ export const modelAccounts = sqliteTable('model_accounts', {
   resetsAt: text('resets_at'),
   hasRoom: integer('has_room', { mode: 'boolean' }).notNull(),
 }, t => [
-  check('model_accounts_usage_read_at_utc', sql`${t.usageReadAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.usageReadAt}) = ${t.usageReadAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.usageReadAt}) = ${t.usageReadAt}, 0)`),
-  check('model_accounts_resets_at_utc', sql`${t.resetsAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.resetsAt}) = ${t.resetsAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.resetsAt}) = ${t.resetsAt}, 0)`),
+  check('model_accounts_usage_read_at_utc', utc(t.usageReadAt)),
+  check('model_accounts_resets_at_utc', utc(t.resetsAt)),
   check('model_accounts_has_room_boolean', sql`${t.hasRoom} in (0, 1)`),
   check('model_accounts_usage_range', sql`${t.usage} is null or ${t.usage} between 0 and 1`),
 ]);
@@ -1011,7 +1017,7 @@ export const bridgeConnections = sqliteTable('bridge_connections', {
   state: text('state', { enum: ["connecting", "connected", "backoff", "disconnected"] }).notNull(),
   stateAt: text('state_at').notNull(),
 }, t => [
-  check('bridge_connections_state_at_utc', sql`${t.stateAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.stateAt}) = ${t.stateAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.stateAt}) = ${t.stateAt}, 0)`),
+  check('bridge_connections_state_at_utc', utc(t.stateAt)),
   check('bridge_connections_platform_choice', sql`${t.platform} in ('discord', 'slack')`),
   check('bridge_connections_enabled_boolean', sql`${t.enabled} in (0, 1)`),
   check('bridge_connections_state_choice', sql`${t.state} in ('connecting', 'connected', 'backoff', 'disconnected')`),
@@ -1066,9 +1072,9 @@ export const bridgeIncoming = sqliteTable('bridge_incoming', {
   reason: text('reason'),
   conversation: text('conversation').references((): AnySQLiteColumn => conversations.id),
 }, t => [
-  check('bridge_incoming_posted_at_utc', sql`${t.postedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.postedAt}) = ${t.postedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.postedAt}) = ${t.postedAt}, 0)`),
-  check('bridge_incoming_received_at_utc', sql`${t.receivedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.receivedAt}) = ${t.receivedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.receivedAt}) = ${t.receivedAt}, 0)`),
-  check('bridge_incoming_delivered_at_utc', sql`${t.deliveredAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.deliveredAt}) = ${t.deliveredAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.deliveredAt}) = ${t.deliveredAt}, 0)`),
+  check('bridge_incoming_posted_at_utc', utc(t.postedAt)),
+  check('bridge_incoming_received_at_utc', utc(t.receivedAt)),
+  check('bridge_incoming_delivered_at_utc', utc(t.deliveredAt)),
   check('bridge_incoming_is_dm_boolean', sql`${t.isDm} in (0, 1)`),
   check('bridge_incoming_state_choice', sql`${t.state} in ('pending', 'held', 'dropped', 'delivered')`),
 ]);
@@ -1085,7 +1091,7 @@ export const bridgeSends = sqliteTable('bridge_sends', {
   postedId: text('posted_id'),
   createdAt: text('created_at').notNull(),
 }, t => [
-  check('bridge_sends_created_at_utc', sql`${t.createdAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.createdAt}) = ${t.createdAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.createdAt}) = ${t.createdAt}, 0)`),
+  check('bridge_sends_created_at_utc', utc(t.createdAt)),
   check('bridge_sends_state_choice', sql`${t.state} in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed')`),
 ]);
 
@@ -1098,7 +1104,7 @@ export const bridgeFiles = sqliteTable('bridge_files', {
   contents: blob('contents', { mode: 'buffer' }).notNull(),
   fetchedAt: text('fetched_at').notNull(),
 }, t => [
-  check('bridge_files_fetched_at_utc', sql`${t.fetchedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.fetchedAt}) = ${t.fetchedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.fetchedAt}) = ${t.fetchedAt}, 0)`),
+  check('bridge_files_fetched_at_utc', utc(t.fetchedAt)),
   primaryKey({ columns: [t.connection, t.file] }),
 ]);
 
@@ -1109,7 +1115,7 @@ export const secrets = sqliteTable('secrets', {
   changedAt: text('changed_at').notNull(),
   changedBy: text('changed_by').notNull().references((): AnySQLiteColumn => members.id),
 }, t => [
-  check('secrets_changed_at_utc', sql`${t.changedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.changedAt}) = ${t.changedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.changedAt}) = ${t.changedAt}, 0)`),
+  check('secrets_changed_at_utc', utc(t.changedAt)),
 ]);
 
 /** Who may be handed a secret. */
@@ -1123,8 +1129,8 @@ export const secretGrants = sqliteTable('secret_grants', {
   grantedAt: text('granted_at').notNull(),
   expiresAt: text('expires_at').notNull(),
 }, t => [
-  check('secret_grants_granted_at_utc', sql`${t.grantedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.grantedAt}) = ${t.grantedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.grantedAt}) = ${t.grantedAt}, 0)`),
-  check('secret_grants_expires_at_utc', sql`${t.expiresAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.expiresAt}) = ${t.expiresAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.expiresAt}) = ${t.expiresAt}, 0)`),
+  check('secret_grants_granted_at_utc', utc(t.grantedAt)),
+  check('secret_grants_expires_at_utc', utc(t.expiresAt)),
 ]);
 
 /** An agent asking for a secret. */
@@ -1142,8 +1148,8 @@ export const secretRequests = sqliteTable('secret_requests', {
   askedAt: text('asked_at').notNull(),
   answeredAt: text('answered_at'),
 }, t => [
-  check('secret_requests_asked_at_utc', sql`${t.askedAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.askedAt}) = ${t.askedAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.askedAt}) = ${t.askedAt}, 0)`),
-  check('secret_requests_answered_at_utc', sql`${t.answeredAt} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.answeredAt}) = ${t.answeredAt} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.answeredAt}) = ${t.answeredAt}, 0)`),
+  check('secret_requests_asked_at_utc', utc(t.askedAt)),
+  check('secret_requests_answered_at_utc', utc(t.answeredAt)),
   check('secret_requests_state_choice', sql`${t.state} in ('pending', 'allowed', 'denied', 'cancelled', 'revoked')`),
   check('secret_requests_always_boolean', sql`${t.always} in (0, 1)`),
 ]);
@@ -1159,7 +1165,7 @@ export const secretRules = sqliteTable('secret_rules', {
 
 /** The agents a rule applies to. */
 export const secretRuleAgents = sqliteTable('secret_rule_agents', {
-  secret: text('secret').notNull().references((): AnySQLiteColumn => secrets.name),
+  secret: text('secret').notNull().references((): AnySQLiteColumn => secretRules.secret),
   agent: text('agent').notNull().references((): AnySQLiteColumn => agents.id),
   when: text('when', { enum: ["on_request", "at_start"] }).notNull(),
 }, t => [
@@ -1176,7 +1182,7 @@ export const secretUses = sqliteTable('secret_uses', {
   at: text('at').notNull(),
   state: text('state', { enum: ["started", "released", "failed"] }).notNull(),
 }, t => [
-  check('secret_uses_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
+  check('secret_uses_at_utc', utc(t.at)),
   check('secret_uses_state_choice', sql`${t.state} in ('started', 'released', 'failed')`),
 ]);
 
@@ -1188,7 +1194,7 @@ export const secretChanges = sqliteTable('secret_changes', {
   by: text('by').notNull().references((): AnySQLiteColumn => members.id),
   at: text('at').notNull(),
 }, t => [
-  check('secret_changes_at_utc', sql`${t.at} is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', ${t.at}) = ${t.at} or strftime('%Y-%m-%dT%H:%M:%fZ', ${t.at}) = ${t.at}, 0)`),
+  check('secret_changes_at_utc', utc(t.at)),
   check('secret_changes_action_choice', sql`${t.action} in ('add', 'replace', 'removed')`),
 ]);
 
@@ -1673,10 +1679,12 @@ export const secretRequestsRelations = relations(secretRequests, ({ one, many })
 }));
 
 export const secretRulesRelations = relations(secretRules, ({ one, many }) => ({
+  agents: many(secretRuleAgents, { relationName: 'secret_rule_assignments' }),
   secretRow: one(secrets, { fields: [secretRules.secret], references: [secrets.name], relationName: 'secret_rules_secret' }),
 }));
 
 export const secretRuleAgentsRelations = relations(secretRuleAgents, ({ one, many }) => ({
+  ruleRow: one(secretRules, { fields: [secretRuleAgents.secret], references: [secretRules.secret], relationName: 'secret_rule_assignments' }),
   secretRow: one(secrets, { fields: [secretRuleAgents.secret], references: [secrets.name], relationName: 'secret_rule_agents_secret' }),
   agentRow: one(agents, { fields: [secretRuleAgents.agent], references: [agents.id], relationName: 'secret_rule_agents_agent' }),
 }));
@@ -1696,14 +1704,17 @@ export const secretChangesRelations = relations(secretChanges, ({ one, many }) =
 export const migrations = sqliteTable('migrations', {
   number: integer('number').primaryKey().notNull(),
   appliedAt: text('applied_at').notNull(),
-});
+}, t => [
+  check('migrations_appliedAt_utc', utc(t.appliedAt)),
+]);
 export const operationResults = sqliteTable('operation_results', {
   caller: text('caller').notNull(),
   id: text('id').notNull(),
   operation: text('operation').notNull(),
   result: blob('result', { mode: 'buffer' }).notNull(),
   expiresAt: text('expires_at').notNull(),
-}, t => [primaryKey({ columns: [t.caller, t.id] }), index('operation_results_expiry_idx').on(t.expiresAt)]);
+}, t => [
+  check('operationResults_expiresAt_utc', utc(t.expiresAt)),primaryKey({ columns: [t.caller, t.id] }), index('operation_results_expiry_idx').on(t.expiresAt)]);
 export const outsideEffects = sqliteTable('outside_effects', {
   id: text('id').primaryKey().notNull(),
   operation: text('operation').notNull(),
@@ -1711,7 +1722,11 @@ export const outsideEffects = sqliteTable('outside_effects', {
   createdAt: text('created_at').notNull(),
   releasedAt: text('released_at'),
   completedAt: text('completed_at'),
-});
+}, t => [
+  check('outsideEffects_createdAt_utc', utc(t.createdAt)),
+  check('outsideEffects_releasedAt_utc', utc(t.releasedAt)),
+  check('outsideEffects_completedAt_utc', utc(t.completedAt)),
+]);
 export const notificationQueue = sqliteTable('notification_queue', {
   id: text('id').primaryKey().notNull(),
   device: text('device').notNull().references(() => notificationDevices.endpoint),
@@ -1719,20 +1734,27 @@ export const notificationQueue = sqliteTable('notification_queue', {
   queuedAt: text('queued_at').notNull(),
   sentAt: text('sent_at'),
   attempts: integer('attempts').notNull().default(0),
-});
+}, t => [
+  check('notificationQueue_queuedAt_utc', utc(t.queuedAt)),
+  check('notificationQueue_sentAt_utc', utc(t.sentAt)),
+]);
 export const signinChallenges = sqliteTable('signin_challenges', {
   id: text('id').primaryKey().notNull(),
   token: text('token').notNull().references(() => tokens.fingerprint),
   challenge: text('challenge').notNull(),
   expiresAt: text('expires_at').notNull(),
-});
+}, t => [
+  check('signinChallenges_expiresAt_utc', utc(t.expiresAt)),
+]);
 export const bridgeRawEvents = sqliteTable('bridge_raw_events', {
   connection: text('connection').notNull().references(() => bridgeConnections.id),
   id: text('id').notNull(),
   receivedAt: text('received_at').notNull(),
   expiresAt: text('expires_at').notNull(),
   event: blob('event', { mode: 'buffer' }).notNull(),
-}, t => [primaryKey({ columns: [t.connection, t.id] }), index('bridge_raw_events_expiry_idx').on(t.expiresAt)]);
+}, t => [
+  check('bridgeRawEvents_receivedAt_utc', utc(t.receivedAt)),
+  check('bridgeRawEvents_expiresAt_utc', utc(t.expiresAt)),primaryKey({ columns: [t.connection, t.id] }), index('bridge_raw_events_expiry_idx').on(t.expiresAt)]);
 export const bridgeResume = sqliteTable('bridge_resume', {
   connection: text('connection').primaryKey().notNull().references(() => bridgeConnections.id),
   session: text('session').notNull(),
@@ -1747,6 +1769,8 @@ export const secretWriteJournal = sqliteTable('secret_write_journal', {
   startedAt: text('started_at').notNull(),
   completedAt: text('completed_at'),
 }, t => [
+  check('secretWriteJournal_startedAt_utc', utc(t.startedAt)),
+  check('secretWriteJournal_completedAt_utc', utc(t.completedAt)),
   check('secret_write_journal_operation_choice', sql`${t.operation} in ('add', 'replace', 'remove')`),
   check('secret_write_journal_state_choice', sql`${t.state} in ('prepared', 'committed', 'undone')`),
 ]);

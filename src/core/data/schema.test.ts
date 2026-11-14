@@ -7,7 +7,7 @@ import { buildSchema } from 'drizzle-graphql';
 import { graphql } from 'graphql/index.js';
 import { createDataSchema } from './database.js';
 import { referenceStatements } from './references.js';
-import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, digests } from './schema.js';
+import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, digests, migrations, operationResults, signinChallenges, household as householdSettings, secrets, secretRules, secretRuleAgents } from './schema.js';
 
 const opened: Database.Database[] = [];
 function fresh() {
@@ -168,6 +168,50 @@ describe('the approved data model', () => {
     expect(db.select().from(messages).all()).toEqual([]);
     expect(db.select().from(threadRefs).all()).toEqual([]);
     expect(client.pragma('foreign_key_check')).toEqual([]);
+  });
+
+
+  it('also refuses a database containing only SQLite analysis state', () => {
+    const client = new Database(':memory:'); opened.push(client);
+    client.exec('CREATE TABLE old(a); ANALYZE; DROP TABLE old;');
+    const before = client.prepare('SELECT * FROM sqlite_schema').all();
+    expect(before).not.toEqual([]);
+    expect(() => createDataSchema(client)).toThrow('requires an empty database');
+    expect(client.prepare('SELECT * FROM sqlite_schema').all()).toEqual(before);
+  });
+
+  it('keeps spec lines unique and rule-agent assignments attached to an actual standing rule', () => {
+    const { db, at, task } = household();
+    db.update(tasks).set({ specItem: 'spec/pump', criterion: 'fits' }).run();
+    expect(() => db.insert(tasks).values({ ...task, id: 't-2', specItem: 'spec/pump', criterion: 'fits' }).run()).toThrow();
+    db.insert(secrets).values({ name: 'github', description: 'Test', changedAt: at, changedBy: 'jonathan' }).run();
+    expect(() => db.insert(secretRuleAgents).values({ secret: 'github', agent: 'art', when: 'on_request' }).run()).toThrow();
+    db.insert(secretRules).values({ secret: 'github', answer: 'ask', minutes: 10 }).run();
+    db.insert(secretRuleAgents).values({ secret: 'github', agent: 'art', when: 'on_request' }).run();
+    expect(() => db.delete(secretRules).run()).toThrow();
+  });
+
+  it('checks UTC timestamps in internal bookkeeping as well', () => {
+    const { db, at } = household();
+    expect(() => db.insert(migrations).values({ number: 2, appliedAt: 'yesterday' }).run()).toThrow();
+    expect(() => db.insert(operationResults).values({ caller: 'art', id: 'retry-1', operation: 'tasks.close', result: Buffer.from('done'), expiresAt: '2026-11-14T00:00:00+01:00' }).run()).toThrow();
+    db.insert(tokens).values({ fingerprint: 'fp', label: 'browser', kind: 'owner', member: 'jonathan', createdAt: at }).run();
+    expect(() => db.insert(signinChallenges).values({ id: 'ch-1', token: 'fp', challenge: 'test', expiresAt: 'yesterday' }).run()).toThrow();
+  });
+
+  it('enforces household ranges, live token labels and secret rule choices', () => {
+    const { db, client, at } = household();
+    expect(() => db.insert(householdSettings).values({ commsDays: 15 }).run()).toThrow();
+    expect(() => db.insert(householdSettings).values({ backupKeep: 91 }).run()).toThrow();
+    db.insert(householdSettings).values({ commsDays: 14, backupKeep: 90 }).run();
+    const token = { fingerprint: 'fp', label: 'browser', kind: 'owner' as const, member: 'jonathan', createdAt: at };
+    db.insert(tokens).values(token).run();
+    expect(() => db.insert(tokens).values({ ...token, fingerprint: 'fp2' }).run()).toThrow();
+    db.update(tokens).set({ revokedAt: at }).run();
+    db.insert(tokens).values({ ...token, fingerprint: 'fp2' }).run();
+    db.insert(secrets).values({ name: 'github', description: 'Test', changedAt: at, changedBy: 'jonathan' }).run();
+    db.insert(secretRules).values({ secret: 'github', answer: 'ask', minutes: 10 }).run();
+    expect(() => client.prepare("UPDATE secret_rules SET answer = 'sometimes'").run()).toThrow();
   });
 
 });

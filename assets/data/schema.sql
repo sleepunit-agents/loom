@@ -259,6 +259,7 @@ CREATE TABLE `tasks` (
 	CONSTRAINT "tasks_assignee_pair" CHECK(("tasks"."assignee_kind" is null) = ("tasks"."assignee" is null))
 );
 
+CREATE UNIQUE INDEX `tasks_spec_line_unique` ON `tasks` (`spec_item`,`criterion`) WHERE "tasks"."spec_item" is not null and "tasks"."criterion" is not null;
 CREATE INDEX `tasks_status_priority_position_idx` ON `tasks` (`status`,`priority`,`position`);
 CREATE INDEX `tasks_project_status_idx` ON `tasks` (`project`,`status`);
 CREATE INDEX `tasks_owner_kind_owner_idx` ON `tasks` (`owner_kind`,`owner`);
@@ -1130,7 +1131,7 @@ CREATE TABLE `secret_rule_agents` (
 	`agent` text NOT NULL,
 	`when` text NOT NULL,
 	PRIMARY KEY(`secret`, `agent`, `when`),
-	FOREIGN KEY (`secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`secret`) REFERENCES `secret_rules`(`secret`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	CONSTRAINT "secret_rule_agents_when_choice" CHECK("secret_rule_agents"."when" in ('on_request', 'at_start'))
 );
@@ -1188,7 +1189,8 @@ CREATE TABLE `measuring_settings` (
 
 CREATE TABLE `migrations` (
 	`number` integer PRIMARY KEY NOT NULL,
-	`applied_at` text NOT NULL
+	`applied_at` text NOT NULL,
+	CONSTRAINT "migrations_appliedAt_utc" CHECK("migrations"."applied_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "migrations"."applied_at") = "migrations"."applied_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "migrations"."applied_at") = "migrations"."applied_at", 0))
 );
 
 CREATE TABLE `operation_results` (
@@ -1197,7 +1199,8 @@ CREATE TABLE `operation_results` (
 	`operation` text NOT NULL,
 	`result` blob NOT NULL,
 	`expires_at` text NOT NULL,
-	PRIMARY KEY(`caller`, `id`)
+	PRIMARY KEY(`caller`, `id`),
+	CONSTRAINT "operationResults_expiresAt_utc" CHECK("operation_results"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "operation_results"."expires_at") = "operation_results"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "operation_results"."expires_at") = "operation_results"."expires_at", 0))
 );
 
 CREATE INDEX `operation_results_expiry_idx` ON `operation_results` (`expires_at`);
@@ -1207,7 +1210,10 @@ CREATE TABLE `outside_effects` (
 	`target` text NOT NULL,
 	`created_at` text NOT NULL,
 	`released_at` text,
-	`completed_at` text
+	`completed_at` text,
+	CONSTRAINT "outsideEffects_createdAt_utc" CHECK("outside_effects"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "outside_effects"."created_at") = "outside_effects"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "outside_effects"."created_at") = "outside_effects"."created_at", 0)),
+	CONSTRAINT "outsideEffects_releasedAt_utc" CHECK("outside_effects"."released_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "outside_effects"."released_at") = "outside_effects"."released_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "outside_effects"."released_at") = "outside_effects"."released_at", 0)),
+	CONSTRAINT "outsideEffects_completedAt_utc" CHECK("outside_effects"."completed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "outside_effects"."completed_at") = "outside_effects"."completed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "outside_effects"."completed_at") = "outside_effects"."completed_at", 0))
 );
 
 CREATE TABLE `notification_queue` (
@@ -1218,7 +1224,9 @@ CREATE TABLE `notification_queue` (
 	`sent_at` text,
 	`attempts` integer DEFAULT 0 NOT NULL,
 	FOREIGN KEY (`device`) REFERENCES `notification_devices`(`endpoint`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "notificationQueue_queuedAt_utc" CHECK("notification_queue"."queued_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_queue"."queued_at") = "notification_queue"."queued_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_queue"."queued_at") = "notification_queue"."queued_at", 0)),
+	CONSTRAINT "notificationQueue_sentAt_utc" CHECK("notification_queue"."sent_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_queue"."sent_at") = "notification_queue"."sent_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_queue"."sent_at") = "notification_queue"."sent_at", 0))
 );
 
 CREATE TABLE `signin_challenges` (
@@ -1226,7 +1234,8 @@ CREATE TABLE `signin_challenges` (
 	`token` text NOT NULL,
 	`challenge` text NOT NULL,
 	`expires_at` text NOT NULL,
-	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "signinChallenges_expiresAt_utc" CHECK("signin_challenges"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "signin_challenges"."expires_at") = "signin_challenges"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "signin_challenges"."expires_at") = "signin_challenges"."expires_at", 0))
 );
 
 CREATE TABLE `bridge_raw_events` (
@@ -1236,7 +1245,9 @@ CREATE TABLE `bridge_raw_events` (
 	`expires_at` text NOT NULL,
 	`event` blob NOT NULL,
 	PRIMARY KEY(`connection`, `id`),
-	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "bridgeRawEvents_receivedAt_utc" CHECK("bridge_raw_events"."received_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_raw_events"."received_at") = "bridge_raw_events"."received_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_raw_events"."received_at") = "bridge_raw_events"."received_at", 0)),
+	CONSTRAINT "bridgeRawEvents_expiresAt_utc" CHECK("bridge_raw_events"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_raw_events"."expires_at") = "bridge_raw_events"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_raw_events"."expires_at") = "bridge_raw_events"."expires_at", 0))
 );
 
 CREATE INDEX `bridge_raw_events_expiry_idx` ON `bridge_raw_events` (`expires_at`);
@@ -1255,6 +1266,8 @@ CREATE TABLE `secret_write_journal` (
 	`state` text NOT NULL,
 	`started_at` text NOT NULL,
 	`completed_at` text,
+	CONSTRAINT "secretWriteJournal_startedAt_utc" CHECK("secret_write_journal"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "secret_write_journal"."started_at") = "secret_write_journal"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "secret_write_journal"."started_at") = "secret_write_journal"."started_at", 0)),
+	CONSTRAINT "secretWriteJournal_completedAt_utc" CHECK("secret_write_journal"."completed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "secret_write_journal"."completed_at") = "secret_write_journal"."completed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "secret_write_journal"."completed_at") = "secret_write_journal"."completed_at", 0)),
 	CONSTRAINT "secret_write_journal_operation_choice" CHECK("secret_write_journal"."operation" in ('add', 'replace', 'remove')),
 	CONSTRAINT "secret_write_journal_state_choice" CHECK("secret_write_journal"."state" in ('prepared', 'committed', 'undone'))
 );
