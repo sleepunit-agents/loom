@@ -24,8 +24,11 @@ export function SealedQuestionReader({ ask, guard, go }: { ask: Ask; guard: Guar
   const retained = row && Number.isFinite(row.keepUntil) && row.keepUntil > Math.max(now,Date.now());
   const question = retained ? row.question : null;
   useEffect(()=>{
-    if (!row || !Number.isFinite(row.keepUntil) || row.keepUntil<=Date.now()) return;
-    const timer=setTimeout(()=>setNow(Date.now()),Math.min(2147483647,Math.max(1,row.keepUntil-Date.now())));
+    if (!row || !Number.isFinite(row.keepUntil)) return;
+    const current=Date.now();
+    // The deadline can pass between render and this passive effect. Withdraw now rather than skip the timer.
+    if (row.keepUntil<=current) { if (now<row.keepUntil) setNow(current); return; }
+    const timer=setTimeout(()=>setNow(Date.now()),Math.min(2147483647,Math.max(1,row.keepUntil-current)));
     return ()=>clearTimeout(timer);
   },[row,now]);
   // Withdraw drafts and confirmation on connection/scope/retention loss.

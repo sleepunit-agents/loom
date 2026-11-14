@@ -22,7 +22,7 @@ const publish=async(s:Snapshot<SealedQuestion>)=>act(async()=>{f.snapshot=s;f.li
 const draw=async(a:Ask=ask,go=vi.fn())=>act(async()=>{tree=create(h(SealedQuestionReader,{ask:a,guard:guard(),go}));});
 function pending(){let resolve!:(r:unknown)=>void;return {result:new Promise(r=>resolve=r),finish:async(r:unknown)=>act(async()=>resolve(r))};}
 beforeEach(()=>{vi.useFakeTimers();f.call.mockReset();f.read.mockReset();f.listeners.clear();f.snapshot={records:[row()],status:'live'};});
-afterEach(async()=>{await act(async()=>tree?.unmount());vi.useRealTimers();});
+afterEach(async()=>{await act(async()=>tree?.unmount());vi.useRealTimers();vi.restoreAllMocks();});
 it('reads exactly the selected scope, shows words and requires fresh display and send checks',async()=>{
  const q=f.snapshot.records[0];f.call.mockReturnValue({result:Promise.resolve({ok:true,value:q})});await draw();
  expect(f.read).toHaveBeenCalledWith('comms.question',ask.id);expect(text()).toContain('Secret question?');expect(text()).toContain('Secret no');expect(buttons('Yes')).toHaveLength(0);
@@ -80,4 +80,10 @@ it.each(['offline','denied','loading','empty'] as const)('withdraws answered his
  expect(text()).toContain('replied');expect(buttons('Open private reply')).toHaveLength(1);
  await publish({records:mode==='empty'?[]:[q],status:mode==='empty'?'live':mode});
  expect(text()).not.toContain('replied');expect(text()).not.toContain('jonathan');expect(buttons('Open private conversation')).toHaveLength(0);expect(buttons('Open private reply')).toHaveLength(0);
+});
+
+it('withdraws words when retention expires between render and the passive effect',async()=>{
+ const before=Date.now(),deadline=f.snapshot.records[0].keepUntil;
+ vi.spyOn(Date,'now').mockReturnValueOnce(before).mockReturnValueOnce(before).mockReturnValue(deadline);
+ await draw();expect(text()).not.toContain('Secret question?');expect(text()).toContain('Words no longer kept');expect(buttons('Check private question')).toHaveLength(0);
 });
