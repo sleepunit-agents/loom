@@ -59,7 +59,7 @@ async function setup(staging=false,privateInput=false,unknownRoot=false,file?:st
   const c={args,input:'',child,options};child.stdin.on('data',v=>{c.input+=v.toString();launched();if(autoFinish)queueMicrotask(finish);});calls.push(c);
   return child as ReturnType<SpawnClaude>;
  };
- const finish=()=>{const c=calls.at(-1)!,session=c.args[c.args.indexOf('--session-id')+1];
+ const finish=()=>{const c=calls.at(-1)!,session=c.args[c.args.indexOf(c.args.includes('--resume')?'--resume':'--session-id')+1];
   c.child.stdout.end(JSON.stringify({type:'result',is_error:false,session_id:session,result:'PRIVATE RESULT'}));c.child.emit('close',0);};
  const start=(override=config)=>{const worker=startClockWorker(override,{clock,launch});closes.push(worker.close);return worker;};
  const withdraw=()=>{fenceSource();};
@@ -418,4 +418,97 @@ it('standalone file joining an authenticated prompt conversation stays held',asy
  const row=f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(joined) as {record:string};
  expect(JSON.parse(row.record).state).toBe('held');
  expect(f.app.db.prepare('SELECT id FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toBeUndefined();
+});
+
+it.each([false,true])('executable worker drains a joined prompt through the same native history (private=%s)',async privateInput=>{
+ const f=await setup(false,privateInput),input=new PassThrough(),signals=new EventEmitter(),stderr=vi.fn();
+ const completed=runClockWorker({input,args:[],signals,stderr},{clock:f.clock,launch:f.launch});
+ input.end(JSON.stringify(f.config));await f.ready;
+ const joined=await f.joinInput();
+ const next=new Promise<void>(resolve=>{
+  const original=preparation.prepareClockInput;
+  vi.spyOn(preparation,'prepareClockInput').mockImplementation((...args)=>{
+   const value=original(...args);if(value?.message==='LATER JOINED WORDS')resolve();return value;
+  });
+ });
+ f.finish();
+ // A bounded condition wait fails promptly on the unchanged one-turn startup.
+ await vi.waitFor(()=>expect(f.calls).toHaveLength(2));await next;
+ expect(f.calls[1].args).toContain('--resume');
+ expect(f.calls[1].args[f.calls[1].args.indexOf('--resume')+1]).toBe(f.calls[0].args[f.calls[0].args.indexOf('--session-id')+1]);
+ expect(f.calls[1].input).toBe('LOCAL OWNER RULES\nLATER JOINED WORDS');
+ expect(f.consumed().consumed).not.toBeNull();
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+ f.finish();expect(await completed).toBe(0);expect(stderr).not.toHaveBeenCalled();
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:expect.any(Number)});
+ expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(2);
+});
+
+it.each(['withdraw','credential','claim','model','policy'] as const)('rechecks joined %s after preparation before resumed spawn',async kind=>{
+ const f=await setup(),worker=f.start();await f.ready;const joined=await f.joinInput();
+ const original=preparation.prepareClockInput;let changed=false;
+ vi.spyOn(preparation,'prepareClockInput').mockImplementation((...args)=>{
+  const value=original(...args);if(value?.message==='LATER JOINED WORDS'){
+   changed=true;
+   if(kind==='withdraw')f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.withdrawn',json('true')) WHERE id=?").run(joined);
+   if(kind==='credential')signin(f.app).tokens.change(ts=>{for(const t of ts)if(t.sha256===hash(f.config.credential))t.revoked=new Date(f.clock.now()).toISOString();});
+   if(kind==='claim')f.store.put('job',{...f.store.read('job',f.job)!,claimedAt:f.config.assignment.claimedAt+1},f.clock.now());
+   if(kind==='model')f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.model','changed') WHERE id=?").run(joined);
+   if(kind==='policy')expect(f.call('runtime.configureBodyPolicy',{agent:'art',revision:0,gates:{people:{}},policy:{deny:['Bash']}}).ok).toBe(true);
+  }return value;
+ });
+ f.finish();expect(await worker.completed).toBe(false);expect(changed).toBe(true);expect(f.calls).toHaveLength(1);
+ expect(f.consumed().consumed).not.toBeNull();
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+ expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(1);
+});
+it('a failed resumed child never ACKs or retries that source',async()=>{
+ const f=await setup(),worker=f.start();await f.ready;const joined=await f.joinInput();f.finish();
+ await vi.waitFor(()=>expect(f.calls).toHaveLength(2));f.calls[1].child.emit('close',1);
+ expect(await worker.completed).toBe(false);expect(f.consumed().consumed).not.toBeNull();
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+ expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(2);
+});
+it('pins steering across separately valid admissions rather than reusing old history',async()=>{
+ const f=await setup(),worker=f.start();await f.ready;const joined=await f.joinInput();
+ const original=globalThis.fetch;let changed=false;
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+  const response=await original(...args);
+  if(String(args[0]).endsWith('/completeClockExecution')&&!changed){
+   changed=true;const p=provenanceStore(f.app.db),before=p.read(f.config.binding.conversation)!;
+   f.app.db.transaction(()=>p.put(f.config.binding.conversation,{...before,history:{...before.history,people:['mark'],owner:false}}))();
+  }return response;
+ });
+ f.finish();expect(await worker.completed).toBe(false);expect(changed).toBe(true);expect(f.calls).toHaveLength(1);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+});
+
+it('a retired watchdog failure during completion cannot fence the next native generation',async()=>{
+ const f=await setup(),original=globalThis.fetch;let reads=0,rejectRead!:(error:Error)=>void,entered!:()=>void;
+ const reading=new Promise<void>(resolve=>{entered=resolve;});
+ vi.spyOn(globalThis,'fetch').mockImplementation((...args)=>{
+  if(String(args[0]).endsWith('/currentClockExecution')&&++reads===2){entered();return new Promise<Response>((_resolve,reject)=>{rejectRead=reject;});}
+  return original(...args);
+ });
+ const worker=f.start();await f.ready;await f.joinInput();await reading;
+ const held=holdResponse('completeClockExecution');
+ try {
+  f.finish();await held.ready;rejectRead(new Error('retired source no longer current'));await settle();
+  expect(f.calls[0].child.killed).toBe(false);held.release();
+  await vi.waitFor(()=>expect(f.calls).toHaveLength(2));expect(f.calls[1].child.killed).toBe(false);
+  f.finish();expect(await worker.completed).toBe(true);
+ }finally {held.release();held.spy.mockRestore();}
+});
+it('a lost completion never releases a second child even when more input is queued',async()=>{
+ const f=await setup(),worker=f.start();await f.ready;const joined=await f.joinInput(),held=holdResponse('completeClockExecution');
+ try {f.finish();await held.ready;f.clock.advance(5000);expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(1);}
+ finally {held.release();held.spy.mockRestore();}
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+});
+it('new generation watchdog still kills a resumed child on source withdrawal',async()=>{
+ const f=await setup(),worker=f.start();await f.ready;const joined=await f.joinInput();f.finish();
+ await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+ f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.withdrawn',json('true')) WHERE id=?").run(joined);
+ f.clock.advance(1000);expect(await worker.completed).toBe(false);expect(f.calls[1].child.killed).toBe(true);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
 });

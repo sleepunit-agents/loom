@@ -23,7 +23,7 @@ export interface ClockWorkerConfig {
 }
 const fail=()=>new Error('Scheduled worker unavailable');
 
-/** One foreground child, one original local assignment, no resume/retry. The
+/** One foreground child at a time, one original assignment, no retry. The
  * HTTP authority is exact-source Runtime admission, not a caller current()
  * witness. Owner lifecycle events fence synchronously across every await. */
 export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch?:SpawnClaude}={}) {
@@ -37,6 +37,7 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
   const clock=host.clock??realClock;
   const session=new ClaudeWorkerSession(config.command,config.env,host.launch);
   const requests=new Set<AbortController>();
+  let generation=0;
   let active=true,deadline=0,cancelWatch:(()=>void)|undefined,cancelExpiry:(()=>void)|undefined;
   const fence=()=>{
     active=false;cancelWatch?.();cancelExpiry?.();session.close();
@@ -62,39 +63,53 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
   };
   const completed=(async()=>{
     try {
-      const started=clock.now(),input=begin.parse(await call('beginClockExecution',{}));
-      if(input.job!==config.job||JSON.stringify(input.binding)!==JSON.stringify(config.binding)||JSON.stringify(input.assignment)!==JSON.stringify(config.assignment))throw fail();
-      // This deadline starts BEFORE the request. A delayed successful response
-      // cannot mint a fresh local execution window from old authority.
-      deadline=started+input.ttl;
-      const message=prepareClockInput(input.batch,config.binding.conversation,config.checkout);
-      if(!message||!local())throw fail();
-      const refresh=async()=>{
-        const started=clock.now();
-        const value=clockExecutionCurrent.parse(await call('currentClockExecution',{execution:input.execution}));
-        if(!local()||clock.now()>=started+value.ttl)throw fail();
-        // Out-of-order successful reads cannot shorten/restore a fenced lease.
-        deadline=Math.max(deadline,started+value.ttl);
-        cancelExpiry?.();cancelExpiry=clock.at(deadline,fence);
-      };
-      // Independent owning read after preparation, before the actual spawn.
-      await refresh();if(!local())throw fail();
-      const watch=()=>{cancelWatch=clock.at(clock.now()+1000,()=>{
-        if(!active)return;
-        // Cadence belongs to the clock, independently of response latency.
-        // At most five one-second reads can overlap the bounded window.
-        watch();void refresh().catch(fence);
-      });};
-      watch();
-      const output=await session.turn({binding:config.binding,rules:config.rules,message:message.message,
-        checkout:config.checkout,current:local});
-      // Always start a NEW authority request after output. Never coalesce this
-      // with a watchdog read begun while the child was still running.
-      await refresh();if(!local())throw fail();
-      const receipt=clockExecutionCompletion.parse(await call('completeClockExecution',{execution:input.execution}));
-      if(!local()||!receipt.acknowledged)throw fail();
-      // No words or native handle escape this dedicated one-turn startup.
-      void output;return true;
+      let historyKey:string|undefined;
+      for(let turn=0;turn<100;turn++){
+        const generationId=++generation;
+        const started=clock.now(),input=begin.parse(await call('beginClockExecution',{}));
+        if(input.job!==config.job||JSON.stringify(input.binding)!==JSON.stringify(config.binding)||JSON.stringify(input.assignment)!==JSON.stringify(config.assignment))throw fail();
+        // Equality witness only: each source still requires its own admission.
+        // Retained local history must not outlive original steering/root/claim.
+        historyKey??=input.historyKey;if(input.historyKey!==historyKey)throw fail();
+        // This deadline starts BEFORE the request. A delayed successful response
+        // cannot mint a fresh local execution window from old authority.
+        deadline=started+input.ttl;
+        const message=prepareClockInput(input.batch,config.binding.conversation,config.checkout);
+        if(!message||!local())throw fail();
+        const refresh=async()=>{
+          const started=clock.now();
+          const value=clockExecutionCurrent.parse(await call('currentClockExecution',{execution:input.execution}));
+          if(generationId!==generation)return;
+          if(!local()||clock.now()>=started+value.ttl)throw fail();
+          // Out-of-order successful reads cannot shorten/restore a fenced lease.
+          deadline=Math.max(deadline,started+value.ttl);
+          cancelExpiry?.();cancelExpiry=clock.at(deadline,fence);
+        };
+        // Independent owning read after preparation, before the actual spawn.
+        await refresh();if(!local())throw fail();
+        const watch=()=>{cancelWatch=clock.at(clock.now()+1000,()=>{
+          if(!active)return;
+          // Cadence belongs to the clock, independently of response latency.
+          // At most five one-second reads can overlap the bounded window.
+          watch();void refresh().catch(()=>{if(generationId===generation)fence();});
+        });};
+        watch();
+        const output=await session.turn({binding:config.binding,rules:config.rules,message:message.message,
+          checkout:config.checkout,current:local});
+        // Always start a NEW authority request after output. Never coalesce this
+        // with a watchdog read begun while the child was still running.
+        await refresh();if(!local())throw fail();
+        // Completion invalidates the source. Retire overlapping watchdog reads
+        // BEFORE sending it, but keep the existing bounded local expiry.
+        ++generation;cancelWatch?.();
+        const receipt=clockExecutionCompletion.parse(await call('completeClockExecution',{execution:input.execution}));
+        if(!local()||!receipt.acknowledged)throw fail();
+        cancelExpiry?.();
+        // Only this in-memory session retains native history. No idle polling,
+        // serialized resume handle, restart reuse or retry of uncertain work.
+        void output;if(!receipt.more)return true;
+      }
+      return false;
     }catch {return false;}
     finally {fence();}
   })();

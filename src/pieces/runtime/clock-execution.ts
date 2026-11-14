@@ -8,6 +8,8 @@ import type { Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
 
 export interface ClockExecutionInput {
+  historyKey:string;
+  more():boolean;
   assignment:z.infer<typeof clockExecutionAssignment>;
   job:string;
   binding:{agent:string;conversation:string;venue:'wake';place:string};
@@ -50,7 +52,7 @@ export function installClockExecution(app:Foundation,effects:OutsideEffects,
       prune();if(executions.size>=1024)throw new OperationError('unavailable','Scheduled execution is busy');
       const execution=randomUUID();
       executions.set(execution,{input,expires:ctx.now+30*60_000});
-      return {execution,job:input.job,assignment:input.assignment,binding:input.binding,
+      return {execution,historyKey:input.historyKey,job:input.job,assignment:input.assignment,binding:input.binding,
         batch:{conversation:input.binding.conversation,messages:[input.message]},ttl:5000 as const};
     },
   }));
@@ -60,6 +62,6 @@ export function installClockExecution(app:Foundation,effects:OutsideEffects,
   }));
   operations.register(operation({name:'runtime.completeClockExecution',doors:['http','direct'],write:true,recheckPolicy:true,
     input:token,output:clockExecutionCompletion,may:v=>v.kind==='agent',
-    run(ctx,i){const e=current(ctx.viewer,i.execution);e.input.acknowledge(ctx);executions.delete(i.execution);return {acknowledged:true as const};},
+    run(ctx,i){const e=current(ctx.viewer,i.execution);e.input.acknowledge(ctx);executions.delete(i.execution);return {acknowledged:true as const,more:e.input.more()};},
   }));
 }

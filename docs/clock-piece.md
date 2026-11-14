@@ -12,7 +12,7 @@ runtime. `loom wake` loads identity and is unrelated to scheduling.
 
 ## Remaining work and evidence
 
-A dedicated worker entry point now owns **one stored-prompt or standalone checkout-file native turn**:
+A dedicated worker entry point now owns **stored-prompt turns or one standalone checkout-file turn**:
 `loom-clock-worker` reads an owner-supplied configuration from bounded stdin,
 uses the existing job-bearing body credential, and calls the Runtime operations
 below before invoking `ClaudeWorkerSession`. This is an executable worker
@@ -31,8 +31,9 @@ Configuration is captured before the first await. The credential does not enter
 argv, stdout, the child's environment automatically, or a new credential store.
 The executable takes no arguments, bounds and validates stdin, drains signals
 through the owning startup, and prints no result words/native handles;
-exit 0 means the turn completed and Runtime acknowledged it, exit 1 means failed
-or uncertain. It performs no retry and owns no retained native session.
+exit 0 means the admitted turns completed and Runtime acknowledged them, exit 1
+means failed or uncertain. It performs no retry. During this one startup it retains
+native history only for prompts already queued when the previous turn completes.
 
 | Native worker step | Owning behavior |
 | --- | --- |
@@ -70,15 +71,47 @@ Generic prompt consumers still use `runtime.readConversation` and
 `runtime.acknowledgeClockInput`; their brief requires accepting actual words
 before ACK and grants no file execution authority.
 
-This consumer supports one stored prompt or standalone checkout file with no model or
+This consumer supports stored prompts or a standalone checkout file with no model or
 account override on the job, root or selected source (including later joined
-inputs), rechecked throughout execution and no configured/imported central body policy. Native joining/resume, continuation handles, local/approval/slot execution,
+inputs), rechecked throughout execution and no configured/imported central body policy. Cross-process/idle native joining, continuation handles, local/approval/slot execution,
 central compiled policy integration and the full runner lifecycle remain work
 under t-2201. The worker is present as a package entry point but is not installed
 or selected on any host by this PR. In-process tests exercise actual next-mode
 HTTP/Signin/Clock/Runtime and the production worker startup with a fake child at
 the existing spawn seam; they do not claim a real Claude login, host deployment,
 browser proof or real-host delivery.
+
+
+### Queued prompt native resume
+
+The same foreground worker now drains prompts queued by the existing authenticated
+Clock join route before each successful completion. Completion returns only a
+`more` boolean alongside the ACK; it is a hint to seek fresh admission, never
+execution authority. Each source still needs its own durable native effect,
+preparation, new current read, watchdog, post-output read and completion. Only the
+oldest pending source executes; no retry follows an uncertain attempt or ACK.
+The worker stops on an empty queue, any failure, or after 100 turns. The bounded
+turn limit reports failure if more remain; a later startup must seek fresh source
+authority, and starts with fresh native history.
+
+Runtime supplies an opaque equality key derived from the original destination,
+root source and effective steering. The worker pins it across turns alongside its
+original binding/assignment and fixed local rules. A changed key ends the startup
+before another spawn, even if the new source would independently be executable.
+The key is data rather than a capability: each admission/current call still needs
+the original current body credential and owning source checks. No caller supplies
+a native session id. `ClaudeWorkerSession` alone holds that id in memory, uses
+`--resume` only after its preceding successful turn, and discards it at close.
+Watchdog responses from a completed generation cannot revoke or extend a later
+generation; generation retirement happens before sending completion, while the
+existing local expiry still bounds a stalled completion.
+
+Public and private executable-stdin fixtures file joined prompts through Clock,
+claim/takeInput/report through the runner, and exercise real HTTP Signin plus the
+production worker at its existing fake-child seam. This is queued sequential
+resume in one worker lifetime. It does not interrupt a running child, wait idle for
+future arrivals, restore native history after restart, install an entry point on a
+host, or implement authenticated continuation handles. Those remain work here.
 
 
 The existing `runtime.takeInput` boundary now requires current owning Clock

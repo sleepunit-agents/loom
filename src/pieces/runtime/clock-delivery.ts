@@ -186,7 +186,9 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       return !!source&&known(source.authorship?.principal)&&source.model===undefined&&supportedClockInput(source);
     };
     if(!originalSteering||!nativeSource(root)||!nativeSource(row))throw new OperationError('denied','Native scheduled source is unsupported');
-    return {job:job.id,assignment:{runner:job.runner,box:job.box,claimedAt:job.claimedAt,house:job.made},
+    return {historyKey:createHash('sha256').update(JSON.stringify([readDestination(job),rootKey,originalSteering])).digest('hex'),
+      more:()=>!!(db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND consumed IS NULL ORDER BY seq').all(job.conversation) as Turn[]).find(r=>!withdrawn(r)),
+      job:job.id,assignment:{runner:job.runner,box:job.box,claimedAt:job.claimedAt,house:job.made},
       binding:{agent:job.agent,conversation:job.conversation!,venue:'wake' as const,place:binding.place},
       message:{seq:row.seq,id:row.id,kind:'wake' as const,...(turnInput(row))},
       current(caller:Viewer){

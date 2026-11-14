@@ -6,7 +6,8 @@ export const clockExecutionBinding=z.object({agent:z.string(),conversation:z.str
 const messageBase=z.object({seq:z.number().int().positive(),id:z.string().startsWith('clock:'),kind:z.literal('wake')});
 export const clockExecutionMessage=z.union([messageBase.extend({text:z.string()}).strict(),messageBase.extend({file:z.string()}).strict()]);
 export const clockExecutionAdmission=z.object({execution:z.uuid(),job:z.string(),assignment:clockExecutionAssignment,binding:clockExecutionBinding,
+  historyKey:z.string().regex(/^[0-9a-f]{64}$/),
   batch:z.object({conversation:z.string(),messages:z.array(clockExecutionMessage).length(1)}).strict(),
   ttl:z.literal(5000)}).strict();
 export const clockExecutionCurrent=z.object({current:z.literal(true),ttl:z.literal(5000)}).strict();
-export const clockExecutionCompletion=z.object({acknowledged:z.literal(true)}).strict();
+export const clockExecutionCompletion=z.object({acknowledged:z.literal(true),more:z.boolean()}).strict();
