@@ -1,3 +1,5 @@
+import { installClockExecution } from './clock-execution.js';
+import type { Context } from '../../core/index.js';
 import { supportedClockPrompt } from './clock-input.js';
 /** Clock's owning handoff. Only ids cross the service operation; never a saved Viewer. */
 import { createHash } from 'node:crypto';
@@ -16,7 +18,7 @@ import { bodyPolicyExecutionHeld } from './policy-store.js';
 import type { Wake } from '../clock/role.js';
 import type { RuntimeRecords } from './records.js';
 import type { ClockProvenanceReader } from './role.js';
-export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation. After reading, acknowledge through the last seq with runtime.acknowledgeClockInput. New inputs may arrive in this conversation.';
+export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation. Acknowledge through runtime.acknowledgeClockInput only after accepting the actual words for execution; reading a filename is not execution. Native workers use runtime.beginClockExecution and its owning current/completion protocol. New inputs may arrive in this conversation.';
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,40);
 const id=z.string().min(1).max(200);
 interface Turn {seq:number;id:string;conversation:string;job:string;record:string;released:number|null;consumed:number|null}
@@ -126,21 +128,67 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     reads.set(value,{job:job.id,destination:originalDestination,rows});
     return value;
   };
-  operations.register(operation({name:'runtime.acknowledgeClockInput',doors:['http','direct'],write:true,recheckPolicy:true,
-    input:z.object({through:z.number().int().positive()}).strict(),output:z.object({acknowledged:z.literal(true)}),
-    may:v=>!!bound(v),run(ctx,i){
+  const acknowledge=(ctx:Context,through:number)=>{
       const job=bound(ctx.viewer);if(!job)throw new OperationError('denied','Clock body binding ended');
-      const all=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<=?').all(job.conversation,i.through) as Turn[];
+      const all=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<=?').all(job.conversation,through) as Turn[];
       const rows=all.filter(row=>!withdrawn(row));
       if(!rows.every(row=>currentSource(row,job)))throw new OperationError('denied','Clock delivery authority ended');
-      if(!rows.some(row=>row.seq===i.through)||rows.some(row=>row.released===null))throw new OperationError('conflict','Input has not been released to this body');
+      if(!rows.some(row=>row.seq===through)||rows.some(row=>row.released===null))throw new OperationError('conflict','Input has not been released to this body');
       for(const row of rows)db.prepare('UPDATE runtime_clock_turns SET consumed=COALESCE(consumed,?) WHERE id=?').run(ctx.now,row.id);
       const keys=provenanceStore(db).read(job.conversation!)?.queue.map(row=>row.key)??[];
       provenanceStore(db).consumed(job.conversation!,keys.filter(key=>all.some(row=>key===row.id||key.startsWith(`${row.id}:person:`))));
       ctx.changed('runtime.job',job.id);
-      return {acknowledged:true as const};
-    },
+  };
+  operations.register(operation({name:'runtime.acknowledgeClockInput',doors:['http','direct'],write:true,recheckPolicy:true,
+    input:z.object({through:z.number().int().positive()}).strict(),output:z.object({acknowledged:z.literal(true)}),
+    may:v=>!!bound(v),run(ctx,i){acknowledge(ctx,i.through);return {acknowledged:true as const};},
   }));
+  const currentRead=(v:Viewer,value:unknown)=>{
+    const snapshot=value&&typeof value==='object'?reads.get(value):undefined,job=bound(v);
+    return !!snapshot&&!!job&&snapshot.job===job.id&&snapshot.destination===readDestination(job)
+      &&snapshot.rows.every(row=>currentSource(row,job));
+  };
+  installClockExecution(app,effects,viewer=>{
+    const job=bound(viewer);
+    // Model selection and compiled central body policy remain held by this
+    // first native consumer. No silent model substitution or policy bypass.
+    if(!job||job.model!==undefined||job.account!==undefined||job.claimedAt===undefined||!job.made)throw new OperationError('denied','Native scheduled input unavailable');
+    const value=read(viewer),snapshot=reads.get(value)!;
+    const row=[...snapshot.rows].reverse().find(row=>row.consumed===null);
+    // Do not skip an older unconsumed source outside the bounded read window.
+    const first=db.prepare('SELECT seq FROM runtime_clock_turns WHERE conversation=? AND consumed IS NULL ORDER BY seq LIMIT 1').get(job.conversation) as {seq:number}|undefined;
+    if(!row||row.seq!==first?.seq)throw new OperationError('conflict','No next scheduled input');
+    const root=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(job.conversation) as Turn;
+    const binding=store.read('binding',job.conversation!)!;
+    const identity=(r:Turn|undefined)=>r&&JSON.stringify([r.seq,r.id,r.conversation,r.job,r.record]);
+    const rootKey=identity(root),rowKey=identity(row);
+    const known=(principal:{for:string}|undefined)=>!!principal&&(principal.for==='owner'||Object.hasOwn(sharing().members,principal.for));
+    const steering=()=>{
+      const p=provenanceStore(db).read(job.conversation!);
+      const principal=p&&principalForWork(p.history,owners());
+      return known(principal)?JSON.stringify(principal):undefined;
+    };
+    const originalSteering=steering();
+    const nativeSource=(row:Turn)=>{
+      const attempt=(JSON.parse(row.record) as {attempt:string}).attempt;
+      const source=clockDispatchSource(operations,row.id.slice('clock:'.length),attempt,true);
+      return !!source&&known(source.authorship?.principal)&&source.model===undefined&&supportedClockPrompt(source);
+    };
+    if(!originalSteering||!nativeSource(root)||!nativeSource(row))throw new OperationError('denied','Native scheduled source is unsupported');
+    return {job:job.id,assignment:{runner:job.runner,box:job.box,claimedAt:job.claimedAt,house:job.made},
+      binding:{agent:job.agent,conversation:job.conversation!,venue:'wake' as const,place:binding.place},
+      message:{seq:row.seq,id:row.id,kind:'wake' as const,text:(JSON.parse(row.record) as {text:string}).text},
+      current(caller:Viewer){
+        const callerJob=bound(caller);
+        const live=db.prepare('SELECT * FROM runtime_clock_turns WHERE id=?').get(row.id) as Turn|undefined;
+        const liveRoot=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(job.conversation) as Turn|undefined;
+        return callerJob?.id===job.id&&callerJob.model===undefined&&callerJob.account===undefined
+          &&steering()===originalSteering&&nativeSource(root)&&nativeSource(row)&&currentRead(viewer,value)&&!withdrawn(root)&&!withdrawn(row)
+          &&identity(liveRoot)===rootKey&&identity(live)===rowKey&&live?.consumed===null;
+      },
+      acknowledge(ctx:Context){acknowledge(ctx,row.seq);},
+    };
+  });
   const clockProvenance:ClockProvenanceReader=v=>{
     const job=bound(v);if(!job?.conversation)return;
     const p=provenanceStore(db).read(job.conversation);if(!p)return;
@@ -165,11 +213,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     // Final dispatch must follow the owning preparation, even if a different
     // conversation consumer would independently authorize the viewer now.
     preparedRead(value:unknown){return !!value&&typeof value==='object'&&reads.has(value);},
-    currentRead(v:Viewer,value:unknown){
-      const snapshot=value&&typeof value==='object'?reads.get(value):undefined,job=bound(v);
-      return !!snapshot&&!!job&&snapshot.job===job.id&&snapshot.destination===readDestination(job)
-        &&snapshot.rows.every(row=>currentSource(row,job));
-    },
+    currentRead,
     job:(wake:string)=>(db.prepare('SELECT job FROM runtime_clock_turns WHERE id=?').get(`clock:${wake}`) as {job:string}|undefined)?.job,
     consumed:(source:string)=>{const row=db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(source) as {consumed:number|null}|undefined;return !!row&&row.consumed!==null;},
   };

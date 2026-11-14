@@ -12,6 +12,62 @@ runtime. `loom wake` loads identity and is unrelated to scheduling.
 
 ## Remaining work and evidence
 
+A dedicated worker entry point now owns **one stored-prompt native turn**:
+`loom-clock-worker` reads an owner-supplied configuration from bounded stdin,
+uses the existing job-bearing body credential, and calls the Runtime operations
+below before invoking `ClaudeWorkerSession`. This is an executable worker
+composition, not an installed worker or automatic runner discovery. The runner
+still owns house checkout, claim, `takeInput`, its existing credential and
+`reportJob`; no daemon process opens a checkout or launches Claude. Installation
+and live use are not part of this change.
+
+The private configuration has `url` (HTTPS, or loopback HTTP), `credential`,
+`job`, the original `assignment` (`runner`, `box`, `claimedAt`, `house` from the
+runner's original claim), `binding` (`agent`, `conversation`, `venue: "wake"`,
+`place`), absolute `checkout` and `command`, explicit `env`, and local `rules`
+(the existing prepared-brief shape: `key`, `deny`, `sections`). It is owner input,
+never a model-supplied request or a replacement assignment discovered remotely.
+Configuration is captured before the first await. The credential does not enter
+argv, stdout, the child's environment automatically, or a new credential store.
+The executable takes no arguments, bounds and validates stdin, drains signals
+through the owning startup, and prints no result words/native handles;
+exit 0 means the turn completed and Runtime acknowledged it, exit 1 means failed
+or uncertain. It performs no retry and owns no retained native session.
+
+| Native worker step | Owning behavior |
+| --- | --- |
+| `runtime.beginClockExecution` | Existing authenticated Clock body only. Capture the original source, conversation, place, claim and built house; select the oldest pending input within the existing bounded inbox. Release one durable outside effect per source before issuing an in-memory execution id. The original body credential is still required with that id. No source can be attempted again after a lost response or daemon restart. |
+| Worker preparation and `runtime.currentClockExecution` | Validate the original local assignment and binding, prepare the actual words with the existing worker preparation, then begin a fresh Runtime source check after preparation and before native spawn. Exact source/root identities and withdrawal, scope, current Signin credential, policy, job, box and house remain required. |
+| Foreground Claude turn | Existing `ClaudeWorkerSession` supplies no-shell argv, prepared rules, stdin, bounded output, and the worker-owned native session id. Local policy revocation, job stop, request cancellation and close are sticky and kill the foreground child. |
+| Watchdog and expiry | Check Runtime every second. Each successful read supplies at most a five-second local authority window measured from BEFORE its request; a stalled response cannot extend its own age. Expiry or any failure fences the original execution. This is bounded remote revocation, not instantaneous cross-machine cancellation; execution may continue within an already admitted window. The server id expires after 30 minutes and is never restart authority. |
+| Output and `runtime.completeClockExecution` | Start a new source check after output, independently of any in-flight watchdog read. Only a current result can ACK the selected sequence; no native result words are persisted or returned by this startup. A failed or lost completion stays uncertain and never starts another child. |
+
+Unknown steering is held for this native consumer: the root, selected source and
+current conversation history must have a known principal. The effective original
+steering is pinned across execution; an added unknown source or a change to a
+different known principal cannot retain the old local rules. This hold adds no
+owner identity inferred from a saved Viewer or archive, and it leaves the generic
+inbox behavior unchanged. Native unknown-principal execution needs the remaining
+compiled policy integration before it can be supported.
+
+The native effect is separate from the existing input/read effects; all three
+honor staging. A denied/uncertain native attempt leaves source consumption null.
+Generic prompt consumers still use `runtime.readConversation` and
+`runtime.acknowledgeClockInput`; their brief requires accepting actual words
+before ACK and grants no file execution authority.
+
+This first consumer deliberately supports one stored prompt with no model or
+account override on the job, root or selected source (including later joined
+inputs), rechecked throughout execution and no configured/imported central body policy. Standalone
+files, native joining/resume, continuation handles, local/approval/slot execution,
+central compiled policy integration and the full runner lifecycle remain work
+under t-2201. The worker is present as a package entry point but is not installed
+or selected on any host by this PR. In-process tests exercise actual next-mode
+HTTP/Signin/Clock/Runtime and the production worker startup with a fake child at
+the existing spawn seam; they do not claim a real Claude login, host deployment,
+browser proof or end-to-end standalone file delivery.
+
+
 The existing `runtime.takeInput` boundary now requires current owning Clock
 source authority for public starts as well as private starts. It captures the
 original job, conversation, wake binding, place, claim, runner, box and house,
@@ -19,7 +75,8 @@ then rechecks after the effects gate and at final input release before issuing a
 body credential. Withdrawal before preparation leaves no input effect; a race
 after effect consumption stays consumed and cannot authorize another start.
 This proof ends when the start payload leaves Runtime. It does not authorize a
-later native launch or enable standalone file delivery, both still unfinished.
+later native launch. The dedicated native protocol above adds a separate owning
+consumer for stored prompts; standalone file delivery remains unfinished.
 
 At base `27a1e59`, runtime installs `runtime.startBody` and next mode composes
 Clock with `src/pieces/runtime/clock.ts`. The bridge accepts plain prompt wakes
