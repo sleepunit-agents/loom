@@ -1,11 +1,13 @@
 /** Wait facts come from owning read roles under the operation's original viewer. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { mayAct, OperationError, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
+import { mayAct, maySee, operation as coreOperation, OperationError, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
 import { operation } from './commands.js';
 import type { Ask } from './role.js';
 
 export interface AttentionWaits {
+  /** Scoped facts for one synchronous sweep under its original viewer. */
+  batch?(asks: readonly Ask[], viewer: Viewer): AttentionWaits;
   /** Undefined means absent, invisible or unavailable; never means gone. */
   approval?(id: string, viewer: Viewer): { state: string } | undefined;
   task?(id: string, viewer: Viewer): { status: string } | undefined;
@@ -22,6 +24,43 @@ export function installWaitChecks(db: Db, operations: Operations, sharing: () =>
     const row = db.prepare('SELECT record FROM attention_asks WHERE id=?').get(id) as {record: string} | undefined;
     return row && JSON.parse(row.record) as Ask;
   };
+  const reasonFor = (ask: Ask, viewer: Viewer, facts: AttentionWaits): string | undefined => {
+    if (!ask.waits_on) return;
+    try {
+      if ('approval' in ask.waits_on) {
+        const result = facts.approval?.(ask.waits_on.approval, viewer);
+        return result && Object.hasOwn(approvalReasons, result.state) ? approvalReasons[result.state] : undefined;
+      }
+      const task = facts.task?.(ask.waits_on.task, viewer);
+      if (task?.status === 'closed') return `${ask.waits_on.task} is closed`;
+      if (task && ['open', 'in_progress'].includes(task.status) && facts.taskAnswered?.(ask.waits_on.task, ask.ask, ask.createdAt, viewer) === true) return `you answered it on ${ask.waits_on.task}`;
+    } catch { /* Owning role unavailable: hold. */ }
+  };
+  operations.register(coreOperation({ name: 'attention.sweepWaits', doors: ['direct'], write: true,
+    input: z.object({}).strict(), output: z.object({ pending: z.number(), resolved: z.number() }),
+    may: viewer => mayAct(viewer, { type: 'attention.ask' }, sharing(), 'act', 'attention.sweepWaits')
+      && mayAct(viewer, { type: 'attention.ask' }, sharing(), 'act', 'attention.pendingWaits'),
+    run(ctx) {
+      const held = sharing();
+      const pending = (db.prepare('SELECT record FROM attention_asks ORDER BY id').all() as { record: string }[])
+        .map(row => JSON.parse(row.record) as Ask)
+        .filter(ask => ask.state === 'open' && !ask.sourceManaged && !!ask.waits_on && maySee(ctx.viewer, { type: 'attention.ask', ...ask }, held));
+      const eligible = pending.filter(ask => !ask.privateQuestion && mayAct(ctx.viewer, { type: 'attention.ask', ...ask }, held, 'act', 'attention.checkWait')
+        && mayAct(ctx.viewer, { type: 'attention.ask', ...ask }, held, 'act', 'attention.resolve'));
+      // No cross-operation cache: all facts and policy share this transaction.
+      let facts: AttentionWaits;
+      try { facts = waits.batch?.(eligible, ctx.viewer) ?? {}; } catch { return { pending: pending.length, resolved: 0 }; }
+      const save = db.prepare('UPDATE attention_asks SET record=? WHERE id=?');
+      let resolved = 0;
+      for (const ask of eligible) {
+        const reason = reasonFor(ask, ctx.viewer, facts);
+        if (!reason) continue;
+        ask.state = 'resolved'; ask.changedAt = ctx.now; ask.resolution = reason;
+        save.run(JSON.stringify(ask), ask.id); ctx.changed('attention.ask', ask.id); resolved++;
+      }
+      return { pending: pending.length, resolved };
+    },
+  }));
   operations.register(operation({ name: 'attention.checkWait', write: true,
     input: z.object({ id: z.string().min(1).max(200) }).strict(), output: z.unknown(),
     may(viewer, input) {
@@ -31,18 +70,7 @@ export function installWaitChecks(db: Db, operations: Operations, sharing: () =>
     run(ctx, input) {
       const ask = read(input.id)!;
       if (ask.state !== 'open' || !ask.waits_on) return ask;
-      let reason: string | undefined;
-      // A failed read holds the ask; no failure wording or foreign records escape.
-      try {
-        if ('approval' in ask.waits_on) {
-          const result = waits.approval?.(ask.waits_on.approval, ctx.viewer);
-          if (result && Object.hasOwn(approvalReasons, result.state)) reason = approvalReasons[result.state];
-        } else {
-          const task = waits.task?.(ask.waits_on.task, ctx.viewer);
-          if (task?.status === 'closed') reason = `${ask.waits_on.task} is closed`;
-          else if (task && ['open', 'in_progress'].includes(task.status) && waits.taskAnswered?.(ask.waits_on.task, ask.ask, ask.createdAt, ctx.viewer) === true) reason = `you answered it on ${ask.waits_on.task}`;
-        }
-      } catch { return ask; }
+      const reason = reasonFor(ask, ctx.viewer, waits);
       if (!reason) return ask;
       // Use the existing operation so policy, transaction, live changes and rollback stay central.
       const nestedId = createHash('sha256').update(`attention-check-wait:${ctx.receipt!.id}`).digest('hex');

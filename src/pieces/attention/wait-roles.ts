@@ -4,6 +4,20 @@ import type { AttentionWaits } from './waits.js';
 export function attentionWaits(approvals: { check: NonNullable<AttentionWaits['approval']> }, tasks: Tasks, owner: () => string | undefined = () => undefined): AttentionWaits {
   return {
     approval: (id, viewer) => approvals.check(id, viewer),
+    batch(asks, viewer) {
+      const ids = [...new Set(asks.flatMap(ask => ask.waits_on && 'task' in ask.waits_on ? [ask.waits_on.task] : []))];
+      const response = ids.length ? tasks.readMany?.(viewer, ids) : undefined;
+      const records = new Map<string, { id: string; status: string; comments?: unknown }>();
+      if (response?.ok && Array.isArray(response.value)) for (const task of response.value) {
+        if (task && typeof task.id === 'string' && typeof task.status === 'string') records.set(task.id, task);
+      }
+      // This closure is confined to one synchronous operation and its exact viewer.
+      // An unavailable/denied batch holds waits; never fall back to per-row calls.
+      return attentionWaits(approvals, { call(actor, _verb, input) {
+        const task = actor === viewer && typeof input.id === 'string' ? records.get(input.id) : undefined;
+        return { ok: true, value: { result: task ? { ok: true, task } : { ok: false } } };
+      } }, owner);
+    },
     taskAnswered(id, ask, since, viewer) {
       const person = owner()?.trim();
       if (!person || !Number.isFinite(since)) return;

@@ -80,8 +80,19 @@ export function installTasks(db: Db, operations: Operations, live: Live, sharing
     may:v=>v.kind==='service' && v.id==='tasks' && mayAct(v,{type:'task'},sharing(),'act','tasks.reconcileAttention'),
     run(ctx) { file(ctx,load(db)); return null; }}));
   });
+  // One policy snapshot and one owning-store load for another piece's wait facts.
+  operations.register(operation({ name: 'tasks.readMany', doors: ['direct'],
+    input: z.object({ ids: z.array(z.string().min(1).max(200)) }).strict(), output: z.unknown(),
+    may: viewer => viewer.kind !== 'service' || mayAct(viewer, { type: 'task' }, sharing(), 'act', 'tasks.readMany'),
+    run(ctx, input) {
+      const held = sharing(), ids = new Set(input.ids);
+      return load(db).tasks.filter(task => ids.has(task.id) && maySee(ctx.viewer, scope(task), held))
+        .map(task => ({ id: task.id, status: task.status, comments: task.comments }));
+    },
+  }));
   const visible = (state: StoreState, viewer: Viewer): StoreState => {
-    const tasks = state.tasks.filter(t => maySee(viewer, scope(t), sharing()));
+    const held = sharing();
+    const tasks = state.tasks.filter(t => maySee(viewer, scope(t), held));
     const ids = new Set(tasks.map(t => t.id));
     return { ...state, tasks, links: state.links.filter(l => ids.has(l.id) && ids.has(l.dependsOn)) };
   };
