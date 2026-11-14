@@ -495,7 +495,12 @@ async function proveNextComms(browser:Browser,webRoot:string) {
       return send.top>=tile.top&&send.bottom<=tile.bottom&&send.left>=tile.left&&send.right<=tile.right;
      })).toBe(true);
      const transcript=await b.getByLabel('Thread messages',{exact:true}).boundingBox();
-     expect(transcript!.width).toBeGreaterThan(200);expect(transcript!.height).toBeGreaterThanOrEqual(100);
+     expect(transcript!.width).toBeGreaterThan(200);
+     const layout=await b.locator('.comms-thread').evaluate(el=>{
+      const header=el.querySelector('header')!,input=el.querySelector('textarea')!,reader=el.parentElement!;
+      return {header:header.getBoundingClientRect().height,maxHeader:getComputedStyle(header).maxHeight,input:input.getBoundingClientRect().height,minInput:getComputedStyle(input).minHeight,reader:reader.getBoundingClientRect().width,container:getComputedStyle(reader).container,article:el.getBoundingClientRect().height,tile:el.closest('.next-page')!.getBoundingClientRect().height};
+     });
+     expect(transcript!.height,JSON.stringify(layout)).toBeGreaterThanOrEqual(100);
      await expect.poll(()=>b.locator('.comms-work-strip').isVisible()).toBe(width<1920);
      await b.screenshot({path:join(shots,`comms-next-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
