@@ -105,6 +105,7 @@ export class Conversations {
     return this.db.transaction(() => {
       const item = this.item(itemId);
       if (item.toKind !== 'person' || !item.answers) throw new Error('Item is not a question for a person');
+      if (item.thread) throw new Error('Answer through encrypted Comms');
       if (item.state === 'answered') return item;
       if (item.state !== 'waiting') throw new Error('Question is already settled');
       if (item.source === 'approval' || item.source === 'secret-request' || item.waitsOnKind) throw new Error('Answer at the linked source');
