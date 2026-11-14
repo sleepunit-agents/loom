@@ -3,7 +3,9 @@
 `site/` is the description of the finished product, page by page: what each
 part is, what a person sees, how the parts connect, who can see what, and the
 data model under it. Jonathan read every page and approved it on 2026-11-14.
-Open `site/index.html` in a browser, or read `model.py` for the tables.
+Read it at <https://sleepunit-agents.github.io/loom/> (published from `site/` on
+every merge to main), open `site/index.html` locally, or read `model.py` for
+the tables.
 
 ## This is where we are going
 
