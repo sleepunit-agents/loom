@@ -747,6 +747,16 @@ lifecycle reconciliation, importer, command parity and screens remain on t-2209.
 No deploy, live import or transition is part of this implementation.
 
 
+### Terminal private working state
+
+A committed `done`, `failed` or `stopped` job clears its current private Comms
+thread's working state, even without a reply or final body heartbeat. Runtime
+reconciles on committed job notifications and startup. It requires the exact
+current binding, agent, conversation, member, project and live Comms membership;
+imported jobs and superseded bindings cannot end a current turn. A rolled-back
+completion leaves working unchanged. This emits no synthetic no-reply message;
+terminal notices and broader body lifecycle reporting remain on t-2209.
+
 ### Authoritative final-start failure and member retry
 
 An assigned runner may finish an unconfirmed `starting` job with
