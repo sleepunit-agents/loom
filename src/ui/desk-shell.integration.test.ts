@@ -316,6 +316,8 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await page.getByRole('button',{name:'Close app launcher',exact:true}).focus();
               await page.keyboard.press('Enter');
               await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
+              await page.getByRole('button',{name:'Close Your account',exact:true}).click();
+              await expect.poll(()=>page.locator('[data-tile=account]').count()).toBe(0);
             }
             await page.getByRole('button',{name:'All apps',exact:true}).first().click();
             await expect.poll(()=>page.getByRole('textbox',{name:'Find an app',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
