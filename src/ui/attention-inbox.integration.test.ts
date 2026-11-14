@@ -135,6 +135,40 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.getByRole('button',{name:/^Answered/}).click();
     expect(await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).count()).toBe(0);
     await b.locator('.loom-split').getByRole('button',{name:/^Needs you/}).click();
+    // An owning Clock outcome produces the real managed notice; acknowledgement leaves work alone.
+    const wakeResult=loom.operations.call('direct',owner,'clock.in',{agent:'art',prompt:'Fixture scheduled work',note:'Inbox alert fixture',when:'1m'},'inbox-clock-wake');
+    if(!wakeResult.ok)throw Error(wakeResult.message);
+    const wake=wakeResult.value as {id:string;due:number}; clock.advance(wake.due-clock.now());
+    // FakeClock may synchronously commit the daemon intent before its deferred external call.
+    const current=JSON.parse((loom.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(wake.id) as {record:string}).record) as {state:string;attempt?:string};
+    const attempt=current.state==='firing' ? current.attempt! : 'inbox-clock-attempt';
+    if(current.state!=='firing')expect(loom.operations.call('direct',owner,'clock.dispatch',{id:wake.id,attempt},'inbox-clock-dispatch').ok).toBe(true);
+    const outcome=loom.operations.call('direct',owner,'clock.outcome',{id:wake.id,attempt,result:{state:'not-started',code:'quota',reason:'Fixture capacity wait'}},'inbox-clock-outcome');
+    expect(outcome.ok).toBe(true);
+    const noticeId=`clock:${wake.id}:quota`;
+    await b.goto(`${loom.url}/p/inbox-preview/ask/${encodeURIComponent(noticeId)}`);
+    await b.getByRole('button',{name:'Check again',exact:true}).click();
+    await b.getByRole('button',{name:'Acknowledge',exact:true}).waitFor();
+    expect(await yes(b).count()).toBe(0);
+    await b.locator('.loom-split').getByRole('button',{name:/^Alerts/}).click();
+    await b.locator('[data-split-row]').filter({hasText:'Review clock work waiting for model capacity.'}).click();
+    await b.getByRole('button',{name:'Acknowledge',exact:true}).waitFor();
+    for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
+      await b.setViewportSize({width,height:900});
+      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await b.screenshot({path:join(shots,`inbox-alert-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    await b.setViewportSize({width:1280,height:900});
+    const beforeAck=loom.operations.call('direct',owner,'clock.list',{});
+    expect(beforeAck.ok).toBe(true);
+    await b.getByRole('button',{name:'Acknowledge',exact:true}).click();
+    await expect.poll(()=>loom.operations.call('direct',owner,'attention.get',{id:noticeId})).toMatchObject({ok:true,value:{state:'answered',answer:{kind:'done'}}});
+    expect(loom.operations.call('direct',owner,'clock.list',{})).toEqual(beforeAck);
+    await b.locator('.loom-split').getByRole('button',{name:'Open Clock',exact:true}).click();
+    await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/clock-preview');
+    await b.goto(`${loom.url}/p/inbox-preview`);
     // One actual central approval, with the owning page's action and two-window withdrawal.
     const requested=loom.operations.call('direct',{kind:'agent',id:'art'},'approvals.request',{kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,ask:'Merge the Inbox source fix?',why:'The source card keeps the exact decision and receipt.',if_yes:'I merge the fix.',if_no:'I hold it.'},'inbox-request-approval');
     expect(requested.ok).toBe(true);if(!requested.ok)throw Error(requested.message);

@@ -1,4 +1,5 @@
 /** Composition and in-process test harness for the new application foundation. */
+import {snapshotSecretWorkers} from './secret-worker-startup.js';
 import { createServer } from 'node:http';
 import { createFoundation, httpDoor, beginClosing, type Foundation } from './core/app.js';
 import type { Clock } from './core/clock.js';
@@ -14,12 +15,13 @@ import { listenOperator, firstSignin, prepareOperatorHome } from './core/signin/
 import { ownHome } from './core/daemon-home.js';
 import type { OutsideEffects } from './core/effects.js';
 export { createFoundation } from './core/app.js';
-export async function startLoom({ home, clock, install, authenticate, sharing, listen, next, staging, host, port, webRoot, stdout, notifications, changes, bridges, secretAuthority, secretWrites, clockDeadmanAgents }: {
+export async function startLoom({ home, clock, install, authenticate, sharing, listen, next, staging, host, port, webRoot, stdout, notifications, changes, bridges, secretAuthority, secretWrites, secretWorkers, clockDeadmanAgents }: {
   stdout?: (text: string) => void;
   notifications?: NextOptions['notifications'];
   changes?: NextOptions['changes'];
   secretAuthority?: NextOptions['secretAuthority'];
   secretWrites?: NextOptions['secretWrites'];
+  secretWorkers?: NextOptions['secretWorkers'];
   bridges?: NextOptions['bridges'];
   clockDeadmanAgents?: NextOptions['clockDeadmanAgents'];
   home: string; clock?: Clock; sharing?: () => Sharing;
@@ -29,13 +31,15 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   /** Transitional production transport; it owns piece installation and listener shutdown. */
   listen?: (app: Foundation) => Promise<{ url: string; close(): Promise<void> }>;
 }): Promise<Omit<Foundation, 'close'> & { url: string; effects?: OutsideEffects; close(): Promise<void> }> {
+  if (secretWorkers && !next) throw new Error('Secret worker startup requires next mode');
+  secretWorkers = secretWorkers && snapshotSecretWorkers(secretWorkers);
   if (next) prepareOperatorHome(home);
   const release = next ? await ownHome(home) : async () => {};
   let app: Foundation;
   try { app = createFoundation({ home, clock }); } catch(e) { await release(); throw e; }
   const closeApp = async () => { beginClosing(app); try { await closeNext(app); } finally { try { app.close(); } finally { await release(); } } };
   let effects: OutsideEffects | undefined;
-  const nextOptions: NextOptions = { home, staging, host, port, webRoot, authenticate, sharing, notifications, changes, bridges, secretAuthority, secretWrites, clockDeadmanAgents };
+  const nextOptions: NextOptions = { home, staging, host, port, webRoot, authenticate, sharing, notifications, changes, bridges, secretAuthority, secretWrites, secretWorkers, clockDeadmanAgents };
   if (next && listen) { await closeApp(); throw new Error("next mode owns its listener"); }
   try {
     install?.(app);

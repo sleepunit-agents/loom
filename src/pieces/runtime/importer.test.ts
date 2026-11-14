@@ -47,7 +47,7 @@ function fixture() {
 }
 it('imports exact source bytes, every document and revision, scoped metadata and held work without old authority',()=>{
   const f=fixture(), before=readFileSync(f.sources.store), expected=f.read();
-  expect(f.run()).toMatchObject({ok:true,imported:true});
+  expect(f.run()).toMatchObject({ok:true,imported:true,skippedCount:0});
   expect(compareRuntimeImport(f.app.db,runtimeImportTables(expected))).toBe(true);
   for(const table of ['runtime_boxes','runtime_jobs'])expect((f.app.db.prepare(`SELECT changed_at FROM ${table}`).all() as {changed_at:number}[]).map(row=>row.changed_at)).toEqual([Date.parse(at),Date.parse(at)]);
   for(const table of ['runtime_settings','runtime_bindings'])expect(f.app.db.prepare(`SELECT changed_at FROM ${table}`).all()).toEqual([{changed_at:0}]);
@@ -176,7 +176,7 @@ it.each(['loom','spawn'])('retains deleted %s thread bindings only in the exact 
  f.options.conversations[cv]={} as typeof f.options.conversations[typeof cv];
  const skipped=[{id:cv,reason:'skipped: owning Comms thread deleted'}];
  expect(f.read()).toMatchObject({skipped,expected:{binding:[]}});
- expect(f.run()).toMatchObject({imported:true,skipped});expect(f.run()).toMatchObject({imported:false,skipped});
+ expect(f.run()).toMatchObject({imported:true,skipped,skippedCount:1});expect(f.run()).toMatchObject({imported:false,skipped,skippedCount:1});
  expect(f.app.db.prepare('SELECT * FROM runtime_bindings').all()).toEqual([]);
  expect(f.app.db.prepare('SELECT * FROM runtime_provenance').all()).toEqual([]);
  expect(compareRuntimeArchive(f.app.db,f.read())).toBe(true);
@@ -294,4 +294,40 @@ for(const tombstoneId of ['actual-thread','th:actual-thread'])it.each([true,fals
  if(hasConversation)db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?)').run(tombstoneId,'art','jonathan',null);
  else db.prepare('INSERT INTO comms_deleted VALUES (?,?,?)').run(tombstoneId,'art','jonathan');
  db.close();expect(f.read).toThrow('owning Comms source');
+});
+
+function orphanThread(f: ReturnType<typeof fixture>, venue='loom', place='th:orphan') {
+ const db=new Database(f.sources.household);db.exec('DELETE FROM comms_threads');db.close();
+ const path=join(f.sources.data,'delivery','conversations',`${cv}.json`);
+ writeFileSync(path,JSON.stringify({conversation:cv,agent:'art',venue,place,kind:'live',started:'2026-11-06T00:00:00Z',last:'2026-11-06T00:00:00Z',msgs:[{text:'PRIVATE ORPHAN WORDS'}]}));
+ f.options.conversations[cv]={} as typeof f.options.conversations[typeof cv];return path;
+}
+it.each([['loom','th:orphan'],['loom','bare-orphan'],['spawn','th:orphan'],['wake','th:orphan']])('archives orphan %s %s without creating binding authority', (venue,place)=>{
+ const f=fixture(),path=orphanThread(f,venue,place),before=readFileSync(path);
+ const skipped=[{id:cv,reason:'skipped: owning Comms thread missing'}];
+ expect(f.read()).toMatchObject({skipped,expected:{binding:[]}});
+ expect(f.run()).toMatchObject({imported:true,skipped,skippedCount:1});expect(f.run()).toMatchObject({imported:false,skipped,skippedCount:1});
+ expect(f.app.db.prepare('SELECT * FROM runtime_bindings').all()).toEqual([]);
+ expect(f.app.db.prepare('SELECT * FROM runtime_provenance').all()).toEqual([]);
+ expect(compareRuntimeArchive(f.app.db,f.read())).toBe(true);
+ expect(compareRuntimeImport(f.app.db,runtimeImportTables(f.read()))).toBe(true);
+ expect(readFileSync(path)).toEqual(before);
+});
+it.each([{member:'jonathan'},{member:'guest'},{project:'pond'},{member:'jonathan',project:'pond'}])('refuses unsupported explicit orphan audience %j',mapping=>{
+ const f=fixture();orphanThread(f);(f.options.conversations as Record<string,unknown>)[cv]=mapping;
+ expect(f.read).toThrow(/owning Comms source|requires a member/);
+});
+it.each(['absent','null'])('requires an explicit empty orphan mapping rather than %s',kind=>{
+ const f=fixture();orphanThread(f);
+ if(kind==='absent')delete (f.options.conversations as Record<string,unknown>)[cv];
+ else (f.options.conversations as Record<string,unknown>)[cv]=null;
+ expect(f.read).toThrow(/every source id|mapping required/);
+});
+it('does not treat a missing spawn handle owner as an orphan Comms place',()=>{
+ const f=fixture();orphanThread(f,'spawn','job-h-1862');expect(f.read).toThrow('requires a member');
+});
+it('does not hide a mismatched place owner behind the orphan disposition',()=>{
+ const f=fixture();orphanThread(f);
+ const db=new Database(f.sources.household);db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run('orphan','cv-ffffffffffff','art','jonathan',null);db.close();
+ expect(f.read).toThrow('requires a member');
 });

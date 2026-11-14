@@ -157,7 +157,7 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
     // No imported job is claimable. Active work needs authoritative runner reconciliation.
     expected.job.push(records.job.parse({id,agent,...scope(options.jobs[id]),box,runner:box,title:'Imported runtime work',state:terminal.has(String(house.state))?house.state:'uncertain',imported:{history:house.writtenOff?'discard':'unknown'},createdAt:stamp(house.created),...(terminal.has(String(house.state))&&house.updated?{endedAt:stamp(house.updated)}:{}),...(house.service?{service:house.service}:{})}));
   }
-  const skipped: {id:string;reason:'skipped: owning Comms thread deleted'}[] = [];
+  const skipped: {id:string;reason:'skipped: owning Comms thread deleted'|'skipped: owning Comms thread missing'}[] = [];
   for (const c of inventory.conversations) {
     const id = text(c.conversation), audience = scope(options.conversations[id]);
     const agent=knownAgent(c.agent);
@@ -178,6 +178,12 @@ export function readRuntimeImport(sources: RuntimeImportSources, supplied: unkno
         || (audience.member!==undefined&&audience.member!==tombstone.member) || audience.project!==undefined)
         throw Error('Runtime deleted binding must match the owning Comms source');
       skipped.push({id,reason:'skipped: owning Comms thread deleted'});continue;
+    }
+    // A missing Comms owner supplies no audience proof. Retain only the private
+    // source bytes when the explicit map supplies no member or project either.
+    if((c.venue==='loom' || placeId!==undefined) && !threads.length
+      && audience.member===undefined && audience.project===undefined) {
+      skipped.push({id,reason:'skipped: owning Comms thread missing'});continue;
     }
     if(c.venue==='loom' || c.venue==='spawn' || placeId!==undefined || threads.length) {
       if(!audience.member)throw Error('Private Comms conversation requires a member');

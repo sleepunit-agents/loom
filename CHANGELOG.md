@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Deliver stored public household lane prompts through Runtime’s scheduled inbox, with runner confirmation, authenticated reads and staging holds.
+- Add next-mode Bridges status JSON for Discord and Slack with configured agents, intake holds and explicit staging mode.
+- Archive orphan Comms delivery bindings without inventing an owner, and report their skipped conversation ids through offline Runtime imports.
+
 - Tests: give each test 20 s on CI instead of 5 s, after unrelated tests timed out on loaded shared runners and left main without a deployable build.
 - New desk: make request and form ids without `crypto.randomUUID`, which browsers withhold on plain HTTP, so the desk works on a home network address.
 - Resolve original private loom parent metadata for Comms through the joined Runtime job and exact owning thread.
@@ -19,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Classify already owned Runtime spawn threads in Comms through original member metadata, preserving independent transport and execution holds.
 
 
-- New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
+- New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search. Keep passkeys and sign-out in Your account, removing the provisional corner toolbar that overlapped apps.
 - New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail; counted pixel talking beats follow through completion, with crisp whole-scale compact portraits.
 - Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
 
@@ -39,6 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add member-private Inbox read facts without answering asks or copying draft words.
 - Inbox now separates self-cleared asks into searchable FYI history, keeping human answers in Answered.
+- Inbox: group Clock operational alerts, acknowledge them without changing scheduled work, and open Clock through its internal route.
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 - File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.

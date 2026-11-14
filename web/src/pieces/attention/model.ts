@@ -11,8 +11,12 @@ export interface Ask extends LiveRecord {
   resolution?: string;
 }
 export type Answer = { kind: 'yes' | 'no' | 'done' | 'dismiss' } | { kind: 'words'; text: string };
+// Clock alone registers operational notices; other managed sources can own decisions.
+export function isNotice(ask: Ask) {
+  return ask.sourceManaged === true && ask.source.kind === 'piece' && ask.source.id === 'clock';
+}
 export function inFolder(ask: Ask, folder: string) {
-  return folder === 'fyi' ? ask.state === 'resolved' : folder === 'answered' ? ask.state === 'answered' : ask.state === 'open' && (!folder.startsWith('agent:') || ask.agent === folder.slice(6));
+  return folder === 'alerts' ? isNotice(ask) && ask.state === 'open' : folder === 'fyi' ? ask.state === 'resolved' || isNotice(ask) && ask.state === 'answered' : folder === 'answered' ? ask.state === 'answered' && !isNotice(ask) : ask.state === 'open' && (!folder.startsWith('agent:') || ask.agent === folder.slice(6));
 }
 export function matches(ask: Ask, query: string) {
   const text = [ask.ask, ask.why, ask.agent, ask.project, ask.id, ask.resolution, ...(ask.refs ?? [])].join(' ').toLowerCase();
@@ -20,6 +24,7 @@ export function matches(ask: Ask, query: string) {
 }
 /** A central answer cannot apply another piece's decision. Its app owns that action. */
 export function decisionLink(ask: Ask): { path: string; label: string } | undefined {
+  if (isNotice(ask)) return { path: '/p/clock-preview', label: 'Open Clock' };
   const approval = ask.waits_on && 'approval' in ask.waits_on ? ask.waits_on.approval : ask.source.kind === 'approval' ? ask.source.id : undefined;
   if (approval) return { path: `/p/approvals-preview/approval/${encodeURIComponent(approval)}`, label: 'Open approval' };
   const task = ask.waits_on && 'task' in ask.waits_on ? ask.waits_on.task : ask.source.kind === 'task' ? ask.source.id : undefined;

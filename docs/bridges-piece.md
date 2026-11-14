@@ -1105,3 +1105,30 @@ Endpoint contracts: [Discord own reactions](https://github.com/discord/discord-a
 [Discord typing](https://github.com/discord/discord-api-docs/blob/main/developers/resources/channel.mdx),
 [Slack add](https://docs.slack.dev/reference/methods/reactions.add/) and
 [Slack remove](https://docs.slack.dev/reference/methods/reactions.remove/).
+
+## Platform status command
+
+The generated client accepts `loom-bridges status '{"platform":"discord"}'`
+(or `slack`) and calls the read-only `bridges.status` operation. It uses the same
+central household setup authorization as the existing setup commands. No service
+credential, platform lookup, body admission, effect or receipt is needed.
+
+JSON retains the pinned legacy dispatchers' `mode`, `agents` and `held` fields.
+Agents are sorted and deduplicated from all configured connections, including
+disabled ones. Held counts intake rows whose original platform identity matches,
+including rows for a removed or reassigned connection; pending retries, delivered
+or dropped intake and outgoing holds do not count. It reports current durable
+state, not a historical window or an assertion of connection health. Mode is
+`live` normally and `staging` when installed by next-mode staging composition;
+this describes the process effect gate, not whether a connection is enabled.
+
+The old shadow mode and `shadow_lines` field retire with whole-side staging.
+The old human text line and `--json` switch are replaced by the generated client's
+always-JSON output. JSON is pretty printed like the other generated setup commands.
+Success exits 0; daemon refusal/unavailability exits 1 with sanitized stderr;
+local malformed usage exits 2. Synthetic fixtures retain both pinned old JSON
+examples, compare the retained fields and exact new output, force reverse agent
+order through record IDs, and cover connection reassignment. The operation and
+client share a closed status response schema. Fixtures exercise the real
+HTTP operation, empty setup, staging composition, permission denials and closed
+response shapes. No old files or programs are read on the next runtime path.
