@@ -742,8 +742,58 @@ existing loom window is navigated and focused; if it closed, another window or a
 new one is used. No private response or push payload is added to a cache.
 
 This is the display/tap part of the old worker contract only. Imported push rows
-do not yet trigger new-side delivery: row-backed device operations, Account
-controls, VAPID use, daemon dispatch, per-member eligibility revalidation,
+do not yet trigger new-side delivery: Account controls, test sending, daemon dispatch, per-member eligibility revalidation,
 deduplication, rate limits and staging are still pending. The old SessionStore
 and push watcher are never called. No migration or live rollout is needed for
 this worker change; finish those remaining operations before the final move.
+
+
+### Next notification devices
+
+`notifications.read` and the member-private `notifications.devices` Live record
+return only opaque device/session references, trusted session device labels and
+second-based first/last registration times. Even household owners see only their
+own devices. `notifications.remove` removes one own device and remembers its
+endpoint hash, bounded to 100 tombstones. Retrying a committed removal does not
+remove a later re-enabled device.
+
+Cookie-window-only `notifications.key`, `notifications.subscribe` and
+`notifications.unsubscribe` replace GET `/push/key`, POST `/push/subscribe` and
+POST `/push/unsubscribe`. The key operation lazily retains the existing imported
+VAPID pair and returns only its public key. Subscription credentials go directly
+into existing `household_push` rows, never into records or receipt results.
+Trusted Signin resolver proof supplies session, token and device label; a member
+Viewer alone, a bearer alongside a cookie, an agent session and a headless
+session cannot register. Inputs cannot select a member, session or device label.
+Only known HTTPS push services with bounded URL-safe keys are accepted; URL
+credentials, nonstandard ports and fragments are refused.
+
+Devices survive ordinary logout, cookie expiry, session eviction and later
+sign-in. Quiet `again` refreshes a same-member device without resetting its first
+registration time, but cannot undo removal or take another member's device.
+Explicit enable clears a tombstone and can reassign a shared tablet, resetting
+its first registration time. The household cap remains 20 bound devices, oldest
+last-seen first; unresolved import evidence does not take active device capacity.
+Existing Account/session/compromise revocations still remove associated rows.
+
+Member-less imported devices resolve through their retained token (or retained
+session's token), including revoked token records; all records for that digest
+must agree on an owner. Existing membership edits pin unbound owner tokens before
+first-owner rotation. Orphans or conflicting bindings are retained as import
+evidence and omitted from member records; they are never reassigned to the new
+first owner. Turn notifications on explicitly on the device to bind it anew.
+No schema, importer or old-side change is needed.
+
+| Old surface | Next replacement |
+|---|---|
+| `/push/key` | `notifications.key`, cookie window, public key only |
+| `/push/subscribe` | `notifications.subscribe`, trusted cookie proof, explicit/quiet registration |
+| `/push/unsubscribe` | `notifications.unsubscribe`, own-member removal only |
+| Profile's notification device list / `push-remove` | `notifications.read`, `notifications.devices`, `notifications.remove`; Account controls pending |
+| `push-test` | Pending staged send operation; this unit sends nothing |
+| legacy push watch | Pending daemon job; never call SessionStore/watch from next |
+
+These are page operations; no previous notification CLI needs replacing. The
+Account controls, browser subscription API, test notification delivery and daemon
+dispatch (eligibility, dedupe, rate limits, staging) remain part of t-2203 before
+the final move. This unit introduces no new screen or screenshot claim.

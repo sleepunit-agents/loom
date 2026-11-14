@@ -1207,6 +1207,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Let the next-side service worker show content-free push notifications and open their signed-in destinations.
 
+- Add next-mode member-private notification device operations with cookie-bound registration and persistent removal; Account controls and delivery remain pending.
+
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

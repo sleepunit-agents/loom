@@ -72,7 +72,7 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | POST `/login/passkey/options`, `/login/passkey` | Existing expiring challenge, signature, verification and counter checks |
 | GET `/faces/AGENT/…`, `/pixel-icons/APP.png` | **Pending** new-side asset serving with appropriate household/agent access; file import alone does not mount these routes |
 | Appearance/accessibility preferences and per-member saved settings | `household.preferences`, `household.setPreferences` and member-private Live records preserve imported choices. Shell controls apply look, reduced motion, contrast and zoom across windows; **pending** ground, sound, pixel faces/icons, haptics and one-window layout integration |
-| Push subscription/device controls, `push-test`, `push-remove` | **Pending** next notification/device administration; retained push rows alone do not send notifications |
+| Push subscription/device controls, `push-test`, `push-remove` | `notifications.key/subscribe/unsubscribe` (cookie window), `notifications.read/remove` and private `notifications.devices` Live. Account controls and staged `push-test` delivery **pending**; retained rows alone do not send |
 | Piece `settings.json` reads/writes | Rows are imported into `household_piece_settings`; **pending** settings operation/record/client coverage. Built-in service registration is an in-process authority seam, not a settings editor |
 
 Household project Live records and post-commit sharing/access refreshes already
@@ -90,7 +90,7 @@ in [core/services.ts](../src/core/services.ts).
 | Token/session last use | Accepted next-mode HTTP/MCP admission, session status and incoming Live messages record throttled row-backed usage; pure validity checks and idle sockets do not |
 | Browser/session/token expiry checks | Sign-in enforces expiry at authentication; session-cap eviction happens at session creation. Link creation prunes expired links. No separate household expiry timer is installed |
 | Legacy HTTP push watch | **Pending** next notification job; do not start old `pushWatch` from next mode |
-| Legacy worker push display / notification tap | `nextWorker` displays a content-free loom notification and opens its same-origin destination (including next Comms threads), reusing a window when possible. Device registration, Account controls and daemon dispatch remain **pending** |
+| Legacy worker push display / notification tap | `nextWorker` displays a content-free loom notification and opens its same-origin destination (including next Comms threads), reusing a window when possible. Row-backed device registration is implemented; Account controls and daemon dispatch remain **pending** |
 | Legacy HTTP backup tick launching `loom backup tick` | **Pending** next backup job; do not call the detached old program from next mode |
 | Old per-listener settings/store discovery | No replacement poller; next composition selects row stores explicitly |
 

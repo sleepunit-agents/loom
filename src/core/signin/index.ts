@@ -1,3 +1,4 @@
+import { installNotifications, retainNotificationTokens } from './notifications.js';
 /** Next-mode credentials. Only loom.db is consulted; no legacy file activation. */
 import { installAccount } from './account.js';
 import { installAccessAdmin } from './admin.js';
@@ -142,6 +143,13 @@ export class Signin {
     this.browsers.set(s.viewer,id);
     return {window:true,viewer:s.viewer,expiresAt:s.expiresAt,valid,activity:()=>{if(valid())this.used(s.s.secret,id);}};
   }
+  /** Exact current cookie proof for device registration; bearer/synthetic viewers have none. */
+  notificationBrowser(viewer: Viewer) {
+    const id=this.browsers.get(viewer), current=id?this.session(id):undefined;
+    if (!id || !current || current.viewer.id!==viewer.id || current.s.agent || /HeadlessChrome\b/.test(current.s.device ?? ''))
+      throw new OperationError('denied','A person’s signed-in browser is required');
+    return {session:hash(id),token:current.s.secret,device:current.s.device};
+  }
   /** Proof is attached only by cookie authentication, never by operation input. */
   browserLink(viewer: Viewer, member = viewer.id) {
     const id=this.browsers.get(viewer), current=id?this.session(id):undefined;
@@ -154,6 +162,7 @@ export class Signin {
     if (this.token(secret)?.viewer.kind!=='member') throw new Error('Sign-in refused');
     const id=random(), now=this.now();
     this.sessions.change(f=>{
+      retainNotificationTokens(f);
       f.sessions[hash(id)]={issuedAt:now,secret,...meta,...(/HeadlessChrome\b/.test(meta.device ?? '')?{agent:true as const}:{})};
       const rank=(s:typeof f.sessions[string])=>!this.token(s.secret) || now>=s.issuedAt+(s.agent?HOURS:MONTH)?0:s.agent||/^HeadlessChrome\b/.test(s.device ?? '')?1:2;
       const all=Object.entries(f.sessions).sort((a,b)=>rank(a[1])-rank(b[1])||a[1].issuedAt-b[1].issuedAt);
@@ -165,7 +174,7 @@ export class Signin {
     const secure=!!('encrypted' in req.socket && req.socket.encrypted) || !!(process.env.LOOM_PUBLIC_URL?.startsWith('https://'));
     return `loom_ui=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${id?MONTH:0}${secure?'; Secure':''}`;
   }
-  end(id: string) { this.sessions.change(f=>{delete f.sessions[hash(id)];}); queueMicrotask(() => this.app.live.changed([{type:'core.access',id:'credentials'}])); }
+  end(id: string) { this.sessions.change(f=>{retainNotificationTokens(f);delete f.sessions[hash(id)];}); queueMicrotask(() => this.app.live.changed([{type:'core.access',id:'credentials'}])); }
   link(member: string, label?: string, agent?: boolean, signedInAt?: number, ttl=300) {
     const h=this.household(); if (!h?.members.some(m=>m.person===member)) throw new OperationError('invalid','Unknown member');
     const code=random();
@@ -230,6 +239,7 @@ export function installSignin(app: Foundation) {
   const s=signin(app);
   installAccessAdmin(app);
   installAccount(app);
+  installNotifications(app);
   app.operations.register({name:'signin.browserLink',windowOnly:true,doors:['socket'],input:z.object({member:z.string().optional()}).strict(),output:z.object({path:z.string()}),may:v=>mayAct(v,{member:v.id},new SharingDatabase(app.db,'').sharing()),run:(ctx,i)=>{const path=s.browserLink(ctx.viewer,i.member);ctx.changed('signin.admin','household');return {path};}});
   // Deliberately ephemeral: no write retry journal may retain a sign-in URL or its input hash.
   app.operations.register({name:'signin.link',input:z.object({member:z.string(),label:z.string().optional(),agent:z.boolean().optional(),ttl:z.number().int().min(1).max(3600).optional()}),output:z.object({path:z.string()}),doors:['direct'],may:v=>v.kind==='member'&&s.owner(v.id),run:(_ctx,i)=>({path:s.link(i.member,i.label,i.agent,undefined,i.ttl)})});
