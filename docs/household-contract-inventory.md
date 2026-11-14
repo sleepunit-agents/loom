@@ -26,6 +26,8 @@ codes are in [household-piece.md](household-piece.md#generated-household-api-cli
 | `loom household icons set APP PNG` | **Pending** icon replacement |
 | `loom household icons use SET\|none` | **Pending** active-set selection |
 | `loom household icons list` | **Pending** installed-set projection/client |
+| `loom backup set/off/status` | `loom-household setBackup/backupOff/backup` reconcile configuration only; `status` run history and Setup controls remain **pending** |
+| `loom backup run/tick` | **Pending** next exporter/drill and daemon runner; old detached programs are never called |
 | `loom token create` (agent/service/house, owner, peer, piece, runtime roles) | `token.create` / `loom-token create`; explicit member/agent/active runner/service only; retired legacy roles are disposed in household-piece.md |
 | `loom token list` | `token.list` / `loom-token list`, safe metadata only |
 | `loom token revoke LABEL [--with-passkeys] [--with-devices]` | `token.revoke` / `loom-token revoke`, atomic optional descendant-passkey and device cascades; old internal `signin.revokeToken` remains |
@@ -58,7 +60,7 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | `face-set`, `mark-set` | **Pending** appearance operations/records and Setup controls |
 | `about-set`, `about-ask` | `household.setProfile` / `household.requestProfile`, generated `loom-household` bindings and agent-owner Setup controls; `household.describeSelf` answers once as the authenticated agent. Explicit offline `describe_self` still refuses app access |
 | `identity-set`, `identity-section-set`, `identity-section-add` | **Pending** Setup/identity behavior reconciliation; no next page editor. The household spec describes Setup identity as read-only |
-| `backup-set`, Setup health/backup status | **Pending** next backup settings/status integration; no new-side invocation of the old backup program |
+| `backup-set`, Setup health/backup status | `household.backup/setBackup/backupOff` and owner-only `household.backup` Live reconcile row-backed configuration; generated `loom-household` JSON bindings. Configured status explicitly says no backup is scheduled. **Pending** Setup controls, exporter/drill, arming, execution and run/health status; no invocation of the old backup program |
 | `person-add` | `mind.personAdd`; People screen handles the new-side form |
 | `fact-add`, `knowledge-verify`, `knowledge-recheck` | `mind.knowledgeAdd`, `mind.knowledgeVerify`, `mind.knowledgeRecheck`; Knowledge screen handles the new-side forms |
 | GET `/a/AGENT/setup` | `/p/setup-preview` now provides member ownership/removal, project lists, account attribution and existing-context registration via Live/call; token/session administration via `signin.admin` and socket calls; **pending** read-only identity, health and full bootstrap coverage |

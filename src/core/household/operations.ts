@@ -1,3 +1,4 @@
+import { installHouseholdBackup } from './backup.js';
 import { installHouseholdProfiles } from './profile.js';
 import { bootstrapInput, bootstrapHouseholdAgent } from './bootstrap.js';
 import { z } from 'zod';
@@ -17,6 +18,7 @@ import { SharingDatabase, projectSchema, projectSlug } from './sharing.js';
 
 /** Explicit installation only until importer and all production callers cut over together. */
 export function installHouseholdProjects(app: Foundation, home: string): void {
+  installHouseholdBackup(app, home);
   installHouseholdProfiles(app, home);
   installHouseholdPreferences(app, home);
   installHouseholdTime(app, home);

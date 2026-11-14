@@ -1,3 +1,4 @@
+import { backupStatusSchema } from './backup-schema.js';
 /** One declaration drives household operation responses and the opt-in API client. */
 import { z } from 'zod';
 import { operation as defineOperation, type Operation, type CliCommand } from '../operations/index.js';
@@ -7,6 +8,9 @@ import { projectSchema, projectSlug } from './sharing.js';
 
 const profileResponse = z.object({ agent: z.string(), description: z.string().optional(), requestedAt: z.string().optional() }).strict();
 export const householdResponses = {
+  backup: backupStatusSchema,
+  setBackup: backupStatusSchema,
+  backupOff: backupStatusSchema,
   profile: profileResponse,
   setProfile: profileResponse,
   requestProfile: profileResponse,
@@ -24,7 +28,7 @@ export const householdResponses = {
   setProjectAgents: projectSchema,
 };
 export const householdCommands: readonly CliCommand[] = Object.keys(householdResponses)
-  .map(name => ({ name, write: !['show', 'profile'].includes(name), positional: ['json'] }));
+  .map(name => ({ name, write: !['show', 'profile', 'backup'].includes(name), positional: ['json'] }));
 export function householdOperation<I>(op: Omit<Operation<I>, 'output' | 'cli'>): Operation<I> {
   const name = op.name.slice('household.'.length) as keyof typeof householdResponses;
   const cli = householdCommands.find(command => `household.${command.name}` === op.name);
