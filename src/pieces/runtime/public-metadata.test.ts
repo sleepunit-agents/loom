@@ -1,4 +1,10 @@
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
+import * as policy from '../../core/index.js';
+import * as effectModule from '../../core/effects.js';
+import Database from 'better-sqlite3';
+import fs from 'node:fs';
+import fsPromises from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -11,7 +17,7 @@ import {signin,hash} from '../../core/signin/index.js';
 import {runtimeStore} from './store.js';
 import {conversationId} from '../attention/conversations.js';
 const closes:Array<()=>unknown>=[];
-afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
+afterEach(async()=>{vi.restoreAllMocks();syncBuiltinESMExports();for(const close of closes.splice(0).reverse())await close();});
 async function setup(privateInput=false,project?:string){
  const home=mkdtempSync(join(tmpdir(),'runtime-metadata-'));fixture(home);closes.push(()=>rmSync(home,{recursive:true,force:true}));
  const sharing=structuredClone(fixtureSharing()),clock=new FakeClock();
@@ -136,4 +142,51 @@ it('refuses metadata when service exclusion is the only hold on an otherwise cur
  expect(await f.post(body,'recordTurn',turn)).toMatchObject({ok:false,code:'denied'});
  expect(await f.post(body,'writeDigest',{digest})).toMatchObject({ok:false,code:'denied'});
  expect(f.app.db.prepare('SELECT * FROM attention_conversations').all()).toEqual([]);
+});
+
+it('holds a waiting body even while its owning Clock read remains available',async()=>{
+ const f=await setup();expect(await f.post(f.body,'recordTurn',turn)).toMatchObject({ok:true});
+ expect(await f.post(f.runner,'reportJob',{job:f.job,state:'waiting'})).toMatchObject({ok:true});
+ expect(await f.post(f.body,'readConversation',{})).toMatchObject({ok:true});
+ expect(await f.post(f.body,'recordTurn',turn)).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(f.body,'writeDigest',{digest})).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(1);
+ expect(f.app.db.prepare('SELECT * FROM attention_digests').all()).toEqual([]);
+});
+it.each(['conversation-create','conversation-update','digest-create','digest-update'] as const)('retains central Attention %s denial while owning Clock authority remains current',async kind=>{
+ const f=await setup();
+ if(kind!=='conversation-create')expect(await f.post(f.body,'recordTurn',turn)).toMatchObject({ok:true});
+ if(kind==='digest-update')expect(await f.post(f.body,'writeDigest',{digest})).toMatchObject({ok:true});
+ const beforeTurns=f.app.db.prepare('SELECT * FROM attention_turns').all(),beforeDigests=f.app.db.prepare('SELECT * FROM attention_digests').all();
+ const name=kind.endsWith('create')?'mayCreate':'mayAct',original=policy[name];let denials=0;
+ vi.spyOn(policy,name).mockImplementation((v,r,s,...rest)=>{
+  if(v.kind==='agent'&&r.type===(kind.startsWith('conversation')?'attention.conversation':'attention.digest')){denials++;return false;}
+  return original(v,r,s,...rest);
+ });
+ expect(await f.post(f.body,'readConversation',{})).toMatchObject({ok:true});
+ const result=kind.startsWith('conversation')?await f.post(f.body,'recordTurn',turn):await f.post(f.body,'writeDigest',{digest:{...digest,summary:'Later summary'}});
+ expect(result).toMatchObject({ok:false,code:'denied'});expect(denials).toBeGreaterThan(0);
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual(beforeTurns);
+ expect(f.app.db.prepare('SELECT * FROM attention_digests').all()).toEqual(beforeDigests);
+});
+it('performs both metadata writes without filesystem reads or outside-effect dispatch',async()=>{
+ let effects:ReturnType<typeof effectModule.installEffects>|undefined;
+ const install=effectModule.installEffects;
+ vi.spyOn(effectModule,'installEffects').mockImplementation((...args)=>{effects=install(...args);return effects;});
+ const f=await setup();expect(effects).toBeDefined();
+ const outside=vi.spyOn(effects!,'beforeOutside').mockImplementation(()=>{throw Error('Metadata attempted an outside effect');});
+ const finish=vi.spyOn(effects!,'finish').mockImplementation(()=>{throw Error('Metadata finished an outside effect');});
+ const read=vi.spyOn(fs,'readFileSync').mockImplementation(()=>{throw Error('Metadata read a file');});
+ const asyncRead=vi.spyOn(fsPromises,'readFile').mockImplementation(async()=>{throw Error('Metadata read a file');});
+ syncBuiltinESMExports();
+ const prepare=Database.prototype.prepare;
+ vi.spyOn(Database.prototype,'prepare').mockImplementation(function(this:Database.Database,sql:string){
+  if(this!==f.app.db)throw Error('Metadata queried another database');
+  return prepare.call(this,sql);
+ });
+ const before=f.app.db.prepare('SELECT * FROM core_effects').all();
+ expect(await f.post(f.body,'recordTurn',turn)).toMatchObject({ok:true});
+ expect(await f.post(f.body,'writeDigest',{digest})).toMatchObject({ok:true});
+ expect(read).not.toHaveBeenCalled();expect(asyncRead).not.toHaveBeenCalled();expect(outside).not.toHaveBeenCalled();expect(finish).not.toHaveBeenCalled();
+ expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual(before);
 });

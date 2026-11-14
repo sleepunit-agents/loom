@@ -1572,7 +1572,7 @@ ownership or durable native history, and does not enable external bound work.
 
 ### Public Clock body metadata
 
-A currently authenticated, running public Clock body can call
+A currently authenticated public Clock body in `running` state can call
 `runtime.recordTurn({kind,outcome,model?,harness?})` and
 `runtime.writeDigest({digest})`. Record an own turn before its first digest.
 Runtime derives agent, project, sender, timestamp and run from the current
@@ -1585,7 +1585,8 @@ Attention's canonical conversation is derived from agent, venue
 `clock-*` transport id and reusable lane label remain unchanged. A new Runtime
 conversation therefore cannot inherit a previous lane conversation's metadata.
 The returned `cv-*` is metadata identity only, never a body or source capability.
-Private Comms, private Clock and service bodies cannot use these operations;
+Waiting bodies must return to running before writing. Private Comms, private
+Clock and service bodies cannot use these operations;
 their words and questions remain with their owning consumers.
 
 Retry fingerprints include the original job, claim, house, route and scope; a

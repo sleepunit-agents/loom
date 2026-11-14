@@ -16,7 +16,7 @@ export function installPublicMetadata(app:Foundation,bound:(viewer:Viewer)=>Runt
  const {operations,db}=app,store=runtimeStore(db);
  const destination=(viewer:Viewer)=>{
   const job=bound(viewer);
-  if(!job||job.member!==undefined||job.service!==undefined||!job.conversation)return;
+  if(!job||job.state!=='running'||job.member!==undefined||job.service!==undefined||!job.conversation)return;
   const binding=store.read('binding',job.conversation);
   if(!binding||binding.venue!=='wake'||binding.job!==job.id||binding.agent!==job.agent
    ||binding.member!==undefined||binding.project!==job.project)return;
