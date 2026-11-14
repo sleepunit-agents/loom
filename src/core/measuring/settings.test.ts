@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createDataSchema, type DataDatabase } from '../data/database.js';
 import { agents, members, measuringSettings } from '../data/schema.js';
 import { approvalService } from '../../apps/approvals.js';
+import { readMeasuringChange } from './change.js';
 import { DEFAULT_MEASURING } from './index.js';
 import { MEASURING_SETTINGS_OPERATION, measuringSettingsService } from './settings.js';
 
@@ -19,6 +20,7 @@ it('prepares a durable before/after card and applies it using a recreated servic
   const service = measuringSettingsService(db);
   const after = { ...DEFAULT_MEASURING, on: true, keep_days: 7 };
   const card = JSON.parse(JSON.stringify(service.prepare(after)));
+  expect(readMeasuringChange(card)).toEqual({ before: DEFAULT_MEASURING, after });
   expect(service.read().on).toBe(false);
   expect(card.changeSummary).toContain('"on":false');
   expect(card.changeSummary).toContain('"on":true');
