@@ -28,18 +28,19 @@ it('acknowledges only the sent version, preserving newer same-text and other-win
   await edit('Second');await act(async()=>editor.acknowledged(sent));expect(editor.value.text).toBe('Second');
   await edit('First');await act(async()=>editor.acknowledged(sent));expect(data.has(draftKey('alice','one'))).toBe(true);
   const sentAgain=editor.value;
-  data.set(draftKey('alice','one'),JSON.stringify({version:'other-window',text:'Other window'}));
+  data.set(draftKey('alice','one'),'aaaaaaaaaaaaaaaa');
+  data.set(`${draftKey('alice','one')}:aaaaaaaaaaaaaaaa`,'Other window');
   await act(async()=>editor.acknowledged(sentAgain));
-  expect(editor.value.text).toBe('Other window');expect(JSON.parse(data.get(draftKey('alice','one'))!).text).toBe('Other window');
-  await act(async()=>editor.acknowledged(editor.value));expect(editor.value.text).toBe('');expect(data.size).toBe(0);
+  expect(editor.value.text).toBe('Other window');expect(data.get(`${draftKey('alice','one')}:aaaaaaaaaaaaaaaa`)).toBe('Other window');
+  await act(async()=>editor.acknowledged(editor.value));expect(editor.value.text).toBe('');expect([...data.values()]).not.toContain('Other window');
 });
 it('takes storage changes from other windows without writing them back and leaves unrelated asks alone',async()=>{
   await mount();await edit('Here');
-  data.set(draftKey('alice','one'),JSON.stringify({version:'remote',text:'There'}));
+  data.set(draftKey('alice','one'),'aaaaaaaaaaaaaaaa');data.set(`${draftKey('alice','one')}:aaaaaaaaaaaaaaaa`,'There');
   const event=Object.assign(new Event('storage'),{key:draftKey('alice','two')});
   await act(async()=>events.dispatchEvent(event));expect(editor.value.text).toBe('Here');
   await act(async()=>events.dispatchEvent(Object.assign(new Event('storage'),{key:draftKey('alice','one')})));
-  expect(editor.value.text).toBe('There');expect(data.size).toBe(1);
+  expect(editor.value.text).toBe('There');expect(data.get(`${draftKey('alice','one')}:aaaaaaaaaaaaaaaa`)).toBe('There');
   data.clear();await act(async()=>events.dispatchEvent(Object.assign(new Event('storage'),{key:null})));expect(editor.value.text).toBe('');
 });
 it('ignores malformed storage, retains in-window words when storage is blocked, and clears on acknowledged success',async()=>{
@@ -47,4 +48,14 @@ it('ignores malformed storage, retains in-window words when storage is blocked, 
   vi.stubGlobal('localStorage',{getItem:()=>{throw Error('Denied');},setItem:()=>{throw Error('Full');},removeItem:()=>{throw Error('Denied');}});
   await edit('Still here');expect(editor.value.text).toBe('Still here');expect(editor.persistent).toBe(false);
   await act(async()=>editor.acknowledged(editor.value));expect(editor.value.text).toBe('');
+});
+
+it('cannot erase an edit interleaved at acknowledgement deletion',async()=>{
+  await mount();await edit('Sent');const sent=editor.value,key=draftKey('alice','one');
+  vi.stubGlobal('localStorage',{getItem:(k:string)=>data.get(k)??null,setItem:(k:string,v:string)=>data.set(k,v),removeItem:(k:string)=>{
+    data.set(`${key}:bbbbbbbbbbbbbbbb`,'Concurrent edit');data.set(key,'bbbbbbbbbbbbbbbb');data.delete(k);
+  }});
+  await act(async()=>editor.acknowledged(sent));
+  expect(editor.value.text).toBe('Concurrent edit');expect(data.get(key)).toBe('bbbbbbbbbbbbbbbb');
+  expect([...data.values()]).not.toContain('Sent');
 });

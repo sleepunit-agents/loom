@@ -10,17 +10,26 @@ export interface ReplyDraft {
 }
 const empty: Draft = { version: '', text: '' };
 export const draftKey = (member: string, ask: string) => `loom:inbox:draft:v1:${encodeURIComponent(member)}:${encodeURIComponent(ask)}`;
+const validVersion = (value: string | null): value is string => !!value && /^[a-z2-7]{16}$/.test(value);
+const versionKey = (key: string, version: string) => `${key}:${version}`;
 export function readDraft(key: string): Draft {
   try {
-    const value: unknown = JSON.parse(localStorage.getItem(key) ?? 'null');
-    if (value && typeof value === 'object' && 'version' in value && typeof value.version === 'string' && value.version.length > 0 && 'text' in value && typeof value.text === 'string') return { version: value.version, text: value.text };
+    const version = localStorage.getItem(key);
+    if (!validVersion(version)) return empty;
+    const text = localStorage.getItem(versionKey(key, version));
+    if (text !== null) return { version, text };
   } catch { /* A blocked or malformed device store must not break the editor. */ }
   return empty;
 }
 const same = (a: Draft, b: Draft) => a.version === b.version && a.text === b.text;
 function store(key: string, value: Draft): boolean {
-  try { if (value.text) localStorage.setItem(key, JSON.stringify(value)); else localStorage.removeItem(key); return true; }
-  catch { return false; }
+  try {
+    const previous = localStorage.getItem(key);
+    if (value.text) localStorage.setItem(versionKey(key, value.version), value.text);
+    localStorage.setItem(key, value.version);
+    if (validVersion(previous) && previous !== value.version) localStorage.removeItem(versionKey(key, previous));
+    return true;
+  } catch { return false; }
 }
 /** Mounted under a member+ask key. No draft words are sent until an explicit answer. */
 export function useReplyDraft(member: string, ask: string): ReplyDraft {
@@ -29,7 +38,7 @@ export function useReplyDraft(member: string, ask: string): ReplyDraft {
   const [persistent, setPersistent] = useState(true);
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const refresh = (event: StorageEvent) => { if (event.key === key || event.key === null) setValue(readDraft(key)); };
+    const refresh = (event: StorageEvent) => { if (event.key === key || event.key?.startsWith(`${key}:`) || event.key === null) setValue(readDraft(key)); };
     window.addEventListener('storage', refresh);
     return () => window.removeEventListener('storage', refresh);
   }, [key]);
@@ -39,10 +48,11 @@ export function useReplyDraft(member: string, ask: string): ReplyDraft {
       setPersistent(store(key, next)); setValue(next);
     },
     acknowledged(sent) {
-      // Compare against the current device value, including edits from another window.
-      const stored = readDraft(key);
-      if (same(stored, sent)) setPersistent(store(key, empty));
-      setValue(current => same(current, sent) ? (same(stored, sent) ? empty : stored) : current);
+      // Never compare-and-delete the shared pointer: another window can write between them.
+      // Immutable revision slots let an old acknowledgement delete only its sent words.
+      try { localStorage.removeItem(versionKey(key, sent.version)); }
+      catch { setPersistent(false); }
+      setValue(current => same(current, sent) ? readDraft(key) : current);
     },
   };
 }

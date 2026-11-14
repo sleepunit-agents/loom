@@ -69,7 +69,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await expect.poll(()=>yes(b).count()).toBe(0);
     await expect.poll(()=>b.getByText(/words · jonathan/).count()).toBe(1);
     await expect.poll(()=>b.getByText('Continue after the small fix.',{exact:true}).count()).toBe(1);
-    await expect.poll(()=>a.evaluate(()=>Object.keys(localStorage).filter(key=>key.startsWith('loom:inbox:draft:')).length)).toBe(0);
+    await expect.poll(()=>a.evaluate(()=>Object.keys(localStorage).filter(key=>key.startsWith('loom:inbox:draft:') && localStorage.getItem(key)==='Continue after the small fix.').length)).toBe(0);
     expect(loom.operations.call('direct',owner,'attention.get',{id:'public'})).toMatchObject({ok:true,value:{answer:{kind:'words',text:'Continue after the small fix.',by:owner}}});
     await b.setViewportSize({width:1280,height:900});
     await b.getByRole('button',{name:/Answered/}).click();

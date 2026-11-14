@@ -201,13 +201,13 @@ it('keeps the persistent Inbox draft through failed answers and remounts, then c
     await draw(element);await shown.finish({ok:true,value:ask()});
     await act(async()=>tree!.root.findByType('textarea').props.onChange({target:{value:'A saved answer'}}));
     await click('Record answer');await fresh.finish({ok:true,value:ask()});await write.finish({ok:false,code:'denied',message:'Held'});
-    expect(data.size).toBe(1);
+    expect([...data.values()]).toContain('A saved answer');
     await act(async()=>tree!.unmount());tree=undefined;
     const reopened=request<Ask>(),nextFresh=request<Ask>(),success=request<Ask>();
     f.call.mockReturnValueOnce(reopened.call).mockReturnValueOnce(nextFresh.call).mockReturnValueOnce(success.call);
     await draw(element);await reopened.finish({ok:true,value:ask()});
     expect(tree!.root.findByType('textarea').props.value).toBe('A saved answer');
     await click('Record answer');await nextFresh.finish({ok:true,value:ask()});await success.finish({ok:true,value:ask('ask-1',{state:'answered'})});
-    expect(data.size).toBe(0);
+    expect([...data.values()]).not.toContain('A saved answer');
   } finally {vi.unstubAllGlobals();}
 });
