@@ -239,6 +239,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
         check(ctx);
         // Parsing blocks scope injection even from an accidentally miswired caller.
         const parsed = question.parse({ ...input, source: { kind: 'piece', id: name } });
+        if (parsed.id.startsWith('comms:')) throw new OperationError('conflict', 'Ask belongs to another source');
         if (parsed.project !== undefined || parsed.agent !== undefined || parsed.member !== undefined || parsed.waits_on !== undefined) throw new OperationError('invalid', 'Source asks must be household asks');
         const old = readAsk(parsed.id);
         if (old) {

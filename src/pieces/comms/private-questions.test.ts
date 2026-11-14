@@ -4,7 +4,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startLoom} from '../../foundation.js';
 import {FakeClock,type Sharing} from '../../core/index.js';
-import {installAttention} from '../attention/index.js';
+import {installAttention,attentionSources} from '../attention/index.js';
+import {createHash} from 'node:crypto';
 import {attentionRole} from '../attention/role.js';
 import {installComms} from './index.js';
 import {loadKey} from './crypto.js';
@@ -108,4 +109,23 @@ it('keeps the default answer mode consistent in sealed words and Attention metad
  const f=await setup(),r=await f.comms.ask('art',f.place,{id:'default-mode',question:{ask:'Private default question'}});
  expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{answers:'words'}});
  expect(await f.call('comms.messages',{thread:f.place})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:{ask:'Private default question',answers:'words'}})])});
+});
+
+it('does not let another registered source reserve a future Comms identity',async()=>{
+ const f=await setup(),ref=`comms:${createHash('sha256').update(JSON.stringify([f.place,'question'])).digest('hex')}`;
+ const source=attentionSources(f.app.operations)!.register('fixture-source',()=>{});
+ const ctx={db:f.app.db,viewer:f.viewer,now:f.clock.now(),changed:()=>{}};
+ expect(()=>f.app.db.transaction(()=>source.raise(ctx,{id:ref,ask:'Impersonated source'}))()).toThrow('another source');
+ expect(f.app.db.prepare('SELECT * FROM attention_asks').all()).toEqual([]);
+ expect(await f.comms.ask('art',f.place,{id:'question',question})).toMatchObject({ref});
+ expect(()=>f.app.db.transaction(()=>source.resolve(ctx,ref,'Wrong source'))()).toThrow('another source');
+});
+it('rechecks independent project creation permission for an ordinary member',async()=>{
+ const f=await setup();f.sharing.members.jonathan.owner=false;
+ f.sharing.projects.private={members:['jonathan'],agents:['art']};
+ expect(await f.call('comms.change',{thread:f.place,action:'project',project:'private'})).toMatchObject({ok:true});
+ const seal=f.key.seal;vi.spyOn(f.key,'seal').mockImplementation(async words=>{const sealed=await seal(words);f.sharing.projects.private.members=[];return sealed;});
+ await expect(f.comms.ask('art',f.place,{id:'question',question})).rejects.toThrow();
+ expect(f.app.db.prepare('SELECT * FROM attention_asks').all()).toEqual([]);
+ expect(f.app.db.prepare("SELECT * FROM comms_messages WHERE kind='ask'").all()).toEqual([]);
 });
