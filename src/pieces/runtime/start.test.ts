@@ -10,6 +10,7 @@ import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
 import { fixture, fixtureSharing } from '../../fixture.js';
 import { signin, hash } from '../../core/signin/index.js';
 import { runtimeStore } from './store.js';
+import { jobHeard } from './heartbeat.js';
 import { wake, wakes } from '../clock/store.js';
 import { START_CONFIRM_MS, clockRuntime } from './clock.js';
 import type { Wake } from '../clock/store.js';
@@ -653,7 +654,32 @@ it('allows Clock progress and heartbeat metadata to change during read preparati
  const payload=await f.post(f.runner,'takeInput',{job});
  expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
  const viewer=signin(f.app).token(hash(payload.value.credential))!.viewer;
+ const changedAt=f.store.read('job',job)!.changedAt,heardAt=jobHeard(f.app.db,job)!;
  const pending=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
+ f.clock.advance(1);
  expect(f.call('runtime.reportJob',{job,state:'waiting'},{kind:'runner',id:'a'})).toMatchObject({ok:true});
+ expect(f.store.read('job',job)!.changedAt).toBeGreaterThan(changedAt);
+ expect(jobHeard(f.app.db,job)).toBeGreaterThan(heardAt);
  expect(await pending).toMatchObject({ok:true,value:{messages:[{text:'PRIVATE wake words'}]}});
+});
+
+it('refuses a destination replaced by the outside gate before marking Clock words released',async()=>{
+ const f=await setup(),id=await f.schedule(),job=f.store.ids('job')[0];
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const payload=await f.post(f.runner,'takeInput',{job});
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+ const viewer=signin(f.app).token(hash(payload.value.credential))!.viewer;
+ const original=f.app.effects!.beforeOutside.bind(f.app.effects!);
+ const gate=vi.spyOn(f.app.effects!,'beforeOutside').mockImplementation(action=>{
+  if(action.id.startsWith('runtime:clock-read:'))f.app.db.transaction(()=>{
+   const {changedAt:_,...binding}=f.store.read('binding',payload.value.conversation)!;
+   f.store.put('binding',{...binding,place:'lane:gate-replacement'},f.clock.now());
+  })();
+  return original(action);
+ });
+ try {
+  expect(await f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{})).toMatchObject({ok:false,code:'denied'});
+  expect(gate).toHaveBeenCalled();
+  expect(f.app.db.prepare('SELECT released,consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${id}`)).toEqual({released:null,consumed:null});
+ }finally {gate.mockRestore();}
 });
