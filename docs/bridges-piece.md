@@ -1062,3 +1062,27 @@ default-only entries need no block. Identical entries present in every part reta
 their rules. Private legacy-evidence.retained reports each dropped non-default
 field as source, collection, agent, channel and path; exact documents remain in
 stores. Review and repair these channels before removing their import blocks.
+
+## Internal presence lifecycle
+
+`presence.ts` is an unregistered controller for one authenticated agent/venue/place.
+An explicit fake owning role supplies working/done, original take times, heartbeat
+and last-post time in `presence.test.ts`. Eyes are set once per taken ID and removed
+on reply, completion, disappearance or a heartbeat stale at 90 seconds. Discord
+supplies a typing effect every five seconds while a reply is owed; Slack does not.
+Only the newest twenty unique takes are eligible. Failed cleanup consumes slots,
+so repeated new takes cannot grow uncertain reaction state beyond twenty.
+
+The controller serializes updates, rechecks the owning facts and composition gate
+before each effect, cleans late reactions after completion during IO, retries
+idempotent uncertain reactions, and awaits in-flight IO on shutdown. A transport
+must check the supplied predicate after acquiring its service credential and
+immediately before IO. An unavailable source or staging gate holds all effects;
+a lost setup/credential lifetime permanently stops the controller.
+
+This is internal lifecycle proof, not platform or public support: there is no
+installed Runtime presence source, real reaction/typing transport, public status
+command, daemon registration or durable restart cleanup yet. Its bounded state is
+in memory; a crash could leave eyes behind. Production wiring must first supply
+the owning role, service-scoped IO and durable cleanup. Stop and peer-turn budgets
+remain Runtime responsibilities; this controller adds no policy for either.
