@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
+import { Row } from '../../kit';
 import { useRecords, type LiveRecord } from '../../data';
 import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus, type OwnedAgent } from './home-model';
 import type { Ask } from './model';
@@ -47,13 +48,13 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       const unread = recent.filter(t=>t.unread), thread = unread[0]??recent[0];
       const path = thread?`/p/comms-preview/thread/${encodeURIComponent(thread.id.replace(/^th:/,''))}`:'/p/comms-preview';
       const word = status?.state==='offline'?'Unavailable':ask?'Needs you':status?.state==='working'?'Working':status?.state==='waiting'?'Waiting':status?'Quiet':'No status reported';
-      if(fold&&agent.id!==opened)return <section key={agent.id} className="desk-rail-row" data-agent={agent.id} aria-label={`${agent.name} rail card`}>
-        <button aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)}>
-          <AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state,!!ask)} size={24}/>
-          <strong>{agent.name}</strong><span className="desk-rail-dot" data-state={status?.state} title={word} aria-label={word}/>
-          {ask&&<span className="desk-rail-badge">ASK</span>}
-          <span className="desk-rail-unread" aria-label={threads.status!=='live'?'Conversations unavailable':`${unread.length} unread threads`}>{threads.status!=='live'?'?':unread.length||''}</span>
-        </button>
+      if(fold&&agent.id!==opened)return <section key={agent.id} className="desk-rail-compact" data-agent={agent.id} aria-label={`${agent.name} rail card`}>
+        <Row aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)} title={agent.name}
+          icon={<AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state,!!ask)} size={24}/>}
+          trailing={<span className="desk-rail-flags"><span role="img" className="desk-rail-dot" data-state={status?.state} title={word} aria-label={word}/>
+            {ask&&<span className="desk-rail-badge">ASK</span>}
+            <span className="desk-rail-unread" aria-label={threads.status!=='live'?'Conversations unavailable':`${unread.length} unread threads`}>{threads.status!=='live'?'?':unread.length||''}</span>
+          </span>}/>
       </section>;
       return <section key={agent.id} className="desk-rail-card" data-agent={agent.id} aria-label={`${agent.name} rail card`} data-state={status?.state}>
         <button className="desk-rail-agent" aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)}>

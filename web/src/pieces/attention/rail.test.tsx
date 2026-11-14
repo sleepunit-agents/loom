@@ -45,7 +45,7 @@ it('folds measured overflow, keeps talking before asks/unread, and unfolds when 
   await act(async()=>{tree=create(h(Rail,{go}),{createNodeMock:(node:any)=>node.props.className==='desk-agent-rail'?element:null});});
   expect(tree.root.findByProps({className:'desk-agent-rail'}).props['data-fold']).toBe(true);
   expect(tree.root.findByProps({className:'desk-rail-card'}).props['data-agent']).toBe('art');
-  expect(tree.root.findByProps({className:'desk-rail-row'}).props['data-agent']).toBe('mark');
+  expect(tree.root.findByProps({className:'desk-rail-compact'}).props['data-agent']).toBe('mark');
   // An actual working private thread takes priority over Art's ask.
   await publish('thread','live',[...f.snapshots.thread.records,{id:'th:mark',agent:'mark',title:'In flight',unread:false,working:true,last:3,archived:null}]);
   expect(tree.root.findByProps({className:'desk-rail-card'}).props['data-agent']).toBe('mark');
@@ -59,7 +59,7 @@ it('folds measured overflow, keeps talking before asks/unread, and unfolds when 
   expect(tree.root.findByProps({className:'desk-agent-rail'}).props['data-fold']).toBeUndefined();
   expect(tree.root.findAllByProps({className:'desk-rail-card'})).toHaveLength(2);
   element.clientHeight=120;await act(async()=>resize());
-  expect(tree.root.findAllByProps({className:'desk-rail-row'})).toHaveLength(1);
+  expect(tree.root.findAllByProps({className:'desk-rail-compact'})).toHaveLength(1);
   // A content shrink also retries full cards, without waiting for a viewport resize.
   element.scrollHeight=80;await publish('attention.ownedAgent','live',[{id:'art',name:'Art'}]);
   expect(tree.root.findByProps({className:'desk-agent-rail'}).props['data-fold']).toBeUndefined();
