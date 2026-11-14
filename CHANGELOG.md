@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Keep ordinary one-off Clock work filed by authenticated private bodies member-private, with original steering evidence and acknowledgements that omit words.
+- Bind authenticated HOUSE request/status metadata in the typed Secrets client, with exact-job assertions, stable retries and value-free JSON acknowledgements.
 
 - Reserve one-off Clock capacity: at most forty API-created wakes per agent and twenty per proven conversation, with unbound bodies sharing one bucket.
 - Add an internal Runtime role for current authenticated Clock conversation provenance, retaining private scope and sender history.
