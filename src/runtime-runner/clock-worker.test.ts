@@ -14,6 +14,7 @@ import {signin,hash} from '../core/signin/index.js';
 import {currentExecution} from '../pieces/runtime/control.js';
 import {hearJob} from '../pieces/runtime/heartbeat.js';
 import {runtimeStore} from '../pieces/runtime/store.js';
+import {runClockWorker} from './clock-worker-entry.js';
 import {startClockWorker,type ClockWorkerConfig} from './clock-worker.js';
 import type {SpawnClaude} from './session.js';
 import * as preparation from './clock-input.js';
@@ -34,7 +35,7 @@ async function setup(staging=false,privateInput=false){
  const runner=randomBytes(32).toString('hex');
  signin(app).tokens.change(ts=>ts.push({role:'runner:a',label:'fixture runner',sha256:hash(runner),created:new Date(clock.now()).toISOString()}));
  const post=async(token:string,name:string,input={})=>(await fetch(`${app.url}/api/runtime/${name}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({input,id:`http-${++n}`})})).json();
- const work={agent:'art',prompt:'ONLY CURRENT SCHEDULED WORDS',note:'fixture',when:'1s'};
+ const work={agent:'art',prompt:'ONLY CURRENT SCHEDULED WORDS',note:'fixture',place:'lane:native',when:'1s'};
  const scheduled=privateInput?await app.operations.callAsync('socket',owner,'clock.in',{...work,member:'jonathan',project:'pond'},`private-${++n}`,true):call('clock.in',work);
  expect(scheduled).toMatchObject({ok:true});const wake=(scheduled as {ok:true;value:{id:string}}).value.id;
  clock.advance(1000);await settle();const job=store.ids('job')[0];expect(job).toBeTruthy();
@@ -49,11 +50,12 @@ async function setup(staging=false,privateInput=false){
   binding:{agent:'art',conversation:b.id,venue:'wake',place:b.place},checkout:home,command:'/worker/claude',env:{WORKER:'yes'},
   rules:{key:'a'.repeat(64),deny:['Bash(rm *)'],sections:[{text:'LOCAL OWNER RULES'}]}};
  const calls:Array<{args:readonly string[];input:string;child:EventEmitter&{stdin:PassThrough;stdout:PassThrough;stderr:PassThrough;kill:()=>boolean;killed:boolean};options:unknown}>=[];
+ let autoFinish=false;
  let launched!:()=>void;const ready=new Promise<void>(r=>{launched=r;});
  const launch:SpawnClaude=(_cmd,args,options)=>{
   const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough(),killed:false,
    kill(){this.killed=true;queueMicrotask(()=>this.emit('close',null));return true;}});
-  const c={args,input:'',child,options};child.stdin.on('data',v=>{c.input+=v.toString();launched();});calls.push(c);
+  const c={args,input:'',child,options};child.stdin.on('data',v=>{c.input+=v.toString();launched();if(autoFinish)queueMicrotask(finish);});calls.push(c);
   return child as ReturnType<SpawnClaude>;
  };
  const finish=()=>{const c=calls.at(-1)!,session=c.args[c.args.indexOf('--session-id')+1];
@@ -61,9 +63,13 @@ async function setup(staging=false,privateInput=false){
  const start=(override=config)=>{const worker=startClockWorker(override,{clock,launch});closes.push(worker.close);return worker;};
  const withdraw=()=>{fenceSource();};
  const fenceSource=()=>{app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.withdrawn',json('true')) WHERE id=?").run(wake);};
- const attempt=()=>{const worker=start();void ready.then(finish);return worker.completed;};
+ const attempt=()=>{autoFinish=true;return start().completed.finally(()=>{autoFinish=false;});};
+ const joinInput=async()=>{
+  const response=await (await fetch(`${app.url}/api/clock/in`,{method:'POST',headers:{authorization:`Bearer ${config.credential}`,'content-type':'application/json'},body:JSON.stringify({input:{agent:'art',prompt:'LATER JOINED WORDS',note:'join',place:config.binding.place,when:'1s'},id:`join-${++n}`})})).json();
+  expect(response).toMatchObject({ok:true});clock.advance(1000);await settle();return response.value.id as string;
+ };
  const consumed=()=>app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${wake}`) as {consumed:number|null};
- return {home,app,clock,store,call,post,wake,job,config,calls,ready,finish,start,attempt,consumed,withdraw,access};
+ return {home,app,clock,store,call,post,wake,job,config,calls,ready,finish,start,attempt,joinInput,launch,consumed,withdraw,access};
 }
 it('actual worker startup obtains owning Runtime admission, executes the original words and only then ACKs',async()=>{
  const f=await setup(),worker=f.start();await f.ready;
@@ -150,7 +156,7 @@ function holdResponse(op:string,n=1){
   if(this.req.url===`/api/runtime/${op}`&&++count===n){release=()=>{end.apply(this,args);};entered();return this;}
   return end.apply(this,args);
  });
- return {ready,release:()=>release(),spy,get count(){return count;}};
+ return {ready,release:()=>{const pending=release;release=()=>{};pending();},spy,get count(){return count;}};
 }
 it('a stalled watchdog cannot keep the original foreground child past its local authority window',async()=>{
  const f=await setup(),held=holdResponse('currentClockExecution',2),worker=f.start();
@@ -183,4 +189,76 @@ it('allows harmless progress timestamps to advance during preparation',async()=>
   f.app.db.transaction(()=>hearJob(f.app.db,f.job,f.clock.now()))();return value;
  });
  const worker=f.start();await f.ready;f.finish();expect(await worker.completed).toBe(true);
+});
+
+it('executable IO parses bounded stdin and returns success through real HTTP startup with the existing fake child',async()=>{
+ const f=await setup(),signals=new EventEmitter(),input=new PassThrough(),errors:string[]=[];
+ const result=runClockWorker({input,args:[],signals,stderr:s=>errors.push(s)},{clock:f.clock,launch:f.launch});
+ input.end(JSON.stringify(f.config));await f.ready;expect(f.consumed().consumed).toBeNull();f.finish();
+ expect(await result).toBe(0);expect(errors).toEqual([]);expect(signals.listenerCount('SIGTERM')).toBe(0);expect(f.consumed().consumed).not.toBeNull();
+});
+it.each(['argument','invalid-json','oversized','signal-input','signal-admission'] as const)('executable IO rejects %s without native release or private diagnostics',async kind=>{
+ const f=await setup(),signals=new EventEmitter(),input=new PassThrough(),errors:string[]=[],held=kind==='signal-admission'?holdResponse('beginClockExecution'):undefined;
+ const result=runClockWorker({input,args:kind==='argument'?['--unexpected']:[],signals,stderr:s=>errors.push(s)},{clock:f.clock,launch:f.launch});
+ try {
+  if(kind==='signal-input')signals.emit('SIGINT');
+  else if(kind==='invalid-json')input.end('PRIVATE INVALID JSON');
+  else if(kind==='oversized')input.end(Buffer.alloc(1_048_577,65));
+  else input.end(JSON.stringify(f.config));
+  if(held){await held.ready;signals.emit('SIGTERM');}
+  expect(await result).toBe(1);expect(f.calls).toHaveLength(0);expect(f.consumed().consumed).toBeNull();
+  expect(errors.join('')).not.toContain(f.config.credential);expect(errors.join('')).not.toContain('PRIVATE');
+  expect(signals.listenerCount('SIGTERM')).toBe(0);expect(signals.listenerCount('SIGINT')).toBe(0);
+ }finally {held?.release();held?.spy.mockRestore();input.destroy();}
+});
+it('starts watchdog reads every second even while an earlier successful response is delayed',async()=>{
+ const f=await setup(),held=holdResponse('currentClockExecution',2),worker=f.start();
+ try {
+  await f.ready;f.clock.advance(1000);await held.ready;
+  let entered!:()=>void;const third=new Promise<void>(resolve=>{entered=resolve;});const fetchOriginal=globalThis.fetch;
+  const spy=vi.spyOn(globalThis,'fetch').mockImplementation((...args)=>{if(String(args[0]).endsWith('/currentClockExecution'))entered();return fetchOriginal(...args);});
+  f.clock.advance(1000);await third;expect(held.count).toBeGreaterThanOrEqual(2);
+  spy.mockRestore();await worker.close();expect(await worker.completed).toBe(false);
+ }finally {held.release();held.spy.mockRestore();}
+});
+it('a delayed successful authority response expires from request start, without the watchdog masking its deadline',async()=>{
+ const f=await setup(),held=holdResponse('currentClockExecution'),worker=f.start();
+ try {
+  await held.ready;f.clock.advance(3000);held.release();await f.ready;
+  // Prevent additional successful refreshes from extending the tested window.
+  const block=holdResponse('currentClockExecution');
+  try {f.clock.advance(2000);await settle();expect(f.calls[0].child.killed).toBe(true);expect(await worker.completed).toBe(false);}
+  finally {block.release();block.spy.mockRestore();}
+ }finally {held.release();held.spy.mockRestore();}
+});
+it('an uncertain source stays consumed as an attempt after a later join AND a daemon restart',async()=>{
+ const f=await setup(),held=holdResponse('beginClockExecution'),worker=f.start();
+ try {await held.ready;await worker.close();expect(await worker.completed).toBe(false);}
+ finally {held.release();held.spy.mockRestore();}
+ await f.joinInput();expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns WHERE job=?').get(f.job)).toEqual({n:2});
+ await f.app.close();const app=await startLoom({home:f.home,clock:f.clock,next:true,sharing:()=>f.access,stdout(){}});closes.push(app.close);f.access.services=builtinServices(app.db);
+ expect(await f.start({...f.config,url:app.url}).completed).toBe(false);expect(f.calls).toHaveLength(0);
+ expect(app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE job=?').all(f.job)).toEqual([{consumed:null},{consumed:null}]);
+});
+it.each(['selected-sequence','source-contents','root-replacement'] as const)('pins exact %s independently of current generic destination authority',async kind=>{
+ const f=await setup(),first=f.start();await f.ready;f.finish();expect(await first.completed).toBe(true);
+ const selected=await f.joinInput();
+ let replacement:{id:string;record:string}|undefined;
+ if(kind==='root-replacement'){
+  const r=f.call('clock.in',{agent:'art',prompt:'REPLACEMENT ROOT',note:'other',when:'1s'});expect(r.ok).toBe(true);
+  f.clock.advance(1000);await settle();replacement=f.app.db.prepare('SELECT id,record FROM runtime_clock_turns WHERE job<>?').get(f.job) as typeof replacement;expect(replacement).toBeTruthy();
+ }
+ const original=preparation.prepareClockInput;let mutated=false;
+ vi.spyOn(preparation,'prepareClockInput').mockImplementation((...args)=>{
+  const value=original(...args);
+  if(kind==='selected-sequence')f.app.db.prepare('UPDATE runtime_clock_turns SET seq=seq+10000 WHERE id=?').run(`clock:${selected}`);
+  if(kind==='source-contents')f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.prompt','REPLACED WORDS') WHERE id=?").run(selected);
+  if(kind==='root-replacement')f.app.db.transaction(()=>{
+   f.app.db.prepare('DELETE FROM runtime_clock_turns WHERE id=?').run(replacement!.id);
+   f.app.db.prepare('UPDATE runtime_clock_turns SET id=?,record=? WHERE id=?').run(replacement!.id,replacement!.record,`clock:${f.wake}`);
+  })();
+  mutated=true;return value;
+ });
+ expect(await f.attempt()).toBe(false);expect(mutated).toBe(true);expect(f.calls).toHaveLength(1);
+ if(kind!=='source-contents')expect(await f.post(f.config.credential,'readConversation',{})).toMatchObject({ok:true});
 });

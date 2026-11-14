@@ -29,7 +29,8 @@ runner's original claim), `binding` (`agent`, `conversation`, `venue: "wake"`,
 never a model-supplied request or a replacement assignment discovered remotely.
 Configuration is captured before the first await. The credential does not enter
 argv, stdout, the child's environment automatically, or a new credential store.
-The executable takes no arguments and prints no result words/native handles;
+The executable takes no arguments, bounds and validates stdin, drains signals
+through the owning startup, and prints no result words/native handles;
 exit 0 means the turn completed and Runtime acknowledged it, exit 1 means failed
 or uncertain. It performs no retry and owns no retained native session.
 

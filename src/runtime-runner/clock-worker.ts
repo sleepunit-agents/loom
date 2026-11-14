@@ -83,7 +83,12 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
       };
       // Independent owning read after preparation, before the actual spawn.
       await refresh();if(!local())throw fail();
-      const watch=()=>{cancelWatch=clock.at(clock.now()+1000,()=>{void refresh().then(()=>{if(active)watch();},fence);});};
+      const watch=()=>{cancelWatch=clock.at(clock.now()+1000,()=>{
+        if(!active)return;
+        // Cadence belongs to the clock, independently of response latency.
+        // At most five one-second reads can overlap the bounded window.
+        watch();void refresh().catch(fence);
+      });};
       watch();
       const output=await session.turn({binding:config.binding,rules:config.rules,message:message.message,
         checkout:config.checkout,current:local});
