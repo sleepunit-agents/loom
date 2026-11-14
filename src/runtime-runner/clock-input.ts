@@ -18,7 +18,7 @@ export function prepareClockInput(raw:unknown,conversation:string,checkout:strin
   const pending=batch.messages.filter(m=>!m.acknowledged);
   if(!pending.length)return;
   const words=pending.map(m=>'text' in m?m.text:prepareScheduledFile(m.file,checkout));
-  if(words.some(text=>text.includes('\0')||text.includes('<!-- house: local -->')))
+  if(words.some(text=>!text.trim()||text.includes('\0')||text.includes('<!-- house: local -->')))
     throw new Error('Scheduled input requires a different execution boundary');
   const message=words.join('\n');
   if(Buffer.byteLength(message)>MAX_BRIEF_BYTES)throw new Error('Scheduled input exceeds its limit');

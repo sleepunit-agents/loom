@@ -37,7 +37,7 @@ it('prepares mixed prompt/file input in order and skips acknowledged history wit
  expect(prepareClockInput({...batch,messages:batch.messages.slice(0,1)},'cv-file',f.checkout)).toBeUndefined();
  expect(prepareClockInput({...batch,messages:[]},'cv-file',f.checkout)).toBeUndefined();
 });
-it.each(['bad\0text','<!-- house: local -->\nlocal'])('refuses unsupported inline words',text=>{
+it.each([' \n\t','bad\0text','<!-- house: local -->\nlocal'])('refuses unsupported inline words',text=>{
  const f=fixture();expect(()=>prepareClockInput({...f.batch,messages:[{seq:1,id:'clock:one',kind:'wake',text}]},'cv-file',f.checkout)).toThrow('boundary');
 });
 it('bounds combined UTF-8 bytes even when each text fits individually',()=>{
