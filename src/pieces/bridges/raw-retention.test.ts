@@ -5,6 +5,14 @@ import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { fixture as seedHome } from '../../fixture.js';
 import { FakeClock } from '../../core/clock.js';
+import { openDb, migrate } from '../../core/index.js';
+import { installBridges } from './index.js';
+import { schema as s1 } from './schema/001.js';
+import { schema as s2 } from './schema/002.js';
+import { schema as s3 } from './schema/003.js';
+import { schema as s4 } from './schema/004.js';
+import { schema as s5 } from './schema/005.js';
+import { schema as s6 } from './schema/006.js';
 import { installBridgeRawRetention } from './raw-retention.js';
 const HOUR = 3_600_000, MINUTE = 60_000, NOW = Date.UTC(2026, 10, 14);
 interface RawRow { id: string; event: string | null; state: string; received: number }
@@ -14,10 +22,11 @@ afterEach(async () => {
   for (const home of roots.splice(0)) rmSync(home, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
-async function fixture(home?: string, at = NOW, staging = false) {
+async function fixture(home?: string, at = NOW, staging = false, next = true) {
   if (!home) { home = mkdtempSync(join(tmpdir(), 'bridge-raw-retention-')); roots.push(home); seedHome(home); }
   const clock = new FakeClock(at);
-  const app = await startLoom({ home, next: true, staging, clock, port: 0, stdout: () => {} });
+  const app = await startLoom({ home, next, staging, clock, port: 0, stdout: () => {},
+    install: next ? undefined : app => installBridges(app, () => ({ members: {}, projects: {}, services: {} })) });
   let closed = false;
   const close = async () => { if (!closed) { closed = true; await app.close(); } };
   closes.push(close);
@@ -87,10 +96,62 @@ it('recovers a failed startup sweep and cancels queued work on shutdown', async 
   g.clock.advance(MINUTE); await g.close(); const calls = prepare.mock.calls.length;
   g.clock.advance(MINUTE); await settle(); expect(prepare.mock.calls).toHaveLength(calls);
 });
-it('uses partial age indexes rather than scanning permanent tombstones', async () => {
+it('uses partial age indexes in the installed UPDATE rather than scanning permanent tombstones', async () => {
   const f = await fixture();
+  const prepare = vi.spyOn(f.app.db, 'prepare');
+  f.clock.advance(MINUTE); await settle();
+  const statements = prepare.mock.calls.map(([sql]) => sql);
   for (const platform of ['discord', 'slack']) {
-    const plan = f.app.db.prepare(`EXPLAIN QUERY PLAN SELECT id FROM bridges_${platform}_receipts WHERE state='pending' AND received<? ORDER BY received,id LIMIT 64`).all(NOW);
+    const sql = statements.find(sql => sql.startsWith(`UPDATE bridges_${platform}_receipts`))!;
+    expect(sql).toBeDefined();
+    const plan = f.app.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(NOW);
     expect(JSON.stringify(plan)).toContain(`bridges_${platform}_raw_expiry`);
   }
+});
+
+it('upgrades a populated version-005 store without modifying rows and is repeatable', () => {
+  const home = mkdtempSync(join(tmpdir(), 'bridge-raw-v5-')); roots.push(home);
+  const lease = openDb(home), db = lease.db;
+  try {
+    migrate(db, 'bridges', [...s1, ...s2, ...s3, ...s4, ...s5]);
+    db.exec(`INSERT INTO bridges_discord_sessions VALUES ('binding','checkpoint');
+      INSERT INTO bridges_discord_receipts VALUES ('id','venue','binding','message','words','pending',1);
+      INSERT INTO bridges_slack_receipts VALUES ('id','venue','binding','event',NULL,'consumed',2);
+      INSERT INTO bridges_inbox(id,venue,identity,message,state,received) VALUES ('in','venue','identity','words','pending',1);
+      INSERT INTO bridges_outbox(id,incoming,venue,identity,address,text,state,created) VALUES ('out','in','venue','identity','address','words','uncertain',1);`);
+    const tables = ['bridges_discord_sessions', 'bridges_discord_receipts', 'bridges_slack_receipts', 'bridges_inbox', 'bridges_outbox'];
+    const snapshot = () => tables.map(table => db.prepare(`SELECT * FROM ${table}`).all());
+    const before = snapshot();
+    migrate(db, 'bridges', [...s1, ...s2, ...s3, ...s4, ...s5, ...s6]);
+    expect(snapshot()).toEqual(before);
+    migrate(db, 'bridges', [...s1, ...s2, ...s3, ...s4, ...s5, ...s6]);
+    expect(snapshot()).toEqual(before);
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'bridges_%_raw_expiry' ORDER BY name").all()).toEqual([
+      {name: 'bridges_discord_raw_expiry'}, {name: 'bridges_slack_raw_expiry'},
+    ]);
+  } finally { lease.close(); }
+});
+it('refuses to join an enclosing transaction then retries independently', async () => {
+  const f = await fixture(undefined, NOW, false, false); f.seed('old', HOUR + 1);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  expect(() => f.app.db.transaction(() => {
+    installBridgeRawRetention(f.app);
+    expect(f.rows('discord')[0]).toMatchObject({ state: 'pending' });
+    throw Error('rollback enclosing transaction');
+  })()).toThrow('rollback enclosing transaction');
+  expect(warn.mock.calls).toEqual([['Bridges raw receipt retention failed']]);
+  f.clock.advance(MINUTE); await settle();
+  for (const platform of ['discord', 'slack']) expect(f.rows(platform)[0]).toMatchObject({ state: 'consumed', event: null });
+});
+it('preserves existing normalized pending/uncertain work and Runtime jobs/turns', async () => {
+  const f = await fixture(); f.seed('old', HOUR + 1);
+  f.app.db.exec(`INSERT INTO bridges_inbox(id,venue,identity,message,state,received) VALUES ('in','venue','identity','words','pending',1);
+    INSERT INTO bridges_outbox(id,incoming,venue,identity,address,text,state,created) VALUES ('out','in','venue','identity','address','words','uncertain',1);
+    INSERT INTO runtime_jobs VALUES ('job','{"id":"job","state":"running"}',1);
+    INSERT INTO runtime_bridge_turns(id,conversation,direction,record) VALUES ('turn','conversation','in','{"text":"words"}');`);
+  const tables = ['bridges_inbox', 'bridges_outbox', 'runtime_jobs', 'runtime_bridge_turns'];
+  const snapshot = () => tables.map(table => f.app.db.prepare(`SELECT * FROM ${table}`).all());
+  const before = snapshot(); f.clock.advance(MINUTE); await settle();
+  expect(f.rows('discord')[0]).toMatchObject({ state: 'consumed', event: null });
+  expect(snapshot()).toEqual(before);
 });

@@ -1350,6 +1350,8 @@ Failures roll back the pass, emit a fixed warning without exception text, and
 retry on the next minute. Shutdown cancels the timer and fences queued work.
 `raw-retention.test.ts` covers actual next startup/restart (including staging and
 no credentials), exact boundary/young-row preservation, tombstones/checkpoints,
-per-pass limits, coalescing, partial-index plans, atomic failure/retry and shutdown.
+per-pass limits, coalescing, the installed UPDATE index plans, populated version-005
+upgrade/repeated migration, enclosing-transaction refusal/retry, preservation of
+existing normalized/Runtime work, atomic failure/retry and shutdown.
 Permanent obsolete-binding/checkpoint cleanup still needs its separate lifecycle
 and outstanding-work reconciliation; this sweep does not close that required row.
