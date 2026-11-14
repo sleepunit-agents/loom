@@ -57,10 +57,19 @@ it('retains real task success and domain/transport errors for the window member,
 });
 it('publishes to a second window, persists across reopening, and never creates an ask',async()=>{
   const {app,home,clock,list,socket,types}=await setup();const writer=await socket(),reader=await socket();
+  writer.ws.send(JSON.stringify({kind:'subscribe',type:'attention.outcome'}));await writer.receive(m=>m.kind==='set');
   reader.ws.send(JSON.stringify({kind:'subscribe',type:'attention.outcome'}));expect((await reader.receive(m=>m.kind==='set')).records).toEqual([]);
   await writer.call('tasks.create',{cli:true,title:'A task',goal:'goal',why:'why'},'one');
   const change=await reader.receive(m=>m.kind==='put'&&m.type==='attention.outcome');expect(change.record).toEqual(list()[0]);
   expect(types.get('attention.ask')!.ids(undefined)).toEqual([]);
+  const outcomeId=list()[0].id;
+  expect(await reader.call('attention.readOutcome',{id:outcomeId},'read-persist')).toMatchObject({ok:true,value:{read:true}});
+  const readChange=await writer.receive(m=>m.kind==='put'&&m.type==='attention.outcome'&&m.record.readAt!==undefined);
+  expect(readChange.record).toMatchObject({id:outcomeId,readAt:clock.now()});
+  const firstRead=list()[0].readAt;clock.advance(1000);
+  expect(await reader.call('attention.readOutcome',{id:outcomeId},'read-again')).toMatchObject({ok:true});
+  expect(list()[0].readAt).toBe(firstRead);
+  expect(app.db.prepare('SELECT * FROM attention_read_marks').all()).toEqual([]);
   const expected=list();await app.close();
   const next=await startLoom({home,next:true,clock,stdout:()=>{},sharing:()=>({members:{alice:{owner:true,agents:['art']}},projects:{},services:{}})});
   cleanup.push(next.close);
@@ -70,7 +79,7 @@ it('keeps newest 50 per member at the same clock tick and does not resurrect a t
   const {app,list,socket}=await setup(),a=await socket(),b=await socket('bob');
   const input={id:'missing',answer:{kind:'yes'}};
   for(let n=0;n<53;n++) await a.call('attention.answer',input,`attempt-${n}`);
-  expect(list()).toHaveLength(50);const first=list()[0];
+  expect(list()).toHaveLength(50);expect(list().map(record=>record.order)).toEqual(Array.from({length:50},(_,i)=>53-i));const first=list()[0];
   await a.call('attention.answer',input,'attempt-0');expect(list()).toHaveLength(50);expect(list()[0]).toEqual(first);
   await b.call('attention.answer',input,'attempt-0');expect(list(bob)).toHaveLength(1);expect(list()).toHaveLength(50);
   expect(app.db.prepare('SELECT count(*) AS n FROM attention_outcomes').get()).toEqual({n:51});
@@ -100,4 +109,52 @@ it('adds schema seven to a version-six home without changing held asks and reapp
   const outcomes=list();expect(outcomes).toHaveLength(1);
   migrate(app.db,'attention',attentionMigrations);
   expect(list()).toEqual(outcomes);expect(app.db.prepare('SELECT * FROM attention_asks').all()).toEqual(before);
+});
+
+it('records every advertised Tasks mutation with its real result and commit order',async()=>{
+  const {list,socket}=await setup(),client=await socket();let serial=0;
+  const run=async(verb:string,input:object)=>{const result=await client.call(`tasks.${verb}`,{cli:true,...input},`task-action-${++serial}`);expect(result).toMatchObject({ok:true,value:{result:{ok:true}}});expect(list()[0]).toMatchObject({operation:`tasks.${verb}`,ok:true});return result.value.result;};
+  const first=await run('create',{title:'First task',goal:'goal',why:'why'});
+  const second=await run('create',{title:'Second task',goal:'goal',why:'why'});
+  for(const verb of ['claim','unclaim'])await run(verb,{id:first.id});
+  await run('close',{id:first.id,reason:'Finished'});await run('reopen',{id:first.id});
+  await run('update',{id:first.id,set:{title:'Updated task'}});
+  await run('comment',{id:first.id,text:'Comment words stay in Tasks'});
+  await run('link',{id:first.id,dependsOn:second.id,type:'blocks'});
+  await run('unlink',{id:first.id,dependsOn:second.id,type:'blocks'});
+  await run('delete',{id:second.id});
+  expect(list().map(record=>record.operation)).toEqual(['delete','unlink','link','comment','update','reopen','close','unclaim','claim','create','create'].map(verb=>`tasks.${verb}`));
+  expect(JSON.stringify(list())).not.toContain('Comment words stay in Tasks');
+});
+it('captures a new action after retry expiry even if the old outcome remains in the newest fifty',async()=>{
+  const {clock,list,socket}=await setup(),client=await socket();
+  const input={cli:true,title:'An ordinary task',goal:'goal',why:'why'};
+  const before=await client.call('tasks.create',input,'reusable');expect(before).toMatchObject({ok:true,value:{result:{ok:true}}});
+  const first=list()[0];clock.advance(30*86400_000);
+  const after=await client.call('tasks.create',input,'reusable');expect(after).toMatchObject({ok:true,value:{result:{ok:true}}});
+  expect(after.value.result.id).not.toBe(before.value.result.id);
+  expect(list()).toHaveLength(2);expect(list()[0].id).not.toBe(first.id);expect(list()[1]).toEqual(first);
+  expect(await client.call('tasks.create',input,'reusable')).toEqual(after);expect(list()).toHaveLength(2);
+});
+it('keeps already-answered fresh-id conflicts quiet',async()=>{
+  const {app,list,socket}=await setup(),client=await socket();
+  app.operations.call('direct',alice,'attention.raise',{id:'question',agent:'art',ask:'Continue?',source:{kind:'piece',id:'test'}},'raise-question');
+  const input={id:'question',answer:{kind:'yes'}};
+  expect(await client.call('attention.answer',input,'first-answer')).toMatchObject({ok:true});
+  const before=list();expect(before).toHaveLength(1);
+  expect(await client.call('attention.answer',input,'duplicate-answer')).toMatchObject({ok:false,code:'conflict'});
+  expect(list()).toEqual(before);
+});
+it('preserves committed action and socket result when the optional notice transaction fails',async()=>{
+  const {app,list,socket}=await setup(),client=await socket();
+  app.db.exec("CREATE TRIGGER reject_notice BEFORE INSERT ON attention_outcomes BEGIN SELECT RAISE(ABORT, 'Fixture notice failure'); END;");
+  const result=await client.call('tasks.create',{cli:true,title:'Keep this task',goal:'goal',why:'why'},'survive');
+  expect(result).toMatchObject({ok:true,value:{result:{ok:true,created:true}}});
+  expect(app.operations.call('direct',alice,'tasks.show',{id:result.value.result.id})).toMatchObject({ok:true});
+  expect(list()).toEqual([]);
+  expect(app.db.prepare('SELECT * FROM attention_outcome_seen').all()).toEqual([]);
+  app.db.exec('DROP TRIGGER reject_notice');
+  // The retry repairs its notice without repeating the committed action.
+  expect(await client.call('tasks.create',{cli:true,title:'Keep this task',goal:'goal',why:'why'},'survive')).toEqual(result);
+  expect(list()).toMatchObject([{operation:'tasks.create',ok:true}]);
 });

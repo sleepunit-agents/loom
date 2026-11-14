@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { mayAct, maySee, type Db, type Live, type LiveRecord, type Operations, type Result, type Sharing, type Viewer } from '../../core/index.js';
 import { operation } from './commands.js';
@@ -38,12 +38,12 @@ export function installOutcomes(db: Db, operations: Operations, live: Live, shar
       db.prepare('DELETE FROM attention_outcome_seen WHERE expires<=?').run(now);
       if (db.prepare('SELECT id FROM attention_outcome_seen WHERE id=?').get(key)) return;
       const ok=succeeded(name,result);
-      const record: ActionOutcome={id:key,member:viewer.id,at:now,order:0,ok,text:`${action.label}: ${ok?'saved':'could not be saved'}.`,source:action.source,sourceLabel:action.sourceLabel,page:action.page,operation:name};
-      const inserted=db.prepare('INSERT INTO attention_outcomes(id,member,record) VALUES (?,?,?)').run(key,viewer.id,JSON.stringify(record));
+      const record: ActionOutcome={id:`outcome-${randomUUID()}`,member:viewer.id,at:now,order:0,ok,text:`${action.label}: ${ok?'saved':'could not be saved'}.`,source:action.source,sourceLabel:action.sourceLabel,page:action.page,operation:name};
+      const inserted=db.prepare('INSERT INTO attention_outcomes(id,member,record) VALUES (?,?,?)').run(record.id,viewer.id,JSON.stringify(record));
       record.order=Number(inserted.lastInsertRowid);
-      db.prepare('UPDATE attention_outcomes SET record=? WHERE id=?').run(JSON.stringify(record),key);
+      db.prepare('UPDATE attention_outcomes SET record=? WHERE id=?').run(JSON.stringify(record),record.id);
       db.prepare('INSERT INTO attention_outcome_seen VALUES (?,?)').run(key,now+30*86400_000);
-      changes.push({type:'attention.outcome',id:key});
+      changes.push({type:'attention.outcome',id:record.id});
       const excess=db.prepare('SELECT id FROM attention_outcomes WHERE member=? ORDER BY ordinal DESC LIMIT -1 OFFSET 50').all(viewer.id) as {id:string}[];
       for (const row of excess) { db.prepare('DELETE FROM attention_outcomes WHERE id=?').run(row.id); changes.push({type:'attention.outcome',id:row.id}); }
     })();
