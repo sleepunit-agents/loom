@@ -242,7 +242,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
           }
           if(surface==='home-steps') {
             await page.getByRole('region',{name:'art desk details',exact:true}).getByRole('heading',{name:'Last steps',exact:true}).scrollIntoViewIfNeeded();
-            await reference.locator('.loom-bigcard').filter({has:reference.getByRole('heading',{name:'art',exact:true})}).getByRole('heading',{name:'Last steps',exact:true}).scrollIntoViewIfNeeded();
+            await reference.locator('.loom-bigcard[data-agent=art]').getByRole('heading',{name:'Last steps',exact:true}).scrollIntoViewIfNeeded();
           }
           if(surface==='work') {
             await page.getByRole('button',{name:'Open Inbox',exact:true}).click();
