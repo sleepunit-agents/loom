@@ -1,4 +1,6 @@
 import { Hono } from 'hono';
+import { GraphQLObjectType, GraphQLSchema, type GraphQLFieldConfigMap } from 'graphql/index.js';
+import type { Viewer } from '../index.js';
 import { bodyLimit } from 'hono/body-limit';
 import { createYoga } from 'graphql-yoga';
 import type { Authentication } from '../live/index.js';
@@ -11,7 +13,7 @@ import type { DataDatabase } from './database.js';
  * supplied by the composition's session/token resolver, never a request viewer.
  * No credential, session, plumbing or service-only table enters this schema.
  */
-export function dataHttp(db: DataDatabase, authenticate: (request: Request) => Authentication | undefined = dataAuthentication(db), publicOrigin?: string) {
+export function dataHttp(db: DataDatabase, authenticate: (request: Request) => Authentication | undefined = dataAuthentication(db), publicOrigin?: string, fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }> = {}) {
   const app = new Hono();
   app.use('*', bodyLimit({ maxSize: 1024 * 1024 }));
   app.use('*', async (c, next) => { await next(); c.header('cache-control', 'no-store'); });
@@ -33,8 +35,12 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     // Outside programs are never treated as installed services. Runner reads
     // will get a separate safe projection rather than inheriting member reads.
     if (auth.viewer.kind === 'service' || auth.viewer.kind === 'runner') return c.json({ errors: [{ message: 'Caller has no data projection' }] }, 403);
-    const schema = dataQueries(db.$client, { tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents'], visibility: taskVisibility(auth.viewer) });
-    const yoga = createYoga({ schema, graphqlEndpoint: '/graphql', graphiql: false, logging: false,
+    const generated = dataQueries(db.$client, { tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents'], visibility: taskVisibility(auth.viewer) });
+    const query = generated.getQueryType()!;
+    const schema = new GraphQLSchema({ ...generated.toConfig(), types: generated.toConfig().types.filter(type => type !== query), query: new GraphQLObjectType({
+      ...query.toConfig(), fields: { ...query.toConfig().fields, ...fields },
+    }) });
+    const yoga = createYoga({ schema, context: () => ({ viewer: auth!.viewer }), graphqlEndpoint: '/graphql', graphiql: false, logging: false,
       cors: false, batching: false,
       plugins: [{ onExecute() { if (!auth!.valid()) throw new Error('Authentication ended'); } }],
     });
