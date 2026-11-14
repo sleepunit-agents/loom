@@ -186,3 +186,54 @@ it('checks unknown-agent claims against all selected route bot identities before
  writeFileSync(f.sources.files[1].path,'{}');writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100',fez:'100'}}));
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
 });
+
+it('preserves safe source file and field diagnostics through the owning import projection',()=>{
+ const f=fixture();writeFileSync(f.sources.files[1].path,JSON.stringify({agents:{art:'PRIVATE_ACCOUNT_VALUE'}}));
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(/^Invalid offline Bridges configuration inventory: people.json at \$\["agents"\]\["art"\]$/);
+});
+it('skips annotations in accepted store assembly without changing exact private evidence',()=>{
+ const f=fixture();const note='PRIVATE_STORE_ANNOTATION';
+ f.store('shuttle',[['routes','household',{_note:note,guild:'789',channel_names:{_note:note,'300':'work'},webhook_peers:{_comment:'x'.repeat(395)}}],['channels','art',{_note:note,bot:'100',answers:{_note:note,'300':'work'},flags:{_note:note},threads:{_note:note},extra:{_note:note,ignore:{_note:note,'500':true}}}],['route-offers','art',{doc:{bots:{_note:note,art:'100'},channels:{_note:note,'300':{primary:'art'}}}}]]);
+ const store=new Database(f.sources.stores[0].path);
+ store.prepare("UPDATE docs SET doc=? WHERE collection='channels'").run(' { "bot":"100", "answers":{"300":"work"}, "_note":"PRIVATE_STORE_ANNOTATION", "extra":{"ignore":{"500":true}}, "ignored_numeric":1.2500 } ');
+ const originals=store.prepare('SELECT doc FROM docs ORDER BY collection,key').all() as {doc:string}[];store.close();
+ const s=readBridgeImport(f.sources,f.options,h,f.open);
+ expect(s.expected.routes.map(r=>r.channel)).toEqual(['300']);
+ expect(s.expected.venues[0].ignore).toEqual(['500']);
+ expect(JSON.stringify(s.expected)).not.toContain(note);
+ const evidence=JSON.parse(s.evidence).stores.stores[0].documents as {doc:string}[];
+ expect(evidence.map(d=>d.doc)).toEqual(originals.map(d=>d.doc));
+});
+
+it('identifies malformed selected accepted-store maps without values',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',answers:42}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('Invalid offline Bridges configuration inventory: shuttle.db at $["channels"]["art"]["answers"]');
+});
+it('identifies selected Runtime source fields without pretending they came from people.json',()=>{
+ const f=fixture();f.store('runtime',[['gates','art',{people:{jonathan:{discord:true}}}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('Invalid offline Bridges configuration inventory: runtime.db at $["gates"]["art"]["people"]["jonathan"]["discord"]');
+});
+
+for(const [label,household,part,path] of [
+ ['bot',{guild:'789'},{bot:false},'["channels"]["art"]["bot"]'],
+ ['roles',{guild:'789'},{bot:'100',bot_role:[true]},'["channels"]["art"]["bot_role"]'],
+ ['channel name',{guild:'789',channel_names:{'300':false}},{bot:'100'},'["routes"]["household"]["channel_names"]["300"]'],
+ ['thread',{guild:'789'},{bot:'100',threads:{'400':{parent:false}}},'["channels"]["art"]["threads"]["400"]["parent"]'],
+ ['flag',{guild:'789'},{bot:'100',answers:{'300':'work'},flags:{'300':{peer:'PRIVATE_VALUE'}}},'["channels"]["art"]["flags"]["300"]["peer"]'],
+ ['extra',{guild:'789'},{bot:'100',extra:{notify:{general:false}}},'["channels"]["art"]["extra"]["notify"]["general"]'],
+] as const)it(`identifies the original accepted-store ${label} field`,()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',household],['channels','art',part]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(`Invalid offline Bridges configuration inventory: shuttle.db at $${path}`);
+});
+
+for(const kind of ['runtime','shuttle'] as const)it(`reports malformed ${kind} store JSON safely through the owning projection`,()=>{
+ const f=fixture();f.store(kind,[[kind==='runtime'?'gates':'people','art',{}]]);
+ const store=new Database(f.sources.stores[0].path);store.prepare('UPDATE docs SET doc=?').run('PRIVATE_BAD_JSON');store.close();
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(`Invalid offline Bridges configuration inventory: ${kind}.db at $["docs"]["${kind==='runtime'?'gates':'people'}"]["art"]["doc"]`);
+});
+it('reports malformed revision JSON without original words and still closes the source',()=>{
+ const f=fixture();f.store('runtime',[['gates','art',{}]]);
+ const store=new Database(f.sources.stores[0].path);store.prepare('INSERT INTO revisions VALUES (1,?,?,?,?,?,?,?)').run('gates','art','PRIVATE_BAD_JSON',1,'put','today','owner');store.close();
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('Invalid offline Bridges configuration inventory: runtime.db at $["revisions"]["1"]["doc"]');
+ const reopened=f.open(f.sources.stores[0].path);expect(reopened.open).toBe(true);reopened.close();
+});

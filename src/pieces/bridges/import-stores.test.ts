@@ -72,7 +72,7 @@ it.each(['bad-json','unsafe-rev','extra-table','extra-column','generated-column'
   if(kind==='unsafe-revision-id')db.exec("INSERT INTO revisions VALUES(9007199254740993,'people','art','{}',1,'put','t','by')");db.close();
   let closed=false;
   const open=(path:string)=>{const source=openSnapshotSqlite(path),close=source.close.bind(source);source.close=()=>{closed=true;return close();};return source;};
-  expect(()=>readBridgeStoreInventory([file],open)).toThrow(/^Invalid offline Bridges store inventory$/);expect(closed).toBe(true);
+  expect(()=>readBridgeStoreInventory([file],open)).toThrow(kind==='bad-json'?'Invalid offline Bridges configuration inventory: shuttle.db at $["docs"]["people"]["art"]["doc"]':/^Invalid offline Bridges store inventory$/);expect(closed).toBe(true);
 });
 it('refuses oversized UTF-8 document bytes before selecting raw words',()=>{
   const {file,db,add}=fixture();add('people','art',JSON.stringify({words:'界'.repeat(3*1024*1024)}));db.close();

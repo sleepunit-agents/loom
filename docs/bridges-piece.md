@@ -996,3 +996,18 @@ that only Art's disabled Discord venue exists and Slack's incomplete evidence
 names the workspace and bundle. The synthetic household rehearsal exercises
 plan, all and both verifiers, including evidence tampering. Imports start no
 adapters, make no venue calls, and do not enable or change the work workspace.
+
+### Legacy source annotations
+
+Keys beginning with `_` are human annotations at every object depth in the
+instance JSON, platform settings bot maps (including JSON encoded as text), and
+selected accepted-store documents. Projection skips these keys before schema
+validation and assembly; they never become accounts, bots, workspaces, channels,
+filters or other identities. This does not relax validation of other keys or
+array entries. Original file bytes stay in the private completed snapshot and
+source digests; exact store JSON stays in the private evidence archive.
+Configuration schema refusals report the source file kind and JSON field path,
+without values or parser/filesystem exception text. Malformed instance JSON
+reports the file root `$`; malformed stored JSON identifies its document field.
+Accepted-route diagnostics map assembled fields back to their original store
+collection/key/field.

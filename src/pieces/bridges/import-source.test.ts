@@ -48,6 +48,28 @@ describe('offline legacy Bridges source inventory',()=>{
     expect(JSON.stringify(v)).not.toMatch(/ignored|exit 99|do-not-open|tier|grants/);
     expect(sources.map(f=>readFileSync(f.path))).toEqual(before);
   });
+  it('skips underscore keys before validating every nested source map and serialized settings map',()=>{
+    const {file}=fixture(), note='PRIVATE_ANNOTATION'.repeat(30);
+    const sources=[file('shuttle.json','shuttle',{_updated:note,agent:{slug:'art',_note:note},channel_notes:{_note:note,work:'channels'},slack:{secrets_env:'bundle',workspaces:{_note:note,T1:'Work'}}}),
+      file('people.json','people',{_comment:note,agents:{_note:note,art:{discord:'100'}},people:{_note:note,jonathan:{discord:'123',slack:{_note:note,T1:'U1'}}}}),
+      file('routes.json','routes',{_comment:note,bots:{_note:note,art:'100'},bot_roles:{_note:note,art:['200']},
+        channels:{_note:note,'300':{primary:'art',_note:note,onterris:true}},threads:{_note:note,'400':{parent:'300',_note:note}},
+        only:{_note:note,'300':true},ignore:{_note:note,'500':true},guests:{_note:note},webhook_peers:{_comment:'x'.repeat(395),'600':'peer'},notify:{_note:note,general:'300'}}),
+      file('pieces/discord/settings.json','discord-settings',{_comment:note,DISCORD_BOTS:JSON.stringify({_note:note,art:'discord-token'})})];
+    const before=sources.map(f=>readFileSync(f.path));
+    const v=readBridgeInventory(sources);
+    expect(v.instances[0]).toMatchObject({slackWorkspaces:{T1:'Work'},channelNotes:{work:'channels'}});
+    expect(v.accounts.map(a=>a.user)).toEqual(['123','U1','100']);
+    expect(v.routes[0]).toMatchObject({bots:{art:'100'},botRoles:{art:['200']},only:['300'],ignore:['500'],webhookPeers:{'600':'peer'},notify:{general:'300'}});
+    expect(v.routes[0].channels.map(c=>c.channel)).toEqual(['300','400']);
+    expect(v.settings[0].bots).toEqual({art:'discord-token'});
+    expect(JSON.stringify(v)).not.toContain('PRIVATE_ANNOTATION');
+    expect(sources.map(f=>readFileSync(f.path))).toEqual(before);
+  });
+  it('reports only file and field path for a non-annotation value that still fails validation',()=>{
+    const {file}=fixture(),f=file('routes.json','routes',{webhook_peers:{bad:'PRIVATE_VALUE'.repeat(40)}});
+    expect(()=>readBridgeInventory([f])).toThrow(/^Invalid offline Bridges configuration inventory: routes.json at \$\["webhook_peers"\]\["bad"\]$/);
+  });
   it('retains only supplied platform references, including absent, null and empty sections',()=>{
     const {file}=fixture();
     for (const sections of [{}, {discord:null,slack:null}, {discord:{},slack:{}}]) {
@@ -85,6 +107,13 @@ describe('offline legacy Bridges source inventory',()=>{
       {source:'pieces/slack/settings.json',platform:'slack',bots:{art:'slack-bundle'}}]);
     expect(JSON.stringify(v)).not.toMatch(/private-value|never\/read|tokenSecret|appSecret|workspace|botUser/);
   });
+  for(const platform of ['discord','slack'] as const) it(`reports full ${platform} settings bot field paths`,()=>{
+    const {file}=fixture(),key=platform==='discord'?'DISCORD_BOTS':'SLACK_BOTS';
+    for(const value of [{art:false},JSON.stringify({art:false})]){
+      const f=file(`pieces/${platform}/settings.json`,`${platform}-settings`,{[key]:value});
+      expect(()=>readBridgeInventory([f])).toThrow(`Invalid offline Bridges configuration inventory: ${platform}/settings.json at $["${key}"]["art"]`);
+    }
+  });
   it('binds checksum to names, kinds and all bytes including ignored metadata, independent of argument order',()=>{
     const {file}=fixture();const a=file('a/people.json','people',{people:{a:{discord:'1'}}}),b=file('b/routes.json','routes',{});
     const v=readBridgeInventory([a,b]);expect(readBridgeInventory([b,a])).toEqual(v);
@@ -107,7 +136,7 @@ describe('offline legacy Bridges source inventory',()=>{
     expect(readBridgeInventory([roleSource]).routes[0].botRoles).toEqual({art:['0','123']});
     for (const spelling of ['9007199254740993','9007199254740991.1','123.000000000000001','1e2','123.0']) {
       writeFileSync(f.path,`{"people":{"a":{"discord":${spelling}}}}`);
-      expect(()=>readBridgeInventory([f])).toThrow(/^Invalid offline Bridges configuration inventory$/);
+      expect(()=>readBridgeInventory([f])).toThrow('people.json at $["people"]["a"]["discord"]');
     }
   });
   it('refuses nonregular descriptors before reading otherwise valid JSON',()=>{
@@ -122,9 +151,9 @@ describe('offline legacy Bridges source inventory',()=>{
       expect(()=>readBridgeInventory(sources)).toThrow('Invalid offline Bridges configuration inventory');
     }
     writeFileSync(f.path,'{"people":{"a":{"discord":true}},"private":"SENTINEL"}');
-    expect(()=>readBridgeInventory([f])).toThrow(/^Invalid offline Bridges configuration inventory$/);
+    expect(()=>readBridgeInventory([f])).toThrow('people.json at $["people"]["a"]["discord"]');
     writeFileSync(f.path,'{"private":"PARSER_SENTINEL",');
-    expect(()=>readBridgeInventory([f])).toThrow(/^Invalid offline Bridges configuration inventory$/);
+    expect(()=>readBridgeInventory([f])).toThrow(/^Invalid offline Bridges configuration inventory: people.json at \$$/);
     expect(()=>readBridgeInventory([{...f,path:join(root,'FS_SENTINEL','people.json')}])).toThrow(/^Invalid offline Bridges configuration inventory$/);
     writeFileSync(f.path,Buffer.alloc(8*1024*1024+1,32));expect(()=>readBridgeInventory([f])).toThrow('Invalid offline');
     const target=file('target/people.json','people',{});rmSync(f.path);symlinkSync(target.path,f.path);
