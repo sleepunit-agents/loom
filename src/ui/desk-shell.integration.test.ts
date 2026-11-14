@@ -206,6 +206,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await expect.poll(()=>page.locator('.next-rail').isVisible()).toBe(true);
               await choose('dock','Minimize to strip');
               await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(false);
+              await expect.poll(async()=>(await tileBox())!.height).toBeGreaterThan(tile!.height);
               const hiddenDock=await tileBox();
               await page.getByRole('button',{name:'Show dock',exact:true}).click();
               await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(true);

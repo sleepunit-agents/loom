@@ -11,11 +11,12 @@ export function useHiding(menuOpen: boolean, announce: (text:string)=>void) {
   const timers=useRef<Partial<Record<Part,number>>>({});
   const show=(part:Part,on:boolean)=>{clearTimeout(timers.current[part]);if(on)setPeek(p=>({...p,[part]:true}));else timers.current[part]=window.setTimeout(()=>setPeek(p=>({...p,[part]:false})),280);};
   const choose=(part:Part,mode:Mode)=>{
+    clearTimeout(timers.current[part]);
     try{localStorage.setItem(`loom-next-${part}`,mode);}catch{/* Private browsers can still use this window's choice. */}
     setModes(p=>({...p,[part]:mode}));setPeek(p=>({...p,[part]:false}));announce(`${part==='rail'?'Agents rail':'Dock'}: ${labels[mode]}`);
   };
   const menu=(part:Part,e:ReactPointerEvent|React.MouseEvent):MenuAt=>{
-    e.preventDefault();return {x:e.clientX,y:e.clientY,title:part==='rail'?'Agents rail':'Dock',back:e.currentTarget as HTMLElement,items:(['always','strip','auto'] as const).map(mode=>({id:mode,label:labels[mode],hint:modes[part]===mode?'✓':undefined,run:()=>choose(part,mode)}))};
+    e.preventDefault();return {x:e.clientX,y:e.clientY,title:part==='rail'?'Agents rail':'Dock',back:(e.target as Element).closest<HTMLElement>('button')??e.currentTarget as HTMLElement,items:(['always','strip','auto'] as const).map(mode=>({id:mode,label:labels[mode],hint:modes[part]===mode?'✓':undefined,run:()=>choose(part,mode)}))};
   };
   useEffect(()=>{
     if(menuOpen)Object.values(timers.current).forEach(clearTimeout);
