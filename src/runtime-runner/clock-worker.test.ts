@@ -617,3 +617,25 @@ it('a watchdog reaching Runtime after completion cannot consume the retained suc
   await vi.waitFor(()=>expect(f.calls).toHaveLength(2));f.finish();expect(await worker.completed).toBe(true);
  }finally {release();held.release();held.spy.mockRestore();}
 });
+
+it.each(['identity','consumption'] as const)('retained source %s tampering blocks successor admission and current execution',async kind=>{
+ for(const phase of ['before-admission','during-turn'] as const){
+  const f=await setup(),worker=f.start();await f.ready;const earlier=await f.joinInput(),third=await f.joinInput({prompt:'THIRD SOURCE'});
+  f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+  const tamper=()=>{
+   if(kind==='identity')f.app.db.prepare('UPDATE runtime_clock_turns SET seq=seq+100000 WHERE id=?').run(`clock:${earlier}`);
+   else f.app.db.prepare('UPDATE runtime_clock_turns SET consumed=NULL WHERE id=?').run(`clock:${earlier}`);
+  };
+  if(phase==='before-admission'){
+   const original=globalThis.fetch;
+   const spy=vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+    const response=await original(...args);if(String(args[0]).endsWith('/completeClockExecution'))tamper();return response;
+   });
+   f.finish();expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(2);spy.mockRestore();
+  }else {
+   f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(3));tamper();f.clock.advance(1000);
+   expect(await worker.completed).toBe(false);expect(f.calls[2].child.killed).toBe(true);
+  }
+  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${third}`)).toEqual({consumed:null});
+ }
+});
