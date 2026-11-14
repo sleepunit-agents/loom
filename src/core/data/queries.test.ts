@@ -63,7 +63,7 @@ describe('generated SQL reads', () => {
     });
     const result = await graphql({ schema, source: `{
       tasksSingle(where: {id: {eq: "a"}}) {
-        id projectRow { name } taskCommentsByTask { text }
+        id projectRow { name } taskCommentsByTask(orderBy: {seq: {direction: desc, priority: 0}}, limit: 1) { text }
         taskLinksByTask { dependsOnRow { id } }
       }
     }` });
