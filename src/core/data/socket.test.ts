@@ -142,7 +142,7 @@ it('uses the upgrade viewer for context-based reads and observe reruns despite c
     query: '{ title }', variables: { viewer: { kind: 'member', id: 'owner' } },
   } })));
   expect(direct.payload).toEqual({ data: { title: 'sam:First' } });
-  const observed = { ...selection, payload: { ...selection.payload, variables: { query: '{ title }', viewer: { kind: 'member', id: 'owner' } } } };
+  const observed = { ...selection, payload: { query: 'subscription($query: String!, $variables: DataValue) { observe(query: $query, variables: $variables) { revision patches { path removed value } } }', variables: { query: '{ title }', variables: { viewer: { kind: 'member', id: 'owner' } } } } };
   const initial = await read(ws, () => ws.send(JSON.stringify(observed)));
   expect(initial.payload.data.observe.patches[0].value).toEqual({ title: 'sam:First' });
   const changed = await read(ws, () => { title = 'Second'; f.live.changed(); });
