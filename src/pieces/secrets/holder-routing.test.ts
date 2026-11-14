@@ -47,3 +47,12 @@ it.each(['current','delivery','settlement'] as const)('consumes the original fai
   await expect(d.handTo(Buffer.from('synthetic'))).rejects.toThrow();await d.abandon!();
   expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);expect(await d.current()).toBe(false);
 });
+it('selects each owning transport when two exact assignments are configured',async()=>{
+ const f=setup(),second=setup();
+ const tickets={claim:vi.fn(async(id:string)=>id===f.binding.job?f.claim:second.claim)};
+ const authority=routedHolderAuthority(tickets,[...f.configured,...second.configured]);
+ const first=(await authority(f.binding.job))!,other=(await authority(second.binding.job))!;
+ const bytes=Buffer.from('synthetic');await first.handTo(bytes);await other.handTo(bytes);
+ expect(f.transport.deliver).toHaveBeenCalledExactlyOnceWith(f.claim.pendingId,f.binding,bytes);
+ expect(second.transport.deliver).toHaveBeenCalledExactlyOnceWith(second.claim.pendingId,second.binding,bytes);
+});

@@ -148,6 +148,7 @@ it('client close independently aborts a live request and disconnect fences late 
  // setting its closed flag until the disconnected handler has already ended.
  await vi.waitFor(()=>expect(f.bytes.every(b=>b===0)).toBe(true));
  expect(f.handTo).not.toHaveBeenCalled();expect(f.current).toHaveBeenCalledOnce();
+ await vi.waitFor(()=>expect(f.abandon).toHaveBeenCalledOnce());
  // A separate client still uses the same live holder.
  f.read.mockResolvedValueOnce(Buffer.from('FRESH'));
  const next=localHolderHandoff(f.config,f.fingerprint('holder'));closes.push(next.close);
@@ -246,4 +247,10 @@ it('shutdown drains uncertain settlement after a late original authority result'
  const pending=f.client.handTo(f.id).catch(e=>e);await entered.promise;
  let done=false;const closing=f.holder.close().then(()=>{done=true;});await f.client.close();release.resolve();await settling.promise;
  expect(done).toBe(false);expect(f.read).not.toHaveBeenCalled();settled.resolve();await closing;await pending;expect(f.abandon).toHaveBeenCalledOnce();
+});
+
+it('refuses a malformed authority destination without retirement capability before reading',async()=>{
+ const f=await setup();delete (f.destination as Partial<HolderDestination>).abandon;
+ await expect(f.client.handTo(f.id)).rejects.toThrow(/^Secret handoff unavailable$/);
+ expect(f.read).not.toHaveBeenCalled();expect(f.handTo).not.toHaveBeenCalled();
 });

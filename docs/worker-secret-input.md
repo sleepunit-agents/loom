@@ -76,8 +76,8 @@ on every unsuccessful acquired destination, including invalid metadata, current
 checks, source failures, late authority resolution, timeout, disconnect and
 shutdown. It drains retirement on close, after any borrowed bytes have settled
 and been erased. Retirement is consumed before IO and is never retried after a
-lost settlement acknowledgement. Existing unactivated destinations may omit the
-hook; actual routed composition always provides it.
+lost settlement acknowledgement. Every destination must provide the retirement capability; malformed authority
+results without it are refused before source access.
 
 Successful holder delivery leaves the central ticket **claimed**. This unit does
 not implement the daemon's final completion/uncertainty protocol: that owner must

@@ -29,7 +29,7 @@ export interface HolderDestination {
   handTo(bytes: Uint8Array): Promise<void>;
   /** Retire the original claim on EVERY failed path, including before handTo.
    * Success remains claimed until the owning completion protocol settles it. */
-  abandon?(): Promise<void>;
+  abandon(): Promise<void>;
 }
 export type HolderHandoffAuthority = (id: string) => Promise<HolderDestination | null>;
 
@@ -113,7 +113,7 @@ export async function listenHolderHandoff(config: Omit<LocalHolderConfig, 'serve
             || req.method !== 'POST' || !match || req.headers['content-length'] !== '0' || req.headers['transfer-encoding']) throw failed();
           const id = ticket.parse(match[1]);
           destination = await authority(id);
-          if (!alive() || !destination || !secretName.safeParse(destination.name).success
+          if (!alive() || !destination || typeof destination.abandon !== 'function' || !secretName.safeParse(destination.name).success
             || await destination.current() !== true || !alive()) throw failed();
           bytes = await source.read(destination.name);
           if (!alive() || !(bytes instanceof Uint8Array) || !bytes.length || bytes.length > 65536
@@ -129,7 +129,7 @@ export async function listenHolderHandoff(config: Omit<LocalHolderConfig, 'serve
         } finally {
           clearTimeout(deadline);
           if (bytes instanceof Uint8Array) bytes.fill(0);
-          if (!delivered) try { await destination?.abandon?.(); } catch { /* uncertain; never retry */ }
+          if (!delivered) try { await destination?.abandon(); } catch { /* uncertain; never retry */ }
         }
       })();
       active.add(work); void work.catch(() => {}).finally(() => active.delete(work));
