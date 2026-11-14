@@ -43,7 +43,7 @@ Schema 4 adds folded days and checked findings. `attention.fold({conversation})`
 
 The Inbox preview is registered at `/p/inbox-preview` on the kit and reads only `attention.ask` through `useRecords`. It has Needs you, alphabetical agent folders, search, answered/resolved history and a full question reader. Opening a row starts `attention.get`; direct links and invalidated checks offer Check again. It shows answer controls only after that read confirms the ask is open, then repeats that read immediately before `attention.answer`. Connection loss, scope loss, a changed live set or leaving the reader invalidates a pending check. A shared guard above reader navigation permits only one pending check/write, including after closing or switching the reader. One pending call retains its operation id through reconnects; failures are inline and a rejected words answer retains its draft while the reader stays open. Done and Dismiss wait while a words draft is unsent. Public drafts persist per member and ask on the device (see below); private drafts remain in the reader only.
 
-Approval/task source asks and `waits_on` decisions open the owning preview app rather than recording an ineffective central yes. Member-private conversation asks offer a typed encrypted Comms reply; sealed questions open their owning Comms thread until the scoped question reader is connected. Other private and managed decisions retain their owning actions. Ordinary public asks accept a words reply in either answer mode, alongside yes/no for yes-no asks and done/dismiss. An unsent words draft disables the alternate answers; a refused write keeps that draft while the reader stays open. Private reply words are refused by the daemon before storing an answer or retry receipt, regardless of answer mode. Source-managed asks retain their declared answer mode. This bounded preview **records** an answer; it does not deliver a message or start a body. Public Runtime delivery and the scoped sealed-question reader remain required before final move. The UI states this limitation. The current live type includes every visible ask, including all answered history; there is no second archive cache or legacy Inbox read.
+Approval/task source asks and `waits_on` decisions open the owning preview app rather than recording an ineffective central yes. Member-private conversation asks offer a typed encrypted Comms reply; sealed questions open their owning Comms thread until the scoped question reader is connected. Other private and managed decisions retain their owning actions. Ordinary public asks accept a words reply in either answer mode, alongside yes/no for yes-no asks and done/dismiss. An unsent words draft disables the alternate answers; a refused write keeps that draft while the reader stays open. Private reply words are refused by the daemon before storing an answer or retry receipt, regardless of answer mode. Source-managed asks retain their declared answer mode. This bounded preview **records** an answer; it does not deliver a message or start a body. Public Runtime delivery remains required before final move. The scoped sealed-question reader is implemented below. The UI states this limitation. The current live type includes every visible ask, including all answered history; there is no second archive cache or legacy Inbox read.
 
 The single Inbox browser test brings a disposable next-mode loom and fake clock, proves two-window first-answer propagation and private/project filtering, and captures 390/1280/1920 screenshots in Neon Noir and Daylight under `artifacts/attention-inbox`, uploaded by the ordinary CI shard artifact. No browser suite runs on loom's machine.
 
@@ -92,7 +92,7 @@ Legacy timestamps with mixed fractional precision exposed an old lexical min/max
 
 Set explicit `LOOM_URL` (an HTTP or HTTPS origin) and `LOOM_TOKEN_FILE` (a token for that daemon), then use, for example, `node dist/attention-client.js conversations '{"agent":"art","limit":10}'`. Success prints the operation value as pretty JSON and exits 0; a daemon refusal, connection/configuration error or malformed envelope exits 1 with a generic stderr line and no data; malformed command/JSON usage exits 2. `--help` exits 0 without credentials or a daemon. Redirects are refused; retries are bounded to four attempts, retaining the same operation id and body for a write. The supplied bearer token is redacted from returned string values. It opens only the explicit token file, never a domain store or a legacy executable.
 
-There was no old `loom attention` executable to replace: conversation and digest tools were MCP bindings. This is the direct operation JSON surface, not an adapter for the old MCP envelope. MCP runtime identity/run binding and delivered answers remain separate final-composition obligations. The standalone launcher leaves existing commands and callers untouched until the whole-side move. During that move, compose Attention explicitly and point the launcher at the new daemon; no import receipt selects it. Projects reference lookup is composed through the Mind registry role in next mode. The thread-project metadata role is wired through next mode; installing Comms and private encrypted Comms delivery remain pending.
+There was no old `loom attention` executable to replace: conversation and digest tools were MCP bindings. This is the direct operation JSON surface, not an adapter for the old MCP envelope. MCP runtime identity/run binding and delivered answers remain separate final-composition obligations. The standalone launcher leaves existing commands and callers untouched until the whole-side move. During that move, compose Attention explicitly and point the launcher at the new daemon; no import receipt selects it. Projects reference lookup is composed through the Mind registry role in next mode. The thread-project metadata role and scoped encrypted Comms replies are wired through next mode; Runtime public delivery remains a final-composition obligation.
 
 ## Project reference composition
 
@@ -246,7 +246,7 @@ Old Inbox audit against `src/ui/handler.ts:inboxItems`:
 | Piece manifest `answered` | Owning decision/history records, including Approvals History and Tasks state; central human answers remain Answered. No copying piece history into another store. |
 | Resolved central asks | FYI resolution history already merged |
 | Backup failure and recovery FYI | Still an owning Household/backup inventory gap (see `docs/household-piece.md`); not claimed implemented or replaced by Clock |
-| Per-member meaningful action outcomes (`done`) | Still outstanding. The old handler records non-secret success/error messages per reader; merely displaying a transient call result does not satisfy Jonathan's recorded meaningful-toast FYI requirement. No blanket retirement or completion claim. |
+| Per-member meaningful action outcomes (`done`) | Fixed member-private receipts for the explicit registered-app inventory below; unsafe/private actions excluded. Old session Done arrays deliberately retired, with old stores untouched. |
 | Runtime lifecycle notices | Owning Runtime integration audit still required; Clock capacity notices cover scheduled work only |
 
 These gaps remain part of the final old-to-new reconciliation before closing t-2205. No old-store reads or compatibility adapter are added.
@@ -371,3 +371,40 @@ and one-time output are excluded. Inbox never copies tell wording, targets,
 principal names or result/error/command text. Old answered approval verdicts
 remain in Approvals History (`approvals.history`); the central resolved card
 is deliberately only a duplicate-clearing fact, not a verdict archive.
+
+
+## Secrets decision history: owning records, no duplicate manifest archive
+
+The pinned old manifest (`sleepunit-agents/loom-secrets` at
+`bc8d2117b8ac35a33ff54ab8fb33ab59b0d8ed39`, `src/cli.mjs`,
+`uiManifest` / `answeredRequests`) supplied up to 20 answered request summaries
+for Inbox. Those summaries repeated secret names, request reasons, owner/policy
+attribution and permission outcomes. They were not an independent decision store.
+
+| Old input / action | New disposition |
+| --- | --- |
+| `answeredRequests`: granted, expired, denied, revoked; owner or policy, duration and Always | Owning `secrets.list` and `secret.request` retain request decisions, actor/time, duration, policy and Always metadata; `secret.grant` retains exact scope and expiry. The duplicate central prose archive is deliberately retired. |
+| Request acknowledged through Inbox | Existing Secrets source hook applies the owning decision atomically. Direct owning answers resolve the existing central card; no second answered card is filed. |
+| Later expiry or revocation | Owning grant expiry/revocation determines access. Historical `allowed` describes the recorded decision, not present permission. Central resolved cards remain clearing facts, not a continuously updated permission verdict. |
+| Old decision data at the final move | The stopped Secrets importer owns request/grant history and source comparison. No new Attention import of the manifest's derived summaries; old stores stay untouched for rollback. |
+
+The fixture regression `src/pieces/attention/secret-history.test.ts` checks real
+next-mode composition, allowed and denied decisions, the expiry boundary,
+restart, owning Live records and later scoped revocation. Original attribution
+and decision time survive; expiry does not fabricate another central history
+record. An agent cannot call the owner-only `secrets.list` operation. This adds
+no grant rule, producer, operation or schema.
+
+Owning Settings currently lists retained requests and state, duration and scope;
+it does **not yet render** the full actor/time/policy/Always/expiry explanation
+that the old summary supplied. That owning display reconciliation is recorded
+on t-2208. Retiring the duplicate Inbox prose does not claim that display gap is
+complete. Secrets' importer and screen acceptance remain its owning task's work.
+
+Remaining source obligations are explicit: Household backup failure/missed/recovery
+needs actual runner facts (saved configuration is not execution); Runtime's old
+`deliveryNotices`, `relayNotices`, `boxNotices`, bridge outage/recovery and
+`watchNoticesOf` each need an owning replacement or an individually named
+retirement. Clock alerts, Approvals tell notices and registered-app action receipts
+are already covered above. These gaps, public Runtime answer acceptance and
+bound metadata/digests/grading still gate final t-2205 acceptance.
