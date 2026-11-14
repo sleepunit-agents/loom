@@ -5,7 +5,7 @@ import type { Server, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { Viewer } from '../../policy.js';
 import type { Clock } from '../clock.js';
-import type { Change, Operations } from '../operations/index.js';
+import type { Result, Change, Operations } from '../operations/index.js';
 export interface LiveRecord { id: string; [key: string]: unknown }
 export interface RecordType {
   name: string;
@@ -54,6 +54,11 @@ export class Live {
   /** Derived records can invalidate through their owning piece's role without reading its tables. */
   observe(fn: (changes: Change[]) => void): () => void {
     this.emitter.on('changed', fn); return () => { this.emitter.off('changed', fn); };
+  }
+  /** Trusted composition hook for completed signed-in window calls. Inputs are
+   * deliberately absent; consumers must opt in to safe, bounded summaries. */
+  observeWindowCalls(fn: (event: {viewer: Viewer; name: string; id?: string; result: Result}) => void): () => void {
+    this.emitter.on('windowCall', fn); return () => { this.emitter.off('windowCall', fn); };
   }
   changed(changes: Change[]) {
     if (changes.some(c => c.type === 'core.access')) this.refreshAccess();
@@ -155,6 +160,10 @@ export class Live {
           c.send({ kind: 'pending', request: op.data.request });
           const result = await this.ops.callAsync('socket', c.viewer, op.data.name, op.data.input, op.data.id, auth.window === true, () => auth.valid());
           if (!auth.valid()) { ws.close(1008, 'Session ended'); return; }
+          if (auth.window && c.viewer.kind === 'member') {
+            try { this.emitter.emit('windowCall', {viewer:c.viewer,name:op.data.name,id:op.data.id,result}); }
+            catch { /* A failed optional notice cannot change an action's committed result. */ }
+          }
           c.send({ kind: 'result', request: op.data.request, result });
         });
         ws.on('close', () => { stopExpiry?.(); this.sockets.delete(ws); this.clients.delete(c); for (const s of c.types.values()) s.cancel.forEach(cancel => cancel()); });
