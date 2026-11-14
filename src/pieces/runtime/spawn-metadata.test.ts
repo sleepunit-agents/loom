@@ -64,15 +64,18 @@ it('changes version on same-clock owning record changes and refuses after close'
  expect(spawnMetadata(f.app,fixtureSharing)('cv-child')!.version).not.toBe(f.read('cv-child')!.version);
  await f.app.close();expect(f.read('cv-child')).toBeUndefined();
 });
-it('composes the owning callback into actual next Comms background classification',async()=>{
+it.each(['job','binding'] as const)('composes the owning callback and refreshes Comms background classification on %s changes',async source=>{
  const f=await setup();
  const created={thread:'th:owner'};
  const ws=new WebSocket(f.app.url.replace('http:','ws:')+'/live');cleanups.push(()=>ws.terminate());await once(ws,'open');
  const received=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'thread',scope:'background'}));
  expect(JSON.parse((await received)[0].toString())).toMatchObject({records:expect.arrayContaining([expect.objectContaining({id:created.thread,member:'jonathan',job:{joined:false},background:true})])});
  const removed=once(ws,'message');
- f.app.db.transaction(()=>{const {changedAt:_,...job}=f.store.read('job','child')!;f.store.put('job',{...job,member:'someone'},f.clock.now());})();
- f.app.live.changed([{type:'runtime.job',id:'child'}]);
+ f.app.db.transaction(()=>{
+  if(source==='job'){const {changedAt:_,...job}=f.store.read('job','child')!;f.store.put('job',{...job,member:'someone'},f.clock.now());}
+  else {const {changedAt:_,...binding}=f.store.read('binding','cv-child')!;f.store.put('binding',{...binding,venue:'loom'},f.clock.now());}
+ })();
+ f.app.live.changed([{type:`runtime.${source}`,id:source==='job'?'child':'cv-child'}]);
  expect(JSON.parse((await removed)[0].toString())).toMatchObject({kind:'del',type:'thread',id:created.thread});
  expect(f.store.read('binding','cv-child')!.place).toBe('job-h-1862');
  expect(f.store.read('job','child')!.imported).toEqual({history:'discard'});
