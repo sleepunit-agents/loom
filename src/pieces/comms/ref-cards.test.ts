@@ -143,3 +143,33 @@ for(const damage of ['ambiguous','relational','tombstone'] as const)it(`conversa
  const result=await s.call('refCards',{thread:s.thread,refs:[target.conversation]});
  expect(result).toMatchObject({ok:true,value:{cards:{[target.conversation]:null}}});expect(JSON.stringify(result)).not.toContain('HIDDEN');
 });
+
+it('live target lifecycle and target-only ownership changes withdraw metadata in two windows',async()=>{
+ const s=await setup();await s.comms.referencesReady;
+ s.sharing.members.jonathan.agents.push('mark');
+ const opened=await s.call('open',{agent:'mark',id:'cccccccccccccccc',text:'Target private words'});
+ if(!opened.ok)throw new Error('target open');const target=(opened.value as {thread:string}).thread;
+ await s.comms.deliver('mark',target,1);
+ const row=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(target) as {record:string}).record);
+ const cv=row().conversation as string,scope=JSON.stringify({thread:s.thread,refs:[cv]});
+ async function window(){
+  const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan'}});
+  const queue:any[]=[],waiters:((v:any)=>void)[]=[];
+  ws.on('message',raw=>{const v=JSON.parse(raw.toString()),next=waiters.shift();if(next)next(v);else queue.push(v);});
+  const next=()=>queue.length?Promise.resolve(queue.shift()):new Promise<any>(r=>waiters.push(r));
+  await once(ws,'open');cleanup.push(()=>ws.terminate());ws.send(JSON.stringify({kind:'subscribe',type:'comms.refCards',scope}));return {next};
+ }
+ const a=await window(),b=await window();
+ for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'set',records:[{cards:{[cv]:{status:'Open'}}}]});
+ const working=(state:boolean)=>s.comms.status('mark',target,state?'working':'done');
+ working(true);for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{[cv]:{status:'Working'}}}});
+ working(false);for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{[cv]:{status:'Open'}}}});
+ expect(await s.call('change',{thread:target,action:'archive'})).toMatchObject({ok:true});
+ for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{[cv]:{status:'Archived'}}}});
+ s.sharing.members.jonathan.agents=['art'];s.app.live.refreshAccess();
+ for(const w of [a,b]){const result=await w.next();expect(result).toMatchObject({kind:'set',records:[{cards:{[cv]:null}}]});expect(JSON.stringify(result)).not.toContain(target);expect(JSON.stringify(result)).not.toContain('New thread with mark');}
+ s.sharing.members.jonathan.agents.push('mark');s.app.live.refreshAccess();
+ for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'set',records:[{cards:{[cv]:{status:'Archived'}}}]});
+ expect(await s.call('change',{thread:target,action:'delete'})).toMatchObject({ok:true});
+ for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{[cv]:null}}});
+});
