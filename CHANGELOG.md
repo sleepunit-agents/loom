@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Next Comms keeps a bounded word-free reference index with message writes and preserves expired references during fixture imports.
 - Next Inbox retains member-private action success/error FYI for Tasks and central answers, with read marks and an Errors folder.
 
 - Add an explicit external dedicated secret-command worker with authenticated Runtime stop/history checks and drained shutdown, reusing the Claude worker control owner.
@@ -35,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add owner-only next-mode backup configuration operations and Live status; saved configuration explicitly remains unscheduled pending the new runner.
 
 - Deliver private timed prompts through Runtime’s bound inbox, retaining member scope and current grants through runner confirmation, reads and acknowledgment.
+- Exclude private dispatched Clock prompts and correlated Runtime/Sign-in copies from filtered exports and backups while preserving public records.
 
 - Deliver stored public household lane prompts through Runtime’s scheduled inbox, with runner confirmation, authenticated reads and staging holds.
 - Add next-mode Bridges status JSON for Discord and Slack with configured agents, intake holds and explicit staging mode.

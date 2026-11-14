@@ -1,3 +1,4 @@
+import { registerExportFilter, type ExportSnapshot } from '../db/export.js';
 import { installNotifications, retainNotificationTokens } from './notifications.js';
 /** Next-mode credentials. Only loom.db is consulted; no legacy file activation. */
 import { installAccount } from './account.js';
@@ -59,6 +60,15 @@ export class Signin {
     this.sessions=new SessionDatabase(app.db); this.tokens=new TokenDatabase(app.db);
     const rows=new HouseholdRows<string>(app.db,'settings');
     this.key=Buffer.from(app.db.transaction(()=>{ const key=rows.get('signin-csrf-key') ?? random(); rows.put('signin-csrf-key',key); return key; }).immediate(),'hex');
+  }
+  /** Trusted Runtime composition supplies only excluded job identities. */
+  excludeBodyExport(excludeJob: (job: string,snapshot:ExportSnapshot) => boolean) {
+    const excluded=this.tokens.installExportExclusions((record,snapshot)=>{
+      const match=/^agent:[a-z0-9-]+(?:\/[a-z0-9-]+)?@([a-z0-9-]+)$/.exec(record.role);
+      return !!match&&excludeJob(match[1],snapshot);
+    });
+    registerExportFilter(this.app.db,'signin-body-sessions',(table,row,snapshot)=>table!=='household_sessions'
+      ||!excluded(snapshot).has(String(JSON.parse(String(row.body)).secret)));
   }
   now() { return Math.floor(this.app.operations.clock.now()/1000); }
   household() { return new HouseholdDatabase(this.app.db).household(''); }

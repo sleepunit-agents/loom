@@ -1,3 +1,4 @@
+import { registerExportFilter, registerExportTextRedactor, type ExportSnapshot } from '../db/export.js';
 import type { Db } from '../db/index.js';
 import { parseTokenDocument, type TokenPersistence, type TokenRecord } from '../../household.js';
 import { HouseholdRows } from './rows.js';
@@ -8,6 +9,22 @@ interface Envelope { fields: Record<string, unknown>; digests: string[] }
 /** Supplied connection only: no opening, migration, activation or JSON IO. */
 export class TokenDatabase implements TokenPersistence {
   constructor(private readonly db: Db) {}
+
+  /** Owner-composed private jobs are omitted as whole digest groups, including
+   * duplicate roles for the same secret. The ordered envelope must agree. */
+  installExportExclusions(exclude: (record: TokenRecord,snapshot:ExportSnapshot) => boolean) {
+    const key={};
+    const excluded=(snapshot:ExportSnapshot)=>snapshot.memo(key,()=>new Set(new HouseholdRows<TokenRecord[]>(this.db,'tokens').entries()
+      .filter(([,records])=>records.some(record=>exclude(record,snapshot))).map(([digest])=>digest)));
+    registerExportTextRedactor(this.db,'signin-body-token-envelope',(table,row,snapshot):Record<string,string>=>{
+      if(table!=='household_settings'||row.id!=='token-envelope')return {};
+      const envelope=JSON.parse(String(row.body)) as Envelope, gone=excluded(snapshot);
+      return {body:JSON.stringify({...envelope,digests:envelope.digests.filter(d=>!gone.has(d))})};
+    });
+    registerExportFilter(this.db,'signin-body-tokens',(table,row,snapshot)=>
+      !['household_tokens','household_token_use'].includes(table)||!excluded(snapshot).has(String(row.id)));
+    return excluded;
+  }
 
   /** Duplicate digests remain ordered: legacy resolution chooses the first live record. */
   records(digest: string): TokenRecord[] {

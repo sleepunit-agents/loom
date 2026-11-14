@@ -57,9 +57,9 @@ export function privateDecisions(o:Options & {closed():boolean}) {
    const q=question.parse(JSON.parse(await o.key.open(before.row.words!)));
    const outcome=i.verdict==='yes'?q.if_yes:q.if_no;
    const text=`${i.verdict==='yes'?'Yes':'No'}, to: ${q.ask}${outcome?`\n\n${outcome}`:''}`;
-   return {before,old,words:old?undefined:await o.key.seal(JSON.stringify({text,ref:i.ref,verdict:i.verdict}))};
+   return {before,old,text,words:old?undefined:await o.key.seal(JSON.stringify({text,ref:i.ref,verdict:i.verdict}))};
   },
-  run(ctx:Context,i:Input,p:{before:ReturnType<typeof lookup>;old:MessageRow|undefined;words:Buffer|undefined}){
+  run(ctx:Context,i:Input,p:{before:ReturnType<typeof lookup>;old:MessageRow|undefined;words:Buffer|undefined;text:string}){
    const current=lookup(ctx.viewer,i);
    // Route and ciphertext are immutable across decryption/encryption, even on replay.
    if(!unchanged(current,p.before))return deny();
@@ -73,7 +73,7 @@ export function privateDecisions(o:Options & {closed():boolean}) {
    const answer=o.attention.privateDecision!(ctx,{id:i.ref,conversation:current.t.conversation,agent:current.t.agent,member:current.t.member,thread:i.thread,seq:current.row.seq,verdict:i.verdict});
    if(!answer.ok)throw new OperationError(answer.code,answer.message);
    // Throwing on append failure rolls back Attention and the enclosing operation receipt too.
-   const row=append(o.db,current.t,{id:`answer:${i.ref}`,kind:'message',at:ctx.now,sender:current.t.member,words:p.words!,hash:hash(i),record:JSON.stringify({delivery:'sending',attempted:false})});
+   const row=append(o.db,current.t,{id:`answer:${i.ref}`,kind:'message',at:ctx.now,sender:current.t.member,words:p.words!,hash:hash(i),record:JSON.stringify({delivery:'sending',attempted:false})},p.text);
    ctx.changed('thread',i.thread);ctx.changed('message',`${i.thread}/${row.seq}`);
    return {thread:i.thread,seq:row.seq};
   },

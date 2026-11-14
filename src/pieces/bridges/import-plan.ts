@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
-import { readBridgeInventory, projectBridgeDocument, bridgeSourceValue, BridgeSourceError, type BridgeSourceFile, type LegacyBridgeInventory } from './import-source.js';
+import { readBridgeInventory, readBridgeSourceNotes, bridgeSourceNoteKey, projectBridgeDocument, bridgeSourceValue, BridgeSourceError, type BridgeSourceFile, type LegacyBridgeInventory } from './import-source.js';
 import { readBridgeStoreInventory, type BridgeStoreFile } from './import-stores.js';
 import { venueSchema, routeSchema, linkSchema, type Venue, type Route, type PersonLink } from './model.js';
 const name=z.string().min(1).max(200);
@@ -103,7 +103,13 @@ function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|
   }
   Object.assign(out,{bots,bot_roles:roles,channels,threads});
   // Extras never override the assembled accepted map. Unknown fields remain in private store evidence.
-  for(const [k,v]of Object.entries(at(own,'extra',['channels',agent])))if(!Object.hasOwn(out,k)){out[k]=v;origin([k],['channels',agent,'extra',k]);}
+  const extra=at(own,'extra',['channels',agent]);
+  let notes:Record<string,string[]>;
+  try{notes=readBridgeSourceNotes(parts.get(agent)!,true);}
+  catch(error){if(error instanceof BridgeSourceError)throw new BridgeSourceError('shuttle-store',['channels',agent,'extra',...error.path]);throw error;}
+  for(const [k,v]of Object.entries(extra))if(!Object.hasOwn(out,k)){
+    out[k]=bridgeSourceNoteKey(k)?notes[k]??null:v;origin([k],['channels',agent,'extra',k]);
+  }
   checkSourceNumbers(out,[],sourcePath);
   const source=JSON.stringify(out);
   return result=>{
@@ -250,7 +256,8 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
       v.ignore=[...new Set([...v.ignore,...blocked])];
     }
     const expected={venues:unique(venues),routes:unique(routes.filter(r=>!blockedRoutes.has(r.id))),links:unique(links)};
-    const evidence=JSON.stringify({inventory,stores,incomplete,retained}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping]));
+    const noteInventories=effective.routes.filter(r=>r.noteChannels!==undefined).map(r=>({source:r.source,agent:routeOwners.get(r.source),noteChannels:r.noteChannels}));
+    const evidence=JSON.stringify({inventory,stores,incomplete,retained,...(noteInventories.length?{noteInventories}:{})}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping]));
     return {expected,evidence,mapping,checksum};
   }catch(error){if(error instanceof BridgeSourceError)throw error;throw Error('Invalid offline Bridges import mapping or sources');}
 }

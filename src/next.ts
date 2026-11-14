@@ -1,3 +1,4 @@
+import { privateRuntimeExport } from './pieces/runtime/private-export.js';
 import {startSecretWorkers, type SecretWorkersConfig} from './secret-worker-startup.js';
 import { replyAnnouncements } from './pieces/comms/role.js';
 import { installNotificationAnnouncements } from './core/signin/notification-announcements.js';
@@ -207,6 +208,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     if (!result.ok) console.warn(`Approval filing failed (${result.code})`);
   }
   if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials, privateStart:i=>conversations.privateStart(i)||bridgeBodies.privateStart(i) });
+  signin(app).excludeBodyExport((job,snapshot)=>privateRuntimeExport(app.db,snapshot).jobs.has(job));
   if (!app.operations.has('secrets.houseRequest')) installHouseSecrets(app);
   if (!app.operations.has('changes.list')) {
     const attribution = () => householdAttribution(app.db, options.home);
