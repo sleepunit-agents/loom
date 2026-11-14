@@ -48,3 +48,5 @@ export function clockLocalStanding(operations: Pick<Operations,'call'>) {
 export { clockRoute, type ClockDestinationReader, type ClockDestination, type ClockRoute } from './destination.js';
 
 export { clockDispatchSource, clockDispatchWithdrawn } from './dispatch-source.js';
+
+export type { Wake } from './store.js';

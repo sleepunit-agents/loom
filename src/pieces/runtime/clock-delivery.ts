@@ -13,7 +13,7 @@ import { provenanceStore } from './provenance-store.js';
 import { principalFromHistory } from './provenance.js';
 import { currentExecution } from './control.js';
 import { bodyPolicyExecutionHeld } from './policy-store.js';
-import type { Wake } from '../clock/store.js';
+import type { Wake } from '../clock/role.js';
 import type { RuntimeRecords } from './records.js';
 import type { ClockProvenanceReader } from './role.js';
 export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation. After reading, acknowledge through the last seq with runtime.acknowledgeClockInput. New inputs may arrive in this conversation.';
