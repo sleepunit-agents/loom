@@ -1,5 +1,5 @@
 /** Runtime owns its downstream copies; no read of Clock's tables or saved Viewer. */
-import { privateExportCopy, registerExportFilter, type Db, type Context } from '../../core/index.js';
+import { privateExportCopy, registerExportFilter, type Db, type Context, type ExportSnapshot } from '../../core/index.js';
 
 export function rememberClockReceipt(ctx:Context,job:{id:string;member?:string}){
  const r=ctx.receipt;if(!r)throw Error('Clock consumption requires its write receipt');
@@ -7,7 +7,9 @@ export function rememberClockReceipt(ctx:Context,job:{id:string;member?:string})
   .run(r.viewer,r.id,r.name,r.inputHash,r.expires,job.id,job.member===undefined?0:1);
 }
 
-export function privateRuntimeExport(db: Db) {
+const runtimeExportKey={};
+export function privateRuntimeExport(db: Db,snapshot?:ExportSnapshot):{jobs:Set<string>;excludes(table:string,row:Record<string,unknown>):boolean} {
+ if(snapshot)return snapshot.memo(runtimeExportKey,()=>privateRuntimeExport(db));
  const jobs=new Set<string>(),conversations=new Set<string>(),sources=new Set<string>();
  const records=(table:string)=>db.prepare(`SELECT * FROM ${table}`).all() as Record<string,unknown>[];
  for(const row of records('runtime_clock_turns'))if(privateExportCopy(row,new Set())){
@@ -65,8 +67,8 @@ export function privateRuntimeExport(db: Db) {
  }};
 }
 export function installPrivateRuntimeExport(db:Db){
- registerExportFilter(db,'runtime', (table,row)=>{
+ registerExportFilter(db,'runtime', (table,row,snapshot)=>{
   if(!table.startsWith('runtime_')&&!['core_operations','core_effects'].includes(table))return true;
-  return !privateRuntimeExport(db).excludes(table,row);
+  return !privateRuntimeExport(db,snapshot).excludes(table,row);
  });
 }

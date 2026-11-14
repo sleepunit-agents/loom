@@ -177,10 +177,17 @@ it('keeps replacement inside the caller import transaction, including other conc
 it('excludes whole private digest groups, repairs duplicate envelope positions and retains unrelated roles on restore',()=>{
  const f=fixture(),privateToken=record('private','agent:art@private-job'),publicToken=record('public','agent:art@public-job');
  f.db.transaction(()=>f.store.replace({v:1,extra:'kept',tokens:[publicToken,privateToken,{...privateToken,role:'owner'},publicToken]}, {[privateToken.sha256]:'private use',[publicToken.sha256]:'public use'}))();
- const source=f.store.document();f.store.installExportExclusions(t=>t.role==='agent:art@private-job');
+ let classifications=0;
+ const source=f.store.document();f.store.installExportExclusions(t=>{classifications++;return t.role==='agent:art@private-job';});
  const restored=new Database(exportDatabaseImage(f.db).bytes);cleanups.push(()=>restored.close());
  const store=new TokenDatabase(restored);
  expect(store.document()).toEqual({v:1,extra:'kept',tokens:[publicToken,publicToken]});
  expect(store.records(privateToken.sha256)).toEqual([]);expect(store.used()).toEqual({[publicToken.sha256]:'public use'});
  expect(f.store.document()).toEqual(source);
+ expect(classifications).toBe(3); // One classification of each visited record per snapshot.
+ f.store.change(tokens=>{for(const token of tokens)if(token.sha256===publicToken.sha256)token.role='agent:art@private-job';});
+ classifications=0;
+ const second=new Database(exportDatabaseImage(f.db).bytes);cleanups.push(()=>second.close());
+ expect(new TokenDatabase(second).document()!.tokens).toEqual([]);
+ expect(classifications).toBe(2); // A new export recomputes from current groups.
 });

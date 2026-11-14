@@ -905,11 +905,11 @@ it.each(['original','cleared-summary','withdrawn','restarted','marker-rollback']
  const before=f.app.db.prepare('SELECT * FROM runtime_clock_turns').all();
  // Historic ACK receipts carry no scope or job. Exclude these unknown caches,
  // while preserving the newly attributed public receipt above.
- f.app.db.prepare('INSERT INTO core_operations VALUES (?,?,?,?,?,?)').run('agent:art','historical-clock-ack','runtime.acknowledgeClockInput','old-hash',JSON.stringify({ok:true,value:{acknowledged:true}}),f.clock.now()+100000);
+ for(const [id,name] of [['historical-clock-ack','runtime.acknowledgeClockInput'],['historical-clock-complete','runtime.completeClockExecution']])f.app.db.prepare('INSERT INTO core_operations VALUES (?,?,?,?,?,?)').run('agent:art',id,name,'old-hash',JSON.stringify({ok:true,value:{acknowledged:true}}),f.clock.now()+100000);
  const acknowledgements=f.app.db.prepare("SELECT id FROM core_operations WHERE name IN ('runtime.acknowledgeClockInput','runtime.completeClockExecution')").all() as {id:string}[];
- expect(acknowledgements).toHaveLength(3);
+ expect(acknowledgements).toHaveLength(4);
  const tables=exportDatabase(f.app.db),text=JSON.stringify(tables);
-  expect(text.includes('historical-clock-ack')).toBe(false);
+  expect(text.includes('historical-clock-ack')).toBe(false);expect(text.includes('historical-clock-complete')).toBe(false);
  const markers=f.app.db.prepare('SELECT * FROM runtime_clock_receipts').all() as {id:string;private:number}[];
  expect(markers).toHaveLength(2);
  for(const {id,private:privateWork} of markers){

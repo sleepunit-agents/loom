@@ -206,7 +206,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     if (!result.ok) console.warn(`Approval filing failed (${result.code})`);
   }
   if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials, privateStart:i=>conversations.privateStart(i)||bridgeBodies.privateStart(i) });
-  signin(app).excludeBodyExport(job=>privateRuntimeExport(app.db).jobs.has(job));
+  signin(app).excludeBodyExport((job,snapshot)=>privateRuntimeExport(app.db,snapshot).jobs.has(job));
   if (!app.operations.has('secrets.houseRequest')) installHouseSecrets(app);
   if (!app.operations.has('changes.list')) {
     const attribution = () => householdAttribution(app.db, options.home);

@@ -1446,7 +1446,9 @@ owner excludes the whole digest group (including duplicate roles), usage rows
 and sessions, and removes those digests from the ordered token envelope. Public
 Clock records and unrelated credentials remain. Core permits owning pieces to
 redact text encodings in exported rows while preserving schema, row identities
-and SQLite storage classes; it never edits the source database.
+and SQLite storage classes; changing primary keys or text storage classes is
+refused. Privacy classification is shared within one export snapshot and
+recomputed for the next export. It never edits the source database.
 
 Synthetic signed-window filing, normal runner claim/input/report, consumption,
 withdrawal, cleared summaries and daemon restart are covered. A reconstructed
