@@ -6,6 +6,7 @@ import type { Snapshot } from '../../data';
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>()}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])}));
 import Rail from './rail';
+import DeskSignals from './desk-signals';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 const live=(records:object[])=>({records,status:'live' as const});
@@ -68,7 +69,7 @@ it('folds measured overflow, keeps talking before asks/unread, and unfolds when 
 });
 
 it('reports only live attention and opens alphabetical agents by shortcut while typing',async()=>{
- const go=vi.fn(),onAttention=vi.fn();await act(async()=>{tree=create(h(Rail,{go,onAttention}));});
+ const go=vi.fn(),onAttention=vi.fn();await act(async()=>{tree=create(h(DeskSignals,{go,onAttention}));});
  expect(onAttention).toHaveBeenLastCalledWith(true);
  const press=(code:string)=>{const event=new Event('keydown',{cancelable:true});Object.assign(event,{code,ctrlKey:true,shiftKey:true});return event;};
  const first=press('Digit1');await act(async()=>{events.dispatchEvent(first);});

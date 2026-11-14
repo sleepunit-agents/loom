@@ -21,7 +21,7 @@ function Screen({ app, tile, router, active }: { app: RegisteredApp; tile: Tile;
   const View = app.Screen;
   return <AppBoundary><Suspense fallback={<Loading label={`Opening ${app.title}…`} />}><View active={active} path={currentPath(tile)} go={path => router.go(tile.id,path)} /></Suspense></AppBoundary>;
 }
-export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void; onAttention?: (value:boolean)=>void }>; Bar?: ComponentType<{ title: string; go(path: string): void; actions: ReactNode }> }
+export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void }>; Signals?: ComponentType<{ go(path:string):void; onAttention:(value:boolean)=>void }>; Bar?: ComponentType<{ title: string; go(path: string): void; actions: ReactNode }> }
 export default function Shell({ apps, surfaces = {} }: { apps: readonly RegisteredApp[]; surfaces?: ShellSurfaces }) {
   const [router] = useState(() => new DeskRouter(apps, window));
   const route = useSyncExternalStore(router.subscribe,router.getSnapshot);
@@ -45,7 +45,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   useEffect(() => () => router.close(),[router]);
   const visible = route.tiles.filter(t => !t.minimized);
   // Until Home's piece registers a rail there is no invented agent data or empty reserved column.
-  const { Home, Rail, Bar } = surfaces;
+  const { Home, Rail, Bar, Signals } = surfaces;
   const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railAs==='always'?railWidth(width)+10:railAs==='strip'?24:0) : 0)) };
   useEffect(() => { if(!phone) {const notices=router.fit(workArea,width);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,router]);
   const boxes = layout(router.asTiles(),workArea,width).apps;
@@ -89,12 +89,12 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     }} actions={<Preferences />} /> : <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Preferences /><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>}
     <div ref={ground} className="next-ground">
       {!visible.length && (Home ? <Home go={path => { const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/')); if(app){open(app.id);router.go(app.id,path);} }} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
-      {!phone && Rail && <>
+      {!phone && Rail && visible.length>0 && <>
         {visible.length>0&&railAs!=='always'&&<button type="button" data-hide-part="rail" className="next-rail-edge" data-mode={railAs} data-attention={attention||undefined} aria-label="Show agents rail" aria-expanded={hiding.peek.rail}
           onClick={()=>hiding.show('rail',true)} onPointerEnter={()=>{if(railAs==='auto')hiding.show('rail',true);}} onPointerDown={e=>{if(e.pointerType==='touch')hiding.show('rail',true);}} onContextMenu={e=>setMenu(hiding.menu('rail',e))}><span aria-hidden="true">‹</span></button>}
-        <aside hidden={!visible.length} aria-label="Your agents" tabIndex={-1} data-hide-part="rail" className="next-rail" data-mode={railAs} data-peek={hiding.peek.rail||undefined} inert={!visible.length||(railAs!=='always'&&!hiding.peek.rail)} style={{width:railWidth(width)||296}}
+        <aside aria-label="Your agents" tabIndex={-1} data-hide-part="rail" className="next-rail" data-mode={railAs} data-peek={hiding.peek.rail||undefined} inert={railAs!=='always'&&!hiding.peek.rail} style={{width:railWidth(width)||296}}
           onPointerEnter={()=>{if(railAs==='auto')hiding.show('rail',true);}} onPointerLeave={e=>{if(railAs==='auto'&&e.pointerType==='mouse'&&!menu)hiding.show('rail',false);}} onContextMenu={e=>setMenu(hiding.menu('rail',e))}>
-          <Rail onAttention={setAttention} go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} />
+          <Rail go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} />
         </aside>
       </>}
       {route.tiles.map(tile => {
@@ -118,6 +118,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
         </section>;
       })}
     </div>
+    {!phone&&Signals&&<Signals onAttention={setAttention} go={path=>{const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}}/>}
     <Launcher apps={apps} open={launcher} onOpenChange={setLauncher} launch={open} />
     {!phone&&hiding.modes.dock!=='always'&&<button type="button" data-hide-part="dock" className="next-dock-edge" data-mode={hiding.modes.dock} data-attention={attention||undefined} aria-label="Show dock" aria-expanded={hiding.peek.dock}
       onClick={()=>hiding.show('dock',true)} onPointerEnter={()=>{if(hiding.modes.dock==='auto')hiding.show('dock',true);}} onPointerDown={e=>{if(e.pointerType==='touch')hiding.show('dock',true);}} onContextMenu={e=>setMenu(hiding.menu('dock',e))}><span aria-hidden="true">⌃</span></button>}

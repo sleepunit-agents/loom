@@ -11,11 +11,16 @@ export const homeApp = {
 };
 
 const Rail = lazy(() => import('./rail'));
-export function RailSurface(props: { go: (path:string)=>void; onAttention?: (value:boolean)=>void }) {
+export function RailSurface(props: { go: (path:string)=>void }) {
   return createElement(Suspense,{fallback:createElement(Loading,{label:'Opening your agents…'})},createElement(Rail,props));
 }
 
 const Bar = lazy(() => import('./bar'));
 export function BarSurface(props: import('./bar').BarProps) {
   return createElement(Suspense,{fallback:null},createElement(Bar,props));
+}
+
+const Signals = lazy(() => import('./desk-signals'));
+export function SignalsSurface(props: {go:(path:string)=>void;onAttention:(value:boolean)=>void}) {
+  return createElement(Suspense,{fallback:null},createElement(Signals,props));
 }
