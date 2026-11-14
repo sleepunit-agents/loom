@@ -84,7 +84,7 @@ export function bridgeFileStore(db:Db, now:()=>number) {
         if(!Buffer.isBuffer(owned)||owned.length>SLACK_FILE_BYTES||hash(owned)!==row.digest||!current()
           ||tick(now)>=Math.min(row.created,row.delivered)+BRIDGE_FILE_RETENTION)throw held();
         return {name:row.name,bytes:owned,sha256:row.digest};
-      }catch{owned?.fill(0);throw held();}
+      }catch{if(Buffer.isBuffer(owned))owned.fill(0);throw held();}
     },
     /** Logical SQLite expiry only, not forensic erasure of backups/WAL. The
      * daemon job remains pending; reads enforce expiry even without pruning. */

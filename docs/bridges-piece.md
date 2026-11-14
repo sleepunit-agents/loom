@@ -1205,6 +1205,8 @@ and backups. Filenames are safe metadata; no output path is accepted. No legacy
 file directory is read. `save` commits a complete batch and its exact delivery
 associations atomically. Repeated scoped file IDs deduplicate identical bytes;
 changed content/name or a changed delivery manifest refuses without overwrite.
+Deduplication is by scoped platform file ID (as in legacy `Files.fetch`), not
+cross-ID content-addressed sharing; distinct file IDs remain independent.
 Deduplication never refreshes the original file age. Descriptors persist only as
 a digest, without the Slack URL.
 

@@ -34,6 +34,14 @@ async function fixture(home=mkdtempSync(join(tmpdir(),'bridge-files-')),at=1000)
   return {app,home,clock,store,facts,permit,read,batch,close,body,records};
 }
 describe('private attachment storage (fake owning Runtime permits)',()=>{
+  it('uses original delivery age on a delayed initial save and refuses timestamp changes',async()=>{
+    const f=await fixture();f.clock.advance(500);f.store.save(f.permit,f.batch());
+    expect(f.app.db.prepare('SELECT created FROM bridges_files').get()).toEqual({created:1000});
+    expect(f.app.db.prepare('SELECT created FROM bridges_file_deliveries').get()).toEqual({created:1000});
+    expect(()=>f.store.save({...f.permit,deliveredAt:1001},f.batch())).toThrow();
+    expect(()=>f.store.save({...f.permit,delivery:'future',deliveredAt:1501},f.batch())).toThrow();
+    f.clock.advance(BRIDGE_FILE_RETENTION-500);expect(()=>f.store.read(f.read)).toThrow();
+  });
   it('never revives an expired original delivery, even after explicit prune or restart',async()=>{
     const f=await fixture();f.store.save(f.permit,f.batch());f.clock.advance(BRIDGE_FILE_RETENTION);
     expect(()=>f.store.save(f.permit,f.batch())).toThrow();f.store.prune();
@@ -57,17 +65,18 @@ describe('private attachment storage (fake owning Runtime permits)',()=>{
     expect(()=>f.store.prune()).toThrow('Bridge file unavailable');
     for(const table of ['bridges_files','bridges_file_deliveries','bridges_file_sources'])expect(f.app.db.prepare(`SELECT count(*) n FROM ${table}`).get()).toEqual({n:1});
   });
-  it('erases the selected owned buffer when the post-read body check fails',async()=>{
+  for(const cause of ['revoked','job','conversation','delivery','agent','venue','workspace','channel','file'] as const)it(`erases selected bytes on mid-read ${cause}`,async()=>{
     const f=await fixture();f.store.save(f.permit,f.batch());let selected:Buffer|undefined,calls=0;
+    const permit={...f.read,current:()=>++calls===1||cause!=='revoked'};
     const prepare=f.app.db.prepare.bind(f.app.db);
     const spy=vi.spyOn(f.app.db,'prepare').mockImplementation((sql:string)=>{
       const statement=prepare(sql);
       if(sql.startsWith('SELECT f.name')){const get=statement.get.bind(statement);vi.spyOn(statement,'get').mockImplementation((...args:unknown[])=>{
-        const row=get(...args) as {bytes:Buffer};selected=row.bytes;return row;
+        const row=get(...args) as {bytes:Buffer};selected=row.bytes;if(cause!=='revoked')permit[cause]='changed';return row;
       });}
       return statement;
     });
-    try{expect(()=>f.store.read({...f.read,current:()=>++calls===1})).toThrow();expect(selected).toEqual(Buffer.alloc(4));}finally{spy.mockRestore();}
+    try{expect(()=>f.store.read(permit)).toThrow();expect(selected).toEqual(Buffer.alloc(4));}finally{spy.mockRestore();}
   });
   it('registers only setup/send live records, exposing no attachment data or associations',async()=>{
     const f=await fixture();f.store.save(f.permit,f.batch());
@@ -119,6 +128,7 @@ describe('private attachment storage (fake owning Runtime permits)',()=>{
     expect(()=>f.store.save({...f.permit,files:[{...f.permit.files[0],url:'https://files.slack.com/changed'}]},f.batch())).toThrow();
     expect(()=>f.store.save({...f.permit,delivery:'new'},[{...f.batch()[0],bytes:Buffer.from('evil')}])).toThrow();
     expect(f.store.read(f.read).bytes.toString()).toBe('data');
+    expect(()=>f.store.save({...f.permit,deliveredAt:999},f.batch())).toThrow();
   });
   it('expires exactly at fourteen days without a cleanup job and prunes links atomically',async()=>{
     const f=await fixture();f.store.save(f.permit,f.batch());f.clock.advance(BRIDGE_FILE_RETENTION-1);
@@ -149,6 +159,8 @@ describe('private attachment storage (fake owning Runtime permits)',()=>{
     expect(f.store.read(f.read).bytes.toString()).toBe('data');
     f.app.db.prepare('UPDATE bridges_files SET bytes=?').run(Buffer.from('tampered private words'));
     expect(()=>f.store.read(f.read)).toThrow('Bridge file unavailable');
+    f.app.db.prepare('UPDATE bridges_files SET bytes=?').run('invalid stored TEXT');
+    expect(()=>f.store.read(f.read)).toThrow(/^Bridge file unavailable$/);
     expect(()=>f.store.read({...f.read,current:()=>{throw Error('private words');}})).toThrow('Bridge file unavailable');
   });
   it('refuses invalid batches, unsafe names, excess bytes, mismatched ids and missing body ids',async()=>{
