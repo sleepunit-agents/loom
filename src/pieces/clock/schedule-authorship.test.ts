@@ -44,12 +44,14 @@ it('never infers a historical original from a fresh owner, and preserves only ju
  expect(runAuthorship(original,{principal:{for:'owner',people:['jonathan']}})).toMatchObject({conversation:'cv-old',principal:{for:'pollock'}});
 });
 it('persists original schedule principal in occurrences and narrows owner edits and runs across restart',async()=>{
- const f=await setup();expect(f.call('scheduleSet',input,person)).toMatchObject({ok:true});
+ const f=await setup(), setId=randomUUID(), created=f.call('scheduleSet',input,person,setId);expect(created).toMatchObject({ok:true});
+ expect((created as {value:object}).value).not.toHaveProperty('authorship');expect(f.call('scheduleSet',input,person,setId)).toEqual(created);
  expect(schedules(f.app.db)[0].authorship).toEqual({principal:{for:'pollock',people:['pollock']}});
  expect(wakes(f.app.db)[0].authorship).toEqual(schedules(f.app.db)[0].authorship);
  expect(f.call('scheduleSet',{...input,prompt:'Changed by owner'})).toMatchObject({ok:true});
  const saved=schedules(f.app.db)[0];expect(saved.authorship).toEqual({principal:{for:'pollock',people:['jonathan','pollock']}});
- expect(f.call('scheduleRun',{id:input.id})).toMatchObject({ok:true});
+ const runId=randomUUID(), ran=f.call('scheduleRun',{id:input.id},owner,runId);expect(ran).toMatchObject({ok:true});
+ expect((ran as {value:object}).value).not.toHaveProperty('authorship');expect(f.call('scheduleRun',{id:input.id},owner,runId)).toEqual(ran);
  expect(wakes(f.app.db).find(w=>w.runNow)?.authorship).toEqual(saved.authorship);
  expect(JSON.stringify(f.call('schedules',{}))).not.toContain('authorship');
  await f.app.close();const again=await f.open();expect(schedules(again.db)[0].authorship).toEqual(saved.authorship);
@@ -102,4 +104,23 @@ it('redacts saved authorship from schedule and wake Live snapshots and updates',
   const snapshot=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'schedule'}));await snapshot;
   expect(JSON.stringify(messages)).toContain('UPDATED_WORDS');expect(JSON.stringify(messages)).not.toContain('authorship');
  }finally{const closed=once(ws,'close');ws.terminate();await closed;}
+});
+
+it('refuses otherwise-authorized project and member scope changes without changing schedule or occurrences',async()=>{
+ const f=await setup();f.access.projects.pond={members:['jonathan'],agents:['art']};
+ expect(f.call('scheduleSet',input).ok).toBe(true);
+ const before={s:schedules(f.app.db),w:wakes(f.app.db),events:f.app.db.prepare('SELECT * FROM clock_events').all()};
+ for(const changed of [{project:'pond'},{member:'jonathan'}]){
+  expect(await f.app.operations.callAsync('socket',owner,'clock.scheduleSet',{...input,...changed},randomUUID(),true)).toMatchObject({ok:false,code:'invalid'});
+  expect({s:schedules(f.app.db),w:wakes(f.app.db),events:f.app.db.prepare('SELECT * FROM clock_events').all()}).toEqual(before);
+ }
+});
+it('copies saved narrowed authorship into the next occurrence created by dispatch',async()=>{
+ const f=await setup();expect(f.call('scheduleSet',input,person).ok).toBe(true);expect(f.call('scheduleSet',input).ok).toBe(true);
+ const original=wakes(f.app.db).find(w=>w.state==='pending')!, saved=schedules(f.app.db)[0].authorship;
+ await f.clock.advance(original.due-f.clock.now());
+ for(let n=0;n<6;n++)await Promise.resolve();
+ const next=wakes(f.app.db).find(w=>w.schedule===input.id&&w.due>original.due);
+ expect(next).toBeDefined();expect(next!.authorship).toEqual(saved);
+ expect(next!.authorship!.principal).toEqual({for:'pollock',people:['jonathan','pollock']});
 });
