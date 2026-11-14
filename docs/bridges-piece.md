@@ -870,14 +870,11 @@ lexemes stay in their original strings. Source mutation around the read refuses.
 Failures are sanitized. Parent confinement and completed-backup consistency belong
 to the snapshot caller; this reader is not a live-WAL reader.
 
-Still required before claiming a complete Bridges importer: collect both stores
-and explicit external instance roots; resolve each agent's authoritative sources
-against pinned Runtime/shuttle contracts, preserving/refusing ambiguity and missing
-moved-gates sources; compare every archived document/revision independently from
-the destination; explicitly map Slack bundle metadata and separate secret references
-without opening the bundle; implement the owning import transaction, checksum,
-repeat/different-source guards, rollback, registry, plan discovery/options and both
-verification paths. Neither source inventory is registered with migrate-all yet.
+The completed-snapshot importer below now collects these stores and explicit
+external roots, resolves authoritative sources, retains exact private evidence,
+and owns the atomic import and both source-derived verification paths. The
+inventory readers are used by the registered Bridges migration; they never run
+as daemon adapters or apply legacy authority themselves.
 
 ## Completed-snapshot importer
 

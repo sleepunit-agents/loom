@@ -165,20 +165,23 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
         routes.push(record);
       }
     }
-    const agentClaims=effective.accounts.filter(a=>a.kind==='agent');
+    const agentClaims=[...effective.accounts.filter(a=>a.kind==='agent'),
+      ...effective.routes.flatMap(r=>Object.entries(r.bots).map(([owner,user])=>({source:r.source,owner,user,kind:'agent' as const,platform:'discord' as const,workspace:undefined}))),
+      ...venues.map(v=>({source:v.id,owner:v.agent,user:v.bot,kind:'agent' as const,platform:v.platform,workspace:v.workspace})),
+    ];
     for(const a of agentClaims){
       if(a.user==='0')throw Error();
-      if(!household.agents.includes(a.owner)){retained.push({kind:'agent',source:a.source,owner:a.owner,reason:'not a household agent'});continue;}
       const samePlace=(b:typeof a)=>a.platform===b.platform&&(a.platform==='discord'||a.workspace===b.workspace);
       if(agentClaims.some(b=>samePlace(b)&&(b.owner===a.owner&&b.user!==a.user||b.user===a.user&&b.owner!==a.owner)))throw Error();
       const bots=venues.filter(v=>v.agent===a.owner&&v.platform===a.platform&&(a.platform==='discord'||v.workspace===a.workspace)).map(v=>v.bot);
       if(a.platform==='discord')bots.push(...effective.routes.flatMap(r=>r.bots[a.owner]===undefined?[]:[r.bots[a.owner]]));
       if(bots.some(bot=>bot!==a.user))throw Error();
+      if(!household.agents.includes(a.owner))retained.push({kind:'agent',source:a.source,owner:a.owner,reason:'not a household agent'});
     }
     for(const a of effective.accounts){
       if(a.kind!=='person')continue;
       if(effective.accounts.some(b=>b.kind==='person'&&b.platform===a.platform&&b.user===a.user&&b.owner!==a.owner&&(a.platform==='discord'||b.workspace===a.workspace)))throw Error();
-      if(venues.some(v=>v.platform===a.platform&&v.bot===a.user&&(a.platform==='discord'||v.workspace===a.workspace))||effective.routes.some(r=>a.platform==='discord'&&Object.values(r.bots).includes(a.user))||effective.accounts.some(b=>b.kind==='agent'&&b.platform===a.platform&&b.user===a.user&&(a.platform==='discord'||b.workspace===a.workspace)))throw Error();
+      if(venues.some(v=>v.platform===a.platform&&v.bot===a.user&&(a.platform==='discord'||v.workspace===a.workspace))||effective.routes.some(r=>a.platform==='discord'&&Object.values(r.bots).includes(a.user))||agentClaims.some(b=>b.platform===a.platform&&b.user===a.user&&(a.platform==='discord'||b.workspace===a.workspace)))throw Error();
       if(a.user==='0')throw Error();
       if(!household.members.includes(a.owner)){retained.push({kind:'person',source:a.source,owner:a.owner,reason:'not a household member'});continue;}
       const workspaces=a.platform==='slack'?(venues.some(v=>v.platform==='slack'&&v.workspace===a.workspace)||incomplete.some(v=>v.workspace===a.workspace)?[a.workspace!]:[]):[...new Set(venues.filter(v=>v.platform==='discord').map(v=>v.workspace))];

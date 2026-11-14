@@ -171,3 +171,13 @@ it('an unprojectable route claim cannot be shadowed by another source or a threa
  expect(source.expected.routes).toEqual([]);
  expect(JSON.parse(source.evidence).retained).toContainEqual(expect.objectContaining({kind:'route',channel:'500'}));
 });
+
+it('checks unknown-agent claims against all selected route bot identities before retaining them',()=>{
+ const f=fixture();writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100',fez:'250'}}));
+ writeFileSync(f.sources.files[1].path,JSON.stringify({agents:{fez:{discord:['100']}}}));
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+ writeFileSync(f.sources.files[1].path,JSON.stringify({agents:{fez:{discord:['250']}}}));
+ expect(readBridgeImport(f.sources,f.options,h,f.open).expected.venues.map(v=>v.agent)).toEqual(['art']);
+ writeFileSync(f.sources.files[1].path,'{}');writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100',fez:'100'}}));
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+});
