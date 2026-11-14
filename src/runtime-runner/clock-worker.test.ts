@@ -794,3 +794,19 @@ it('executable signal drains a sleeping idle worker without another fake-clock t
  signals.emit('SIGTERM');expect(await completed).toBe(1);expect(f.calls).toHaveLength(1);
  expect(signals.listenerCount('SIGTERM')).toBe(0);expect(signals.listenerCount('SIGINT')).toBe(0);
 });
+
+it.each(['expire','signal'] as const)('executable owns a real referenced idle handle until %s',async ending=>{
+ const f=await setup(),input=new PassThrough(),signals=new EventEmitter(),stderr=vi.fn();
+ const intervals=vi.spyOn(globalThis,'setInterval'),clear=vi.spyOn(globalThis,'clearInterval');
+ const completed=runClockWorker({input,args:[],signals,stderr},{clock:f.clock,launch:f.launch});
+ input.end(JSON.stringify({...f.config,idleMs:3000}));await f.ready;await finishToIdle(f);
+ const index=intervals.mock.calls.findIndex(([fn,ms])=>ms===30_000);
+ expect(index).toBeGreaterThanOrEqual(0);
+ const handle=intervals.mock.results[index].value as NodeJS.Timeout;
+ // The actual Node handle is referenced, even though injected Clock timers
+ // need no OS handle and production Clock timers deliberately unref.
+ expect(handle.hasRef()).toBe(true);expect(clear).not.toHaveBeenCalledWith(handle);
+ if(ending==='signal')signals.emit('SIGTERM');else f.clock.advance(3000);
+ expect(await completed).toBe(ending==='signal'?1:0);
+ expect(clear).toHaveBeenCalledWith(handle);expect(f.calls).toHaveLength(1);
+});

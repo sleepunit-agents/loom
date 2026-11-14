@@ -46,3 +46,26 @@ it('bounds all retained sources across multiple chains and releases expired capa
  clock.advance(30*60_000);
  expect(await call('beginClockExecution',{})).toMatchObject({ok:true});expect(prepared).toBe(1025);
 },20_000);
+
+it('idle retention is clipped to the original execution expiry, even after a late completion',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'clock-idle-expiry-'));cleanups.push(()=>rmSync(home,{recursive:true,force:true}));
+ const clock=new FakeClock(),app=createFoundation({home,clock});cleanups.push(app.close);
+ const effects=installEffects(app,fixtureSharing,false);let consumed=false,prepared=0,n=0;
+ const input:ClockExecutionInput={historyKey:'b'.repeat(64),job:'job-expiry',
+  assignment:{runner:'a',box:'a',claimedAt:clock.now(),house:{repo:'/fixture/art',houseFile:'house/house.json'}},
+  binding:{agent:'art',conversation:'expiry-chain',venue:'wake',place:'expiry-place'},
+  message:{id:'clock:expiry-0',seq:1,kind:'wake',text:'fixture'},
+  current:(_viewer,completed=false)=>consumed===completed,retainedCurrent:()=>consumed,
+  acknowledge:()=>{consumed=true;},more:()=>false};
+ installClockExecution(app,effects,()=>{prepared++;return input;});
+ const call=(name:string,value:unknown)=>app.operations.callAsync('direct',{kind:'agent',id:'art'},`runtime.${name}`,value,`expiry-${++n}`);
+ const admission=await call('beginClockExecution',{});expect(admission).toMatchObject({ok:true});
+ if(!admission.ok)throw new Error('expiry admission failed');
+ const execution=clockExecutionAdmission.parse(admission.value).execution;
+ clock.advance(30*60_000-2000);
+ expect(await call('completeClockExecution',{execution,idleMs:30_000})).toMatchObject({ok:true,value:{more:false}});
+ clock.advance(1999);expect(await call('idleClockExecution',{execution})).toMatchObject({ok:true});
+ clock.advance(1);expect(await call('idleClockExecution',{execution})).toMatchObject({ok:false,code:'denied'});
+ expect(await call('beginClockExecution',{previous:execution})).toMatchObject({ok:false,code:'denied'});
+ expect(prepared).toBe(1);
+});

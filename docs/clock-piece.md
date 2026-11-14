@@ -145,7 +145,10 @@ watchdog, post-output check and ACK. The same worker-owned native session resume
 only after those checks. Clean expiry with no arrival succeeds; a failed or
 uncertain probe/completion fails without retry. Idle HTTP requests are bounded by
 both five seconds and the original idle deadline. Owner close, cancellation,
-policy revocation and job stop end idle waiting promptly. Late responses cannot
+policy revocation and job stop end idle waiting promptly. The worker owns a
+referenced Node timer only during idle, so production Clock timers being
+unreferenced cannot end the executable while it is waiting. That handle is
+cleared on arrival, clean expiry, failure and owner shutdown. Late responses cannot
 restart a closed worker. The idle window restarts only after another successfully
 executed prompt; 100 turns and 1024 total retained source slots remain the bounds.
 Standalone file completion never retains an idle join proof.

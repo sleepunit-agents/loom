@@ -117,21 +117,27 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
           // Completed history remains private to this startup. Polling supplies
           // no native launch authority: every arrival still needs new admission.
           let more=false;
-          while(active&&clock.now()<idleUntil){
-            await new Promise<void>(resolve=>{
-              finishIdle=resolve;cancelIdle=clock.at(Math.min(clock.now()+1000,idleUntil),resolve);
-            });
-            cancelIdle?.();cancelIdle=undefined;finishIdle=undefined;
+          // Clock timers deliberately unref in production. A pending promise or
+          // signal listener cannot keep this executable alive after stdin/child
+          // EOF, so own one referenced handle for precisely this idle window.
+          const lifetime=setInterval(()=>{},30_000);
+          try {
+            while(active&&clock.now()<idleUntil){
+              await new Promise<void>(resolve=>{
+                finishIdle=resolve;cancelIdle=clock.at(Math.min(clock.now()+1000,idleUntil),resolve);
+              });
+              cancelIdle?.();cancelIdle=undefined;finishIdle=undefined;
+              if(!active)throw fail();
+              if(clock.now()>=idleUntil)break;
+              const checked=clock.now();
+              const idle=clockExecutionIdle.parse(await call('idleClockExecution',{execution:input.execution},idleUntil));
+              if(!active||clock.now()>=checked+idle.ttl)throw fail();
+              if(clock.now()>=idleUntil)break;
+              if(idle.more){more=true;break;}
+            }
             if(!active)throw fail();
-            if(clock.now()>=idleUntil)break;
-            const checked=clock.now();
-            const idle=clockExecutionIdle.parse(await call('idleClockExecution',{execution:input.execution},idleUntil));
-            if(!active||clock.now()>=checked+idle.ttl)throw fail();
-            if(clock.now()>=idleUntil)break;
-            if(idle.more){more=true;break;}
-          }
-          if(!active)throw fail();
-          if(!more)return true;
+            if(!more)return true;
+          }finally {clearInterval(lifetime);}
         }
         previous=input.execution;
       }
