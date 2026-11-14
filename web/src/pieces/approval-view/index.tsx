@@ -1,7 +1,10 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
 import { folders, matches, rows, type Approval, type ApprovalSnapshot } from './model';
 export type { ApprovalSnapshot } from './model';
+
+export type RenderApprovalChange = (approval: Approval) => ReactNode;
+interface ChangePresentation { renderChange?: RenderApprovalChange }
 
 /** The composition binds these commands to the authenticated operation door.
  * A visible button is not authority: the operation rechecks the exact request.
@@ -35,7 +38,7 @@ function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalA
     {error && <Error text={error} />}
   </>;
 }
-function Details({ approval: a, snapshot, actions, inline = false }: { approval: Approval; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean }) {
+function Details({ approval: a, snapshot, actions, renderChange, inline = false }: { approval: Approval; snapshot: ApprovalSnapshot; actions?: ApprovalActions; inline?: boolean } & ChangePresentation) {
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
   return <article className="grid min-w-0 gap-4 p-5 [overflow-wrap:anywhere]">
     <header><p>{a.kind} · {a.state}</p><h2 className="text-xl font-semibold">{a.ask}</h2><p>{a.agent}{a.project && ` · ${a.project}`}{a.member && ` · private to ${a.member}`}</p></header>
@@ -43,6 +46,7 @@ function Details({ approval: a, snapshot, actions, inline = false }: { approval:
     <section><h3>If you allow</h3><p>{a.ifYes}</p></section>
     <section><h3>If you deny</h3><p>{a.ifNo}</p></section>
     {a.changeSummary && <section><h3>Exactly what will change</h3><p className="whitespace-pre-wrap">{a.changeSummary}</p></section>}
+    {renderChange?.(a)}
     <section><h3>Exactly what this allows</h3><p>{a.kind}: {a.target}</p></section>
     <Answer key={a.id} approval={a} actions={actions} />
     {a.decidedBy && <p>Answered by {a.decidedBy}</p>}
@@ -55,16 +59,21 @@ function Details({ approval: a, snapshot, actions, inline = false }: { approval:
 }
 
 /** Same current request and answer controls as the tile, with before and after. */
-export function ApprovalCard({ id, snapshot, actions }: { id: string; snapshot: ApprovalSnapshot; actions?: ApprovalActions }) {
+export function ApprovalCard({ id, snapshot, actions, renderChange }: { id: string; snapshot: ApprovalSnapshot; actions?: ApprovalActions } & ChangePresentation) {
   if (snapshot.status !== 'live') return <Unavailable status={snapshot.status} />;
   const approval = snapshot.approvals.find(a => a.id === id);
-  return approval ? <Details key={id} approval={approval} snapshot={snapshot} actions={actions} inline /> : <Empty title="Approval unavailable" />;
+  return approval ? <Details key={id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} inline /> : <Empty title="Approval unavailable" />;
 }
 
 /** No transport or cached private records: the generated query client supplies
  * the current visible snapshot, and drops it on disconnect or access loss. */
-export default function Approvals({ snapshot, actions }: { snapshot: ApprovalSnapshot; actions?: ApprovalActions }) {
-  const [folder, setFolder] = useState('pending'), [query, setQuery] = useState(''), [selected, setSelected] = useState<string>();
+export default function Approvals({ snapshot, actions, renderChange, navigation }: { snapshot: ApprovalSnapshot; actions?: ApprovalActions;
+  navigation?: { selected?: string; select(id?: string): void; folder: string; openFolder(id: string): void };
+} & ChangePresentation) {
+  const [localFolder, setLocalFolder] = useState('pending'), [query, setQuery] = useState(''), [localSelected, setLocalSelected] = useState<string>();
+  const folder = navigation ? navigation.folder : localFolder;
+  const selected = navigation ? navigation.selected : localSelected;
+  const setSelected = navigation ? navigation.select : setLocalSelected;
   const live = snapshot.status === 'live';
   const shown = rows(snapshot, folder, query);
   const approval = live ? snapshot.approvals.find(a => a.id === selected) : undefined;
@@ -72,7 +81,7 @@ export default function Approvals({ snapshot, actions }: { snapshot: ApprovalSna
   const notices = live ? snapshot.notices.filter(n => matches([n.what, n.agent, n.target, n.kind], query)).sort((a,b) => b.at.localeCompare(a.at)) : [];
   const rulesView = folder === 'rules', noticesView = folder === 'notices';
   return <Split label="Approvals" className="h-full" folders={folders.map(f => ({ ...f, count: live ? f.id === 'rules' ? snapshot.rules.length : f.id === 'notices' ? snapshot.notices.length : rows(snapshot, f.id, '').length : undefined }))}
-    folder={folder} onFolder={id => { setFolder(id); setSelected(undefined); }}
+    folder={folder} onFolder={id => { if (navigation) navigation.openFolder(id); else { setLocalFolder(id); setLocalSelected(undefined); } }}
     search={<label>Search approvals<Input type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>}
     listTitle={folders.find(f => f.id === folder)?.label}
     listMeta={live ? rulesView ? rules.length : noticesView ? notices.length : shown.length : undefined}
@@ -80,7 +89,7 @@ export default function Approvals({ snapshot, actions }: { snapshot: ApprovalSna
       : rulesView ? <>{rules.length ? <List label="Standing rules">{rules.map(r => <Row key={`${r.kind}:${r.scope}:${r.person}`} title={r.scope} meta={`${r.kind}${r.person ? ` · for ${r.person}` : ''}`} status={r.tier === 'do' ? 'Just do it' : r.tier === 'tell' ? 'Tell me after' : 'Ask me'} />)}</List> : <Empty title="No matching rules" />}<p className="p-3">Ask an agent in chat to change a standing rule. Only a household owner can change rules.</p></>
       : noticesView ? notices.length ? <List label="Reported steps">{notices.map(n => <Row key={n.id} title={n.what} meta={`${n.agent} · ${n.kind} · ${n.target}`} status={new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'short', timeStyle: 'short' }).format(new Date(n.at))} />)}</List> : <Empty title="No reported steps" />
       : shown.length ? <List label="Approvals">{shown.map(a => <Row key={a.id} title={a.what} meta={a.why} status={`${a.agent} · ${a.state}`} selected={a.id === selected} onClick={() => setSelected(a.id)} />)}</List> : <Empty title={query ? 'No matching approvals' : 'No approvals here'} />}
-    reader={approval ? <Details key={approval.id} approval={approval} snapshot={snapshot} actions={actions} /> : null}
+    reader={approval ? <Details key={approval.id} approval={approval} snapshot={snapshot} actions={actions} renderChange={renderChange} /> : null}
     open={!!approval} onBack={() => setSelected(undefined)} backLabel="Approvals"
     blank={<Empty title="Open an approval" text="Choose a request to read exactly what it allows." />} />;
 }
