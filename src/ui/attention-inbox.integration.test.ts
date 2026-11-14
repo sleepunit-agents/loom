@@ -115,6 +115,26 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     }
     const fact=loom.operations.call('direct',owner,'attention.get',{id:'closed-task'});
     if(!fact.ok)throw Error('Missing wait');expect(fact.value).not.toHaveProperty('answer');
+    // The same resolution is quiet FYI, never a human answer or another open need.
+    await b.setViewportSize({width:1280,height:900});
+    await b.getByRole('button',{name:/^FYI/}).click();
+    await expect.poll(()=>b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).count()).toBe(1);
+    await b.getByRole('searchbox',{name:'Search asks'}).fill('t-1 is closed');
+    await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).click();
+    await b.getByRole('heading',{name:'Check the completed work?',exact:true}).waitFor();
+    expect(await yes(b).count()).toBe(0);
+    for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
+      await b.setViewportSize({width,height:900});
+      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await b.screenshot({path:join(shots,`inbox-fyi-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    await b.setViewportSize({width:1280,height:900});
+    await b.getByRole('searchbox',{name:'Search asks'}).fill('');
+    await b.getByRole('button',{name:/^Answered/}).click();
+    expect(await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).count()).toBe(0);
+    await b.locator('.loom-split').getByRole('button',{name:/^Needs you/}).click();
     // One actual central approval, with the owning page's action and two-window withdrawal.
     const requested=loom.operations.call('direct',{kind:'agent',id:'art'},'approvals.request',{kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,ask:'Merge the Inbox source fix?',why:'The source card keeps the exact decision and receipt.',if_yes:'I merge the fix.',if_no:'I hold it.'},'inbox-request-approval');
     expect(requested.ok).toBe(true);if(!requested.ok)throw Error(requested.message);

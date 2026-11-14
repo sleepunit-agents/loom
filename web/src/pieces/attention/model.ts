@@ -12,10 +12,10 @@ export interface Ask extends LiveRecord {
 }
 export type Answer = { kind: 'yes' | 'no' | 'done' | 'dismiss' } | { kind: 'words'; text: string };
 export function inFolder(ask: Ask, folder: string) {
-  return folder === 'answered' ? ask.state !== 'open' : ask.state === 'open' && (!folder.startsWith('agent:') || ask.agent === folder.slice(6));
+  return folder === 'fyi' ? ask.state === 'resolved' : folder === 'answered' ? ask.state === 'answered' : ask.state === 'open' && (!folder.startsWith('agent:') || ask.agent === folder.slice(6));
 }
 export function matches(ask: Ask, query: string) {
-  const text = [ask.ask, ask.why, ask.agent, ask.project, ask.id, ...(ask.refs ?? [])].join(' ').toLowerCase();
+  const text = [ask.ask, ask.why, ask.agent, ask.project, ask.id, ask.resolution, ...(ask.refs ?? [])].join(' ').toLowerCase();
   return query.toLowerCase().trim().split(/\s+/).every(word => text.includes(word));
 }
 /** A central answer cannot apply another piece's decision. Its app owns that action. */
