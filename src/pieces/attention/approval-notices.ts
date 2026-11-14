@@ -22,7 +22,7 @@ export function approvalNoticeFiling(db: Db): Pick<ApprovalAskFiling,'syncNotice
       const row=db.prepare('SELECT record FROM attention_asks WHERE id=?').get(id) as {record:string}|undefined;
       if(row && row.record!==JSON.stringify(record)) {
         const old=JSON.parse(row.record) as Ask;
-        throw new OperationError('conflict',old.sourceManaged && old.source.kind==='piece' && old.source.id==='approvals-notices'?'Notice event changed':'Notice belongs to another source');
+        if(!(old.sourceManaged && old.source.kind==='piece' && old.source.id==='approvals-notices' && old.ask==='Reported step no longer retained' && JSON.stringify({...old,ask:record.ask})===JSON.stringify(record)))throw new OperationError('conflict',old.sourceManaged && old.source.kind==='piece' && old.source.id==='approvals-notices'?'Notice event changed':'Notice belongs to another source');
       }
       if(row?.record===JSON.stringify(record))continue;
       dirty=true;

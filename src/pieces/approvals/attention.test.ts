@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -193,6 +193,15 @@ it('files each tell event atomically as fixed scoped FYI, with permanent per-mem
   const s=await setup(), agent:Viewer={kind:'agent',id:'art'};
   expect(s.call('approvals.set-rule',{kind:'merge',scope:'github:acme/*',tier:'tell'}).ok).toBe(true);
   const input={kind:'merge',target:card().target,what:'Do not copy these source words'};
+  const batches:Array<Array<{type:string;id:string}>>=[];
+  s.app.live.observe(changes=>{
+    if(changes.some(c=>c.type==='approval.notice')) {
+      batches.push(changes);
+      expect(s.app.db.inTransaction).toBe(false);
+      expect(s.types.get('approval.notice')!.ids().length).toBeGreaterThan(0);
+      expect(changes.some(c=>c.type==='attention.ask')).toBe(true);
+    }
+  });
   const first=s.call('approvals.tell',input,agent,'tell-first');expect(first.ok).toBe(true);
   const entries=()=>s.app.db.prepare("SELECT record FROM attention_asks WHERE id LIKE 'approval-notice:%'").all().map(r=>JSON.parse((r as {record:string}).record) as Ask);
   const original=entries()[0];expect(original).toMatchObject({agent:'art',state:'resolved',ask:'Merge reported in Approvals',source:{kind:'piece',id:'approvals-notices'}});
@@ -206,7 +215,7 @@ it('files each tell event atomically as fixed scoped FYI, with permanent per-mem
   expect(s.call('attention.resolve',{id:original.id,reason:'replace'}).ok).toBe(false);
   expect(s.call('attention.raise',{id:'approval-notice:future',agent:'art',ask:'fake',source:{kind:'piece',id:'approvals-notices'}},agent).ok).toBe(false);
   const marks=s.types.get('attention.readMark')!;expect(marks.ids()).toHaveLength(1);
-  expect(s.types.get('approval.notice')!.ids()).toHaveLength(2);
+  expect(s.types.get('approval.notice')!.ids()).toHaveLength(2);expect(batches).toHaveLength(2);
   expect(s.startupChanges.length).toBeGreaterThan(0);
 });
 
@@ -230,9 +239,10 @@ it('rolls back the owning tell when its permanent projection conflicts',async()=
   s.app.db.transaction(()=>persist(s.app.db,state,s.app.operations.clock.now()))();
   const {approvalNoticeId}=await import('../attention/approval-notices.js');
   const id=approvalNoticeId('collision');s.app.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run(id,JSON.stringify({id,source:{kind:'conversation',id:'other'},state:'open',ask:'Unrelated'}));
+  const events:unknown[]=[];const stop=s.app.live.observe(changes=>events.push(changes));
   const prior=load(s.app.db).notices;
   expect(s.call('approvals.tell',{kind:'merge',target:card().target,what:'Will roll back'},{kind:'agent',id:'art'})).toMatchObject({ok:false,code:'conflict'});
-  expect(load(s.app.db).notices).toEqual(prior);
+  expect(load(s.app.db).notices).toEqual(prior);expect(events).toEqual([]);stop();
 });
 
 it('excludes private/unknown source notices and removes trimmed FYIs without reassigning read marks',async()=>{
@@ -242,11 +252,15 @@ it('excludes private/unknown source notices and removes trimmed FYIs without rea
   expect(s.call('approvals.tell',input,agent).ok).toBe(true);
   const first=s.types.get('attention.ask')!.ids().find(id=>id.startsWith('approval-notice:'))!;
   expect(s.call('attention.markRead',{id:first}).ok).toBe(true);
+  const removedSourceId=load(s.app.db).notices[0].id;
+  const changes:Array<Array<{type:string;id:string}>>=[];s.app.live.observe(batch=>changes.push(batch));
   for(let i=0;i<50;i++){const r=s.call('approvals.tell',input,agent);expect(r,JSON.stringify(r)).toMatchObject({ok:true});}
   expect(s.types.get('approval.notice')!.ids()).toHaveLength(50);
   expect(s.types.get('attention.ask')!.ids().filter(id=>id.startsWith('approval-notice:')&&s.types.get('attention.ask')!.read(id,owner))).toHaveLength(50);
   expect(s.call('attention.get',{id:first}).ok).toBe(false);
+  expect(changes.some(batch=>batch.some(c=>c.type==='approval.notice'&&c.id===removedSourceId)&&batch.some(c=>c.type==='attention.ask'&&c.id===first))).toBe(true);
   expect(s.app.db.prepare('SELECT count(*) AS n FROM attention_read_marks').get()).toEqual({n:1});
+  expect(s.call('approvals.attentionPending',{}, {kind:'service',id:'approvals'})).toMatchObject({ok:true,value:false});
   const state=load(s.app.db);state.notices.unshift({...state.notices[0],id:'private-notice',member:'pollock',what:'Private words'}, {...state.notices[0],id:'unknown-notice',kind:'secret-output',what:'One-time output'});
   s.app.db.transaction(()=>persist(s.app.db,state,s.app.operations.clock.now()))();expect(s.reconcile().ok).toBe(true);
   const rows=s.types.get('approval.notice')!.ids().map(id=>s.types.get('approval.notice')!.read(id,owner));
@@ -269,6 +283,10 @@ it('persists legacy identities before filing, retaining the second duplicate aft
   expect(s.call('attention.get',{id:first}).ok).toBe(false);expect(s.call('attention.get',{id:second}).ok).toBe(true);
   const mark=s.app.db.prepare('SELECT ask FROM attention_read_marks').all();expect(mark).toEqual([{ask:first}]);
   expect(s.call('approvals.attentionPending',{}, {kind:'service',id:'approvals'})).toMatchObject({ok:true,value:false});
+  const restored=load(s.app.db);restored.notices.unshift(initial[0]);
+  s.app.db.transaction(()=>persist(s.app.db,restored,s.app.operations.clock.now()))();expect(s.reconcile().ok).toBe(true);
+  expect(s.call('attention.get',{id:first}).ok).toBe(true);
+  expect(s.app.db.prepare('SELECT ask FROM attention_read_marks').all()).toEqual(mark);
 });
 
 it('files valid owning host notices with fixed FYI text and no target or source-word copying',async()=>{
@@ -278,4 +296,19 @@ it('files valid owning host notices with fixed FYI text and no target or source-
   const id=s.types.get('attention.ask')!.ids().find(id=>id.startsWith('approval-notice:'))!;
   const result=s.call('attention.get',{id});expect(result).toMatchObject({ok:true,value:{ask:'Host step reported in Approvals',state:'resolved',agent:'art'}});
   expect(JSON.stringify(result)).not.toContain('fixture.service');expect(JSON.stringify(result)).not.toContain('Source-only host wording');
+});
+
+it('reserves identified legacy keys and bounds oversized stopped imports before startup projection',async()=>{
+  const s=await setup(),source=mkdtempSync(join(tmpdir(),'notice-import-'));dirs.push(source);
+  const n={at:'2026-11-13T00:00:00Z',agent:'art',kind:'merge',target:card().target,what:'Duplicate legacy event'};
+  const {identifyNotices}=await import('./notices.js');const state=load(s.app.db);state.notices=[{...n}];identifyNotices(state);
+  const identified=state.notices[0];
+  const document=JSON.stringify({v:1,approvals:{},notices:[identified,{...n},...Array.from({length:58},(_,i)=>({...n,what:`Legacy event ${i}`}))]});
+  const path=join(source,'approvals.json');writeFileSync(path,document);
+  const {importApprovals}=await import('./importer.js');expect(importApprovals(s.app.db,source,s.app.operations.clock.now()).imported).toBe(true);
+  expect(readFileSync(path,'utf8')).toBe(document);expect(load(s.app.db).notices).toHaveLength(60);
+  const retained=load(s.app.db).notices;expect(retained[0].id).toBe(identified.id);expect(retained[1].id).not.toBe(identified.id);
+  await s.app.close();const restarted=await setup(s.home);
+  expect(restarted.types.get('approval.notice')!.ids()).toHaveLength(50);
+  expect(restarted.types.get('attention.ask')!.ids().filter(id=>id.startsWith('approval-notice:'))).toHaveLength(50);
 });

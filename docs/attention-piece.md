@@ -343,7 +343,8 @@ acceptance still remain. It changes no permissions, schema or Home visuals.
 The pinned old Approvals `tell`/`notice_of`/manifest contract (loom-approvals
 588b3f7c22f86068063153676de159597348216a, bin/approvals) reported merge and
 host steps as notices. Next Approvals owns the bounded newest 50 events and
-publishes `approval.notice`; Inbox files fixed, resolved FYIs with the same
+publishes `approval.notice` (only the first 50 imported rows, even when an
+oversized legacy source is retained losslessly); Inbox files fixed, resolved FYIs with the same
 agent audience and per-member read marks. Open Approvals goes to Reported
 steps, where the original public wording and exact target remain. Reporting
 records a source claim; it does not prove execution. FYIs never count as

@@ -156,9 +156,13 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.locator('.loom-split').getByRole('button',{name:/^Needs you/}).click();
     // A real tell event files a stable FYI across both windows and opens its owner.
     expect(loom.operations.call('direct',owner,'approvals.set-rule',{kind:'merge',scope:'github:acme/*',tier:'tell'},'inbox-notice-rule').ok).toBe(true);
+    await a.goto(`${loom.url}/p/approvals-preview/notices`);
+    await expect.poll(()=>a.getByRole('heading',{name:'Reported steps'}).count()).toBe(1);
+    await b.getByRole('button',{name:/^FYI/}).click();
     expect(loom.operations.call('direct',{kind:'agent',id:'art'},'approvals.tell',{kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,what:'Reported fixture page fix'},'inbox-approval-notice').ok).toBe(true);
-    await Promise.all([a.goto(`${loom.url}/p/inbox-preview`),b.goto(`${loom.url}/p/inbox-preview`)]);
-    for(const page of [a,b])await page.getByRole('button',{name:/^FYI/}).click();
+    await expect.poll(()=>a.locator('[data-split-row]').filter({hasText:'Reported fixture page fix'}).count()).toBe(1);
+    await a.goto(`${loom.url}/p/inbox-preview`);
+    await a.getByRole('button',{name:/^FYI/}).click();
     const noticeRow=(page:typeof a)=>page.locator('[data-split-row]').filter({hasText:'Merge reported in Approvals'});
     await expect.poll(()=>noticeRow(b).getAttribute('data-unread')).toBe('true');
     await noticeRow(a).click();

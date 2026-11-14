@@ -7,15 +7,18 @@ import { repoOf, hostOf } from './targets.js';
  * are retained; later source removal cannot renumber surviving events. */
 export function identifyNotices(s:State): void {
   const occurrences=new Map<string,number>();
+  const used=new Set(s.notices.flatMap(n=>n.id?[n.id]:[]));
   for(const n of s.notices) {
     if(n.id!==undefined)continue;
     const digest=createHash('sha256').update(JSON.stringify([n.at,n.agent,n.kind,n.target,n.what,n.for??null]),'utf16le').digest('hex');
-    const occurrence=occurrences.get(digest)??0;occurrences.set(digest,occurrence+1);
-    n.id=`legacy:${digest}:${occurrence}`;
+    let occurrence=occurrences.get(digest)??0;
+    while(used.has(`legacy:${digest}:${occurrence}`))occurrence++;
+    occurrences.set(digest,occurrence+1);
+    n.id=`legacy:${digest}:${occurrence}`;used.add(n.id);
   }
 }
 export function noticeEntries(s: State) {
-  return s.notices.flatMap(n=>{
+  return s.notices.slice(0,50).flatMap(n=>{
     if(!n.id || n.member || !/^[a-z][a-z0-9-]{0,63}$/.test(n.agent) || !Number.isFinite(Date.parse(n.at))
       || !(n.kind==='merge' && repoOf(n.target) || n.kind==='host' && hostOf(n.target)))return [];
     return [{id:n.id,notice:n}];
