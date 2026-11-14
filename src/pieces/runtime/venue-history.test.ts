@@ -136,3 +136,11 @@ it('revokes an issued permit and refuses new issuance for an otherwise current w
  expect(await f.post(f.body,'runtime.readConversation',{})).toMatchObject({ok:true});
  expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)).toBeUndefined();expect(f.permit.current()).toBe(false);
 });
+it('refuses owner-body issuance when retained sender history resolves to a named nonowner',async()=>{
+ const f=await running(),conversation=runtimeStore(f.app.db).read('job',f.job)!.conversation!;
+ f.app.db.transaction(()=>provenanceStore(f.app.db).note(conversation,'art',{
+  key:'retained-nonowner',sender:{kind:'person',person:'pollock'},at:f.clock.now(),
+ },['jonathan']))();
+ expect(await f.post(f.body,'runtime.readConversation',{})).toMatchObject({ok:true});
+ expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)).toBeUndefined();expect(f.permit.current()).toBe(false);
+});
