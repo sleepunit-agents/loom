@@ -31,10 +31,9 @@ arithmetic mean (`total_ms/count`). Its key is `(day, kind, name)`. These are
 the page's real columns, not a JSON document or a separate monitoring database.
 Kinds are request, operation and job. A span is assigned to its completion
 day in UTC. `prune` deletes days before the supplied cutoff; today counts as
-one of `keep_days`. Retention runs on the first completed span of a new UTC
-day, including after idle periods or restart. The integration must handle
-expired rows when reading an idle or disabled store if it promises immediate
-expiry. Storage failures are reported through a payload-free callback and do
+one of `keep_days`. Retention runs at startup and each UTC midnight, even while idle,
+and also before the first completed span of a new UTC day. Closing cancels
+the timer. Disabled and outside-only instances schedule no retention work. Storage failures are reported through a payload-free callback and do
 not change the outcome of application work.
 
 Choices where the page is silent: 90 days by default, configurable from 1 to
