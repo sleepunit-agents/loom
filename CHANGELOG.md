@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Tests: give each test 20 s on CI instead of 5 s, after unrelated tests timed out on loaded shared runners and left main without a deployable build.
 - New desk: make request and form ids without `crypto.randomUUID`, which browsers withhold on plain HTTP, so the desk works on a home network address.
+- Resolve original private loom parent metadata for Comms through the joined Runtime job and exact owning thread.
+
 - Classify already owned Runtime spawn threads in Comms through original member metadata, preserving independent transport and execution holds.
 
 
