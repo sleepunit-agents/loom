@@ -127,3 +127,15 @@ it('shutdown during a held replacement poisons both operations and shares the or
   child.reply('replaced',1);await turn();expect(replaced).toBe(false);expect(closed).toBe(false);
   child.end(null,'SIGKILL');await Promise.all([replacementRejected,closeRejected]);
 });
+it('installs one shutdown promise before synchronous abort listeners reenter close',async()=>{
+  const {child,owner}=setup();child.reply('ready',0);await owner.ready;
+  let nested:Promise<void>|undefined;
+  owner.signal.addEventListener('abort',()=>{nested=owner.close();},{once:true});
+  const outer=owner.close();
+  try {expect(nested).toBe(outer);expect(owner.close()).toBe(outer);}
+  finally {
+    await turn();child.reply('closed',1);child.end();await Promise.all([outer,nested]);
+  }
+  expect(child.sent).toEqual([{op:'close',seq:1}]);
+  expect(child.kill).not.toHaveBeenCalled();
+});

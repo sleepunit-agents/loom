@@ -1395,3 +1395,5 @@ The process fixtures also cover missing readiness/replacement/close replies,
 independent abnormal child exit after a valid close acknowledgement, and shutdown
 during a held replacement. These failures keep the original owner burned and
 join its child before rejected settlement; a late reply cannot restore it.
+Shutdown installs its shared join before aborting, so a synchronous abort listener
+retiring the same source receives that original promise instead of a second close.

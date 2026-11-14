@@ -40,8 +40,9 @@ export function startHolderProcess(file:string) {
   const owner=holderOwner(child);
   function close():Promise<void> {
     if(closing)return closing;
-    fence();
-    // Defer IO so closing is installed before a synchronous disconnect/error.
+    // Install the shared join before abort invokes caller listeners. They may
+    // synchronously close this same owner while retiring their original source.
+    // Defer IO too, so disconnect/error cannot reenter an uninstalled close.
     closing=Promise.resolve().then(async()=>{
       try {await owner.close();}catch {fault=true;owner.abort();}
       // Ack/disconnect can precede process exit. Bound graceful exit, but join
@@ -53,6 +54,7 @@ export function startHolderProcess(file:string) {
       child.off('error',error);child.off('disconnect',disconnect);
       if(fault)throw failed();
     });
+    fence();
     void closing.catch(()=>{});return closing;
   }
   const ready=owner.ready.catch(async()=>{fault=true;fence();try {await close();}catch {}throw failed();});
