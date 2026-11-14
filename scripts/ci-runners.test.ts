@@ -10,7 +10,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export const TRUSTED_RUNS_ON =
-  "${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && matrix.shard != 3 && matrix.shard != 4 && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"loom\"]') || 'ubuntu-latest' }}";
+  "${{ vars.LOOM_SELF_HOSTED_RUNNERS == 'on' && github.base_ref != 'next' && matrix.shard != 2 && matrix.shard != 3 && matrix.shard != 4 && (github.event_name == 'push' || github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]')) && fromJSON('[\"self-hosted\",\"Linux\",\"X64\",\"loom\"]') || 'ubuntu-latest' }}";
 
 // GitHub's own images by name: a self-hosted runner can carry any label, even ubuntu-lab.
 const HOSTED = /^(ubuntu-(latest|2\d\.04)(-arm)?|windows-(latest|20\d\d)|macos-(latest|\d+))$/;

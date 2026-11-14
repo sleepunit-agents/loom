@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
+import { SecretsView } from '../secrets-view';
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ComponentProps } from 'react';
 import { call, useRecords, type Call } from '../../data';
 import { newId } from '../../data/id';
 import { settingsWrites } from './writes';
@@ -90,7 +91,7 @@ function SecretReader({name,policy,agents,grants,uses,changes,enabled,values,now
   </article>;
 }
 const pieces=[['Sharing','/p/sharing-preview','Project membership'],['Approvals','/p/approvals-preview','Standing approval rules'],['Clock','/p/clock-preview','Schedules and wakes'],['Bridges','/p/bridges-preview','Venues, routes and identities']];
-export default function SettingsApp({path:shellPath,go}:{path?:string;go?:(path:string)=>void}={}) {
+function LegacySettingsApp({path:shellPath,go}:{path?:string;go?:(path:string)=>void}={}) {
   const base='/p/settings-preview',[local,setLocal]=useState(()=>typeof location==='undefined'?base:location.pathname),path=shellPath??local;
   const parts=path.slice(base.length).split('/');let id:string|undefined;try{id=parts[2]?decodeURIComponent(parts[2]):undefined;}catch{/* malformed link */}
   const [folder,setFolder]=useState(parts[1]||'secrets'),[query,setQuery]=useState(''),[confirmation,setConfirmation]=useState<Confirmation>();
@@ -117,4 +118,10 @@ export default function SettingsApp({path:shellPath,go}:{path?:string;go?:(path:
   return <Split label="Settings" className="h-full" folders={[{id:'secrets',label:'Secrets',count:names.records.length},{id:'requests',label:'Requests',count:pending.length},{id:'grants',label:'Grants',count:grants.records.length},{id:'pieces',label:'Piece settings'}]} folder={view==='add'?'secrets':view} onFolder={f=>navigate(f)}
     search={<label>Search Settings<Input type="search" value={query} onChange={e=>setQuery(e.target.value)}/></label>} listTitle={view==='grants'?'Agents and services':view==='requests'?'Requests':view==='pieces'?'Household piece settings':'Secrets'}
     listTop={view==='secrets'?<div className="p-3"><Button onClick={()=>navigate('add')}>Add a secret</Button></div>:undefined} list={list} reader={reader} open={!!id||view==='add'} onBack={()=>navigate(view)} backLabel="Settings" blank={<Empty title="Settings" text="Choose a secret, request or agent to manage its access."/>}/>;
+}
+
+/** The root supplies the authenticated shared-query view when mounted in the
+ * rebuilt app. Keep legacy hooks in their own component. */
+export default function SettingsApp({shared,...legacy}:{shared?:ComponentProps<typeof SecretsView>;path?:string;go?:(path:string)=>void}={}) {
+  return shared?<SecretsView {...shared}/>:<LegacySettingsApp {...legacy}/>;
 }

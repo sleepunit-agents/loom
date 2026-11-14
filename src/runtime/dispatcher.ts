@@ -31,7 +31,7 @@ export class Dispatcher {
         if (!claimed) continue;
         // model on a queued job is the initial preference; this records the
         // model actually requested from the worker after current placement.
-        this.db.update(jobs).set({ model: placement.model }).where(eq(jobs.id, job.id)).run();
+        this.db.update(jobs).set({ model: placement.model, account: placement.account, harness: placement.harness }).where(eq(jobs.id, job.id)).run();
         return { id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
           model: placement.model, account: placement.account, harness: placement.harness,
           brief: claimed.brief ?? '', house: { repository: claimed.houseRepository ?? '',
