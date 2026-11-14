@@ -70,3 +70,28 @@ it('clears encryption and decryption plaintext on success without clearing retur
   expect(opened?.length).toBeGreaterThan(0); expect(opened?.every(byte=>byte===0)).toBe(true);
   expect(result.bytes.some(byte=>byte!==0)).toBe(true);
 });
+it.each(['integrity_check','foreign_key_check'])('refuses a post-decryption %s failure and clears both plaintexts', async check => {
+  const db=source(), k=await keys(); let captured:Uint8Array|undefined,opened:Uint8Array|undefined;
+  const encrypt=Encrypter.prototype.encrypt, decrypt=Decrypter.prototype.decrypt, pragma=Database.prototype.pragma;
+  vi.spyOn(Encrypter.prototype,'encrypt').mockImplementation(async function(this:Encrypter,bytes){captured=bytes as Uint8Array;return encrypt.call(this,bytes);});
+  vi.spyOn(Decrypter.prototype,'decrypt').mockImplementation(async function(this:Decrypter,bytes){opened=await decrypt.call(this,bytes);return opened;});
+  vi.spyOn(Database.prototype,'pragma').mockImplementation(function(this:Database.Database,sql:string,options?:Database.PragmaOptions){
+    if(opened && sql===check) return check==='integrity_check' ? 'damaged' : [{table:'records'}];
+    return pragma.call(this,sql,options);
+  });
+  await expect(encryptDatabaseImage(db,[k.recipient],k.drill)).rejects.toThrow(/^Encrypted database export or restore drill failed$/);
+  expect(captured?.length).toBeGreaterThan(0); expect(captured?.every(byte=>byte===0)).toBe(true);
+  expect(opened?.length).toBeGreaterThan(0); expect(opened?.every(byte=>byte===0)).toBe(true);
+});
+it('clears the underlying serialized plaintext when reconstruction checks fail before encryption', async () => {
+  const db=source(), k=await keys(); let captured:Buffer|undefined;
+  const serialize=Database.prototype.serialize;
+  vi.spyOn(Database.prototype,'serialize').mockImplementation(function(this:Database.Database){
+    this.exec('DROP TABLE records'); captured=serialize.call(this); return captured;
+  });
+  const encrypt=vi.spyOn(Encrypter.prototype,'encrypt');
+  await expect(encryptDatabaseImage(db,[k.recipient],k.drill)).rejects.toThrow(/^Encrypted database export or restore drill failed$/);
+  expect(encrypt).not.toHaveBeenCalled();
+  expect(captured?.length).toBeGreaterThan(0); expect(captured?.every(byte=>byte===0)).toBe(true);
+  expect(db.prepare('SELECT count(*) AS n FROM records').get()).toEqual({n:2});
+});
