@@ -1,3 +1,4 @@
+import { stamp } from './time';
 import { agentPath } from './home-model';
 import { HomeSteps } from './home-steps';
 import type { ActivityWindow } from '../activity/model';
@@ -7,7 +8,7 @@ import './home.css';
 import { useEffect, useRef, useState } from 'react';
 import { useRecords, type Snapshot } from '../../data';
 import { AppFrame, Button, Empty, Error, List, Loading, Row } from '../../kit';
-import { AskReader, AnswerReceipt, stamp, type Guard } from './index';
+import { AskReader, AnswerReceipt, type Guard } from './index';
 import { useWaitChecks } from './wait-checks';
 import { useMemberRetention } from './member-retention';
 import type { Ask } from './model';

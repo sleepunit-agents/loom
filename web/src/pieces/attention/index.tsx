@@ -1,3 +1,4 @@
+import { stamp } from './time';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { call, useRecords, type Call, type CallState, type Snapshot, type LiveRecord } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, Textarea } from '../../kit';
@@ -10,7 +11,7 @@ const noop = () => () => {};
 function useCall<T>(request?: Call<T>) {
   return useSyncExternalStore(request?.subscribe ?? noop, request?.getSnapshot ?? (() => idle as CallState<T>));
 }
-export const stamp = (at: number) => `${new Date(at).toLocaleString('en-US', { timeZone:'America/Chicago' })} CT`;
+export { stamp } from './time';
 export interface Guard { lock: {current:boolean}; busy: boolean; setBusy(busy:boolean):void }
 function startCheck(guard: Guard, id: string): Call<Ask> | undefined {
   if (guard.lock.current) return;

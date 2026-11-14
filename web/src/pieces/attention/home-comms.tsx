@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { callOnce, useRecords, type LiveRecord } from '../../data';
 import { Button } from '../../kit';
 import { Composer } from '../comms/composer';
-import { stamp } from './index';
+import { stamp } from './time';
 interface Summary { agent:string; unread:number; last?:{thread:string;title:string|null;at:number}; first?:{thread:string} }
 interface Summaries { member:string; agents:string[]; summaries:Summary[] }
 export const threadPath=(id:string)=>`/p/comms-preview/thread/${encodeURIComponent(id.replace(/^th:/,''))}`;
