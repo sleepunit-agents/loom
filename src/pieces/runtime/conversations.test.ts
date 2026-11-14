@@ -1194,14 +1194,14 @@ it('binds private questions to the original body and seals words without publish
  expect(await f.socket('attention.get',{id:ack.ref})).toMatchObject({ok:true,value:{state:'answered'}});
 });
 
-it.each(['credential','policy','archive','imported','reset','writeoff','ended','service','binding','duplicate','tombstone','member'] as const)('rejects a private question revoked during actual encryption by %s without partial persistence',async drift=>{
+it.each(['credential','policy','archive','imported','reset','writeoff','ended','service','binding','duplicate','tombstone','member','box','hosting','house','membership','lending'] as const)('rejects a private question revoked during actual encryption by %s without partial persistence',async drift=>{
  let armed=false,entered:()=>void=()=>{},release:()=>void=()=>{};
  const sealing=new Promise<void>(r=>{entered=r;}),gate=new Promise<void>(r=>{release=r;});
  vi.spyOn(commsCrypto,'loadKey').mockImplementation(async home=>{
   const key=await realLoadKey(home);
   return {...key,async seal(words){if(armed&&words.includes('PRIVATE INFLIGHT QUESTION')){entered();await gate;}return key.seal(words);}};
  });
- const f=await commsBodyFixture(),viewer=signin(f.app).token(hash(f.body))!.viewer;
+ const f=await commsBodyFixture(drift==='membership'||drift==='lending'?'pollock':'jonathan'),viewer=signin(f.app).token(hash(f.body))!.viewer;
  const snapshot=()=>['attention_asks','comms_messages'].map(table=>f.app.db.prepare(`SELECT * FROM ${table}`).all());
  const before=snapshot();armed=true;
  const pending=f.app.operations.callAsync('http',viewer,'runtime.askQuestion',{id:'inflight-question',question:{ask:'PRIVATE INFLIGHT QUESTION'}},'inflight-question');
@@ -1209,6 +1209,9 @@ it.each(['credential','policy','archive','imported','reset','writeoff','ended','
  await sealing;
  f.app.db.transaction(()=>{
   const store=runtimeStore(f.app.db),{changedAt:_,...job}=store.read('job',f.job)!,t=f.record();
+  if(['box','hosting','lending'].includes(drift)){const {changedAt:__,...box}=store.read('box','a')!;store.put('box',{...box,...(drift==='box'?{revokedAt:f.clock.now()}:drift==='hosting'?{mayHost:[]}:{lentTo:[]})},f.clock.now());}
+  if(drift==='house'){const {changedAt:__,...settings}=store.read('settings','art')!;store.put('settings',{...settings,house:{repo:'/changed',houseFile:'house.json'}},f.clock.now());}
+  if(drift==='membership')new HouseholdDatabase(f.app.db).change(f.home,raw=>{(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person==='pollock')!.agents=[];});
   if(drift==='credential')signin(f.app).tokens.change(ts=>ts.splice(ts.findIndex(t=>t.sha256===hash(f.body)),1));
   if(drift==='policy')f.app.db.prepare('INSERT INTO runtime_body_policy (agent,record) VALUES (?,?)').run('art','{}');
   if(drift==='archive'){t.archived=f.clock.now();f.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(t),f.thread);}
@@ -1250,4 +1253,26 @@ it('namespaces private question identities by the actual replacement job',async(
  expect(await f.post(f.body,'runtime.askQuestion',input)).toMatchObject({ok:false});
  const messages=value<Array<{ask?:{ask:string}}>>(await f.socket('comms.messages',{thread:f.thread}));
  expect(messages.filter(m=>m.ask).map(m=>m.ask!.ask)).toEqual(['PRIVATE FIRST JOB QUESTION','PRIVATE SECOND JOB QUESTION']);
+});
+
+it('enforces bounded private Question fields before encryption and accepts their exact limits',async()=>{
+ const f=await commsBodyFixture(),input={id:'bounded-question',question:{ask:'PRIVATE BOUNDED QUESTION'}};
+ const snapshot=()=>['attention_asks','comms_messages'].map(table=>f.app.db.prepare(`SELECT * FROM ${table}`).all());
+ const before=snapshot();
+ const invalid=[
+  {...input,id:''},{...input,id:'x'.repeat(201)},
+  ...['ask','why','if_yes','if_no'].flatMap(field=>['','x'.repeat(4001)].map(text=>({...input,question:{...input.question,[field]:text}}))),
+  {...input,question:{...input.question,href:'x'.repeat(2001)}},
+  {...input,question:{...input.question,refs:Array.from({length:101},()=> 'ref')}},
+  {...input,question:{...input.question,refs:['x'.repeat(201)]}},
+  {...input,question:{...input.question,refs:['']}},
+ ];
+ for(const candidate of invalid){
+  expect(await f.post(f.body,'runtime.askQuestion',candidate)).toMatchObject({ok:false,code:'invalid'});
+  expect(snapshot()).toEqual(before);
+ }
+ const maximum={id:'q'.repeat(200),question:{ask:'a'.repeat(4000),why:'w'.repeat(4000),if_yes:'y'.repeat(4000),if_no:'n'.repeat(4000),href:'h'.repeat(2000),refs:Array.from({length:100},()=> 'r'.repeat(200)),answers:'yes-no'}};
+ const ack=value<{ref:string;seq:number}>(await f.post(f.body,'runtime.askQuestion',maximum));
+ expect(await f.socket('comms.messages',{thread:f.thread})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:maximum.question})])});
+ expect(await f.socket('attention.get',{id:ack.ref})).toMatchObject({ok:true,value:{answers:'yes-no'}});
 });
