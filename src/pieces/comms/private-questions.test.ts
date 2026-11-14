@@ -282,11 +282,12 @@ for(const drift of ['expired','ciphertext','missing','metadata','sender','sequen
  expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').all(`private-reply:${r.ref}`)).toEqual([]);
  expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{state:'open'}});
 });
-for(const drift of ['expired','ciphertext','archive'] as const)it(`refuses sealed typed reply receipt after ${drift}`,async()=>{
+for(const drift of ['expired','ciphertext','archive','projection'] as const)it(`refuses sealed typed reply receipt after ${drift}`,async()=>{
  const f=await setup(),r=await f.comms.ask('art',f.place,{id:'typed',question}),input={ref:r.ref,text:'Private typed words'};
  const first=await f.call('comms.replyToAsk',input,f.viewer,'typed-receipt');expect(first.ok).toBe(true);
  if(drift==='expired')f.clock.advance(14*86400_000);
  else if(drift==='archive')await f.call('comms.change',{thread:f.place,action:'archive'});
+ else if(drift==='projection'){const a=f.attention.get(f.viewer,{id:r.ref});if(!a.ok)throw Error('missing ask');f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify({...a.value as object,answers:'yes-no'}),r.ref);}
  else f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=?').run(await f.key.seal(JSON.stringify({...question,ask:'Replacement question'})),f.place,r.seq);
  for(const operation of ['typed-receipt','fresh-receipt'])expect(await f.call('comms.replyToAsk',input,f.viewer,operation)).toMatchObject({ok:false});
 });

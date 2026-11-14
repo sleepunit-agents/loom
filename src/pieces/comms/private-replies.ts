@@ -33,7 +33,7 @@ export function installPrivateReplies(o:Options & {closed():boolean;changed(t:Th
  };
  const row=(place:string,ref:string)=>db.prepare("SELECT * FROM comms_messages WHERE thread=? AND kind='message' AND id=?").get(place,`private-reply:${ref}`) as MessageRow|undefined;
  const question=({state:_,changedAt:__,answer:___,...rest}:Record<string,unknown>)=>JSON.stringify(rest);
- const sourceIdentity=(s:ReturnType<typeof lookup>)=>s.source?[s.thread.id,s.thread.member,s.thread.agent,s.thread.conversation,s.thread.project,s.ask.id,s.ask.member,s.ask.agent,s.ask.source,s.ask.privateQuestion,s.source]:null;
+ const sourceIdentity=(s:ReturnType<typeof lookup>)=>s.source?[s.thread.id,s.thread.member,s.thread.agent,s.thread.conversation,s.thread.project,question(s.ask),s.source]:null;
  const validate=(current:ReturnType<typeof lookup>,before:ReturnType<typeof lookup>)=>{
   if(JSON.stringify(sourceIdentity(current))!==JSON.stringify(sourceIdentity(before)))return deny();
  };
