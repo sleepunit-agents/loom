@@ -604,7 +604,11 @@ async function proveNextComms(browser:Browser,webRoot:string) {
      expect(await card.isVisible()).toBe(true);await b.keyboard.press('Escape');
     }
     // Nested question batches retain the desk's navigation capability.
+    // Finish click-induced scrolling before opening: scrolling dismisses cards.
+    await questionChip(a).first().scrollIntoViewIfNeeded();
+    await a.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
     await questionChip(a).first().click();
+    await expect.poll(()=>a.getByRole('dialog',{name:'Task: Sealed question work',exact:true}).getByRole('link',{name:'Open',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
     await a.getByRole('dialog',{name:'Task: Sealed question work',exact:true}).getByRole('link',{name:'Open',exact:true}).click();
     await expect.poll(()=>new URL(a.url()).pathname).toBe(`/p/tasks-preview/task/${cited}`);
     expect(JSON.parse(new URL(a.url()).searchParams.get('paths')??'{}').comms).toBe(`/p/comms-preview/thread/${thread.slice(3)}`);
