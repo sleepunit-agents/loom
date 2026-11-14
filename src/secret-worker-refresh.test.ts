@@ -69,3 +69,25 @@ test('replacement inside a database transaction cannot retire the generation',as
  f.app.db.transaction(()=>{expect(()=>f.owner.replaceWorkers([])).toThrow('Secret worker startup unavailable');})();
  expect(f.state(id)).toEqual({state:'admitted'});expect(await f.client().admit('API')).toMatch(/^[0-9a-f-]{36}$/);
 });
+test('replacement changes the pinned peer on both admission and read-only worker authority',async()=>{
+ const f=await setup();f.owner.replaceWorkers([{tokenDigest:f.tokenDigest,fingerprint:f.fingerprint('stranger')}]);
+ await expect(f.client().admit('API')).rejects.toThrow();
+ const pending=randomUUID(),peer={...f.server,cert:join(f.home,'stranger.pem'),key:join(f.home,'stranger.key'),servername:'daemon.test'};
+ const client=workerAdmission({...peer,socket:f.config.admission.socket},f.fingerprint('daemon'),pending);closes.push(client.close);
+ const id=await client.admit('API');expect(await f.remote.claim(id)).toBeNull();f.release(id);
+ const claim=(await f.remote.claim(id))!;expect(await claim.current()).toBe(true);
+ const proof=remoteWorkerTicketProof(peer,f.fingerprint('daemon'),id,pending);closes.push(proof.close);
+ const oldProof=remoteWorkerTicketProof({...f.server,servername:'daemon.test'},f.fingerprint('daemon'),id,pending);closes.push(oldProof.close);
+ expect(await proof.current()).toBe(true);expect(await oldProof.current()).toBe(false);
+});
+test('a mixed batch with a valid prefix and invalid tail preserves the original live authority claim',async()=>{
+ const f=await setup(),pending=randomUUID(),id=await f.client(pending).admit('API');
+ expect(await f.remote.claim(id)).toBeNull();f.release(id);const claim=(await f.remote.claim(id))!;
+ const proof=remoteWorkerTicketProof({...f.server,servername:'daemon.test'},f.fingerprint('daemon'),id,pending);closes.push(proof.close);
+ const batch=[...f.config.workers,{...f.config.workers[0],tokenDigest:'0'.repeat(64)}];
+ expect(()=>f.owner.replaceWorkers(batch)).toThrow('Secret worker startup unavailable');
+ expect(f.state(id)).toEqual({state:'claimed'});expect(await claim.current()).toBe(true);expect(await proof.current()).toBe(true);
+ const undispatched=await f.client().admit('API');
+ expect(()=>f.owner.replaceWorkers(batch)).toThrow();expect(f.state(undispatched)).toEqual({state:'admitted'});
+ await claim.finish(false);
+});
