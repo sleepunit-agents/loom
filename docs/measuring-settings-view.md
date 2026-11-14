@@ -1,9 +1,11 @@
 # Measuring settings presentation
 
 `web/src/pieces/measuring/settings.tsx` exports `MeasuringSettingsProposal`
-and `MeasuringChange` for the normal owner settings and approval flows. They
-are not mounted yet: the shared root and Approvals owner supply their data,
-route and callbacks. No endpoint or permission rule is added here.
+and `MeasuringChange` for the normal owner settings and approval flows. The
+registered Approvals tile and exported live inline card now bind the change
+renderer through `web/src/data/work-views.tsx` and the shared generated client.
+The proposal form still needs an owner flow and authenticated command callback.
+No endpoint or permission rule is added here.
 
 Pass the proposal form an authoritative `MeasuringSettingsSnapshot` with
 status `live` and the current four settings, or `loading`, `offline`, or
@@ -36,11 +38,12 @@ After the outer approval transaction commits, reload Measuring; await its
 close before closing the shared database. No SDK or database work runs in
 these components, and no monitoring settings are sent to a separate store.
 
-This unit implements presentation only. The shared root must mount the form
-in the owner flow and the change card in Approvals; it must not add a visible
+The shared root must mount the form in the owner flow and place the live change
+card in conversations; it must not add a visible
 Measuring tile to a never-configured household. Request/operation/job dispatch
 instrumentation and generated timing reads remain separate integration work.
 
-Actual entry composition is still pending with the shared view owner. Adding the
-callback prop does not mount a tile or inline card by itself, and the reachability
-check must remain enabled until the real generated-read registration supplies it.
+The actual lazy Approvals registration now reaches the generated view and
+Measuring renderer; the reachability check passes without exemptions. The root
+still must compose the authenticated live endpoint and command callbacks before
+this is proof of working behavior in the running program.
