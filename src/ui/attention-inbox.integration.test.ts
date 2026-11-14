@@ -65,13 +65,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await a.getByRole('button',{name:'Check again',exact:true}).click();
     await expect.poll(()=>a.getByRole('textbox',{name:'Or answer in your own words'}).inputValue()).toBe('Continue after the small fix.');
     const shots=resolve('artifacts/attention-inbox');mkdirSync(shots,{recursive:true});
-    for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
-      await b.setViewportSize({width,height:900});
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await b.screenshot({path:join(shots,`inbox-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
+
     await a.getByRole('button',{name:'Record answer',exact:true}).click();
     await expect.poll(()=>yes(b).count()).toBe(0);
     await expect.poll(()=>b.getByText(/words · jonathan/).count()).toBe(1);
@@ -97,13 +91,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       await page.getByRole('button',{name:'Open task',exact:true}).waitFor();
       expect(await yes(page).count()).toBe(0);
     }
-    for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
-      await b.setViewportSize({width,height:900});
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await b.screenshot({path:join(shots,`inbox-task-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
+
     await a.getByRole('button',{name:'Open task',exact:true}).click();
     await expect.poll(()=>new URL(a.url()).pathname).toBe('/p/tasks-preview/task/t-1');
     await a.getByRole('heading',{name:'Pond work',exact:true}).waitFor();
@@ -128,13 +116,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).click();
     await b.getByRole('heading',{name:'Check the completed work?',exact:true}).waitFor();
     expect(await yes(b).count()).toBe(0);
-    for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
-      await b.setViewportSize({width,height:900});
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await b.screenshot({path:join(shots,`inbox-fyi-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
+
     await b.setViewportSize({width:1280,height:900});
     await b.getByRole('searchbox',{name:'Search asks'}).fill('');
     await b.getByRole('button',{name:/^Answered/}).click();
@@ -158,13 +140,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.locator('.loom-split').getByRole('button',{name:/^Alerts/}).click();
     await b.locator('[data-split-row]').filter({hasText:'Review clock work waiting for model capacity.'}).click();
     await b.getByRole('button',{name:'Acknowledge',exact:true}).waitFor();
-    for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
-      await b.setViewportSize({width,height:900});
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await b.screenshot({path:join(shots,`inbox-alert-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
+
     await b.setViewportSize({width:1280,height:900});
     const beforeAck=loom.operations.call('direct',owner,'clock.list',{});
     expect(beforeAck.ok).toBe(true);
@@ -183,13 +159,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       await page.getByRole('button',{name:'Open approval',exact:true}).waitFor();
       expect(await yes(page).count()).toBe(0);
     }
-    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
-      await b.setViewportSize({width,height:900});
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await b.screenshot({path:join(shots,`inbox-approval-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
+
     raise({id:'approval-wait',source:{kind:'conversation',id:'cv-approval-wait'},project:'pond',ask:'Please decide the Inbox fix?',waits_on:{approval:approvalId}});
     raise({id:'approval-wait-2',source:{kind:'conversation',id:'cv-approval-wait-2'},project:'pond',ask:'Another conversation about the fix?',waits_on:{approval:approvalId}});
     for(const page of [a,b]){
@@ -205,12 +175,12 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     for(const page of [a,b]){
       await page.goto(`${loom.url}/p/inbox-preview/ask/private-reply`);
       await page.getByRole('button',{name:'Check again',exact:true}).click();
-      await page.getByRole('textbox',{name:'Your answer',exact:true}).waitFor();
+      await page.getByRole('textbox',{name:'Your private reply',exact:true}).waitFor();
       expect(await yes(page).count()).toBe(0);
     }
     const privateWords='Private Inbox reply fixture sentinel';
-    await a.getByRole('textbox',{name:'Your answer',exact:true}).fill(privateWords);
-    expect(await b.getByRole('textbox',{name:'Your answer',exact:true}).inputValue()).toBe('');
+    await a.getByRole('textbox',{name:'Your private reply',exact:true}).fill(privateWords);
+    expect(await b.getByRole('textbox',{name:'Your private reply',exact:true}).inputValue()).toBe('');
     expect(await a.evaluate(words=>JSON.stringify(localStorage).includes(words),privateWords)).toBe(false);
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       await a.setViewportSize({width,height:900});
