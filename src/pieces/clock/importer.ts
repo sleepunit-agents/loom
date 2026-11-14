@@ -13,6 +13,12 @@ function string(v: unknown, name: string): string { if (typeof v !== 'string' ||
 function stamp(v: unknown): number { return parseAt(string(v, 'timestamp'), 0); }
 export const legacyClockAgentFiles = ['spool.jsonl', 'schedules.json', 'paused', 'wake.log', 'filed.json', 'sessions.json', 'vouch.json', 'places.json'] as const;
 const importedBy: Viewer = { kind: 'runner', id: 'clock-import:unverified' };
+/** Archived hints only exclude recovery; they never establish an owner. */
+function plainSchedule(r: Row): boolean {
+  return [undefined, '-', 'owner'].includes(r.for as string | undefined)
+    && ['member','project','for_people','model','slot','lane','continuation','approval','place','local_approval','standing','standing_target','standing_digest','delivery','deliver_place','on','_firing'].every(k => r[k] === undefined)
+    && !String(r.prompt ?? '').includes('<!-- house: local -->');
+}
 function work(r: Row, agent: string): Work {
   const prompt = r.prompt === undefined ? undefined : string(r.prompt, 'prompt');
   const file = r.prompt_file === undefined ? undefined : string(r.prompt_file, 'prompt file');
@@ -88,7 +94,7 @@ export function readClockImport(from: string, now: number, options: { afterSnaps
     const sourceSchedules = object(JSON.parse(content(`${agent}/schedules.json`, '{}')));
     for (const [id, raw] of Object.entries(sourceSchedules)) {
       const r = object(raw), at = timesOf(r.at as string | string[]), days = typeof r.days === 'string' ? r.days : ''; daysOf(days);
-      expectedSchedules.push({ ...work(r, agent), id: scheduleId(id), at, days, by: importedBy, enabled: false, changedAt: now, ...(typeof r.lane === 'string' ? { lane: r.lane } : {}) });
+      expectedSchedules.push({ ...work(r, agent), id: scheduleId(id), at, days, by: importedBy, enabled: false, changedAt: now, ...(plainSchedule(r) ? { importRecovery: 'plain' as const } : {}), ...(typeof r.lane === 'string' ? { lane: r.lane } : {}) });
     }
     if (files[`${agent}/paused`] !== undefined) pauses.push({ agent, since: stamp(object(JSON.parse(content(`${agent}/paused`))).since) });
   }

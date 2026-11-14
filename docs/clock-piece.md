@@ -24,7 +24,8 @@ reconciled here; they are not a sequence of pending assignments.
 | Schedule/lane authorship, private body controls, six-hour suppression | Current Runtime provenance and central policy; archive/saved Viewer never prove an original | `src/pieces/clock/schedule-authorship.test.ts`, `src/pieces/clock/private-control.test.ts`, `src/pieces/clock/jobs.test.ts` |
 | Local approvals and standing work | Filing, owner decisions, exact recovery and standing rechecks implemented; execution still held | `src/pieces/clock/local-recovery.test.ts`, `src/pieces/clock/local-standing.test.ts` |
 | Imported eligible unknown one-offs | Fresh owner direct vouch or owning Allow records new authorship; normal native checks still apply | `src/pieces/clock/vouch.test.ts`, `src/runtime-runner/clock-worker.test.ts` |
-| Other imports | Known-person/owner/private imports and disabled schedules still need fresh owning recovery or an explicit deliberate-drop decision; uncertain attempts never replay | `src/pieces/clock/importer.ts`, `src/pieces/clock/vouch.ts` |
+| Plain disabled imported schedules | Fresh owner complete prompt/timing recovery through operation and client; no archived authority | `src/pieces/clock/import-recovery.test.ts` |
+| Other imports | Known-person/owner/private one-offs and remaining disabled schedules still need fresh owning recovery or an explicit deliberate-drop decision; uncertain attempts never replay | `src/pieces/clock/importer.ts`, `src/pieces/clock/vouch.ts` |
 
 The remaining completion obligations are:
 
@@ -42,6 +43,28 @@ The remaining completion obligations are:
 
 These are open work, not a cutover approval. No installed runner, real-data
 import/export, deployment or host changes are established by this documentation.
+
+### Fresh owner recovery of plain imported schedules
+
+`clock.scheduleRecover` (client: `wake --agent art schedule recover daily --at
+13:17 -p 'Review the queue' --note 'Daily review'`) replaces a plain disabled
+imported schedule with newly submitted prompt, note, times and days (daily by
+default). Only a current household owner with current target-agent give-work can
+do this. The new schedule and its one next occurrence commit together, with fresh
+owner authorship. Ordinary `scheduleSet` edits still narrow historical authorship;
+they do not adopt imported work.
+
+The offline importer marks only unscoped schedules without named-person or
+capability hints as eligible. Recovery copies no archived words, Viewer,
+principal, conversation or capability. A linked firing or uncertain occurrence
+must be reconciled first; definitely unstarted linked occurrences are cancelled
+in the same transaction. Unmarked historical imports are refused rather than
+backfilled. Private/person imports, lanes and capability-bearing schedules still
+need their owning recovery. There is no Clock app recovery control yet. Tests in
+`src/pieces/clock/import-recovery.test.ts` cover real fixture import, generated
+command binding, current authority, rollback, receipt replay and dispatch after
+database reopen through a fake Runtime; they do not prove a native process or
+installed runner lifecycle.
 
 A dedicated worker entry point now owns **stored-prompt turns or one standalone checkout-file turn**:
 `loom-clock-worker` reads an owner-supplied configuration from bounded stdin,

@@ -29,7 +29,7 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   if (name === 'vouch' || name === 'ask-vouch') input.target = `${agent}:${[...new Set(positional)].sort().join(',')}`;
   for (const key of ['note','model','slot','continuation','approval','place','on','days','at']) if (flags[key] !== undefined) input[key] = flags[key];
   if (timed) input.when = positional.join(name === 'in' ? '' : ' ');
-  if (['at','in','park','schedule set'].includes(name!)) {
+  if (['at','in','park','schedule set','schedule recover'].includes(name!)) {
     if (!(timed && flags.approval && !flags.prompt && !flags['prompt-file']) && !!flags.prompt === !!flags['prompt-file']) return fail('give exactly one of --prompt/-p or --prompt-file/-f');
     input.agent = agent; if (!timed || !flags.approval) input.note ??= '';
     if (flags.prompt) input.prompt = flags.prompt; else if (flags['prompt-file']) input.file = flags['prompt-file'];
@@ -132,7 +132,7 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
     const next = (pending.value as Wake[]).find(w=>w.schedule===s.id && w.state==='pending')!;
     return `schedule ${label}: next at ${clockTime(next.due)} (${next.id})`;
   };
-  if (name === 'schedule set') {
+  if (name === 'schedule set' || name === 'schedule recover') {
     const ack=value as Schedule & {private?:boolean;due:number};
     return success(ack.private ? `schedule ${positional[0]}: next at ${clockTime(ack.due)} (private work armed)` : confirmation(ack,positional[0]));
   }
@@ -193,7 +193,7 @@ export function oneOffCommandInput(viewer:Viewer,request:ClockCommandInput):{age
 export function controlCommandInput(viewer:Viewer,request:ClockCommandInput, visible:readonly Pick<Schedule,'id'|'agent'>[]=[]):{operation:string;id:string;agent:string;ambiguous?:boolean}|undefined {
  const parsed=parseCommand(viewer,request);if('reply' in parsed)return;
  const {agent,name,positional,operation}=parsed;
- if(!['schedule set','schedule rm','schedule run','cancel'].includes(name) || !agent)return;
+ if(!['schedule set','schedule recover','schedule rm','schedule run','cancel'].includes(name) || !agent)return;
  const resolved=resolveScheduleId(visible,agent,positional[0]);
  return {operation,...(name==='cancel'?{id:positional[0]}:resolved),agent};
 }
