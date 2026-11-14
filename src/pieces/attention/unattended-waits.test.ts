@@ -234,6 +234,7 @@ it.each(['facts', 'policy', 'inventory', 'stop'] as const)('yields after 1000 ra
   const resolved = () => (app.db.prepare("SELECT count(*) AS n FROM attention_asks WHERE json_extract(record, '$.state')='resolved'").get() as { n: number }).n;
   const calls = vi.spyOn(app.operations, 'call');
   let stopClose: Promise<void> | undefined;
+  let closing = false;
   clock.at(clock.now(), () => {
     // Already queued work runs between slices, after exactly one committed page.
     expect(resolved()).toBe(1000);
@@ -242,12 +243,14 @@ it.each(['facts', 'policy', 'inventory', 'stop'] as const)('yields after 1000 ra
       app.db.prepare('UPDATE tasks_tasks SET record=? WHERE id=?').run(JSON.stringify({ ...JSON.parse(row.record), status: 'open' }), 't-1');
     } else if (mode === 'policy') grants.resolveRead = false;
     else if (mode === 'inventory') grants.inventoryRead = false;
-    else stopClose = app.close();
+    else { closing = true; stopClose = app.close(); }
   });
   const cancellations: ReturnType<typeof vi.fn>[] = [];
   const at = clock.at.bind(clock);
   vi.spyOn(clock, 'at').mockImplementation((time, fn) => {
-    const cancel = vi.fn(at(time, fn)); cancellations.push(cancel); return cancel;
+    const cancel = vi.fn(at(time, fn));
+    if (!closing && time === clock.now()) cancellations.push(cancel);
+    return cancel;
   });
   clock.advance(0);
   if (stopClose) {

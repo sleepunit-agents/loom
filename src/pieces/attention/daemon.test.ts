@@ -145,15 +145,18 @@ it.each(['continue', 'revoke', 'stop'] as const)('yields retention inventory aft
   const calls = vi.spyOn(app.operations, 'call');
   const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
   let stopClose: Promise<void> | undefined;
+  let closing = false;
   clock.at(clock.now(), () => {
     expect(count()).toBe(1000);
     if (mode === 'revoke') denied.value = true;
-    if (mode === 'stop') stopClose = app.close();
+    if (mode === 'stop') { closing = true; stopClose = app.close(); }
   });
   const cancellations: ReturnType<typeof vi.fn>[] = [];
   const at = clock.at.bind(clock);
   vi.spyOn(clock, 'at').mockImplementation((time, fn) => {
-    const cancel = vi.fn(at(time, fn)); cancellations.push(cancel); return cancel;
+    const cancel = vi.fn(at(time, fn));
+    if (!closing && time === clock.now()) cancellations.push(cancel);
+    return cancel;
   });
   clock.advance(0);
   if (stopClose) {
