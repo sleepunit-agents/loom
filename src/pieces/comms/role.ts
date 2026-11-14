@@ -1,3 +1,4 @@
+export type { StepConversation } from './conversation-steps.js';
 /** Runtime is in-process and holds this capability; tokens never obtain it. */
 export interface Delivery { thread: string; agent: string; member: string; conversation: string; seq: number; generation?: number; text: string; project?: string }
 export type DeliveryReceipt = Omit<Delivery, 'text'>;
