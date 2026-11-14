@@ -1299,3 +1299,41 @@ remain tracked on t-2208. Holder recovery must include the independent ciphertex
 receipts, generation, all retained identities and fingerprint/receipt keys via an
 explicit opaque encrypted owner boundary and an isolated restore witness; the
 Household backup must fail closed until that owning boundary is supplied.
+
+### Inherited persistent-holder lifecycle owner
+
+`loom-secret-holder --config <private holder file> --owned` now accepts the
+spawning supervisor's inherited Node IPC channel. It refuses to start without
+that channel, a configured handoff, an empty initial worker list, and nonempty
+`handoff.ownerPeers`. Each owner peer has the same local TLS transport and
+certificate fingerprint as an ordinary handoff worker, without a binding.
+The holder preflights those peers before opening storage. Standalone mode
+refuses `ownerPeers`, so this cannot silently enable a new lifecycle mode.
+
+The private `holderOwner` capability sends only bindings and certificate pins.
+The holder selects transport paths and TLS keys from its own startup file;
+no message accepts executable selection, arbitrary peers, paths, reads, writes,
+secret names, values or diagnostics. The routing binding is still metadata:
+existing original daemon ticket authority and worker proofs authorize every
+handoff. This channel does not mint a release proof or a grant.
+
+A strictly ordered, single outstanding replacement acknowledges only after
+`replaceWorkers` joins retirement. Equal bindings still retire the original
+route generation. Startup, wrong/duplicate/out-of-order messages, lost acks,
+peer rejection and channel loss have no reconnect, retry or adoption path.
+The client poisons its original channel on uncertainty. The child begins
+holder shutdown before joining an outstanding replacement; its completion
+joins late startup, replacement and the original holder close. A close ack
+comes after holder listeners, transports, outstanding handlers and storage
+have closed. A supervisor must also join its actual child's exit before
+reusing a process slot; a routing ack alone does not prove process exit.
+
+This is opt-in source carriage for the holder side of orchestration. Tests
+use the production channel protocol with the actual persistent holder,
+daemon tickets and worker input in process, plus controlled protocol failures.
+They do not establish an installed supervisor or an OS-process ownership
+witness. No default daemon registration, holder configuration, process launch,
+installed file or deployment is activated. The remaining source supervisor
+must retain the original daemon/source/worker capabilities, launch and join
+separate processes and preserve the single-use Runtime job proof throughout.
+The recovery boundary described above remains a separate outstanding duty.

@@ -19,6 +19,8 @@ import {startPersistentHolder} from '../../secret-holder-startup.js';
 import {localHolderMutations} from './holder-mutations.js';
 import {localHolderHandoff} from './holder-handoff.js';
 import * as storage from './holder-store.js';
+import {holderOwner,serveHolderOwner} from '../../secret-holder-owner.js';
+import {pair} from '../../secret-holder-owner.fixture.js';
 import * as authority from './ticket-authority.js';
 import * as workerTransport from '../../runtime-runner/secret-transport.js';
 const closes:Array<()=>unknown>=[];
@@ -309,4 +311,41 @@ it('preflights a later invalid route before constructing even the first new clie
  const first=f.config.handoff.workers[0],second={...first,binding:{...first.binding,job:randomUUID()},config:{...first.config,key:join(f.home,'missing-key'),socket:join(f.home,'second-worker.sock')}};
  await expect(holder.replaceWorkers([first,second])).rejects.toThrow();expect(construct).not.toHaveBeenCalled();
  await f.put();await f.admit();await f.admission.dispatch();expect(f.received).toEqual(['SYNTHETIC-PERSISTENT-HANDOFF']);
+});
+
+// Real persistent storage, daemon authority, worker input and original Runtime
+// destination behind the production inherited-owner protocol, in process.
+it.each([false,true])('inherited owner selects configured holder peers only and preserves staging=%s',async staging=>{
+ const f=await setup(staging),selected=structuredClone(f.config.handoff.workers);
+ const ownerPeers=selected.map(({config,fingerprint})=>({config,fingerprint}));
+ f.config.handoff.workers=[];Object.assign(f.config.handoff,{ownerPeers});f.save();
+ const {parent,child}=pair();
+ const server=serveHolderOwner(child,()=>startPersistentHolder(f.file,true));
+ const client=holderOwner(parent);closes.push(async()=>{client.abort();await server.close();await server.done.catch(()=>{});});
+ await client.ready;await client.replaceWorkers(selected);await f.put();const id=await f.admit();
+ if(staging)await expect(f.admission.dispatch()).rejects.toThrow();else await f.admission.dispatch();
+ expect(f.received).toEqual(staging?[]:['SYNTHETIC-PERSISTENT-HANDOFF']);
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(id)).toEqual({state:staging?'uncertain':'released'});
+ expect(JSON.stringify([...parent.messages,...child.messages])).not.toMatch(/SYNTHETIC|\.pem|\.key|socket|config/);
+ for(const name of ['holder.db','holder.db-wal'])expect(readFileSync(join(f.config.directory,name)).includes('SYNTHETIC-PERSISTENT-HANDOFF')).toBe(false);
+ await client.replaceWorkers([]);await client.close();await server.close();
+ expect(existsSync(f.config.handoff.listen.socket)).toBe(false);
+});
+it('inherited owner cannot add an unconfigured peer and lost channel closes actual holder sockets',async()=>{
+ const f=await setup(),selected=structuredClone(f.config.handoff.workers);
+ f.config.handoff.workers=[];Object.assign(f.config.handoff,{ownerPeers:selected.map(({config,fingerprint})=>({config,fingerprint}))});f.save();
+ const {parent,child}=pair(),server=serveHolderOwner(child,()=>startPersistentHolder(f.file,true)),client=holderOwner(parent);
+ closes.push(async()=>{client.abort();await server.close();await server.done.catch(()=>{});});
+ await client.ready;
+ await expect(client.replaceWorkers([{...selected[0],fingerprint:f.fingerprint('stranger')}])).rejects.toThrow('Secret holder owner unavailable');
+ await expect(server.done).rejects.toThrow();expect(existsSync(f.config.read.socket)).toBe(false);expect(existsSync(f.config.mutation.socket)).toBe(false);
+ expect(existsSync(f.config.handoff.listen.socket)).toBe(false);
+});
+it.each(['no-peers','bound-startup','legacy-mode','duplicate-peer'])('owned startup refuses %s before opening holder storage',async kind=>{
+ const f=await setup(),selected=structuredClone(f.config.handoff.workers);
+ if(kind!=='bound-startup')f.config.handoff.workers=[];
+ if(kind!=='no-peers')Object.assign(f.config.handoff,{ownerPeers:selected.map(({config,fingerprint})=>({config,fingerprint}))});
+ if(kind==='duplicate-peer')Object.assign(f.config.handoff,{ownerPeers:[selected[0],selected[0]].map(({config,fingerprint})=>({config,fingerprint}))});
+ f.save();await expect(startPersistentHolder(f.file,kind!=='legacy-mode')).rejects.toThrow('Persistent secret holder could not start');
+ expect(existsSync(join(f.config.directory,'holder.db'))).toBe(false);
 });
