@@ -13,6 +13,7 @@ import { privateQuestionCreator } from './private-questions.js';
 import { installQuestionRead } from './question-read.js';
 import { installPrivateReplies } from './private-replies.js';
 import { installCommsWork } from './work.js';
+import { backfillRefs } from './refs-backfill.js';
 import { about, aboutPointer, aboutIdentity, attachedText } from './about.js';
 import { HeldEffect, registerCommsMetadata } from './role.js';
 import type { Comms, AgentPost, StartNotice, RuntimeDelivery, Hold, Attention } from './role.js';
@@ -33,7 +34,7 @@ export interface Options {
  /** Current authoritative registry order and household default; no legacy lookup. */
  recipients?(): {agents: readonly string[]; default?: string};
 }
-export function installComms(o: Options): Comms & { close(): Promise<void> } {
+export function installComms(o: Options): Comms & { close(): Promise<void>; referencesReady: Promise<boolean> } {
  const {db,operations,live,clock,key} = o;
  const days = o.days ?? 14;
  if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Comms retention must be 1–14 days');
@@ -567,6 +568,8 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   cancel=clock.at(Math.min(clock.now()+3600_000,next.at===null?Infinity:next.at+days*day,workingThreads().reduce((at,t)=>Math.min(at,workingDeadline(t)),Infinity)),sweep);
  }
  sweep();
+ // Failure leaves no marker; next startup retries. Drain before closing SQLite.
+ const referencesReady=backfillRefs({...o,days,closed:()=>closed,changed:id=>live.changed([{type:'thread',id}])}).catch(()=>false);
  void reconcileEnds();
  void reconcileDeliveries();
  function announcements(member:string) {
@@ -672,6 +675,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    }
    saveThread(db,t);touched(t);if(state!==undefined&&t.archived===null)progressChanged(t);return {stop,archived:t.archived!==null};
   },
-  async close(){closed=true;cancel();await Promise.all([...pending.values(),...(recovery?[recovery]:[])]);},
+  referencesReady,
+  async close(){closed=true;cancel();await Promise.all([referencesReady,...pending.values(),...(recovery?[recovery]:[])]);},
  };
 }

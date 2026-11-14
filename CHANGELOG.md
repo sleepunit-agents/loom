@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Next Comms backfills retained message references once on startup, with ownership and retention fences and safe retry after interruption.
 - Next Comms keeps a bounded word-free reference index with message writes and preserves expired references during fixture imports.
 - Next Inbox retains member-private action success/error FYI for Tasks and central answers, with read marks and an Errors folder.
 
