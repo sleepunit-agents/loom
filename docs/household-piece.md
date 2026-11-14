@@ -1094,3 +1094,51 @@ Secrets recovery boundary, the full encrypted bundle and actual restore drill.
 There is no production caller, command, new record, filesystem write, daemon,
 arming, publication or scheduled backup in this prerequisite. Existing
 configuration continues to report `awaiting-runner`.
+
+### Explicit-input encrypted household envelope and drill
+
+`encryptHouseholdBundle` in `src/core/household/backup-bundle.ts` composes the
+filtered fresh app image, explicit continuity snapshots and paired attachments,
+allowlisted documents, an exact borrowed 32-byte cookie key and an **owning opaque
+Secrets recovery part**. Its temporary required `HouseholdSecretsRecovery` role
+exports owner-encrypted recovery covering holder values, identities and historical
+fingerprint/receipt keys, then verifies restoration of the part read from the
+actual decrypted bundle in isolated state. Core neither interprets the part nor
+opens holder files. There is no owning implementation on main yet; a test fake
+exercises the seam. Missing or failed recovery refuses the whole bundle.
+
+The internal version-one format is a length-prefixed manifest followed by binary
+file payloads, inside native age encryption. This replaces the old gzipped tar
+as an internal technical choice: it needs no process, plaintext directory, tar
+extraction or base64 expansion. No public restore command consumes it yet. The
+manifest records relative file paths, exact lengths/hashes and deliberate absent
+continuity stores; it never carries a drill identity or machine arming state.
+Each independent owner recipient and the separate machine-local drill identity
+can decrypt the envelope. SSH recipient execution still refuses.
+
+The drill decrypts actual ciphertext, compares the complete envelope byte for
+byte, reads the manifest and every payload/hash, independently opens all SQLite
+images with integrity/foreign-key checks and sqlite-vec for continuity, and asks
+the owning role to verify the recovered Secrets part. It does not start a daemon
+or demonstrate sign-in from a restored home. Owned plaintext (including the
+Secrets export and verification copy) is cleared on all exits; the caller's
+borrowed cookie key is unchanged. App and Secrets images are each capped at
+256 MiB; the full envelope at 896 MiB, including manifest overhead. Callers may
+lower those limits. App size is checked after the existing filtered exporter
+returns; this is not a pre-allocation app-memory guarantee. Continuity/file caps
+remain enforced by their capture helpers. Captures are consistent per database,
+not a simultaneous snapshot of every store and mutable document.
+
+| Old bundle action | New internal unit / remaining work |
+| --- | --- |
+| Spawn tar/age over a staged household | In-process encrypted explicit-input envelope and drill |
+| Installed piece bundle export/import | Required owning opaque Secrets recovery role; implementation pending on t-2208 |
+| Discover live source files and keys | Still pending: trusted selected-home source acquisition, no old-store fallback |
+| Restore into a usable home and sign in | Still pending: public safe restore and restored-home acceptance |
+
+Output coverage is explicitly `explicit-household-inputs`, never a complete
+production backup claim. No production caller, command, source opener, file
+write, publication, retention, local arming, daemon job or scheduled backup is
+added. Saved configuration remains `awaiting-runner`. The owning Secrets role,
+source/key acquisition, actual restored-home acceptance, runner and final backup
+acceptance described above remain required before retirement of the old backup.
