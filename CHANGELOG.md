@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Clock native resume chains retain their first admission deadline across joined turns; neither server nor worker renews retained history on resume.
+- Comms preview resolves private conversation references to current thread cards for their original member, with live state and fixed reader links.
 
 - Next Comms renders authorized reference chips in retained sealed questions, with live privacy fences and owning app navigation.
 - Clock owners can recover plain disabled imported schedules through a fresh complete prompt and timing submission; archived authority and uncertain occurrences stay inert.
@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Clock owner vouch records fresh owner authorship so eligible imported prompts can reach the native worker after current authority checks.
 
 - Clock native workers can opt into a bounded idle wait and resume later prompts in the same worker lifetime after fresh owning checks.
+- Clock native resume chains retain their first admission deadline across joined turns; neither server nor worker renews retained history on resume.
 - Next Comms: Tasks and Changes resolve reverse From links through Comms for the original viewer, with private labels hidden from other owners and on disconnect.
 
 - Clock native workers can resolve standalone scheduled files in their own checkout, with exact source checks and native-only acknowledgement.

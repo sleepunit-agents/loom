@@ -518,6 +518,7 @@ async function proveNextComms(browser:Browser,webRoot:string) {
    ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.kind==='result'&&m.request===id){clearTimeout(timer);ws.close();resolve(m.result);}};
    ws.onerror=()=>{clearTimeout(timer);ws.close();reject(new Error('Fixture socket failed'));};
   }),{name,input,id:`next-browser-${++n}`});
+  let earlier:{thread:string;conversation:string}|undefined;
   for(const kind of ['ordinary','filed','attached'] as const) {
    const inbound=`PRIVATE ${kind} browser inbound`,outbound=`PRIVATE ${kind} body reply`;
    await a.goto(`${app.url}/p/comms-preview/new`);
@@ -618,6 +619,31 @@ async function proveNextComms(browser:Browser,webRoot:string) {
     for(const page of [a,b]){await expect.poll(()=>page.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(0);await expect.poll(()=>page.getByText('An unsaved private answer',{exact:true}).count()).toBe(1);}
     expect(await socket(a,'attention.get',{id:sealed.ref})).toMatchObject({ok:true,value:{state:'answered'}});
     for(const table of ['attention_asks','core_operations']){const stored=JSON.stringify(app.db.prepare(`SELECT * FROM ${table}`).all());expect(stored).not.toContain('Which fixture should I check next?');expect(stored).not.toContain('An unsaved private answer');}
+    expect(earlier).toBeDefined();
+    expect(await post(input.credential,'runtime.reply',{id:'conversation-chip-reply',text:`Revisit ${earlier!.conversation} before continuing.`})).toMatchObject({ok:true});
+    const conversationChip=(page:Page)=>page.getByLabel('Thread messages',{exact:true}).getByRole('button',{name:`Conversation ${earlier!.conversation}: Earlier fixture thread, Open`,exact:true});
+    for(const page of [a,b])await expect.poll(()=>conversationChip(page).count()).toBe(1);
+    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]) {
+     await b.setViewportSize({width,height:900});
+     await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';},look);
+     await conversationChip(b).scrollIntoViewIfNeeded();
+     await b.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+     await conversationChip(b).click();
+     const card=b.getByRole('dialog',{name:'Conversation: Earlier fixture thread',exact:true});
+     await expect.poll(()=>card.getByRole('link',{name:'Open',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
+     expect(await card.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;})).toBe(true);
+     expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+     await b.screenshot({path:join(shots,`comms-conversation-chips-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+     await b.keyboard.press('Escape');
+    }
+    await conversationChip(a).scrollIntoViewIfNeeded();
+    await a.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+    await conversationChip(a).click();
+    await a.getByRole('dialog',{name:'Conversation: Earlier fixture thread',exact:true}).getByRole('link',{name:'Open',exact:true}).click();
+    await expect.poll(()=>new URL(a.url()).pathname).toBe(`/p/comms-preview/thread/${earlier!.thread.slice(3)}`);
+    await expect.poll(()=>a.getByText('PRIVATE ordinary browser inbound',{exact:true}).count()).toBe(1);
+    await a.goto(`${app.url}/p/comms-preview/thread/${thread.slice(3)}`);
+
    }
    if(kind==='attached'){
     const made=value<{result:{id:string}}>(await socket(a,'tasks.create',{title:'Chip opens in Tasks tile',agent:'art',source:`conversation:cv-chip-fixture`,actor:'art',at:new Date(clock.now()).toISOString()})).result.id;
@@ -628,6 +654,10 @@ async function proveNextComms(browser:Browser,webRoot:string) {
     await expect.poll(()=>new URL(a.url()).pathname).toBe(`/p/tasks-preview/task/${made}`);
     await expect.poll(()=>a.getByRole('heading',{name:'Chip opens in Tasks tile',exact:true}).count()).toBe(1);
     expect(JSON.parse(new URL(a.url()).searchParams.get('paths')??'{}').comms).toBe(`/p/comms-preview/thread/${thread.slice(3)}`);
+   }
+   if(kind==='ordinary'){
+    earlier={thread,conversation:runtimeStore(app.db).read('job',job)!.conversation!};
+    expect(await socket(a,'comms.change',{thread,action:'title',title:'Earlier fixture thread'})).toMatchObject({ok:true});
    }
    expect(await post(runner,'runtime.finishJob',{job,state:'done'})).toMatchObject({ok:true});
    expect(await post(input.credential,'runtime.readConversation',{})).toMatchObject({ok:false});
