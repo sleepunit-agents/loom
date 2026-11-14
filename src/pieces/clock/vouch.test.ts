@@ -510,7 +510,7 @@ it('keeps grouping direct-only even for an otherwise authorized service', async 
 });
 
 
-it('files project work on a project-scoped card visible only to that project and the owner, then adopts atomically', async () => {
+it('files project work on a card visible through project or agent ownership, then adopts atomically', async () => {
   const s=await setup();
   s.access.members.observer={owner:false,agents:['art']};
   const original=wake(s.app.db,ids[0])!;
@@ -522,6 +522,8 @@ it('files project work on a project-scoped card visible only to that project and
   expect(wakes(s.app.db)).toEqual(before);
   for(const viewer of [owner,agent,{kind:'member',id:'pollock'}] as Viewer[])
     expect(s.call('approvals.check',{id:filed.id},viewer)).toMatchObject({ok:true,value:{state:'pending'}});
+  expect(s.call('approvals.check',{id:filed.id},{kind:'member',id:'observer'})).toMatchObject({ok:true,value:{state:'pending'}});
+  s.access.members.observer.agents=[];
   expect(s.call('approvals.check',{id:filed.id},{kind:'member',id:'observer'})).toMatchObject({ok:false,code:'denied'});
   expect(s.call('approvals.answer',{id:filed.id,action:'allow'},{kind:'member',id:'pollock'}).ok).toBe(false);
   await s.restart();
