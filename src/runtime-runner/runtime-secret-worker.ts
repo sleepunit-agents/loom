@@ -11,6 +11,7 @@ const failed=()=>new Error('Runtime secret worker unavailable');
 export async function startRuntimeSecretWorker(config:WorkerControlConfig,selection:SecretWorkerSelection,runtime?:WorkerControlRuntime) {
   config={...config};selection=structuredClone(selection);
   if(selection.jobs.length!==1||selection.jobs[0].binding.job!==config.job)throw failed();
+  const expiresAt=selection.jobs[0].expiresAt;
   let worker:ReturnType<typeof startSecretWorker>|undefined,closing:Promise<void>|undefined;
   const control=await connectWorkerControl(config,()=>{void worker?.close().catch(()=>{});},runtime);
   const close=()=>{
@@ -25,7 +26,7 @@ export async function startRuntimeSecretWorker(config:WorkerControlConfig,select
       try {
         if(!await original.completed)return false;
         // Do not accept a retain response begun before command completion.
-        await control.fresh();return control.current();
+        await control.fresh();return control.current()&&Date.now()<expiresAt;
       }catch {return false;}
       finally {await close();}
     })();

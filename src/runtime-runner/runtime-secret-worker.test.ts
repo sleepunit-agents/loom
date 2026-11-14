@@ -165,3 +165,11 @@ it.each(['command','delivery'] as const)('the executable refuses unsuccessful %s
  expect(existsSync(f.config.input.socket)).toBe(false);
  if(failure==='delivery'){expect(f.source).not.toHaveBeenCalled();expect(existsSync(f.marker)).toBe(false);}
 });
+it('rejects original local expiry reached during the final Runtime read',async()=>{
+ const f=await setup();let release!:()=>void,observed!:()=>void,reads=0;
+ const ready=new Promise<void>(resolve=>{observed=resolve;}),wait=new Promise<void>(resolve=>{release=resolve;});
+ f.runtime.request=async(...args)=>{const response=await fetch(...args);if(++reads===2){observed();await wait;}return response;};
+ const worker=await f.start();await ready;
+ try {vi.spyOn(Date,'now').mockReturnValue(f.selection.jobs[0].expiresAt);release();expect(await worker.completed).toBe(false);}
+ finally {release();}
+});
