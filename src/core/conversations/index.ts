@@ -105,9 +105,10 @@ export class Conversations {
     return this.db.transaction(() => {
       const item = this.item(itemId);
       if (item.toKind !== 'person' || !item.answers) throw new Error('Item is not a question for a person');
+      if (item.thread) throw new Error('Answer through encrypted Comms');
       if (item.state === 'answered') return item;
       if (item.state !== 'waiting') throw new Error('Question is already settled');
-      if (item.source === 'approval' || item.source === 'secret-request' || item.waitsOnKind) throw new Error('Answer at the linked source');
+      if (item.source === 'task' || item.source === 'approval' || item.source === 'secret-request' || item.waitsOnKind) throw new Error('Answer at the linked source');
       if ((answer === 'yes' || answer === 'no') && item.answers !== 'yes-no') throw new Error('Question needs words');
       if ((answer === 'words' || answer === 'replied') && !words?.trim()) throw new Error('Answer needs words');
       const at = this.now();

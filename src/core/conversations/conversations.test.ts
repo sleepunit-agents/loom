@@ -83,9 +83,11 @@ it('keeps source decisions at their source and resolves linked questions without
   const { db, service, cv } = fixture();
   const item = service.send({ toKind: 'person', to: 'jonathan', conversation: cv.id, source: 'task', sourceId: 't-1', fromKind: 'agent', words: 'Book the electrician?', answers: 'yes-no', waitsOnKind: 'task', waitsOnId: 't-1', link: '/tasks/t-1' });
   expect(() => service.answer(item.id, 'jonathan', 'yes')).toThrow('linked source');
+  const unlinked = service.send({ toKind: 'person', to: 'jonathan', source: 'task', sourceId: 't-2', fromKind: 'agent', words: 'Source owns this?', answers: 'yes-no' });
+  expect(() => service.answer(unlinked.id, 'jonathan', 'yes')).toThrow('linked source');
   expect(service.resolve('task', 't-1', 'Task closed')[0]).toMatchObject({ state: 'resolved', answer: null, resolution: 'Task closed' });
   expect(service.resolve('task', 't-1', 'Task closed')).toEqual([]);
-  expect(db.select().from(inbox).all()).toHaveLength(1);
+  expect(db.select().from(inbox).all()).toHaveLength(2);
 });
 it('revises digests by run, replaces lists, resolves old questions and rolls back a failed rewrite', () => {
   const { db, service, cv } = fixture();
