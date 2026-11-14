@@ -182,3 +182,9 @@ it('wipes successfully captured portable files too when the snapshot size compar
   expect(()=>captureHouseholdContinuity(f.home,f.sources)).toThrow(/^Household continuity capture failed$/);
   expect(allocated.length).toBeGreaterThan(0); expect(allocated.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
 });
+it('checks a lowered per-image budget before serialization', () => {
+  const f=fixture(), limit=f.memory.serialize().length-1;
+  const serialize=vi.spyOn(Database.prototype,'serialize');
+  expect(()=>captureHouseholdContinuity(f.home,f.sources,{imageBytes:limit,databaseBytes:512*1024*1024})).toThrow(/^Household continuity capture failed$/);
+  expect(serialize).not.toHaveBeenCalled();
+});
