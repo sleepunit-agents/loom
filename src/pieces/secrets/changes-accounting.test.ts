@@ -2,6 +2,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {inspect} from 'node:util';
 import {startLoom} from '../../foundation.js';
 import {fixture} from '../../fixture.js';
 import {FakeClock} from '../../core/clock.js';
@@ -43,7 +44,9 @@ async function setup(staging=false) {
   const assertPrivate=()=>{
     const tables=app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[];
     const dump=tables.map(t=>app.db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all());
-    expect(JSON.stringify([dump,published,...logs.map(log=>log.mock.calls)])).not.toContain(sentinel);
+    expect(JSON.stringify([dump,published])).not.toContain(sentinel);
+    // JSON.stringify(Error(...)) is {}, hiding precisely the provider diagnostic.
+    expect(inspect(logs.map(log=>log.mock.calls),{depth:null})).not.toContain(sentinel);
     expect(buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
   };
   return {app,clock,source,request,call,events,refresh,assertPrivate};
