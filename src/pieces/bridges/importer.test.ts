@@ -329,14 +329,17 @@ it('keeps selected accepted note maps scoped to their source agent without propo
  const f=fixture();
  writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100'},stale:['300']}));
  f.store('shuttle',[['routes','household',{guild:'789'}],
- ['channels','art',{bot:'100',answers:{'300':'work'},extra:{'custom / key':['300'],mapped:{'400':1.25},float:1.25,scalar:300}}],
+ ['channels','art',{bot:'100',answers:{'300':'work'},extra:{'custom / key':['300'],mapped:{'400':1.25,'600':'PRIVATE_UNUSED_MAP_VALUE'},float:1.25,scalar:300}}],
  ['channels','mark',{bot:'200',extra:{'custom / key':['400']}}],
  ['route-offers','art',{doc:{bots:{art:'100',mark:'200'},proposal:['999']}}]]);
  const result=readBridgeImport(f.sources,f.options,h,f.open);
  expect(JSON.parse(result.evidence).noteInventories).toEqual([
-  {source:'accepted:art',agent:'art',noteChannels:{'custom / key':['300'],mapped:['400'],scalar:['300']}},
+  {source:'accepted:art',agent:'art',noteChannels:{'custom / key':['300'],mapped:['400','600'],scalar:['300']}},
   {source:'accepted:mark',agent:'mark',noteChannels:{'custom / key':['400']}}]);
  expect(result.expected.routes.every(r=>r.notes.length===0)).toBe(true);
+ expect(JSON.stringify(JSON.parse(result.evidence).noteInventories)).not.toContain('PRIVATE_UNUSED_MAP_VALUE');
+ const original=JSON.parse(result.evidence).stores.stores[0].documents.find((d:{collection:string;key:string})=>d.collection==='channels'&&d.key==='art').doc;
+ expect(JSON.parse(original).extra.mapped['600']).toBe('PRIVATE_UNUSED_MAP_VALUE');
  const {db,close}=openDb(join(f.root,'new'));
  try{
   expect(()=>importBridges(db,f.sources,f.options,h,f.open,{interrupt:()=>{throw Error('note interruption');}})).toThrow('note interruption');

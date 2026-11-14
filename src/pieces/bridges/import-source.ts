@@ -85,7 +85,15 @@ function noteMembership(raw: unknown): Record<string,string[]> {
 }
 /** Offline describe selection: a thread uses its parent, including unknown parents. */
 export function bridgeSourceNoteKeys(route: LegacyBridgeInventory['routes'][number],channel:string,parent?:string):string[] {
-  return Object.entries(route.noteChannels??{}).filter(([,channels])=>channels.includes(parent??channel)).map(([key])=>key).sort();
+  return Object.entries(route.noteChannels??{}).filter(([,channels])=>channels.includes(parent??channel)).map(([key])=>key).sort((a,b)=>{
+    // Python sorts Unicode code points, whereas JS's default compares UTF-16 units.
+    const left=Array.from(a),right=Array.from(b);
+    for(let i=0;i<Math.min(left.length,right.length);i++){
+      const difference=left[i].codePointAt(0)!-right[i].codePointAt(0)!;
+      if(difference)return difference;
+    }
+    return left.length-right.length;
+  });
 }
 /** Explicit files only: never follow an old config's paths, execute commands, or acquire credentials. */
 export function readBridgeInventory(files: readonly BridgeSourceFile[]): LegacyBridgeInventory {

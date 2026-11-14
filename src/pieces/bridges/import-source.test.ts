@@ -208,3 +208,10 @@ it('ignores Python non-integer scalar shapes while preserving string membership 
  expect(bridgeSourceNoteKeys(route,'300')).toEqual(['list']);
  expect(bridgeSourceNoteKeys(route,'00300')).toEqual(['list']);
 });
+
+it('orders arbitrary Unicode note keys like the pinned Python describe',()=>{
+ const root=mkdtempSync(join(tmpdir(),'bridges-note-unicode-'));roots.push(root);const path=join(root,'routes.json');
+ writeFileSync(path,JSON.stringify({'\u{10000}':['300'],'\ue000':['300'],'z':['300']}));
+ const route=readBridgeInventory([{name:'routes.json',path,kind:'routes'}]).routes[0];
+ expect(bridgeSourceNoteKeys(route,'300')).toEqual(['z','\ue000','\u{10000}']);
+});
