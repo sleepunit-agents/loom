@@ -64,7 +64,12 @@ for(const boundary of ['revoked','deleted','member','agent','conversation','proj
  if(boundary==='revoked')s.sharing.members.jonathan.agents=[];
  else if(boundary==='deleted')s.app.db.prepare('DELETE FROM comms_threads WHERE id=?').run(t.id);
  else if(boundary==='closed')closing=c.close();
- else if(boundary==='expiry')s.clock.advance(14*day);
+ else if(boundary==='expiry'){
+  // Cross the deadline without running the sweep: retained ciphertext alone
+  // must never authorize indexing after its words have expired.
+  vi.spyOn(s.clock,'now').mockReturnValue(s.clock.now()+14*day);
+  expect(s.app.db.prepare('SELECT words FROM comms_messages').get()).toMatchObject({words:expect.any(Buffer)});
+ }
  else if(boundary==='columns')s.app.db.prepare("UPDATE comms_threads SET member='other' WHERE id=?").run(t.id);
  else if(boundary==='ciphertext')s.app.db.prepare('UPDATE comms_messages SET words=?').run(Buffer.from('{"text":"t-2"}'));
  else if(boundary==='sender')s.app.db.prepare("UPDATE comms_messages SET sender='other'").run();
