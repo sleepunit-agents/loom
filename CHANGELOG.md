@@ -12,12 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Add bounded, descriptor-pinned capture of allowlisted context documents and referenced note attachments for a future household bundle; full backup execution remains pending.
+- Read current sealed questions and send ephemeral private replies inline in next-mode Comms.
 - Expose private persistent-holder worker route replacement with complete selection preflight and retirement of original claims and clients.
 
 - Bind sealed typed Comms replies and retry receipts to the retained original encrypted question and owning route.
 - Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
 - Add native-age encryption and an actual encrypted restore drill for filtered next-database images; full household file coverage and backup execution remain pending.
+- Add bounded, descriptor-pinned capture of allowlisted context documents and referenced note attachments for a future household bundle; full backup execution remains pending.
 
 - Deliver sealed Comms yes/no decisions back to the owning private conversation through staged encrypted message delivery.
 - Add a filtered next-database image exporter with an independent SQLite reconstruction drill; complete encrypted household backups and execution remain pending.
@@ -63,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Inbox now separates self-cleared asks into searchable FYI history, keeping human answers in Answered.
 - Inbox: group Clock operational alerts, acknowledge them without changing scheduled work, and open Clock through its internal route.
 - Inbox: reply privately to conversation asks through encrypted Comms, keep private drafts in the window only, and link sealed questions and reply receipts to their owning thread.
+- Inbox reads sealed private questions and their retained history through scoped Comms records, with guarded encrypted replies.
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 - File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.
@@ -1264,6 +1266,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add staged, durable own-device test notification sending in next mode; Account test controls and routine announcement dispatch remain pending.
 
 - Account can queue a test notification for an exact device and follow private Live outcomes, preserving uncertain retries across navigation. Push acceptance is shown separately from device delivery.
+
+- Add an explicit external Claude worker for unbound next-mode jobs, with authenticated stop/history polling and no automatic retry after uncertain execution.
 
 ## [0.16.1] - 2026-10-25
 

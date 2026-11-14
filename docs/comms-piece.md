@@ -1210,4 +1210,12 @@ Legacy/imported private replies retain their existing hash and retry behavior,
 including acknowledgements after their reply words expire. Existing sealed
 replies written before this source binding fail closed on retry rather than
 claiming evidence they never stored; their saved message and answer remain.
-The inline editor and live current-question UI are still the next unit.
+The inline thread reader now uses an exact-ref `comms.question` subscription for
+current sealed wording and state, identified by current owning Attention
+thread/sequence/ref/route evidence (not encoding or a ref prefix). The record
+includes its authoritative member and agent for the reader's scope check.
+Draft replies stay in window memory, cap at 4000 characters, and disappear on
+source, scope, connection, archive or retention changes. Both yes/no and typed
+answers re-read the exact displayed question before an ephemeral write. Archived
+threads require explicit unarchive. Imported legacy asks retain their existing
+reader and Inbox path.
