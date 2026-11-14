@@ -12,6 +12,7 @@ import { spawnCreator } from './spawn.js';
 import { privateQuestionCreator } from './private-questions.js';
 import { installQuestionRead } from './question-read.js';
 import { installPrivateReplies } from './private-replies.js';
+import { refsOf } from './refs.js';
 import { installCommsWork } from './work.js';
 import { backfillRefs } from './refs-backfill.js';
 import { about, aboutPointer, aboutIdentity, attachedText } from './about.js';
@@ -41,7 +42,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void>; refe
  migrate(db,'comms',schema); db.pragma('secure_delete = ON');
  const see = (v: Viewer,t: Thread|undefined) => !!t && mayUseThread(v,t,o.sharing());
  const writable = (v: Viewer,input: {thread:string}) => see(v,thread(db,input.thread));
- installCommsWork({operations,live,clock,sharing:o.sharing,thread:(viewer,id)=>{const t=thread(db,id);return !closed&&see(viewer,t)?t:undefined;}});
+ installCommsWork({operations,live,clock,sharing:o.sharing,refs:id=>refsOf(db,id),thread:(viewer,id)=>{const t=thread(db,id);return !closed&&see(viewer,t)?t:undefined;}});
  registerCommsMetadata(operations, {
   privateThread(viewer, conversation) {
    if(closed||viewer.kind!=='member'||viewer.id!==conversation.member)return;

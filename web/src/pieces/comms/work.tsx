@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useRecords } from '../../data';
 import { Button, Loading } from '../../kit';
-interface WorkItem {ref:string;title:string;status:string;from:string;url:string;tone?:'bad'|'warn'|'ok'}
+interface WorkItem {ref:string;title:string;status:string;from:string;url?:string;made?:true;tone?:'bad'|'warn'|'ok'}
 interface ThreadWork {id:string;items:WorkItem[];failed:string[];[key:string]:unknown}
 export function Work({thread,agent,member}:{thread:string;agent:string;member:string}) {
  const {records,status}=useRecords<ThreadWork>('threadWork',thread),work=status==='live'?records.find(r=>r.id===thread):undefined;
@@ -13,7 +13,7 @@ export function Work({thread,agent,member}:{thread:string;agent:string;member:st
    <section aria-label="Work in this thread" className="grid gap-2 py-2">
     {status!=='live'?<Loading label="Waiting for work connection…"/>:!work?<p>Work unavailable</p>:<>
      {work.failed.map(piece=><p key={piece} role="status">{piece} didn't answer.</p>)}
-     {work.items.length===0?<p>No work made here yet.</p>:<ul className="grid gap-2">{work.items.map(item=><li key={item.ref}><a href={item.url}>{item.title}</a><p><span data-tone={item.tone} className="rounded border px-1">{item.status}</span> · <span className="font-mono">{item.ref}</span> · Made here</p></li>)}</ul>}
+     {work.items.length===0?<p>No work in this thread yet.</p>:<ul className="grid gap-2">{work.items.map(item=><li key={item.ref}>{item.url?<a href={item.url}>{item.title}</a>:<code>{item.title}</code>}<p><span data-tone={item.tone} className="rounded border px-1">{item.status}</span> · <span className="font-mono">{item.ref}</span>{item.made?' · Made here':''}</p></li>)}</ul>}
     </>}
    </section>
   </div>
