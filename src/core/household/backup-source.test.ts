@@ -159,3 +159,21 @@ it('refuses registration removed by an owning export filter even while live regi
   expect(input.secrets.export).not.toHaveBeenCalled();
   expect(new HouseholdDatabase(input.db).household(input.home)?.agents).toContain('pond-bot');
 });
+
+it('publishes the actual registered encrypted/drilled bundle and validates its restored app and Secrets part', async () => {
+  const { input, owner } = await fixture(), target = home(); fs.chmodSync(target, 0o700);
+  const { publishHouseholdPathBundle } = await import('./backup-path.js');
+  const { withHouseholdRestore } = await import('./backup-restore.js');
+  const out = await publishHouseholdPathBundle(input.home, target, '20261114-0317', () => encryptRegisteredHouseholdBundle(input));
+  const ciphertext = readFileSync(join(target, out.name));
+  expect(ciphertext.length).toBe(out.bytes);
+  expect(input.secrets.verifyRestore).toHaveBeenCalledOnce();
+  await withHouseholdRestore(ciphertext, owner, bundle => {
+    expect(bundle.files.get('secrets/recovery.age')).toEqual(Buffer.from('OPAQUE_FIXTURE'));
+    for (const agent of ['art', 'mark', 'pond-bot']) expect(bundle.files.get(`agents/${agent}/IDENTITY.md`)?.toString()).toBe(`CREED_${agent}`);
+    const app = new Database(bundle.files.get('loom.db')!);
+    try { expect(new HouseholdDatabase(app).document()?.agents).toEqual(['art', 'mark', 'pond-bot']); }
+    finally { app.close(); }
+  });
+  expect(readFileSync(join(input.home, 'household.json'), 'utf8')).toBe('{"agents":["unregistered"]}');
+});
