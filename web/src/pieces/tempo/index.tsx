@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Split, List, Row, Empty, Error, Loading, Input } from '../../kit';
-import { folders, rows, title, source, target, history, status, type Trigger, type TriggerEvent, type AgentPause, type Folder } from './model';
+import { useRef, useState } from 'react';
+import { Split, List, Row, Empty, Error, Loading, Input, Button } from '../../kit';
+import { folders, rows, title, source, target, history, status, terminal, type Trigger, type TriggerEvent, type AgentPause, type Folder } from './model';
 
 export interface TempoSnapshot {
   status: 'loading' | 'live' | 'offline' | 'denied';
@@ -10,17 +10,52 @@ export interface TempoSnapshot {
   timezone: string;
 }
 
+/** Root supplies authenticated Operations callbacks. No actor or transport comes from the tile. */
+export interface TempoActions {
+  runNow(id: string): Promise<void>;
+  stop(id: string): Promise<void>;
+  pause(agent: string): Promise<void>;
+  resume(agent: string): Promise<void>;
+}
+
+function TriggerActions({ trigger, pauses, actions }: { trigger: Trigger; pauses: readonly AgentPause[]; actions: TempoActions }) {
+  const busy = useRef(false);
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const paused = pauses.some(item => item.agent === trigger.to);
+  async function run(action: () => Promise<void>) {
+    if (busy.current) return;
+    busy.current = true;
+    setPending(true);
+    setFailed(false);
+    try { await action(); }
+    catch { setFailed(true); }
+    finally { busy.current = false; setPending(false); }
+  }
+  return <section aria-label="Trigger actions" className="grid gap-2">
+    <div className="flex flex-wrap gap-2">
+      {!terminal(trigger) && <>
+        <Button disabled={pending || !trigger.enabled || paused || trigger.state === 'held' || trigger.state === 'firing'} onClick={() => void run(() => actions.runNow(trigger.id))}>Run now</Button>
+        <Button disabled={pending} onClick={() => void run(() => actions.stop(trigger.id))}>Cancel</Button>
+      </>}
+      {trigger.toKind === 'agent' && trigger.to && <Button disabled={pending} onClick={() => void run(() => paused ? actions.resume(trigger.to!) : actions.pause(trigger.to!))}>{paused ? 'Resume agent' : 'Pause agent'}</Button>}
+    </div>
+    {pending && <p role="status">Waiting for Tempo…</p>}
+    {failed && <p role="alert">Tempo could not complete that action. Try again.</p>}
+  </section>;
+}
+
 /** Inline conversation view. Resolve IDs only against the current visible snapshot. */
-export function TempoCard({ snapshot, triggerId }: { snapshot: TempoSnapshot; triggerId: string }) {
+export function TempoCard({ snapshot, triggerId, actions }: { snapshot: TempoSnapshot; triggerId: string; actions?: TempoActions }) {
   if (snapshot.status !== 'live') return snapshot.status === 'loading'
     ? <Loading label="Opening Tempo…" />
     : <Error text={snapshot.status === 'denied' ? 'Sign in with access to see Tempo.' : 'Waiting for connection.'} />;
   const trigger = snapshot.triggers.find(item => item.id === triggerId);
   if (!trigger) return <Empty title="Trigger unavailable" text="This trigger is no longer in your Tempo view." />;
-  return <TriggerDetails snapshot={snapshot} trigger={trigger} />;
+  return <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} />;
 }
 
-function TriggerDetails({ snapshot, trigger }: { snapshot: TempoSnapshot; trigger: Trigger }) {
+function TriggerDetails({ snapshot, trigger, actions }: { snapshot: TempoSnapshot; trigger: Trigger; actions?: TempoActions }) {
   const time = (at: string) => new Intl.DateTimeFormat(undefined, {
     timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short',
   }).format(new Date(at));
@@ -37,6 +72,7 @@ function TriggerDetails({ snapshot, trigger }: { snapshot: TempoSnapshot; trigge
     </dl>
     {trigger.instructions && <section><h2>Words</h2><p className="whitespace-pre-wrap break-words">{trigger.instructions}</p></section>}
     {trigger.file && <section><h2>Repository file</h2><p>{trigger.file}</p></section>}
+    {actions && <TriggerActions trigger={trigger} pauses={snapshot.pauses} actions={actions} />}
     <section><h2>Recent history</h2>{history(snapshot.events, trigger.id).length ? <ol>
       {history(snapshot.events, trigger.id).map(event => <li key={event.seq}>{time(event.at)} · {event.event}{event.note && ` · ${event.note}`}</li>)}
     </ol> : <p>No events yet.</p>}</section>
@@ -44,7 +80,7 @@ function TriggerDetails({ snapshot, trigger }: { snapshot: TempoSnapshot; trigge
 }
 
 /** The composition supplies one visible, live query snapshot; this view owns no transport. */
-export default function Tempo({ snapshot }: { snapshot: TempoSnapshot }) {
+export default function Tempo({ snapshot, actions }: { snapshot: TempoSnapshot; actions?: TempoActions }) {
   const [folder, setFolder] = useState<Folder>('due');
   const [query, setQuery] = useState('');
   const [agent, setAgent] = useState('');
@@ -55,7 +91,7 @@ export default function Tempo({ snapshot }: { snapshot: TempoSnapshot }) {
   const shown = rows(triggers, folder, query, agent);
   const trigger = triggers.find(item => item.id === selected);
   const agents = [...new Set(triggers.filter(item => item.toKind === 'agent').map(item => item.to!))].sort();
-  const reader = trigger ? <TriggerDetails snapshot={snapshot} trigger={trigger} /> : null;
+  const reader = trigger ? <TriggerDetails key={trigger.id} snapshot={snapshot} trigger={trigger} actions={actions} /> : null;
   const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
   return <Split label="Tempo" className="h-full" folders={folders.map(item => ({ ...item, count: live ? rows(triggers, item.id, '', agent).length : undefined }))}
     folder={folder} onFolder={id => { setFolder(id as Folder); setSelected(undefined); }}
