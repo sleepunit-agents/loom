@@ -109,8 +109,9 @@ it('uses partial age indexes in the installed UPDATE rather than scanning perman
   for (const platform of ['discord', 'slack']) {
     const sql = statements.find(sql => sql.startsWith(`UPDATE bridges_${platform}_receipts`))!;
     expect(sql).toBeDefined();
-    const plan = f.app.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(NOW);
-    expect(JSON.stringify(plan)).toContain(`bridges_${platform}_raw_expiry`);
+    const plan = f.app.db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(NOW) as {detail: string}[];
+    expect(plan.some(row => new RegExp(`SEARCH bridges_${platform}_receipts USING (?:COVERING )?INDEX bridges_${platform}_raw_expiry`).test(row.detail)
+      && row.detail.includes('received<?'))).toBe(true);
   }
 });
 
