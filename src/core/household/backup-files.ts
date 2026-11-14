@@ -29,6 +29,16 @@ const missing = (e: unknown) => (e as NodeJS.ErrnoException).code === 'ENOENT';
  * No writes, database opens, key discovery, recursive globs or process calls.
  */
 export function capturePortableFiles(home: string, selection: readonly ContextFileSelection[]): PortableFile[] {
+  return capture(home, selection, false);
+}
+
+/** Explicit imported-file presence only. Absence is declared by the caller;
+ * present-but-missing, linked, changed or malformed files refuse. Owned bytes. */
+export function captureImportedCookieKey(home: string): Buffer {
+  return capture(home, [], true)[0].bytes;
+}
+
+function capture(home: string, selection: readonly ContextFileSelection[], cookie: boolean): PortableFile[] {
   const out: PortableFile[] = [], held: number[] = [];
   let total = 0, failed = false;
   const directory = (parent: number | undefined, leaf: string, optional = false): number | undefined => {
@@ -44,6 +54,7 @@ export function capturePortableFiles(home: string, selection: readonly ContextFi
       try { fd = openSync(`/proc/self/fd/${parent}/${leaf}`, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
       catch (e) { if (optional && missing(e)) return; throw e; }
       const before = fstatSync(fd, { bigint: true });
+      if (cookie && before.size !== 32n) throw Error();
       if (!before.isFile() || before.nlink !== 1n || before.size > BigInt(MAX_FILE) || total + Number(before.size) > MAX_TOTAL || out.length >= MAX_FILES) throw Error();
       bytes = Buffer.alloc(Number(before.size));
       let offset = 0;
@@ -69,9 +80,10 @@ export function capturePortableFiles(home: string, selection: readonly ContextFi
     for (const item of selection) if (!name.test(item.agent) || item.noteHashes.some(h => !digest.test(h))) throw Error();
     let root = directory(undefined, '/')!;
     for (const part of parts) root = directory(root, part)!;
-    const agents = directory(root, 'agents')!;
+    if (cookie) file(root, 'ui-cookie.key', 'ui-cookie.key');
+    const agents = cookie ? undefined : directory(root, 'agents')!;
     for (const item of [...selection].sort((a, b) => a.agent.localeCompare(b.agent))) {
-      const agent = directory(agents, item.agent)!;
+      const agent = directory(agents!, item.agent)!;
       const prefix = `agents/${item.agent}`;
       // Creed is required; the other fixed documents may be deliberately absent.
       for (const doc of documents) file(agent, doc, `${prefix}/${doc}`, doc !== 'IDENTITY.md');

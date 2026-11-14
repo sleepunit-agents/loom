@@ -1145,3 +1145,31 @@ write, publication, retention, local arming, daemon job or scheduled backup is
 added. Saved configuration remains `awaiting-runner`. The owning Secrets role,
 source/key acquisition, actual restored-home acceptance, runner and final backup
 acceptance described above remain required before retirement of the old backup.
+
+### Registered backup source composition
+
+`encryptRegisteredHouseholdBundle` is an internal source owner entry point. It
+accepts an already initialized next app connection, explicit initialized continuity
+connections (or deliberate `null` absence) for every registered agent and both
+commons stores, owner recipients, a dedicated drill identity, and the required
+opaque Secrets recovery role. It opens no source database and reads no old JSON,
+program, store or migration snapshot. Handles and selected home are pinned before
+async crypto setup. Agent selection is matched exactly against registration in
+the **captured filtered app image**, rather than a preceding live metadata read;
+missing, extra and duplicate selections refuse. Repeated registrations in valid
+household metadata denote one stack. Each database still has its own snapshot.
+
+The owning caller must declare `importedCookieFile: 'present' | 'absent'`.
+`absent` performs no cookie-file lookup, even if a file exists. Fresh next homes
+use this state: their active sign-in CSRF key is already in the app rows.
+`present` reads only `ui-cookie.key` through the existing descriptor-pinned file
+capture, requiring a single-link regular 32-byte file and stable metadata.
+Missing/unreadable/changed/linked files refuse; no caught error means absence.
+Captured key bytes are wiped on success and failure, and the source stays intact.
+
+This adds source composition, not a running backup worker. The current Secrets
+role still has no recovery export/verifier; a missing role refuses before key IO.
+Public usable-home restore/sign-in/stdio acceptance, publication/retention,
+execution boundary checks, local arming, staging holds, jobs, health/Attention
+and generated commands/Setup remain required. Saved backup config remains
+`awaiting-runner` and does not arm itself.
