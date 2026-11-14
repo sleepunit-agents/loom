@@ -206,16 +206,11 @@ it('rejects a second finding on a different own turn of the same day', async () 
   expect(call('writeFinding', input)).toMatchObject({ ok: true });
   expect(call('writeFinding', { ...input, seq: 2, text: 'Second' })).toMatchObject({ code: 'conflict' });
 });
-it('rolls the whole sweep back when a later nested fold fails', async () => {
+it('rolls the whole sweep back when a later fold fails', async () => {
   const { app, write, call } = await setup(); write(base); write({ ...base, place: 'second' });
-  const original = app.operations.call.bind(app.operations); let folds = 0;
-  vi.spyOn(app.operations, 'call').mockImplementation((door, viewer, name, input, op) => {
-    if (name === 'attention.fold' && ++folds === 2) return failure('denied', 'injected nested refusal');
-    return original(door, viewer, name, input, op);
-  });
+  app.db.exec("CREATE TRIGGER fail_later_fold BEFORE INSERT ON attention_days WHEN EXISTS (SELECT 1 FROM attention_days) BEGIN SELECT RAISE(ABORT, 'fixture fold failure'); END");
   const before = app.db.prepare('SELECT * FROM core_operations').all(), changed = vi.spyOn(app.live, 'changed');
-  expect(call('retain', {})).toMatchObject({ code: 'denied' });
-  expect(folds).toBe(2);
+  expect(call('retain', {})).toMatchObject({ code: 'unavailable' });
   expect(app.db.prepare('SELECT * FROM attention_days').all()).toEqual([]);
   expect(app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(2);
   expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);

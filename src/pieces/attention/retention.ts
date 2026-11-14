@@ -46,24 +46,24 @@ export function installRetention(db: Db, operations: Operations, live: Live, sha
   const rows = <T>(table: string, id: string): T[] => (db.prepare(`SELECT record FROM ${table} WHERE conversation=?`).all(id) as { record: string }[]).map(r => JSON.parse(r.record) as T);
   const canRead = (v: Viewer, id: string, type: string) => { const c = conversation(id); return !!c && maySee(v, { type, ...scopeOf(c) }, sharing()); };
   const fold = (ctx: Context, c: Conversation) => {
-      const groups = new Map<string, Turn[]>();
-      for (const t of rows<Turn>('attention_turns', c.id)) { const day = t.at.slice(0, 10), ts = groups.get(day) ?? []; ts.push(t); groups.set(day, ts); }
-      const cutoff = new Date(ctx.now - RETENTION_DAYS * DAY_MS).toISOString();
-      let days = 0, turns = 0;
-      for (const [day, ts] of groups) {
-        if (ts.some(t => t.at >= cutoff) || db.prepare('SELECT 1 FROM attention_days WHERE conversation=? AND day=?').get(c.id, day)) continue;
-        const counts: Record<string, number> = {}, outcomes: Record<string, Record<string, number>> = Object.create(null);
-        for (const t of ts) {
-          counts[t.kind] = (counts[t.kind] ?? 0) + 1;
-          if (t.outcome) { const m = (outcomes[t.model ?? 'unknown'] ??= Object.create(null)); m[t.outcome] = (m[t.outcome] ?? 0) + 1; }
-        }
-        const mid = median(ts.filter(t => t.kind === 'reply' && t.latency_ms !== undefined).map(t => t.latency_ms!));
-        const record: Day = { ...scopeOf(c), id: `${c.id}:${day}`, conversation: c.id, day, counts, median_latency_ms: mid === null ? null : Math.round(mid), outcomes };
-        db.prepare('INSERT INTO attention_days VALUES (?,?,?,?)').run(record.id, c.id, day, JSON.stringify(record));
-        for (const t of ts) { db.prepare('DELETE FROM attention_turns WHERE id=?').run(t.id); ctx.changed('attention.turn', t.id); }
-        ctx.changed('attention.day', record.id); days++; turns += ts.length;
+    const groups = new Map<string, Turn[]>();
+    for (const t of rows<Turn>('attention_turns', c.id)) { const day = t.at.slice(0, 10), ts = groups.get(day) ?? []; ts.push(t); groups.set(day, ts); }
+    const cutoff = new Date(ctx.now - RETENTION_DAYS * DAY_MS).toISOString();
+    let days = 0, turns = 0;
+    for (const [day, ts] of groups) {
+      if (ts.some(t => t.at >= cutoff) || db.prepare('SELECT 1 FROM attention_days WHERE conversation=? AND day=?').get(c.id, day)) continue;
+      const counts: Record<string, number> = {}, outcomes: Record<string, Record<string, number>> = Object.create(null);
+      for (const t of ts) {
+        counts[t.kind] = (counts[t.kind] ?? 0) + 1;
+        if (t.outcome) { const m = (outcomes[t.model ?? 'unknown'] ??= Object.create(null)); m[t.outcome] = (m[t.outcome] ?? 0) + 1; }
       }
-      return { days, turns };
+      const mid = median(ts.filter(t => t.kind === 'reply' && t.latency_ms !== undefined).map(t => t.latency_ms!));
+      const record: Day = { ...scopeOf(c), id: `${c.id}:${day}`, conversation: c.id, day, counts, median_latency_ms: mid === null ? null : Math.round(mid), outcomes };
+      db.prepare('INSERT INTO attention_days VALUES (?,?,?,?)').run(record.id, c.id, day, JSON.stringify(record));
+      for (const t of ts) { db.prepare('DELETE FROM attention_turns WHERE id=?').run(t.id); ctx.changed('attention.turn', t.id); }
+      ctx.changed('attention.day', record.id); days++; turns += ts.length;
+    }
+    return { days, turns };
   };
   operations.register(operation({ name: 'attention.fold', write: true, input: z.object({ conversation: key }).strict(), output: z.unknown(),
     may(v, i) { const c = conversation(i.conversation); return !!c && mayAct(v, { type: 'attention.day', ...scopeOf(c) }, sharing(), 'act', 'attention.fold'); },
