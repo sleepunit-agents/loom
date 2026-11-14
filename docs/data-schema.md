@@ -140,8 +140,18 @@ real-data move must supply the approved shared database. No fallback reads of
 interim task/token/session tables are provided. The mounted-route test builds a
 fresh in-memory shared database, writes through `taskService`, and reads those
 same rows over actual HTTP; it does not touch a home or installed state.
+`tasks.commentCount` is a generated task output extension, also available on
+connected task rows when comments are selected in the query schema. A correlated
+SQL count uses the same comment visibility predicate and runs inside the one
+relational statement; it never issues per-task reads. Counts are current on each
+execution and independent of pagination/filtering on a separately selected comment
+relation. Scalar aliases, fragments and directives select the count as usual.
+An unrequested count adds no SQL work. Counts have no separate stored column,
+filter or order input. This output-only detail follows the site's example;
+filtering and sorting remain on the schema's real columns.
+
 Remaining on t-2235: other outside table projections, file-backed Memory roots,
-comment counts, websocket deltas and normalized Tasks client, deleting replaced
+websocket deltas and normalized Tasks client, deleting replaced
 interim reads/tables, and configurable database providers.
 
 ## Runtime account placement and quota windows
