@@ -3,6 +3,7 @@ import { GraphQLBoolean, GraphQLFloat, GraphQLError, GraphQLInt, GraphQLList, Gr
 import { peopleReader, mayReadPerson, type PeopleReaderOptions } from './people.js';
 import type { CardValue, PersonCard, PersonRecord } from './people-model.js';
 import type { MemoryQueryContext } from './knowledge-query.js';
+import type { PeopleConversations } from './people-conversations.js';
 const text={type:GraphQLString}, requiredText={type:new GraphQLNonNull(GraphQLString)};
 const list=(type:GraphQLObjectType)=>new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(type)));
 const value=new GraphQLObjectType<CardValue>({name:'MemoryCardValue',fields:{
@@ -23,7 +24,9 @@ const project=new GraphQLObjectType({name:'MemoryPersonProject',fields:{agent:re
 const evidence=new GraphQLObjectType({name:'MemoryPersonEvidence',fields:{created:requiredText,category:requiredText,title:requiredText,content:requiredText}});
 const ownership=new GraphQLObjectType({name:'MemoryPersonOwnership',fields:{owner:{type:GraphQLBoolean},agents:{type:new GraphQLList(new GraphQLNonNull(GraphQLString))}}});
 const revision=new GraphQLObjectType({name:'MemoryPersonRevision',fields:{id:{type:GraphQLInt},op:requiredText,replacedAt:requiredText,actor:text,card:{type:card}}});
-export function peopleQueryFields(options:PeopleReaderOptions): {fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;close():void} {
+const conversation=new GraphQLObjectType({name:'MemoryPersonConversation',fields:{id:requiredText,title:requiredText,href:requiredText}});
+const conversations=new GraphQLObjectType({name:'MemoryPersonConversations',fields:{available:{type:new GraphQLNonNull(GraphQLBoolean)},rows:{type:list(conversation)}}});
+export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:PeopleConversations}): {fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;close():void} {
  let reader:ReturnType<typeof peopleReader>|undefined=peopleReader(options);
  const visible=(context:MemoryQueryContext,agent?:string)=>!!context?.viewer&&mayReadPerson(context.viewer,agent,options.sharing());
  const anyVisible=(context:MemoryQueryContext)=>visible(context)||options.agents.some(a=>visible(context,a.agent));
@@ -32,6 +35,11 @@ export function peopleQueryFields(options:PeopleReaderOptions): {fields:GraphQLF
   id:requiredText,slug:requiredText,agent:text,name:requiredText,card:{type:new GraphQLNonNull(card)},updated:requiredText,synthesizedAt:text,kind:requiredText,
   evidence:{type:list(evidence)},newer:{type:GraphQLInt},fields:{type:list(field)},projects:{type:list(project)},ownership:{type:ownership},mergedFrom:text,
   history:{type:list(revision),resolve:(source,_args,context)=>visible(context,source.agent)?safe(()=>reader?.history(source.id,context.viewer)??[]):[]},
+  conversations:{type:conversations,resolve:(source,_args,context)=>{
+   if(!visible(context,source.agent))return {available:false,rows:[]};
+   try{return options.conversations?.list(context.viewer,source.slug)??{available:false,rows:[]};}
+   catch{throw new GraphQLError('People conversations are unavailable');}
+  }},
  }});
  return {fields:{
   memoryPeople:{type:new GraphQLList(new GraphQLNonNull(person)),resolve:(_source,_args,context)=>anyVisible(context)?safe(()=>reader?.list(context.viewer)??[]):[]},

@@ -12,14 +12,15 @@ import type { Sharing,Viewer } from '../../policy.js';
 import { peopleQueryFields } from './people-query.js';
 import { peopleReader } from './people.js';
 import { ProjectsStore } from '../../backends/projects.js';
+import type { PeopleConversations } from './people-conversations.js';
 const homes:string[]=[],closes:Array<()=>void>=[];
 afterEach(()=>{for(const close of closes.splice(0).reverse())close();for(const home of homes.splice(0))rmSync(home,{recursive:true,force:true});});
 function home(){const path=mkdtempSync(join(tmpdir(),'people-query-'));homes.push(path);return path;}
 function store(path:string){const s=new PeopleStore({dbPath:path,actor:'fiction'});closes.push(()=>s.close());return s;}
-function fixture(directory:string,agents:Array<{agent:string;memories:string}>) {
+function fixture(directory:string,agents:Array<{agent:string;memories:string}>,conversations?:PeopleConversations) {
  let now=Date.parse('2026-11-14T18:00:00Z');
  const sharing:Sharing={members:{owner:{owner:true,agents:[]},member:{owner:false,agents:['fiction']},peer:{owner:false,agents:[]}},projects:{team:{members:['peer'],agents:['fiction']}},services:{}};
- const fields=peopleQueryFields({directory,agents,sharing:()=>sharing,now:()=>now});closes.push(fields.close);
+ const fields=peopleQueryFields({directory,agents,sharing:()=>sharing,now:()=>now,conversations});closes.push(fields.close);
  const db=new Database(':memory:');closes.push(()=>db.close());createDataSchema(db);const generated=dataQueries(db,{tables:['tasks'],visibility:{tasks:()=>sql`true`}});
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{...generated.getQueryType()!.toConfig().fields,...fields.fields}})});
  const query=(source:string,viewer:Viewer={kind:'member',id:'owner'})=>graphql({schema,source,contextValue:{viewer}});
@@ -34,6 +35,41 @@ it('composes generated fields and complete typed cards including value kinds, pr
  const result=await f.query('{ tasks { id } memoryPerson(id:"commons:friend") { name card { summary where { key value { strings text number boolean } label source verified_at stale_after_days } how { key value { text number boolean } } may { text source } } history { op actor card { summary where { key value { strings } label source verified_at stale_after_days } how { key value { text number boolean } } may { text source } } } } }');
  expect(result.errors).toBeUndefined();
  expect(result.data).toMatchObject({tasks:[],memoryPerson:{name:'Fictional Friend',card:{summary:'Version 11',where:[{key:'channel',value:{strings:['one','two'],text:null,number:null,boolean:null},label:'Channels',source:'a conversation',verified_at:'2026-11-13T00:00:00Z',stale_after_days:30}],how:expect.arrayContaining([{key:'count',value:{text:null,number:3,boolean:null}},{key:'enabled',value:{text:null,number:null,boolean:true}},{key:'style',value:{text:'direct',number:null,boolean:null}}]),may:[{text:'A recorded statement',source:'fiction'}]},history:Array.from({length:10},(_,i)=>({op:'write',actor:'fiction',card:{summary:`Version ${10-i}`,where:[{key:'channel',value:{strings:['one','two']},label:'Channels',source:'a conversation',verified_at:'2026-11-13T00:00:00Z',stale_after_days:30}],how:expect.arrayContaining([{key:'count',value:{text:null,number:3,boolean:null}},{key:'enabled',value:{text:null,number:null,boolean:true}},{key:'style',value:{text:'direct',number:null,boolean:null}}]),may:[{text:'A recorded statement',source:'fiction'}]}}))}});
+});
+it('lazily reads conversation metadata with the authenticated viewer after card visibility',async()=>{
+ const h=home(),a=store(join(h,'a.db'));a.write({slug:'friend',name:'Friend'});
+ const calls:Array<{viewer:Viewer;person:string}>=[];
+ const f=fixture(join(h,'absent.db'),[{agent:'fiction',memories:a.database.name}],{list(viewer,person){
+  calls.push({viewer,person});return {available:true,rows:[{id:'cv-fiction',title:'Fictional conversation',href:'/conversation/cv-fiction'}]};
+ }});
+ expect(await f.query('{ memoryPerson(id:"fiction:friend") { name } }')).toMatchObject({data:{memoryPerson:{name:'Friend'}}});
+ expect(calls).toEqual([]);
+ const query='{ memoryPerson(id:"fiction:friend") { conversations { available rows { id title href } } } }';
+ expect(await f.query(query,{kind:'member',id:'peer'})).toEqual({data:{memoryPerson:null}});expect(calls).toEqual([]);
+ const viewer:Viewer={kind:'agent',id:'fiction'};
+ expect(await f.query(query,viewer)).toEqual({data:{memoryPerson:{conversations:{available:true,rows:[{id:'cv-fiction',title:'Fictional conversation',href:'/conversation/cv-fiction'}]}}}});
+ expect(calls).toEqual([{viewer,person:'friend'}]);
+ f.sharing.members.member.agents=[];
+ expect(await f.query(query,{kind:'member',id:'member'})).toEqual({data:{memoryPerson:null}});expect(calls).toHaveLength(1);
+ const absent=fixture(join(h,'absent.db'),[{agent:'fiction',memories:a.database.name}]);
+ expect(await absent.query(query)).toEqual({data:{memoryPerson:{conversations:{available:false,rows:[]}}}});
+});
+it('reads current conversation metadata and hides adapter failures behind a generic field error',async()=>{
+ const h=home(),a=store(join(h,'a.db'));a.write({slug:'friend',name:'Friend'});
+ let available=true,failed=false;
+ const f=fixture(join(h,'absent.db'),[{agent:'fiction',memories:a.database.name}],{list(){
+  if(failed)throw Error('PRIVATE SQL source /private/path');
+  return {available,rows:available?[{id:'cv-fiction',title:'Fictional conversation',href:'/conversation/cv-fiction'}]:[]};
+ }});
+ const query='{ memoryPerson(id:"fiction:friend") { name conversations { available rows { id } } } }';
+ expect(await f.query(query)).toMatchObject({data:{memoryPerson:{conversations:{available:true,rows:[{id:'cv-fiction'}]}}}});
+ available=false;
+ expect(await f.query(query)).toEqual({data:{memoryPerson:{name:'Friend',conversations:{available:false,rows:[]}}}});
+ failed=true;
+ const result=await f.query(query);
+ expect(result.data).toEqual({memoryPerson:{name:'Friend',conversations:null}});
+ expect(result.errors?.map(e=>({message:e.message,path:e.path}))).toEqual([{message:'People conversations are unavailable',path:['memoryPerson','conversations']}]);
+ expect(JSON.stringify(result)).not.toContain('PRIVATE SQL');
 });
 it('keeps agent cards private despite project membership and applies current ownership on each query',async()=>{
  const h=home(),d=store(join(h,'directory.db')),a=store(join(h,'a.db')),b=store(join(h,'b.db'));
