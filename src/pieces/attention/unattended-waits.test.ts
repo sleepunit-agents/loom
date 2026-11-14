@@ -13,12 +13,12 @@ const owner: Viewer = { kind: 'member', id: 'jonathan' }, service: Viewer = { ki
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'unattended-waits-')); fixture(home);
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  const grants = { taskType: true, taskRead: true, approvalType: true };
+  const grants = { taskType: true, taskRead: true, approvalType: true, approvalRead: true };
   let database: SharingDatabase;
   const app = await startLoom({ home, next: true, staging: true, clock, stdout: () => {}, install: app => { database = new SharingDatabase(app.db, home); }, sharing: () => {
     const snapshot = database.sharing();
     const attention = snapshot.services.attention;
-    if (attention) snapshot.services = { ...snapshot.services, attention: { types: attention.types.filter(type => (type !== 'task' || grants.taskType) && (type !== 'approval' || grants.approvalType)), operations: attention.operations.filter(op => op !== 'tasks.show' || grants.taskRead) } };
+    if (attention) snapshot.services = { ...snapshot.services, attention: { types: attention.types.filter(type => (type !== 'task' || grants.taskType) && (type !== 'approval' || grants.approvalType)), operations: attention.operations.filter(op => (op !== 'tasks.show' || grants.taskRead) && (op !== 'approvals.check' || grants.approvalRead)) } };
     return snapshot;
   } });
   cleanups.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
@@ -64,7 +64,10 @@ it('uses actual public Approval terminal facts without spending them; private ap
   clock.advance(0); expect(read('approval')).toMatchObject({ value: { state: 'open' } });
   expect(call('approvals.answer', { id, action: 'allow' })).toMatchObject({ ok: true });
   grants.approvalType = false; clock.advance(60_000); expect(read('approval')).toMatchObject({ value: { state: 'open' } });
-  grants.approvalType = true; clock.advance(60_000); expect(read('approval')).toMatchObject({ value: { state: 'resolved', resolution: 'the approval was allowed' } });
+  grants.approvalType = true; grants.approvalRead = false; clock.advance(60_000); expect(read('approval')).toMatchObject({ value: { state: 'open' } });
+  expect(call('approvals.check', { id }, service)).toMatchObject({ code: 'denied' });
+  grants.approvalRead = true; clock.advance(60_000); expect(read('approval')).toMatchObject({ value: { state: 'resolved', resolution: 'the approval was allowed' } });
+  expect(call('approvals.open', { id }, service)).toMatchObject({ code: 'denied' });
   expect(call('approvals.check', { id }, { kind: 'agent', id: 'art' })).toMatchObject({ value: { state: 'allowed' } });
   // A member-private approval can be read only by that member, even when the ask is public.
   const privateAsk = call('approvals.request', { kind: 'merge', target: `github:acme/app#13@${'b'.repeat(40)}`, ask: 'Merge private work?', why: 'Fix it.', if_yes: 'I merge it.', if_no: 'I leave it.' }, { kind: 'agent', id: 'art' });

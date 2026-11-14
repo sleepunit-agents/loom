@@ -1,4 +1,4 @@
-import { maySee, type Db, type Sharing, type Operations, type Viewer } from '../../core/index.js';
+import { maySee, mayAct, type Db, type Sharing, type Operations, type Viewer } from '../../core/index.js';
 import { approvalScope, stateOf, type Caller } from './model.js';
 import { load, readApproval } from './store.js';
 /** Owner UI composition keeps the authenticated viewer; no body Caller is minted. */
@@ -36,7 +36,9 @@ export function approvalAnswers(db: Db, sharing: () => Sharing, now: () => numbe
   return {
     check(id: string, viewer: Viewer) {
       const approval = readApproval(db, id);
-      if (!approval || !maySee(viewer, approvalScope(approval), sharing())) return;
+      if (!approval) return;
+      const scope = approvalScope(approval), access = sharing();
+      if (!maySee(viewer, scope, access) || viewer.kind === 'service' && !mayAct(viewer, scope, access, 'act', 'approvals.check')) return;
       return { state: stateOf(approval, now()), kind: approval.kind, target: approval.target };
     },
   };

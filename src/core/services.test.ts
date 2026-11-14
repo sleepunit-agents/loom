@@ -111,7 +111,7 @@ it('registers the own types and exact namespace operations for every in-repo ins
   for (const [id, ownTypes] of Object.entries(types)) {
     expect(snapshot.services[id].types).toEqual(ownTypes);
     const namespace = id === 'sharing' ? 'household' : id;
-    const ownOperations = app.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(namespace + '.') || id==='attention' && name==='tasks.show' || id==='clock' && ['approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check'].includes(name));
+    const ownOperations = app.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(namespace + '.') || id==='attention' && ['tasks.show','approvals.check'].includes(name) || id==='clock' && ['approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check'].includes(name));
     expect(ownOperations.length).toBeGreaterThan(0);
     expect(snapshot.services[id].operations).toEqual(ownOperations);
     for (const type of ownTypes) expect(maySee({ kind: 'service', id }, { type }, snapshot)).toBe(true);
