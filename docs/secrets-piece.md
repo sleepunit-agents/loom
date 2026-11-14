@@ -1259,3 +1259,40 @@ and deadline callbacks and never retries an uncertain response. This extraction
 does not add a secret-job claim path: the source selection/lifecycle owner must
 still connect the exact Runtime assignment, original body proof, daemon and
 holder route replacement, and value-free completion.
+
+## Source-selected dedicated Runtime attempt
+
+`secretJobAssignment` is a private, single-use source owner for one job and
+exclusive daemon/holder route slots. It snapshots the local command, TLS peers,
+policy and grant deadlines before claim IO. Its `claimed` method resolves the
+existing owner-selected Signin digest through `runtimeHouseDestination` after
+Runtime claims the job. That original destination supplies `claimedAt`; callers
+cannot predict or replace it. The same binding installs both route owners, using
+the existing daemon and persistent holder replacement capabilities. Retirement
+fences the retained source proof and drains both route generations. A supervisor
+must retire and drain this owner before assigning its exclusive slots again.
+
+`runRuntimeSecretJob` consumes that source in one attempt: durable receipt,
+existing Runtime control, HTTP claim/takeInput, source route selection, dedicated
+worker startup and delivery, running report, command completion, fresh authority,
+and finish. It consumes only an unbound input with the exact selected agent and
+house, with no credential, conversation or model/account overrides. Brief words
+never choose a command or become command input. Only `{job,state}` is sent in a
+report or finish; command output and exit diagnostics are disconnected. Lost
+acknowledgements remain uncertain and are never retried. The retained source
+proof joins the existing control watchdog and final completion check; private
+source retirement also fences an initial control read still awaiting its reply.
+
+The integration fixture starts a queued job and runs these source functions
+through real Runtime HTTP, daemon admission, persistent encrypted holder routes
+and a dedicated fd3 consumer. It does not hand-construct a claimed timestamp or
+worker binding. No default daemon registration, installed configuration or live
+supervisor is activated here. The deployment supervisor still needs to own and
+carry the private lifecycle capabilities across the separate processes; these
+source functions must never be registered as public operations. Bound credential
+inputs, durable tombstone capacity/lifecycle, whole-path staging/accounting,
+public/granted get parity, remaining typed Settings, recovery and final move
+remain tracked on t-2208. Holder recovery must include the independent ciphertext,
+receipts, generation, all retained identities and fingerprint/receipt keys via an
+explicit opaque encrypted owner boundary and an isolated restore witness; the
+Household backup must fail closed until that owning boundary is supplied.
