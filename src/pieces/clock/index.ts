@@ -132,6 +132,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const saved=schedule(db,input.id);
     return mayFile(v,input) && (!saved || (saved.laneDetails ? act(v,saved,true) : mayControl(v,saved)));
   };
+  const mayRecoverSchedule = (v:Viewer,input:Work & {id:string}) => {
+    const saved=schedule(db,input.id);
+    return v.kind==='member' && mayAct(v,{},sharing(),'household') && mayFile(v,input)
+      && !!saved && see(v,saved,'schedule') && act(v,saved,true);
+  };
   const mayScheduleControl = (v:Viewer, name:string, saved:Schedule) =>
     saved.laneDetails || name==='scheduleRun' && v.kind!=='agent'
       ? act(v,saved,true) && create(v,saved) : mayControl(v,saved);
@@ -157,7 +162,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   };
   function register<I>(name: string, input: z.ZodType<I>, write: boolean, may: (v: Viewer, i: I) => boolean, run: (ctx: Context, i: I) => unknown, internal = false) {
     const ordinaryFiling = ['at','in','park'].includes(name);
-    const control = ['scheduleSet','scheduleRun','scheduleRemove','cancel'].includes(name);
+    const control = ['scheduleSet','scheduleRecover','scheduleRun','scheduleRemove','cancel'].includes(name);
     operations.register(operation({ name: `clock.${name}`, input, output, write,
       recheckPolicy: control || (write && ordinaryFiling ? (viewer:Viewer) => !!provenance(viewer) : false),
       inputHash: ordinaryFiling || control ? filingHash : undefined,
@@ -419,6 +424,23 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('agentNext', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (ctx, i) => agentNext(i.agent, deskWakes(ctx, i.agent), paused(db, i.agent)));
 
   const scheduleInput = workInput.extend({ id: text, at: z.union([text, z.array(text)]), days: z.string().default(''), lane: text.optional() });
+  register('scheduleRecover', scheduleInput.pick({id:true,agent:true,at:true,days:true,prompt:true,note:true}).extend({prompt:text}).strict(), true,
+    mayRecoverSchedule,
+    (ctx,input) => {
+      const old=schedule(db,input.id)!;
+      if(old.by.kind!=='runner' || old.by.id!=='clock-import:unverified' || old.enabled || old.importRecovery!=='plain'
+        || old.agent!==input.agent || !old.prompt || old.file || old.member!==undefined || old.project!==undefined || old.lane || old.laneDetails
+        || old.model || old.slot || old.continuation || old.approval || old.place)
+        invalid('Only a plain disabled imported schedule can be recovered; refile other work through its owning flow');
+      if(input.prompt.includes('<!-- house: local -->')) invalid('Local work needs its owning approval flow');
+      if(wakes(db).some(w=>w.schedule===old.id && active(w) && (w.state==='firing' || w.hold==='uncertain' || !!w.attempt)))
+        invalid('Reconcile the imported schedule occurrence before recovering its schedule');
+      const i=filedWork(ctx.viewer,input); newWork(i); calendar(()=>daysOf(i.days));
+      // A complete new submission is fresh owner work, not a widening edit of
+      // the archive. No saved Viewer, words or steering principal is reused.
+      const s:Schedule={...i,at:calendar(()=>timesOf(i.at)),by:ctx.viewer,enabled:true,changedAt:ctx.now,scheduleRevision:randomUUID()};
+      cancelOccurrences(ctx,s.id,'Imported schedule recovered'); saveSchedule(ctx,s); next(ctx,s,ctx.now); return s;
+    });
   register('scheduleSet', scheduleInput, true, maySetSchedule, (ctx, input) => {
     const i = filedWork(ctx.viewer, input);
     newWork(i); calendar(() => daysOf(i.days));
@@ -514,6 +536,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         const saved=control.operation==='cancel'?wake(db,control.id):schedule(db,control.id);
         if(!saved?.member && db.prepare('SELECT 1 FROM clock_meta WHERE key=?').get('private-id:'+control.id))return false;
         if(control.operation==='scheduleSet')return maySetSchedule(viewer,{id:control.id,agent:control.agent,note:''});
+        if(control.operation==='scheduleRecover')return mayRecoverSchedule(viewer,{id:control.id,agent:control.agent,note:''});
         if(!saved)return viewer.kind==='member';
         return control.operation==='cancel' ? mayControl(viewer,saved) : mayScheduleControl(viewer,control.operation,saved as Schedule);
       }
