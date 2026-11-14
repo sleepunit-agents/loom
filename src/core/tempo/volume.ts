@@ -6,7 +6,7 @@ import type { Clock } from '../clock.js';
 export type Recipient = { kind: 'person' | 'agent'; id: string };
 export type Volume = 'full' | 'dim' | 'mute';
 export const defaultTimings = Object.freeze({ settleSeconds: 5, dimDays: 1, muteDays: 7 });
-export type Timings = typeof defaultTimings;
+export type Timings = { settleSeconds: number; dimDays: number; muteDays: number };
 const day = 86_400_000;
 
 /** Trusted in-process API. External callers must pass through the household door.
