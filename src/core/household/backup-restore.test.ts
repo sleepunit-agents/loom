@@ -12,7 +12,7 @@ import { FakeClock } from '../clock.js';
 import { encryptRegisteredHouseholdBundle } from './backup-source.js';
 import { validateHouseholdBundle, withHouseholdRestore } from './backup-restore.js';
 import { HouseholdDatabase } from './document.js';
-import { stageHouseholdRestore } from './backup-destination.js';
+import { stageHouseholdRestore, stageHouseholdRestoreWithRecovery, type HouseholdSecretsRestore } from './backup-destination.js';
 import { restorePending } from '../home-state.js';
 import { openDb } from '../db/index.js';
 import { prepareOperatorHome } from '../signin/operator.js';
@@ -72,6 +72,141 @@ function destination() {
   cleanups.push(() => rmSync(parent, { recursive: true, force: true }));
   return { parent, home: join(parent, '.loom-restore-home') };
 }
+function gate() {
+  let release!: () => void;
+  const promise = new Promise<void>(resolve => { release = resolve; });
+  return { promise, release };
+}
+it.each(['success', 'reject-restore', 'reject-accept'] as const)('stateful isolated owning fake retains stopped recovery: %s', async outcome => {
+  const f = await fixture(), out = destination(), holder = join(out.parent, 'isolated-holder');
+  const authority = Symbol('explicit fixture authority');
+  const expected = f.files.get('secrets/recovery.age')!;
+  const enteredClose = gate(), finishClose = gate();
+  let active = false, accepted = false, settled = false;
+  const construct = (owner: symbol, target: string): HouseholdSecretsRestore => {
+    expect(owner).toBe(authority); expect(fs.existsSync(target)).toBe(false);
+    return { restore: async bytes => {
+      fs.mkdirSync(target, { mode: 0o700 }); active = true;
+      if (outcome === 'reject-restore') {
+        active = false; // Rejecting restore owns its acquisitions; no session exists.
+        fs.rmdirSync(target); throw Error('fixture restore failed');
+      }
+      const fd = fs.openSync(join(target, 'complete-state'), 'wx', 0o600);
+      try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      return {
+        accept: async () => {
+          expect(active).toBe(true);
+          expect(fs.readFileSync(join(target, 'complete-state'))).toEqual(expected);
+          if (outcome === 'reject-accept') throw Error('fixture acceptance failed');
+          accepted = true;
+        },
+        close: async () => { enteredClose.release(); await finishClose.promise; active = false; },
+      };
+    } };
+  };
+  const result = stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, construct(authority, holder));
+  // Attach rejection handling before yielding, including while failed acceptance cleans up.
+  const observed = result.then(value => ({ value }), error => ({ error })).finally(() => { settled = true; });
+  if (outcome !== 'reject-restore') {
+    await enteredClose.promise;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(settled).toBe(false); expect(active).toBe(true);
+    finishClose.release();
+  }
+  const completion = await observed;
+  if (outcome === 'success') expect(completion).toHaveProperty('value.state', 'awaiting-household-acceptance');
+  else expect(completion).toHaveProperty('error.message', 'Household owning recovery failed');
+  expect(active).toBe(false); expect(accepted).toBe(outcome === 'success');
+  if (outcome === 'reject-restore') expect(fs.existsSync(holder)).toBe(false);
+  else expect(fs.readFileSync(join(holder, 'complete-state'))).toEqual(expected);
+  expect(() => openDb(out.home)).toThrow('Household restore is incomplete');
+});
+it.each(['present', 'absent'] as const)('joins original owning recovery and keeps exact candidate quarantined, cookie %s', async cookie => {
+  const f = await fixture(cookie), out = destination();
+  const entered = gate(), acceptance = gate(), closing = gate(), closed = gate();
+  let borrowed!: Buffer, settled = false;
+  const session = {
+    accept: vi.fn(async function () { expect(this).toBe(session); entered.release(); await acceptance.promise; }),
+    close: vi.fn(async function () { expect(this).toBe(session); closing.release(); await closed.promise; }),
+  };
+  const role = { restore: vi.fn(async function (bytes: Buffer) {
+    expect(this).toBe(role); borrowed = bytes;
+    expect(bytes).toEqual(f.files.get('secrets/recovery.age'));
+    expect(fs.readFileSync(join(out.home, restorePending))).toBeTruthy();
+    for (const [path, expected] of f.files) expect(fs.readFileSync(join(out.home, path))).toEqual(expected);
+    return session;
+  }) };
+  const result = stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, role).finally(() => { settled = true; });
+  // Decryption has yielded; later mutation cannot substitute the owning role.
+  role.restore = vi.fn(async () => { throw Error('wrong restore'); });
+  await entered.promise;
+  // The original cleanup was captured before acceptance yielded.
+  session.close = vi.fn(async () => { throw Error('wrong close'); });
+  await new Promise<void>(resolve => setImmediate(resolve));
+  expect(settled).toBe(false);
+  acceptance.release(); await closing.promise;
+  await new Promise<void>(resolve => setImmediate(resolve));
+  expect(settled).toBe(false); expect(borrowed.some(byte => byte !== 0)).toBe(true);
+  closed.release();
+  await expect(result).resolves.toEqual({ home: out.home, state: 'awaiting-household-acceptance' });
+  expect(borrowed.every(byte => byte === 0)).toBe(true);
+  for (const [path, expected] of f.files) expect(fs.readFileSync(join(out.home, path))).toEqual(expected);
+  for (const path of f.absent) expect(fs.existsSync(join(out.home, path))).toBe(false);
+  expect(() => openDb(out.home)).toThrow('Household restore is incomplete');
+  const renamed = join(out.parent, 'home'); fs.renameSync(out.home, renamed);
+  expect(() => openDb(renamed)).toThrow('Household restore is incomplete');
+  expect(() => readContinuityHousehold(renamed)).toThrow('Household restore is incomplete');
+});
+it.each(['restore', 'accept', 'close', 'accept-and-close', 'mutate-restore', 'mutate-accept', 'mutate-close', 'malformed-accept', 'accept-getter'] as const)(
+  'owning recovery failure %s is generic, wiped, blocked, and joins original cleanup', async kind => {
+    const f = await fixture(), out = destination(); let borrowed!: Buffer;
+    const close = vi.fn(async () => {
+      if (kind === 'mutate-close') borrowed[0] ^= 1;
+      if (kind === 'close' || kind === 'accept-and-close') throw Error('PRIVATE_CLOSE_DETAIL');
+    });
+    const accept = vi.fn(async () => {
+      if (kind === 'mutate-accept') borrowed[0] ^= 1;
+      if (kind === 'accept' || kind === 'accept-and-close') throw Error('PRIVATE_ACCEPT_DETAIL');
+    });
+    const role: HouseholdSecretsRestore = { restore: async bytes => {
+      borrowed = bytes;
+      if (kind === 'restore') throw Error('PRIVATE_RESTORE_DETAIL');
+      if (kind === 'mutate-restore') bytes[0] ^= 1;
+      if (kind === 'accept-getter') return { close, get accept(): typeof accept { throw Error('PRIVATE_GETTER_DETAIL'); } };
+      return { close, accept: kind === 'malformed-accept' ? undefined as unknown as typeof accept : accept };
+    } };
+    await expect(stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, role)).rejects.toThrow(/^Household owning recovery failed$/);
+    expect(close).toHaveBeenCalledTimes(kind === 'restore' ? 0 : 1);
+    expect(accept).toHaveBeenCalledTimes(['restore', 'mutate-restore', 'malformed-accept', 'accept-getter'].includes(kind) ? 0 : 1);
+    expect(borrowed.every(byte => byte === 0)).toBe(true);
+    expect(fs.readFileSync(join(out.home, 'secrets/recovery.age'))).toEqual(f.files.get('secrets/recovery.age'));
+    expect(() => openDb(out.home)).toThrow('Household restore is incomplete');
+    // No recovery retry adopts a partial/previous candidate.
+    const retry = { restore: vi.fn() };
+    await expect(stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, retry)).rejects.toThrow(/^Household owning recovery failed$/);
+    expect(retry.restore).not.toHaveBeenCalled();
+  });
+it.each([undefined, {}, { accept: async () => {} }])('rejects malformed original session %j and wipes its input', async session => {
+  const f = await fixture(), out = destination(); let borrowed!: Buffer;
+  const role = { restore: async (bytes: Buffer) => { borrowed = bytes; return session; } } as HouseholdSecretsRestore;
+  await expect(stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, role)).rejects.toThrow(/^Household owning recovery failed$/);
+  expect(borrowed.every(byte => byte === 0)).toBe(true);
+  expect(() => openDb(out.home)).toThrow('Household restore is incomplete');
+});
+it('refuses missing owning role before filesystem IO and failed staging before owning IO', async () => {
+  const f = await fixture(), out = destination(), role = { restore: vi.fn() };
+  const open = vi.spyOn(fs, 'openSync');
+  await expect(stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, undefined as unknown as HouseholdSecretsRestore)).rejects.toThrow(/^Household owning recovery failed$/);
+  expect(open).not.toHaveBeenCalled();
+  await expect(stageHouseholdRestoreWithRecovery(f.ciphertext, 'bad identity', out.home, role)).rejects.toThrow(/^Household owning recovery failed$/);
+  expect(open).not.toHaveBeenCalled(); expect(role.restore).not.toHaveBeenCalled();
+  await expect(stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, role, { documentCount: 1 })).rejects.toThrow(/^Household owning recovery failed$/);
+  expect(open).not.toHaveBeenCalled(); expect(role.restore).not.toHaveBeenCalled();
+  open.mockRestore();
+  fs.mkdirSync(out.home);
+  await expect(stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, role)).rejects.toThrow(/^Household owning recovery failed$/);
+  expect(role.restore).not.toHaveBeenCalled();
+});
 it.each(['present', 'absent'] as const)('materializes exact private bytes and deliberate absences, cookie %s, retaining the startup fence', async cookie => {
   const f = await fixture(cookie), out = destination();
   const before = Buffer.from(f.ciphertext);
