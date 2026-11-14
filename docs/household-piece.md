@@ -960,11 +960,14 @@ The database-only prerequisite is `exportDatabaseImage` in
 transaction through `exportDatabase` and its required owning filters. It builds
 a fresh in-memory database from accepted rows, never copying source pages or
 free pages. It preserves table DDL, indexes, triggers (installed after rows),
-BLOBs and retained tables' AUTOINCREMENT high-water marks. A separate reopened
+BLOBs, SQLite numeric storage classes, accessible implicit rowids and retained
+tables' AUTOINCREMENT high-water marks. A separate reopened
 image must pass integrity and foreign-key checks and match all captured row
 counts, digests, schema and sequences. Missing filters, filtered dangling
 foreign keys, views, virtual tables and integer values outside JavaScript's
-exact range refuse instead of returning an apparently successful image.
+exact range or rowid tables shadowing all three implicit identity aliases refuse
+instead of returning an apparently successful image. Large implicit rowids are
+captured as exact integers even though ordinary exported data remains JS numbers.
 The current schema needs no view or virtual-table restore policy.
 
 The returned Buffer is sensitive plaintext, intended only for a future offline

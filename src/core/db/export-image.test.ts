@@ -117,3 +117,33 @@ it('rejects a failed integrity check even when the image rows still match', () =
   });
   expect(() => exportDatabaseImage(db)).toThrow('restore integrity failed');
 });
+it('preserves implicit rowids and integer/real storage classes in columns without affinity', () => {
+  const db = database();
+  db.exec(`CREATE TABLE data(integer_value CHECK(typeof(integer_value)='integer'), real_value CHECK(typeof(real_value)='real'), label TEXT);
+    INSERT INTO data(rowid,integer_value,real_value,label) VALUES (42,1,1.0,'first'), (9007199254740993,2,2.0,'second');
+    CREATE TRIGGER identity_read AFTER UPDATE ON data BEGIN INSERT INTO identities VALUES (NEW.rowid); END;
+    CREATE TABLE identities(value INTEGER);`);
+  const image = exportDatabaseImage(db), restored = new Database(image.bytes); close.push(() => restored.close());
+  expect(restored.prepare('SELECT rowid,typeof(integer_value) AS i,typeof(real_value) AS r FROM data').safeIntegers().all()).toEqual([
+    { rowid: 42n, i: 'integer', r: 'real' }, { rowid: 9007199254740993n, i: 'integer', r: 'real' },
+  ]);
+  restored.exec("UPDATE data SET label='updated' WHERE rowid=42");
+  expect(restored.prepare('SELECT * FROM identities').get()).toEqual({ value: 42 });
+});
+it.each([
+  ['renumbered identity', 'UPDATE data SET rowid=99'],
+  ['changed numeric storage class', 'UPDATE data SET value=CAST(value AS REAL)'],
+])('rejects %s even when ordinary SELECT * JS values match', (_name, damage) => {
+  const db = database(); db.exec('CREATE TABLE data(value); INSERT INTO data(rowid,value) VALUES (42,1)');
+  const serialize = Database.prototype.serialize;
+  vi.spyOn(Database.prototype, 'serialize').mockImplementation(function (this: Database.Database) { this.exec(damage); return serialize.call(this); });
+  expect(() => exportDatabaseImage(db)).toThrow('rows differ');
+});
+it('supports WITHOUT ROWID and a shadowed rowid alias, but refuses when all aliases are shadowed', () => {
+  const db = database(); db.exec("CREATE TABLE data(rowid TEXT PRIMARY KEY) WITHOUT ROWID; INSERT INTO data VALUES ('named'); CREATE TABLE alias(_rowid_ TEXT); INSERT INTO alias(rowid,_rowid_) VALUES (42,'shadow')");
+  const restored = new Database(exportDatabaseImage(db).bytes); close.push(() => restored.close());
+  expect(restored.prepare('SELECT rowid FROM data').get()).toEqual({ rowid: 'named' });
+  expect(restored.prepare('SELECT rowid,_rowid_ FROM alias').get()).toEqual({ rowid: 42, _rowid_: 'shadow' });
+  db.exec('CREATE TABLE opaque(rowid TEXT,_rowid_ TEXT,oid TEXT)');
+  expect(() => exportDatabaseImage(db)).toThrow('cannot capture table identity');
+});

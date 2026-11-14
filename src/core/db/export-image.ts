@@ -1,7 +1,7 @@
 /** Offline backup prerequisite. No file discovery, IO, arming or public restore door. */
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { exportDatabase } from './export.js';
+import { exportDatabase, sqliteExportRows, type SqliteRow } from './export.js';
 import type { Db } from './index.js';
 
 const quote = (name: string) => `"${name.replaceAll('"', '""')}"`;
@@ -20,9 +20,10 @@ function value(value: unknown): unknown {
   return [typeof value, value];
 }
 const rowKey = (row: Row) => JSON.stringify(Object.keys(row).sort().map(key => [key, value(row[key])]));
-function digest(rows: Row[]) {
+function digest(rows: Row[], sqlite?: SqliteRow[]) {
   const hash = createHash('sha256');
-  for (const row of rows.map(rowKey).sort()) hash.update(String(Buffer.byteLength(row))).update(':').update(row);
+  const keys = rows.map((row, i) => JSON.stringify([rowKey(row), sqlite ? JSON.stringify(sqlite[i], (_key,v) => typeof v === 'bigint' ? v.toString() : v) : null]));
+  for (const row of keys.sort()) hash.update(String(Buffer.byteLength(row))).update(':').update(row);
   return hash.digest('hex');
 }
 function sequences(db: Db, names: Set<string>): Row[] {
@@ -43,7 +44,7 @@ export interface DatabaseImage {
 export function exportDatabaseImage(db: Db): DatabaseImage {
   if (db.inTransaction) throw Error('Database export requires an offline job');
   return db.transaction(() => {
-    const tables = exportDatabase(db);
+    const tables = exportDatabase(db, true);
     const names = new Set(tables.map(table => table.name));
     const objects = schema(db).filter(object => names.has(object.tbl_name));
     // Views have no owning table and may expose excluded data. The current
@@ -51,7 +52,7 @@ export function exportDatabaseImage(db: Db): DatabaseImage {
     // restore policy. Virtual tables likewise require their owning extension.
     if (schema(db).some(object => object.type === 'view') || tables.some(table => /^CREATE\s+VIRTUAL\s+TABLE/i.test(table.sql))) throw Error('Database export requires a schema-specific restore policy');
     const sequence = sequences(db, names);
-    const expected = tables.map(table => ({ name: table.name, rows: table.rows.length, sha256: digest(table.rows as Row[]) }));
+    const expected = tables.map(table => ({ name: table.name, rows: table.rows.length, sha256: digest(table.rows as Row[], table.sqlite) }));
     const restored = new Database(':memory:');
     try {
       restored.pragma('foreign_keys = OFF');
@@ -59,8 +60,13 @@ export function exportDatabaseImage(db: Db): DatabaseImage {
         for (const table of tables) restored.exec(table.sql);
         for (const table of tables) {
           const columns = (restored.prepare(`PRAGMA table_xinfo(${quote(table.name)})`).all() as {name:string;hidden:number}[]).filter(column => column.hidden === 0).map(column => column.name);
-          const insert = restored.prepare(`INSERT INTO ${quote(table.name)} (${columns.map(quote).join(',')}) VALUES (${columns.map(() => '?').join(',')})`);
-          for (const row of table.rows as Row[]) insert.run(...columns.map(column => row[column]));
+          const withRowid = [...columns, ...(table.rowid ? [table.rowid] : [])];
+          const insert = restored.prepare(`INSERT INTO ${quote(table.name)} (${withRowid.map(quote).join(',')}) VALUES (${withRowid.map(() => '?').join(',')})`);
+          const visible = (restored.prepare(`PRAGMA table_xinfo(${quote(table.name)})`).all() as {name:string;hidden:number}[]).filter(column => column.hidden !== 1).map(column => column.name);
+          for (const [i, row] of (table.rows as Row[]).entries()) {
+            const values = columns.map(column => table.sqlite![i].types[visible.indexOf(column)] === 'integer' ? BigInt(row[column] as number) : row[column]);
+            insert.run(...values, ...(table.rowid ? [table.sqlite![i].rowid] : []));
+          }
         }
         if (sequence.length) {
           restored.exec('DELETE FROM sqlite_sequence');
@@ -76,8 +82,8 @@ export function exportDatabaseImage(db: Db): DatabaseImage {
         if (drill.pragma('integrity_check', { simple: true }) !== 'ok' || (drill.pragma('foreign_key_check') as unknown[]).length) throw Error('Database export restore integrity failed');
         if (JSON.stringify(schema(drill)) !== JSON.stringify(objects)) throw Error('Database export restore schema differs');
         for (const table of expected) {
-          const rows = drill.prepare(`SELECT * FROM ${quote(table.name)}`).all() as Row[];
-          if (rows.length !== table.rows || digest(rows) !== table.sha256) throw Error('Database export restore rows differ');
+          const captured = sqliteExportRows(drill, table.name);
+          if (captured.rows.length !== table.rows || digest(captured.rows, captured.sqlite) !== table.sha256) throw Error('Database export restore rows differ');
         }
         if (digest(sequences(drill, names)) !== digest(sequence)) throw Error('Database export restore sequences differ');
       } finally { drill.close(); }
