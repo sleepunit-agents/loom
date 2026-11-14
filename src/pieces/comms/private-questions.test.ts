@@ -264,3 +264,46 @@ it('preserves a private question retry after filing but still rechecks current i
  await expect(f.comms.ask('art',f.place,input)).rejects.toThrow('Ask unavailable');
  expect(before()).toEqual(snapshot);
 });
+
+for(const drift of ['expired','ciphertext','missing','metadata','sender','sequence','tombstone'] as const)it(`fences sealed typed replies when ${drift} changes during crypto`,async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'typed',question}),seal=f.key.seal;
+ vi.spyOn(f.key,'seal').mockImplementation(async words=>{
+  const sealed=await seal(words);
+  if(drift==='expired')f.clock.advance(14*86400_000);
+  else if(drift==='ciphertext')f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=?').run(await seal(JSON.stringify({...question,ask:'Replacement question'})),f.place,r.seq);
+  else if(drift==='missing')f.app.db.prepare('DELETE FROM comms_messages WHERE thread=? AND seq=?').run(f.place,r.seq);
+  else if(drift==='metadata')f.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=? AND seq=?').run(JSON.stringify({ref:r.ref,encoding:'json'}),f.place,r.seq);
+  else if(drift==='sender')f.app.db.prepare('UPDATE comms_messages SET sender=? WHERE thread=? AND seq=?').run('other',f.place,r.seq);
+  else if(drift==='tombstone')f.app.db.prepare('INSERT INTO comms_deleted (id,conversation) VALUES (?,?)').run(f.place,'removed');
+  else {const a=f.attention.get(f.viewer,{id:r.ref});if(!a.ok)throw Error('missing ask');f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify({...a.value as object,privateQuestion:{thread:f.place,seq:r.seq+1}}),r.ref);}
+  return sealed;
+ });
+ expect(await f.call('comms.replyToAsk',{ref:r.ref,text:'Private typed words'})).toMatchObject({ok:false});
+ expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').all(`private-reply:${r.ref}`)).toEqual([]);
+ expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{state:'open'}});
+});
+for(const drift of ['expired','ciphertext','archive'] as const)it(`refuses sealed typed reply receipt after ${drift}`,async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'typed',question}),input={ref:r.ref,text:'Private typed words'};
+ const first=await f.call('comms.replyToAsk',input,f.viewer,'typed-receipt');expect(first.ok).toBe(true);
+ if(drift==='expired')f.clock.advance(14*86400_000);
+ else if(drift==='archive')await f.call('comms.change',{thread:f.place,action:'archive'});
+ else f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=?').run(await f.key.seal(JSON.stringify({...question,ask:'Replacement question'})),f.place,r.seq);
+ for(const operation of ['typed-receipt','fresh-receipt'])expect(await f.call('comms.replyToAsk',input,f.viewer,operation)).toMatchObject({ok:false});
+});
+it('rejects a competing sealed typed receipt for a changed source while preparation awaits',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'typed',question}),input={ref:r.ref,text:'Identical typed words'},seal=f.key.seal;
+ let release!:()=>void,ready!:()=>void;const gate=new Promise<void>(r=>release=r),entered=new Promise<void>(r=>ready=r);let first=true;
+ vi.spyOn(f.key,'seal').mockImplementation(async words=>{if(first){first=false;ready();await gate;}return seal(words);});
+ const pending=f.call('comms.replyToAsk',input,f.viewer,'competing');await entered;
+ f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=?').run(await seal(JSON.stringify({...question,ask:'Replacement question'})),f.place,r.seq);
+ expect(await f.call('comms.replyToAsk',input,f.viewer,'competing')).toMatchObject({ok:true});
+ release();expect(await pending).toMatchObject({ok:false});
+});
+for(const sameId of [true,false])it(`coalesces identical sealed typed replies with ${sameId?'same':'distinct'} operation ids`,async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'typed',question}),input={ref:r.ref,text:'Identical typed words'},seal=f.key.seal;
+ let release!:()=>void,ready!:()=>void,count=0;const gate=new Promise<void>(r=>release=r),entered=new Promise<void>(r=>ready=r);
+ vi.spyOn(f.key,'seal').mockImplementation(async words=>{if(++count===2)ready();await gate;return seal(words);});
+ const a=f.call('comms.replyToAsk',input,f.viewer,'one'),b=f.call('comms.replyToAsk',input,f.viewer,sameId?'one':'two');await entered;release();
+ const results=await Promise.all([a,b]);expect(results[0]).toMatchObject({ok:true});expect(results[1]).toEqual(results[0]);
+ expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').all(`private-reply:${r.ref}`)).toHaveLength(1);
+});
