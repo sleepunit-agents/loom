@@ -50,6 +50,7 @@ import type { HolderGeneration } from './pieces/secrets/local-holder.js';
 import { installDiscordDaemon, type DiscordDaemonOptions } from './pieces/bridges/discord-daemon.js';
 import { installSlackDaemon, type SlackDaemonOptions } from './pieces/bridges/slack-daemon.js';
 import { installBridges } from './pieces/bridges/index.js';
+import { installBridgeFileRetention } from './pieces/bridges/file-retention.js';
 import { connectApprovalAttention, installApprovals } from './pieces/approvals/index.js';
 import { installRunnerInput } from './pieces/runtime/input.js';
 import { installRuntime } from './pieces/runtime/index.js';
@@ -168,6 +169,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     }));
   }
   if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing, { staging: options.staging });
+  installBridgeFileRetention(app);
   const conversations=conversationRuntime(app,sharing,v=>signin(app).agent(v));
   const bridgeBodies=bridgeRuntime(app,sharing,v=>signin(app).agent(v));
   conversations.connectBridges(bridgeBodies);

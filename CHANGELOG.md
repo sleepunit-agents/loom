@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Refuse public Clock runner start input after withdrawal or a change to its original destination or claim during preparation.
+- Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
+
 - Deliver sealed Comms yes/no decisions back to the owning private conversation through staged encrypted message delivery.
+- Add a filtered next-database image exporter with an independent SQLite reconstruction drill; complete encrypted household backups and execution remain pending.
+
 - Let a current private body ask an encrypted Comms question through its original member binding, with authority rechecked after encryption and a wordless acknowledgement.
 - Add pure worker-checkout preparation for scheduled file inputs, using bounded descriptor-pinned reads; executable Clock file delivery stays held pending owning runner integration.
 - Add owner-only next-mode backup configuration operations and Live status; saved configuration explicitly remains unscheduled pending the new runner.
