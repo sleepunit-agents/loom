@@ -190,3 +190,28 @@ it('performs both metadata writes without filesystem reads or outside-effect dis
  expect(read).not.toHaveBeenCalled();expect(asyncRead).not.toHaveBeenCalled();expect(outside).not.toHaveBeenCalled();expect(finish).not.toHaveBeenCalled();
  expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual(before);
 });
+
+it('refuses a current authenticated private Comms body whose own read succeeds',async()=>{
+ const f=await setup();
+ const opened=await f.app.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.open',{agent:'art',id:'abcdefghijklmnop',text:'PRIVATE Comms sentinel'},'open-comms',true);
+ expect(opened).toMatchObject({ok:true});let jobs:string[]=[];
+ for(let i=0;i<15&&!jobs.length;i++){
+  const claimable=await f.post(f.runner,'claimableJobs',{});expect(claimable).toMatchObject({ok:true});jobs=claimable.value.jobs;
+ }
+ expect(jobs).toHaveLength(1);const job=jobs[0];
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const input=await f.post(f.runner,'takeInput',{job});expect(input).toMatchObject({ok:true});
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});
+ const body=input.value.credential;
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'PRIVATE Comms sentinel'}]}});
+ expect(await f.post(body,'recordTurn',turn)).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(body,'writeDigest',{digest})).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare('SELECT * FROM attention_conversations').all()).toEqual([]);
+});
+it('derives each turn timestamp from the current foundation clock',async()=>{
+ const f=await setup(),first=new Date(f.clock.now()).toISOString();
+ expect(await f.post(f.body,'recordTurn',turn)).toMatchObject({ok:true});
+ f.clock.advance(1234);const second=new Date(f.clock.now()).toISOString();expect(second).not.toBe(first);
+ expect(await f.post(f.body,'recordTurn',turn)).toMatchObject({ok:true});
+ expect(f.call('attention.turns',{conversation:f.canonical})).toMatchObject({ok:true,value:[{at:first},{at:second}]});
+});
