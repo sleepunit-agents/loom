@@ -16,12 +16,12 @@ import {workerAdmission} from './pieces/secrets/worker-admission.js';
 import {remoteWorkerTicketProof} from './pieces/secrets/ticket-authority.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
-async function setup() {
+async function setup(empty=false) {
  const f=await ticketAuthorityFixture(closes);await f.authority.close();
  const config={authority:f.server,admission:{...f.server,socket:join(f.home,'refresh.sock')},
   holder:{config:{...f.server,socket:join(f.home,'holder.sock'),servername:'holder.test'},fingerprint:f.fingerprint('holder')},
   workers:[{tokenDigest:f.tokenDigest,fingerprint:f.fingerprint('daemon')}]};
- const owner=await startSecretWorkers(f.app,()=>new SharingDatabase(f.app.db,f.home).sharing(),f.app.effects!,config);closes.push(owner.close);
+ const owner=await startSecretWorkers(f.app,()=>new SharingDatabase(f.app.db,f.home).sharing(),f.app.effects!,empty?{...config,workers:[]}:config);closes.push(owner.close);
  const client=(pending=randomUUID())=>{const c=workerAdmission({...config.admission,servername:'daemon.test'},f.fingerprint('daemon'),pending);closes.push(c.close);return c;};
  return {...f,config,owner,client};
 }
@@ -139,4 +139,11 @@ test.each(['sparse','member','agent','ended-job','split-assignment','imported-jo
  const proof=remoteWorkerTicketProof({...f.server,servername:'daemon.test'},f.fingerprint('daemon'),id,pending);closes.push(proof.close);expect(await proof.current()).toBe(true);
  const next=await f.client().admit('API');expect(f.state(next)).toEqual({state:'admitted'});
  await claim.finish(false);
+});
+
+test('empty preclaim startup denies admission until an original destination is selected',async()=>{
+ const f=await setup(true);
+ await expect(f.client().admit('API')).rejects.toThrow();
+ f.owner.replaceWorkers(f.config.workers);
+ expect(await f.client().admit('API')).toMatch(/^[0-9a-f-]{36}$/);
 });

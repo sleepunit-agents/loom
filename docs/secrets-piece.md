@@ -1397,3 +1397,37 @@ during a held replacement. These failures keep the original owner burned and
 join its child before rejected settlement; a late reply cannot restore it.
 Shutdown installs its shared join before aborting, so a synchronous abort listener
 retiring the same source receives that original promise instead of a second close.
+
+### One-shot source production selection root
+
+`startSecretJobSupervisor` composes the original daemon, fixed holder child,
+`secretJobAssignment` and `runRuntimeSecretJob` for one explicitly selected
+Runtime attempt. It is source-only, never a registered operation or a default
+startup option. The caller supplies local selections before any IO and keeps the
+Foundation open until `close()` settles, including rejected settlement.
+The daemon now accepts an empty initial worker list: no preclaim destination is
+fabricated. Actual Runtime claim and original Signin destination resolution
+install routes using the existing single-use source. The parent never opens the
+holder file or receives keys/values. The holder alone selects its static peers;
+IPC still carries only binding and pin metadata, never release authority.
+
+The root owns one attempt and cannot reuse its slots, retry, reconnect or adopt
+an uncertain result. Holder loss immediately fences the original source and
+command startup. Shutdown joins route retirement and the original Runtime
+attempt, then holder close (which joins its original OS child), then daemon
+listeners while the database remains alive. Route retirement precedes holder
+protocol close because that channel permits only one outstanding command.
+Failures still drain every owner and surface only a fixed generic error.
+The shared shutdown promise is installed before synchronous abort listeners.
+An interrupted startup can reject close; that rejection remains joined cleanup.
+
+The integration fixture invokes this root rather than manually composing its
+owners. It drives a real queued Runtime HTTP claim, private inherited holder
+protocol, persistent encrypted store, original daemon authority and dedicated
+fd3 command to value-free finish, and staging prevents command spawn. The holder
+fork and original child close event are controlled in process: this is not a
+real holder OS-process integration witness or a live activation claim. No
+installed configuration, real home, host/service or default registration changes.
+Durable tombstone capacity, complete staging/accounting and public/granted-get
+parity, remaining Settings, owner-encrypted recovery, final docs/move/leak/import
+ledger and owner-present activation remain duties of t-2208 and t-2203.
