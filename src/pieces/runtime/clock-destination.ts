@@ -26,12 +26,14 @@ export function clockDestination(app: Foundation, sharing:()=>Sharing): ClockDes
       const viewer={kind:'agent' as const,id:input.agent},access=sharing();
       if(input.member===undefined ? !mayCreate(viewer,{type:'wake',agent:input.agent,project:input.project},access)
         : !mayFilePrivateWork(viewer,{type:'wake',...input,privateControl:true},access))return;
-      return {agent:binding.agent,member:binding.member,project:binding.project,conversation:binding.id,place:binding.place,service:job.service,job:job.id};
+      return {agent:binding.agent,member:binding.member,project:binding.project,conversation:binding.id,place:binding.place,service:job.service,job:job.id,runner:job.runner,box:job.box,claimedAt:job.claimedAt};
     };
     let before:ReturnType<typeof resolve>;
     try{before=resolve();}catch{return;}
     if(!before)return;
-    const identity=JSON.stringify(before),{job:_,...destination}=before;
+    const identity=JSON.stringify(before);
+    const {agent,member,project,conversation,place,service}=before;
+    const destination={agent,member,project,conversation,place,service};
     return Object.freeze({...destination,current(){try{return JSON.stringify(resolve())===identity;}catch{return false;}}});
   };
 }

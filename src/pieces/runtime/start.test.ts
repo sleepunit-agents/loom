@@ -230,6 +230,12 @@ it('issues Clock lane witnesses from current Runtime bindings, never Comms/bridg
  const witness=read(input)!;expect(witness).toMatchObject({agent:'art',conversation:'cv-lane',place:'lane:daily'});expect(witness.current()).toBe(true);
  for(const change of [{place:'lane:other'},{agent:'mark'},{member:'jonathan'},{project:'pond'}])expect(read({...input,...change})).toBeUndefined();
  const binding=f.store.read('binding','cv-lane')!,before=f.store.read('job',job)!;
+ for(const change of [{runner:'b',box:'b'},{claimedAt:before.claimedAt!+1}]){
+  f.app.db.transaction(()=>{const {changedAt:_,...j}=before;f.store.put('job',{...j,...change},f.clock.now());})();
+  expect(witness.current()).toBe(false);expect(read(input)?.current()).toBe(true);
+ }
+ f.app.db.transaction(()=>{const {changedAt:_,...j}=before;f.store.put('job',j,f.clock.now());})();
+ expect(witness.current()).toBe(true);
  for(const change of [{venue:'loom'},{venue:'bridge:discord'},{job:'missing'},{member:'jonathan'},{project:'pond'},{agent:'mark'}]){
   f.app.db.transaction(()=>{const {changedAt:_,...b}=binding;f.store.put('binding',{...b,...change},f.clock.now());})();
   expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
