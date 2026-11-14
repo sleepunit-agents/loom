@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import WebSocket from 'ws';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../../core/clock.js';
 import { createDataSchema } from '../../core/data/database.js';
@@ -7,7 +8,8 @@ import { agents, members, secrets, bridgeConnections, bridgeChannels, bridgePeop
 import { BridgeReceiver, type BridgeChannelCache } from './receiver.js';
 
 const cleanups: (() => void)[] = [];
-afterEach(() => { for (const close of cleanups.splice(0)) close(); });
+vi.mock('ws', () => ({ default: vi.fn(() => { throw Error('Unexpected receiver socket'); }) }));
+afterEach(() => { for (const close of cleanups.splice(0)) close(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 function fixture() {
   const client = new Database(':memory:');
   const clock = new FakeClock();
@@ -91,6 +93,49 @@ it.each(['discord', 'slack'] as const)('waits for trusted %s channel metadata an
   f.clock.advance(3_600_000);
   expect(f.raw()).toEqual([]);
   expect(f.receiver.drain(platform)).toBe(0);
+});
+
+it.each(['discord', 'slack'] as const)('delivers later %s events while metadata is missing, then recovers the deferred message', platform => {
+  const f = fixture(), resolve = { ...f.channels };
+  f.channels.discord = (connection, channel) => channel === 'room' ? undefined : resolve.discord(connection, channel);
+  f.channels.slack = (connection, channel) => channel === 'room' ? undefined : resolve.slack(connection, channel);
+  const first = f[platform]();
+  const later = Buffer.from((platform === 'discord' ? f.discord(2, 'later') : f.slack('ack2', 'ev2')).toString().replace('"room"', '"other"'));
+  // Direct mentions let the later channel deliver without a default route.
+  const parsed = JSON.parse(later.toString());
+  if (platform === 'discord') parsed.d.mentions = [{ id: 'bot' }];
+  else parsed.payload.event.text = '<@bot> Friday?';
+  if (platform === 'discord') {
+    f.receiver.discord(platform, first, f.checkpoint());
+    f.receiver.discord(platform, Buffer.from(JSON.stringify(parsed)), f.checkpoint(2));
+  } else {
+    f.receiver.slack(platform, first);
+    f.receiver.slack(platform, Buffer.from(JSON.stringify(parsed)));
+  }
+  expect(f.receiver.drain(platform)).toBe(1);
+  expect(f.raw().map(row => row.event)).toEqual([first]);
+  expect(f.db.select().from(bridgeIncoming).all().map(row => row.channel)).toEqual(['other']);
+  Object.assign(f.channels, resolve);
+  expect(f.receiver.drain(platform)).toBe(1);
+  expect(f.raw()).toEqual([]);
+  expect(f.db.select().from(inbox).all()).toHaveLength(2);
+});
+
+it('does not fetch or open sockets during receipt, drain, held retry or expiry', () => {
+  const request = vi.fn(() => { throw Error('Unexpected receiver request'); });
+  vi.stubGlobal('fetch', request);
+  const f = fixture();
+  f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'discord')).run();
+  f.receiver.discord('discord', f.discord(), f.checkpoint());
+  f.receiver.slack('slack', f.slack());
+  f.receiver.drain('discord'); f.receiver.drain('slack');
+  f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'discord')).run();
+  f.receiver.drain('discord');
+  f.receiver.slack('slack', f.slack('ack2', 'ev2'));
+  f.clock.advance(3_600_000);
+  expect(f.raw()).toEqual([]);
+  expect(request).not.toHaveBeenCalled();
+  expect(WebSocket).not.toHaveBeenCalled();
 });
 
 it('recovers a retained Discord message after reopening and uses the durable resume cursor', () => {
