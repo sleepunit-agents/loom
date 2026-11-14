@@ -3,15 +3,15 @@ import { createElement as h, useMemo } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { Snapshot } from '../../data';
-const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>}));
-vi.mock('../../data/graphql',()=>({useDataQuery:()=>useMemo(()=>({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent']])}));
+const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>, tempo:{status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}} as any}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>useMemo(()=>document.includes('DeskTempo')?f.tempo:({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.tempo])}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>f.snapshots[type]}));
 vi.mock('../../ticker',()=>({Ticker:(props:unknown)=>h('ticker-test',props as object)}));
 import Bar from './bar';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 const live=(records:object[])=>({records,status:'live' as const});
-beforeEach(()=>{f.snapshots={
+beforeEach(()=>{f.tempo={status:'live',data:{triggers:[{id:'standing',enabled:true,state:'standing'},{id:'done',enabled:true,state:'fired'},{id:'off',enabled:false,state:'due'}],triggerLog:[{seq:2,event:'fired'}],agentPauses:[{agent:'art'}]}};f.snapshots={
  'runtime.box':live([{id:'local'},{id:'gone',revokedAt:1}]),
  task:live([{id:'t-1',status:'in_progress',ready:false},{id:'t-2',status:'open',ready:true}]),
  wake:live([{id:'w-1',state:'parked'},{id:'w-2',state:'fired'}]),
@@ -34,9 +34,10 @@ it('uses owned-agent facts and open asks, and opens Inbox through the router',as
 });
 it.each(['offline','denied','loading'] as const)('drops stale work, identity and count on %s',async(status)=>{
  await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ f.tempo={...f.tempo,status};
  for(const type of Object.keys(f.snapshots))f.snapshots[type]={...f.snapshots[type],status};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
- expect(tree.root.findByType('ticker-test').props.parts.map((p:{text:string})=>p.text)).toEqual(['Your agents are unavailable','Tasks unavailable','Clock unavailable','Bridges unavailable','Changes unavailable','Boxes unavailable']);
+ expect(tree.root.findByType('ticker-test').props.parts.map((p:{text:string})=>p.text)).toEqual(['Your agents are unavailable','Tasks unavailable','Tempo unavailable','Bridges unavailable','Changes unavailable','Boxes unavailable']);
  expect(tree.root.findByProps({'aria-label':'Boxes unavailable'}).children).toBeTruthy();
  expect(tree.root.findByType('ticker-test').props.live).toBe(false);
  expect(tree.root.findByProps({'aria-label':'Needs you: unavailable'}).children).toEqual(['?']);
@@ -65,7 +66,7 @@ it('uses real piece counts, puts CI trouble first, and never calls enrollment he
  expect(tree.root.findByType('ticker-test').props.parts.slice(2)).toEqual([
   {text:'Changes · 1 open · 1 CI red',href:'/p/changes-preview',tone:'bad'},
   {text:'Tasks · 1 in progress · 1 ready',href:'/p/tasks-preview'},
-  {text:'Clock · 1 active wake',href:'/p/clock-preview'},
+  {text:'Tempo · 1 active trigger · 1 paused agent · Last event: fired',href:'/p/tempo-preview',tone:undefined},
   {text:'Bridges · 1 enabled venue',href:'/p/bridges-preview'},
   {text:'1 enrolled box · health unavailable'},
  ]);
@@ -78,4 +79,20 @@ it('uses real piece counts, puts CI trouble first, and never calls enrollment he
  expect(parts.some((p:{text:string})=>p.text.includes('CI red')||p.text.includes('enrolled'))).toBe(false);
  expect(parts.find((p:{text:string})=>p.text==='Changes unavailable').tone).toBeUndefined();
  expect(parts.some((p:{text:string})=>p.text==='Tasks · 1 in progress · 1 ready')).toBe(true);
+});
+
+it('updates Tempo independently, clears retained failures and keeps an empty live result explicit',async()=>{
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ f.tempo={status:'live',data:{triggers:[{id:'failed',enabled:false,state:'failed'},{id:'held',enabled:true,state:'held'}],triggerLog:[{seq:3,event:'held'}],agentPauses:[]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ const tempo=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/tempo-preview');
+ expect(tempo()).toEqual({text:'Tempo · 1 active trigger · 0 paused agents · 1 failed · Last event: held',href:'/p/tempo-preview',tone:'bad'});
+ for(const status of ['offline','denied','loading']){
+  f.tempo={...f.tempo,status};
+  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+  expect(tempo()).toEqual({text:'Tempo unavailable',href:'/p/tempo-preview',tone:undefined});
+ }
+ f.tempo={status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(tempo().text).toBe('Tempo · 0 active triggers · 0 paused agents');
 });
