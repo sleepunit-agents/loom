@@ -483,3 +483,21 @@ it.each(['missing-root','cycle'] as const)('does not release a Clock continuatio
  expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false});
  expect(f.app.db.prepare('SELECT * FROM core_effects WHERE id=?').get(`runtime:input:${job}`)).toBeUndefined();
 });
+it.each(['original-claim','new-claim','binding'] as const)('fences released successor ACKs and exact receipt retries after %s drift',async drift=>{
+ const f=await setup(),{job}=await terminalSuccessor(f),input=await f.post(f.runner,'takeInput',{job});expect(input).toMatchObject({ok:true});
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});
+ const read=await f.post(input.value.credential,'readPublicInputs',{});expect(read).toMatchObject({ok:true});
+ const through=read.value.messages[0].seq;
+ const ack=await f.post(input.value.credential,'acknowledgePublicInputs',{through},'successor-ack');expect(ack).toMatchObject({ok:true,value:{job,acknowledged:true}});
+ expect(await f.post(input.value.credential,'acknowledgePublicInputs',{through},'successor-ack')).toEqual(ack);
+ const before=f.app.db.prepare('SELECT * FROM runtime_public_inputs').all();
+ const receipt=f.app.db.prepare("SELECT * FROM core_operations WHERE id='successor-ack'").all();expect(receipt).toHaveLength(1);
+ const record=f.store.read('job',job)!;
+ if(drift==='original-claim')f.put('job',{...f.store.read('job',f.job)!,claimedAt:f.clock.now()+1});
+ if(drift==='new-claim')f.put('job',{...record,claimedAt:record.claimedAt!+1});
+ if(drift==='binding')f.put('binding',{...f.store.read('binding',record.conversation!)!,place:'replacement'});
+ expect(await f.post(input.value.credential,'acknowledgePublicInputs',{through})).toMatchObject({ok:false});
+ expect(await f.post(input.value.credential,'acknowledgePublicInputs',{through},'successor-ack')).toMatchObject({ok:false});
+ expect(f.app.db.prepare('SELECT * FROM runtime_public_inputs').all()).toEqual(before);
+ expect(f.app.db.prepare("SELECT * FROM core_operations WHERE id='successor-ack'").all()).toEqual(receipt);
+});
