@@ -1133,6 +1133,35 @@ client share a closed status response schema. Fixtures exercise the real
 HTTP operation, empty setup, staging composition, permission denials and closed
 response shapes. No old files or programs are read on the next runtime path.
 
+## Internal Slack first-DM transport
+
+`slack-open.ts` supplies unregistered `slackOpen(...).open()` IO for the pinned
+legacy Slack `test_a_message_to_one_person_is_one_dm` contract's open step.
+It checks fresh same-workspace human eligibility with `users.info`, then calls
+[`conversations.open`](https://docs.slack.dev/reference/methods/conversations.open/)
+with exactly one `users` ID and `return_im=true`. Only a D-prefixed IM whose
+returned user matches that recipient is accepted; no shared/group conversation
+or raw platform fields are returned. Existing DMs use the same uncached path.
+
+A trusted recipient role binds agent, venue, workspace and user. Its `current()`
+must include authenticated bot setup, credential generation and current Runtime
+authority to contact that person. Tests provide an explicit fake owning role;
+there is no installed Runtime issuer, public operation, command or daemon wiring.
+People links and platform eligibility confer no recipient authority.
+
+Every request reacquires the service's SecretUse and rechecks the exact recipient,
+lifetime and dynamic composition gate after acquisition, immediately before IO,
+and after the response. Opening a DM is an outside effect even without words.
+Responses are bounded to 1 MiB, readers are cancelled, redirects are refused and
+each request has a 15-second deadline. Failures and late revocations return only
+fixed uncertainty, with no local retry or cached channel/token. An uncertain open
+may have created a DM; this transport cannot assert rollback or delivery.
+
+Runtime recipient authorization and attribution, a durable staged open/post
+workflow with uncertain-send handling, and generated send command parity remain
+required on t-2210. No message is posted, no inbound message is fabricated, and
+no existing reply path is widened by this internal transport.
+
 ## Internal Slack file fetch
 
 `slack-files.ts` is an unregistered transport for the first five attachments of
