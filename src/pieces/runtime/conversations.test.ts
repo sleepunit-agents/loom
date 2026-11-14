@@ -1,5 +1,6 @@
 import * as conversationModule from './conversations.js';
 import * as services from '../../core/services.js';
+import * as corePolicy from '../../core/index.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
 import { wakes } from '../clock/store.js';
 import { exportDatabase } from '../../core/index.js';
@@ -1124,4 +1125,38 @@ it('rolls back spawn project filing across Comms, binding, job, receipt and live
  expect(await f.socket('comms.change',{thread:f.thread,action:'project',project:'pond'})).toMatchObject({ok:false});
  expect(store.read('binding',f.conversation)).toEqual(binding);expect(store.read('job',f.job)).toEqual(job);expect(f.record()).toEqual(thread);
  expect(f.app.db.prepare('SELECT * FROM core_operations').all()).toEqual(receipts);expect(seen).toEqual([]);
+});
+
+it.each(['reset','writeoff','history-unknown','policy','archived-policy'] as const)('preserves %s execution holds when filing spawned metadata across restart',async hold=>{
+ const f=await spawnFilingFixture(),store=runtimeStore(f.app.db);
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...job}=store.read('job',f.job)!;
+  if(hold==='reset')store.put('job',{...job,principalReset:{approval:'a-reset',by:'jonathan',at:f.clock.now()}},f.clock.now());
+  if(hold==='writeoff')store.put('job',{...job,writtenOff:{approval:'a-writeoff',by:'jonathan',at:f.clock.now()}},f.clock.now());
+  if(hold==='history-unknown')store.put('job',{...job,imported:{history:'unknown'}},f.clock.now());
+  if(hold==='policy')f.app.db.prepare('INSERT INTO runtime_body_policy (agent,record) VALUES (?,?)').run('art','{}');
+  if(hold==='archived-policy')f.app.db.prepare('INSERT INTO runtime_import_documents (collection,key,record) VALUES (?,?,?)').run('gates','art',JSON.stringify({doc:'{}'}));
+ })();
+ const job=store.read('job',f.job)!,binding=store.read('binding',f.conversation)!;
+ const policies=()=>['runtime_body_policy','runtime_import_documents'].map(table=>f.app.db.prepare(`SELECT * FROM ${table}`).all());
+ const before=policies();
+ value(await f.socket('comms.change',{thread:f.thread,action:'project',project:'pond'}));
+ expect(store.read('job',f.job)).toEqual({...job,project:'pond'});expect(policies()).toEqual(before);
+ await f.restart();
+ const after=runtimeStore(f.app.db);
+ expect(after.read('job',f.job)).toEqual({...job,project:'pond'});
+ expect(after.read('binding',f.conversation)).toEqual({...binding,project:'pond'});expect(policies()).toEqual(before);
+ expect(await f.post(f.body,'runtime.readConversation',{})).toMatchObject({ok:false});
+ expect(await f.post(f.runner,'runtime.takeInput',{job:f.job})).toMatchObject({ok:false});
+});
+it.each(['runtime.binding','runtime.job'] as const)('honors central %s move refusal before committing spawned filing',async type=>{
+ const f=await spawnFilingFixture(),realMove=corePolicy.mayMove;
+ // Both valid records have the same private scope today. Inject each central
+ // policy refusal independently to prove both call boundaries are enforced.
+ const move=vi.spyOn(corePolicy,'mayMove').mockImplementation((viewer,before,after,sharing,operation)=>before.type===type?false:realMove(viewer,before,after,sharing,operation));
+ const snapshot=()=>['comms_threads','runtime_jobs','runtime_bindings','core_operations'].map(table=>f.app.db.prepare(`SELECT * FROM ${table}`).all());
+ const before=snapshot(),seen:unknown[]=[];const stop=f.app.live.observe(changes=>seen.push(...changes));cleanups.push(stop);
+ expect(await f.socket('comms.change',{thread:f.thread,action:'project',project:'pond'})).toMatchObject({ok:false,code:'denied'});
+ expect(move).toHaveBeenCalledWith({kind:'member',id:'jonathan'},expect.objectContaining({type,member:'jonathan',agent:'art'}),expect.objectContaining({type,member:'jonathan',agent:'art',project:'pond'}),expect.any(Object),'runtime.acceptConversation');
+ expect(snapshot()).toEqual(before);expect(seen).toEqual([]);
 });
