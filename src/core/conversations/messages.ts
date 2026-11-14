@@ -1,6 +1,6 @@
 /** Trusted private-message service. External doors authenticate and authorize;
  * encrypted words never enter operation receipts or the plaintext Inbox. */
-import { and, eq, inArray, isNotNull, lte, max, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, lte, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, deletedThreads, household, inbox, inboxRefs, messages, threadRefs, threads } from '../data/schema.js';
 import type { WordsKey } from './words.js';
@@ -136,7 +136,11 @@ export class CommsMessages {
   }
 
   expire(): number {
-    return this.db.update(messages).set({ words: null }).where(and(isNotNull(messages.words), lte(messages.keepUntil, this.now()))).returning({ seq: messages.seq }).all().length;
+    const days = this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+    if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
+    const at = this.now(), cutoff = new Date(Date.parse(at) - days * 86400000).toISOString();
+    return this.db.update(messages).set({ words: null }).where(and(isNotNull(messages.words),
+      or(lte(messages.keepUntil, at), lte(messages.at, cutoff)))).returning({ seq: messages.seq }).all().length;
   }
 
   /** Remove private words and references; retain Inbox outcome metadata and a

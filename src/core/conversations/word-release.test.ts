@@ -36,4 +36,7 @@ it('applies the current household keep time to existing words before decrypting'
   now = '2026-11-15T18:00:00.000Z';
   expect(await service.words(thread.id, row.seq)).toBeNull();
   expect(opened).toBe(false);
+  expect(service.expire()).toBe(1);
+  expect(db.select().from(messages).get()?.words).toBeNull();
+  expect(service.expire()).toBe(0);
 });
