@@ -1,6 +1,8 @@
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {once} from 'node:events';
+import {WebSocket} from 'ws';
 import {afterEach,expect,it,vi} from 'vitest';
 import {startLoom} from '../../foundation.js';
 import {FakeClock,migrate,type Sharing} from '../../core/index.js';
@@ -10,13 +12,17 @@ import {append,saveThread,thread,type Thread} from './store.js';
 import {refsOf,indexRefs} from './refs.js';
 import type {WordsKey} from './crypto.js';
 import {loadKey} from './crypto.js';
+import * as cryptoModule from './crypto.js';
+import * as commsModule from './index.js';
+import {installFixture} from '../../fixture.js';
 const cleanup:(()=>Promise<void>)[]=[];
-afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
+afterEach(async()=>{try{for(const f of cleanup.splice(0).reverse())await f();}finally{vi.restoreAllMocks();}});
 const day=86400_000;
 async function fixture(){
  const home=mkdtempSync(join(tmpdir(),'comms-backfill-')),clock=new FakeClock();
- const sharing:Sharing={members:{jonathan:{agents:['art']}},projects:{pond:{members:['jonathan'],agents:['art']}},services:{}};
- let app=await startLoom({home,clock});migrate(app.db,'comms',schema);
+ const sharing:Sharing={members:{jonathan:{owner:true,agents:['art']}},projects:{pond:{members:['jonathan'],agents:['art']}},services:{}};
+ const authenticate=()=>({viewer:{kind:'member' as const,id:'jonathan'},window:true,valid:()=>true});
+ let app=await startLoom({home,clock,authenticate});migrate(app.db,'comms',schema);
  const base:WordsKey={seal:async text=>Buffer.from(text),open:async bytes=>Buffer.from(bytes).toString(),hash:text=>text};
  let comms:ReturnType<typeof installComms>|undefined;
  const start=(key:WordsKey=base)=>comms=installComms({...app,clock,key,sharing:()=>sharing,hold:async f=>f(),runtime:{deliver:async()=>{},end:async()=>{}},attention:{answer:()=>({ok:true,value:{}})}});
@@ -25,7 +31,7 @@ async function fixture(){
   const t:Thread={id,member:'jonathan',agent:'art',conversation:`cv-${id}`,title:null,titledBy:null,pinned:false,archived:null,opened:clock.now(),last:clock.now(),readSeq:0,nextSeq:1,stop:false,firstId:'first',firstHash:'hash',working:false,...extra};saveThread(app.db,t);return t;
  };
  const add=(t:Thread,text:string,kind='message',encoding='json',at=clock.now())=>app.db.transaction(()=>append(app.db,t,{id:`row-${t.nextSeq}`,kind,at,sender:t.member,words:Buffer.from(encoding==='text'?text:JSON.stringify({text})),hash:`hash-${t.nextSeq}`,record:JSON.stringify({encoding,delivery:'delivered'})}))();
- return {get app(){return app;},home,clock,sharing,base,start,addThread,add,marker:()=>app.db.prepare("SELECT value FROM comms_meta WHERE key='refs_backfilled'").get(),async restart(key:WordsKey=base){await comms?.close();await app.close();app=await startLoom({home,clock});return start(key);}};
+ return {get app(){return app;},home,clock,sharing,base,start,addThread,add,marker:()=>app.db.prepare("SELECT value FROM comms_meta WHERE key='refs_backfilled'").get(),async next(){await app.close();app=await startLoom({home,clock,next:true,staging:true,stdout:()=>{},sharing:()=>sharing,install:a=>installFixture(a,()=>sharing),authenticate});return app;},async restart(key:WordsKey=base){await comms?.close();await app.close();app=await startLoom({home,clock,authenticate});return start(key);}};
 }
 it('startup scans retained message/reply words once, including archives; never asks, cards, errors or revoked threads',async()=>{
  const s=await fixture(),t=s.addThread(),archived=s.addThread('th:archive',{archived:s.clock.now()}),revoked=s.addThread('th:revoked',{member:'gone'});
@@ -80,4 +86,30 @@ it('a failed scan leaves no marker, retries safely, and shutdown drains a suspen
  const g=gate(),again=await s.restart({...s.base,open:g.open});await g.began;let closed=false;const closing=again.close().then(()=>{closed=true;});
  await Promise.resolve();expect(closed).toBe(false);g.release();await closing;expect(s.marker()).toBeUndefined();
  expect(await (await s.restart()).referencesReady).toBe(true);expect(refsOf(s.app.db,t.id).map(r=>r.ref)).toEqual(['t-2','t-1']);
+});
+it('production next startup and application shutdown drain retained-history crypto before closing SQLite',async()=>{
+ const s=await fixture(),t=s.addThread();s.add(t,'t-1');const g=gate();
+ let drained=false,enteredClose!:()=>void;const closeEntered=new Promise<void>(r=>enteredClose=r);
+ vi.spyOn(cryptoModule,'loadKey').mockResolvedValue({...s.base,open:async b=>{try{return await g.open(b);}finally{drained=true;}}});
+ const install=commsModule.installComms;
+ vi.spyOn(commsModule,'installComms').mockImplementation(o=>{const c=install(o),close=c.close.bind(c);vi.spyOn(c,'close').mockImplementation(()=>{enteredClose();return close();});return c;});
+ const app=await s.next();await g.began;expect(s.marker()).toBeUndefined();
+ const closeDb=app.db.close.bind(app.db);vi.spyOn(app.db,'close').mockImplementation(()=>{expect(drained).toBe(true);return closeDb();});
+ const closing=app.close();await closeEntered;
+ expect(app.db.open).toBe(true);expect(drained).toBe(false);
+ g.release();await closing;expect(app.db.open).toBe(false);
+});
+it('work calls and live subscriptions never reopen retained words after startup',async()=>{
+ const s=await fixture(),t=s.addThread();s.add(t,'t-1');const open=vi.fn(s.base.open);
+ expect(await s.start({...s.base,open}).referencesReady).toBe(true);expect(open).toHaveBeenCalledTimes(1);
+ open.mockImplementation(async()=>{throw new Error('view opened history');});
+ expect(await s.app.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.work',{thread:t.id},'view',true)).toMatchObject({ok:true});
+ const ws=new WebSocket(s.app.url.replace('http','ws')+'/live');await once(ws,'open');
+ try {
+  const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'threadWork',scope:t.id}));
+  expect(JSON.parse(String((await initial)[0]))).toMatchObject({kind:'set',type:'threadWork',records:[{id:t.id}]});
+  const changed=once(ws,'message');s.app.live.changed([{type:'thread',id:t.id}]);
+  expect(JSON.parse(String((await changed)[0]))).toMatchObject({kind:'put',type:'threadWork',record:{id:t.id}});
+  expect(open).toHaveBeenCalledTimes(1);
+ } finally {ws.terminate();}
 });
