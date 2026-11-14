@@ -56,7 +56,9 @@ they do not adopt imported work.
 
 The offline importer marks only unscoped stored-prompt schedules without
 named-person, unresolved-steering, other-origin or capability hints as eligible;
-file/lane schedules are excluded. Recovery copies no archived words, Viewer,
+file/lane schedules are excluded. The supported archive shape contains only
+`at`, `days`, `prompt`, `note`, `for`, `for_why` and `origin`; unknown fields
+refuse eligibility, even when false. Recovery copies no archived words, Viewer,
 principal, conversation or capability. A linked firing or uncertain occurrence
 must be reconciled first; definitely unstarted linked occurrences are cancelled
 in the same transaction. Unmarked historical imports are refused rather than

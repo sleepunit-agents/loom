@@ -15,10 +15,13 @@ export const legacyClockAgentFiles = ['spool.jsonl', 'schedules.json', 'paused',
 const importedBy: Viewer = { kind: 'runner', id: 'clock-import:unverified' };
 /** Archived hints only exclude recovery; they never establish an owner. */
 function plainSchedule(r: Row, agent: string): boolean {
-  return [undefined, '-', 'owner'].includes(r.for as string | undefined)
+  return Object.keys(r).every(k => ['at','days','prompt','note','for','for_why','origin'].includes(k))
+    && typeof r.prompt === 'string' && !!r.prompt.trim()
+    && (r.note === undefined || typeof r.note === 'string')
+    && (r.days === undefined || typeof r.days === 'string')
+    && [undefined, '-', 'owner'].includes(r.for as string | undefined)
     && [undefined, 'none'].includes(r.for_why as string | undefined)
     && [undefined, `agent:${agent}`].includes(r.origin as string | undefined)
-    && ['prompt_file','member','project','for_people','authorship','principal','conversation','service','model','slot','lane','continuation','approval','place','local_approval','standing','standing_target','standing_digest','delivery','deliver_place','on','_firing'].every(k => r[k] === undefined)
     && !String(r.prompt ?? '').includes('<!-- house: local -->');
 }
 function work(r: Row, agent: string): Work {

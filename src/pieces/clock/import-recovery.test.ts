@@ -69,7 +69,7 @@ it.each([{state:'held',hold:'uncertain'},{state:'firing',hold:undefined},{state:
  expect(wakes(s.app.db).find(w=>w.id===id)).toMatchObject({state:'cancelled'});
  expect(wakes(s.app.db).filter(w=>w.state==='pending')).toHaveLength(1);
 });
-it.each([{prompt:undefined,prompt_file:'routines/night.md'},{origin:'person:pollock'},{origin:'agent:other'},{for:'person:pollock'},{for_why:'steered'},{for_why:'unverified'},{for_why:'other-agent'},{authorship:{principal:{for:'pollock'}}},{principal:{for:'pollock'}},{conversation:'old'},{service:'old'},{member:'jonathan'},{project:'pond'},{for_people:['pollock']},{lane:'daily'},
+it.each([{credential:'fixture-saved-token'},{private:true},{future_capability:false},{note:42},{days:42},{prompt:undefined,prompt_file:'routines/night.md'},{origin:'person:pollock'},{origin:'agent:other'},{for:'person:pollock'},{for_why:'steered'},{for_why:'unverified'},{for_why:'other-agent'},{authorship:{principal:{for:'pollock'}}},{principal:{for:'pollock'}},{conversation:'old'},{service:'old'},{member:'jonathan'},{project:'pond'},{for_people:['pollock']},{lane:'daily'},
  {model:'saved'},{slot:'saved'},{continuation:'saved'},{approval:'saved'},{place:'saved'},{standing:true},
  {prompt:'<!-- house: local -->\nlocal words'},{_firing:true}])('does not recover archived capability or private/person hints: %j',async raw=>{
  const s=await setup(raw),before=schedules(s.app.db);
