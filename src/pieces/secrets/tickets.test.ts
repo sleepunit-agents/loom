@@ -1,4 +1,4 @@
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -194,4 +194,76 @@ it('does not burn the pending binding when admission itself rolls back',async()=
  expect(()=>f.tickets.admit(f.viewer,'API',request)).toThrow();
  f.app.db.exec('DROP TRIGGER fail_pending');const t=f.tickets.admit(f.viewer,'API',request);
  expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);expect(f.tickets.claim(t.id)?.pendingId).toBe(request.id);
+});
+
+
+it.each(['ack','missing-claim','lost-ack','source-failure','holder-settlement','runtime','grant','policy','expiry'] as const)('daemon owns one-use completion of the original admission: %s',async outcome=>{
+ const f=await setup(),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ let original:ReturnType<typeof f.tickets.claim>;
+ const holder={handTo:vi.fn(async(id:string)=>{
+  if(outcome==='missing-claim')return;
+  original=f.tickets.claim(id);expect(original).not.toBeNull();
+  if(outcome==='holder-settlement') {expect(()=>original!.finish(true)).toThrow();return;}
+  if(outcome==='source-failure') {original!.finish(false);throw Error('private-source-error');}
+  if(outcome==='lost-ack')throw Error('private-response-error');
+  if(outcome==='runtime')f.job({claimedAt:f.clock.now()+1});
+  if(outcome==='grant') {const {expiresAt:_,...revoke}=f.grant;f.call('secrets.revoke',revoke);}
+  if(outcome==='policy')f.call('secrets.policy',{default:'never',secrets:{}});
+  if(outcome==='expiry')f.clock.advance(30_000);
+ })};
+ const t=f.tickets.admitHandoff(f.viewer,'API',request,holder),claim=vi.spyOn(f.tickets,'claim');
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);claim.mockClear();
+ const success=outcome==='ack'||outcome==='holder-settlement';
+ if(success)await t.dispatch();else await expect(t.dispatch()).rejects.toThrow(/^Secret handoff unavailable$/);
+ expect(holder.handTo).toHaveBeenCalledExactlyOnceWith(t.id);
+ expect(claim).toHaveBeenCalledTimes(outcome==='missing-claim'?0:1);
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(t.id)).toEqual({state:success?'released':['grant','policy'].includes(outcome)?'revoked':'uncertain'});
+ expect(original?.current()??false).toBe(false);
+ await expect(t.dispatch()).rejects.toThrow();expect(holder.handTo).toHaveBeenCalledTimes(1);
+ expect(f.tickets.claim(t.id)).toBeNull();
+ expect(()=>f.tickets.admit(f.viewer,'API',request)).toThrow();
+});
+it('burns an undispatched admission if its original Runtime assignment changes before dispatch',async()=>{
+ const f=await setup(),holder={handTo:vi.fn(async()=>{})};
+ const t=f.tickets.admitHandoff(f.viewer,'API',{id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}},holder);
+ f.job({state:'done'});await expect(t.dispatch()).rejects.toThrow();
+ expect(holder.handTo).not.toHaveBeenCalled();expect(f.tickets.claim(t.id)).toBeNull();
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets').get()).toEqual({state:'uncertain'});
+});
+it('captures the configured holder capability and rejects overlapping dispatch without a second IO',async()=>{
+ const f=await setup();let release!:()=>void,entered!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;});const wait=new Promise<void>(r=>{release=r;});
+ const holder={handTo:vi.fn(async(id:string)=>{expect(f.tickets.claim(id)).not.toBeNull();entered();await wait;})};
+ const t=f.tickets.admitHandoff(f.viewer,'API',{id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}},holder);
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ const original=holder.handTo;holder.handTo=vi.fn(async()=>{throw Error('replacement');});
+ const dispatch=t.dispatch();await ready;await expect(t.dispatch()).rejects.toThrow();release();await dispatch;
+ expect(original).toHaveBeenCalledExactlyOnceWith(t.id);expect(holder.handTo).not.toHaveBeenCalled();
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets').get()).toEqual({state:'released'});
+});
+it('never turns a staging hold into delivery or success and refuses dispatch within a transaction',async()=>{
+ const f=await setup(),holder={handTo:vi.fn(async(id:string)=>{expect(f.tickets.claim(id)).toBeNull();throw Error('held');})};
+ const t=f.tickets.admitHandoff(f.viewer,'API',{id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}},holder);
+ let rejected!:Promise<void>;f.app.db.transaction(()=>{rejected=t.dispatch();})();
+ await expect(rejected).rejects.toThrow(/^Secret handoff unavailable$/);
+ expect(holder.handTo).not.toHaveBeenCalled();
+ await expect(t.dispatch()).rejects.toThrow();
+ expect(f.app.effects!.status(`secrets:handoff:${t.id}`)).toBe('due');
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets').get()).toEqual({state:'uncertain'});
+ f.release(t.id);expect(f.tickets.claim(t.id)).toBeNull();await expect(t.dispatch()).rejects.toThrow();
+ expect(holder.handTo).toHaveBeenCalledTimes(1);
+});
+it('does not retry a consumed original completion when persistence fails after holder acknowledgement',async()=>{
+ const f=await setup(),holder={handTo:vi.fn(async(id:string)=>{
+  expect(f.tickets.claim(id)).not.toBeNull();
+  f.app.db.exec("CREATE TRIGGER fail_completion BEFORE UPDATE ON secrets_tickets BEGIN SELECT RAISE(ABORT,'synthetic-private-error'); END");
+ })};
+ const t=f.tickets.admitHandoff(f.viewer,'API',{id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}},holder);
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ await expect(t.dispatch()).rejects.toThrow(/^Secret handoff unavailable$/);
+ f.app.db.exec('DROP TRIGGER fail_completion');
+ expect(f.tickets.claim(t.id)).toBeNull();await expect(t.dispatch()).rejects.toThrow();
+ expect(holder.handTo).toHaveBeenCalledTimes(1);expect(f.app.effects!.status(`secrets:handoff:${t.id}`)).toBe('started');
+ // Restart recovery already marks interrupted started effects uncertain; a
+ // persistence error cannot authorize reconstruction of this consumed closure.
 });

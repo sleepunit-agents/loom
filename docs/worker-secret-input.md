@@ -88,3 +88,26 @@ cancellation retiring the claim, and a lost worker acknowledgement retiring it
 uncertain even when the original stream received bytes. Trusted admission,
 standalone runner-owned input creation, daemon completion, production capacity
 and staging/value-free accounting remain prerequisites to activation.
+
+
+### Daemon-owned completion (unactivated)
+
+`secretTickets.admitHandoff(viewer, name, originalPending, configuredHolder)`
+returns the original central ticket metadata plus a one-use `dispatch()` closure.
+Retain that closure separately from the worker's original pending input. Supply
+an owner-configured pinned `localHolderHandoff` client, never a caller's endpoint
+or callback. The holder claims once through the existing authenticated authority;
+the daemon retains that exact original claim for completion. For these admissions
+the holder can only abandon, not settle success. The dispatch closure alone
+settles success after the complete authenticated empty holder acknowledgement and
+a synchronous check of the original central claim. Missing/failed responses,
+including a lost holder acknowledgement after a successful worker write, retire
+the original claim as uncertain without claiming again or retrying delivery.
+Early failure before claim also burns the original admission. Failed current
+proofs and staging holds cannot be overridden by a successful response.
+
+This API is not wired into daemon startup or a public operation. Real trusted
+worker admission transport and standalone runner-owned dedicated input creation
+remain prerequisites, along with production tombstone lifecycle/capacity and
+staging/value-free accounting evidence. Existing legacy `admit`/claim components
+remain unactivated and retain their prior holder-owned settlement behavior.
