@@ -78,7 +78,7 @@ describe('unregistered Slack first DM open with explicit fake recipient owner',(
     const f=fixture();f.request.mockResolvedValueOnce(Response.json({ok:true,user:{...human,...patch}}));
     await expect(f.open()).rejects.toEqual(Error(uncertain));expect(f.request).toHaveBeenCalledOnce();
   });
-  it.each([null,[],{}, {id:'D2'}, {...channel,id:'G2'}, {...channel,user:'U3'}, {...channel,is_im:false}, {...channel,is_mpim:true}, {...channel,is_org_shared:true}, {...channel,is_ext_shared:true}])('never returns wrong or incomplete DM evidence %j',async value=>{
+  it.each([null,[],{}, {id:'D2'}, {...channel,id:'G2'}, {...channel,user:'U3'}, {...channel,is_im:false}, {...channel,is_mpim:true}, {...channel,is_org_shared:true}, {...channel,is_ext_shared:true}, {...channel,is_mpim:'false'}, {...channel,is_org_shared:undefined}, {...channel,is_org_shared:'false'}, {...channel,is_ext_shared:null}])('never returns wrong or incomplete DM evidence %j',async value=>{
     const f=fixture();f.request.mockImplementation(async url=>Response.json(String(url).endsWith('users.info')?{ok:true,user:human}:{ok:true,channel:value}));
     await expect(f.open()).rejects.toEqual(Error(uncertain));expect(f.request).toHaveBeenCalledTimes(2);
   });

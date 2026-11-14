@@ -68,8 +68,9 @@ export function slackOpen(input: Venue, recipient: SlackRecipient, secrets: Secr
           || (user.is_stranger !== undefined && user.is_stranger !== false)) throw failed();
         const {channel} = await call('conversations.open',{users:bound.user,return_im:'true'});
         if (!object(channel) || typeof channel.id !== 'string' || !/^D[A-Z0-9]{1,199}$/.test(channel.id)
-          || channel.is_im !== true || channel.user !== bound.user || channel.is_mpim === true
-          || channel.is_org_shared === true || channel.is_ext_shared === true) throw failed();
+          || channel.is_im !== true || channel.user !== bound.user
+          || (channel.is_mpim !== undefined && channel.is_mpim !== false)
+          || channel.is_org_shared !== false || (channel.is_ext_shared !== undefined && channel.is_ext_shared !== false)) throw failed();
         return {channel:channel.id};
       } catch { throw failed(); }
     },
