@@ -482,6 +482,10 @@ async function proveNextComms(browser:Browser,webRoot:string) {
    expect(JSON.stringify(value(await post(input.credential,'runtime.readConversation',{})))).toContain(`${inbound} follow-up`);
    expect(value<{jobs:string[]}>(await post(runner,'runtime.claimableJobs',{})).jobs).toEqual([]);
    if(kind==='filed') {
+    const sealed=value<{ref:string}>(await post(input.credential,'runtime.askQuestion',{id:'inline-question',question:{ask:'Which fixture should I check next?',why:'Your answer stays in this private thread.',answers:'words'}}));
+    for(const page of [a,b])await expect.poll(()=>page.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(1);
+    await b.getByRole('textbox',{name:'Your private reply',exact:true}).fill('An unsaved private answer');
+    expect(await b.evaluate(()=>JSON.stringify(localStorage))).not.toContain('An unsaved private answer');
     const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]) {
      await b.setViewportSize({width,height:900});
@@ -504,6 +508,10 @@ async function proveNextComms(browser:Browser,webRoot:string) {
      await expect.poll(()=>b.locator('.comms-work-strip').isVisible()).toBe(width<1920);
      await b.screenshot({path:join(shots,`comms-next-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
+    await b.getByRole('button',{name:'Send private reply',exact:true}).click();
+    for(const page of [a,b]){await expect.poll(()=>page.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(0);await expect.poll(()=>page.getByText('An unsaved private answer',{exact:true}).count()).toBe(1);}
+    expect(await socket(a,'attention.get',{id:sealed.ref})).toMatchObject({ok:true,value:{state:'answered'}});
+    for(const table of ['attention_asks','core_operations']){const stored=JSON.stringify(app.db.prepare(`SELECT * FROM ${table}`).all());expect(stored).not.toContain('Which fixture should I check next?');expect(stored).not.toContain('An unsaved private answer');}
    }
    expect(await post(runner,'runtime.finishJob',{job,state:'done'})).toMatchObject({ok:true});
    expect(await post(input.credential,'runtime.readConversation',{})).toMatchObject({ok:false});
