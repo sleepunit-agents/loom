@@ -1,7 +1,7 @@
 /** Trusted job lifecycle. The worker executes; this service only changes records.
  * External machine identity is checked at the API door before calling it. */
 import { randomUUID } from 'node:crypto';
-import { and, asc, count, eq, inArray, ne } from 'drizzle-orm';
+import { and, asc, eq, inArray, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs } from '../core/data/schema.js';
 
@@ -81,21 +81,23 @@ export class Jobs {
   }
 
   /** Only a failure before started() creates a retry: initial attempt + 3 retries.
-   * Every retry points to the original attempt and keeps its snapshot. */
+   * Every successor points to its immediate predecessor and keeps its snapshot. */
   finish(id: string, box: string, exitCode: number, logTail = ''): { job: Job; retry?: Job } {
     return this.db.transaction(() => {
       const before = this.assigned(id, box, ['starting', 'running', 'waiting']);
       const at = this.now();
       const job = this.end(before, before.state === 'starting' || exitCode !== 0 ? 'failed' : 'done', { exitCode, logTail: logTail.slice(-16_384), endedAt: at });
       if (before.state !== 'starting') return { job };
-      const original = before.retryOf ?? before.id;
-      // All attempts in this family share one durable budget, even when the
-      // service restarts or the next attempt runs on another worker.
-      const retries = this.db.select({ total: count() }).from(jobs).where(eq(jobs.retryOf, original)).get()!.total;
-      if (retries >= 3) return { job };
+      let depth = 0, ancestor = before;
+      const seen = new Set([id]);
+      while (ancestor.retryOf) {
+        if (seen.has(ancestor.retryOf)) throw new Error('Cyclic job retries');
+        seen.add(ancestor.retryOf); ancestor = this.get(ancestor.retryOf); depth++;
+        if (depth >= 3) return { job };
+      }
       const { id: _id, ...snapshot } = before;
       const retry = this.db.insert(jobs).values({ ...snapshot, id: `job-${randomUUID()}`, state: 'queued', box: null,
-        retryOf: original, retryAt: new Date(Date.parse(at) + 1000 * 2 ** retries).toISOString(), queuedAt: at,
+        retryOf: id, retryAt: new Date(Date.parse(at) + 1000 * 2 ** depth).toISOString(), queuedAt: at,
         claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, logTail: null,
       }).returning().get();
       for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
