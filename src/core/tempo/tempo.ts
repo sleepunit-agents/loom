@@ -18,12 +18,14 @@ export interface TempoOptions {
   /** Commit a synchronous built-in operation on this same database. */
   operation(name: string, trigger: Trigger, occurrence: string): void;
   instructions?(file: string): string;
+  /** Read Changes' persisted occurrence revision during source recovery. */
+  changeRevision?(id: string): string | undefined;
   /** Publish committed table changes to the generated query subscriptions. */
   changed?(): void;
 }
 
 export function createTempo(db: DataDatabase, clock: Clock, options: TempoOptions) {
-  const settled = new SettledInbox(db, clock, options.admit);
+  const settled = new SettledInbox(db, clock, options.admit, options.changed);
   const sweep = new Sweep(clock, delivery => {
     const conversation = delivery.who.kind === 'agent' ? options.conversations.open({ agent: delivery.who.id, venue: 'wake', place: `sweep:${delivery.who.id}`, label: 'The sweep' }).id : undefined;
     options.conversations.send({ toKind: delivery.who.kind, to: delivery.who.id, conversation, source: 'notice', sourceId: delivery.id, fromKind: 'schedule', words: delivery.words });
@@ -43,10 +45,11 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
     instructions: options.instructions,
     changed() { settled.changed(); options.changed?.(); },
   });
+  const sources = new TempoSources(db, engine);
   return {
-    triggers: engine, inbox: settled, volume: settled.volume, sweep, sources: new TempoSources(db, engine),
+    triggers: engine, inbox: settled, volume: settled.volume, sweep, sources,
     /** Start after all sweep contributors and operation targets are installed. */
-    start() { engine.tick(); },
+    start() { sources.recover(options.changeRevision); engine.tick(); },
     /** Call after committed Inbox writes or a runtime capacity change. */
     changed() { settled.changed(); options.changed?.(); },
     close() { engine.close(); settled.close(); },

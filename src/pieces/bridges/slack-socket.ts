@@ -17,7 +17,7 @@ export interface SlackSocketOptions {
   beforeConnect(): boolean;
   /** Resolves only after durable receipt, even for a duplicate envelope.
    * Must durably retain or reject the payload before resolving. */
-  receive(payload: Json): Promise<void>;
+  receive(payload: Json, raw: Buffer): Promise<void>;
   request?: typeof fetch;
   socket?: (url: string) => Socket;
 }
@@ -119,7 +119,7 @@ export function slackSocket(options: SlackSocketOptions): { close(): Promise<voi
             if (closed || epoch !== generation) return;
             if (frame.type === 'events_api') {
               if (!object(frame.payload)) throw Error();
-              await options.receive(frame.payload);
+              await options.receive(frame.payload, bytes);
             } else if (frame.type !== 'interactive' && frame.type !== 'slash_commands') throw Error();
             // Unsupported interactive/slash payloads are deliberately consumed.
             // Never ACK a failed write or work finishing on an obsolete socket.

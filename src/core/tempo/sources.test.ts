@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
 import { expect, it } from 'vitest';
 import { createDataSchema } from '../data/database.js';
-import { agents, approvals, changes, inbox, jobs, members, secretRequests, secrets } from '../data/schema.js';
+import { agents, approvals, changes, inbox, jobs, members, secretRequests, secrets, triggers } from '../data/schema.js';
 import { TempoSources } from './sources.js';
 
 it('reports only durable answers and terminal jobs with repeatable namespaced identities', () => {
@@ -36,6 +36,16 @@ it('reports only durable answers and terminal jobs with repeatable namespaced id
     ]);
     expect(new Set(events.map(e => e[2])).size).toBe(4);
     const first = events.slice();
+    for (const [id, sourceKind, watches] of [
+      ['a', 'answer', 'approval:same'], ['q', 'answer', 'question:same'],
+      ['s', 'answer', 'secret-request:same'], ['j', 'job', 'job:same'],
+      ['duplicate', 'answer', 'approval:same'],
+      ['wrong-kind', 'job', 'approval:same'], ['missing', 'answer', 'question:missing'],
+      ['stopped', 'answer', 'approval:stopped'],
+    ] as const) db.insert(triggers).values({ id, sourceKind, watches, ownerKind: 'household', targetKind: 'inbox', toKind: 'agent', to: 'art', lifespan: 'once', note: id, enabled: id !== 'stopped', state: 'standing', createdAt: at, changedAt: at }).run();
+    sources.recover();
+    expect(events.slice(4)).toEqual([first[1], first[0], first[2], first[3]]);
+    events.splice(4);
     db.update(approvals).set({ state: 'used', usedAt: at }).where(eq(approvals.id, 'same')).run();
     db.update(secretRequests).set({ state: 'revoked' }).where(eq(secretRequests.id, 'same')).run();
     sources.question('same'); sources.approval('same'); sources.secret('same'); sources.job('same');
@@ -70,6 +80,12 @@ it('distinguishes changes at the same source timestamp and repeats an unchanged 
     db.update(changes).set({ checks: 'running' }).where(eq(changes.id, 'pr')).run();
     sources.change('pr', 'sync-3');
     expect(events[3][2]).not.toEqual(events[0][2]);
+    db.insert(triggers).values({ id: 'watch', sourceKind: 'pull-request', watches: 'change:pr', ownerKind: 'household', targetKind: 'operation', target: 'test', lifespan: 'until-stopped', note: 'Change', enabled: true, state: 'standing', createdAt: at, changedAt: at }).run();
+    sources.recover();
+    sources.recover(() => undefined);
+    expect(events).toHaveLength(4);
+    sources.recover(id => id === 'pr' ? 'sync-3' : undefined);
+    expect(events[4]).toEqual(events[3]);
     expect(() => sources.change('pr', '')).toThrow('durable source revision');
   } finally { client.close(); }
 });
