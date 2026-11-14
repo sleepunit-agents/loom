@@ -1466,3 +1466,27 @@ boundary and t-2208's final move acceptance. Do not activate on the strength of
 this migration alone. Whole-path staging/value-free accounting, public/granted-get parity,
 remaining Settings history, owner-encrypted holder recovery, and the final
 old-to-new/move/leak/import ledger remain open before activation.
+
+### Dedicated handoff usage accounting
+
+The original central ticket claim persists a `secret.use` attempt before it can
+return holder authority. The entry contains only name, `issue`, original agent,
+job/service scope and daemon time. Staging denial creates no usage entry; failed
+usage admission burns the claim/effect before holder access. Completion counts a
+release only after the original current claim receives authenticated delivery
+acknowledgement. Abandonment or lost authority records failure; interrupted or
+failed final audit persistence leaves an unconfirmed started entry and cannot be
+retried through that consumed proof. An acknowledged delivery counts even if the
+consumer command later fails: Runtime command completion remains independent.
+
+The supervisor fixture also injects audit admission and final-settlement storage
+failures through the real holder path: admission failure prevents holder read and credential delivery;
+failed final persistence remains unconfirmed and the original owner cannot retry.
+It covers both delivery/command outcomes through the existing actual Runtime
+HTTP, persistent encrypted holder and dedicated consumer. Its staging case stops
+at held Runtime input, creates neither ticket nor usage, and cannot restart the
+same one-shot owner after release. Ticket fixtures separately release the secret
+read hold and verify original scope, one completion, admission persistence failure,
+failed settlement and loss of authority. This does not activate the source root,
+implement upgrade/rollback enforcement or complete the remaining parity, Settings,
+recovery and final move duties above.

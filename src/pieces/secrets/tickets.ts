@@ -7,6 +7,7 @@ import { isClosing, type Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
 import type { Sharing, Viewer } from '../../core/index.js';
 import { runtimeHouseDestination, type HouseDestination } from '../runtime/role.js';
+import { beginSecretUsage } from './usage.js';
 import { grantId } from './grant-id.js';
 import { secretName } from './input.js';
 import { authenticatedHolderDispatch, type localHolderHandoff } from './holder-handoff.js';
@@ -104,6 +105,18 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
           const fresh = read(id);
           if (!fresh || !valid(fresh,d,'admitted') || app.db.prepare("UPDATE secrets_tickets SET state='claimed' WHERE id=? AND state='admitted'").run(id).changes !== 1) throw failed();
         })();
+        let usage: ReturnType<typeof beginSecretUsage>;
+        try {
+          usage = beginSecretUsage(app.db,app.live,t.name,'issue',{kind:'agent',id:d.agent},app.operations.clock.now(),
+            {house:d.job,...(d.service === undefined ? {} : {service:d.service})});
+        } catch {
+          // No holder can receive a claim without a durable value-free attempt.
+          // Burn the original claim/effect rather than retrying audit admission.
+          retireProof(id);
+          app.db.prepare("UPDATE secrets_tickets SET state='uncertain' WHERE id=? AND state='claimed'").run(id);
+          effects.finish(effect(id),false);
+          throw failed();
+        }
         let settled = false;
         const owned=daemonOwned.has(id);
         const original = Object.freeze({name:t.name, destination:d, ...(pending.has(id)?{pendingId:pending.get(id)!}:{}),
@@ -126,6 +139,7 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
               app.db.prepare("UPDATE secrets_tickets SET state=? WHERE id=? AND state='claimed'")
                 .run(certain ? 'released' : 'uncertain',id);
               effects.finish(effect(id),certain);
+              usage.finish(certain ? 'released' : 'failed');
             } catch { throw failed(); }
           },
         });
