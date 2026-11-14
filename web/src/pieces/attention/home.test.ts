@@ -238,7 +238,7 @@ it('fences late conversation summaries after a thread feed loses access or chang
 it('shows and counts a represented source approval once through the actual Home path',async()=>{
   const approval=ask('approval',{sourceManaged:true,source:{kind:'approval',id:'a-12345678'}});
   const wait=ask('wait',{source:{kind:'conversation',id:'cv-one'},waits_on:{approval:'a-12345678'}});
-  f.snapshots['attention.ask']=live([approval,wait]);await draw();
-  expect(text()).toContain('Question wait');expect(text()).not.toContain('Question approval');
+  f.snapshots['attention.ask']=live([approval,wait,{...wait,id:'another-wait',createdAt:2,ask:'Another copy of this approval'}]);await draw();
+  expect(text()).toContain('Question wait');expect(text()).not.toContain('Question approval');expect(text()).not.toContain('Another copy of this approval');
   expect(tree!.root.findAllByType('h2').map(words)).toContain('Needs you · 1');
 });

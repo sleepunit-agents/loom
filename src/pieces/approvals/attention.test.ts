@@ -164,3 +164,26 @@ it('hides stale source projections when startup reconciliation is denied after s
     expect(s.ask()).toMatchObject({ok:true,value:{state:'resolved',member:'jonathan',project:'other'}});
   }finally{warn.mockRestore();}
 });
+
+it('keeps private source words out of filing and read-mark retry results after a real window decision',async()=>{
+  const s=await setup();s.seed(card({member:'jonathan',ask:'Private sentinel question',why:'Private sentinel reason',if_yes:'Private sentinel yes',if_no:'Private sentinel no'}));
+  const mark=s.call('attention.markRead',{id:approvalAskId('a-12345678')});expect(mark.ok).toBe(true);
+  const answered=await s.app.operations.callAsync('socket',owner,'approvals.answer',{id:'a-12345678',action:'deny'},'owning-private-answer',true);
+  expect(answered.ok).toBe(true);expect(s.ask()).toMatchObject({ok:true,value:{state:'resolved'}});
+  const receipts=s.app.db.prepare("SELECT result FROM core_operations WHERE name IN ('approvals.reconcileAttention','attention.markRead')").all();
+  expect(receipts.length).toBeGreaterThan(0);expect(JSON.stringify(receipts)).not.toContain('Private sentinel');
+  expect(JSON.stringify(s.app.db.prepare('SELECT record FROM attention_asks').all())).not.toContain('Private sentinel');
+});
+it('holds missing source filing on denied startup while the owning card remains available',async()=>{
+  const first=await setup();first.seed();await first.app.close();closes.pop();
+  const Database=(await import('better-sqlite3')).default,db=new Database(join(first.home,'loom.db'));db.prepare('DELETE FROM attention_asks WHERE id=?').run(approvalAskId('a-12345678'));db.close();
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  try{const s=await setup(first.home,true);expect(warn.mock.calls).toEqual([['Approval filing failed (denied)']]);expect(s.ask().ok).toBe(false);expect(s.call('approvals.open',{id:'a-12345678'})).toMatchObject({ok:true,value:{open:true,mayAnswer:true}});}finally{warn.mockRestore();}
+});
+it('holds source conflicts at startup without replacing the unrelated record or hiding the owning approval',async()=>{
+  const first=await setup();first.seed();await first.app.close();closes.pop();
+  const Database=(await import('better-sqlite3')).default,db=new Database(join(first.home,'loom.db'));
+  db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify({id:approvalAskId('a-12345678'),source:{kind:'conversation',id:'unrelated'},ask:'Original unrelated ask',state:'open',createdAt:1,changedAt:1}),approvalAskId('a-12345678'));db.close();
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  try{const s=await setup(first.home);expect(warn.mock.calls).toEqual([['Approval filing failed (conflict)']]);expect(s.ask()).toMatchObject({ok:true,value:{source:{kind:'conversation',id:'unrelated'},ask:'Original unrelated ask'}});expect(s.call('approvals.open',{id:'a-12345678'})).toMatchObject({ok:true,value:{open:true,mayAnswer:true}});}finally{warn.mockRestore();}
+});

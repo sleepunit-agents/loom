@@ -132,9 +132,11 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       await b.screenshot({path:join(shots,`inbox-approval-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     raise({id:'approval-wait',source:{kind:'conversation',id:'cv-approval-wait'},project:'pond',ask:'Please decide the Inbox fix?',waits_on:{approval:approvalId}});
+    raise({id:'approval-wait-2',source:{kind:'conversation',id:'cv-approval-wait-2'},project:'pond',ask:'Another conversation about the fix?',waits_on:{approval:approvalId}});
     for(const page of [a,b]){
       await expect.poll(()=>page.locator('[data-split-row]').filter({hasText:'Please decide the Inbox fix?'}).count()).toBe(1);
       await expect.poll(()=>page.locator('[data-split-row]').filter({hasText:'Merge the Inbox source fix?'}).count()).toBe(0);
+      expect(await page.locator('[data-split-row]').filter({hasText:'Another conversation about the fix?'}).count()).toBe(0);
     }
     await a.getByRole('button',{name:'Open approval',exact:true}).click();
     await expect.poll(()=>new URL(a.url()).pathname).toBe(`/p/approvals-preview/approval/${approvalId}`);

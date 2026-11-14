@@ -228,3 +228,13 @@ it('renders one Needs-you decision for a matching approval wait while direct sou
   await draw(h(InboxApp,{path:'/p/inbox-preview/ask/source'}));
   expect(tree!.root.findAll(n=>n.props['data-split-row']!==undefined)).toHaveLength(1);expect(buttons('Needs you1')).toHaveLength(1);expect(buttons('Open approval')).toHaveLength(1);
 });
+
+it('chooses one stable conversation representative across multiple waits for the same decision',()=>{
+  const source=ask('source',{sourceManaged:true,source:{kind:'approval',id:'a-12345678'}});
+  const old=ask('a',{source:{kind:'conversation',id:'cv-a'},waits_on:{approval:'a-12345678'},createdAt:1});
+  const tied={...old,id:'b'},newer={...old,id:'c',createdAt:2};
+  expect(listedAsks([newer,tied,source,old])).toEqual([old]);
+  expect(listedAsks([old,source,tied,newer])).toEqual([old]);
+  expect(listedAsks([source,{...old,state:'resolved'},tied,newer])).toEqual([{...old,state:'resolved'},tied]);
+  expect(listedAsks([source,old,{...tied,member:'jonathan'}])).toHaveLength(2);
+});
