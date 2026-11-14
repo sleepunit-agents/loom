@@ -6,6 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {fixture} from '../../fixture.js';
 import {startLoom} from '../../foundation.js';
 import {FakeClock,type Viewer} from '../../core/index.js';
+import {HouseholdDatabase} from '../../core/household/document.js';
 import {SharingDatabase} from '../../core/household/sharing.js';
 import {signin,hash} from '../../core/signin/index.js';
 import {runtimeStore} from './store.js';
@@ -72,4 +73,16 @@ it('never caches body proof across expiry or database shutdown',async()=>{
 it('keeps the original destination through ordinary running/waiting metadata reports',async()=>{
  const f=await setup(),bound=f.read()!;f.job({state:'waiting',title:'new status'});expect(bound.current()).toBe(true);
  f.job({state:'running'});expect(bound.current()).toBe(true);
+});
+
+it('refuses retained proof after household agent removal even while the original token row remains',async()=>{
+ const f=await setup(),bound=f.read()!,household=new HouseholdDatabase(f.app.db),before=household.document()!;
+ f.app.db.transaction(()=>household.replace('',{...before,agents:before.agents.filter(agent=>agent!=='art')}))();
+ expect(f.auth.tokens.records(hash(f.token))).toHaveLength(1);expect(f.auth.token(hash(f.token))).toBeUndefined();
+ expect(bound.current()).toBe(false);expect(f.read()).toBeUndefined();
+});
+it('fences destinations synchronously when async shutdown begins, while SQLite remains open',async()=>{
+ const f=await setup(),bound=f.read()!;const pending=f.app.close();
+ expect(f.app.db.open).toBe(true);expect(bound.current()).toBe(false);expect(f.read()).toBeUndefined();
+ await pending;
 });

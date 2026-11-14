@@ -1122,3 +1122,7 @@ it does not replace the secret grant, expiry, policy, staging or authenticated
 worker sink checks. Public get and holder activation remain unavailable. The real
 runner must bind its own pending delivery sink to this exact metadata before
 Secrets can connect the complete path.
+Destination checks also require current household agent membership, even when a
+previously resolved token proof remains retained. Daemon shutdown marks a shared
+Foundation admission fence synchronously before awaiting operator/listener drains;
+new and retained destination bindings refuse throughout that interval.

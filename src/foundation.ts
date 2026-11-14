@@ -1,6 +1,6 @@
 /** Composition and in-process test harness for the new application foundation. */
 import { createServer } from 'node:http';
-import { createFoundation, httpDoor, type Foundation } from './core/app.js';
+import { createFoundation, httpDoor, beginClosing, type Foundation } from './core/app.js';
 import type { Clock } from './core/clock.js';
 import type { Authentication } from './core/live/index.js';
 import type { IncomingMessage } from 'node:http';
@@ -32,7 +32,7 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
   const release = next ? await ownHome(home) : async () => {};
   let app: Foundation;
   try { app = createFoundation({ home, clock }); } catch(e) { await release(); throw e; }
-  const closeApp = async () => { try { await closeNext(app); } finally { try { app.close(); } finally { await release(); } } };
+  const closeApp = async () => { beginClosing(app); try { await closeNext(app); } finally { try { app.close(); } finally { await release(); } } };
   let effects: OutsideEffects | undefined;
   const nextOptions: NextOptions = { home, staging, host, port, webRoot, authenticate, sharing, changes, bridges, secretAuthority, secretWrites, clockDeadmanAgents };
   if (next && listen) { await closeApp(); throw new Error("next mode owns its listener"); }
@@ -55,13 +55,13 @@ export async function startLoom({ home, clock, install, authenticate, sharing, l
         firstSignin(app, home, server.url, stdout ?? (text => process.stdout.write(text)));
       } catch (error) { await operator?.close().catch(() => {}); await server.close(); throw error; }
       let closing: Promise<void> | undefined;
-      return { ...app, effects, url: server.url, close() { return closing ??= (async () => { try { await operator!.close(); } finally { try { await server.close(); } finally { await closeApp(); } } })(); } };
+      return { ...app, effects, url: server.url, close() { beginClosing(app); return closing ??= (async () => { try { await operator!.close(); } finally { try { await server.close(); } finally { await closeApp(); } } })(); } };
     } catch (e) { await closeApp(); throw e; }
   }
   if (listen) {
     try {
       const server = await listen(app);
-      return { ...app, url: server.url, async close() { try { await server.close(); } finally { await closeApp(); } } };
+      return { ...app, url: server.url, async close() { beginClosing(app); try { await server.close(); } finally { await closeApp(); } } };
     } catch (error) { await closeApp(); throw error; }
   }
   const auth = authenticate ?? (() => undefined);

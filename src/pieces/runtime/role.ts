@@ -1,4 +1,4 @@
-import type { Foundation } from '../../core/app.js';
+import { isClosing, type Foundation } from '../../core/app.js';
 import { signin } from '../../core/signin/index.js';
 import { runtimeStore } from './store.js';
 import { currentExecution } from './control.js';
@@ -116,13 +116,16 @@ export interface HouseDestination {
 }
 export function runtimeHouseDestination(app: Foundation, sharing: () => Sharing, viewer: Viewer): HouseDestination | undefined {
   const resolve = () => {
+    if (isClosing(app)) return;
     const scope = runtimeHouseContext(app, viewer);
     if (!scope) return;
+    const access = sharing();
+    if (!Object.values(access.members).some(member => member.agents.includes(scope.agent))) return;
     const store = runtimeStore(app.db), job = store.read('job', scope.job);
     // Existing runner operations require both the assigned runner and box ids
     // to match. An imported/malformed split assignment is not a destination.
     if (!job || job.runner !== job.box || job.claimedAt === undefined || job.principalReset || job.writtenOff
-      || !currentExecution(store, job, sharing())) return;
+      || !currentExecution(store, job, access)) return;
     return { ...scope, runner: job.runner, box: job.box, claimedAt: job.claimedAt };
   };
   let bound: ReturnType<typeof resolve>;
