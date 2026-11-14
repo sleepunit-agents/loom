@@ -63,6 +63,8 @@ it('next Changes answers through real owner Approvals and keeps exact-head and c
   expect(show()).toMatchObject({ok:true,value:{group:'agent',rule:{tier:'do'}}});
   loom.db.transaction(()=>new HouseholdDatabase(loom.db).replace(home,{v:1,agents:['art'],members:[{person:'pollock',role:'owner',agents:'*'},{person:'jonathan',role:'member',agents:['art']}]}))();
   expect(await answer('yes','b'.repeat(40))).toMatchObject({ok:false,code:'denied'});
+  expect(show()).toMatchObject({ok:true,value:{agent:'art'}}); // Demotion keeps owned-agent visibility.
+  loom.db.transaction(()=>new HouseholdDatabase(loom.db).replace(home,{v:1,agents:['art'],members:[{person:'pollock',role:'owner',agents:'*'},{person:'jonathan',role:'member',agents:[]}]}))();
   expect(show()).toMatchObject({ok:false,code:'denied'});
  } finally {await loom.close();rmSync(home,{recursive:true,force:true});}
 });

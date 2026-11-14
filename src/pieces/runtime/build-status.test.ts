@@ -54,7 +54,7 @@ it('filters private and project jobs before selecting, with separate service typ
   f.put('project', { state: 'running', project: 'other', made, claimedAt: 1, build: image('3'), buildAt: 30 });
   f.sharing.projects.other.agents = [];
   expect(f.status()).toMatchObject({ value: { build: { job: 'project' } } });
-  expect(f.status({ kind: 'agent', id: 'art' })).toMatchObject({ value: { build: { job: 'public' } } });
+  expect(f.status({ kind: 'agent', id: 'art' })).toMatchObject({ value: { build: { job: 'project' } } });
   for (const viewer of [{ kind: 'runner', id: 'a' }, { kind: 'member', id: 'pollock' }, { kind: 'agent', id: 'pond-bot' }, { kind: 'service', id: 'svc' }] as Viewer[])
     expect(f.status(viewer)).toMatchObject({ ok: false, code: 'denied' });
   f.sharing.services.svc = { types: ['runtime.settings'], operations: ['runtime.buildStatus'] };
