@@ -15,6 +15,7 @@ export type Hold = <T>(effect: () => Promise<T>, facts?: EffectFacts) => Promise
 import type { Context, Operations, Viewer, Result } from '../../core/index.js';
 /** Structural subset of attention/role.ts; keep the original member and stable retry id. */
 export interface Attention {
+ privateQuestion?(ctx: Context, input: import('../attention/role.js').PrivateQuestion): Result;
  get?(viewer: Viewer, input: {id: string}): Result;
  privateReply?(ctx: Context, input: {id:string;conversation:string;agent:string;member:string;thread:string;seq:number}): Result;
  answer(viewer: Viewer, input: { id: string; answer: { kind: 'yes' | 'no' } | { kind: 'words'; text: string } }, operationId: string): Result;
@@ -52,6 +53,8 @@ export interface ReplyAnnouncement {
 }
 export interface SpawnThread { conversation: string; text: string; parent?: string; run?: string }
 export interface Comms {
+ /** Trusted source only; full Question stays encrypted, Attention receives routing metadata. */
+ ask(agent: string, thread: string, input: {id:string; question: Omit<import('../attention/role.js').Question, 'waits_on'>}): Promise<{ref:string;seq:number}>;
  /** Assigned runner confirmed this accepted message generation started. */
  confirmStart(agent: string, thread: string, seq: number, generation: number): void;
  /** Runtime proof is checked again inside the encrypted write transaction. */

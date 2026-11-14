@@ -35,7 +35,7 @@ it('returns only original joined spawn metadata while preserving imported execut
  expect(f.store.read('binding','cv-child')).toEqual(before);expect(f.store.read('job','child')).toEqual(job);
  expect(f.app.operations.has('runtime.spawnMetadata')).toBe(false);
 });
-it.each(['missing-binding','missing-job','no-job','memberless','job-member','agent','conversation','project','loom','bridge','revoked','malformed','missing-thread','duplicate-thread','deleted-thread','thread-project'] as const)('refuses %s metadata without choosing a fallback owner',async drift=>{
+it.each(['missing-binding','missing-job','no-job','memberless','job-member','agent','conversation','project','bridge','revoked','malformed','missing-thread','duplicate-thread','deleted-thread','thread-project'] as const)('refuses %s metadata without choosing a fallback owner',async drift=>{
  const f=await setup();
  f.app.db.transaction(()=>{
   const {changedAt:_,...binding}=f.store.read('binding','cv-child')!,{changedAt:__,...job}=f.store.read('job','child')!;
@@ -73,7 +73,7 @@ it.each(['job','binding'] as const)('composes the owning callback and refreshes 
  const removed=once(ws,'message');
  f.app.db.transaction(()=>{
   if(source==='job'){const {changedAt:_,...job}=f.store.read('job','child')!;f.store.put('job',{...job,member:'someone'},f.clock.now());}
-  else {const {changedAt:_,...binding}=f.store.read('binding','cv-child')!;f.store.put('binding',{...binding,venue:'loom'},f.clock.now());}
+  else {const {changedAt:_,...binding}=f.store.read('binding','cv-child')!;f.store.put('binding',{...binding,venue:'bridge:discord'},f.clock.now());}
  })();
  f.app.live.changed([{type:`runtime.${source}`,id:source==='job'?'child':'cv-child'}]);
  expect(JSON.parse((await removed)[0].toString())).toMatchObject({kind:'del',type:'thread',id:created.thread});
@@ -107,4 +107,48 @@ it('changes the composed reader version after an identical same-clock binding re
  f.app.live.changed([{type:'runtime.binding',id:binding.id}]);
  expect(composed!('cv-child')).toMatchObject({member:'jonathan',agent:'art',venue:'spawn'});
  expect(composed!('cv-child')!.version).not.toBe(before.version);
+});
+
+it('resolves an original private loom parent only through its exact owning place',async()=>{
+ const f=await setup();
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=f.store.read('binding','cv-child')!;f.store.put('binding',{...b,venue:'loom',place:'th:owner'},f.clock.now());})();
+ expect(f.read('cv-child')).toMatchObject({agent:'art',member:'jonathan',venue:'loom',label:'Private task'});
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=f.store.read('binding','cv-child')!;f.store.put('binding',{...b,place:'th:other'},f.clock.now());})();
+ expect(f.read('cv-child')).toBeUndefined();
+});
+
+it.each(['missing-thread','duplicate-thread','deleted-thread','project','member','job','revoked'] as const)('refuses private loom parent %s drift',async drift=>{
+ const f=await setup();
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...b}=f.store.read('binding','cv-child')!;
+  f.store.put('binding',{...b,venue:'loom',place:'th:owner'},f.clock.now());
+  if(drift==='missing-thread')f.app.db.prepare('DELETE FROM comms_threads').run();
+  if(drift==='duplicate-thread')saveThread(f.app.db,{...thread(f.app.db,'th:owner')!,id:'th:duplicate'});
+  if(drift==='deleted-thread')f.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('th:deleted','jonathan','art','cv-child',f.clock.now());
+  if(drift==='project')saveThread(f.app.db,{...thread(f.app.db,'th:owner')!,project:undefined});
+  if(drift==='member'||drift==='job'){const {changedAt:__,...j}=f.store.read('job','child')!;f.store.put('job',{...j,...(drift==='member'?{member:'someone'}:{conversation:'cv-other'})},f.clock.now());}
+ })();
+ if(drift==='revoked')f.setSharing({members:{someone:{agents:['art']}},projects:{}});
+ expect(f.read('cv-child')).toBeUndefined();
+});
+
+it('composes private loom parent metadata without opening ordinary conversation steps',async()=>{
+ const realInstall=commsModule.installComms;let composed:((id:string)=>StepConversation|undefined)|undefined;
+ vi.spyOn(commsModule,'installComms').mockImplementation(options=>{composed=options.conversation;return realInstall(options);});
+ const f=await setup(),before=f.store.read('job','child');
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=f.store.read('binding','cv-child')!;f.store.put('binding',{...b,venue:'loom',place:'th:owner'},f.clock.now());})();
+ expect(composed!('cv-child')).toMatchObject({member:'jonathan',agent:'art',venue:'loom'});
+ expect(await f.app.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.conversationSteps',{conversation:'cv-child'},undefined,true)).toMatchObject({ok:false,code:'denied'});
+ expect(f.store.read('job','child')).toEqual(before);
+ expect(f.app.db.prepare('SELECT * FROM runtime_inputs').all()).toEqual([]);
+ expect(f.app.db.prepare('SELECT * FROM runtime_deliveries').all()).toEqual([]);
+ const original=f.store.read('binding','cv-child')!;
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=original;f.store.put('binding',{...b,place:'th:other'},f.clock.now());})();
+ expect(composed!('cv-child')).toBeUndefined();
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=original;f.store.put('binding',b,f.clock.now());saveThread(f.app.db,{...thread(f.app.db,'th:owner')!,id:'th:duplicate'});})();
+ expect(composed!('cv-child')).toBeUndefined();
+ f.app.db.prepare('DELETE FROM comms_threads WHERE id=?').run('th:duplicate');
+ expect(composed!('cv-child')).toMatchObject({member:'jonathan',venue:'loom'});
+ f.setSharing({members:{someone:{agents:['art']}},projects:{}});
+ expect(composed!('cv-child')).toBeUndefined();
 });

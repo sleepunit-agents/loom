@@ -34,3 +34,8 @@ export function keyFor(venue: Venue, message: Message, person: string): Conversa
   const place = dm ? `dm:${person}` : group ? `group:${message.channel}` : message.thread ? `thread:${message.channel}:${message.thread}` : `channel:${message.channel}`;
   return { agent: venue.agent, who: dm ? person : place, venue: `${venue.platform}:${venue.workspace}:${place}` };
 }
+
+/** Closed status summary shared by the operation and generated client. */
+export const statusSchema = z.object({
+  mode: z.enum(['live', 'staging']), agents: z.array(z.string()), held: z.number().int().nonnegative(),
+}).strict();

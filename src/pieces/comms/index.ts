@@ -7,6 +7,7 @@ import type { WordsKey } from './crypto.js';
 import { installConversationSteps, type StepConversation } from './conversation-steps.js';
 import { threadActivity } from './thread-activity.js';
 import { spawnCreator } from './spawn.js';
+import { privateQuestionCreator } from './private-questions.js';
 import { installPrivateReplies } from './private-replies.js';
 import { installCommsWork } from './work.js';
 import { about, aboutPointer, aboutIdentity, attachedText } from './about.js';
@@ -557,7 +558,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  sweep();
  void reconcileEnds();
  void reconcileDeliveries();
- return {confirmStart(agent,place,seq,generation) {
+ return {ask:privateQuestionCreator({...o,closed:()=>closed,changed:(t,seq,ref)=>{armSweep();live.changed([{type:'thread',id:t.id},{type:'message',id:messageId(t.id,seq)},{type:'attention.ask',id:ref}]);}}),confirmStart(agent,place,seq,generation) {
    const t=requireAgent(agent,place);
    const row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message' AND sender=?").get(place,seq,t.member) as MessageRow|undefined;
    if(closed||t.archived!==null||!row||!see({kind:'member',id:t.member},t)||(JSON.parse(row.record).generation??0)!==generation||!row.words||row.at+days*day<=clock.now())return;

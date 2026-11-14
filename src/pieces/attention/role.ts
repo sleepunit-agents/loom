@@ -28,6 +28,8 @@ export type AskAnswer =
   | { kind: 'yes' | 'no' | 'done' | 'dismiss' }
   | { kind: 'words'; text: string };
 export interface Ask extends RaiseAsk {
+  /** Wordless projection owned by encrypted Comms. */
+  privateQuestion?: {thread: string; seq: number};
   /** An in-process source owns application of the answer; fail closed if absent. */
   sourceManaged?: true;
   state: 'open' | 'answered' | 'resolved';
@@ -59,7 +61,16 @@ export function registerPrivateReplies(operations: Operations, reply: (ctx: Cont
   if (privateReplies.has(operations)) throw new Error('Private reply role already installed');
   privateReplies.set(operations, reply);
 }
+export interface PrivateQuestion {
+  id: string; conversation: string; agent: string; member: string; thread: string; seq: number; project?: string; answers: 'yes-no' | 'words';
+}
+const privateQuestions = new WeakMap<object, (ctx: Context, input: PrivateQuestion) => Result>();
+export function registerPrivateQuestions(operations: Operations, create: (ctx: Context, input: PrivateQuestion) => Result): void {
+  if (privateQuestions.has(operations)) throw new Error('Private question role already installed');
+  privateQuestions.set(operations, create);
+}
 export interface Attention {
+  privateQuestion(ctx: Context, input: PrivateQuestion): Result;
   privateReply(ctx: Context, input: PrivateReply): Result;
   raise(viewer: Viewer, input: RaiseAsk, operationId: string): Result;
   resolve(viewer: Viewer, input: { id: string; reason: string }, operationId: string): Result;
@@ -69,6 +80,7 @@ export interface Attention {
 }
 export function attentionRole(operations: Pick<Operations, 'call'>): Attention {
   return {
+    privateQuestion: (ctx, input) => privateQuestions.get(operations)?.(ctx, input) ?? failure('unavailable', 'Private question source is unavailable'),
     privateReply: (ctx, input) => privateReplies.get(operations)?.(ctx, input) ?? failure('unavailable', 'Private reply source is unavailable'),
     raise: (viewer, input, id) => operations.call('direct', viewer, 'attention.raise', input, id),
     resolve: (viewer, input, id) => operations.call('direct', viewer, 'attention.resolve', input, id),
