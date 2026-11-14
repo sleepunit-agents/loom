@@ -1,6 +1,8 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { startLoom } from '../../foundation.js';
@@ -19,7 +21,7 @@ async function setup(){
  const access:Sharing={members:{jonathan:{owner:true,agents:['art']},pollock:{owner:false,agents:['art']},other:{owner:false,agents:['art']}},projects:{},services:{}};
  let proof:ClockProvenance|undefined;
  const open=async()=>{
-  const app=await startLoom({home,clock,install(app){const jobs=installClock(app.db,app.operations,app.live,()=>access,{provenance:v=>v===body?proof:undefined});app.onClose(jobs.close);}});
+  const app=await startLoom({home,clock,authenticate:()=>({viewer:owner,valid:()=>true}),install(app){const jobs=installClock(app.db,app.operations,app.live,()=>access,{provenance:v=>v===body?proof:undefined});app.onClose(jobs.close);}});
   let closed=false;const close=app.close;app.close=async()=>{if(!closed){closed=true;await close();}};clean.push(app.close);return app;
  };
  const app=await open();
@@ -73,13 +75,31 @@ it('refuses private body schedules without flattening their member or writing pu
  expect(f.call('command',{agent:'art',argv:['schedule','set','daily','--at','13:17','-p','SAVED_WORDS']},body)).toMatchObject({ok:true,value:{exit:1}});
  expect(schedules(f.app.db)).toEqual([]);expect(wakes(f.app.db)).toEqual([]);
 });
-it('private schedule receipts and authorship stay private after schedule removal',async()=>{
+it.each([false,true])('private schedule receipts stay private after removal (historical marker absent: %s)',async historical=>{
  const f=await setup(),id=randomUUID();
  const windowCall=(op:string,data:object,receipt=randomUUID())=>f.app.operations.callAsync('socket',owner,'clock.'+op,data,receipt,true);
  expect(await windowCall('scheduleSet',{...input,member:'jonathan'})).toMatchObject({ok:true});
+ if(historical)f.app.db.prepare('DELETE FROM clock_meta WHERE key=?').run('private-id:'+input.id);
  expect(await windowCall('scheduleRun',{id:input.id},id)).toMatchObject({ok:true});
  expect(await windowCall('scheduleRemove',{id:input.id})).toMatchObject({ok:true});
  expect(f.call('scheduleRun',{id:input.id},owner,id)).toMatchObject({ok:false,code:'denied'});
  expect(JSON.stringify(exportDatabase(f.app.db))).not.toMatch(/SAVED_WORDS|SAVED_NOTE/);
  expect(JSON.stringify(f.call('schedules',{}))).not.toMatch(/SAVED_WORDS|authorship/);
+});
+
+it('redacts saved authorship from schedule and wake Live snapshots and updates',async()=>{
+ const f=await setup();expect(f.call('scheduleSet',input,person).ok).toBe(true);
+ const ws=new WebSocket(f.app.url.replace('http:','ws:')+'/live');await once(ws,'open');
+ try {
+  for(const type of ['schedule','wake']){
+   const frame=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type}));const [raw]=await frame;
+   const data=JSON.parse(raw.toString());expect(data.records).toHaveLength(1);expect(data.records[0].prompt).toBe('SAVED_WORDS');
+   expect(data.records[0]).not.toHaveProperty('authorship');
+  }
+  const messages:unknown[]=[];ws.on('message',raw=>messages.push(JSON.parse(raw.toString())));
+  const changed=once(ws,'message');expect(f.call('scheduleSet',{...input,prompt:'UPDATED_WORDS'}).ok).toBe(true);await changed;
+  // The schedule update is published after cancelled and new wake records.
+  const snapshot=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'schedule'}));await snapshot;
+  expect(JSON.stringify(messages)).toContain('UPDATED_WORDS');expect(JSON.stringify(messages)).not.toContain('authorship');
+ }finally{const closed=once(ws,'close');ws.terminate();await closed;}
 });

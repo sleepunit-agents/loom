@@ -14,7 +14,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, mayFilePrivateWork, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import { schema } from './schema/001.js';
-import { wakes, schedules, wake, schedule, saveWake, saveSchedule, event, paused, active, type Wake, type Work, type Schedule } from './store.js';
+import { wakes, schedules, wake, schedule, saveWake, saveSchedule, rememberPrivateId, event, paused, active, type Wake, type Work, type Schedule } from './store.js';
 import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
 import { stagingRuntime, type Runtime, type StartResult } from './dependencies/runtime.js';
 import { deskJobs, agentNext } from './desk.js';
@@ -385,6 +385,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     for (const w of wakes(db).filter(w => w.schedule === id && active(w) && w.state !== 'firing' && w.hold !== 'uncertain')) cancelLaneWork(ctx, w, reason);
   };
   const removeSchedule = (ctx: Context, s: Schedule) => {
+    rememberPrivateId(ctx, s);
     cancelOccurrences(ctx, s.id, s.laneDetails ? 'Lane changed' : 'Schedule removed'); db.prepare('DELETE FROM clock_schedules WHERE id=?').run(s.id); ctx.changed('schedule', s.id);
   };
   function setLane(ctx: Context, i: z.infer<typeof laneSetInput>) {
