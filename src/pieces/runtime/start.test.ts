@@ -502,6 +502,10 @@ it('uses real scheduled-body provenance for agent-authored six-hour self-rearm s
  const scheduled=await clockCall(body,'scheduleSet',{agent:'art',id:'art/self-rearm',at:'13:17',file:'routines/care.md',note:'schedule'},'body-schedule');
  expect(scheduled.ok).toBe(true);
  const occurrence=wakes(f.app.db).find(w=>w.schedule==='art/self-rearm')!,input={agent:'art',file:'routines/care.md',note:'self-rearm',when:`${(occurrence.due-f.clock.now())/1000}s`};
+ // The originating conversation's twenty one-off slots are full. A schedule
+ // acknowledgement must not allocate or require a twenty-first slot.
+ for(let n=0;n<20;n++)expect(await clockCall(body,'in',{agent:'art',prompt:'Independent future work',note:'capacity',when:'2d'},`body-capacity-${n}`)).toMatchObject({ok:true});
+ expect(await clockCall(body,'in',{agent:'art',prompt:'Over capacity',note:'capacity',when:'2d'},'body-over-capacity')).toMatchObject({ok:false,code:'invalid'});
  const before=wakes(f.app.db).length;
  expect(await clockCall(body,'in',input,'body-rearm')).toEqual({ok:true,value:{alreadyScheduled:true,schedule:'art/self-rearm',due:occurrence.due}});
  expect(wakes(f.app.db)).toHaveLength(before);
