@@ -4,14 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { FakeClock } from '../../core/index.js';
-import { installBridges } from './index.js';
+import { fixture as seedHome } from '../../fixture.js';
 import { bridgeFileStore, BRIDGE_FILE_RETENTION, type BridgeFileSavePermit } from './file-store.js';
 import { bridgeFilesOnce } from './file-once.js';
 const closes:(()=>Promise<void>)[]=[],roots:string[]=[];
 afterEach(async()=>{for(const close of closes.splice(0))await close();for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 async function fixture(home=mkdtempSync(join(tmpdir(),'files-once-')),at=1000){
- if(!roots.includes(home))roots.push(home);
- const clock=new FakeClock(at),app=await startLoom({home,clock,install:a=>installBridges(a,()=>({members:{},projects:{},services:{}}))});
+ if(!roots.includes(home)){roots.push(home);seedHome(home);}
+ const clock=new FakeClock(at),app=await startLoom({home,next:true,staging:true,clock,port:0,stdout:()=>{}});
  let closed=false;const close=async()=>{if(!closed){closed=true;await app.close();}};closes.push(close);
  const facts={authenticated:true,setup:true,credential:true,delivered:true,policy:true};
  // Explicit fake owning Runtime permit; no production issuer exists.
@@ -39,10 +39,10 @@ it('fetches only missing IDs and atomically associates the whole original batch'
 });
 for(const fact of ['authenticated','setup','credential','delivered','policy'] as const)it(`rechecks queued ${fact} authority even with cached bytes`,async()=>{
  const f=await fixture();let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
- const first=f.run(f.permit,async p=>{await gate;return f.fetch(p);});
+ const first=f.run({...f.permit,current:()=>true},async p=>{await gate;return f.fetch(p);});
  const p={...f.permit,delivery:'two',current:()=>f.facts[fact]};const second=f.run(p);f.facts[fact]=false;
- release();await expect(first).rejects.toThrow('Bridge file unavailable');await expect(second).rejects.toThrow('Bridge file unavailable');
- expect(f.app.db.prepare('SELECT count(*) n FROM bridges_file_deliveries').get()).toEqual({n:0});
+ release();await first;await expect(second).rejects.toThrow('Bridge file unavailable');
+ expect(f.app.db.prepare('SELECT count(*) n FROM bridges_file_deliveries').get()).toEqual({n:1});
 });
 it('does not inherit a concurrent caller proof and recovers after a failed fetch',async()=>{
  const f=await fixture();await expect(f.run(f.permit,async()=>{throw Error('private URL');})).rejects.toThrow(/^Bridge file unavailable$/);
@@ -57,9 +57,9 @@ it('refuses manifest changes, unsafe cache name changes and corrupt cached bytes
  await expect(f.run({...f.permit,delivery:'two'})).rejects.toThrow();expect(f.calls()).toBe(1);
 });
 it('does not refresh original age or revive expired deliveries, but fetches a new delivery after expiry',async()=>{
- const f=await fixture();await f.run();f.clock.advance(BRIDGE_FILE_RETENTION);
- await expect(f.run()).rejects.toThrow();expect(f.calls()).toBe(1);
- const p={...f.permit,delivery:'fresh',deliveredAt:f.clock.now()};await f.run(p);expect(f.calls()).toBe(2);expect(f.read(p).bytes.toString()).toBe('data');
+ const first=await fixture();await first.run();await first.close();const f=await fixture(first.home,1000+BRIDGE_FILE_RETENTION);
+ await expect(f.run()).rejects.toThrow();expect(f.calls()).toBe(0);
+ const p={...f.permit,delivery:'fresh',deliveredAt:f.clock.now()};await f.run(p);expect(f.calls()).toBe(1);expect(f.read(p).bytes.toString()).toBe('data');
 });
 it('erases fetched buffers and rolls back associations on post-fetch revocation',async()=>{
  const f=await fixture();await expect(f.run(f.permit,async p=>{const batch=await f.fetch(p);f.facts.policy=false;return batch;})).rejects.toThrow();
@@ -91,7 +91,7 @@ it('rejects extra fetched results before committing any bytes',async()=>{
  expect(f.app.db.prepare('SELECT count(*) n FROM bridges_files').get()).toEqual({n:0});expect(f.fetched.every(b=>b.equals(Buffer.alloc(4)))).toBe(true);
 });
 it('refuses cached bytes that expire while another missing file is being fetched',async()=>{
- const f=await fixture();await f.run();f.clock.advance(BRIDGE_FILE_RETENTION-1);
+ const first=await fixture();await first.run();await first.close();const f=await fixture(first.home,1000+BRIDGE_FILE_RETENTION-1);
  const p={...f.permit,delivery:'two',deliveredAt:f.clock.now(),files:[...f.permit.files,{...f.permit.files[0],id:'FDEF'}]};
  await expect(f.run(p,async input=>{f.clock.advance(1);return f.fetch(input);})).rejects.toThrow();
  expect(f.app.db.prepare("SELECT created FROM bridges_files WHERE file='FABC'").get()).toEqual({created:1000});
@@ -129,4 +129,12 @@ it('finishes an independent scope while another scope is still fetching',async()
  const f=await fixture();let release!:()=>void;const gate=new Promise<void>(r=>{release=r;});
  const first=f.run(f.permit,async p=>{await gate;return f.fetch(p);});
  try{await f.run({...f.permit,channel:'D2'});expect(f.calls()).toBe(1);}finally{release();await first;}
+});
+
+it('preserves the original file age on successful later-delivery reuse',async()=>{
+ const first=await fixture();await first.run();await first.close();
+ const f=await fixture(first.home,2000);const p={...f.permit,delivery:'later',deliveredAt:2000};await f.run(p);
+ expect(f.calls()).toBe(0);expect(f.app.db.prepare('SELECT created FROM bridges_files').get()).toEqual({created:1000});
+ expect(f.read(p).bytes.toString()).toBe('data');await f.close();
+ const g=await fixture(f.home,1000+BRIDGE_FILE_RETENTION);expect(()=>g.read(p)).toThrow();
 });
