@@ -9,7 +9,7 @@ import { installAttention } from './index.js';
 import { conversationId } from './conversations.js';
 import { findingId, median, dueToProgressSeconds, startAttentionRetention } from './retention.js';
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
-afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(async () => { vi.restoreAllMocks(); for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const alice: Viewer = { kind: 'member', id: 'alice' }, art: Viewer = { kind: 'agent', id: 'art' };
 const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] }, carol: { owner: false, agents: [] } }, projects: { shared: { members: ['carol'], agents: ['art'] }, restricted: { members: ['alice'], agents: [] } }, services: {
   reader: { types: ['attention.day', 'attention.finding', 'attention.turn'], operations: [] },
@@ -260,6 +260,18 @@ it('rolls back only the failing retention page, replays its receipt and retries 
       putTurn.run(`${id}:1`, id, 1, JSON.stringify({ id: `${id}:1`, conversation: id, seq: 1, at: base.at, kind: 'message' }));
     }
   })();
+  const fetched: number[] = [];
+  const prepare = app.db.prepare.bind(app.db);
+  vi.spyOn(app.db, 'prepare').mockImplementation(sql => {
+    const query = prepare(sql);
+    if (sql.startsWith('SELECT rowid AS cursor, record FROM attention_conversations')) {
+      const all = query.all.bind(query);
+      vi.spyOn(query, 'all').mockImplementation((...args: unknown[]) => {
+        const rows = all(...args); fetched.push(rows.length); return rows;
+      });
+    }
+    return query;
+  });
   const first = call('retain', {}, alice, 'page-one');
   expect(first).toEqual({ ok: true, value: { days: 1000, turns: 1000, next: 1000 } });
   const changes = vi.spyOn(app.live, 'changed');
@@ -275,4 +287,5 @@ it('rolls back only the failing retention page, replays its receipt and retries 
   app.db.exec('DROP TRIGGER fail_page');
   expect(call('retain', { after: 1000 }, alice, 'page-two')).toEqual({ ok: true, value: { days: 2, turns: 2 } });
   expect(changes).toHaveBeenCalledTimes(1);
+  expect(fetched).toEqual([1001, 2, 2]);
 });

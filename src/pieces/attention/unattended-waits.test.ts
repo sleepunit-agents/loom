@@ -244,9 +244,17 @@ it.each(['facts', 'policy', 'inventory', 'stop'] as const)('yields after 1000 ra
     else if (mode === 'inventory') grants.inventoryRead = false;
     else stopClose = app.close();
   });
+  const cancellations: ReturnType<typeof vi.fn>[] = [];
+  const at = clock.at.bind(clock);
+  vi.spyOn(clock, 'at').mockImplementation((time, fn) => {
+    const cancel = vi.fn(at(time, fn)); cancellations.push(cancel); return cancel;
+  });
   clock.advance(0);
-  if (stopClose) await stopClose;
-  else expect(resolved()).toBe(1000);
+  if (stopClose) {
+    await stopClose;
+    expect(cancellations).toHaveLength(1);
+    expect(cancellations[0]).toHaveBeenCalledTimes(1);
+  } else expect(resolved()).toBe(1000);
   const sweeps = calls.mock.calls.filter(c => c[2] === 'attention.sweepWaits');
   expect(sweeps.length).toBe(mode === 'stop' ? 1 : mode === 'inventory' ? 2 : 6);
   // First pass visits three pages; live resolutions request one fresh pass from the start.
@@ -260,10 +268,23 @@ it('bounds raw ask scans even when every record is invisible or already resolved
   const { app, call, clock } = await setup();
   const put = app.db.prepare('INSERT INTO attention_asks VALUES (?,?)');
   app.db.transaction(() => {
-    for (let n = 0; n < 1001; n++) put.run(`hidden-${n}`, JSON.stringify({ id: `hidden-${n}`, agent: 'art', member: 'jonathan', state: 'open', waits_on: { task: 't-1' }, createdAt: clock.now() }));
+    for (let n = 0; n < 1002; n++) put.run(`hidden-${n}`, JSON.stringify({ id: `hidden-${n}`, agent: 'art', member: 'jonathan', state: 'open', waits_on: { task: 't-1' }, createdAt: clock.now() }));
   })();
+  const fetched: number[] = [];
+  const prepare = app.db.prepare.bind(app.db);
+  vi.spyOn(app.db, 'prepare').mockImplementation(sql => {
+    const query = prepare(sql);
+    if (sql.startsWith('SELECT rowid AS cursor, record FROM attention_asks')) {
+      const all = query.all.bind(query);
+      vi.spyOn(query, 'all').mockImplementation((...args: unknown[]) => {
+        const rows = all(...args); fetched.push(rows.length); return rows;
+      });
+    }
+    return query;
+  });
   expect(call('attention.sweepWaits', {}, service)).toEqual({ ok: true, value: { pending: 0, resolved: 0, next: 1000 } });
   expect(call('attention.sweepWaits', { after: 1000 }, service)).toEqual({ ok: true, value: { pending: 0, resolved: 0 } });
+  expect(fetched).toEqual([1001, 2]);
 });
 
 it('revisits asks inserted behind the cursor during a multi-page pass', async () => {

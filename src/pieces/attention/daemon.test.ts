@@ -150,9 +150,17 @@ it.each(['continue', 'revoke', 'stop'] as const)('yields retention inventory aft
     if (mode === 'revoke') denied.value = true;
     if (mode === 'stop') stopClose = app.close();
   });
+  const cancellations: ReturnType<typeof vi.fn>[] = [];
+  const at = clock.at.bind(clock);
+  vi.spyOn(clock, 'at').mockImplementation((time, fn) => {
+    const cancel = vi.fn(at(time, fn)); cancellations.push(cancel); return cancel;
+  });
   clock.advance(0);
-  if (stopClose) await stopClose;
-  else expect(count()).toBe(mode === 'continue' ? 2001 : 1000);
+  if (stopClose) {
+    await stopClose;
+    expect(cancellations).toHaveLength(1);
+    expect(cancellations[0]).toHaveBeenCalledTimes(1);
+  } else expect(count()).toBe(mode === 'continue' ? 2001 : 1000);
   const sweeps = calls.mock.calls.filter(c => c[2] === 'attention.retain');
   expect(sweeps.map(c => c[3])).toEqual(mode === 'continue' ? [{}, { after: 1000 }, { after: 2000 }] : mode === 'revoke' ? [{}, { after: 1000 }] : [{}]);
   if (mode === 'revoke') {
