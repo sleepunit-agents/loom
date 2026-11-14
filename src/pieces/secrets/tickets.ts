@@ -1,5 +1,6 @@
 /** Trusted metadata-only admission. Unregistered until a real holder/runner
  * composition exists. An opaque ticket is neither a grant nor a destination. */
+import { secretInputBindingSchema, type SecretInputBinding } from '../../runtime-runner/secret-input.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { isClosing, type Foundation } from '../../core/app.js';
@@ -17,7 +18,7 @@ interface Ticket {
   state: 'admitted' | 'claimed' | 'released' | 'uncertain' | 'revoked';
 }
 const failed = () => new Error('Secret handoff unavailable');
-const identity = (d: HouseDestination) => JSON.stringify({agent:d.agent, job:d.job, runner:d.runner,
+const identity = (d: SecretInputBinding) => JSON.stringify({agent:d.agent, job:d.job, runner:d.runner,
   box:d.box, claimedAt:d.claimedAt, ...(d.service === undefined ? {} : {service:d.service})});
 const effect = (id: string) => `secrets:handoff:${id}`;
 
@@ -28,6 +29,10 @@ const effect = (id: string) => `secrets:handoff:${id}`;
  */
 export function secretTickets(app: Foundation, sharing: () => Sharing, effects: OutsideEffects) {
   const proofs = new Map<string, HouseDestination>();
+  const pending = new Map<string, string>();
+  // Bounded non-expiring tombstones: this unactivated role fails closed after
+  // 1024 bound admissions in one lifetime rather than permitting request reuse.
+  const usedPending = new Set<string>();
   const read = (id: string) => app.db.prepare('SELECT * FROM secrets_tickets WHERE id=?').get(id) as Ticket | undefined;
   const policy = () => (app.db.prepare("SELECT value FROM secrets_meta WHERE key='policy'").get() as {value:string}|undefined)?.value ?? '';
   function valid(t: Ticket, d: HouseDestination, state: Ticket['state']) {
@@ -40,16 +45,20 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
   }
   return {
     /** No operation input may supply agent, grant, job, runner, box or service. */
-    admit(viewer: Viewer, name: string): {id:string; expiresAt:number} {
+    admit(viewer: Viewer, name: string, request?: Readonly<{id:string; binding:SecretInputBinding}>): {id:string; expiresAt:number} {
       try {
         if (app.db.inTransaction || isClosing(app) || !secretName.safeParse(name).success) throw failed();
         for (const [id, d] of proofs) {
           const t = read(id);
           if (!t || !['admitted','claimed'].includes(t.state) || !valid(t,d,t.state)) proofs.delete(id);
         }
-        if (proofs.size >= 1024) throw failed();
+        if (proofs.size >= 1024 || usedPending.size >= 1024) throw failed();
         const d = runtimeHouseDestination(app,sharing,viewer);
         if (!d) throw failed();
+        // Trusted composition only: this is not operation input. Snapshot the
+        // original worker identity before admission; never rebind a ticket.
+        const pendingId = request === undefined ? undefined : z.uuid().parse(request.id);
+        if (request && (usedPending.has(pendingId!) || identity(d) !== identity(secretInputBindingSchema.parse(request.binding)))) throw failed();
         const now = app.operations.clock.now(), scope = {house:d.job, ...(d.service === undefined ? {} : {service:d.service})};
         const resource = {kind:'secret' as const,target:name};
         const candidates = [grantId(d.agent,resource),grantId(d.agent,resource,scope)];
@@ -70,6 +79,7 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
             .run(t.id,t.name,t.grant_id,t.grant_record,t.policy,t.destination,t.expires_at,t.state);
         })();
         proofs.set(t.id,d);
+        if (pendingId) {pending.set(t.id,pendingId);usedPending.add(pendingId);}
         return {id:t.id,expiresAt:t.expires_at};
       } catch { throw failed(); }
     },
@@ -86,7 +96,7 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
           if (!fresh || !valid(fresh,d,'admitted') || app.db.prepare("UPDATE secrets_tickets SET state='claimed' WHERE id=? AND state='admitted'").run(id).changes !== 1) throw failed();
         })();
         let settled = false;
-        return Object.freeze({name:t.name, destination:d,
+        return Object.freeze({name:t.name, destination:d, ...(pending.has(id)?{pendingId:pending.get(id)!}:{}),
           current() {
             try {
               const fresh = read(id);
@@ -98,7 +108,7 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
           finish(acknowledged: boolean) {
             if (app.db.inTransaction) throw failed();
             if (settled) return;
-            settled = true; proofs.delete(id);
+            settled = true; proofs.delete(id); pending.delete(id);
             try {
               const fresh = read(id);
               const certain = acknowledged === true && !!fresh && valid(fresh,d,'claimed')
