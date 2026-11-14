@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Exclude private dispatched Clock prompts and correlated Runtime/Sign-in copies from filtered exports and backups while preserving public records.
+- Next Inbox retains member-private action success/error FYI for Tasks and central answers, with read marks and an Errors folder.
 
 - Add an explicit external dedicated secret-command worker with authenticated Runtime stop/history checks and drained shutdown, reusing the Claude worker control owner.
 
@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
 - Add native-age encryption and an actual encrypted restore drill for filtered next-database images; full household file coverage and backup execution remain pending.
 - Add bounded, descriptor-pinned capture of allowlisted context documents and referenced note attachments for a future household bundle; full backup execution remains pending.
+- Add explicit continuity database snapshots with captured-notes attachment pairing for the future household bundle; encrypted full restore and execution remain pending.
 
 - Deliver sealed Comms yes/no decisions back to the owning private conversation through staged encrypted message delivery.
 - Add a filtered next-database image exporter with an independent SQLite reconstruction drill; complete encrypted household backups and execution remain pending.
@@ -34,6 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add owner-only next-mode backup configuration operations and Live status; saved configuration explicitly remains unscheduled pending the new runner.
 
 - Deliver private timed prompts through Runtime’s bound inbox, retaining member scope and current grants through runner confirmation, reads and acknowledgment.
+- Exclude private dispatched Clock prompts and correlated Runtime/Sign-in copies from filtered exports and backups while preserving public records.
 
 - Deliver stored public household lane prompts through Runtime’s scheduled inbox, with runner confirmation, authenticated reads and staging holds.
 - Add next-mode Bridges status JSON for Discord and Slack with configured agents, intake holds and explicit staging mode.

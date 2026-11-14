@@ -78,12 +78,41 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.setViewportSize({width:1280,height:900});
     await b.getByRole('button',{name:/Answered/}).click();
     await expect.poll(()=>b.locator('[data-split-row]').filter({hasText:'Continue the Attention rebuild?'}).count()).toBe(1);
+    // A meaningful public action persists once in this member's FYI across windows/reloads.
+    await b.getByRole('button',{name:/^FYI/}).click();
+    const outcomeRow=b.locator('[data-split-row]').filter({hasText:'Record answer: saved.'});
+    await expect.poll(()=>outcomeRow.count()).toBe(1);
+    await outcomeRow.click();
+    await b.getByRole('heading',{name:'Record answer: saved.',exact:true}).waitFor();
+    await b.reload();
+    await b.getByRole('heading',{name:'Record answer: saved.',exact:true}).waitFor();
+    // A refused ordinary window write creates a safe error summary, never its input/error words.
+    const rejected=await b.evaluate(()=>new Promise(resolve=>{
+      const ws=new WebSocket(`${location.origin.replace('http','ws')}/live`);
+      ws.onopen=()=>ws.send(JSON.stringify({kind:'call',request:'outcome-proof',name:'attention.answer',id:'outcome-rejected',input:{id:'absent-private-source',answer:{kind:'words',text:'Never copy these private input words'}}}));
+      ws.onmessage=event=>{const message=JSON.parse(event.data);if(message.kind==='result'&&message.request==='outcome-proof'){ws.close();resolve(message.result);}};
+    }));
+    expect(rejected).toMatchObject({ok:false});
+    await b.setViewportSize({width:1280,height:900});
+    await b.getByRole('button',{name:/^Errors/}).click();
+    await b.locator('[data-split-row]').filter({hasText:'Record answer: could not be saved.'}).click();
+    await b.getByRole('heading',{name:'Record answer: could not be saved.',exact:true}).waitFor();
+    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
+      await b.setViewportSize({width,height:900});
+      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await b.screenshot({path:join(shots,`inbox-outcome-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    expect(JSON.stringify(loom.db.prepare('SELECT * FROM attention_outcomes').all())).not.toContain('Never copy these private input words');
+    await b.setViewportSize({width:1280,height:900});
     await b.goto(`${loom.url}/p/inbox-preview/ask/private`);
     await expect.poll(()=>b.getByText('Answer this in its private conversation. Private replies stay there.').count()).toBe(1);
     expect(await yes(b).count()).toBe(0);
     const member=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
     await member.grantPermissions(['local-network-access'],{origin:loom.url});
-    const p=await member.newPage();await signIn(p,'pollock');await p.goto(`${loom.url}/p/inbox-preview`);
+    const p=await member.newPage();await signIn(p,'pollock');
+    expect(loom.operations.call('direct',{kind:'member',id:'pollock'},'attention.outcomes',{})).toEqual({ok:true,value:[]});await p.goto(`${loom.url}/p/inbox-preview`);
     await expect.poll(()=>p.locator('[data-split-row]').filter({hasText:'Review the shared Pond plan?'}).count()).toBe(1);
     expect(await p.getByText('Private conversation needs you').count()).toBe(0);
     expect(await p.getByText('Continue the Attention rebuild?').count()).toBe(0);
