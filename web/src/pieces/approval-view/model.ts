@@ -1,11 +1,17 @@
-import type { approvals, approvalRules, approvalNotices, approvalRecord } from '../../../../src/core/data/schema';
-
-export type Approval = Pick<typeof approvals.$inferSelect,
-  'id' | 'kind' | 'target' | 'what' | 'why' | 'agent' | 'project' | 'member' | 'conversation' | 'state' |
-  'ask' | 'ifYes' | 'ifNo' | 'details' | 'changeSummary' | 'askedAt' | 'decidedBy' | 'expiresAt'>;
-export type Rule = typeof approvalRules.$inferSelect;
-export type Notice = typeof approvalNotices.$inferSelect;
-export type Record = typeof approvalRecord.$inferSelect;
+// Selected query fields, matching the approved shared schema. The generated
+// browser client will provide its result type when the composition connects it.
+export interface Approval {
+  id: string; kind: 'merge' | 'command' | 'setting' | 'dangerous'; target: string;
+  what: string; why: string; agent: string; project: string | null; member: string | null;
+  conversation: string | null; state: 'pending' | 'allowed' | 'denied' | 'used' | 'withdrawn' | 'expired';
+  ask: string; ifYes: string; ifNo: string; details: string; changeSummary: string | null;
+  askedAt: string; decidedBy: string | null; expiresAt: string | null;
+}
+export interface Rule {
+  kind: Approval['kind']; scope: string; person: string; tier: 'do' | 'tell' | 'ask'; setBy: string; setAt: string;
+}
+export interface Notice { id: string; agent: string; kind: string; target: string; what: string; at: string }
+export interface Record { seq: number; at: string; event: string; approval: string; agent: string; note: string }
 export interface ApprovalSnapshot {
   status: 'loading' | 'live' | 'offline' | 'denied';
   approvals: readonly Approval[]; rules: readonly Rule[]; notices: readonly Notice[]; record: readonly Record[];
