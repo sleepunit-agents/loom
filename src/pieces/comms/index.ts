@@ -7,6 +7,7 @@ import type { WordsKey } from './crypto.js';
 import { installConversationSteps, type StepConversation } from './conversation-steps.js';
 import { threadActivity } from './thread-activity.js';
 import { spawnCreator } from './spawn.js';
+import { installPrivateReplies } from './private-replies.js';
 import { installCommsWork } from './work.js';
 import { about, aboutPointer, aboutIdentity, attachedText } from './about.js';
 import { HeldEffect, registerCommsMetadata } from './role.js';
@@ -286,6 +287,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const value=answer.value as {thread:string;seq:number};
   const t=thread(db,value.thread); if(t)void deliver(t.agent,t.id,value.seq);
  }
+ installPrivateReplies({...o,closed:()=>closed,changed:touched,after:sendAfter});
  operations.register(operation({name:'comms.open',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),
   input:z.object({agent:id,id:clientId,text,project:id.optional(),about:about.optional()}),output:ack,
   may:(v,i)=>v.kind==='member' && mayUseThread(v,{member:v.id,agent:i.agent},o.sharing()) && (!i.project || maySee(v,{project:i.project},o.sharing()) && maySee({kind:'agent',id:i.agent},{project:i.project},o.sharing())),
@@ -619,14 +621,14 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     return {thread:{id:current.id,title:current.title,archived:current.archived,working:current.working},messages};
    }};
   },
-  title(agent,place,value) {title.parse(value); const t=requireAgent(agent,place);if(closed||t.archived!==null||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');if(t.titledBy==='member')return fail('conflict','The member named this thread');t.title=value;t.titledBy='agent';saveThread(db,t);touched(t);},
-  activity(agent,place,alive) {
+  title(agent,place,value,publish) {title.parse(value); const t=requireAgent(agent,place);if(closed||t.archived!==null||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');if(t.titledBy==='member')return fail('conflict','The member named this thread');t.title=value;t.titledBy='agent';saveThread(db,t);if(publish)publish();else touched(t);},
+  activity(agent,place,alive,publish) {
    const value=z.object({at:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),tokens:z.number().int().min(0).max(1e12).optional()}).strict().parse(alive);
    const t=requireAgent(agent,place);
    if(closed||t.archived!==null||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');
    if(value.at>clock.now()+60_000||value.at<=(t.aliveAt??-1))return;
    t.aliveAt=value.at;t.aliveTokens=value.tokens??null;
-   saveThread(db,t);touched(t);
+   saveThread(db,t);if(publish)publish();else touched(t);
   },
   status(agent,place,state) {
    if(state!==undefined)z.enum(['working','done']).parse(state);

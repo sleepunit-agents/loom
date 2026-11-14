@@ -12,9 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Bridges migration skips underscore annotation keys in every legacy source map before validation/assembly and reports safe file/field diagnostics; household rehearsal includes real note shapes.
-
+- Preserve private ordinary schedule scope and bind body schedule controls and cancellation, including command receipt replay, to fresh Runtime conversation proof and current policy.
 - Add an unregistered pinned metadata ticket authority channel for the separate Secrets holder; worker delivery and public get remain unavailable.
+- Runtime: expose authenticated private conversation description, title and activity controls through the next API; keep imported and policy-held execution fenced.
 
 - Add unregistered one-use Secrets handoff tickets with durable claims, exact grant/Runtime fences and staging holds; real worker delivery remains disabled.
 
@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add an internal Runtime role for current authenticated Clock conversation provenance, retaining private scope and sender history.
 - Match imported private spawn bindings to Comms by conversation ownership, preserving job and spawn handles independently of thread ids.
 
+- Bridges migration skips underscore annotation keys in every legacy source map before validation/assembly and reports safe file/field diagnostics; household rehearsal includes real note shapes.
 - Preserve authoritative shuttle and Runtime store documents and revisions as bounded offline Bridges import evidence; do not select or apply authority.
 - Import Bridges setup from explicit completed snapshots with authoritative source resolution, disabled connections, private evidence and independent verification.
 - Import local bridge setup from household snapshots without inventing off-machine connections or Slack credentials; retain incomplete Slack and unprojectable audiences as private evidence.
@@ -96,6 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Apply next-mode Runtime owner reset and silent-work write-off cards against durable original snapshots, with atomic body/session fencing and central credential revocation.
 
+- Add a window-only encrypted Comms typed reply seam with atomic opaque Attention acknowledgement and first-answer retry fencing.
 - Fit the Comms composer to its actual next-mode tile and fold Work when the reader is narrow. Exercise ordinary, filed and attached Comms delivery through real next-mode page sessions, Runner claims and bound-body replies in the two-window browser proof.
 - Comms thread rows pin on a stationary touch or pen long press, without opening the thread; scrolling and cancelled holds leave it unchanged.
 - Reduce first-page JavaScript while keeping app screens loaded on demand.

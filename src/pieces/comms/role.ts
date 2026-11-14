@@ -11,9 +11,11 @@ export interface RuntimeDelivery {
 }
 /** The frame's staging gate must wrap every effect, including runtime delivery. */
 export type Hold = <T>(effect: () => Promise<T>, facts?: EffectFacts) => Promise<T>;
-import type { Operations, Viewer, Result } from '../../core/index.js';
+import type { Context, Operations, Viewer, Result } from '../../core/index.js';
 /** Structural subset of attention/role.ts; keep the original member and stable retry id. */
 export interface Attention {
+ get?(viewer: Viewer, input: {id: string}): Result;
+ privateReply?(ctx: Context, input: {id:string;conversation:string;agent:string;member:string;thread:string;seq:number}): Result;
  answer(viewer: Viewer, input: { id: string; answer: { kind: 'yes' | 'no' } | { kind: 'words'; text: string } }, operationId: string): Result;
 }
 export interface AgentPost {
@@ -79,9 +81,10 @@ export interface Comms {
  /** Replies with a spawn-run-<12 lowercase hex> ref keep the first report across post ids. */
  post(agent: string, thread: string, message: AgentPost): Promise<{ seq: number }>;
  deliver(agent: string, thread: string, seq: number): Promise<void>;
- title(agent: string, thread: string, title: string): void;
+ /** Registry callers supply publication to queue notification until commit. */
+ title(agent: string, thread: string, title: string, publish?: () => void): void;
  /** Monotonic body movement; never starts or extends a working turn. */
- activity(agent: string, thread: string, alive: BodyAlive): void;
+ activity(agent: string, thread: string, alive: BodyAlive, publish?: () => void): void;
  /** Optional heartbeat updates working state; omitted state only consumes stop. */
  status(agent: string, thread: string, state?: 'working' | 'done'): { stop: boolean; archived: boolean };
 }

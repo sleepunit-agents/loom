@@ -24,8 +24,9 @@ export class RecoveredWrite<T = unknown> { constructor(readonly value: T, readon
 export interface Operation<I = unknown> {
   /** Sensitive authority results must recheck current policy even on receipt replay. */
   recheckPolicy?: boolean | ((viewer: Viewer, input: I) => boolean);
-  /** Per-record private reads/writes require a real signed-in browser window. */
-  requiresWindow?(input: I): boolean;
+  /** Per-record window gate, evaluated before replay with the exact authenticated Viewer.
+   * A piece may admit an independently proved acknowledgement-only body control. */
+  requiresWindow?(input: I, viewer: Viewer): boolean;
   name: string; cli?: CliCommand; windowOnly?: boolean; input: z.ZodType<I>; output: z.ZodType; write?: boolean; doors?: Door[];
   /** Message words must never enter retry storage; these operations return an acknowledgement. */
   may(viewer: Viewer, input: I, db: Db): boolean;
@@ -143,7 +144,7 @@ export class Operations {
     if (!op.prepare && !op.windowOnly && !op.requiresWindow && !window) return this.call(door, viewer, name, input, id);
     const parsed = op.input.safeParse(input);
     if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
-    if (op.requiresWindow?.(parsed.data) && (!window || door!=='socket' || viewer.kind!=='member')) return failure('denied','A signed-in window is required');
+    if (op.requiresWindow?.(parsed.data, viewer) && (!window || door!=='socket' || viewer.kind!=='member')) return failure('denied','A signed-in window is required');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
     try {
       let receipt: Readonly<WriteReceipt> | undefined;
@@ -169,7 +170,7 @@ export class Operations {
     if ((op.windowOnly && (!window || door !== 'socket' || viewer.kind !== 'member')) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
     const parsed = op.input.safeParse(input);
     if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
-    if (op.requiresWindow?.(parsed.data) && (!window || door!=='socket' || viewer.kind!=='member')) return failure('denied','A signed-in window is required');
+    if (op.requiresWindow?.(parsed.data, viewer) && (!window || door!=='socket' || viewer.kind!=='member')) return failure('denied','A signed-in window is required');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
     const changes: Change[] = [];
     let result: Result | PreparationNeeded;
