@@ -24,7 +24,8 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | Phone bar and centered desktop ticker | Registration title, shared existing ticker renderer, owned roster/status and live Needs you count; exact Inbox navigation, appearance gear on phone; all apps stays in dock |
 | System clock and status glyphs | Member-private `household.time` carries server minutes and database timezone; desktop shows connection and working-agent glyphs. Phone retains its device status bar |
 | Boxes/backup status glyphs, piece-stat ticker items | Runtime enrollment count with unknown health; policy-filtered Tasks/Clock/Bridges/Changes records supply live counts. Backup has no new-side source and stays absent |
-| Last steps, phone Home accordion, per-app parity | Follow-up slices before owner acceptance; no invented tape steps |
+| Phone Home accordion | Under 1024px, more than four owned agents keep one full card (working open thread, ask, unread, first). Other agents use kit rows in alphabetical order, navigating to first unread/latest open thread, else Comms. Full readers/composers are unmounted, never CSS-hidden. Four or fewer retain full cards; desktop keeps all cards |
+| Last steps, per-app parity | Follow-up slices before owner acceptance; no invented tape steps |
 
 Every unavailable live feed drops its old content immediately. Roster loss removes cards; directory failure uses canonical roster names; status, ask and thread failures show unavailable words instead of stale values. Rail navigation is read-only. Approval and private ask actions stay in the owning reader.
 
