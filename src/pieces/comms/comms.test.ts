@@ -146,6 +146,57 @@ it('assigns a spawn to the owning parent member, otherwise the first explicit ag
  expect((s.app.db.prepare('SELECT member FROM comms_threads WHERE id=?').get(a.thread))).toEqual({member:'other'});
  const b=await s.comms.spawn('art',{conversation:'cv-other',text:'Unparented'});expect(s.app.db.prepare('SELECT member FROM comms_threads WHERE id=?').get(b.thread)).toEqual({member:'jonathan'});
 });
+it('uses the original metadata member for parentless spawn and refuses a different member on retry',async()=>{
+ let original='other',seals=0;
+ const s=await setup({conversation:()=>({agent:'art',venue:'spawn',version:'one',member:original}),key:k=>({...k,seal:async words=>{seals++;return k.seal(words);}})});
+ const created=await s.comms.spawn('art',{conversation:'cv-bound',text:'Original member brief'});
+ expect(s.app.db.prepare('SELECT member FROM comms_threads WHERE id=?').get(created.thread)).toEqual({member:'other'});
+ expect(await s.call('messages',{thread:created.thread},member)).toMatchObject({ok:false});
+ expect(JSON.stringify(await s.call('messages',{thread:created.thread},{kind:'member',id:'other'}))).toContain('Original member brief');
+ await s.restart();expect(await s.comms.spawn('art',{conversation:'cv-bound',text:'Retry'})).toEqual(created);
+ const before=s.app.db.prepare('SELECT * FROM comms_messages').all(),count=seals;
+ original='jonathan';await expect(s.comms.spawn('art',{conversation:'cv-bound',text:'Wrong member retry'})).rejects.toThrow('Spawn unavailable');
+ expect(seals).toBe(count);expect(s.app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(before);
+});
+for(const original of ['', 'missing', 'other'])it(`refuses incompatible original spawn member ${JSON.stringify(original)} before sealing or linking`,async()=>{
+ let seals=0;
+ const s=await setup({conversation:()=>({agent:'art',venue:'spawn',version:'one',member:original}),key:k=>({...k,seal:async words=>{seals++;return k.seal(words);}})});
+ const parent=await s.open();await s.comms.deliver('art',parent,1);
+ const cv=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(parent) as {record:string}).record).conversation;
+ const before=s.app.db.prepare('SELECT * FROM comms_messages').all(),count=seals;
+ await expect(s.comms.spawn('art',{conversation:'cv-bound',text:'Private child',parent:cv})).rejects.toThrow('Spawn unavailable');
+ expect(seals).toBe(count);expect(s.app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(before);
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:1});
+});
+it('accepts a matching original parent member and refuses conflicting ordinary parent metadata',async()=>{
+ let parentMember='other';
+ const s=await setup({conversation:id=>({agent:'art',venue:id==='cv-ordinary'?'terminal':'spawn',version:'one',member:id==='cv-ordinary'?parentMember:'other'})});
+ const opened=await s.call('open',{agent:'art',id:'bbbbbbbbbbbbbbbb',text:'Original parent'},{kind:'member',id:'other'});
+ expect(opened.ok).toBe(true);const parent=(opened as {ok:true;value:{thread:string}}).value.thread;
+ const cv=conversationOf(s.app.db,parent);
+ const child=await s.comms.spawn('art',{conversation:'cv-matched',text:'Child brief',parent:cv});
+ expect(s.app.db.prepare('SELECT member FROM comms_threads WHERE id=?').get(child.thread)).toEqual({member:'other'});
+ expect(JSON.stringify(await s.call('messages',{thread:parent},{kind:'member',id:'other'}))).toContain('cv-matched');
+ parentMember='jonathan';const before=s.app.db.prepare('SELECT * FROM comms_messages').all();
+ await expect(s.comms.spawn('art',{conversation:'cv-conflict',text:'Refused brief',parent:'cv-ordinary'})).rejects.toThrow('Spawn unavailable');
+ expect(s.app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(before);
+});
+for(const original of ['missing','other'])it(`does not fall back when original parentless member ${original} is unavailable`,async()=>{
+ let seals=0;const s=await setup({conversation:()=>({agent:'art',venue:'spawn',version:'one',member:original}),key:k=>({...k,seal:async words=>{seals++;return k.seal(words);}})});
+ s.getSharing().members.other.agents=[];
+ await expect(s.comms.spawn('art',{conversation:'cv-unavailable',text:'Private child'})).rejects.toThrow('Spawn unavailable');
+ expect(seals).toBe(0);expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:0});
+});
+for(const boundary of ['member','ownership'] as const)it(`refuses original member ${boundary} drift during spawn encryption`,async()=>{
+ let original='other',entered!:()=>void,release!:()=>void;
+ const started=new Promise<void>(r=>entered=r),wait=new Promise<void>(r=>release=r);
+ const s=await setup({conversation:()=>({agent:'art',venue:'spawn',version:'one',member:original}),key:k=>({...k,seal:async words=>{entered();await wait;return k.seal(words);}})});
+ const pending=s.comms.spawn('art',{conversation:'cv-bound',text:'Private child'});await started;
+ if(boundary==='member')original='jonathan';else s.getSharing().members.other.agents=[];
+ release();await expect(pending).rejects.toThrow('Spawn unavailable');
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:0});
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get()).toEqual({n:0});
+});
 for(const boundary of ['metadata','owner','closed','parent','archive','delete'] as const)it(`refuses an in-flight spawn after ${boundary} changes with no partial links`,async()=>{
  let pause=false,entered!:()=>void,release!:()=>void;const start=new Promise<void>(r=>entered=r),wait=new Promise<void>(r=>release=r);
  const metadata=new Map<string,{agent:string;venue:string;version:string}>([['cv-job',{agent:'art',venue:'spawn',version:'one'}]]);
@@ -385,7 +436,7 @@ it('refreshes foreground presence on unchanged reads without moving activity or 
 function conversationOf(db:import('../../core/index.js').Db,place:string):string {
  return JSON.parse((db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record).conversation;
 }
-async function setup(overrides: {recipients?:()=>{agents:readonly string[];default?:string};key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; receipt?:RuntimeDelivery['receipt']; conversation?:(id:string)=>{agent:string;venue:string;version:string}|undefined; deliver?:(message:Delivery)=>Promise<void>; end?:(conversation:string)=>Promise<void>}={}) {
+async function setup(overrides: {recipients?:()=>{agents:readonly string[];default?:string};key?:(key:WordsKey)=>WordsKey; hold?:boolean|Hold; days?:number; attention?:Attention; valid?:()=>boolean; receipt?:RuntimeDelivery['receipt']; conversation?:(id:string)=>{agent:string;venue:string;version:string;member?:string}|undefined; deliver?:(message:Delivery)=>Promise<void>; end?:(conversation:string)=>Promise<void>}={}) {
  const home=mkdtempSync(join(tmpdir(),'comms-next-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();let sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['other','jonathan'],agents:['art','pond-bot']}},services:{runtime:{types:['message','thread'],operations:[]}}};
  const deliveries:Delivery[]=[];const ends:string[]=[];let comms:Comms & {close():Promise<void>};const base=await loadKey(home),key=overrides.key?.(base)??base;
