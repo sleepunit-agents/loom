@@ -1375,6 +1375,7 @@ it('delivers a private restricted-service timer from a real member body and reta
 
 it.each([{verdict:'yes',staging:false},{verdict:'no',staging:false},{verdict:'yes',staging:true},{verdict:'no',staging:true}] as const)('delivers a sealed $verdict decision through the original member binding after its asking body finishes (staging=$staging)',async ({verdict,staging})=>{
  const f=await commsBodyFixture('pollock',staging),conversation=runtimeStore(f.app.db).read('job',f.job)!.conversation!;
+ value(await f.socket('comms.change',{thread:f.thread,action:'project',project:'pond'}));
  const question={ask:'PRIVATE DECISION QUESTION',if_yes:'PRIVATE SELECTED YES',if_no:'PRIVATE SELECTED NO',answers:'yes-no'};
  const ask=value<{ref:string;seq:number}>(await f.post(f.body,'runtime.askQuestion',{id:'bound-decision',question}));
  // The question belongs to the conversation even after its current body ends.
@@ -1399,8 +1400,8 @@ it.each([{verdict:'yes',staging:false},{verdict:'no',staging:false},{verdict:'ye
  await expect.poll(receipt).toEqual({job:expect.any(String)});
  const replacement=receipt()!.job;
  expect(replacement).not.toBe(f.job);
- expect(runtimeStore(f.app.db).read('job',replacement)).toMatchObject({agent:'art',member:'pollock',conversation,state:'queued'});
- expect(runtimeStore(f.app.db).read('binding',conversation)).toMatchObject({agent:'art',member:'pollock',place:f.thread,job:replacement});
+ expect(runtimeStore(f.app.db).read('job',replacement)).toMatchObject({agent:'art',member:'pollock',project:'pond',conversation,state:'queued'});
+ expect(runtimeStore(f.app.db).read('binding',conversation)).toMatchObject({agent:'art',member:'pollock',project:'pond',place:f.thread,job:replacement});
  expect(value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs).toEqual([replacement]);
  value(await f.post(f.runner,'runtime.claimJob',{job:replacement}));
  if(staging){

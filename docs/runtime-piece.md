@@ -1406,7 +1406,7 @@ The replacement reads the words through `runtime.readConversation`; neither its
 runner brief nor Runtime's routing records contain the private question or answer.
 
 The bound integration matrix in `conversations.test.ts` covers Yes and No for a
-non-owner member, both normally and under staging. It verifies the actual socket
+non-owner member and an explicitly filed project, both normally and under staging. It verifies the actual socket
 answer, runner claim/input/report, authenticated body read, original-member
 provenance and unchanged delivery receipts after retry and restart. Under staging,
 the Attention decision commits while Comms delivery remains held across restart;
