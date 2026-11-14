@@ -183,7 +183,10 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         expect(await page.locator('.next-system-icons [aria-label="0 enrolled boxes; health unavailable"]').count()).toBe(1);
         expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
         await expect.poll(() => page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
-        await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);
+        await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(width<1024?1:5);
+        expect(await page.locator('.desk-home-compact').count()).toBe(width<1024?4:0);
+        expect(await page.locator('.desk-home-compose').count()).toBe(width<1024?1:5);
+        if(width<1024)expect(await page.locator('.desk-home-card').getAttribute('data-agent')).toBe('art');
         await reference.setViewportSize({width,height:900});
         await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
         for (const surface of ['home','work','companion','launcher']) {

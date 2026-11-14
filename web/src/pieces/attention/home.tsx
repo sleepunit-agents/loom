@@ -1,7 +1,7 @@
-import { HomeConversations, HomeComposer, useHomeComms } from './home-comms';
+import { HomeConversations, HomeComposer, useHomeComms, threadPath } from './home-comms';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import './home.css';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRecords, type Snapshot } from '../../data';
 import { AppFrame, Button, Empty, Error, List, Loading, Row } from '../../kit';
 import { AskReader, AnswerReceipt, stamp, type Guard } from './index';
@@ -27,7 +27,9 @@ function ReportedItems({ title, empty, items, go }: { title: string; empty: stri
 export default function Home({ go = path => location.assign(path) }: { go?: (path:string)=>void } = {}) {
   const roster = useRecords<OwnedAgent>('attention.ownedAgent');
   const displays = useAgentDisplays();
-  const conversations = useHomeComms();
+  const { reading:conversations, threads, status:threadStatus } = useHomeComms();
+  const [phone,setPhone] = useState(()=>globalThis.window?.matchMedia?.('(max-width: 1023px)').matches ?? false);
+  useEffect(()=>{const query=globalThis.window?.matchMedia?.('(max-width: 1023px)');if(!query)return;const change=()=>setPhone(query.matches);change();query.addEventListener('change',change);return()=>query.removeEventListener('change',change);},[]);
   const people = useRecords<AgentPerson>('person');
   const agents = namedAgents(roster.records, people.status === 'live' ? people.records : []);
   const asks = useRecords<Ask>('attention.ask');
@@ -41,6 +43,11 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const guard: Guard = {lock,busy,setBusy};
   const columns = roster.records.length <= 1 ? '' : roster.records.length === 2 || roster.records.length === 4 ? 'lg:grid-cols-2' : 'lg:grid-cols-3';
   const open = asks.status === 'live' ? openAsks(asks.records) : [];
+  const ordered = orderedAgents(agents);
+  const fold = phone && ordered.length > 4;
+  const opened = (ordered.find(a=>threads.some(t=>t.agent===a.id&&t.working))
+    ?? ordered.find(a=>open.some(ask=>ask.agent===a.id))
+    ?? ordered.find(a=>threads.some(t=>t.agent===a.id&&t.unread)) ?? ordered[0])?.id;
   return <div className="desk-home h-full w-full min-w-0 max-w-full overflow-auto [overflow-wrap:anywhere]" data-attention-home="">
     <div className="desk-home-content"><AppFrame title="Home" where="Home" go={go} actions={<Button variant="outline" onClick={()=>go(inboxPath())}>Inbox</Button>}>
       <div className="grid min-w-0 gap-5">
@@ -53,17 +60,28 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
         </section>
         {busy && <p role="status">An answer is still being checked or recorded. Other answers wait.</p>}
         {roster.status !== 'live' ? <Unavailable status={roster.status} label="your agents" /> : !roster.records.length ? <Empty title="No agents of your own" text="Agents you own appear here, including when idle." /> : <div className={`desk-home-agents grid min-w-0 grid-cols-1 items-start gap-4 ${columns}`} aria-label="Your agents">
-          {orderedAgents(agents).map(agent=>{
+          {ordered.map(agent=>{
             const ownAsks = open.filter(ask=>ask.agent===agent.id), first=ownAsks[0];
             const receipt = asks.status === 'live' ? asks.records.filter(ask=>ask.agent===agent.id && ask.answer).sort((a,b)=>b.answer!.at-a.answer!.at || a.id.localeCompare(b.id))[0] : undefined;
             const status = statuses.status === 'live' ? latestStatus(statuses.records,agent.id) : undefined;
+            if(fold && agent.id!==opened) {
+              const recent=threads.filter(t=>t.agent===agent.id).sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id));
+              const unread=recent.filter(t=>t.unread), thread=unread[0]??recent[0];
+              const word=status?.state==='offline'?'Unavailable':first?'Needs you':status?.state==='working'?'Working':status?.state==='waiting'?'Waiting':status?'Quiet':'No status reported';
+              return <section key={agent.id} className="desk-home-compact" data-agent={agent.id} aria-label={`${agent.name} card`}>
+                <Row aria-label={`Open ${agent.name} conversation`} title={agent.name} meta={word}
+                  icon={<AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state,!!first)} size={32}/>}
+                  trailing={<span className="desk-home-flags">{first&&<span>ASK</span>}<span aria-label={threadStatus==='live'?`${unread.length} unread threads`:'Conversations unavailable'}>{threadStatus==='live'?(unread.length?`${unread.length} unread`:''):'?'}</span></span>}
+                  onClick={()=>go(thread?threadPath(thread.id):'/p/comms-preview')} />
+              </section>;
+            }
             const clockStatus = wakes.status !== 'live' ? wakes.status : clocks.status;
             const paused = clocks.records.some(c => c.id === agent.id && c.paused);
             const work = clockStatus === 'live' ? wakes.records.filter(w => w.agent === agent.id && active(w)) : [];
             const next = agentNext(agent.id, work, paused);
             const jobs = deskJobs(work, paused);
             const runtimeJobs = runtime.status === 'live' ? currentRuntimeJobs(runtime.records, agent.id) : [];
-            return <section key={agent.id} aria-label={`${agent.name} card`} className="desk-home-card grid min-w-0 gap-3">
+            return <section key={agent.id} aria-label={`${agent.name} card`} data-agent={agent.id} className="desk-home-card grid min-w-0 gap-3">
               <header className="desk-home-identity"><AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state, !!first)} size={96} /><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
               <div role="region" aria-label={`${agent.name} desk details`} tabIndex={0} className="grid min-w-0 gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 lg:max-h-[70dvh] lg:overflow-y-auto lg:pr-2">
               {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} requireOwnership /> : <p>Nothing needs you from {agent.name}.</p>}

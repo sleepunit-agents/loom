@@ -234,3 +234,28 @@ it('fences late conversation summaries after a thread feed loses access or chang
  expect(text()).toContain('Current conversation');expect(text()).not.toContain('Stale conversation');
  await publish('thread',{status:'offline',records:[{id:'th:new'}]});expect(text()).not.toContain('Current conversation');
 });
+
+it('folds only phone rosters over four, prioritizes fresh working threads then asks then unread, and unmounts other readers',async()=>{
+ let matches=true;const changes=new Set<()=>void>();
+ vi.stubGlobal('window',{matchMedia:()=>({get matches(){return matches;},addEventListener:(_s:string,f:()=>void)=>changes.add(f),removeEventListener:(_s:string,f:()=>void)=>changes.delete(f)}),addEventListener:vi.fn(),removeEventListener:vi.fn()});
+ try {
+ const agents=['art','birch','cedar','elm','fern'].map(id=>({id,name:id}));
+ f.snapshots['attention.ownedAgent']=live(agents);
+ f.snapshots['attention.ask']=live([ask('question',{agent:'birch'})]);
+ const thread=(id:string,agent:string,extra={})=>({id,agent,title:id,last:1,archived:null,unread:false,...extra});
+ const threads=[thread('th:working','fern',{working:true}),thread('th:old','cedar',{unread:true}),thread('th:new/one','cedar',{unread:true,last:2}),thread('th:latest','elm')];
+ f.snapshots.thread=live(threads);const go=await draw();
+ const cards=()=>tree!.root.findAllByType('section').filter((n:Node)=>n.props.className?.startsWith('desk-home-card')).map((n:Node)=>n.props['data-agent']);
+ const rows=()=>tree!.root.findAllByType('section').filter((n:Node)=>n.props.className==='desk-home-compact');
+ expect(cards()).toEqual(['fern']);expect(rows()).toHaveLength(4);
+ expect(tree!.root.findAllByProps({'aria-label':'birch desk details'})).toHaveLength(0);
+ await act(async()=>tree!.root.findByProps({'aria-label':'Open cedar conversation'}).props.onClick());expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/new%2Fone');
+ await act(async()=>tree!.root.findByProps({'aria-label':'Open elm conversation'}).props.onClick());expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/latest');
+ await publish('thread',live(threads.map(t=>({...t,working:false}))));expect(cards()).toEqual(['birch']);
+ await publish('attention.ask',{records:f.snapshots['attention.ask'].records,status:'denied'});expect(cards()).toEqual(['cedar']);expect(text()).not.toContain('Question question');
+ await publish('thread',{records:threads,status:'offline'});expect(cards()).toEqual(['art']);expect(text()).not.toContain('2 unread');
+ await act(async()=>{matches=false;changes.forEach(f=>f());});expect(cards()).toHaveLength(5);expect(rows()).toHaveLength(0);
+ await act(async()=>{matches=true;changes.forEach(f=>f());});expect(cards()).toEqual(['art']);
+ await publish('attention.ownedAgent',live(agents.slice(0,4)));expect(cards()).toHaveLength(4);expect(rows()).toHaveLength(0);
+ } finally {vi.unstubAllGlobals();}
+});
