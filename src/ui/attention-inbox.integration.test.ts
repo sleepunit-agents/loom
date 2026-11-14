@@ -134,7 +134,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.getByRole('searchbox',{name:'Search asks'}).fill('');
     await b.getByRole('button',{name:/^Answered/}).click();
     expect(await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).count()).toBe(0);
-    await b.getByRole('button',{name:/^Needs you/}).click();
+    await b.locator('.loom-split').getByRole('button',{name:/^Needs you/}).click();
     // One actual central approval, with the owning page's action and two-window withdrawal.
     const requested=loom.operations.call('direct',{kind:'agent',id:'art'},'approvals.request',{kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,ask:'Merge the Inbox source fix?',why:'The source card keeps the exact decision and receipt.',if_yes:'I merge the fix.',if_no:'I hold it.'},'inbox-request-approval');
     expect(requested.ok).toBe(true);if(!requested.ok)throw Error(requested.message);
