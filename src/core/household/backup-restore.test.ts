@@ -101,16 +101,25 @@ it.each(['present', 'absent'] as const)('materializes exact private bytes and de
   expect(fs.readFileSync(join(out.home, 'loom.db'))).toEqual(bytes);
   expect(fs.readdirSync(out.home).sort()).toEqual(entries);
 });
-it.each(['directory', 'file', 'symlink', 'parent-symlink', 'public-parent', 'relative', 'dotdot', 'ordinary-name'] as const)('refuses unsafe or existing destination %s without changing it', async kind => {
+it.each(['directory', 'file', 'symlink', 'parent-symlink', 'public-parent', 'foreign-parent', 'relative', 'dotdot', 'ordinary-name', 'empty-suffix'] as const)('refuses unsafe or existing destination %s without changing it', async kind => {
   const f = await fixture(), out = destination(); let home = out.home;
   if (kind === 'directory') mkdirSync(home);
   if (kind === 'file') writeFileSync(home, 'KEEP');
   if (kind === 'symlink') fs.symlinkSync(f.home, home);
   if (kind === 'parent-symlink') { fs.symlinkSync(f.home, home); home = join(home, '.loom-restore-new-home'); }
   if (kind === 'public-parent') fs.chmodSync(out.parent, 0o755);
+  if (kind === 'foreign-parent') {
+    const fstat = fs.fstatSync;
+    vi.spyOn(fs, 'fstatSync').mockImplementation((fd, options) => {
+      const st = fstat(fd, options);
+      if (fs.readlinkSync(`/proc/self/fd/${fd}`) === out.parent) Object.assign(st, { uid: process.getuid!() + 1 });
+      return st;
+    });
+  }
   if (kind === 'relative') home = 'relative';
   if (kind === 'dotdot') home = join(out.parent, 'x') + '/../.loom-restore-new-home';
   if (kind === 'ordinary-name') home = join(out.parent, 'ordinary-home');
+  if (kind === 'empty-suffix') home = join(out.parent, '.loom-restore-');
   const entries = fs.readdirSync(out.parent), source = fs.readFileSync(join(f.home, 'loom.db'));
   await expect(stageHouseholdRestore(f.ciphertext, f.owner, home)).rejects.toThrow(/^Household restore staging failed$/);
   expect(fs.readdirSync(out.parent)).toEqual(entries);
@@ -144,6 +153,16 @@ it('blocks the mkdir-to-marker failure window, including an alias, and releases 
     await expect(startLoom({ home, next: true, clock: new FakeClock() })).rejects.toThrow('Household restore is incomplete');
   }
   expect(fs.readdirSync(out.home)).toEqual([]);
+});
+it('refuses a reserved-name alias pointing to an ordinary valid household before stdio or daemon startup', async () => {
+  const f = await fixture(), out = destination(); fs.symlinkSync(f.home, out.home);
+  const bytes = fs.readFileSync(join(f.home, 'loom.db')), entries = fs.readdirSync(f.home).sort();
+  expect(() => readContinuityHousehold(out.home)).toThrow('Household restore is incomplete');
+  expect(() => openDb(out.home)).toThrow('Household restore is incomplete');
+  expect(() => prepareOperatorHome(out.home)).toThrow('Household restore is incomplete');
+  await expect(startLoom({ home: out.home, next: true, clock: new FakeClock() })).rejects.toThrow('Household restore is incomplete');
+  expect(fs.readFileSync(join(f.home, 'loom.db'))).toEqual(bytes);
+  expect(fs.readdirSync(f.home).sort()).toEqual(entries);
 });
 it.each(['symlink', 'directory'] as const)('refuses a %s blocker outside the reserved namespace before any startup side effects', async kind => {
   const out = destination(), home = join(out.parent, 'ordinary-home'); mkdirSync(home, { mode: 0o700 });

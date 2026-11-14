@@ -26,8 +26,8 @@ export interface ContinuityHousehold {
  * Missing/uninitialised/damaged app metadata is an error, never a fallback.
  */
 export function readContinuityHousehold(home: string, agent?: string): ContinuityHousehold {
+  assertHomeReady(home);
   const canonicalHome = realpathSync(home);
-  assertHomeReady(canonicalHome);
   const db = new Database(join(canonicalHome, 'loom.db'), { readonly: true, fileMustExist: true, timeout: 0 });
   let household: Household;
   try {
