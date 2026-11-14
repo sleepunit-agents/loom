@@ -955,10 +955,32 @@ local target is outside the household home; unresolved symlinks and local
 boundary before using a target; configuration validation is not an execution
 permit.
 
-Remaining backup acceptance: implement the next exporter and restore drill
-using `exportDatabase` and every owning piece's privacy filter, including
-context/artwork files and the external Secrets holder's stated recovery
-boundary; then encrypted path/git publication, retention, last-good/run
+The database-only prerequisite is `exportDatabaseImage` in
+`src/core/db/export-image.ts`. It captures one synchronous database read
+transaction through `exportDatabase` and its required owning filters. It builds
+a fresh in-memory database from accepted rows, never copying source pages or
+free pages. It preserves table DDL, indexes, triggers (installed after rows),
+BLOBs and retained tables' AUTOINCREMENT high-water marks. A separate reopened
+image must pass integrity and foreign-key checks and match all captured row
+counts, digests, schema and sequences. Missing filters, filtered dangling
+foreign keys, views, virtual tables and integer values outside JavaScript's
+exact range refuse instead of returning an apparently successful image.
+The current schema needs no view or virtual-table restore policy.
+
+The returned Buffer is sensitive plaintext, intended only for a future offline
+backup worker's encryption step. This helper has no operation, command, file
+discovery, publication, machine arming or daemon integration; it refuses an
+existing transaction. It is a database reconstruction drill, not an encrypted
+bundle restore drill or a complete household backup. Artwork already imported
+into household rows is included; context files are not read. Secrets contains
+metadata only here: the independent holder, identities and historical receipt
+and fingerprint keys require their own explicit recovery boundary. No external
+holder or legacy migration snapshot is discovered or invoked.
+
+Remaining backup acceptance: connect this database exporter to the full
+encrypted bundle and restore drill, including context/artwork files and the
+external Secrets holder's stated recovery boundary; then encrypted path/git
+publication, retention, last-good/run
 records, restored-home local arming, staging holds, one daemon-clock job,
 failure/missed/recovery Attention, generated run/status commands, and Setup
 controls with screenshot evidence. Never reuse `backup.ts`, the old detached
