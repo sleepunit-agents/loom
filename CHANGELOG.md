@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Spec: the owner's rulings of 2026-11-14. Code inside the daemon is one trust domain (permission checks only for callers from outside), built-in data moves to real columns with the database doing the work, and loom measures where its time goes.
 - Comms preview resolves private conversation references to current thread cards for their original member, with live state and fixed reader links.
 
 - Next Comms renders authorized reference chips in retained sealed questions, with live privacy fences and owning app navigation.

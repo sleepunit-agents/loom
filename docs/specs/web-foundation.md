@@ -36,6 +36,27 @@ removing those causes. The historical evidence is in the review note above; the 
 - **Tests bring their own loom.** "we absolutely need to be able to run a loom instance as part of firing up the
   test suite rather than expecting mine to exist."
 
+## What the owner decided (2026-11-14)
+
+After using the next instance and finding it stalling, the owner stopped the build and ruled two things. Where
+this section and anything written before it disagree, this section wins, and the sections below have been
+changed to match.
+
+- **What is installed is trusted.** "anything you've installed, it should just be able to go." A permission
+  boundary belongs where something outside calls the API: a person, an agent, a runner, or someone's own
+  program. "something external that consumes the api ... should have some thought to permission boundaries."
+  Between the parts loom ships there is none: "we've made wordpress where the comments plugin has to get a 3/4
+  majority of congress to be allowed to see a user's name."
+- **A concrete model, and the database does the work.** "we should be doing no data mangling at the js level.
+  the server gives us the goods, we just put them on the page." Built-in data is known and ours, so it is stored
+  in real columns, not as JSON in a text column: "we're better having a fast, concrete model than flexibility
+  that's slow as fuck for one user." Keeping records generic for a future outside piece is dropped: "for now
+  fuck that whole concept if that's making us making decisions like this."
+
+What prompted it (task t-2234): a CPU profile of the stalls showed no time in SQLite. The time went to one
+built-in piece asking another about one record at a time through the operation layer, each call checked as if
+it came from outside, and to rebuilding lists in JavaScript that a query could have returned.
+
 ## Goals
 
 1. **One process serves everything.** `loom serve` is the page, the API, MCP over HTTP, the live feed and the
@@ -127,11 +148,34 @@ API-only app reads. A standalone context directory still needs no `loom.db`. Mig
 stop the daemon, and check identity, owners, memory, knowledge and people for two agents and a standalone home.
 
 **SQLite calls stay synchronous.** In one process with a connection kept open a read takes microseconds; the
-stalls came from child processes, lock waits and opening a connection per call, and all three are removed.
+old stalls came from child processes, lock waits and opening a connection per call, and all three are removed.
+What a synchronous call cannot excuse is work that takes long: a background sweep runs in slices that give way
+to requests, and anything that would hold the thread for more than a few milliseconds is cut up or moved to a
+worker. The model above is written so that changing the database engine later is a change in one place; whether
+to move to Postgres is decided from measurements, not before them.
 
-**Each piece owns its tables,** named `<piece>_<table>`, with its own numbered migrations that the daemon runs at
-start. A piece reads and writes only its own tables; another piece's data is reached through that piece's
-interface ("Pieces").
+**One model, in real columns.** `loom.db` has one schema, defined in one typed place in the source
+(`src/data/`), with the relations between tables declared there. A thing the app filters, sorts, joins or counts
+by is a column with the right type, and where it is looked up, an index. Built-in data is not stored as a JSON
+document in a text column. JSON in a column is allowed only for a value loom never looks inside (an outside
+service's payload kept as received, a block description drawn as it is).
+
+**The database does the work.** A screen's data is one query, or a few, shaped for that screen: filtered, sorted,
+joined and counted in SQL. Server code does not load a table to pick rows out of it, does not parse rows to
+decide which ones matter, and does not ask for related things one row at a time. A loop that runs a statement
+per row is a bug. Statements are prepared once, through one shared place that also counts and times them
+("Measuring", below).
+
+**Tables are named for what they hold** and keep a `<module>_` prefix only to stay readable. Any built-in module
+may read any table. A module writes its own tables, and writes another module's through that module's functions,
+so one place knows how each table is kept consistent. Migrations are numbered in one sequence and the daemon runs
+them at start.
+
+**The tables built before 2026-11-14 are converted in place.** Each document table gets a migration that creates
+its columns and fills them from the stored JSON in SQL, then drops the document column. The importers keep
+writing the shape they were proven with and the migrations carry it forward, so imported data is converted
+exactly as the next instance's own data is, and nothing is imported twice. The hot path goes first: tasks,
+attention and sharing.
 
 **Moving existing data** is one importer per old file or store, run by `loom migrate` with the daemon stopped,
 after a backup. Importing is a one-way door for that store, so the owner is present for each.
@@ -165,9 +209,13 @@ operation({
   - `POST /api/<piece>/<operation>` with JSON, for the CLI, scripts and anything outside the process.
   - A call over the window's socket, for the app.
   - An MCP tool, for the operations a piece marks as offered to agents.
-  - A direct function call from another piece, through that piece's interface.
-- **Every door resolves the caller to a viewer first,** then `may`, then `run` (a retried write stops at its
-  stored result, below). No door has a rule of its own.
+  - A direct function call from code inside the daemon.
+- **The three doors from outside resolve the caller to a viewer first,** then `may`, then `run` (a retried write
+  stops at its stored result, below). No door has a rule of its own.
+- **A call from inside the daemon is trusted.** Built-in code calling an operation, or reading and writing
+  tables directly, has no viewer and is not asked `may`. When it acts for someone (a job delivering a person's
+  answer, a bridge passing on a member's message), it passes that person or agent along so the record says who
+  did it; that is a fact on the record, not a permission check.
 - **An operation names its doors.** The default is all four. Comms' operations that carry a message's words are
   open only on the window's socket, to the thread's member, and to the runtime delivering to the thread's agent
   (below).
@@ -184,7 +232,9 @@ operation({
   `invalid`, `conflict`, `unavailable`). The app shows them inline; nothing uses `alert()`.
 
 Reads are operations too (`tasks.list`, `comms.messages`), for what isn't live or is too large to keep in a
-window: history, search, a closed task from last month.
+window: history, search, a closed task from last month. A read returns what its screen draws, already filtered,
+sorted and joined; the page does not reshape it. An operation that returns many things takes many ids: there is
+no operation whose only use is to be called once per row.
 
 ## The live feed
 
@@ -283,16 +333,18 @@ its own machine's health and facts (that it is alive, what it has, what it is ho
 other machine. The secrets key holder
 and an outside piece see only the record types and operations a household owner granted them.
 
-**A built-in piece's own job has its own viewer.** Background work a piece runs in the daemon (Changes syncing
-from GitHub, the clock firing a wake, a bridge receiving a message) acts as that piece's **service**, registered
-when the piece is installed. A piece's service may read and write that piece's own record types and nothing else;
-it needs no grant from anyone for that. When it calls another piece, it calls that piece's role as itself, and
-the other piece's operations check it like any caller: a service is allowed there only what a household owner
-granted it. A job never acts as a member and never borrows an owner's authority.
+**Code inside the daemon is trusted (the owner, 2026-11-14).** The rule in this section is about who is calling
+from outside: a member, an agent, a runner, the key holder, someone's own program. Everything loom ships and
+everything a household owner installed into the daemon is one trust domain. A built-in module's background work
+(Changes syncing from GitHub, the clock firing a wake, a bridge receiving a message, Attention sweeping its
+waits) reads and writes what it needs and calls other modules as plain functions. There are no service
+identities, no grants between built-in modules, no permits one module issues to another, and no sealed
+references passed between them in place of the data. What a person or an agent is shown is still decided by the
+rule above, at the moment it is sent to them.
 
 **Using a secret inside the daemon.** A built-in piece that must present a credential to the outside (GitHub,
-Discord, Slack) asks the secrets role for it with `withValue(name, use)`: the grants list is checked for that
-piece's service, the key holder hands the value to the daemon over their local channel, `use` runs with it, and
+Discord, Slack) asks the secrets module for it with `withValue(name, use)`: the key holder hands the value to the daemon over
+their local channel, `use` runs with it, and
 the value is dropped when `use` returns. It is never put in a record, a log, a stored result, the live feed or an
 error. The key itself never leaves the key holder. Handing a secret to a body on another machine is the other
 path (`handTo`), which goes to the runner and never returns the value to the daemon.
@@ -313,13 +365,16 @@ owns Art and Mark. Pollock is a member of the project `pond` and owns the agent 
 - Each sees Pond-bot's own records that have no project, and Pollock sees his own private threads.
 - Neither sees Jonathan's private threads.
 
-**Where it's applied:** in `may` for every operation, and in `read` for every record sent to a window. When a
+**Where it's applied:** in `may` for every operation called from outside the daemon, and in `read` for every
+record sent to a window, an agent or an outside program. It is not applied to calls between built-in modules. When a
 member's projects or agents change, or a record moves, the windows affected get their sets again and drop what
 they may no longer see; a removed member's or ended session's socket closes. No piece holds a rule of its own.
 There is no per-frame recheck and no hiding of counts.
 
-**Comms keeps today's promise** ([comms.md](comms.md)): a thread's words are read only by its member and its
-agent. Each message stays encrypted in its row with the Comms key, now by the library in-process. No MCP tool, CLI
+**Comms keeps today's promise** ([comms.md](comms.md)): a thread's words are shown only to its member and its
+agent. That is a promise about people and agents, kept at the doors. Inside the daemon, the modules that need a
+thread's words to do their job (the Inbox showing a question, the runtime delivering it to the agent's body) read
+them directly. Each message stays encrypted in its row with the Comms key, now by the library in-process. No MCP tool, CLI
 command or other token can read one. Export and backup write the database table by table and leave the Comms
 tables out, as the bundle leaves `comms.db` out today.
 
@@ -329,25 +384,27 @@ Sign-in is unchanged in behaviour (passkeys, one-time links, sessions, CSRF on f
 ## Pieces
 
 **A piece** stays loom's word for a part that can be replaced. What changes is that a piece is, by default, a
-module inside loom:
+module inside loom, and a module is a way of arranging code, not a wall:
 
 ```
 src/pieces/<name>/
-  schema/        numbered migrations for its tables
   index.ts       its operations, record types, jobs and what it offers agents
-  role.ts        the interface other pieces may call (optional)
+  role.ts        the functions other modules call to change its data (optional)
 web/src/pieces/<name>/
   index.tsx      its apps: each a screen, an icon, and how much room its tile can use
 ```
 
 **Seams, enforced by a test** (`src/architecture.contract.test.ts` grows to cover it):
 
-- A piece imports from `src/core/` and from another piece's `role.ts`, and nothing else of another piece.
+- A module may read any table through the shared model in `src/data/`. It changes another module's data through
+  that module's `role.ts`. Those are conventions for keeping the code findable; neither is a permission.
 - Core imports no piece. Core learns what exists from the registry.
+- A background job's count of statements and operation calls does not grow with the number of rows it covers;
+  a test runs each sweep over ten rows and over a thousand and fails if it does.
 - A piece's screens import the kit, the data hook and their own piece.
 
 **A role** is a named interface with one implementation at a time: `tasks`, `approvals`, `clock`, `changes`,
-`runtime`. Replacing taskstore is writing another module that implements the `tasks` role, including an adapter
+`runtime`. It exists so a part can be replaced, and it is called as a plain function with no check. Replacing taskstore is writing another module that implements the `tasks` role, including an adapter
 onto someone else's tracker, and switching which one is registered.
 
 **What becomes an in-repo piece:** tasks (taskstore), approvals, clock, changes, the runtime's state and
@@ -434,6 +491,21 @@ own requirements (`sops` and `age` today), until its step settles whether loom c
 The contributing guide and positioning doc still describe loom as memory for one agent with no daemon. They are
 rewritten when step 2 lands: the stdio side is still that; the daemon is the household's desk.
 
+## Measuring
+
+Loom says where its time goes, on the household's own machines, at no cost and with nothing sent anywhere.
+
+- **What is counted:** for every request, operation and background job: how long it took, how many statements
+  and operation calls it made, and how long the thread was held. For every prepared statement: how often it ran
+  and how long. For the process: event-loop delay and memory.
+- **Where it shows:** a page in loom for household owners, with a day of history kept in `loom.db`, and the same
+  numbers as plain text at a local address for anyone who wants to point a scraper at it.
+- **A slow log:** anything that holds the thread longer than 100 ms is written with its name, its counts and what
+  called it.
+- **Budgets, in tests:** the first request after start is answered within a second on the fixture home; no
+  background job holds the thread longer than 50 ms at a stretch; a job's statement count does not grow with its
+  rows ("Pieces").
+
 ## Tests
 
 - **`startLoom({home, clock})`** starts the whole daemon in the test's own process on a temporary home, with a
@@ -518,6 +590,19 @@ move. `--staging` holds everything that reaches outside, as "Tests" says.
    the piece repos' pins, the lease and owner-lock code, and the `--next` flag itself, which becomes the only way
    loom runs. Then the measures in "What must be true when this is done" are taken.
 6. **The phone's redesign,** as its own project.
+
+**After 2026-11-14,** step 3 is finished by layer, not by piece, because the walls between pieces are gone and
+many hands in one model would collide. Four lines of work, in this order of importance:
+
+1. **Take the walls down.** Remove service identities, grants and permits between built-in modules, the sealed
+   references passed between them, and the import rule that kept one module out of another's data. Each piece's
+   list of what is left is cut to what the move needs; work that existed only to let one built-in module trust
+   another is dropped, and named in the old-to-new table as dropped.
+2. **The concrete model.** `src/data/` and the in-place conversions, hot path first, with each screen's reads
+   becoming queries.
+3. **Speed and measuring** (below), starting with the two sweeps the profile named.
+4. **What the move needs:** the commands agents type pointed at the API, the runtime starting bodies from the new
+   side, and the remaining behaviour each old program's contract lists.
 
 No new screens are added to the old side, and it gets bug fixes only.
 
