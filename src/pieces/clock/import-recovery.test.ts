@@ -163,4 +163,7 @@ it.each(['failed','cancelled','fired'])('allows fresh work after a terminal %s o
  expect(s.call('scheduleRecover',input).ok).toBe(true);
  expect(wakes(s.app.db).find(w=>w.id===id)).toEqual(old);
  const fresh=wakes(s.app.db).filter(w=>w.id!==id);expect(fresh).toHaveLength(1);expect(fresh[0]).toMatchObject({prompt:'FRESH_WORDS',state:'pending'});expect(fresh[0].attempt).toBeUndefined();
+ s.clock.advance(fresh[0].due-s.clock.now());for(let n=0;n<20;n++)await Promise.resolve();
+ expect(s.starts).toHaveLength(1);expect(s.starts[0]).toMatchObject({wake:{id:fresh[0].id,prompt:'FRESH_WORDS'}});
+ expect(wakes(s.app.db).find(w=>w.id===id)).toEqual(old);
 });
