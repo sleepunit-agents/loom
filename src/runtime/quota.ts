@@ -4,7 +4,7 @@ export interface QuotaWindow {
   name: string;
   usage: number | null;
   readAt: string | null;
-  resetsAt: string;
+  resetsAt: string | null;
   durationMs: number;
   reserve?: number;
 }
@@ -39,12 +39,14 @@ function time(value: string): number {
 export function accountCapacity(windows: readonly QuotaWindow[], now: string): AccountCapacity {
   const current = time(now);
   const results = windows.map((window): WindowCapacity => {
-    const reset = time(window.resetsAt), reserve = window.reserve ?? 0.05;
+    const reserve = window.reserve ?? 0.05;
+    const reset = window.resetsAt === null ? null : time(window.resetsAt);
     if (!window.name || !Number.isFinite(window.durationMs) || window.durationMs <= 0
-      || !Number.isFinite(reserve) || reserve < 0 || reserve >= 1
+      || !Number.isFinite(reserve) || reserve < 0 || reserve > 1
       || (window.usage !== null && (!Number.isFinite(window.usage) || window.usage < 0))) {
       throw new Error('Invalid quota window');
     }
+    if (reset === null) return { name: window.name, estimatedUsage: null, forecast: null, hasRoom: false, reserveLent: false };
     const start = reset - window.durationMs;
     const read = window.readAt === null ? null : time(window.readAt);
     if (read !== null && (read < start || read >= reset)) throw new Error('Quota observation outside its window');
