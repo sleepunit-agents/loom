@@ -23,6 +23,12 @@ export default defineConfig({
     // condition holds, so this only changes how long a failing one takes to say so. A test that means "at once" says
     // what at once means on the page's own clock (desk.integration.test.ts, holdClock), not with a poll's deadline.
     expect: { poll: { timeout: 10_000 } },
+    // The same reasoning for a whole test: its wall-clock budget is not what any test checks. On GitHub's shared
+    // runners four unrelated tests passed their 5 s default in one evening (sign-in notifications, collections paging
+    // and sync, mind activity, the runner's secret command), each passing again untouched, and each failure left main
+    // without a green build to deploy. A passing test ends when it ends, so this only changes how long a hung one
+    // takes to say so. Local runs keep Vitest's default, where a slow test is worth noticing.
+    testTimeout: process.env.CI ? 20_000 : 5_000,
     env: {
       // Force filesystem backend in tests so tool-level tests don't route
       // through Qdrant (which requires a live server and separate data store).

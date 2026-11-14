@@ -819,7 +819,7 @@ mutation lock with passkey/session changes. CI extends the single two-window
 Account acceptance using a fake browser Push API with real cookie/socket operations,
 Live updates and six notification-focused images. It does not contact a push host.
 
-The Account test-send control and routine dispatch remain pending. Registering
+The Account test-send control queues an exact device request and shows member-private Live outcomes. Routine dispatch remains pending. Registering
 a device alone does not send notifications. The existing worker display/tap behavior is unchanged.
 
 Quiet reconciliation intentionally runs automatically, rather than asking for a
@@ -866,3 +866,16 @@ diagnostics. The next device is resolved afresh after every awaited send.
 This replaces the backend of Profile's `push-test` action. Its Account button
 and Live status UI remain pending, as does routine announcement dispatch. There
 is no new notification CLI, no old SessionStore/watch call and no secret migration.
+
+### Account test notifications
+
+Each device has a deliberate **Send test notification** action on the shared Account
+mutation slot. An uncertain reply retains the original handle, operation id and exact
+device input through navigation; Retry resends that handle. A receipt means queued,
+then its id and device reference join `notifications.test` Live status. History remains
+visible after a device is removed. Sent means push-service acceptance, never device
+delivery. Unknown attempts are not resent automatically. Denied feeds hide retained
+private outcomes; offline or inactive screens disable sending. No subscription,
+endpoint or key is rendered. The existing CI-only two-window Account acceptance uses
+an injected fake transport with real cookie/socket/backend/Live and captures the six
+notification-focused screenshots. No new CLI or backend operation is introduced.

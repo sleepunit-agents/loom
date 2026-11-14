@@ -12,10 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Tests: give each test 20 s on CI instead of 5 s, after unrelated tests timed out on loaded shared runners and left main without a deployable build.
+- New desk: make request and form ids without `crypto.randomUUID`, which browsers withhold on plain HTTP, so the desk works on a home network address.
 - Classify already owned Runtime spawn threads in Comms through original member metadata, preserving independent transport and execution holds.
 
+
 - New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
-- New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail.
+- New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail; counted pixel talking beats follow through completion, with crisp whole-scale compact portraits.
 - Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
 
 - Check Clock lane reuse against current Runtime destination metadata and deliver public prompts through owning conversations, with service dispatch, authenticated read acknowledgements and staging holds.
@@ -1232,6 +1235,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Account can register this browser for notifications and remove its own live notification devices, with confirmed removal and original-request retries. Sending remains pending.
 
 - Add staged, durable own-device test notification sending in next mode; Account test controls and routine announcement dispatch remain pending.
+
+- Account can queue a test notification for an exact device and follow private Live outcomes, preserving uncertain retries across navigation. Push acceptance is shown separately from device delivery.
 
 ## [0.16.1] - 2026-10-25
 

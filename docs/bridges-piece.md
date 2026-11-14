@@ -1081,8 +1081,27 @@ immediately before IO. An unavailable source or staging gate holds all effects;
 a lost setup/credential lifetime permanently stops the controller.
 
 This is internal lifecycle proof, not platform or public support: there is no
-installed Runtime presence source, real reaction/typing transport, public status
-command, daemon registration or durable restart cleanup yet. Its bounded state is
+installed Runtime presence source, public status command, daemon registration or
+durable restart cleanup yet. The unregistered service transport is described below. Its bounded state is
 in memory; a crash could leave eyes behind. Production wiring must first supply
-the owning role, service-scoped IO and durable cleanup. Stop and peer-turn budgets
+the owning role and durable cleanup. Stop and peer-turn budgets
 remain Runtime responsibilities; this controller adds no policy for either.
+
+
+`presence-transport.ts` implements the internal `PresenceEffects` seam: Discord
+PUT/DELETE of this bot's eyes reaction and POST typing; Slack `reactions.add` and
+`reactions.remove` with `eyes` and the original message timestamp, with no typing.
+It is deliberately unregistered. Fixtures supply an explicit fake authenticated
+exact-place owning role; this is not evidence of actual Runtime lifecycle support.
+The service's `SecretUse` is reacquired per request, then the exact-place proof,
+staging and controller facts are checked immediately before HTTP. No credentials
+or platform response words escape. Slack replies are bounded to 4096 bytes;
+`already_reacted` on add and `no_reaction` on remove acknowledge idempotent retries.
+Other failures remain uncertain, with retry owned by the controller. A late
+successful add is acknowledged even after done so the controller can remove it
+before typing. No daemon, status command or durable restart cleanup is supplied.
+
+Endpoint contracts: [Discord own reactions](https://github.com/discord/discord-api-docs/blob/main/developers/resources/message.mdx),
+[Discord typing](https://github.com/discord/discord-api-docs/blob/main/developers/resources/channel.mdx),
+[Slack add](https://docs.slack.dev/reference/methods/reactions.add/) and
+[Slack remove](https://docs.slack.dev/reference/methods/reactions.remove/).

@@ -17,9 +17,9 @@ export function faceState(state?: string, needsYou = false): FaceState {
   return needsYou ? 'needs-input' : state === 'working' ? 'working' : state === 'waiting' ? 'thinking' : state === 'offline' ? 'error' : 'idle';
 }
 /** Display state comes from the owning feed; unavailable metadata keeps a neutral initial. */
-export default function AgentFace({ display, name, state, size, dark = false }: { display?: AgentDisplay; name: string; state: FaceState; size: number; dark?: boolean }) {
+export default function AgentFace({ display, name, state, size, dark = false, talk, scale, onShown, onFrom, onReady }: { display?: AgentDisplay; name: string; state: FaceState; size: number; dark?: boolean; talk?: {n:number;key:number}; scale?:number; onShown?:(state:FaceState)=>void; onFrom?:(from:string)=>void; onReady?:(ready:boolean)=>void }) {
   const pixel = useContext(PixelContext);
   const fallback = <span className="desk-agent-initial" aria-hidden="true" style={{ width: size, height: size }}>{name.slice(0,1)}</span>;
   const drawn = display ? <Face {...display.mark} {...display.face} state={state} size={size} label={name} dark={dark} /> : fallback;
-  return <span className="desk-agent-face" style={{ width: size, height: size }}><Suspense fallback={fallback}>{pixel && display?.sprite ? <PixelFace sprite={display.sprite} state={state} size={size} label={name} fallback={drawn} /> : drawn}</Suspense></span>;
+  return <span className="desk-agent-face" style={{ width: size, height: size }}><Suspense fallback={fallback}>{pixel && display?.sprite ? <PixelFace sprite={display.sprite} state={state} size={size} label={name} fallback={drawn} talk={talk} scale={scale} onShown={onShown} onFrom={onFrom} onReady={onReady} /> : drawn}</Suspense></span>;
 }

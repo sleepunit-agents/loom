@@ -26,8 +26,8 @@ and each body to 64 KiB. Only the holder and original worker input see values;
 responses are empty and diagnostics are generic. It does not serialize pending
 proofs, reconstruct them on restart, or expose a daemon operation.
 
-This is an unactivated component. Standalone worker startup does not yet create
-pending requests or compose this transport with `secretTickets`,
+This is an unactivated component. No installed standalone worker composes
+this transport with `secretTickets`,
 `remoteTicketAuthority` and `listenHolderHandoff`. That composition must preserve
 both the original central claim and the original worker request, bind the pending
 id to its ticket, select configured transport from owning assignment, finish
@@ -56,10 +56,8 @@ write after the network await. A true remote result alone grants no input access
 
 Tests compose actual ticket admission, retained holder claim, worker central
 check and pinned holder-to-worker delivery into an original private stream.
-This is protocol coverage, not standalone startup: trusted admission transport,
-owner-created standalone pending requests, configured holder routing,
-`listenHolderHandoff` completion/uncertainty wiring and staging/value-free
-accounting remain required. No public operation or installed startup is activated.
+The following sections describe the additive startup and admission composition.
+No public operation or installed startup is activated.
 
 ## Owner-configured holder routing and early failure retirement
 
@@ -86,7 +84,7 @@ or uncertain on every missing/failed response. No success settlement is inferred
 from socket writes. The real TLS tests demonstrate source failure and local
 cancellation retiring the claim, and a lost worker acknowledgement retiring it
 uncertain even when the original stream received bytes. Trusted admission,
-standalone runner-owned input creation, daemon completion, production capacity
+installed standalone composition, production capacity
 and staging/value-free accounting remain prerequisites to activation.
 
 
@@ -108,8 +106,95 @@ the original claim as uncertain without claiming again or retrying delivery.
 Early failure before claim also burns the original admission. Failed current
 proofs and staging holds cannot be overridden by a successful response.
 
-This API is not wired into daemon startup or a public operation. Real trusted
-worker admission transport and standalone runner-owned dedicated input creation
-remain prerequisites, along with production tombstone lifecycle/capacity and
-staging/value-free accounting evidence. Existing legacy `admit`/claim components
+This API is not wired into installed daemon startup or a public operation.
+Production tombstone lifecycle/capacity and staging/value-free accounting
+evidence remain prerequisites. Existing legacy `admit`/claim components
 remain unactivated and retain their prior holder-owned settlement behavior.
+
+### Real dedicated command startup (unactivated)
+
+`runtime-runner/secret-command.ts` starts an owner-configured executable with a
+dedicated fd3 pipe; stdin, stdout and stderr are disconnected. This is a command
+consumer protocol: read fd3 to EOF once, then exit. It does not feed credentials
+to Claude prompt stdin or assume Claude supports this protocol. The original
+process pipe, exact assignment, synchronous owning proof and deadline are
+registered before the pending handle is returned. A pinned worker listener is
+started for that registry. One delivery closes fd3; the registry erases its
+borrowed buffer only after the pipe write settles. Command output is discarded.
+
+The owner retains the returned original pending handle and passes it to trusted
+admission. `bindTicket` consumes one admission reply and creates exactly one
+`remoteWorkerTicketProof` for the original ticket/pending pair, using endpoints
+and pins snapshotted from owner configuration before startup awaits. Delivery
+without that proof fails closed. Invalid binding burns the startup; rebinding
+cannot replace a retained proof. The original synchronous current proof must
+include policy, grants, job and local request replacement. It is checked after
+remote authority and immediately before the original pipe write.
+
+Cancellation, process error/exit, expiry and close retire the original pending
+input and proof, destroy the pipe, kill and drain the owned process, and close
+the listener. `completed` reports only a zero process exit after a pipe write
+while the original proof is current; it never settles a central claim or proves
+holder acknowledgement. Early process exit can make delivery uncertain even
+after the pipe accepted bytes. The original daemon completion remains separate.
+
+Real subprocess tests compose this startup with central admission and the pinned
+holder channels, including cancellation while the original central current
+response is delayed. These tests call admission directly as trusted test code.
+The next section adds trusted worker admission; installed standalone/daemon
+startup composition, public typed-command operations and public secret get remain
+unactivated.
+Production tombstone capacity/lifecycle and staging/value-free accounting remain
+required before activation. No real credential consumer is configured here.
+
+
+### Trusted worker admission and owner startup composition (unactivated)
+
+`listenWorkerAdmission` accepts only configured worker certificate pins over
+mutual TLS on a private Unix socket. Owner configuration binds each unique pin
+to an exact assignment, the ORIGINAL authenticated Runtime viewer, and the
+original minted pinned holder client. A copied viewer loses Signin provenance;
+network requests cannot select viewer, assignment, endpoint or holder. Only
+name and original pending UUID cross the admission request. Each connection has
+a five-second absolute deadline, zero request body and bounded headers. Replies
+carry only ticket/pending UUIDs or an empty acknowledgement; errors are generic.
+
+The daemon calls `admitHandoff` once and retains its original completion
+capability separately from worker input. A second request, authenticated as the
+same configured peer with the original pending/ticket pair, triggers dispatch.
+The worker must bind the admission reply before sending that request. There is
+no automatic retry, re-admission or reconstruction. Duplicate pending ids remain
+consumed by the existing central tombstones. Admission retention is bounded to
+1024 entries and 30 seconds; cancellation, unfinished response disconnect,
+expiry and listener shutdown abandon the retained admission. A fully sent but
+lost admission reply can remain retained until expiry, without dispatch.
+Cancellation is best effort; it never makes a pending identity reusable.
+
+`startAdmittedSecretCommand` actually starts `startSecretCommand`, then creates
+one pinned admission client for THAT original pending id, binds its original
+reply once, and requests dispatch. It exposes only `completed`, `delivery` and
+`close`; no caller may substitute a proof or pending request. Admission config,
+name, startup config and original request proofs are captured before startup
+awaits. `delivery` reports a complete daemon response, separately from the
+command's `completed` process result. Failure closes the actual command. Close
+fences local input immediately while draining admission requests and attempting
+bounded cancellation of a known ticket. A lost reply is consumed, never retried.
+The original local proof remains the final synchronous fence after central
+worker-current; owner policy, grant, job and request replacement must be included.
+
+The admitted-command TLS/subprocess suite uses this admission path; primitive
+command tests retain direct trusted admission for their narrower contracts. Synthetic staging effects are explicitly released by the
+test owner before the admission response; without release, dispatch is refused
+and no source is read. Pipe cancellation drains while an intercepted native
+completion callback remains held. These tests do not establish production
+staging/value-free accounting or installed startup ownership. No real consumer,
+Claude fd3 compatibility, public operation, production tombstone lifecycle,
+installed daemon wiring or host activation is claimed by this source-only unit.
+
+
+Admission transport entry saturation is not independently exercised; production
+central tombstone lifecycle/capacity remains required. The server dispatch flag
+rejects duplicate requests before their cleanup can retire a running original
+request. A rejected or lost complete admission reply can remain undispatched
+until bounded expiry. A deadline may lose acknowledgement even after release;
+`delivery: false` never licenses retry. Command expiry closes its admission client.
