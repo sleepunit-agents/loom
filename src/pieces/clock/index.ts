@@ -101,6 +101,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         : w.by.kind==='agent' && w.by.id===w.agent && a.origin===w.agent && !!a.conversation)
       && (a.principal.people??[]).every(id=>id===w.member&&create({kind:'member',id},w));
   };
+  const privateDispatchCaller=(v:Viewer,w:Wake)=>v.kind===w.by.kind&&v.id===w.by.id&&dispatchable(w);
   installDispatchSource(operations,(id,attempt,accepted)=>{
     const w=wake(db,id);
     return !closed && !!w && (w.state==='firing'||accepted&&w.state==='fired') && w.attempt===attempt
@@ -528,7 +529,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     },
   }));
   // Intent and outcome use the registry too: all state and live changes commit together.
-  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && !privateLocal(get(i.id)) && (get(i.id).member===undefined ? create(v,get(i.id)) : v.kind===get(i.id).by.kind && v.id===get(i.id).by.id && dispatchable(get(i.id)))
+  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && !privateLocal(get(i.id)) && (get(i.id).member===undefined ? create(v,get(i.id)) : privateDispatchCaller(v,get(i.id)))
     && (!get(i.id).deadman || deadmanAgents.has(get(i.id).agent)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'pending' || w.due > ctx.now) return null;
     if (paused(db, w.agent) && !w.bypassPause) { w.state = 'held'; w.hold = 'paused'; saveWake(ctx, w); return null; }
@@ -541,7 +542,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     }
     return w;
   }, true);
-  register('outcome', idInput.extend({ attempt: text, result: startResult }), true, (v, i) => !!wake(db, i.id) && (get(i.id).member===undefined ? act(v,get(i.id)) : v.kind===get(i.id).by.kind && v.id===get(i.id).by.id && dispatchable(get(i.id))), (ctx, i) => {
+  register('outcome', idInput.extend({ attempt: text, result: startResult }), true, (v, i) => !!wake(db, i.id) && (get(i.id).member===undefined ? act(v,get(i.id)) : privateDispatchCaller(v,get(i.id))), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'firing' || w.attempt !== i.attempt) return null;
     const r = i.result;
     let eventKind: string | undefined;

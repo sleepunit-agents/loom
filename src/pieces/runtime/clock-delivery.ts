@@ -10,7 +10,7 @@ import { clockDestination } from './clock-destination.js';
 import { enqueueBody } from './queue.js';
 import { runtimeStore } from './store.js';
 import { provenanceStore } from './provenance-store.js';
-import { principalFromHistory } from './provenance.js';
+import { principalForWork } from './provenance.js';
 import { currentExecution } from './control.js';
 import { bodyPolicyExecutionHeld } from './policy-store.js';
 import type { Wake } from '../clock/role.js';
@@ -131,7 +131,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   const clockProvenance:ClockProvenanceReader=v=>{
     const job=bound(v);if(!job?.conversation)return;
     const p=provenanceStore(db).read(job.conversation);if(!p)return;
-    return {agent:job.agent,member:job.member,conversation:job.conversation,project:job.project,service:job.service,principal:principalFromHistory(p.history,owners())};
+    return {agent:job.agent,member:job.member,conversation:job.conversation,project:job.project,service:job.service,principal:principalForWork(p.history,owners())};
   };
   return {valid,bound,read,clockProvenance,
     currentRead(v:Viewer,value:unknown){

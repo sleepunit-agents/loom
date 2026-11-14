@@ -645,7 +645,7 @@ it('gives Clock capacity only to a current owning conversation, never copied pro
  const bucket=wakes(f.app.db).find(w=>w.id===first.id)!.apiCapacity!.bucket;
  expect(bucket).toMatch(/^[a-f0-9]{64}$/);expect(bucket).not.toBe(conversation);
  expect(first).toEqual({id:first.id,due:f.clock.now()+3600_000,state:'pending',private:true});
- expect(wakes(f.app.db).find(w=>w.id===first.id)).toMatchObject({member:'jonathan',authorship:{origin:'art',conversation,member:'jonathan',principal:{for:'owner',people:[]}}});
+ expect(wakes(f.app.db).find(w=>w.id===first.id)).toMatchObject({member:'jonathan',authorship:{origin:'art',conversation,member:'jonathan',principal:{for:'owner',people:['jonathan']}}});
  expect(JSON.stringify(await f.post(body,'clock.list',{}))).not.toContain('Ordinary future work');
  expect(JSON.stringify(exportDatabase(f.app.db))).not.toContain(first.id);
  const viewer=signin(f.app).token(hash(body))!.viewer;
@@ -705,7 +705,7 @@ it('issues current Clock principal history only through the exact private body b
  expect(role!.clockProvenance(viewer)).toBeUndefined();
  await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
  const conversation=runtimeStore(f.app.db).read('job',job)!.conversation!;
- const expected={agent:'art',member:'jonathan',conversation,principal:{for:'owner',people:[]}};
+ const expected={agent:'art',member:'jonathan',conversation,principal:{for:'owner',people:['jonathan']}};
  expect(role!.clockProvenance(viewer)).toEqual(expected);
  value(await f.post(f.runner,'runtime.reportJob',{job,state:'waiting'}));
  expect(role!.clockProvenance(viewer)).toEqual(expected);
@@ -720,10 +720,10 @@ it('issues current Clock principal history only through the exact private body b
  expect(role!.clockProvenance(signin(f.app).token(hash(f.token(`agent:art@${forged}`)))!.viewer)).toBeUndefined();
  // History, not the latest owner message, determines principal after steering.
  f.app.db.transaction(()=>provenanceStore(f.app.db).note(conversation,'art',{key:'unknown-source',sender:{kind:'unknown'},at:f.clock.now()},['jonathan']))();
- expect(role!.clockProvenance(viewer)).toEqual({...expected,principal:{for:'?',people:[]}});
+ expect(role!.clockProvenance(viewer)).toEqual({...expected,principal:{for:'?',people:['jonathan']}});
  await f.restart();
  const current=signin(f.app).token(hash(body))!.viewer;
- expect(role!.clockProvenance(current)).toEqual({...expected,principal:{for:'?',people:[]}});
+ expect(role!.clockProvenance(current)).toEqual({...expected,principal:{for:'?',people:['jonathan']}});
  const before=provenanceStore(f.app.db).read(conversation)!;
  f.app.db.prepare('DELETE FROM runtime_provenance WHERE conversation=?').run(conversation);
  expect(role!.capacityConversation(current)).toBe(conversation);
@@ -749,11 +749,11 @@ it('retains Clock private project scope and re-evaluates former owners without c
  await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
  const viewer=signin(f.app).token(hash(body))!.viewer;
  value(await f.socket('comms.change',{thread,action:'project',project:'pond'}));
- expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',project:'pond',principal:{for:'owner',people:[]}});
+ expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',project:'pond',principal:{for:'owner',people:['jonathan']}});
  // Local approvalCaller retains the member requester, independently of history.
  const cv=runtimeStore(f.app.db).read('job',job)!.conversation!;
  f.app.db.transaction(()=>provenanceStore(f.app.db).note(cv,'art',{key:'steering',sender:{kind:'unknown'},at:f.clock.now()},['jonathan']))();
- expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',project:'pond',principal:{for:'?',people:[]}});
+ expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',project:'pond',principal:{for:'?',people:['jonathan']}});
  expect(role!.approvalCaller(viewer)).toMatchObject({for:'owner',member:'jonathan',people:['jonathan'],project:'pond'});
  // Recounting current owners must not retain a former owner's broad principal.
  f.app.db.transaction(()=>{

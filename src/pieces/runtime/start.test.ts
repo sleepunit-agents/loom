@@ -302,7 +302,7 @@ it('issues Clock lane witnesses from current Runtime bindings, never Comms/bridg
 });
 it('holds a verified Clock join instead of starting a second body',async()=>{
  const f=await setup(),input:Wake={id:'w-join',agent:'art',prompt:'PRIVATE join words',note:'join',schedule:'daily',state:'firing',due:1,createdAt:0,changedAt:0,by:owner,failures:0,
-  authorship:{origin:'art',conversation:'cv-own',principal:{for:'owner',people:[]}}};
+  authorship:{origin:'art',conversation:'cv-own',principal:{for:'owner',people:['jonathan']}}};
  const current=()=>true;
  const runtime=clockRuntime(f.app,f.app.effects!,()=>({agent:'art',place:'lane:daily',conversation:'cv-own',current}));
  const result=runtime.startBody({wake:input,viewer:owner,intent:'join'});f.clock.advance(START_CONFIRM_MS);
@@ -408,7 +408,7 @@ it('creates a real wake binding and joins only after the authenticated body read
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'},{text:'Joined lane input'}]}});
  const after=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'after-restart',input:{agent:'art',prompt:'After restart',note:'history',when:'1h'}})})).json();
  expect(after.ok).toBe(true);
- expect(wake(f.app.db,after.value.id)?.authorship).toMatchObject({origin:'art',conversation:cv,principal:{for:'owner',people:[]}});
+ expect(wake(f.app.db,after.value.id)?.authorship).toMatchObject({origin:'art',conversation:cv,principal:{for:'owner',people:['jonathan']}});
  expect(JSON.parse((f.app.db.prepare('SELECT record FROM runtime_provenance WHERE conversation=?').get(cv) as {record:string}).record).history).toMatchObject({owners:['jonathan'],owner:true,unknown:false});
 
  const raced=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'raced-join',input:{agent:'art',prompt:'Cancelled during read preparation',note:'race',place:'lane:daily',when:'1s'}})})).json();
@@ -601,7 +601,19 @@ it.each([false,true].flatMap(staging=>['once','recurring','runNow'].map(mode=>({
  const chain=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'private-chain',input:{agent:'art',prompt:'PRIVATE chained words',note:'chain',when:'1s'}})})).json();
  expect(chain).toMatchObject({ok:true});expect(JSON.stringify(chain)).not.toContain('PRIVATE chained words');
  const next=wakes(f.app.db).find(w=>w.prompt==='PRIVATE chained words')!;
- expect(next).toMatchObject({member:'jonathan',project:'pond',authorship:{member:'jonathan',project:'pond'}});
+ expect(next).toMatchObject({member:'jonathan',project:'pond',authorship:{member:'jonathan',project:'pond',principal:{for:'owner',people:['jonathan']}}});
  f.clock.advance(1000);await settle();expect(wake(f.app.db,next.id)?.state).toBe('firing');
  expect(f.store.ids('job')).toHaveLength(2);
+ if(!staging&&mode==='once'){
+  // Demotion preserves agent/project grants but must narrow named steering.
+  access.projects.pond.members.push('jonathan');access.members.jonathan.owner=false;
+  const child=f.store.ids('job').find(id=>id!==job)!;
+  expect(await f.post(f.runner,'claimJob',{job:child})).toMatchObject({ok:true});
+  const childInput=await f.post(f.runner,'takeInput',{job:child});expect(childInput.ok).toBe(true);
+  expect(await f.post(f.runner,'reportJob',{job:child,state:'running'})).toMatchObject({ok:true});
+  expect(await f.post(childInput.value.credential,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:next.prompt}]}});
+  const third=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${childInput.value.credential}`},body:JSON.stringify({id:'demoted-rearm',input:{agent:'art',prompt:'After owner demotion',note:'chain',when:'1s'}})})).json();
+  expect(third).toMatchObject({ok:true});
+  expect(wakes(f.app.db).find(w=>w.prompt==='After owner demotion')).toMatchObject({member:'jonathan',authorship:{principal:{for:'jonathan',people:['jonathan']}}});
+ }
 });

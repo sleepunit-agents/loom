@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emptyProvenance, noteProvenance, principalFromHistory, resetProvenance, type ProvenanceRow } from './provenance.js';
+import { emptyProvenance, noteProvenance, principalForWork, principalFromHistory, resetProvenance, type ProvenanceRow } from './provenance.js';
 
 describe('runtime sender history', () => {
   it('keeps unplaced history unknown and re-evaluates former owners', () => {
@@ -42,4 +42,14 @@ describe('runtime sender history', () => {
     expect(history.unknown).toBe(true);
     expect(principalFromHistory(history, []).for).toBe('?');
   });
+});
+
+it('retains a named owner through scheduled transfer so demotion narrows later steering',()=>{
+ const history=noteProvenance(emptyProvenance(),{kind:'person',person:'jonathan'},['jonathan']);
+ const original=principalForWork(history,['jonathan']);
+ expect(original).toEqual({for:'owner',people:['jonathan']});
+ let next=noteProvenance(emptyProvenance(),{kind:'schedule',for:original.for},['jonathan']);
+ for(const person of original.people)next=noteProvenance(next,{kind:'person',person},['jonathan']);
+ expect(principalForWork(next,[])).toEqual({for:'jonathan',people:['jonathan']});
+ expect(principalForWork({...next,unknown:true},['jonathan'])).toEqual({for:'?',people:['jonathan']});
 });

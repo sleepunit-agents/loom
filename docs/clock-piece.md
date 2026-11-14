@@ -1295,3 +1295,10 @@ No UI changes or new private UX evidence are claimed by this delivery slice.
 | Private timed prompt, recurring and run-now | Committed Clock source → Runtime scoped job → assigned runner confirmation → authenticated inbox/read/ACK |
 | Private prompt self-rearm | Runtime supplies member/project/service/principal; the new private occurrence uses the same owning delivery path |
 | Private local/approval wake | Still held; requires its separate trusted local execution boundary |
+
+Scheduled provenance transfers retain named owners separately from the current
+`for: owner` summary, for both private conversation filing and timed self-rearm.
+If that owner is later demoted but retains agent/project grants, the next body
+narrows the steering principal to that named person. The provenance and actual
+private rearm fixtures exercise this transition. Anonymous owner markers are not
+backfilled with names from member scope or archived text.
