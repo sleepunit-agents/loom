@@ -177,3 +177,24 @@ it('publishes the actual registered encrypted/drilled bundle and validates its r
   });
   expect(readFileSync(join(input.home, 'household.json'), 'utf8')).toBe('{"agents":["unregistered"]}');
 });
+
+it('rejoins actual registered encrypted git parts before bounded owner-key validation', async () => {
+  const { input, owner } = await fixture();
+  const { prepareHouseholdGitPayload, verifyHouseholdGitPayload } = await import('./backup-git-parts.js');
+  const { withHouseholdRestore } = await import('./backup-restore.js');
+  const encrypted = await encryptRegisteredHouseholdBundle(input);
+  const partBytes = Math.ceil(encrypted.bytes.length / 3);
+  const payload = prepareHouseholdGitPayload('20261114-0321', encrypted, partBytes);
+  expect(payload.parts).toHaveLength(3);
+  verifyHouseholdGitPayload(payload, encrypted.bytes);
+  const rejoined = Buffer.concat([...payload.parts].sort((a, b) => a.path.localeCompare(b.path)).map(part => part.bytes));
+  expect(rejoined).toEqual(encrypted.bytes);
+  expect(input.secrets.verifyRestore).toHaveBeenCalledOnce();
+  await withHouseholdRestore(rejoined, owner, bundle => {
+    expect(bundle.files.get('secrets/recovery.age')).toEqual(Buffer.from('OPAQUE_FIXTURE'));
+    for (const agent of ['art', 'mark', 'pond-bot']) expect(bundle.files.get(`agents/${agent}/IDENTITY.md`)?.toString()).toBe(`CREED_${agent}`);
+    const app = new Database(bundle.files.get('loom.db')!);
+    try { expect(new HouseholdDatabase(app).document()?.agents).toEqual(['art', 'mark', 'pond-bot']); }
+    finally { app.close(); }
+  });
+});

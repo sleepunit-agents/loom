@@ -1370,3 +1370,43 @@ boundaries, and prune whole bundles only after the new publication is durable.
 Those obligations and actual recovered sign-in/token/stopped-daemon stdio
 acceptance remain required before retiring the old backup. Saved settings
 continue to report `awaiting-runner`; no machine is armed by publication.
+
+### Encrypted git multipart preparation prerequisite
+
+`prepareHouseholdGitPayload` in `src/core/household/backup-git-parts.ts` copies
+an actual trusted registered encrypted/drilled result into owned git payload
+buffers. A bundle at or below 90 MiB stays at
+`bundles/loom-household-YYYYMMDD-HHMM.bundle`; a larger one is split into
+contiguous `.part-00`, `.part-01`, …, at most `.part-99`. Parts use independent
+copies, carry no plaintext and rejoin in lexical pathname order. Tests lower the
+part ceiling; callers cannot raise the production ceiling. The total ciphertext
+ceiling remains 897 MiB, matching the path publisher. Preparation and verification
+accept only lower test ceilings; regression tests reject one byte over that
+ceiling in both functions and reject attempts to raise the production limit.
+Filesystem, process and network API guards witness zero IO on success and
+refusal paths. Calendar stamps share the
+retention planner's strict validator. Invalid input produces a generic error.
+
+`verifyHouseholdGitPayload` checks exact paths, count, lengths, total size,
+SHA-256 and every byte against the original trusted ciphertext. Missing, extra,
+duplicated, reordered, renamed, truncated, extended or corrupted parts refuse.
+The future git publisher must read back the **actual stored blobs** and call this
+verifier before committing; the preparation helper checks only in-memory copies.
+Metadata, the native age header and successful drill-shaped fields are not proof
+of encryption, provenance, owner authority or publication. Mutable payloads and
+successful verification are never capabilities or durable receipts. The source
+integration test uses the actual registered exporter, native age drill, multipart
+join and bounded restore validator, with a fake owning Secrets recovery part;
+it does not prove real holder recovery or restored sign-in acceptance.
+
+This unit does no filesystem, git, remote, retention or credential IO. There is
+no production caller and no commit/push/RESTORE.md, target ownership check,
+staging bypass, local arming, daemon job or activation. The actual git publisher
+must check the remote itself before producing; start from the exact fetched
+remote main tree; preserve unrelated files; verify materialized blob joins; map
+all retained/pruned parts together; create a parentless commit; and use the exact
+remote-main force-with-lease plus bounded http.postBuffer required by
+`docs/specs/keeping-watch.md` section 1. Those obligations, required-part/run/
+health/Attention semantics, accurate recovery instructions once public restore
+exists, the owning Secrets dependency and usable-home/sign-in/stdio acceptance
+remain required. Saved settings still report `awaiting-runner`.
