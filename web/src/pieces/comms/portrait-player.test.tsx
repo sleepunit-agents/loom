@@ -18,11 +18,15 @@ it('a real sprite completes exactly its requested beats and latest reader callba
  vi.stubGlobal('Image',class{width=96;async decode(){}});
  const variant={row:0,frames:2,weight:1};
  vi.stubGlobal('fetch',async()=>({json:async()=>({cell:[96,84],states:{idle:{south:[variant]},working:{south:[variant]},talking:{south:[variant]},done:{south:[variant]}}})}));
+ // Module loading is real IO; settle the lazy player before advancing its fake clock.
+ await import('../../pixel-face');
  const context={clearRect(){},save(){},restore(){},drawImage(){},translate(){},scale(){}};
  const render=(fresh=false,retained=true,seq=1)=>h(PixelContext.Provider,{value:true},h(CommPortrait,{agent:'art',messages:fresh?[{id:`r${seq}`,thread:'th:a',seq,at:1,kind:'reply',from:'art',text:retained?'x'.repeat(151):null}]:[],connected:true,working:true,thinking:false}));
  let tree!:ReturnType<typeof create>;
  try{
   await act(async()=>{tree=create(render(),{createNodeMock:()=>({clientWidth:192,dataset:{},getContext:()=>context})});});
+  // Settle the real lazy player inside act before advancing its animation clock.
+  await act(async()=>{await import('../../pixel-face');});
   const face=()=>tree.root.findByType('section').props['data-face'];
   await act(async()=>tree.update(render(true)));await act(async()=>vi.advanceTimersByTime(32));await act(async()=>vi.advanceTimersByTime(250));
   expect(face()).toBe('talking');

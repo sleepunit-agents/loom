@@ -1,3 +1,4 @@
+import { deliverNotification } from './notification-delivery.js';
 /** Durable, deliberately requested test sends. Never IO inside an operation. */
 import { pushTransport, type PushTransport } from './push-transport.js';
 import { z } from 'zod';
@@ -8,7 +9,7 @@ import { operation, OperationError } from '../operations/index.js';
 import { SharingDatabase } from '../household/sharing.js';
 import { mayAct, maySee, type Viewer } from '../../policy.js';
 import { hash, signin } from './index.js';
-import { deviceRef, notificationMember, notificationBrowserAllowed, subscription } from './notifications.js';
+import { notificationTarget, notificationBrowserAllowed } from './notifications.js';
 
 export interface NotificationSendOptions {
   /** Trusted composition/test seam only, never operation input. */
@@ -27,17 +28,7 @@ export function installNotificationSending(app:Foundation,effects:OutsideEffects
   const rows=()=>app.db.prepare('SELECT * FROM notifications_tests ORDER BY at,id').all() as Request[];
   const publish=(id:string)=>app.live.changed([{type:'notifications.test',id}]);
   const finish=(r:Request,state:State)=>{app.db.prepare('UPDATE notifications_tests SET state=? WHERE id=?').run(state,r.id);publish(r.id);};
-  function target(member:string,ref:string){
-    if(!allowed({kind:'member',id:member}))return;
-    const f=s.sessions.read();
-    const hit=Object.entries(f.push?.subs??{}).find(([ep,d])=>deviceRef(ep)===ref&&notificationMember(s,d,f)===member);
-    if(!hit||f.push?.removed?.includes(hash(hit[0])))return;
-    const parsed=subscription.safeParse(hit[1].sub);
-    if(!parsed.success||parsed.data.endpoint!==hit[0]||!f.push?.vapid)return;
-    const {publicKey,privateKey}=f.push.vapid;
-    if(!publicKey||!privateKey)return;
-    return {sub:parsed.data,vapid:{publicKey,privateKey},binding:hash(JSON.stringify([member,hit[0],hit[1],f.push.vapid]))};
-  }
+  const target=(member:string,ref:string)=>notificationTarget(s,sharing.sharing(),member,ref);
   let stopped=false,running:Promise<void>|undefined,again=false,cancel:(()=>void)|undefined;
   const active=()=>!stopped&&!isClosing(app);
   function schedule(){
@@ -53,24 +44,9 @@ export function installNotificationSending(app:Foundation,effects:OutsideEffects
       const t=target(r.member,r.ref);
       if(!t||t.binding!==r.binding){finish(r,'cancelled');continue;}
       if(!effects.beforeOutside({id:effectId(r.id),kind:'push',title:'Test notification'}))continue;
-      let state:State='sent';
-      const abort=new AbortController(),deadline=app.operations.clock.at(app.operations.clock.now()+15_000,()=>abort.abort());
-      try {
-        await send(t.sub,JSON.stringify({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'}),{
-          vapidDetails:{subject:'mailto:loom@localhost',...t.vapid},TTL:600,urgency:'high',timeout:15_000,
-        },abort.signal);
-      } catch(error){
-        const code=(error as {statusCode?:number}|null)?.statusCode;
-        state=code===404||code===410?'gone':typeof code==='number'?'failed':'uncertain';
-      }
-      finally{deadline();}
-      // Never erase a re-enabled/reassigned subscription after a late 410.
-      const current=target(r.member,r.ref);
-      if(state==='gone'&&current?.binding===r.binding){
-        s.sessions.change(f=>{delete f.push!.subs![current.sub.endpoint];});
-        app.live.changed([{type:'notifications.devices',id:r.member}]);
-      }
-      effects.finish(effectId(r.id),state!=='uncertain');finish(r,state);
+      const state=await deliverNotification(app,effects,send,{effect:effectId(r.id),member:r.member,ref:r.ref,target:t,
+        payload:JSON.stringify({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'}),ttl:600});
+      finish(r,state);
       // The next request resolves policy, exact binding and keys afresh after await.
     }
   }

@@ -13,7 +13,7 @@ import { command, controlCommandInput, localCommandInput, oneOffCommandInput } f
 import { registerBuiltinService } from '../../core/services.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, mayFilePrivateWork, mayControlAuthoredWork, mayReuseAuthoredWork, consistentWorkAuthority, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
+import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, mayFilePrivateWork, mayRunPrivateWork, mayControlAuthoredWork, mayReuseAuthoredWork, consistentWorkAuthority, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { wakes, schedules, wake, schedule, saveWake, saveSchedule, rememberPrivateId, event, paused, active, type Wake, type Work, type Schedule } from './store.js';
 import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
@@ -90,11 +90,22 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   const readSee=(ctx:Context,w:Work,type='wake')=>(!w.member||ctx.window)&&see(ctx.viewer,w,type);
   const act = (v: Viewer, w: Work, household = false) => mayAct(v, scope(w), sharing(), household ? 'household' : 'act');
   const create = (v: Viewer, w: Work) => mayCreate(v, scope(w), sharing()) && (v.kind !== 'member' || mayAct(v, scope(w), sharing(), 'give-work'));
+  // The owning row limits execution; saved attribution never impersonates a
+  // member. Every boundary rechecks current grants, including named steerers.
+  const dispatchable=(w:Wake)=> {
+    if(w.member===undefined)return create(w.by,w)&&create({kind:'agent',id:w.agent},w)
+      &&(w.authorship?.principal.people??[]).every(id=>create({kind:'member',id},w));
+    const a=w.authorship;
+    return mayRunPrivateWork(w,sharing()) && a?.member===w.member && a.project===w.project
+      && (w.by.kind==='member' ? w.by.id===w.member && create(w.by,w)
+        : w.by.kind==='agent' && w.by.id===w.agent && a.origin===w.agent && !!a.conversation)
+      && (a.principal.people??[]).every(id=>id===w.member&&create({kind:'member',id},w));
+  };
+  const privateDispatchCaller=(v:Viewer,w:Wake)=>v.kind===w.by.kind&&v.id===w.by.id&&dispatchable(w);
   installDispatchSource(operations,(id,attempt,accepted)=>{
     const w=wake(db,id);
-    return !closed && !!w && (w.state==='firing'||accepted&&w.state==='fired') && w.attempt===attempt && !w.member
-      && create(w.by,w) && create({kind:'agent',id:w.agent},w)
-      && (w.authorship?.principal.people??[]).every(id=>create({kind:'member',id},w)) ? structuredClone(w) : undefined;
+    return !closed && !!w && (w.state==='firing'||accepted&&w.state==='fired') && w.attempt===attempt
+      && !privateLocal(w) && dispatchable(w) ? structuredClone(w) : undefined;
   },(id,attempt)=>{const w=wake(db,id);return !closed&&!!w&&w.attempt===attempt&&(!!w.withdrawn||w.state==='cancelled');});
   const provenance = (v:Viewer) => {
     const proof=options.provenance?.(v);
@@ -518,7 +529,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     },
   }));
   // Intent and outcome use the registry too: all state and live changes commit together.
-  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && !privateLocal(get(i.id)) && create(v, get(i.id))
+  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && !privateLocal(get(i.id)) && (get(i.id).member===undefined ? create(v,get(i.id)) : privateDispatchCaller(v,get(i.id)))
     && (!get(i.id).deadman || deadmanAgents.has(get(i.id).agent)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'pending' || w.due > ctx.now) return null;
     if (paused(db, w.agent) && !w.bypassPause) { w.state = 'held'; w.hold = 'paused'; saveWake(ctx, w); return null; }
@@ -531,7 +542,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     }
     return w;
   }, true);
-  register('outcome', idInput.extend({ attempt: text, result: startResult }), true, (v, i) => !!wake(db, i.id) && act(v, get(i.id)), (ctx, i) => {
+  register('outcome', idInput.extend({ attempt: text, result: startResult }), true, (v, i) => !!wake(db, i.id) && (get(i.id).member===undefined ? act(v,get(i.id)) : privateDispatchCaller(v,get(i.id))), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'firing' || w.attempt !== i.attempt) return null;
     const r = i.result;
     let eventKind: string | undefined;
@@ -613,7 +624,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
           current=wake(db,w.id)!;
           if(current.attempt!==attempt) return undefined;
           if(privateLocal(current)) throw new OperationError('denied','Private local delivery is not composed');
-          if(!create(current.by,current)) throw new OperationError('denied','Dispatch policy changed');
+          if(!(current.member===undefined ? create(current.by,current) : dispatchable(current))) throw new OperationError('denied','Dispatch policy changed');
           checkStandingWake(db,operations,current);
         }
         catch { holdDenied(wake(db,w.id)!); return undefined; }
