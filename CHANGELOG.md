@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Next Inbox retains fixed, member-private action receipts for the remaining registered app mutations; credential and private Comms actions remain excluded.
+
 - Next Inbox retains member-private action success/error FYI for Tasks and central answers, with read marks and an Errors folder.
 
 - Add an explicit external dedicated secret-command worker with authenticated Runtime stop/history checks and drained shutdown, reusing the Claude worker control owner.
