@@ -4,10 +4,27 @@ import { createDataSchema } from '../data/database.js';
 import { timingDays } from '../data/schema.js';
 import { createMeasuring, DEFAULT_MEASURING } from './index.js';
 import { timingStore } from './store.js';
+import { FakeClock } from '../clock.js';
 
 const client = new Database(':memory:');
 const db = createDataSchema(client);
 afterEach(() => db.delete(timingDays).run());
+
+it('removes expired shared rows even when no requests, operations or jobs run', async () => {
+  const clock = new FakeClock(Date.UTC(2026, 10, 14, 23));
+  const store = timingStore(db);
+  for (const day of ['2026-11-12', '2026-11-13', '2026-11-14']) {
+    store.add({day, kind:'request', name:'tasks', count:1, total_ms:2, typical_ms:2, slowest_ms:2});
+  }
+  const m = await createMeasuring({...DEFAULT_MEASURING, on:true, keep_days:2}, [], store, undefined, clock);
+  try {
+    expect(db.select().from(timingDays).all().map(r => r.day)).toEqual(['2026-11-13', '2026-11-14']);
+    clock.advance(3600_000);
+    expect(db.select().from(timingDays).all().map(r => r.day)).toEqual(['2026-11-14']);
+    clock.advance(86400_000);
+    expect(db.select().from(timingDays).all()).toEqual([]);
+  } finally { await m.close(); }
+});
 
 it('atomically rolls up repeated spans while keeping days, kinds and names separate', () => {
   const store = timingStore(db);
