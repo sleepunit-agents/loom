@@ -139,3 +139,5 @@ Before closing t-2210, replace every pending matrix/command row with merged posi
 proof or a named justified retirement, reconcile Runtime/People/Secrets/Attention/
 Approvals roles, retain generated command output/exit fixtures, and finish the move
 docs. Existing screen and CI evidence do not substitute for these behaviors.
+
+Offline shuttle template-family selection and startup slot validation are now implemented (see [piece overview](bridges-piece.md#offline-shuttle-template-families)). This is private move evidence only; actual Runtime composition, guest floors, restrictions, notify/escalation and positive venue fixtures remain required.

@@ -211,6 +211,15 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByRole('region',{name:'Work in this thread'}).textContent()).toContain('Blocked');
   const badge=b.getByRole('region',{name:'Work in this thread'}).locator('[data-tone="bad"]');
   expect(await badge.evaluate(el=>getComputedStyle(el).color!==getComputedStyle(el.parentElement!).color)).toBe(true);
+  // Cited work has no made-here claim; notes stay unlinked and unknown forge
+  // pointers use only the owning Changes feed's canonical GitHub destination.
+  await comms.post('art',place,{id:'cited-work-fixture',kind:'reply',text:`See ${blockerId}, acme/untracked#93 and note:pond/plan.`});
+  const workRegion=b.getByRole('region',{name:'Work in this thread'});
+  await expect.poll(()=>workRegion.getByRole('link',{name:'Blocking fixture work'}).count()).toBe(1);
+  expect(await workRegion.getByRole('link',{name:'Blocking fixture work'}).locator('..').textContent()).not.toContain('Made here');
+  expect(await workRegion.getByRole('link',{name:'acme/untracked#93'}).getAttribute('href')).toBe('https://github.com/acme/untracked/issues/93');
+  expect(await workRegion.locator('code').textContent()).toBe('pond/plan');
+  expect(await workRegion.getByRole('link',{name:'pond/plan'}).count()).toBe(0);
   await capture('comms-work',true);
   // At desktop widths the region is visible beside the message column without a toggle.
   expect(await b.getByRole('button',{name:/^Work/}).count()).toBe(0);
@@ -226,7 +235,17 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>a.getByRole('link',{name:'Imported work link'}).count()).toBe(1);
   await a.getByRole('link',{name:'Imported work link'}).click();
   await expect.poll(()=>a.getByText('Imported work detail',{exact:true}).count()).toBe(1);
-  await a.goto(`${loom.url}/p/comms-preview/thread/${place.replace(/^th:/,'')}`);
+  const from=a.getByRole('link',{name:'From: New thread with art',exact:true});
+  await expect.poll(()=>from.count()).toBe(1);
+  expect(await from.getAttribute('href')).toBe(`/p/comms-preview/thread/${place.slice(3)}`);
+  for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
+   await a.setViewportSize({width,height:900});
+   await a.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+   expect(await from.isVisible()).toBe(true);
+   expect(await a.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+   await a.screenshot({path:join(shots,`comms-from-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+  }
+  await from.click();
   await expect.poll(()=>a.getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
   await b.clock.pauseAt(await b.evaluate(()=>Date.now()+1000));
   await b.evaluate(()=>{for(const socket of Reflect.get(window,'__fixtureSockets') as WebSocket[])socket.close();});
@@ -235,17 +254,24 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
   await b.clock.resume();
 
-  await comms.startNotice('art',place,{kind:'start-failed',seq,attempt:3});
+  // The cited reply superseded the earlier pending start. Exercise failure and
+  // retry against a fresh accepted member message, rather than that stale start.
+  const priorStartNotes=await b.getByText("Art couldn't start at first.",{exact:true}).count();
+  const failedStart=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.send',{thread:place,id:'retryafterciteda',text:'A fresh queued start after the cited reply'},'fixture-after-citation',true);
+  expect(failedStart.ok).toBe(true);if(!failedStart.ok)throw new Error('start fixture failed');
+  const failedSeq=(failedStart.value as {seq:number}).seq;
+  await comms.deliver('art',place,failedSeq);
+  await comms.startNotice('art',place,{kind:'start-failed',seq:failedSeq,attempt:3});
   await expect.poll(()=>b.getByRole('button',{name:'Send again',exact:true}).count()).toBe(1);
   await expect.poll(()=>b.getByLabel('Thinking status').count()).toBe(0);
   await b.getByRole('button',{name:'Send again',exact:true}).click();
-  await expect.poll(()=>starts.filter(d=>d.seq===seq&&d.generation===1).length).toBe(1);
+  await expect.poll(()=>starts.filter(d=>d.seq===failedSeq&&d.generation===1).length).toBe(1);
   await expect.poll(()=>b.getByRole('button',{name:'Send again',exact:true}).count()).toBe(0);
-  await comms.startNotice('art',place,{kind:'start-retry',seq,generation:1,attempt:1,retryAt});
+  await comms.startNotice('art',place,{kind:'start-retry',seq:failedSeq,generation:1,attempt:1,retryAt});
   await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(1);
   comms.status('art',place,'working');
   await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(0);
-  await expect.poll(()=>b.getByText("Art couldn't start at first.",{exact:true}).count()).toBe(1);
+  await expect.poll(()=>b.getByText("Art couldn't start at first.",{exact:true}).count()).toBe(priorStartNotes+1);
   // Move the first message outside the live hundred, then load it as an earlier page.
   // Only the browser crosses its deadline: no server sweep can update that cached page.
   comms.status('art',place,'done');clock.advance(firstAt+14*86400000-1000-clock.now());

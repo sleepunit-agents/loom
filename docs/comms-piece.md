@@ -96,7 +96,7 @@ project or the household never grants access to another member's thread.
 | `comms.route` | Optional item agent; current configured owned recipients, pick and reason. Missing registry yields no recipients. |
 | `comms.about` | Agent and ref or page; up to five recent open owned threads about that item. |
 | `comms.send` | Thread, client id, words; acknowledgement. Duplicate ids require matching words. |
-| `comms.work` | Thread; currently visible Tasks/Changes made in that exact conversation, plus piece-level failures. |
+| `comms.work` | Thread; currently visible made-here/cited Tasks and Changes, indexed note paths, plus piece-level failures. |
 | `comms.messages` | Thread and optional before-sequence; newest 100 records, in sequence order. |
 | `comms.conversationSteps` | Non-private conversation and optional before-sequence; newest 100 retained step labels in sequence order. Requires a trusted conversation lookup and the ordinary agent viewer gate. |
 | `comms.change` | Thread and title/project/pin/unpin/archive/unarchive/read/stop/delete action. |
@@ -994,8 +994,7 @@ Changes disappear at their owning piece's exact seven-day deadline, including
 from an idle subscription. Archive keeps the panel; deletion and lost ownership
 remove it. A disconnected page hides cached work until its subscription is live.
 
-This completes the made-here portion only. References cited in words, note refs,
-ref chip resolution and reverse “From” links remain required. The current runtime binding is documented in runtime-piece.md; its remaining parity and final integration acceptance still need checking. The Tasks app accepts marked encoded imported ids (including dot-only names) in its reader route and fetches aged-out closed detail through its existing authorized show role. The response is bound to the exact current Live snapshot and hidden on replacement/access loss. Duplicate work refs retain the first whole made-here item in piece-name order, never mixed fields. Status badges use the shared danger/warning/success look tokens alongside their words. Desktop work stays open beside the message column; a phone has a folded Work (N) strip with a worded bad-item warning. The single existing browser proof checks two-window closure, work links, phone folding/warnings, desktop placement and disconnect/reconnect, and captures six additional work-panel screenshots in CI with fake runtime/auth.
+This completes the made-here portion only. Cited work and note rows are completed below. Ref chip resolution remains required; reverse “From” links are completed below. The current runtime binding is documented in runtime-piece.md; its remaining parity and final integration acceptance still need checking. The Tasks app accepts marked encoded imported ids (including dot-only names) in its reader route and fetches aged-out closed detail through its existing authorized show role. The response is bound to the exact current Live snapshot and hidden on replacement/access loss. Duplicate work refs retain the first whole made-here item in piece-name order, never mixed fields. Status badges use the shared danger/warning/success look tokens alongside their words. Desktop work stays open beside the message column; a phone has a folded Work (N) strip with a worded bad-item warning. The single existing browser proof checks two-window closure, work links, phone folding/warnings, desktop placement and disconnect/reconnect, and captures six additional work-panel screenshots in CI with fake runtime/auth.
 
 Cold review for this work-panel unit stopped at the three-round bound, raw final BLOCKING. All reported defects were folded with component/socket/browser regressions afterward; these final fixes are author-tested and CI-verified, not cold-clear. Exact raw results and reconciliation are in loom note `loom/2026-11-13-comms-work-review`. No fourth round.
 
@@ -1246,6 +1245,44 @@ later starts decrypt nothing for references. Failure or shutdown leaves the
 marker absent, so the next start retries safely over any partial indexed rows.
 Shutdown drains the scan before SQLite closes. No view scans history.
 
-Referenced work and note rows, authorized chip cards, reverse From
-links, swipe/undo, final phone layout, imported/spawn privacy and screenshots,
+Authorized chip cards, swipe/undo, final phone layout, imported/spawn privacy and screenshots,
 and the consolidated old-to-new acceptance table still remain on t-2206.
+
+### Cited work and notes
+
+`comms.work` and `threadWork` now consume the bounded word-free reference index.
+Tasks are selected from the original viewer's authorized Tasks export when made
+in this conversation or explicitly cited by task id. Changes receives indexed
+forge pointers through its existing authorized `changes.thread-feed`; an unseen
+change stays absent, while an unknown public forge pointer reads Not tracked.
+Tracked changes open the fixed new Changes reader, and unknown pointers accept
+only the exact GitHub issues URL for their canonical ref. Feed pages never choose
+an arbitrary app destination. Malformed Changes answers fail that piece alone.
+
+Note pointers show their path and Note status without opening a note store or
+linking to a page. Only made-here items carry Made here. Duplicate refs keep the
+first whole made-here item, otherwise piece-name order; the existing bad/warn,
+newest-first order and 100-item cap remain. Thread, task, change, approval and
+sharing changes refresh the panel, and closed Changes retain their owning
+seven-day expiry. No view decrypts history. The first-page shell imports no new
+module. This completes the cited work/notes portion; chip cards,
+swipe/Undo and the final acceptance inventory remain separate work.
+
+### Reverse From links
+
+Tasks with a `conversation:` source and Changes with made-here conversation
+metadata now render the scoped `commsFrom` live record. Comms resolves its own
+metadata; referring pieces receive no private title or thread id. Only the
+original member while still owning the agent sees “From: <title>” and the fixed
+new Comms reader link. An untitled thread uses “New thread with <agent>”. Another
+owner of that agent sees “From a Comms thread”; all other, unknown, deleted or
+ambiguous sources read “From a conversation”. Archive preserves the link.
+Relational routing disagreement and tombstones fail closed. Reads never decrypt
+messages and unscoped subscriptions enumerate nothing. Disconnect or a changed
+source hides the cached label immediately; title, lifecycle and sharing changes
+refresh live records. No bearer or agent surface is added.
+
+This completes reverse provenance only. Authorized chip cards, swipe/Undo, phone
+crowding and final imported/spawn/source privacy acceptance remain required. The
+single Comms browser proof follows an aged-out imported task back to its thread
+and captures the task reader at all six required look/width combinations.

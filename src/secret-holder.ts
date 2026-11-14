@@ -6,21 +6,30 @@ import { realpathSync } from 'node:fs';
 import { listenLocalHolder } from './pieces/secrets/local-holder.js';
 import { startPersistentHolder } from './secret-holder-startup.js';
 import { ageSecretSource } from './pieces/secrets/age-source.js';
-export async function run(argv: string[], stderr: (text:string)=>void): Promise<number> {
+import {serveHolderOwner,type HolderOwnerChannel} from './secret-holder-owner.js';
+export async function run(argv: string[], stderr: (text:string)=>void,ownerChannel?:HolderOwnerChannel): Promise<number> {
   // A signal can arrive after bind but before the listen promise resumes.
   // Latch it before starting so shutdown cannot be lost during startup.
   let stop!:()=>void;
   const stopped = new Promise<void>(resolve => { stop = resolve; });
   process.on('SIGTERM', stop); process.on('SIGINT', stop);
   try {
-    const {values:v} = parseArgs({args:argv, options:{config:{type:'string'},socket:{type:'string'}, ca:{type:'string'}, cert:{type:'string'},
+    const {values:v} = parseArgs({args:argv, options:{config:{type:'string'},owned:{type:'boolean'},socket:{type:'string'}, ca:{type:'string'}, cert:{type:'string'},
       key:{type:'string'}, identity:{type:'string'}, values:{type:'string'}}, strict:true});
     if (v.config) {
-      if (Object.keys(v).some(k=>k!=='config')) throw Error();
+      if (Object.keys(v).some(k=>k!=='config'&&k!=='owned')) throw Error();
+      if(v.owned) {
+        const channel=ownerChannel??process as unknown as HolderOwnerChannel;
+        if(!channel.send||!channel.connected)throw Error();
+        const owner=serveHolderOwner(channel,()=>startPersistentHolder(v.config!,true));
+        try {await Promise.race([stopped,owner.done]);}finally {await owner.close();}
+        await owner.done;return 0;
+      }
       const holder=await startPersistentHolder(v.config);
       try {await stopped;} finally {await holder.close();}
       return 0;
     }
+    if(v.owned)throw Error();
     if (!v.socket || !v.ca || !v.cert || !v.key || !v.identity || !v.values) throw Error();
     const source = ageSecretSource(v.values, v.identity);
     const holder = await listenLocalHolder({socket:v.socket, ca:v.ca, cert:v.cert, key:v.key}, source);

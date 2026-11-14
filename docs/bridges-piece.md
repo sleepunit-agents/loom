@@ -1376,11 +1376,93 @@ in the private import evidence and source checksum. Interrupted/repeated imports
 and both independent migration verifiers cover these bytes. They remain private
 source evidence, never a public record or executable template.
 
-This bounded capture step does not resolve configured `channel_notes` brief
-names to documents, require all configured briefs, or compose them. Those are
-still **required**: preserve shuttle configuration file order and direct-or-parent
-selection (distinct from Discord describe's parent-only selection), refuse any
-unresolved configured brief, and connect actual Runtime brief composition with
-restrictions and positive channel/thread fixtures. Live route `notes` remains
-empty. No daemon reads old paths and no activation or snapshot deletion is
-licensed by successful capture.
+Capture alone does not resolve configured names or compose briefs. The following
+offline resolution stage now requires every configured channel-note document and
+preserves source order and selection. Actual Runtime composition with restrictions
+and positive channel/thread fixtures remains **required**. Live route `notes`
+remains empty. No daemon reads old paths and no activation or snapshot deletion
+is licensed by successful capture or resolution.
+
+## Offline configured channel briefs
+
+For each explicitly selected shuttle instance, every `channel_notes` entry now
+requires exactly one selected document mapping with matching `agent`, `key` and
+literal `brief` name, for example
+`documents: [{path: "bridges-documents/0.md", agent: "art", key: "work", brief: "discord-work"}]`.
+A name is evidence, never a path to open. Empty membership still requires its
+configured document. Unnamed document mappings remain membership-only captures;
+they cannot satisfy a configured name. Wrong names, ambiguous mappings, missing
+keys in the effective accepted route source and missing documents refuse the
+whole offline import. Accepted per-agent membership takes precedence over stale
+file membership. Each mapping still names one individually selected snapshot
+file; shared content for two keys must be explicitly captured twice.
+
+Private `configuredBriefs` evidence links each instance and its effective route
+source to ordered key/name/document/digest/membership entries. It preserves JSON
+file insertion order, including integer-like keys, escaped names and Python's
+duplicate-key order behavior. Offline `selectChannelBriefs` selects direct **or**
+parent membership once per key, preserving that order, as shuttle's
+`render_brief` did. Discord describe's parent-only, sorted membership helper
+remains separate. Exact captured words, BOM, line endings and template markers
+stay in private `selectedDocuments`; no template is rendered here. Import repeat
+and both independent verifiers compare the full private resolution evidence.
+
+This completes offline configured channel-note name resolution and selection,
+not every legacy brief or live Runtime composition. Live route `notes` remains
+empty. Runtime must still consume this resolved content with the appropriate
+slots, guest floor, restrictions and peer/pair context, with positive channel and
+thread fixtures. Other required guest/peer/base/Slack brief families, escalation
+and final move inventory remain in the disposition ledger. No legacy path may
+be followed at runtime; no activation or real import is authorized by this unit.
+
+### Offline shuttle template families
+
+A move plan may additionally select complete, explicitly captured template
+families with `templateFamilies`. Capture each file with the existing repeated
+`--bridges-document` snapshot option, then map its resulting snapshot identity:
+
+```json
+{"templateFamilies":[{"shuttle":"bridges/0/shuttle.json","platform":"discord","briefs":{"discord":"bridges-documents/0.md","discord-owner":"bridges-documents/1.md","discord-no-owner":"bridges-documents/2.md","discord-guest":"bridges-documents/3.md","discord-peer":"bridges-documents/4.md","discord-peer-bot":"bridges-documents/5.md","discord-peer-webhook":"bridges-documents/6.md","discord-pair":"bridges-documents/7.md"}}]}
+```
+
+The `shuttle` must be an explicitly selected instance belonging to a household
+agent with a mapped connection for that platform (disabled or incomplete setup
+is permitted). Omitting `templateFamilies` preserves existing snapshot behavior;
+it supplies no family-completion evidence. Once selected, a family must include
+exactly all eight Discord or eleven Slack names checked by the pinned shuttle
+startup. A family cannot be selected twice for one instance/platform. Each
+selected snapshot path belongs to exactly one template or channel-note document
+mapping. Copy the same bytes separately when explicitly selecting them twice.
+Unknown names, missing/extra files, reused paths, wrong instances/platforms,
+invalid Python `string.Template` dollar syntax, unknown/case-mismatched slots,
+and missing required context uses refuse the entire offline mapping.
+
+`import-templates.ts` records the exact slot vocabularies from pinned shuttle
+`adapters/discord.py` and `adapters/slack.py` (`BRIEF_SLOTS`, `BRIEF_USES`). It
+recognizes ASCII `$name`, `${name}` and `$$` escapes without substituting any
+values. Escaped text such as `$$cards` does not carry the required card slot.
+Discord requires `notes` and guest `cards`; Slack requires the DM tier/card
+notes, card/grant/restriction values, group note/restrictions/cards and each
+group restriction. All other provided slots may be unused, as on the old side.
+
+Private `templateFamilies` evidence binds the selected instance, agent and
+platform to each template's snapshot path, exact UTF-8 content, byte count,
+SHA-256 and ordered unique slot references (first actual use wins, repeated
+references and escaped occurrences add no new entry). The existing combined document
+limits apply across channel documents and templates: 128 files, 1 MiB per file,
+8 MiB total. BOM/CRLF and dollar text remain exact. Both source-derived
+verifiers and repeat import compare this evidence, including slot references;
+interrupted all-import resumes without making the templates public records.
+Integration fixtures use synthetic local files and SQLite databases; platform,
+secret-holder and network IO stay fake. No legacy configured brief directory or
+command is read or executed.
+
+This completes offline family selection and slot validation only. Runtime must
+still compose templates once with actual authenticated scope/tiers, owner and
+reader cards, peer/pair attribution, selected channel notes, notify destinations
+and restrictions; reject empty guest context and enforce the guest tool floor.
+Slack `flag_to`, Discord `notify`, extension-specific text and the owning
+escalation outcome still require their own disposition/composition fixtures.
+A captured `$send` is text, never permission or an executable command. There is
+no live route-note installation, body brief rendering, describe output, policy
+change, activation or source deletion in this offline step.
