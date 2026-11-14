@@ -1,0 +1,35 @@
+# Worker credential input primitive
+
+`src/runtime-runner/secret-input.ts` owns an in-memory pending request for one
+original worker input stream. The worker registers the exact agent, job, service,
+runner, box and claim timestamp, its original synchronous local proof, an async
+authority check, and a deadline of at most 30 seconds. A random pending id names
+that request. The owning worker must cancel it when replacing the request; a new
+request has a new id even for the same assignment. Local proof failure is sticky.
+The async check must retain original central ticket authority; metadata equality
+alone never establishes that authority.
+
+An authenticated holder delivery consumes the pending id before awaiting bytes
+or authority. After authority settles, the worker checks the connection and its
+original local proof, then writes to the original stream without another await.
+It never looks up a replacement stream. The dedicated input must consume its
+borrowed write before invoking the write callback and must not retain the buffer
+afterwards. The worker erases it after settlement. A failed write, shutdown or
+missing acknowledgement is uncertain and never licenses a retry. Shutdown fences
+pending work and drains an already-started stream write; the input owner must
+settle write callbacks on cancellation as well as success.
+
+`secret-transport.ts` carries this through pinned mutual TLS over a private Unix
+socket. Both endpoint and expected certificate come from owning configuration,
+never operation input. It bounds each connection from acceptance to five seconds
+and each body to 64 KiB. Only the holder and original worker input see values;
+responses are empty and diagnostics are generic. It does not serialize pending
+proofs, reconstruct them on restart, or expose a daemon operation.
+
+This is an unactivated component. Standalone worker startup does not yet create
+pending requests or compose this transport with `secretTickets`,
+`remoteTicketAuthority` and `listenHolderHandoff`. That composition must preserve
+both the original central claim and the original worker request, bind the pending
+id to its ticket, select configured transport from owning assignment, finish
+central claims as uncertain on any failure, and pass staging/value-free accounting
+checks before public get or typed-command access can activate.
