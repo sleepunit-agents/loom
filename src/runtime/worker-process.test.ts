@@ -65,6 +65,14 @@ describe('worker command adapter (no child processes in tests)', () => {
     // Simulates group termination closing inherited stdout/stderr handles.
     expect((await body.exited).exitCode).toBe(0); await body.stop(); expect(f.runtime.kill).toHaveBeenCalledOnce();
   });
+  it('keeps stop pending until the killed process has actually closed', async () => {
+    const f = fixture(); vi.mocked(f.runtime.kill).mockImplementation(() => {});
+    const body = f.executor.start(job, 'image', new AbortController().signal), child = f.children[0].child;
+    child.emit('spawn'); await body.spawned;
+    let settled = false; const stopped = body.stop().then(() => { settled = true; });
+    await flush(); expect(f.runtime.kill).toHaveBeenCalledOnce(); expect(settled).toBe(false);
+    child.emit('close', null, 'SIGKILL'); await stopped; expect(settled).toBe(true);
+  });
   it('rejects failed, malformed and oversized build output', async () => {
     for (const output of ['not json', '{}', '{"build":" "}', 'x'.repeat(70_000)]) {
       const f = fixture(), built = f.executor.build(job, new AbortController().signal);
