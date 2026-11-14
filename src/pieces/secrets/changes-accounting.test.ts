@@ -34,10 +34,8 @@ async function setup(staging=false) {
     expect(call('changes.refresh')).toMatchObject({ok:true});
     // Observe the actual job's committed completion, not a fixed microtask count.
     const finished=new Promise<void>(resolve=>{
-      const changed=app.live.changed.bind(app.live);
-      const spy=vi.spyOn(app.live,'changed').mockImplementation(changes=>{
-        changed(changes);
-        if(changes.some(c=>c.type==='change-sync')&&app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get()) {spy.mockRestore();resolve();}
+      const stop=app.live.observe(changes=>{
+        if(changes.some(c=>c.type==='change-sync')&&app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get()) {stop();resolve();}
       });
     });
     clock.advance(0);await finished;
