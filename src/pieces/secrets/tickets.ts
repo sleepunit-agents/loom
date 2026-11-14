@@ -150,7 +150,20 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
       const admitted=tickets.admit(viewer,name,request);
       daemonOwned.add(admitted.id);
       let attempted=false;
+      const abandon=()=>{
+        attempted=true;
+        const original=claimed.get(admitted.id);
+        try {
+          if(original)original.finish(false);
+          else {
+            retireProof(admitted.id);
+            app.db.prepare("UPDATE secrets_tickets SET state='uncertain' WHERE id=? AND state='admitted'").run(admitted.id);
+          }
+        }catch { /* consumed; never reconstruct */ }
+      };
       return Object.freeze({...admitted,
+        /** Owning admission transport retires on disconnect/expiry/shutdown. */
+        abandon,
         async dispatch():Promise<void> {
           if(attempted||app.db.inTransaction)throw failed();
           attempted=true;
@@ -168,16 +181,7 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
           }catch {throw failed();}
           finally {
             if(!acknowledged) {
-              const original=claimed.get(admitted.id);
-              // Early holder failures may already have retired this claim.
-              // Missing holder responses still retire the retained original.
-              try {
-                if(original)original.finish(false);
-                else {
-                  retireProof(admitted.id);
-                  app.db.prepare("UPDATE secrets_tickets SET state='uncertain' WHERE id=? AND state='admitted'").run(admitted.id);
-                }
-              }catch { /* consumed; no reconstruction or retry */ }
+              abandon();
             }
           }
         },
