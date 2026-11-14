@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { graphql } from 'graphql/index.js';
+import { sql } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import { createDataSchema } from '../data/database.js';
 import { dataQueries } from '../data/queries.js';
@@ -95,6 +96,42 @@ it('rechecks project membership, agent ownership, recipient and owner role in re
   expect(result.errors).toBeUndefined();
   expect(result.data?.triggers).toEqual([]);
   expect(result.data?.triggerLog).toEqual([]);
+});
+
+it('retains owned and self pause access without any project sharing', async () => {
+  const sam = schemaFor({kind:'member',id:'sam'});
+  const art = schemaFor({kind:'agent',id:'art'});
+  client.exec('DELETE FROM project_members; DELETE FROM project_agents');
+  for (const schema of [sam, art]) {
+    const result = await graphql({schema,source:'{ agentPauses { agent } }'});
+    expect(result.errors).toBeUndefined();
+    expect(result.data).toEqual({agentPauses:[{agent:'art'}]});
+  }
+  client.exec('DELETE FROM member_agents');
+  expect((await graphql({schema:sam,source:'{ agentPauses { agent } }'})).data).toEqual({agentPauses:[]});
+  expect((await graphql({schema:art,source:'{ agentPauses { agent } }'})).data).toEqual({agentPauses:[{agent:'art'}]});
+});
+
+it('filters denied children from independently visible project and agent parents', async () => {
+  // These fixture parents are intentionally public to isolate the Tempo child
+  // predicates. Production project/agent policies remain the root owner's job.
+  const schema = dataQueries(client, {
+    tables:['projects','agents','triggers','triggerLog','agentPauses'],
+    visibility:{...tempoVisibility({kind:'member',id:'sam'}), projects:()=>sql`true`, agents:()=>sql`true`},
+  });
+  const result = await graphql({schema,source:`{
+    projects(where:{id:{eq:"private"}}) {
+      id triggersByProject(orderBy:{id:{direction:asc,priority:0}},limit:1) {
+        id triggerLogByTrigger { trigger }
+      }
+    }
+    agents(where:{id:{eq:"hidden"}}) { id agentPausesByAgent { agent } }
+  }`});
+  expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual({
+    projects:[{id:'private',triggersByProject:[{id:'c-owned',triggerLogByTrigger:[{trigger:'c-owned'}]}]}],
+    agents:[{id:'hidden',agentPausesByAgent:[]}],
+  });
 });
 
 it('captures identity scalars and cannot bypass denial with aliases or filters', async () => {
