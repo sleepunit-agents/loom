@@ -70,6 +70,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await a.getByRole('button',{name:'Check again',exact:true}).click();
     await expect.poll(()=>b.getByText(/Asked to be checked again/).count()).toBe(1);
     await b.locator('article a[href^="https://loom.invalid/knowledge/"]').click();
+    await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/knowledge-preview/page/clock-tempo');
     await expect.poll(()=>b.getByRole('heading',{name:'Clock tempo',exact:true}).count()).toBe(1);
     await b.locator('article').getByRole('button',{name:'Six voices',exact:true}).click();
     await expect.poll(()=>b.getByRole('heading',{name:'Six voices',exact:true}).count()).toBe(1);
@@ -108,7 +109,34 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>b.getByRole('heading',{name:'A shared new fact',exact:true}).count()).toBe(1);
     }catch(error){
       for(const [name,page] of [['desktop',a],['phone',b]] as const){
-        diagnostics.push(`${name} Knowledge view: ${await page.locator('main').allTextContents().catch(()=>[]).then(text=>text.join(' ').slice(0,3000))}`);
+        // Inspect the actual shell and reader. Never serialize URLs, history
+        // payloads, HTML, or arbitrary text: those may contain sign-in links.
+        const state=await page.evaluate(()=>{
+          const knownPath=(value:unknown)=>typeof value==='string' && /^\/p\/knowledge-preview(?:\/page\/(?:six-voices|clock-tempo|backup))?$/.test(value) ? value : 'other';
+          const shell=document.querySelector('[data-shell]');
+          const tile=document.querySelector('[data-tile="knowledge"]');
+          const split=tile?.querySelector('.loom-split');
+          const saved=history.state?.loomNext;
+          const savedTile=Array.isArray(saved?.tiles) ? saved.tiles.find((t:{id?:string})=>t.id==='knowledge') : undefined;
+          const text=tile?.textContent ?? '';
+          return {
+            path:knownPath(location.pathname),
+            route:knownPath(savedTile?.trail?.[savedTile?.at]),
+            shell:shell?.getAttribute('data-shell') ?? null,
+            tile:!!tile, hidden:tile?.hasAttribute('hidden') ?? null,
+            inert:!!tile?.closest('[inert]'), focused:tile?.getAttribute('data-focused') ?? null,
+            split:split?.getAttribute('data-mode') ?? null, readerOpen:split?.getAttribute('data-open') ?? null,
+            rows:tile?.querySelectorAll('[data-split-row]').length ?? 0,
+            articles:tile?.querySelectorAll('article').length ?? 0,
+            sixVoices:[...tile?.querySelectorAll('h1') ?? []].some(h=>h.textContent==='Six voices'),
+            clockTempo:[...tile?.querySelectorAll('h1') ?? []].some(h=>h.textContent==='Clock tempo'),
+            loading:text.includes('Opening page') || text.includes('Opening knowledge'),
+            denied:text.includes('You don’t have access to Knowledge.'),
+            offline:text.includes('Connection lost.'),
+            unavailable:text.includes('This page is no longer available'),
+          };
+        }).catch(()=>({unavailable:true}));
+        diagnostics.push(`${name} Knowledge state: ${JSON.stringify(state)}`);
       }
       console.error('Knowledge fixture diagnostics',diagnostics);throw error;
     }
