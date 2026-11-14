@@ -6,7 +6,8 @@ import { approvalService } from '../../apps/approvals.js';
 import { FakeClock } from '../clock.js';
 import { createDataSchema } from '../data/database.js';
 import { dataQueries } from '../data/queries.js';
-import { agents, members, timingDays } from '../data/schema.js';
+import { agents, members, projectMembers, timingDays } from '../data/schema.js';
+import { DataWrites } from '../data/writes.js';
 import { DEFAULT_MEASURING } from './index.js';
 import { measuringRuntime } from './runtime.js';
 import { MEASURING_SETTINGS_OPERATION, measuringSettingsService } from './settings.js';
@@ -99,5 +100,83 @@ it('connects durable approvals, outer commits, the runtime and generated Measuri
     await runtime.close();
     client.close();
     clock.advance(2 * 86400_000); // No retained timer may touch the closed DB.
+  }
+});
+
+it('keeps Measuring off through failed shared commits and reloads a committed allowance despite notification errors', async () => {
+  const client = new Database(':memory:');
+  const clock = new FakeClock(Date.UTC(2026, 10, 14));
+  const now = () => new Date(clock.now()).toISOString();
+  const db = createDataSchema(client, now);
+  const settings = measuringSettingsService(db);
+  const runtime = measuringRuntime(settings.read, [{ kind: 'request', name: 'graphql' }], timingStore(db), undefined, clock);
+  const events: string[] = [];
+  const notificationError = new Error('socket unavailable after commit');
+  let failNotification = false;
+  const writes = new DataWrites(db, {
+    refreshAccess() {
+      expect(client.inTransaction).toBe(false);
+      events.push('access');
+      if (failNotification) throw notificationError;
+    },
+    changed() { expect(client.inTransaction).toBe(false); events.push('changed'); },
+  });
+  try {
+    db.insert(members).values({ id: 'owner', role: 'owner', joinedAt: now() }).run();
+    db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+    const approvals = approvalService(db, new Map([[MEASURING_SETTINGS_OPERATION, settings.apply]]), now);
+    const pending = writes.run(() => approvals.request({
+      ...settings.prepare({ ...DEFAULT_MEASURING, on: true }), agent: 'art',
+      askedFrom: 'house', actingFor: 'owner', what: 'Measure request timing',
+      why: 'Compare committed work', ask: 'Turn Measuring on?',
+      ifYes: 'Collect local daily timings', ifNo: 'Keep Measuring off',
+    })).value;
+    events.length = 0;
+    await runtime.reload();
+    const allowNested = () => {
+      const allowed = writes.run(() => approvals.allow(pending.id, 'owner'));
+      expect(allowed.value.state).toBe('used');
+      expect(settings.read().on).toBe(true);
+      expect(events).toEqual([]);
+      runtime.run('request', 'graphql', () => undefined);
+      expect(db.select().from(timingDays).all()).toEqual([]);
+    };
+    // A released inner savepoint is still provisional, including its answer
+    // audit. Failure after Allow must not enable the runtime or notify readers.
+    expect(() => writes.run(() => {
+      allowNested();
+      throw new Error('receipt persistence failed');
+    })).toThrow('receipt persistence failed');
+    expect(settings.read().on).toBe(false);
+    expect(approvals.get(pending.id).state).toBe('pending');
+    expect(approvals.record(pending.id).map(row => row.event)).toEqual(['request']);
+    expect(events).toEqual([]);
+
+    // This failure happens at SQLite COMMIT, after every service returned.
+    expect(() => writes.run(() => {
+      allowNested();
+      client.pragma('defer_foreign_keys = ON');
+      db.insert(projectMembers).values({ project: 'missing', member: 'owner' }).run();
+    })).toThrow('FOREIGN KEY');
+    expect(settings.read().on).toBe(false);
+    expect(approvals.get(pending.id).state).toBe('pending');
+    expect(approvals.record(pending.id).map(row => row.event)).toEqual(['request']);
+    expect(events).toEqual([]);
+
+    failNotification = true;
+    const committed = writes.run(() => approvals.allow(pending.id, 'owner'));
+    expect(committed.value.state).toBe('used');
+    expect(committed.notificationErrors).toEqual([notificationError]);
+    expect(events).toEqual(['access', 'changed']);
+    // Notification errors are not command failures: reload committed settings,
+    // without retrying Allow or duplicating its answer/audit.
+    await runtime.reload();
+    runtime.run('request', 'graphql', () => undefined);
+    expect(db.select().from(timingDays).all()).toMatchObject([{ kind: 'request', name: 'graphql', count: 1 }]);
+    expect(approvals.record(pending.id).map(row => row.event)).toEqual(['request', 'allow', 'use']);
+  } finally {
+    await runtime.close();
+    client.close();
+    clock.advance(2 * 86400_000);
   }
 });

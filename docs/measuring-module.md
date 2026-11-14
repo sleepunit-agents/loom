@@ -88,6 +88,12 @@ the shared timing store and generated policy-filtered GraphQL reads. It proves
 that a rolled-back outer answer leaves the runtime off, approved changes take
 effect after reload, disabling stops new rows, and current owner revocation
 removes reads from an already-created schema. It is not a running-root mount.
+The fixture also uses the real `DataWrites` boundary: a later receipt failure
+or a deferred foreign-key failure at final COMMIT rolls back the allowance,
+settings and audit without notifying or enabling Measuring. Once committed,
+notification errors must be reported separately; they must not prevent the
+settings reload or cause Allow to run again. Root composition must preserve
+that ordering around its own command and receipt handling.
 
 `src/core/measuring/visibility.ts` supplies the read policy for that endpoint:
 include `timingDays` and `measuringSettings` in its selected tables and merge
