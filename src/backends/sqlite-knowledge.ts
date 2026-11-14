@@ -1,3 +1,4 @@
+import { snapshotKnowledgeRevision } from './knowledge-revisions.js';
 import { verifyKnowledgePages, deriveSlaClass, enforcePageBodyCap } from './knowledge-verification.js';
 export { deriveSlaClass } from './knowledge-verification.js';
 import { notifyWrites } from '../core/touched/writes.js';
@@ -51,9 +52,6 @@ const UNKNOWN_IDENTITY = 'unknown';
 
 /** Hard size caps — enforced at write boundary (design §A3). */
 const MAX_CITATION_EXCERPT_LENGTH = 4096; // 4 KB
-
-/** Body snapshots retained per page; oldest pruned beyond this. */
-const MAX_REVISIONS_PER_PAGE = 10;
 
 export interface SqliteKnowledgeConfig {
   /** Absolute path to the knowledge SQLite database file */
@@ -173,7 +171,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
           // page is recoverable (the 2026-06-01 verify run stomped 13 bodies
           // with no recovery path other than transcript archaeology).
           if (appliedMode === 'replace' && newBody !== existing.body) {
-            this.snapshotRevision(db, pageId, input.slug, existing.body, 'write-replace', timestamp, input.actor ?? null);
+            snapshotKnowledgeRevision(db, pageId, input.slug, existing.body, 'write-replace', timestamp, input.actor ?? null);
           }
 
           // verified_at is a verification stamp, not a write stamp: an update
@@ -911,7 +909,7 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
       const tx = db.transaction(() => {
         // The body being displaced is itself preserved — a restore must
         // never be the second irreversible overwrite in the story.
-        snapshotId = this.snapshotRevision(db, page.id, input.slug, page.body, 'history-restore', timestamp, input.actor ?? null);
+        snapshotId = snapshotKnowledgeRevision(db, page.id, input.slug, page.body, 'history-restore', timestamp, input.actor ?? null);
         db.prepare('UPDATE pages SET body = ?, updated = ? WHERE id = ?').run(
           revision.body, timestamp, page.id,
         );
@@ -927,36 +925,6 @@ export class SqliteKnowledgeBackend implements KnowledgeBackend {
     } catch (e) {
       return Promise.reject(e);
     }
-  }
-
-  /**
-   * Insert a body snapshot and prune beyond the per-page cap. Always called
-   * inside a transaction owned by the caller (writePage or restoreRevision).
-   * The inner retryWrite calls run bare statements — safe inside an outer
-   * transaction; the outer transaction is the atomicity boundary.
-   */
-  private snapshotRevision(
-    db: Database,
-    pageId: number,
-    slug: string,
-    body: string,
-    op: string,
-    timestamp: string,
-    actor: string | null = null,
-  ): number {
-    const result = retryWrite(() =>
-      db.prepare(
-        'INSERT INTO page_revisions (page_id, slug, body, op, replaced_at, actor) VALUES (?, ?, ?, ?, ?, ?)',
-      ).run(pageId, slug, body, op, timestamp, actor),
-    );
-    retryWrite(() =>
-      db.prepare(
-        `DELETE FROM page_revisions WHERE page_id = ? AND id NOT IN (
-           SELECT id FROM page_revisions WHERE page_id = ? ORDER BY id DESC LIMIT ?
-         )`,
-      ).run(pageId, pageId, MAX_REVISIONS_PER_PAGE),
-    );
-    return Number(result.lastInsertRowid);
   }
 
   addCitations(slug: string, citations: KnowledgeCitationInput[]): Promise<number> {

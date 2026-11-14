@@ -1,3 +1,4 @@
+import { snapshotKnowledgeRevision } from './knowledge-revisions.js';
 /** Synchronous verification over an already-open existing knowledge store.
  * Owns the immediate transaction and retries; never opens a path or initializes schema.
  * Callers publish committed changes separately. This alone supplies no cross-store receipt.
@@ -30,25 +31,6 @@ export function verifyKnowledgePages(db: Database, input: KnowledgeVerifyInput, 
     throw new Error('verifyPages: slugs must not be empty');
   }
 
-  // Validate every slug before stamping anything — no partial batches.
-  type PageRow = { id: number; status: string; body: string; freshness_anchor: string | null; domain: string };
-  const rows: Array<{ id: number; slug: string; body: string; freshness_anchor: string | null; domain: string }> = [];
-  for (const slug of slugs) {
-    const page = db.prepare(
-      'SELECT id, status, body, freshness_anchor, domain FROM pages WHERE slug = ?',
-    ).get(slug) as PageRow | undefined;
-
-    if (!page) {
-      throw new Error(`verifyPages: page not found: ${slug}`);
-    }
-    if (page.status === 'archived') {
-      throw new Error(
-        `verifyPages: page '${slug}' is archived — restore it before verifying`,
-      );
-    }
-    rows.push({ id: page.id, slug, body: page.body, freshness_anchor: page.freshness_anchor, domain: page.domain });
-  }
-
   const outcome = input.outcome ?? 'confirmed';
   const citationChecked = input.citation_checked ? 1 : 0;
   const insertVerification = db.prepare(
@@ -63,6 +45,25 @@ export function verifyKnowledgePages(db: Database, input: KnowledgeVerifyInput, 
 
   let noted = false;
   const tx = db.transaction(() => {
+    // Read under the write lock so a note and its saved version use the same
+    // current body. Validate every slug before stamping anything.
+    type PageRow = { id: number; status: string; body: string; freshness_anchor: string | null; domain: string };
+    const rows: Array<{ id: number; slug: string; body: string; freshness_anchor: string | null; domain: string }> = [];
+    for (const slug of slugs) {
+      const page = db.prepare(
+        'SELECT id, status, body, freshness_anchor, domain FROM pages WHERE slug = ?',
+      ).get(slug) as PageRow | undefined;
+
+      if (!page) {
+        throw new Error(`verifyPages: page not found: ${slug}`);
+      }
+      if (page.status === 'archived') {
+        throw new Error(
+          `verifyPages: page '${slug}' is archived — restore it before verifying`,
+        );
+      }
+      rows.push({ id: page.id, slug, body: page.body, freshness_anchor: page.freshness_anchor, domain: page.domain });
+    }
     for (const row of rows) {
       const finalAnchor = input.freshness_anchor ?? row.freshness_anchor;
       const slaClass = deriveSlaClass(finalAnchor, row.domain);
@@ -74,6 +75,7 @@ export function verifyKnowledgePages(db: Database, input: KnowledgeVerifyInput, 
         const dateLabel = verifiedAt.slice(0, 10);
         const newBody = `${row.body}\n\n## Verification — ${dateLabel}\n\n${input.note}`;
         enforcePageBodyCap(newBody);
+        snapshotKnowledgeRevision(db, row.id, row.slug, row.body, 'verify-note', timestamp, input.verifier ?? null);
         // A note changes the body, so it bumps `updated` — a pure stamp
         // deliberately does not (updated means "content changed").
         db.prepare(
@@ -91,8 +93,8 @@ export function verifyKnowledgePages(db: Database, input: KnowledgeVerifyInput, 
   retryWrite(() => tx.immediate());
 
   return {
-    verified: rows.length,
-    slugs: rows.map((r) => r.slug),
+    verified: slugs.length,
+    slugs,
     verified_at: verifiedAt,
     stamped,
     noted,

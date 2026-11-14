@@ -1,3 +1,4 @@
+import Database from 'better-sqlite3';
 /**
  * Freshness + body-history backend tests:
  *   - verifyPages: stamp-only verification (the missing primitive whose
@@ -147,6 +148,47 @@ describe('SqliteKnowledgeBackend — verify / freshness / revisions', () => {
       expect(page!.body.indexOf('Original body.')).toBeLessThan(
         page!.body.indexOf('## Verification'),
       );
+    });
+
+    it('saves the earlier body before a verification note and can restore it', async () => {
+      await seed('page', { body: 'Original fact.' });
+      await backend.verifyPages({ slug: 'page', note: 'Still true.', verifier: 'test-agent' });
+      const revisions = await backend.listRevisions('page');
+      expect(revisions).toHaveLength(1);
+      expect(revisions[0]).toMatchObject({ actor: 'test-agent', op: 'verify-note' });
+      expect(await backend.getRevision(revisions[0].id)).toMatchObject({ body: 'Original fact.' });
+      await backend.restoreRevision({ slug: 'page', revision_id: revisions[0].id });
+      expect((await backend.getPage('page'))!.body).toBe('Original fact.');
+      expect(await backend.listRevisions('page')).toHaveLength(2);
+    });
+
+    it('retains only the newest ten versions across notes and regular edits', async () => {
+      await seed('page', { body: 'Original fact.' });
+      for (let n = 0; n < 12; n++) await backend.verifyPages({ slug: 'page', note: `Check ${n}.` });
+      const revisions = await backend.listRevisions('page');
+      expect(revisions).toHaveLength(10);
+      expect((await backend.getRevision(revisions[0].id))!.body).toContain('Check 10.');
+      expect((await backend.getRevision(revisions.at(-1)!.id))!.body).toContain('Check 1.');
+      const body = (await backend.getPage('page'))!.body;
+      await backend.writePage({ slug: 'page', title: 'page', domain: 'test', body: 'Edited fact.', bodyMode: 'replace' });
+      const edited = await backend.listRevisions('page');
+      expect(edited).toHaveLength(10);
+      expect((await backend.getRevision(edited[0].id))!.body).toBe(body);
+    });
+
+    it('rolls back the snapshot and pruning if verification cannot commit', async () => {
+      await seed('page', { body: 'Original fact.' });
+      for (let n = 0; n < 10; n++) await backend.verifyPages({ slug: 'page', note: `Check ${n}.` });
+      const before = await backend.getPage('page');
+      const revisions = await backend.listRevisions('page');
+      const db = new Database(join(tmpDir, 'knowledge.db'));
+      try {
+        db.exec("CREATE TRIGGER fail_verification BEFORE INSERT ON verifications BEGIN SELECT RAISE(ABORT, 'injected failure'); END");
+        await expect(backend.verifyPages({ slug: 'page', note: 'Must not survive.' })).rejects.toThrow('injected failure');
+        expect(await backend.getPage('page')).toEqual(before);
+        expect(await backend.listRevisions('page')).toEqual(revisions);
+        expect(await backend.getVerifications('page')).toHaveLength(10);
+      } finally { db.close(); }
     });
 
     it('stamps a batch of slugs with a shared verified_at', async () => {
