@@ -70,6 +70,15 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await expect.poll(()=>a.getByRole('textbox',{name:'Or answer in your own words'}).inputValue()).toBe('Continue after the small fix.');
     const shots=resolve('artifacts/attention-inbox');mkdirSync(shots,{recursive:true});
 
+    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]) {
+      await a.setViewportSize({width,height:900});
+      await a.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      await a.getByText(/Saved does not mean read/).waitFor();
+      expect(await a.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await a.screenshot({path:join(shots,`inbox-answer-acceptance-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    await a.setViewportSize({width:1280,height:900});
     await a.getByRole('button',{name:'Record answer',exact:true}).click();
     await expect.poll(()=>yes(b).count()).toBe(0);
     await expect.poll(()=>b.getByText(/words · jonathan/).count()).toBe(1);

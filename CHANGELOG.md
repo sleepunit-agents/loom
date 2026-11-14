@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Clock native workers can resolve standalone scheduled files in their own checkout, with exact source checks and native-only acknowledgement.
 - Next Inbox delivers public Clock answers to the original active body, retaining verbatim member words and staging holds.
+- Inbox explains supported conversation delivery, refused drafts and acknowledgements without claiming that a saved answer was read.
 
 - Next Comms keeps a bounded word-free reference index with message writes and preserves expired references during fixture imports.
 - Next Comms backfills retained message references once on startup, with ownership and retention fences and safe retry after interruption.

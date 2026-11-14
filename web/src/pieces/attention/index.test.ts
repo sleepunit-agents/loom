@@ -114,7 +114,7 @@ it('keeps one pending write above reader navigation and never claims delivery',a
   await draw(h(InboxApp));
   const firstRow=tree!.root.findAllByProps({'data-split-row':''}).find((n:Node)=>words(n).includes('Continue the work?'))!;
   await act(async()=>firstRow.props.onClick());await shown.finish({ok:true,value:first});
-  expect(text()).toContain('Delivery to the agent is not connected');
+  expect(text()).toContain('Saved does not mean read');
   await click('Yes');await fresh.finish({ok:true,value:first});
   const row=tree!.root.findAllByProps({'data-split-row':''}).find((n:Node)=>words(n).includes('Another question'))!;
   await act(async()=>row.props.onClick());
@@ -384,4 +384,25 @@ it('keeps Approvals reported-step FYIs in FYI with an owning navigation action a
   const go=vi.fn();await draw(h(AskReader,{ask:notice,go,snapshot:{records:[notice],status:'live'}}));
   expect(text()).toContain('Open Approvals');expect(buttons('Yes')).toHaveLength(0);expect(buttons('No')).toHaveLength(0);
   await click('Open Approvals');expect(go).toHaveBeenCalledWith('/p/approvals-preview/notices');
+});
+it.each(['piece','conversation'] as const)('does not infer delivery or reading from %s source text; a refused public answer retains its draft for a checked retry',async(kind)=>{
+  const record=ask('ask-1',{source:{kind,id:'runtime-clock'}}),snapshot:Snapshot<Ask>={records:[record],status:'live'};
+  const shown=request<Ask>(),fresh=request<Ask>(),write=request<Ask>();
+  f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call).mockReturnValueOnce(write.call);
+  await draw(h(AskReader,{ask:record,snapshot,go:vi.fn()}));await shown.finish({ok:true,value:record});
+  expect(text()).toContain('When the conversation supports delivery');expect(text()).toContain('Saved does not mean read');
+  expect(text()).toContain('Mark done and Dismiss send no message');
+  expect(text()).not.toContain('not connected in this preview');
+  await act(async()=>tree!.root.findByType('textarea').props.onChange({target:{value:'  Keep these exact words.  '}}));
+  await click('Record answer');await fresh.finish({ok:true,value:record});
+  await write.finish({ok:false,code:'denied',message:'Original public answer destination ended'});
+  expect(text()).toContain('Original public answer destination ended');expect(text()).not.toContain('Answer recorded');
+  const retry=request<Ask>(),retryFresh=request<Ask>(),accepted=request<Ask>();
+  f.call.mockReturnValueOnce(retry.call).mockReturnValueOnce(retryFresh.call).mockReturnValueOnce(accepted.call);
+  await click('Check again');await retry.finish({ok:true,value:record});
+  expect(tree!.root.findByType('textarea').props.value).toBe('  Keep these exact words.  ');
+  await click('Record answer');await retryFresh.finish({ok:true,value:record});
+  expect(f.call).toHaveBeenLastCalledWith('attention.answer',{id:record.id,answer:{kind:'words',text:'  Keep these exact words.  '}});
+  await accepted.finish({ok:true,value:{...record,state:'answered'}});
+  expect(text()).toContain('Answer recorded');expect(text()).not.toContain('Answer delivered');
 });
