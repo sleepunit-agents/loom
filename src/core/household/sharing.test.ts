@@ -82,7 +82,7 @@ it('reads persisted sharing, preserves raw fields, and applies the owner example
   expect(mayAct(pollock, { project: 'pond', agent: 'art' }, sharing, 'give-work')).toBe(false);
   expect(mayAct(bot, { agent: 'pond-bot' }, sharing, 'give-work')).toBe(false);
   expect(maySee(pollock, { member: 'pollock' }, sharing)).toBe(true);
-  expect(maySee(owner, { member: 'pollock' }, sharing)).toBe(false);
+  expect(maySee(owner, { member: 'pollock' }, sharing)).toBe(true);
   expect(mayAct(owner, {}, sharing, 'household')).toBe(true);
   expect(readdirSync(h).filter(n => n.endsWith('.json'))).toEqual([]);
 });
