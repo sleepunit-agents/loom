@@ -11,7 +11,7 @@ afterEach(async()=>{await act(async()=>tree?.unmount());f.status='live';});
 it('shows source words, target and principal in the owning live reported view, newest first, with search',async()=>{
   await act(async()=>{tree=create(h(ApprovalsApp,{path:'/p/approvals-preview/notices'}));});
   const text=()=>JSON.stringify(tree.toJSON());
-  expect(text()).toContain('Fix for a person');expect(text()).toContain('github:acme/app#12@head');expect(text()).toContain('for loren');expect(text()).toContain('11/13/26, 6:00 PM CT');
+  expect(text()).toContain('Merge and host reports appear in the list.');expect(text()).toContain('Fix for a person');expect(text()).toContain('github:acme/app#12@head');expect(text()).toContain('for loren');expect(text()).toContain('11/13/26, 6:00 PM CT');
   expect(text().indexOf('Fix for a person')).toBeLessThan(text().indexOf('Earlier reported step'));
   await act(async()=>tree.root.findByProps({type:'search'}).props.onChange({target:{value:'fixture.service'}}));
   expect(text()).toContain('Earlier reported step');expect(text()).not.toContain('Fix for a person');
