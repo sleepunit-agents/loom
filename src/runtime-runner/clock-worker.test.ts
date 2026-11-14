@@ -2,7 +2,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {ServerResponse} from 'node:http';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,rmSync,writeFileSync,mkdirSync,symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomBytes} from 'node:crypto';
@@ -23,7 +23,7 @@ const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
 const owner:Viewer={kind:'member',id:'jonathan'};
 const settle=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
-async function setup(staging=false,privateInput=false,unknownRoot=false){
+async function setup(staging=false,privateInput=false,unknownRoot=false,file?:string){
  const home=mkdtempSync(join(tmpdir(),'clock-native-'));fixture(home);closes.push(()=>rmSync(home,{recursive:true,force:true}));
  const access=structuredClone(fixtureSharing());
  const clock=new FakeClock(),app=await startLoom({home,clock,next:true,staging,sharing:()=>access,stdout(){}});closes.push(app.close);access.services=builtinServices(app.db);
@@ -36,7 +36,7 @@ async function setup(staging=false,privateInput=false,unknownRoot=false){
  const runner=randomBytes(32).toString('hex');
  signin(app).tokens.change(ts=>ts.push({role:'runner:a',label:'fixture runner',sha256:hash(runner),created:new Date(clock.now()).toISOString()}));
  const post=async(token:string,name:string,input={})=>(await fetch(`${app.url}/api/runtime/${name}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({input,id:`http-${++n}`})})).json();
- const work={agent:'art',prompt:'ONLY CURRENT SCHEDULED WORDS',note:'fixture',place:'lane:native',when:'1s'};
+ const work={agent:'art',...(file?{file}:{prompt:'ONLY CURRENT SCHEDULED WORDS'}),note:'fixture',place:'lane:native',when:'1s'};
  const scheduled=privateInput?await app.operations.callAsync('socket',owner,'clock.in',{...work,member:'jonathan',project:'pond'},`private-${++n}`,true):call('clock.in',work,unknownRoot?{kind:'agent',id:'art'}:owner);
  expect(scheduled).toMatchObject({ok:true});const wake=(scheduled as {ok:true;value:{id:string}}).value.id;
  clock.advance(1000);await settle();const job=store.ids('job')[0];expect(job).toBeTruthy();
@@ -344,4 +344,78 @@ it.each(['schema','malformed'] as const)('invalid %s running authority response 
  });
  f.clock.advance(1000);await poisoned;await settle();f.finish();
  expect(await worker.completed).toBe(false);expect(f.calls[0].child.killed).toBe(true);expect(f.consumed().consumed).toBeNull();
+});
+
+it.each([false,true])('native worker reads a standalone checkout file and ACKs actual words (private=%s)',async privateWork=>{
+ const f=await setup(false,privateWork,false,'routines/native.md');
+ mkdirSync(join(f.home,'routines'));writeFileSync(join(f.home,'routines/native.md'),'ACTUAL CHECKOUT WORDS');
+ expect(await f.post(f.config.credential,'readConversation',{})).toMatchObject({ok:false});
+ const seq=(f.app.db.prepare('SELECT seq FROM runtime_clock_turns WHERE id=?').get(`clock:${f.wake}`) as {seq:number}).seq;
+ expect(await f.post(f.config.credential,'acknowledgeClockInput',{through:seq})).toMatchObject({ok:false});
+ const input=new PassThrough(),signals=new EventEmitter(),stderr=vi.fn();
+ const completed=runClockWorker({input,args:[],signals,stderr},{clock:f.clock,launch:f.launch});
+ input.end(JSON.stringify(f.config));await f.ready;
+ expect(f.calls[0].input).toBe('LOCAL OWNER RULES\nACTUAL CHECKOUT WORDS');
+ expect(f.calls[0].input).not.toContain('routines/native.md');expect(f.consumed().consumed).toBeNull();
+ f.finish();expect(await completed).toBe(0);expect(stderr).not.toHaveBeenCalled();expect(f.consumed().consumed).not.toBeNull();
+ expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(1);
+ expect(JSON.stringify(f.app.db.prepare('SELECT * FROM runtime_clock_turns').all())).not.toContain('ACTUAL CHECKOUT WORDS');
+});
+it.each(['missing','symlink','local','oversize','invalid'] as const)('unsafe standalone file %s never launches or ACKs',async kind=>{
+ const f=await setup(false,false,false,'native.md');
+ if(kind==='symlink'){writeFileSync(join(f.home,'target.md'),'WORDS');symlinkSync('target.md',join(f.home,'native.md'));}
+ if(kind==='local')writeFileSync(join(f.home,'native.md'),'<!-- house: local -->\nWORDS');
+ if(kind==='oversize')writeFileSync(join(f.home,'native.md'),'x'.repeat(20001));
+ if(kind==='invalid')writeFileSync(join(f.home,'native.md'),Buffer.from([255]));
+ expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(0);expect(f.consumed().consumed).toBeNull();
+ // Even repairing the file cannot replay an uncertain admitted source.
+ if(kind==='symlink')rmSync(join(f.home,'native.md'));
+ writeFileSync(join(f.home,'native.md'),'REPAIRED');
+ expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(0);
+});
+it.each(['withdraw','path','policy'] as const)('standalone file %s change after preparation prevents spawn',async kind=>{
+ const f=await setup(false,false,false,'native.md');writeFileSync(join(f.home,'native.md'),'CURRENT FILE WORDS');
+ const original=preparation.prepareClockInput;
+ vi.spyOn(preparation,'prepareClockInput').mockImplementation((...args)=>{
+  const value=original(...args);
+  if(kind==='withdraw')f.withdraw();
+  if(kind==='path')f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.file','other.md') WHERE id=?").run(f.wake);
+  if(kind==='policy')f.access.members.jonathan.agents=[];
+  return value;
+ });
+ expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(0);expect(f.consumed().consumed).toBeNull();
+});
+
+it('standalone file output remains unacknowledged after withdrawal',async()=>{
+ const f=await setup(false,false,false,'native.md');writeFileSync(join(f.home,'native.md'),'FILE WORDS');
+ const worker=f.start();await f.ready;f.withdraw();f.finish();
+ expect(await worker.completed).toBe(false);expect(f.consumed().consumed).toBeNull();
+ expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(1);
+});
+it('standalone file native execution retains all three independent staging gates',async()=>{
+ const f=await setup(true,false,false,'native.md');writeFileSync(join(f.home,'native.md'),'STAGED FILE WORDS');
+ expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(0);
+ const read=f.app.db.prepare("SELECT id FROM core_effects WHERE id LIKE 'runtime:clock-read:%'").get() as {id:string};
+ expect(f.call('core.releaseEffect',{id:read.id}).ok).toBe(true);
+ expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(0);
+ expect(f.call('core.releaseEffect',{id:`runtime:clock-native:clock:${f.wake}`}).ok).toBe(true);
+ const worker=f.start();await f.ready;expect(f.calls[0].input).toContain('STAGED FILE WORDS');f.finish();
+ expect(await worker.completed).toBe(true);
+});
+it('prompt joining into a standalone file conversation stays held',async()=>{
+ const f=await setup(false,false,false,'native.md');
+ const joined=await f.joinInput();
+ expect(f.store.ids('job')).toEqual([f.job]);
+ const row=f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(joined) as {record:string};
+ expect(JSON.parse(row.record).state).toBe('held');
+ expect(f.app.db.prepare('SELECT id FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toBeUndefined();
+});
+
+it('standalone file joining an authenticated prompt conversation stays held',async()=>{
+ const f=await setup();
+ const joined=await f.joinInput({prompt:undefined,file:'native.md'});
+ expect(f.store.ids('job')).toEqual([f.job]);
+ const row=f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(joined) as {record:string};
+ expect(JSON.parse(row.record).state).toBe('held');
+ expect(f.app.db.prepare('SELECT id FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toBeUndefined();
 });

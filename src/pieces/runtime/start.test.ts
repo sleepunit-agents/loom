@@ -143,7 +143,7 @@ it('keeps source-less operation identity after restart and receipt expiry',async
   expect(f.jobOf(f.call('runtime.startBody',input,owner,'source-less'))).toBe(job);
   expect(f.call('runtime.startBody',{...input,brief:'changed'},owner,'source-less')).toMatchObject({ok:false,code:'conflict'});
 });
-it.each(['file','continuation','slot','approval','local','missing-house'])('holds %s work through the installed Clock without creating a job',async feature=>{
+it.each(['continuation','slot','approval','local','missing-house'])('holds %s work through the installed Clock without creating a job',async feature=>{
   const f=await setup();
   if(feature==='missing-house') f.app.db.prepare('DELETE FROM runtime_settings').run();
   const extra=feature==='file'?{file:'routines/upkeep.md'}:feature==='local'?{prompt:'<!-- house: local -->\nWork'}:
