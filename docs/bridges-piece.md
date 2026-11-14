@@ -1145,7 +1145,8 @@ acquisition, headers, every body read and before returning the batch.
 
 Each request acquires the Bridges service credential anew and sends it only to
 literal `https://files.slack.com/` URLs, with no credentials, port, fragment,
-backslash, whitespace or redirect. HTML/XHTML response MIME types refuse. Declared
+backslash, whitespace or redirect. Literal/encoded dot path segments and nested
+path escapes refuse before URL normalization. HTML/XHTML response MIME types refuse. Declared
 and actual bodies are bounded to 25 MiB per file; a fifteen-second deadline covers
 both headers and streaming, cancels readers and never retries. Names retain the
 old safe eighty-character basename convention. Failures return fixed text,

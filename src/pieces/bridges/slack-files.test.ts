@@ -13,11 +13,11 @@ const venue=venueSchema.parse({id:'v',agent:'art',platform:'slack',workspace:'TW
 const attachment=(n=0)=>({id:`F0A${n}`,name:'../../photo 1.jpg',size:8,url:`https://files.slack.com/files-pri/TWORK-F0A${n}/photo.jpg`});
 // Explicit fake Runtime delivered-message proof. No installed issuer exists.
 function fixture(){
- let allowed=true,staging=true;
- const permit:SlackFilesPermit={agent:'art',venue:'v',workspace:'TWORK',channel:'DPLACE',delivery:'delivered:1',files:[attachment()],current:()=>allowed};
+ let allowed=true,staging=true,setup=true,generation=1;
+ const permit:SlackFilesPermit={agent:'art',venue:'v',workspace:'TWORK',channel:'DPLACE',delivery:'delivered:1',files:[attachment()],current:()=>allowed&&setup&&generation===1};
  const secrets:SecretUse={withValue:vi.fn(async(_name,use)=>use('fixture-token'))};
  const request=vi.fn<typeof fetch>(async()=>new Response('JPEGDATA',{headers:{'Content-Type':'image/jpeg'}}));
- return {permit,secrets,request,revoke:()=>{allowed=false;},hold:()=>{staging=false;},fetch:()=>slackFiles(venue,permit,secrets,()=>staging,request).fetch()};
+ return {permit,secrets,request,revoke:()=>{allowed=false;},hold:()=>{staging=false;},disableSetup:()=>{setup=false;},rotate:()=>{generation++;},fetch:()=>slackFiles(venue,permit,secrets,()=>staging,request).fetch()};
 }
 afterEach(()=>vi.useRealTimers());
 it('fetches first five files with per-request service use, original delivery scope and safe names',async()=>{
@@ -26,7 +26,7 @@ it('fetches first five files with per-request service use, original delivery sco
  expect(got[0]).toEqual({id:'F0A0',name:'photo_1.jpg',bytes:Buffer.from('JPEGDATA')});
  expect(f.request).toHaveBeenNthCalledWith(1,attachment().url,expect.objectContaining({method:'GET',redirect:'error',headers:{Authorization:'Bearer fixture-token'},signal:expect.any(AbortSignal)}));
 });
-it.each(['https://evil.example/x','http://files.slack.com/x','https://files.slack.com.evil/x','https://u:p@files.slack.com/x','https://files.slack.com:443/x','https://evil.example\\@files.slack.com/x','https://files.slack.com/x#fragment','https://files.slack.com/\nx'])('refuses untrusted URL before secret use: %s',async url=>{
+it.each(['https://evil.example/x','http://files.slack.com/x','https://files.slack.com.evil/x','https://u:p@files.slack.com/x','https://files.slack.com:443/x','https://evil.example\\@files.slack.com/x','https://files.slack.com/x#fragment','https://files.slack.com/\nx','https://files.slack.com/a/../private','https://files.slack.com/./private','https://files.slack.com/%2e%2e/private','https://files.slack.com/a%2f..%2fprivate','https://files.slack.com/%252e%252e/private','https://files.slack.com/a%5cprivate','https://files.slack.com/%broken'])('refuses untrusted URL before secret use: %s',async url=>{
  const f=fixture();Object.assign(f.permit.files[0],{url});await expect(f.fetch()).rejects.toThrow('Bridge file fetch held');expect(f.secrets.withValue).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
 });
 it.each([{id:'../file'},{size:SLACK_FILE_BYTES+1},{size:-1},{size:1.5},{name:'x'.repeat(4097)}])('preflights malformed descriptors %j',async change=>{
@@ -36,14 +36,14 @@ it.each([{agent:'other'},{venue:'other'},{workspace:'TOTHER'},{channel:'../place
  const f=fixture();Object.assign(f.permit,change);await expect(f.fetch()).rejects.toThrow();expect(f.request).not.toHaveBeenCalled();
 });
 it('refuses held/revoked proofs before secret use',async()=>{
- for(const gate of ['revoke','hold'] as const){const f=fixture();f[gate]();await expect(f.fetch()).rejects.toThrow();expect(f.secrets.withValue).not.toHaveBeenCalled();}
+ for(const gate of ['revoke','hold','disableSetup','rotate'] as const){const f=fixture();f[gate]();await expect(f.fetch()).rejects.toThrow();expect(f.secrets.withValue).not.toHaveBeenCalled();}
 });
-it('rechecks after asynchronous holder acquisition',async()=>{
- const f=fixture();f.secrets.withValue=async(_name,use)=>{f.revoke();return use('private-token');};await expect(f.fetch()).rejects.toThrow();expect(f.request).not.toHaveBeenCalled();
+it.each(['revoke','hold','disableSetup','rotate'] as const)('rechecks %s after asynchronous holder acquisition',async gate=>{
+ const f=fixture();f.secrets.withValue=async(_name,use)=>{f[gate]();return use('private-token');};await expect(f.fetch()).rejects.toThrow();expect(f.request).not.toHaveBeenCalled();
 });
-it.each(['revoke','hold','scope','files'])('rechecks after headers: %s',async change=>{
+it.each(['revoke','hold','disableSetup','rotate','scope','files'])('rechecks after headers: %s',async change=>{
  const f=fixture();let cancelled=false;
- f.request.mockImplementation(async()=>{if(change==='revoke')f.revoke();if(change==='hold')f.hold();if(change==='scope')Object.assign(f.permit,{delivery:'another'});if(change==='files')Object.assign(f.permit.files[0],{id:'FOTHER'});
+ f.request.mockImplementation(async()=>{if(['revoke','hold','disableSetup','rotate'].includes(change))f[change as 'revoke'|'hold'|'disableSetup'|'rotate']();if(change==='scope')Object.assign(f.permit,{delivery:'another'});if(change==='files')Object.assign(f.permit.files[0],{id:'FOTHER'});
  return new Response(new ReadableStream({cancel(){cancelled=true;}}));});
  await expect(f.fetch()).rejects.toThrow('Bridge file fetch held');expect(cancelled).toBe(true);
 });
@@ -54,9 +54,9 @@ it('bounds actual bytes independently of metadata and cancels oversized streams'
  const f=fixture();let cancelled=false;f.request.mockResolvedValue(new Response(new ReadableStream({start(c){c.enqueue(new Uint8Array(SLACK_FILE_BYTES));c.enqueue(new Uint8Array(1));},cancel(){cancelled=true;}})));
  await expect(f.fetch()).rejects.toThrow('Bridge file fetch held');expect(cancelled).toBe(true);
 });
-it('rechecks proof during body streaming and cancels',async()=>{
+it.each(['revoke','hold','disableSetup','rotate'] as const)('rechecks %s during body streaming and cancels',async gate=>{
  const f=fixture();let cancelled=false;
- f.request.mockResolvedValue(new Response(new ReadableStream({pull(c){f.revoke();c.enqueue(new Uint8Array([1]));},cancel(){cancelled=true;}})));
+ f.request.mockResolvedValue(new Response(new ReadableStream({pull(c){f[gate]();c.enqueue(new Uint8Array([1]));},cancel(){cancelled=true;}})));
  await expect(f.fetch()).rejects.toThrow();expect(cancelled).toBe(true);
 });
 it.each(['headers','body'])('bounds stalled %s at fifteen seconds, with a fake clock',async where=>{
@@ -67,7 +67,7 @@ it.each(['headers','body'])('bounds stalled %s at fifteen seconds, with a fake c
  await vi.advanceTimersByTimeAsync(1);await check;if(where==='body')expect(cancelled).toBe(true);expect(vi.getTimerCount()).toBe(0);
 });
 it('sanitizes HTTP and holder errors',async()=>{
- const f=fixture();f.request.mockRejectedValue(Error('private-token https://private-path'));await expect(f.fetch()).rejects.toThrow(/^Bridge file fetch held$/);
+ const f=fixture();f.request.mockRejectedValue(Error('private-token https://private-path'));await expect(f.fetch()).rejects.toThrow(/^Bridge file fetch held$/);expect(f.request).toHaveBeenCalledTimes(1);
  f.secrets.withValue=async()=>{throw Error('secret private-token');};await expect(f.fetch()).rejects.toThrow(/^Bridge file fetch held$/);
 });
 
@@ -110,4 +110,10 @@ it.each(['agent','venue','workspace','channel','delivery','files'])('binds %s at
  const f=fixture(),transport=slackFiles(venue,f.permit,f.secrets,()=>true,f.request);
  Object.assign(f.permit,{[key]:key==='files'?[attachment(1)]:key==='channel'?'DOTHER':'other'});
  await expect(transport.fetch()).rejects.toThrow();expect(f.secrets.withValue).not.toHaveBeenCalled();
+});
+
+it('never caches a completed batch across calls',async()=>{
+ const f=fixture(),transport=slackFiles(venue,f.permit,f.secrets,()=>true,f.request);
+ const first=await transport.fetch(),second=await transport.fetch();
+ expect(first[0].bytes).not.toBe(second[0].bytes);expect(f.request).toHaveBeenCalledTimes(2);expect(f.secrets.withValue).toHaveBeenCalledTimes(2);
 });

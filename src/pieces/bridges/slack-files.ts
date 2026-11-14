@@ -29,6 +29,11 @@ const held = () => Error('Bridge file fetch held');
 function fileUrl(value:string) {
   // Refuse alternate URL spellings before WHATWG normalization hides them.
   if (!value.startsWith('https://files.slack.com/') || /[\\\s\x00-\x1f\x7f]/.test(value)) throw held();
+  const rawPath=value.slice('https://files.slack.com'.length).split(/[?#]/,1)[0];
+  const decodedPath=decodeURIComponent(rawPath);
+  // Check before URL normalization removes dot segments. Nested escapes and
+  // encoded backslashes refuse rather than depend on a server's decoding order.
+  if(/(^|\/)\.{1,2}(\/|$)/.test(decodedPath)||decodedPath.includes('\\')||/%[0-9a-f]{2}/i.test(decodedPath))throw held();
   const u=new URL(value);
   if(u.origin!=='https://files.slack.com'||u.username||u.password||u.hash)throw held();
   return u.href;
