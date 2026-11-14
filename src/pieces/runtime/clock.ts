@@ -6,8 +6,9 @@ import { runtimeRole } from './role.js';
 import { runtimeStore } from './store.js';
 import { configuredHouse } from './builds.js';
 import { startJobId } from './start.js';
+import { clockRoute, type ClockDestinationReader } from '../clock/destination.js';
 export const START_CONFIRM_MS = 60_000;
-export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'status'>): Runtime {
+export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'status'>, destination?: ClockDestinationReader): Runtime {
   const store=runtimeStore(app.db), waiting=new Set<(result:StartResult)=>void>();
   let closed=false;
   app.onClose(()=>{closed=true;for(const finish of [...waiting]) finish({state:'uncertain',reason:'Runtime closed before start confirmation'});});
@@ -15,6 +16,11 @@ export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'stat
     if(closed) return {state:'uncertain',reason:'Runtime is closed'};
     const existing=()=>store.read('job',startJobId(viewer,wake.agent,{kind:'wake',id:wake.id}));
     const hold=(reason:string):StartResult=>({state:existing()?'uncertain':'held',reason});
+    // A matching, current Runtime destination is necessary for lane reuse. The
+    // startBody path cannot feed an existing conversation; never silently turn a
+    // verified join into a second body or forward arbitrary caller places.
+    const route=clockRoute(wake,destination);
+    if(route.kind==='join') return hold('This wake needs conversation delivery; starting another body is unsafe');
     if(!configuredHouse(store.read('settings',wake.agent))) return hold('An owner must configure the agent house before dispatch');
     // These old runner features require their own trusted inputs; never pretend
     // a path is a prompt or confer approval/continuation authority from text.

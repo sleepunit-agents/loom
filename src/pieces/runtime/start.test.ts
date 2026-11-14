@@ -215,3 +215,46 @@ it('keeps the original agent viewer in the installed Clock start path',async()=>
   expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
   expect(wake(f.app.db,id)).toMatchObject({state:'fired',outcome:job,by:{kind:'agent',id:'art'}});
 });
+
+it('issues Clock lane witnesses from current Runtime bindings, never Comms/bridge or copied metadata',async()=>{
+ const {clockDestination}=await import('./clock-destination.js');
+ const {provenanceStore}=await import('./provenance-store.js');
+ const f=await setup(),job=f.jobOf(f.call('runtime.startBody',{...f.input,conversation:'cv-lane'}));
+ await f.post(f.runner,'claimJob',{job});await f.post(f.runner,'takeInput',{job});await f.post(f.runner,'reportJob',{job,state:'running'});
+ const input={agent:'art',place:'lane:daily'},read=clockDestination(f.app,()=>fixtureSharing());
+ expect(read(input)).toBeUndefined();
+ f.app.db.transaction(()=>{
+  f.store.put('binding',{id:'cv-lane',agent:'art',place:'lane:daily',venue:'wake',job},f.clock.now());
+  provenanceStore(f.app.db).note('cv-lane','art',{key:'clock-source',sender:{kind:'unknown'},at:f.clock.now()},['jonathan']);
+ })();
+ const witness=read(input)!;expect(witness).toMatchObject({agent:'art',conversation:'cv-lane',place:'lane:daily'});expect(witness.current()).toBe(true);
+ for(const change of [{place:'lane:other'},{agent:'mark'},{member:'jonathan'},{project:'pond'}])expect(read({...input,...change})).toBeUndefined();
+ const binding=f.store.read('binding','cv-lane')!,before=f.store.read('job',job)!;
+ for(const change of [{venue:'loom'},{venue:'bridge:discord'},{job:'missing'},{member:'jonathan'},{project:'pond'},{agent:'mark'}]){
+  f.app.db.transaction(()=>{const {changedAt:_,...b}=binding;f.store.put('binding',{...b,...change},f.clock.now());})();
+  expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+ }
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=binding;f.store.put('binding',b,f.clock.now());})();
+ expect(witness.current()).toBe(true);
+ for(const change of [{state:'done' as const},{endedAt:f.clock.now()},{imported:{history:'unknown' as const}},
+  {principalReset:{approval:'a-reset',by:'jonathan',at:f.clock.now()}},{writtenOff:{approval:'a-off',by:'jonathan',at:f.clock.now()}},
+  {agent:'mark'},{member:'jonathan'},{project:'pond'},{conversation:'cv-elsewhere'}]){
+  f.app.db.transaction(()=>{const {changedAt:_,...j}=before;f.store.put('job',{...j,...change},f.clock.now());})();
+  expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+ }
+ f.app.db.transaction(()=>{const {changedAt:_,...j}=before;f.store.put('job',j,f.clock.now());
+  f.store.put('binding',{id:'cv-replacement',agent:'art',place:'lane:replacement',venue:'wake',job},f.clock.now());})();
+ expect(()=>f.app.db.transaction(()=>f.store.put('binding',{id:'cv-duplicate',agent:'art',place:'lane:daily',venue:'wake',job},f.clock.now()))()).toThrow(/UNIQUE/);
+ f.app.db.prepare('DELETE FROM runtime_bindings WHERE id=?').run('cv-replacement');
+ expect(witness.current()).toBe(true);
+ f.app.db.prepare('DELETE FROM runtime_provenance WHERE conversation=?').run('cv-lane');
+ expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+});
+it('holds a verified Clock join instead of starting a second body',async()=>{
+ const f=await setup(),input:Wake={id:'w-join',agent:'art',prompt:'PRIVATE join words',note:'join',schedule:'daily',state:'firing',due:1,createdAt:0,changedAt:0,by:owner,failures:0,
+  authorship:{origin:'art',conversation:'cv-own',principal:{for:'owner',people:[]}}};
+ const current=()=>true;
+ const runtime=clockRuntime(f.app,f.app.effects!,()=>({agent:'art',place:'lane:daily',conversation:'cv-own',current}));
+ expect(await runtime.startBody({wake:input,viewer:owner,intent:'join'})).toMatchObject({state:'held'});
+ expect(f.store.ids('job')).toEqual([]);
+});
