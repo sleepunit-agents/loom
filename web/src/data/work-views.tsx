@@ -61,6 +61,13 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
     try { selected = decodeURIComponent(currentPath.slice(`${base}/change/`.length)) || undefined; }
     catch { /* Malformed URLs leave the reader closed. */ }
   }
+  let folder = ['you', 'lately'].find(id => currentPath === `${base}/${id}`) ?? 'all';
+  if (currentPath.startsWith(`${base}/project/`)) {
+    try {
+      const project = decodeURIComponent(currentPath.slice(`${base}/project/`.length));
+      if (project) folder = `project:${project}`;
+    } catch { /* Malformed project links show all visible changes. */ }
+  }
   const visit = (next: string) => {
     if (go) go(next);
     else {
@@ -69,7 +76,8 @@ export function ChangesApp({ path, timezone, actions, go }: { path?: string; tim
     }
   };
   return <Changes snapshot={useChangeSnapshot(timezone)} actions={actions}
-    navigation={{ selected, select: id => visit(id ? `${base}/change/${encodeURIComponent(id)}` : base) }}
+    navigation={{ selected, select: id => visit(id ? `${base}/change/${encodeURIComponent(id)}` : base), folder,
+      openFolder: id => visit(id.startsWith('project:') ? `${base}/project/${encodeURIComponent(id.slice(8))}` : id === 'all' ? base : `${base}/${id}`) }}
     openTask={go ? id => go(`/p/tasks-preview/task/${encodeURIComponent(id)}`) : undefined} />;
 }
 /** Cards read the same current entities as the tiles, never copied payloads. */

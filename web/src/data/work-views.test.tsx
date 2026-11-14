@@ -84,7 +84,7 @@ it('opens the exact change from a Comms deep link and follows shell navigation a
   await act(async () => tree.update(h(ChangesApp, { path: route, go })));
   expect(words()).toContain('first-head');
   await act(async () => tree.root.findByType('Split').props.onFolder('you'));
-  expect(go).toHaveBeenLastCalledWith('/p/changes-preview');
+  expect(go).toHaveBeenLastCalledWith('/p/changes-preview/you');
   for (const path of ['/p/changes-preview/change/%broken', '/p/changes-preview/change/missing', '/p/changes-preview/change/']) {
     await act(async () => tree.update(h(ChangesApp, { path, go })));
     expect(words()).not.toContain('first-head');
@@ -161,4 +161,51 @@ it('approval deep links show the current answer and withdraw the reader when una
     expect(words()).not.toContain('Measuring settings change');
     expect(tree.root.findAllByType('Button')).toHaveLength(0);
   }
+});
+
+
+it('restores Changes folders from shell routes, including encoded projects and base navigation', async () => {
+  fixture();
+  const project = 'pond / field?';
+  feed.changes.changes[0] = { ...feed.changes.changes[0], project };
+  feed.changes.changes.push({ ...feed.changes.changes[0], id: 'c-other', title: 'Other project change', project: 'other', waitingOn: 'ci' });
+  const go = vi.fn();
+  for (const [folder, path] of [
+    ['you', '/p/changes-preview/you'], ['lately', '/p/changes-preview/lately'],
+    [`project:${project}`, `/p/changes-preview/project/${encodeURIComponent(project)}`], ['all', '/p/changes-preview'],
+  ]) {
+    await draw(h(ChangesApp, { path, go }));
+    expect(tree.root.findByType('Split').props.folder).toBe(folder);
+    expect(words().includes('Other project change')).toBe(folder === 'all' || folder === 'lately');
+    await act(async () => tree.root.findByType('Split').props.onFolder(folder));
+    expect(go).toHaveBeenLastCalledWith(path);
+    await act(async () => tree.unmount());
+  }
+  await draw(h(ChangesApp, { path: '/p/changes-preview/project/%broken', go }));
+  expect(tree.root.findByType('Split').props.folder).toBe('all');
+  expect(words()).toContain('Other project change');
+});
+
+it('restores Changes folder selection on browser back and forward without a shell callback', async () => {
+  fixture();
+  const location = { pathname: '/p/changes-preview/you' };
+  let pop: (() => void) | undefined;
+  const removeEventListener = vi.fn();
+  vi.stubGlobal('location', location);
+  vi.stubGlobal('history', { pushState: vi.fn((_state, _unused, path) => { location.pathname = path; }) });
+  vi.stubGlobal('window', { addEventListener: (_event: string, listener: () => void) => { pop = listener; }, removeEventListener });
+  try {
+    await draw(h(ChangesApp, {}));
+    expect(tree.root.findByType('Split').props.folder).toBe('you');
+    await act(async () => tree.root.findByType('Split').props.onFolder('lately'));
+    expect(location.pathname).toBe('/p/changes-preview/lately');
+    expect(tree.root.findByType('Split').props.folder).toBe('lately');
+    for (const [path, folder] of [['/p/changes-preview/you', 'you'], ['/p/changes-preview/lately', 'lately']]) {
+      location.pathname = path;
+      await act(async () => pop?.());
+      expect(tree.root.findByType('Split').props.folder).toBe(folder);
+    }
+    await act(async () => tree.unmount());
+    expect(removeEventListener).toHaveBeenCalledWith('popstate', pop);
+  } finally { await act(async () => tree.unmount()); vi.unstubAllGlobals(); }
 });

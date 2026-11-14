@@ -50,8 +50,9 @@ function Details({ change: c, snapshot, actions, openTask }: { change: Change; s
     {c.body && <section><h3>Description</h3><p className="whitespace-pre-wrap">{c.body}</p></section>}
   </article>;
 }
-export default function Changes({ snapshot, actions, openTask, navigation }: { snapshot: ChangeSnapshot; actions?: ChangeActions; openTask?(id: string): void; navigation?: { selected?: string; select(id?: string): void } }) {
-  const [folder, setFolder] = useState('all'), [query, setQuery] = useState(''), [localSelected, setLocalSelected] = useState<string>();
+export default function Changes({ snapshot, actions, openTask, navigation }: { snapshot: ChangeSnapshot; actions?: ChangeActions; openTask?(id: string): void; navigation?: { selected?: string; select(id?: string): void; folder?: string; openFolder?(id: string): void } }) {
+  const [localFolder, setLocalFolder] = useState('all'), [query, setQuery] = useState(''), [localSelected, setLocalSelected] = useState<string>();
+  const folder = navigation?.folder ?? localFolder;
   const selected = navigation ? navigation.selected : localSelected;
   const setSelected = navigation ? navigation.select : setLocalSelected;
   const [refreshing, setRefreshing] = useState(false), [error, setError] = useState('');
@@ -68,7 +69,7 @@ export default function Changes({ snapshot, actions, openTask, navigation }: { s
     finally { refreshActive.current = false; setRefreshing(false); }
   }
   return <Split label="Changes" className="h-full" folders={folders.map(f => ({ ...f, count: live ? rows(snapshot, f.id, '').length : undefined }))}
-    folder={folder} onFolder={id => { setFolder(id); setSelected(undefined); }}
+    folder={folder} onFolder={id => { if (navigation?.openFolder) navigation.openFolder(id); else { setLocalFolder(id); setSelected(undefined); } }}
     search={<label>Search changes<Input type="search" value={query} onChange={e => setQuery(e.target.value)} /></label>}
     listTitle="Changes" listMeta={live ? shown.length : undefined}
     listTop={<>{actions && <Button variant="outline" disabled={!live || refreshing} onClick={() => void refresh()}>Refresh</Button>}
