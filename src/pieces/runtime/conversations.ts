@@ -154,6 +154,22 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    if(available({agent,member,thread,conversation,seq,generation,project:job.project}))comms.confirmStart(agent,thread,seq,generation);
   }
  };
+ // A runner's committed terminal state ends working even when the body never
+ // sends its final heartbeat. Only the exact current private binding may clear
+ // it: an older job's delayed notification cannot end a replacement body's turn.
+ const terminalStatus=()=>{
+  if(closed||!comms)return;
+  for(const id of store.ids('binding')){
+   const binding=store.read('binding',id)!;
+   if(binding.venue!=='loom'||!binding.job||!binding.member)continue;
+   const job=store.read('job',binding.job);
+   if(!job||job.imported||!['done','failed','stopped'].includes(job.state)
+    ||job.conversation!==binding.id||job.agent!==binding.agent||job.member!==binding.member||job.project!==binding.project)continue;
+   const route={agent:binding.agent,member:binding.member,thread:binding.place,conversation:binding.id,project:binding.project,seq:1};
+   if(!available(route))continue;
+   if(comms.trace(binding.agent,binding.place).working)comms.status(binding.agent,binding.place,'done');
+  }
+ };
  // A terminal failed claim is authoritative: reportJob cannot resurrect it.
  // Reconcile from durable routing on startup and committed changes. Comms owns
  // encrypted deduplication and checks generation again after asynchronous crypto.
@@ -180,7 +196,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
  let reconciling=false;
  const unobserve=live.observe(changes=>{
   if(closed)return;
-  if(changes.some(c=>c.type==='runtime.job')){confirmed();failedStarts();}
+  if(changes.some(c=>c.type==='runtime.job')){confirmed();terminalStatus();failedStarts();}
   if(!reconciling&&changes.some(c=>c.type==='core.effect')){
    reconciling=true;void Promise.resolve().then(()=>Promise.all([comms?.reconcileDeliveries(),comms?.reconcileEnds()])).finally(()=>{reconciling=false;});
   }
@@ -217,7 +233,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    ...(job.project?{project:job.project}:{}),...(service?{service}:{}),
    principal:principalFromHistory(source.history,owners)};
  };
- return {delivery,privateStart,refile,approvalCaller,capacityConversation,clockProvenance,connectBridges(role:BridgeBodies){bridges=role;},connect(role:Comms){comms=role;confirmed();failedStarts();void comms.reconcileDeliveries();},
+ return {delivery,privateStart,refile,approvalCaller,capacityConversation,clockProvenance,connectBridges(role:BridgeBodies){bridges=role;},connect(role:Comms){comms=role;confirmed();terminalStatus();failedStarts();void comms.reconcileDeliveries();},
   validInput(jobId:string){const job=store.read('job',jobId),b=job?.conversation?store.read('binding',job.conversation):undefined;return !!job&&!!b&&b.job===job.id&&b.member===job.member&&!!job.member&&available({thread:b.place,agent:job.agent,member:job.member,conversation:b.id,project:b.project,seq:1});},
   async close(){closed=true;unobserve();await notices;},
  };

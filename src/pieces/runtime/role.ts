@@ -1,9 +1,10 @@
-import type { Foundation } from '../../core/app.js';
+import { isClosing, type Foundation } from '../../core/app.js';
 import { signin } from '../../core/signin/index.js';
 import { runtimeStore } from './store.js';
+import { currentExecution } from './control.js';
 import { bodyPolicyExecutionHeld } from './policy-store.js';
 /** Runtime's seam for Clock, Comms and venue adapters. No runner or store imports. */
-import type { Operations, Result, Scope, Viewer } from '../../core/index.js';
+import type { Operations, Result, Scope, Viewer, Sharing } from '../../core/index.js';
 import { attentionRole, type AgentStatus } from '../attention/role.js';
 
 /** Trusted in-process provenance, never a public read or a permission grant.
@@ -96,4 +97,43 @@ export function runtimeHouseContext(app: Foundation, viewer: Viewer): {agent: st
     || !['starting', 'running', 'waiting'].includes(job.state) || !box || box.revokedAt !== undefined
     || bodyPolicyExecutionHeld(app.db, job.agent)) return;
   return {agent: job.agent, job: job.id, ...(job.service === undefined ? {} : {service: job.service})};
+}
+
+/** Metadata-only destination binding for Secrets. This role grants no secret,
+ * supplies no URL/path/certificate, and never receives credential bytes. The
+ * owning runner transport must authenticate its peer and bind its own pending
+ * sink to this exact job/runner/box before release. Tickets and staging belong
+ * to Secrets; a true current() is necessary but is not a release capability.
+ */
+export interface HouseDestination {
+  readonly agent: string;
+  readonly job: string;
+  readonly runner: string;
+  readonly box: string;
+  readonly claimedAt: number;
+  readonly service?: string;
+  current(): boolean;
+}
+export function runtimeHouseDestination(app: Foundation, sharing: () => Sharing, viewer: Viewer): HouseDestination | undefined {
+  const resolve = () => {
+    if (isClosing(app)) return;
+    const scope = runtimeHouseContext(app, viewer);
+    if (!scope) return;
+    const access = sharing();
+    if (!Object.values(access.members).some(member => member.agents.includes(scope.agent))) return;
+    const store = runtimeStore(app.db), job = store.read('job', scope.job);
+    // Existing runner operations require both the assigned runner and box ids
+    // to match. An imported/malformed split assignment is not a destination.
+    if (!job || job.runner !== job.box || job.claimedAt === undefined || job.principalReset || job.writtenOff
+      || !currentExecution(store, job, access)) return;
+    return { ...scope, runner: job.runner, box: job.box, claimedAt: job.claimedAt };
+  };
+  let bound: ReturnType<typeof resolve>;
+  try { bound = resolve(); } catch { return; }
+  if (!bound) return;
+  const identity = JSON.stringify(bound);
+  return Object.freeze({ ...bound, current() {
+    try { return JSON.stringify(resolve()) === identity; }
+    catch { return false; }
+  }});
 }

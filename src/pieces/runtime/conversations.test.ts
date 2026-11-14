@@ -775,3 +775,97 @@ it.each(['credential','box','hosting','house','member','stopped'] as const)('rev
  })();
  expect(role!.clockProvenance(viewer)).toBeUndefined();
 });
+
+it.each(['done','failed'] as const)('clears private working immediately on runner %s without a final body heartbeat or reply',async state=>{
+ const f=await setup(),thread=await f.open(),job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true,value:{thread:{working:true}}});
+ const messagesBefore=value<{messages:unknown[]}>(await f.socket('comms.messages',{thread}));
+ expect(await f.post(f.runner,'runtime.finishJob',{job,state})).toMatchObject({ok:true});
+ const record=JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record);
+ expect(record.working).toBe(false);
+ expect(await f.post(body,'runtime.conversationStatus',{state:'working'})).toMatchObject({ok:false});
+ expect(value(await f.socket('comms.messages',{thread}))).toEqual(messagesBefore);
+});
+
+it('keeps working on rolled-back completion and repairs committed terminal state at startup',async()=>{
+ const f=await setup(),thread=await f.open(),job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});await f.post(f.runner,'runtime.takeInput',{job});
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const working=()=>JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record).working;
+ f.app.db.exec("CREATE TRIGGER fail_terminal_receipt BEFORE INSERT ON core_operations WHEN NEW.name='runtime.finishJob' BEGIN SELECT RAISE(ABORT,'interrupted'); END");
+ expect(await f.post(f.runner,'runtime.finishJob',{job,state:'done'})).toMatchObject({ok:false});
+ expect(working()).toBe(true);expect(runtimeStore(f.app.db).read('job',job)?.state).toBe('running');
+ f.app.db.exec('DROP TRIGGER fail_terminal_receipt');
+ // Model a crash after terminal commit but before its live notification.
+ f.app.db.transaction(()=>{const {changedAt:_,...before}=runtimeStore(f.app.db).read('job',job)!;runtimeStore(f.app.db).put('job',{...before,state:'failed',endedAt:f.clock.now()},f.clock.now());})();
+ await f.restart();expect(working()).toBe(false);
+});
+
+it('does not let an old terminal job clear a replacement binding working state',async()=>{
+ const f=await setup(),thread=await f.open(),old=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job:old});await f.post(f.runner,'runtime.takeInput',{job:old});
+ await f.post(f.runner,'runtime.reportJob',{job:old,state:'running'});
+ const store=runtimeStore(f.app.db),job=store.read('job',old)!;
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...before}=job;store.put('job',{...before,id:'replacement'},f.clock.now());
+  const {changedAt:__,...binding}=store.read('binding',job.conversation!)!;store.put('binding',{...binding,job:'replacement'},f.clock.now());
+ })();
+ expect(await f.post(f.runner,'runtime.finishJob',{job:old,state:'done'})).toMatchObject({ok:false,code:'denied'});
+ // A committed old completion may still have a delayed live notification.
+ f.app.db.transaction(()=>{const {changedAt:_,...before}=job;store.put('job',{...before,state:'done',endedAt:f.clock.now()},f.clock.now());})();
+ f.app.live.changed([{type:'runtime.job',id:old}]);
+ expect(JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record).working).toBe(true);
+});
+
+
+it('clears working on a stopped unarchived current job',async()=>{
+ const f=await setup(),thread=await f.open(),job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});await f.post(f.runner,'runtime.takeInput',{job});
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const record=()=>JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record);
+ expect(record()).toMatchObject({working:true,archived:null});
+ f.app.db.transaction(()=>{const {changedAt:_,...before}=runtimeStore(f.app.db).read('job',job)!;runtimeStore(f.app.db).put('job',{...before,state:'stopped',endedAt:f.clock.now()},f.clock.now());})();
+ f.app.live.changed([{type:'runtime.job',id:job}]);
+ expect(record()).toMatchObject({working:false,archived:null});
+});
+
+it.each(['imported','agent','member','conversation','project','venue','archived','membership'] as const)('protects %s scope on terminal notification and startup',async mismatch=>{
+ const f=await setup(false,mismatch==='membership'?'pollock':'jonathan'),thread=await f.open(),job=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job});await f.post(f.runner,'runtime.takeInput',{job});
+ await f.post(f.runner,'runtime.reportJob',{job,state:'running'});
+ const store=runtimeStore(f.app.db),record=()=>JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record);
+ expect(record().working).toBe(true);
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...before}=store.read('job',job)!;
+  const change=mismatch==='imported'?{imported:{history:'discard' as const}}:mismatch==='agent'?{agent:'mark'}:mismatch==='member'?{member:'pollock'}:mismatch==='conversation'?{conversation:'other'}:mismatch==='project'?{project:'pond'}:{};
+  store.put('job',{...before,...change,state:'done',endedAt:f.clock.now()},f.clock.now());
+  if(mismatch==='venue'){const {changedAt:__,...binding}=store.read('binding',before.conversation!)!;store.put('binding',{...binding,venue:'spawn'},f.clock.now());}
+  if(mismatch==='archived'){const t=record();t.archived=f.clock.now();f.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(t),thread);}
+  if(mismatch==='membership')new HouseholdDatabase(f.app.db).change(f.home,raw=>{(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person==='pollock')!.agents=['pond-bot'];});
+ })();
+ f.app.live.changed([{type:'runtime.job',id:job}]);expect(record().working).toBe(true);
+ await f.restart();expect(record().working).toBe(true);
+});
+
+it('cannot redirect terminal reconciliation onto another working private thread of the same agent and member',async()=>{
+ const f=await setup(),first=await f.open(),a=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job:a});await f.post(f.runner,'runtime.takeInput',{job:a});await f.post(f.runner,'runtime.reportJob',{job:a,state:'running'});
+ const second=value<{thread:string}>(await f.socket('comms.open',{agent:'art',id:'ponmlkjihgfedcba',text:'Separate private conversation'})).thread,b=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job:b});await f.post(f.runner,'runtime.takeInput',{job:b});await f.post(f.runner,'runtime.reportJob',{job:b,state:'running'});
+ const working=(thread:string)=>JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record).working;
+ expect(working(first)).toBe(true);expect(working(second)).toBe(true);
+ const store=runtimeStore(f.app.db);
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...job}=store.read('job',a)!;store.put('job',{...job,state:'done',endedAt:f.clock.now()},f.clock.now());
+  // Swap places through a temporary value to preserve the unique place index.
+  const {changedAt:__,...other}=store.read('binding',store.read('job',b)!.conversation!)!;
+  store.put('binding',{...other,place:'temporary-place'},f.clock.now());
+  const {changedAt:___,...binding}=store.read('binding',job.conversation!)!;store.put('binding',{...binding,place:second},f.clock.now());
+  store.put('binding',{...other,place:first},f.clock.now());
+ })();
+ f.app.live.changed([{type:'runtime.job',id:a}]);expect(working(first)).toBe(true);expect(working(second)).toBe(true);
+ await f.restart();expect(working(first)).toBe(true);expect(working(second)).toBe(true);
+});
