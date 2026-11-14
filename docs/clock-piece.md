@@ -90,6 +90,8 @@ Clock join route before each successful completion. Completion returns only a
 execution authority. Each source still needs its own durable native effect,
 preparation, new current read, watchdog, post-output read and completion. Only the
 oldest pending source executes; no retry follows an uncertain attempt or ACK.
+Native admission selects the oldest pending source independently of the generic
+100-row conversation-history window, so a larger persisted backlog can drain.
 The worker stops on an empty queue, any failure, or after 100 turns. The bounded
 turn limit reports failure if more remain; a later startup must seek fresh source
 authority, and starts with fresh native history.
@@ -130,7 +132,8 @@ only after agent house configuration and waits for runner-confirmed running or
 waiting state. Queue acceptance alone is never reported as started. Missing
 features (continuations, slots, approvals, local wakes) remain held.
 Local, approval, slot and continuation delivery remain held. Private timed prompt delivery is implemented below. Public prompt conversation delivery is implemented below. Native transport
-interrupt/resume and authenticated continuation resolution remain unfinished.
+interrupt, idle/cross-process resume and authenticated continuation resolution
+remain unfinished; queued sequential resume is described above.
 
 Runtime now dispatches public prompt work as the Clock service, retaining
 requester scope as data. Clock intent/outcome operations retain their existing
@@ -1304,7 +1307,7 @@ and terminal-body resumption remain unfinished.
 
 | Old surface | New authorization boundary |
 | --- | --- |
-| `house_may_join`, `wake_place`, persisted `places.json` | `clockRoute` plus Runtime's current exact destination witness; never imported place strings or caller-selected bodies. Actual feed/resume remains held. |
+| `house_may_join`, `wake_place`, persisted `places.json` | `clockRoute` plus Runtime's current exact destination witness; never imported place strings or caller-selected bodies. Native queued feed/resume is described above; idle/cross-process resume remains unfinished. |
 
 ### Public prompt conversation delivery
 

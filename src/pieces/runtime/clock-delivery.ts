@@ -118,7 +118,12 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   const read=(v:Viewer,before?:number,native=false)=>{
     const job=bound(v);if(!job)throw new OperationError('denied','Clock body binding ended');
     const originalDestination=readDestination(job);
-    const rows=(db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT 100').all(job.conversation,before??Number.MAX_SAFE_INTEGER) as Turn[]).filter(row=>!withdrawn(row));
+    // Native execution needs one oldest pending source, independently of the
+    // generic conversation history window. A backlog cannot hide that source.
+    const candidates=(native
+      ? db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND consumed IS NULL ORDER BY seq LIMIT 1').all(job.conversation)
+      : db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT 100').all(job.conversation,before??Number.MAX_SAFE_INTEGER)) as Turn[];
+    const rows=candidates.filter(row=>!withdrawn(row));
     if(!native&&rows.some(hasFile))throw new OperationError('denied','File input requires the native worker');
     const currentSources=()=>rows.every(row=>currentSource(row,job));
     if(!currentSources())throw new OperationError('denied','Clock delivery authority ended');

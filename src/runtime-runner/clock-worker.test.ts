@@ -471,15 +471,16 @@ it('a failed resumed child never ACKs or retries that source',async()=>{
 });
 it('pins steering across separately valid admissions rather than reusing old history',async()=>{
  const f=await setup(),worker=f.start();await f.ready;const joined=await f.joinInput();
- const original=globalThis.fetch;let changed=false;
+ const original=globalThis.fetch;let changed=false,admitted=0;
  vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
   const response=await original(...args);
+  if(String(args[0]).endsWith('/beginClockExecution')){expect(await response.clone().json()).toMatchObject({ok:true});admitted++;}
   if(String(args[0]).endsWith('/completeClockExecution')&&!changed){
    changed=true;const p=provenanceStore(f.app.db),before=p.read(f.config.binding.conversation)!;
    f.app.db.transaction(()=>p.put(f.config.binding.conversation,{...before,history:{...before.history,people:['mark'],owner:false}}))();
   }return response;
  });
- f.finish();expect(await worker.completed).toBe(false);expect(changed).toBe(true);expect(f.calls).toHaveLength(1);
+ f.finish();expect(await worker.completed).toBe(false);expect(changed).toBe(true);expect(admitted).toBe(1);expect(f.calls).toHaveLength(1);
  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
 });
 
@@ -511,4 +512,74 @@ it('new generation watchdog still kills a resumed child on source withdrawal',as
  f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.withdrawn',json('true')) WHERE id=?").run(joined);
  f.clock.advance(1000);expect(await worker.completed).toBe(false);expect(f.calls[1].child.killed).toBe(true);
  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+});
+
+it.each([100,101])('drains oldest sources beyond the history window and stops after 100 turns (queued=%s)',async total=>{
+ const f=await setup();
+ const joined=await f.joinInput({prompt:'ORDERED 1'});
+ // Persisted backlog fixture: ordinary filing capacity limits a current
+ // conversation before 100 pending inputs. Clone one real admitted source to
+ // witness older/backfilled queues without weakening production capacity.
+ const template=JSON.parse((f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(joined) as {record:string}).record);
+ const turn=JSON.parse((f.app.db.prepare('SELECT record FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`) as {record:string}).record);
+ f.app.db.transaction(()=>{
+  for(let i=2;i<total;i++){
+   const id=`w-native-backlog-${i}`,prompt=`ORDERED ${i}`;
+   f.app.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(id,JSON.stringify({...template,id,prompt}),f.clock.now());
+   f.app.db.prepare('INSERT INTO runtime_clock_turns(id,conversation,job,record) VALUES (?,?,?,?)').run(`clock:${id}`,f.config.binding.conversation,f.job,JSON.stringify({...turn,text:prompt}));
+   provenanceStore(f.app.db).note(f.config.binding.conversation,'art',{key:`clock:${id}`,sender:{kind:'schedule',for:'owner'},at:f.clock.now()},['jonathan']);
+  }
+ })();
+ expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns WHERE job=?').get(f.job)).toEqual({n:total});
+ expect(await f.attempt()).toBe(total===100);expect(f.calls).toHaveLength(100);
+ for(let i=1;i<100;i++)expect(f.calls[i].input).toBe(`LOCAL OWNER RULES\nORDERED ${i}`);
+ expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns WHERE job=? AND consumed IS NOT NULL').get(f.job)).toEqual({n:100});
+ if(total===101){
+  expect(f.calls.some(c=>c.input.endsWith('ORDERED 100'))).toBe(false);
+  expect(await f.attempt()).toBe(true);expect(f.calls).toHaveLength(101);
+  expect(f.calls[100].args).toContain('--session-id');expect(f.calls[100].args).not.toContain('--resume');
+ }
+});
+it.each(['root','place','claim'] as const)('does not resume across a separately valid changed %s admission',async kind=>{
+ const f=await setup(),worker=f.start();await f.ready;await f.joinInput();
+ let replacement:{id:string;record:string}|undefined;
+ if(kind==='root'){
+  expect(f.call('clock.in',{agent:'art',prompt:'ANOTHER ROOT',note:'other',when:'1s'}).ok).toBe(true);
+  f.clock.advance(1000);await settle();replacement=f.app.db.prepare('SELECT id,record FROM runtime_clock_turns WHERE job<>?').get(f.job) as typeof replacement;expect(replacement).toBeTruthy();
+ }
+ const original=globalThis.fetch;let admitted=0;
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+  const response=await original(...args);
+  if(String(args[0]).endsWith('/beginClockExecution')){
+   expect(await response.clone().json()).toMatchObject({ok:true});admitted++;
+  }
+  if(String(args[0]).endsWith('/completeClockExecution')){
+   if(kind==='root')f.app.db.transaction(()=>{
+    f.app.db.prepare('DELETE FROM runtime_clock_turns WHERE id=?').run(replacement!.id);
+    f.app.db.prepare('UPDATE runtime_clock_turns SET id=?,record=? WHERE id=?').run(replacement!.id,replacement!.record,`clock:${f.wake}`);
+   })();
+   if(kind==='place')f.store.put('binding',{...f.store.read('binding',f.config.binding.conversation)!,place:'replacement-place'},f.clock.now());
+   if(kind==='claim')f.store.put('job',{...f.store.read('job',f.job)!,claimedAt:f.config.assignment.claimedAt+1},f.clock.now());
+  }
+  return response;
+ });
+ f.finish();expect(await worker.completed).toBe(false);expect(admitted).toBe(1);expect(f.calls).toHaveLength(1);
+});
+it('a late successful retired watchdog cannot extend the resumed generation expiry',async()=>{
+ const f=await setup(),worker=f.start();await f.ready;
+ const held=holdResponse('currentClockExecution',1);
+ try {
+  await f.joinInput();await held.ready;f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+  // Later current-generation reads receive no response, so only its own
+  // pre-spawn window can keep it alive. The old success arrives during it.
+  const original=globalThis.fetch;
+  vi.spyOn(globalThis,'fetch').mockImplementation((...args)=>{
+   if(String(args[0]).endsWith('/currentClockExecution'))return new Promise<Response>((_resolve,reject)=>{
+    const signal=(args[1] as RequestInit).signal;signal?.addEventListener('abort',()=>reject(new Error('aborted')),{once:true});
+   });
+   return original(...args);
+  });
+  f.clock.advance(4000);held.release();await settle();expect(f.calls[1].child.killed).toBe(false);
+  f.clock.advance(1000);expect(await worker.completed).toBe(false);expect(f.calls[1].child.killed).toBe(true);
+ }finally {held.release();held.spy.mockRestore();}
 });
