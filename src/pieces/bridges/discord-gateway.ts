@@ -21,7 +21,7 @@ export interface DiscordGatewayOptions {
   load(): DiscordCheckpoint | undefined;
   /** Atomically retain needed raw events AND checkpoint before resolving.
    * Must not wait for metadata/admission/runtime. Deduplicate platform messages. */
-  commit(event: DiscordDispatch, checkpoint: DiscordCheckpoint): Promise<void>;
+  commit(event: DiscordDispatch, checkpoint: DiscordCheckpoint, raw: Buffer): Promise<void>;
   /** Durably forget the invalid resume cursor before another Identify. */
   reset(): Promise<void>;
   socket?: (url: string, options: WebSocket.ClientOptions) => Socket;
@@ -183,7 +183,7 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
           const event: DiscordDispatch = {type:f.t,data:f.d,seq:f.s};
           queue = track(queue.then(async () => {
             if (!alive(epoch)) return;
-            await o.commit(event,next);
+            await o.commit(event,next,bytes);
             checkpoint = next;
             if (alive(epoch)) { deadline(); failures = 0; }
           }).catch(() => reconnect(epoch)).finally(() => { pending--; }));

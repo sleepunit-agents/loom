@@ -49,13 +49,20 @@ export class CommsMessages {
   }
 
   async send(input: MessageInput): Promise<Message> {
+    return (await this.prepareSend(input))();
+  }
+
+  /** No durable effects until the returned synchronous commit runs. The door
+   * must recheck authentication and authorization before invoking it, inside
+   * its operation transaction. Return only acknowledgement metadata to receipts. */
+  async prepareSend(input: MessageInput): Promise<() => Message> {
     input = { ...input };
     const before = this.context(input.thread);
     if (input.sender !== (input.kind === 'message' ? before.cv.member : before.cv.agent)) throw new Error('Sender differs from thread');
     const old = this.retry(input.thread, input.sender, input.clientId);
-    if (old) return old;
+    if (old) return () => { this.context(input.thread); return old; };
     const refs = refsIn(input.words), words = await this.key.seal(input.words);
-    return this.db.transaction(() => {
+    return () => this.db.transaction(() => {
       const { cv } = this.context(input.thread);
       if (input.sender !== (input.kind === 'message' ? cv.member : cv.agent)) throw new Error('Sender differs from thread');
       const retry = this.retry(input.thread, input.sender, input.clientId);
@@ -70,15 +77,19 @@ export class CommsMessages {
   }
 
   async ask(threadId: string, agent: string, clientId: string, question: PrivateQuestion): Promise<Message> {
+    return (await this.prepareAsk(threadId, agent, clientId, question))();
+  }
+
+  async prepareAsk(threadId: string, agent: string, clientId: string, question: PrivateQuestion): Promise<() => Message> {
     question = { ...question };
     const { cv } = this.context(threadId);
     if (agent !== cv.agent || !cv.member) throw new Error('Agent differs from private thread');
     const old = this.retry(threadId, agent, clientId);
-    if (old) return old;
+    if (old) return () => { this.context(threadId); return old; };
     if (!question.words.trim()) throw new Error('Question needs words');
     const words = await this.key.seal(JSON.stringify(question));
     const refs = refsIn(Object.values(question).join('\n'));
-    return this.db.transaction(() => {
+    return () => this.db.transaction(() => {
       const { cv } = this.context(threadId);
       if (agent !== cv.agent || !cv.member) throw new Error('Agent differs from private thread');
       const retry = this.retry(threadId, agent, clientId);
@@ -91,6 +102,10 @@ export class CommsMessages {
   }
 
   async answer(itemId: string, member: string, answer: Answer, text?: string): Promise<typeof inbox.$inferSelect> {
+    return (await this.prepareAnswer(itemId, member, answer, text))();
+  }
+
+  async prepareAnswer(itemId: string, member: string, answer: Answer, text?: string): Promise<() => typeof inbox.$inferSelect> {
     const check = () => {
       const item = this.threads.conversations.item(itemId);
       if (!item.thread || item.messageSeq == null || item.toKind !== 'person' || !item.answers) throw new Error('Not a private question');
@@ -100,12 +115,12 @@ export class CommsMessages {
       return { item, cv };
     };
     const { item } = check();
-    if (item.state === 'answered') return item;
+    if (item.state === 'answered') return () => check().item;
     if (item.state !== 'waiting') throw new Error('Question is already settled');
     if ((answer === 'yes' || answer === 'no') && item.answers !== 'yes-no') throw new Error('Question needs words');
     if ((answer === 'words' || answer === 'replied') && !text?.trim()) throw new Error('Answer needs words');
     const words = await this.key.seal(text?.trim() || answer), refs = refsIn(text ?? '');
-    return this.db.transaction(() => {
+    return () => this.db.transaction(() => {
       const { item, cv } = check();
       if (item.state === 'answered') return item;
       if (item.state !== 'waiting') throw new Error('Question is already settled');
