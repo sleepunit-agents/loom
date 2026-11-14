@@ -9,7 +9,7 @@ import type { Venue } from './model.js';
 export const discordHistoryInput = discordHistoryQuery.extend({ venue: z.string().min(1).max(200) }).strict();
 export interface HistoryAccess {
   permit(viewer: Viewer, place: {workspace:string;channel:string;kind:'channel'|'thread'}): DiscordHistoryPermit | undefined;
-  read(venue: Venue, query: z.infer<typeof discordHistoryQuery>, permit: DiscordHistoryPermit): Promise<unknown>;
+  read(venue: Venue, query: z.infer<typeof discordHistoryQuery>, permit: DiscordHistoryPermit): Promise<{value:unknown;current():boolean}>;
 }
 export function installDiscordHistory(app: Foundation, access: HistoryAccess) {
   const resolve=(viewer:Viewer,input:z.infer<typeof discordHistoryInput>)=>{
@@ -27,9 +27,9 @@ export function installDiscordHistory(app: Foundation, access: HistoryAccess) {
       const {venue:_,...query}=input;
       const result=await access.read(scope.venue,query,scope.permit);
       if(!scope.permit.current())throw new OperationError('denied','History unavailable');
-      const parsed=discordHistoryResult.safeParse(result);
+      const parsed=discordHistoryResult.safeParse(result.value);
       if(!parsed.success)throw new OperationError('unavailable','History unavailable');
-      return {value:parsed.data,current:scope.permit.current};
+      return {value:parsed.data,current:()=>scope.permit.current()&&result.current()};
     },
     run(_ctx,_input,prepared) {
       const p=prepared as {value:unknown;current():boolean}|undefined;

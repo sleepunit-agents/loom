@@ -270,7 +270,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const jobs = installClock(app.db, app.operations, app.live, sharing, { provenance: conversations.clockProvenance, credentialService: conversations.clockCredentialService, caller: conversations.approvalCaller, capacityConversation: conversations.capacityConversation, runtime: clockRuntime(app, effects, clockDestination(app, sharing), clockBodies), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
-  let historyRead: HistoryAccess['read'] = async () => 'wait';
+  let historyRead: HistoryAccess['read'] = async () => ({value:'wait',current:()=>false});
   installDiscordHistory(app, {permit:(viewer,place)=>runtimeDiscordHistoryPermit(app,viewer,place),read:(...args)=>historyRead(...args)});
   if (options.bridges && !bridgeDaemons.has(app)) {
     if (!app.operations.has('secrets.grantService')) installSecretServices(app.db, app.operations, sharing);
@@ -291,10 +291,10 @@ export async function installNext(app: Foundation, options: NextOptions) {
     };
     historyRead=async(venue,query,permit)=>{
       const original=marker(venue);
-      if(original===undefined)return 'wait';
+      if(original===undefined)return {value:'wait',current:()=>false};
       const current=()=>marker(venue)===original&&permit.current();
       const result=await discordApi(secrets,()=>current()&&beforeRead(venue),options.bridges!.request).history(venue,query,permit);
-      return current()?result:'wait';
+      return {value:current()?result:'wait',current};
     };
     const adapters=venueAdapters(secrets,{request:options.bridges.request,lifetime:marker,beforeRead});
     const engine=new Bridges(app,app.operations.clock,options.bridges.runtime??bridgeBodies.runtime,adapters,effects);

@@ -1,11 +1,7 @@
 import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { runBridgesClient } from '../../cli/bridges-client.js';
-import { runtimeDiscordHistoryPermit } from '../runtime/role.js';
-import { discordApi } from '../bridges/discord-api.js';
-import { venueSchema } from '../bridges/model.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
-import { provenanceStore } from '../runtime/provenance-store.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -21,7 +17,7 @@ import { runtimeStore } from '../runtime/store.js';
 const value=<T>(r:Result):T=>{expect(r.ok).toBe(true);return (r as {ok:true;value:T}).value;};
 const cleanups:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{try{for(const f of cleanups.splice(0).reverse())await f();}finally{vi.restoreAllMocks();}});
-async function setup(staging=false,member='jonathan'){
+async function setup(staging=false,member='jonathan',adapter=true){
  const home=mkdtempSync(join(tmpdir(),'runtime-private-'));fixture(home);cleanups.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();const buffers:Buffer[]=[];
  const source={generation:async()=> '00000000-0000-4000-8000-000000000000',read:vi.fn(async()=>{const b=Buffer.from('HISTORY-CREDENTIAL');buffers.push(b);return b;})};
@@ -31,9 +27,9 @@ async function setup(staging=false,member='jonathan'){
   if(path.endsWith('guilds/300'))return Response.json({id:'300'});
   return Response.json(path.includes('/messages?')?[{id:'500',channel_id:'400',guild_id:'300',type:0,author:{id:'600'},content:'HISTORY WORDS'}]:{id:'400',guild_id:'300',type:0});
  });
- const app=await startLoom({home,clock,next:true,staging,stdout:()=>{},bridges:{source,request,discordSocket:()=>{
+ const app=await startLoom({home,clock,next:true,staging,stdout:()=>{},bridges:adapter?{source,request,discordSocket:()=>{
   const socket=new EventEmitter() as EventEmitter & {readyState:number;terminate():void};socket.readyState=1;socket.terminate=()=>{socket.readyState=3;socket.emit('close');};return socket as unknown as WebSocket;
- }}});cleanups.push(()=>app.close());
+ }}:undefined});cleanups.push(()=>app.close());
  const auth=signin(app);app.db.transaction(()=>auth.tokens.replace({v:1,tokens:[]},{}))();let n=0;
  if(member!=='jonathan')app.db.transaction(()=>new HouseholdDatabase(app.db).change(home,raw=>{const m=(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person===member)!;m.agents=['art'];}))();
  const token=(role:string,person?:string)=>{const secret=randomBytes(32).toString('hex');auth.tokens.change(ts=>ts.push({role,...(person?{member:person}:{}),sha256:hash(secret),label:role,created:new Date(clock.now()).toISOString()}));return secret;};
@@ -52,10 +48,9 @@ async function setup(staging=false,member='jonathan'){
  const open=async()=>{const r=await socket('comms.open',{agent:'art',id:'abcdefghijklmnop',text:'PRIVATE inbound sentinel'});expect(r.ok).toBe(true);return value<{thread:string}>(r).thread;};
  return {app,clock,home,request,source,buffers,owner,runner,unbound,socket,post,open,queued,token};
 }
-const place={workspace:'300',channel:'400',kind:'channel' as const};
 const query={venue:'discord',channel:'400',kind:'channel'};
-async function configured(staging=false) {
- const f=await setup(staging);const thread=await f.open();
+async function configured(staging=false,adapter=true) {
+ const f=await setup(staging,'jonathan',adapter);const thread=await f.open();
  if(staging){
   const id=`comms-deliver:${thread}:1`;
   await expect.poll(()=>f.app.db.prepare("SELECT state FROM core_effects WHERE id=?").get(id)).toEqual({state:'due'});
@@ -73,7 +68,7 @@ async function configured(staging=false) {
   ['secrets.describe',{name:'discord',description:'fixture bot'}],
   ['secrets.grantService',{service:'bridges',name:'discord'}],
   ['bridges.putVenues',{id:'discord',platform:'discord',agent:'art',workspace:'300',bot:'100',tokenSecret:'discord'}],
- ] as const)value(await f.post(f.owner,name,input));
+ ] as const){if(!adapter&&name==='secrets.grantService')continue;value(await f.post(f.owner,name,input));}
  return {...f,job,body};
 }
 it('reads through the installed HTTP operation and generated client with a real running private owner body',async()=>{
@@ -113,5 +108,42 @@ it('holds history in staging before credential acquisition or network IO',async(
  expect(await f.post(f.body,'bridges.discordHistory',query)).toMatchObject({ok:false});
  expect(f.request).not.toHaveBeenCalled();expect(f.source.read).not.toHaveBeenCalled();
  expect(f.app.db.prepare("SELECT count(*) AS n FROM core_effects WHERE state='due'").get()).toMatchObject({n:expect.any(Number)});
- expect((f.app.db.prepare("SELECT count(*) AS n FROM core_effects WHERE state='due' AND title='Inspect bridge recipients'").get() as {n:number}).n).toBeGreaterThan(0);
+ const held=f.app.db.prepare("SELECT id FROM core_effects WHERE state='due' AND title='Inspect bridge recipients'").get() as {id:string};
+ expect(held).toBeDefined();
+ value(await f.post(f.owner,'core.releaseEffect',held));f.clock.advance(0);
+ expect(await f.post(f.body,'bridges.discordHistory',query)).toMatchObject({ok:true,value:{messages:[{text:'HISTORY WORDS'}]}});
+ // Replacing setup invalidates this exact released inspection lifetime.
+ value(await f.post(f.owner,'bridges.putVenues',{id:'discord',platform:'discord',agent:'art',workspace:'300',bot:'100',tokenSecret:'discord'}));
+ f.request.mockClear();f.source.read.mockClear();
+ expect(await f.post(f.body,'bridges.discordHistory',query)).toMatchObject({ok:false});
+ expect(f.request).not.toHaveBeenCalled();expect(f.source.read).not.toHaveBeenCalled();
+});
+
+it('refuses without an adapter even for a real eligible owner body and configured venue',async()=>{
+ const f=await configured(false,false);
+ const result=await f.post(f.body,'bridges.discordHistory',query);
+ expect(result).toEqual({ok:false,code:'unavailable',message:'History unavailable'});
+ expect(f.request).not.toHaveBeenCalled();expect(f.source.read).not.toHaveBeenCalled();
+});
+it('suppresses late history after holder-generation replacement',async()=>{
+ const f=await configured();let enter!:()=>void,release!:(r:Response)=>void;
+ const entered=new Promise<void>(r=>enter=r),response=new Promise<Response>(r=>release=r);
+ const original=f.request.getMockImplementation()!;
+ f.request.mockImplementation((url,init)=>{if(String(url).includes('/messages?')){enter();return response;}return original(url,init);});
+ const reading=f.post(f.body,'bridges.discordHistory',query);await entered;
+ f.source.generation=async()=> '00000000-0000-4000-8000-000000000001';
+ f.clock.advance(5000);
+ // A real HTTP turn lets the current holder poll settle while the history reply is held.
+ value(await f.post(f.owner,'bridges.status',{platform:'discord'}));
+ release(Response.json([{id:'500',channel_id:'400',author:{id:'600'},type:0,content:'LATE PRIVATE WORDS'}]));
+ const result=await reading;expect(result.ok).toBe(false);expect(JSON.stringify(result)).not.toContain('PRIVATE');
+});
+it('rechecks the transport lifetime in the final transaction after preparation',async()=>{
+ const f=await configured();
+ const viewer=signin(f.app).token(hash(f.body))!.viewer;
+ const result=await f.app.operations.callAsync('http',viewer,'bridges.discordHistory',query,undefined,false,()=>{
+  value(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.revokeService',{service:'bridges',name:'discord'},'last-moment-revoke'));
+  return true;
+ });
+ expect(result).toMatchObject({ok:false});
 });

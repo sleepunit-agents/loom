@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -210,4 +210,27 @@ it('rejects extra or malformed status response fields and preserves command fail
   ]) expect(await app.run(['status', '{"platform":"discord"}'], async () => Response.json(answer))).toMatchObject({code: 1, stdout: '', stderr: 'loom-bridges: Invalid daemon response\n'});
   expect(await app.run(['status'])).toMatchObject({code: 2, stdout: ''});
   expect(await app.run(['status', '{"platform":"discord"}'], async () => {throw Error('fixture-token');})).toMatchObject({code: 1, stdout: '', stderr: 'loom-bridges: loom daemon is unavailable\n'});
+});
+
+it.each([2000,35000])('uses a bounded history deadline with fake time (%s ms)',async delay=>{
+ const app=await setup();let entered!:()=>void;
+ const started=new Promise<void>(r=>entered=r);
+ const timeout=vi.spyOn(AbortSignal,'timeout').mockImplementation(ms=>{
+  const c=new AbortController();setTimeout(()=>c.abort(),ms);return c.signal;
+ });
+ vi.useFakeTimers();
+ try{
+  const request:typeof fetch=async(_url,init)=>{
+   expect(init?.signal).toBeDefined();entered();
+   return new Promise<Response>((resolve,reject)=>{
+    const timer=setTimeout(()=>resolve(Response.json({ok:true,value:{messages:[]}})),delay);
+    init!.signal!.addEventListener('abort',()=>{clearTimeout(timer);reject(Error('deadline'));},{once:true});
+   });
+  };
+  const pending=app.run(['discordHistory','{"venue":"discord","channel":"400","kind":"channel"}'],request);
+  await started;
+  if(delay===2000){await vi.advanceTimersByTimeAsync(delay);expect(await pending).toMatchObject({code:0,stderr:''});}
+  else {for(let attempt=0;attempt<4;attempt++)await vi.advanceTimersByTimeAsync(35000);expect(await pending).toMatchObject({code:1,stdout:''});}
+  expect(timeout).toHaveBeenCalledWith(35000);
+ }finally{vi.useRealTimers();timeout.mockRestore();}
 });
