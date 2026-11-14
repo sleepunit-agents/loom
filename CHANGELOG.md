@@ -12,13 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- New desk: Comms follows counted pixel talking beats through completion, with crisp whole-scale compact portraits.
-
 - New desk: make request and form ids without `crypto.randomUUID`, which browsers withhold on plain HTTP, so the desk works on a home network address.
 - Classify already owned Runtime spawn threads in Comms through original member metadata, preserving independent transport and execution holds.
 
 - New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
-- New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail.
+- New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail; counted pixel talking beats follow through completion, with crisp whole-scale compact portraits.
 - Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
 
 - Check Clock lane reuse against current Runtime destination metadata and deliver public prompts through owning conversations, with service dispatch, authenticated read acknowledgements and staging holds.
