@@ -15,17 +15,22 @@ import {Readable}from'node:stream';
 import {createFoundation}from'../core/app.js';
 import {importHousehold}from'./household-importer.js';
 const roots:string[]=[];afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();for(const r of roots.splice(0))rmSync(r,{recursive:true,force:true});});
-async function fixture(){
+async function fixture(budgetSource?:'file'|'store'){
  const root=mkdtempSync(join(tmpdir(),'migration-bridges-'));roots.push(root);const old=join(root,'old'),instance=join(root,'instance'),snapshot=join(root,'snapshot'),home=join(root,'new');
  const put=(path:string,value:unknown)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,JSON.stringify(value));};
  put(join(old,'household.json'),{v:1,agents:['art'],default:'art',owner:'jonathan'});
  put(join(instance,'shuttle.json'),{agent:{slug:'art'},discord:{token_file:'/never-open'}});
  put(join(instance,'people.json'),{people:{jonathan:{discord:['123']}}});
- put(join(instance,'routes.json'),{guild:'789',bots:{art:'100'},channels:{'300':{primary:'art'}}});
+ put(join(instance,'routes.json'),{guild:'789',bots:{art:'100'},channels:{'300':{primary:'art'}},...(budgetSource==='file'?{peer_turns_each:0}:{})});
  writeFileSync(join(instance,'credentials'),'do not collect');
  const storePath=join(old,'commons/stores/shuttle.db');mkdirSync(dirname(storePath),{recursive:true});const store=new Database(storePath);
  store.exec('CREATE TABLE docs(collection TEXT,key TEXT,doc TEXT,rev INTEGER,updated TEXT,by TEXT);CREATE TABLE revisions(id INTEGER,collection TEXT,key TEXT,doc TEXT,rev INTEGER,op TEXT,at TEXT,by TEXT)');
- store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('unknown','private','{"raw":9007199254740991.1}','today','owner');store.close();
+ store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('unknown','private','{"raw":9007199254740991.1}','today','owner');
+ if(budgetSource==='store'){
+  store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('routes','household','{"guild":"789","peer_turns_each":0}','today','owner');
+  store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('channels','art','{"bot":"100","answers":{"300":"work"}}','today','owner');
+ }
+ store.close();
  await createSnapshot(old,snapshot,undefined,{bridges:[instance]});
  const plan=prepareMigrationPlan(snapshot).plan;plan.importers.bridges.options={...(plan.importers.bridges.options as object),connections:[{agent:'art',platform:'discord',workspace:'789',bot:'100',tokenSecret:'art-discord'}]};
  return{root,old,instance,snapshot,home,plan};
@@ -126,4 +131,29 @@ it('rehearses the household shape: one local root, three bots, a work Slack bund
  expect((await verifyMigration(snapshot,home,plan)).status).toBe('different');
  expect((await verifyBridgesMigration(snapshot,home,plan.importers.bridges.options)).status).toBe('different');
  expect(outside).not.toHaveBeenCalled();
+});
+
+for(const origin of ['file','store'] as const)it(`preserves disabled zero budget from ${origin} through all import and both independent verifiers`,async()=>{
+ const f=await fixture(origin);
+ expect((await runMigrationAll(f.snapshot,f.home,f.plan)).status).toBe('complete');
+ expect((await verifyMigration(f.snapshot,f.home,f.plan)).status).toBe('verified');
+ expect((await verifyBridgesMigration(f.snapshot,f.home,f.plan.importers.bridges.options)).status).toBe('verified');
+ const d=new Database(join(f.home,'loom.db'));
+ try{
+  const row=d.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as {value:string};
+  const evidence=JSON.parse(row.value);
+  if(origin==='file')expect(evidence.inventory.routes[0].peerTurnsEach).toBe(0);
+  else{
+   const doc=evidence.stores.stores[0].documents.find((r:{collection:string;key:string})=>r.collection==='routes'&&r.key==='household');
+   expect(JSON.parse(doc.doc).peer_turns_each).toBe(0);
+   expect(doc.doc).toBe('{"guild":"789","peer_turns_each":0}');
+  }
+  expect((d.prepare('SELECT record FROM bridges_venues').all() as {record:string}[]).every(r=>JSON.parse(r.record).enabled===false)).toBe(true);
+  // A zero-to-null normalization must fail source-derived comparison even if receipts remain intact.
+  d.prepare("UPDATE bridges_meta SET value=? WHERE key='legacy-evidence'").run(row.value.replace(origin==='file'?'"peerTurnsEach":0':'\\"peer_turns_each\\":0',origin==='file'?'"peerTurnsEach":null':'\\"peer_turns_each\\":null'));
+  expect((d.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as {value:string}).value).not.toBe(row.value);
+ }finally{d.close();}
+ expect((await verifyMigration(f.snapshot,f.home,f.plan)).status).toBe('different');
+ expect((await verifyBridgesMigration(f.snapshot,f.home,f.plan.importers.bridges.options)).status).toBe('different');
+ expect(readFileSync(join(f.snapshot,'bridges/0/routes.json'))).toEqual(readFileSync(join(f.instance,'routes.json')));
 });

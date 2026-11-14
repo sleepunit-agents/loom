@@ -30,7 +30,7 @@ const channel = z.object({ name: z.string().optional(), primary: slug.nullish(),
 const routes = z.object({ guild: id.optional(), bots: map(id).optional(), bot_roles: map(ids).optional(),
   channels: map(channel).optional(), threads: map(channel).optional(),
   only: z.union([strings, map(z.unknown())]).optional(), ignore: z.union([strings, map(z.unknown())]).optional(),
-  webhook_peers: map(id).optional(), notify: map(id.nullable()).optional(), peer_turns_each: z.number().int().positive().nullish(),
+  webhook_peers: map(id).optional(), notify: map(id.nullable()).optional(), peer_turns_each: z.number().int().nonnegative().nullish(),
 });
 const account = z.object({ discord: ids.optional(), slack: map(ids).optional() });
 const people = z.object({ people: map(account).optional(), agents: map(account).optional() });

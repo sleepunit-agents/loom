@@ -48,6 +48,22 @@ describe('offline legacy Bridges source inventory',()=>{
     expect(JSON.stringify(v)).not.toMatch(/ignored|exit 99|do-not-open|tier|grants/);
     expect(sources.map(f=>readFileSync(f.path))).toEqual(before);
   });
+  it('preserves canonical zero and positive peer budgets, with null/absent remaining absent',()=>{
+    const {file}=fixture();
+    for(const budget of [0,4,null,undefined]){
+      const f=file('routes.json','routes',{peer_turns_each:budget});
+      const route=readBridgeInventory([f]).routes[0];
+      if(budget==null)expect(route).not.toHaveProperty('peerTurnsEach');
+      else expect(route.peerTurnsEach).toBe(budget);
+    }
+  });
+  it('refuses negative, fractional, unsafe and noncanonical peer budget spellings',()=>{
+    const {file}=fixture(),f=file('routes.json','routes',{});
+    for(const spelling of ['-1','-0','0.5','9007199254740993','9007199254740991.1','0.00000000000000001','0.0','0e0','"0"','true']){
+      writeFileSync(f.path,`{"peer_turns_each":${spelling}}`);
+      expect(()=>readBridgeInventory([f])).toThrow('routes.json at $["peer_turns_each"]');
+    }
+  });
   it('skips underscore keys before validating every nested source map and serialized settings map',()=>{
     const {file}=fixture(), note='PRIVATE_ANNOTATION'.repeat(30);
     const sources=[file('shuttle.json','shuttle',{_updated:note,agent:{slug:'art',_note:note},channel_notes:{_note:note,work:'channels'},slack:{secrets_env:'bundle',workspaces:{_note:note,T1:'Work'}}}),
