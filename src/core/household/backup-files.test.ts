@@ -166,6 +166,8 @@ it('detects a same-length rewrite with an independently changed timestamp', () =
 it('opens only allowlisted files, without write flags, writes, databases or processes', async () => {
   const { home, agent } = fixture(); put(agent, 'audit.key', 'AUDIT'); put(home, 'household.json', 'OLD');
   put(agent, 'comms.db', 'PRIVATE'); put(agent, 'backup/drill.key', 'DRILL');
+  put(home, 'agents/pollock/IDENTITY.md', 'UNSELECTED_AGENT_PRIVATE');
+  put(home, 'agents/pollock/preferences.md', 'UNSELECTED_PREFERENCES');
   const open = fs.openSync, opened: string[] = [];
   vi.spyOn(fs, 'openSync').mockImplementation((...args: Parameters<typeof fs.openSync>) => {
     const flags = args[1]; expect(typeof flags).toBe('number');
