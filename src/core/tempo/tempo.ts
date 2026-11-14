@@ -3,6 +3,7 @@ import type { Clock } from '../clock.js';
 import { SettledInbox, type AdmitInbox } from './settle.js';
 import { TriggerEngine, type Trigger } from './triggers.js';
 import { Sweep } from './sweep.js';
+import { TempoSources } from './sources.js';
 
 /** Structural slice of Conversations: built-ins share one service/connection.
  * Kept small so Tempo does not own Inbox or conversation lifecycle. */
@@ -43,7 +44,7 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
     changed() { settled.changed(); options.changed?.(); },
   });
   return {
-    triggers: engine, inbox: settled, volume: settled.volume, sweep,
+    triggers: engine, inbox: settled, volume: settled.volume, sweep, sources: new TempoSources(db, engine),
     /** Start after all sweep contributors and operation targets are installed. */
     start() { engine.tick(); },
     /** Call after committed Inbox writes or a runtime capacity change. */
