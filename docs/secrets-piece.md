@@ -1439,7 +1439,8 @@ Secrets migration 7 stores only the domain-separated SHA-256 digest of each
 canonical pending UUID in `secrets_pending_tombstones`. The unique denial marker
 and original ticket commit atomically. The marker cannot recover a stream,
 proof or release capability; failed persistence denies admission before IO.
-Independent role instances and database reopen cannot admit that UUID again,
+With the committed marker intact, independent role instances and database reopen
+cannot admit that UUID again,
 including a differently cased UUID, after lost acknowledgement or retirement.
 
 Live proof handles remain capped at 1024; permanent denial rows have no TTL,
@@ -1453,7 +1454,15 @@ The prior unactivated role never persisted pending ids, so upgrade cannot
 backfill its lost markers: retire all previous workers and create fresh owners.
 No installed configuration, default registration, real home or host change.
 
-This completes durable central pending-denial capacity/lifecycle for the source
-composition. Whole-path staging/value-free accounting, public/granted-get parity,
+This completes durable central pending-denial capacity/lifecycle while its core
+database remains intact. It does **not** complete upgrade or anti-rollback
+recovery: migration 7 cannot backfill unrecorded pending ids or revoke old Signin
+credentials, and an older snapshot can omit committed markers. The future owning
+upgrade/restore boundary must enforce previous worker retirement and fresh
+original generations, with surviving-credential upgrade/rollback tests, before
+activation. This enforcement is still absent; the operational instructions above
+are not an implementation. Track that missing carrier with t-2203's recovery
+boundary and t-2208's final move acceptance. Do not activate on the strength of
+this migration alone. Whole-path staging/value-free accounting, public/granted-get parity,
 remaining Settings history, owner-encrypted holder recovery, and the final
 old-to-new/move/leak/import ledger remain open before activation.
