@@ -1,0 +1,16 @@
+.next-comm-screen{width:208px;max-width:100%;padding:7px;background:var(--v-paper);border:1px solid var(--v-border);box-shadow:0 3px 0 color-mix(in srgb,var(--v-text) 12%,transparent);color:var(--v-text)}
+.next-comm-glass{position:relative;display:grid;place-items:center;overflow:hidden;background:var(--v-canvas);min-width:0;aspect-ratio:1}
+.next-comm-scan{position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(transparent 0 3px,color-mix(in srgb,var(--v-text) 5%,transparent) 3px 4px)}
+.next-comm-screen[data-signal] .next-comm-scan{background:repeating-linear-gradient(transparent 0 2px,var(--v-text-3) 2px 3px);opacity:.35}
+.next-comm-screen footer{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-top:7px;font:500 9px var(--loom-font-data,monospace);letter-spacing:.06em}
+.next-comm-meter{display:inline-flex;gap:2px;margin-left:auto;align-items:flex-end;height:10px}
+.next-comm-meter i{width:3px;height:4px;background:var(--v-border)}
+.next-comm-meter i:nth-child(2){height:6px}.next-comm-meter i:nth-child(3){height:8px}.next-comm-meter i:nth-child(4){height:10px}.next-comm-meter i[data-on]{background:var(--v-blue)}
+.desk-rail-screen{display:grid;place-items:center;min-height:236px}
+/* In a narrow reader the screen stays compact so the conversation and composer retain their room. */
+.next-comm-portrait{float:left;margin:0 12px 6px 0;justify-self:start}
+@container comms-reader (max-width:639px){.next-comm-portrait .next-comm-screen{width:112px}.next-comm-portrait .desk-agent-face{width:96px!important;height:96px!important}.next-comm-portrait .desk-agent-face>*{max-width:96px;max-height:96px}.next-comm-portrait .next-comm-glass{height:96px}.next-comm-portrait .next-comm-screen footer{font-size:8px}}
+@media(prefers-reduced-motion:reduce){.next-comm-screen[data-signal] .next-comm-scan{background:none}}
+.comms-thread>header:has(.next-comm-portrait){grid-template-columns:auto minmax(0,1fr);align-content:start}
+.comms-thread>header>.next-comm-portrait{grid-column:1;grid-row:1 / span 8;margin:0 4px 0 0}
+.comms-thread>header:has(.next-comm-portrait)>:not(.next-comm-portrait){grid-column:2;min-width:0}

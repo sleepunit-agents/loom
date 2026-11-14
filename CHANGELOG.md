@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail.
+
 - Check Clock lane reuse against current Runtime destination metadata; hold verified joins until conversation delivery can feed the existing body safely.
 - Preserve private ordinary schedule scope and bind body schedule controls and cancellation, including command receipt replay, to fresh Runtime conversation proof and current policy.
 - Resolve unique member-private Comms ownership as metadata and refuse ambiguous or deleted Runtime routes.

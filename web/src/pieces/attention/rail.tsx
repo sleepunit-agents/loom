@@ -9,6 +9,11 @@ import { RailContext } from '../../desk-rail';
 import { reducedMotion } from '../../access';
 
 interface Thread extends LiveRecord { id: string; agent: string; title: string | null; archived: number | null; last: number; unread: boolean; working?: boolean }
+function CompanionSlot({agent}:{agent:string}) {
+  const rail=useContext(RailContext),el=useRef<HTMLDivElement>(null),source=useRef({});
+  useLayoutEffect(()=>{if(!el.current||!rail?.setScreen)return;rail.setScreen({agent,el:el.current},source.current);return()=>rail.setScreen?.(null,source.current);},[agent,rail?.setScreen]);
+  return <div className="desk-rail-screen" ref={el}/>;
+}
 /** Only policy-filtered feeds. No messages, local cache, direct fetch or answer controls. */
 export default function AgentRail({ go }: { go(path: string): void }) {
   const roster = useRecords<OwnedAgent>('attention.ownedAgent');
@@ -65,10 +70,10 @@ export default function AgentRail({ go }: { go(path: string): void }) {
       </section>;
       return <section key={agent.id} className="desk-rail-card" data-companion={agent.id===companion?.id||undefined} data-agent={agent.id} aria-label={`${agent.name} rail card`} data-state={status?.state}>
         {agent.id===companion?.id&&<p className="desk-rail-kicker desk-rail-with">With {agent.name} in Comms</p>}
-        <button className="desk-rail-agent" aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)}>
+        {agent.id===companion?.id&&rail?.shown&&rail.setScreen?<CompanionSlot agent={agent.id}/>:<button className="desk-rail-agent" aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)}>
           <AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state, !!ask)} size={40} />
           <span><strong>{agent.name}</strong><span className="desk-rail-state">{word}</span></span>
-        </button>
+        </button>}
         <p className="desk-rail-work">{statuses.status==='live'?(status?.work||'Nothing right now'):'Agent status unavailable'}</p>
         {ask&&<button className="desk-rail-ask" onClick={()=>go(inboxPath(ask))}><span className="desk-rail-kicker">Asks you</span>{ask.ask}<span aria-hidden="true"> ›</span></button>}
         <button className="desk-rail-thread" onClick={()=>go(path)}>{threads.status!=='live'?'Conversations unavailable':unread.length?`${unread.length} unread ${unread.length===1?'thread':'threads'}`:thread?(thread.title||'Recent conversation'):'Start a conversation'}<span aria-hidden="true"> ↗</span></button>

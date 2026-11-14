@@ -185,3 +185,16 @@ their measured previous position; reduced motion moves immediately. No tiling
 algorithm or Home composition changes. The companion retains its existing card
 until the next portrait/portal slice: Comms has no new-side portrait screen yet.
 The shared context's old provider remains compatible and reads no new data.
+
+### Comms portrait and rail destination
+
+The new Comms reader owns its portrait, driven only by its live thread and retained authorized messages. It uses household.agentDisplay and the member Pixel faces preference. A new retained reply gives 250ms static then 1–4 bounded talking beats (150 characters per beat); reduced motion suppresses both. An outstanding ask or error wins over talking. The channel line reports real connection/work/thinking/ask state and the latest retained reply harness; no legacy channel number is invented because new threads have no radio channel field.
+
+| Old desk behavior | New desk |
+|---|---|
+| Comms portrait in band, moved to permanent rail | Reader-owned portrait portal through pure RailContext, selected owned card supplies destination |
+| Hidden/auto-hide/narrow/phone rail | Portrait stays in Comms, exactly once |
+| Old numeric channel | Omitted: no new-side channel field; state and harness retained |
+| Old Comms fetch/marks | Replaced with retained message feed and household.agentDisplay; no old data reads |
+
+Slot registration and cleanup carry source tokens; stale cleanup cannot remove a newer destination. List navigation, minimize and source loss release selection. No tiling changes. The existing five-agent comparison scenario includes the same 36 boards; fixture evidence is not owner acceptance.
