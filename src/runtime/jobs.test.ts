@@ -58,17 +58,24 @@ it('claims once, rejects other workers, takes mail only when running and preserv
 it('retries a failed start three times as new linked jobs, without retrying the exhausted chain on old mail', () => {
   const f = fixture(); f.send();
   let job = f.runtime.admit(f.conversation.id)!;
+  const original = job.id;
   for (let n = 0; n < 4; n++) {
+    // Recreate the service between attempts: the budget lives in the database.
+    const runtime = new Jobs(f.db, f.now);
     expect(f.runtime.claim(job.id, 'worker')?.state).toBe('starting');
-    const result = f.runtime.finish(job.id, 'worker', 1, 'start failed');
+    const result = runtime.finish(job.id, 'worker', 1, 'start failed');
     expect(result.job.state).toBe('failed');
     if (n === 3) { expect(result.retry).toBeUndefined(); break; }
-    expect(result.retry).toMatchObject({ retryOf: job.id, houseFile: 'Housefile', model: 'primary', box: null, state: 'queued' });
+    expect(result.retry).toMatchObject({ retryOf: original, houseFile: 'Housefile', model: 'primary', box: null, state: 'queued' });
     expect(f.db.select().from(conversations).get()?.job).toBe(result.retry!.id);
     expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: result.retry!.id });
     expect(f.runtime.admit(f.conversation.id)?.id).toBe(result.retry!.id);
     expect(f.runtime.claim(result.retry!.id, 'worker')).toBeUndefined();
-    job = result.retry!; f.tick(10_000);
+    const backoff = 1000 * 2 ** n;
+    expect(result.retry!.retryAt).toBe(new Date(Date.parse(f.now()) + backoff).toISOString());
+    f.tick(backoff - 1);
+    expect(runtime.claim(result.retry!.id, 'worker')).toBeUndefined();
+    f.tick(1); job = result.retry!;
   }
   expect(f.db.select().from(jobs).all()).toHaveLength(4);
   expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
