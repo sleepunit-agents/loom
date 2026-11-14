@@ -1202,3 +1202,10 @@ or continuation inputs. Those still hold. The old-to-new feed/resume obligation
 above is only satisfied for a running body reading its bound scheduled inbox;
 transport-triggered resume, terminal-lane reuse, private delivery and remaining
 features remain work under t-2201. No real data or installed pieces change.
+
+Clock records an owning withdrawal marker when cancellation races dispatch.
+Runtime excludes withdrawn inputs from later reads and acknowledgements; it
+retains their permanent receipts and monotonic sender history. Revoked permission
+or missing source evidence is a hold, never inferred to be a withdrawal. A read
+prepared before cancellation is refused at the final transaction boundary;
+subsequent valid input in the same lane can still be read and acknowledged.

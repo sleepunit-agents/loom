@@ -1,3 +1,4 @@
+import { supportedClockPrompt } from './clock-input.js';
 import type { ClockBodies } from './clock-delivery.js';
 /** Clock waits for the assigned runner's confirmation, outside any transaction. */
 import type { Foundation } from '../../core/app.js';
@@ -23,7 +24,7 @@ export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'stat
     if(!configuredHouse(store.read('settings',wake.agent))) return hold('An owner must configure the agent house before dispatch');
     // These old runner features require their own trusted inputs; never pretend
     // a path is a prompt or confer approval/continuation authority from text.
-    if(!wake.prompt || wake.file || wake.laneVersion || wake.continuation || wake.slot || wake.approval || wake.prompt.includes('<!-- house: local -->'))
+    if(!supportedClockPrompt(wake))
       return hold('This wake requires a runtime feature that is not installed');
     if(!delivery)return hold('Clock delivery composition is unavailable');
     const answer=app.operations.call('direct',{kind:'service',id:'clock'},'runtime.acceptClock',

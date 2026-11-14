@@ -382,6 +382,16 @@ it('creates a real wake binding and joins only after the authenticated body read
  expect(f.call('clock.cancel',{id:raced.value.id}).ok).toBe(true);
  expect(await prepared).toMatchObject({ok:false,code:'denied'});
  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${raced.value.id}`)).toEqual({consumed:null});
+ const following=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'following-join',input:{agent:'art',prompt:'Valid after cancellation',note:'following',place:'lane:daily',when:'1s'}})})).json();
+ expect(following.ok).toBe(true);f.clock.advance(1000);await settle();
+ const followingRead=await f.post(body,'readConversation',{});expect(followingRead.ok).toBe(true);
+ expect(followingRead.value.messages.map((m:{text:string})=>m.text)).toEqual(['First lane input','Joined lane input','Valid after cancellation']);
+ const through=followingRead.value.messages.at(-1).seq;
+ expect(await f.post(body,'acknowledgeClockInput',{through})).toMatchObject({ok:true});await settle();
+ expect(wake(f.app.db,following.value.id)).toMatchObject({state:'fired',outcome:job});
+ expect(f.store.ids('job')).toEqual([job]);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${raced.value.id}`)).toEqual({consumed:null});
+
  const box=f.store.read('box','a')!;
  f.app.db.transaction(()=>{const {changedAt:_,...b}=box;f.store.put('box',{...b,revokedAt:f.clock.now()},f.clock.now());})();
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
@@ -446,4 +456,38 @@ it('issues the original restricted service on the scheduled body credential, sep
  expect(signin(f.app).body(viewer)).toMatchObject({agent:'art',job,service:'restricted'});
  await f.post(f.runner,'reportJob',{job,state:'running'});await settle();
  expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Restricted scheduled input'}]}});
+});
+
+it('requires the exact Clock cross-piece type and operation grants before acceptance and replay',async()=>{
+ const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);access.services=builtinServices(f.app.db);
+ const r=f.call('clock.in',{agent:'art',prompt:'Granted scheduled input',note:'grant',when:'1s'});
+ expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id;
+ f.clock.advance(1000);const attempt=wake(f.app.db,id)!.attempt!,grant=access.services.clock;
+ for(const denied of [{...grant,types:grant.types.filter(t=>t!=='runtime.job')},{...grant,operations:grant.operations.filter(op=>op!=='runtime.acceptClock')}]){
+  access.services={...access.services,clock:denied};
+  expect(f.call('runtime.acceptClock',{wake:id,attempt},{kind:'service',id:'clock'})).toMatchObject({ok:false,code:'denied'});
+  expect(f.store.ids('job')).toEqual([]);expect(f.store.ids('binding')).toEqual([]);
+ }
+ access.services={...access.services,clock:grant};
+ const accepted=f.call('runtime.acceptClock',{wake:id,attempt},{kind:'service',id:'clock'},'grant-accept');
+ expect(accepted.ok).toBe(true);
+ access.services={...access.services,clock:{...grant,operations:[]}};
+ expect(f.call('runtime.acceptClock',{wake:id,attempt},{kind:'service',id:'clock'},'grant-accept')).toMatchObject({ok:false,code:'denied'});
+ expect(f.store.ids('job')).toHaveLength(1);
+ access.services={...access.services,clock:grant};await settle();
+});
+
+it('rolls back the complete owning acceptance after a late provenance write failure',async()=>{
+ const f=await setup(),r=f.call('clock.in',{agent:'art',prompt:'Atomic scheduled input',note:'atomic',place:'lane:atomic',when:'1s'});
+ expect(r.ok).toBe(true);const id=(r as {ok:true;value:{id:string}}).value.id;
+ f.clock.advance(1000);const attempt=wake(f.app.db,id)!.attempt!;
+ f.app.db.exec("CREATE TEMP TRIGGER fail_clock_provenance BEFORE INSERT ON runtime_provenance_sources BEGIN SELECT RAISE(ABORT,'fixture interrupted acceptance'); END");
+ expect(f.call('runtime.acceptClock',{wake:id,attempt},{kind:'service',id:'clock'})).toMatchObject({ok:false,code:'unavailable'});
+ for(const table of ['runtime_bindings','runtime_jobs','runtime_inputs','runtime_clock_turns','runtime_provenance','runtime_provenance_sources'])
+  expect(f.app.db.prepare(`SELECT count(*) AS n FROM ${table}`).get()).toEqual({n:0});
+ f.app.db.exec('DROP TRIGGER fail_clock_provenance');
+ expect(f.call('runtime.acceptClock',{wake:id,attempt},{kind:'service',id:'clock'}).ok).toBe(true);
+ expect(f.store.ids('job')).toHaveLength(1);expect(f.store.ids('binding')).toHaveLength(1);
+ expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns').get()).toEqual({n:1});
+ await settle();
 });

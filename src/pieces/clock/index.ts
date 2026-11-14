@@ -95,7 +95,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     return !closed && !!w && (w.state==='firing'||accepted&&w.state==='fired') && w.attempt===attempt && !w.member
       && create(w.by,w) && create({kind:'agent',id:w.agent},w)
       && (w.authorship?.principal.people??[]).every(id=>create({kind:'member',id},w)) ? structuredClone(w) : undefined;
-  });
+  },(id,attempt)=>{const w=wake(db,id);return !closed&&!!w&&w.attempt===attempt&&(!!w.withdrawn||w.state==='cancelled');});
   const prepareFiling = (v: Viewer, w: Work) => {
     const filed=filing(v,w,sharing(),options.provenance),service=options.credentialService?.(v);
     if(filed?.authorship&&service!==undefined)filed.authorship.service=service;
@@ -313,7 +313,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   });
   register('cancel', idInput, true, (v, i) => !wake(db, i.id) || mayControl(v, get(i.id)), (ctx, i) => {
     const w = get(i.id); if (!active(w) || w.hold === 'uncertain') return w;
-    const firing = w.state === 'firing'; w.state = firing ? 'held' : 'cancelled'; if (firing) w.hold = 'uncertain'; w.outcome = firing ? 'Cancellation raced dispatch; a body may have started' : 'Cancelled';
+    const firing = w.state === 'firing'; w.withdrawn=true; w.state = firing ? 'held' : 'cancelled'; if (firing) w.hold = 'uncertain'; w.outcome = firing ? 'Cancellation raced dispatch; a body may have started' : 'Cancelled';
     saveWake(ctx, w); event(ctx, w, 'cancel');
     const s = w.schedule && schedule(db, w.schedule); if (s) next(ctx, s, Math.max(w.due, ctx.now)); return w;
   });

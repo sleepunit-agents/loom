@@ -1,10 +1,11 @@
+import { supportedClockPrompt } from './clock-input.js';
 /** Clock's owning handoff. Only ids cross the service operation; never a saved Viewer. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { operation, OperationError, mayAct, mayCreate, type Sharing, type Viewer } from '../../core/index.js';
 import { isClosing, type Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
-import { clockDispatchSource, clockRoute } from '../clock/role.js';
+import { clockDispatchSource, clockDispatchWithdrawn, clockRoute } from '../clock/role.js';
 import { clockDestination } from './clock-destination.js';
 import { enqueueBody } from './queue.js';
 import { runtimeStore } from './store.js';
@@ -25,6 +26,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   const {db,operations}=app,store=runtimeStore(db),destination=clockDestination(app,sharing);
   const reads=new WeakMap<object,{job:string;rows:Turn[]}>();
   const owners=()=>Object.entries(sharing().members).filter(([,m])=>m.owner).map(([id])=>id);
+  const withdrawn=(row:Turn)=>clockDispatchWithdrawn(operations,row.id.slice('clock:'.length),(JSON.parse(row.record) as {attempt:string}).attempt);
   const currentSource=(row:Turn,job:RuntimeRecords['job'])=>{
     const record=JSON.parse(row.record) as {text:string;attempt:string};
     const source=clockDispatchSource(operations,row.id.slice('clock:'.length),record.attempt,true);
@@ -48,7 +50,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   };
   const source=(wake:string,attempt:string)=>{
     const w=clockDispatchSource(operations,wake,attempt);
-    if(!w||w.member||!w.prompt||w.file||w.laneVersion||w.continuation||w.slot||w.approval||w.prompt.includes('<!-- house: local -->'))return;
+    if(!w||!supportedClockPrompt(w))return;
     if(bodyPolicyExecutionHeld(db,w.agent))return;
     return w;
   };
@@ -94,7 +96,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   }));
   const read=(v:Viewer,before?:number)=>{
     const job=bound(v);if(!job)throw new OperationError('denied','Clock body binding ended');
-    const rows=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT 100').all(job.conversation,before??Number.MAX_SAFE_INTEGER) as Turn[];
+    const rows=(db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT 100').all(job.conversation,before??Number.MAX_SAFE_INTEGER) as Turn[]).filter(row=>!withdrawn(row));
     const currentSources=()=>rows.every(row=>currentSource(row,job));
     if(!currentSources())throw new OperationError('denied','Clock delivery authority ended');
     // Central staging hold runs at the words boundary, including later joined turns.
@@ -115,12 +117,13 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     input:z.object({through:z.number().int().positive()}).strict(),output:z.object({acknowledged:z.literal(true)}),
     may:v=>!!bound(v),run(ctx,i){
       const job=bound(ctx.viewer);if(!job)throw new OperationError('denied','Clock body binding ended');
-      const rows=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<=?').all(job.conversation,i.through) as Turn[];
+      const all=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<=?').all(job.conversation,i.through) as Turn[];
+      const rows=all.filter(row=>!withdrawn(row));
       if(!rows.every(row=>currentSource(row,job)))throw new OperationError('denied','Clock delivery authority ended');
       if(!rows.some(row=>row.seq===i.through)||rows.some(row=>row.released===null))throw new OperationError('conflict','Input has not been released to this body');
       for(const row of rows)db.prepare('UPDATE runtime_clock_turns SET consumed=COALESCE(consumed,?) WHERE id=?').run(ctx.now,row.id);
       const keys=provenanceStore(db).read(job.conversation!)?.queue.map(row=>row.key)??[];
-      provenanceStore(db).consumed(job.conversation!,keys.filter(key=>rows.some(row=>key===row.id||key.startsWith(`${row.id}:person:`))));
+      provenanceStore(db).consumed(job.conversation!,keys.filter(key=>all.some(row=>key===row.id||key.startsWith(`${row.id}:person:`))));
       ctx.changed('runtime.job',job.id);
       return {acknowledged:true as const};
     },
