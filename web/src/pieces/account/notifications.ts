@@ -1,28 +1,30 @@
 import { call, type Call } from '../../data';
 import { frozen, idle } from '../../data/mutation';
 import { mutation } from './model';
+import { decode } from './encoding';
 export interface BrowserSubscription { toJSON():PushSubscriptionJSON; unsubscribe():Promise<boolean> }
 export interface NotificationBrowser {
   supported():boolean;
   permission():NotificationPermission;
   ask():Promise<NotificationPermission>;
   current():Promise<BrowserSubscription|null>;
-  create(key:string):Promise<BrowserSubscription>;
+  create(key:string,check:()=>void):Promise<BrowserSubscription>;
 }
-const browser:NotificationBrowser={
+export const notificationBrowser:NotificationBrowser={
   supported:()=>typeof window!=='undefined'&&window.isSecureContext&&'serviceWorker' in navigator&&'PushManager' in window&&'Notification' in window,
   permission:()=>Notification.permission,
   ask:()=>Notification.requestPermission(),
   current:async()=> (await navigator.serviceWorker.getRegistration('/'))?.pushManager.getSubscription()??null,
-  create:async key=>{
+  create:async (key,check)=>{
     const registration=await navigator.serviceWorker.getRegistration('/');
     if(!registration)throw Error('Open loom again to prepare notifications.');
-    const bytes=Uint8Array.from(atob(key.replace(/-/g,'+').replace(/_/g,'/')+'==='.slice((key.length+3)%4)),c=>c.charCodeAt(0));
+    const bytes=decode(key);
+    check();
     return registration.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:bytes});
   },
 };
 /** Window-lifetime flow: a lost reply keeps its original request and continuation. */
-export function notificationController(device:NotificationBrowser=browser, send:typeof call=call, changes=mutation){
+export function notificationController(device:NotificationBrowser=notificationBrowser, send:typeof call=call, changes=mutation){
   let state={busy:false,message:'',permission:'default' as NotificationPermission,supported:false,on:false,ref:''};
   let generation=0,runningGeneration=0;
   let enabled=false,checked=false,local:BrowserSubscription|null=null;
@@ -50,27 +52,40 @@ export function notificationController(device:NotificationBrowser=browser, send:
     try{await work();}catch{update({message:'Notifications could not be changed. Check browser settings and the connection, then try again.'});}
     finally{update({busy:false,permission:device.supported()?device.permission():'default'});}
   }
+  function reconcile(){
+    if(!enabled||checked||state.busy||!device.supported()||!allowed())return;
+    checked=true;
+    void run(async()=>{
+      try{
+        local=await device.current();update({on:!!local});check();
+        if(!local)return;await identify(local);check();
+        const answer=await write<{status:string}>('notifications.subscribe',{sub:local.toJSON(),again:true});
+        if(answer.status==='removed'){await local.unsubscribe();local=null;update({on:false});}
+      }catch(error){if(generation!==runningGeneration)checked=false;throw error;}
+    }).then(()=>{if(!checked&&enabled)reconcile();});
+  }
+  // A locked entry waits for the existing Account request instead of losing its
+  // once-per-window reconciliation. This controller owns no React lifecycle.
+  let stopRequest=()=>{};
+  changes.subscribe(()=>{
+    stopRequest();
+    stopRequest=changes.getSnapshot().request?.subscribe(()=>queueMicrotask(reconcile))??(()=>{});
+    queueMicrotask(reconcile);
+  });
   return {
     getSnapshot:()=>state,
     subscribe:(fn:()=>void)=>{listeners.add(fn);return()=>{listeners.delete(fn);};},
     setEnabled(value:boolean){
       if(enabled!==value)generation++;enabled=value;
       const supported=device.supported();update({supported,permission:supported?device.permission():'default'});
-      if(!value||checked||!supported||state.busy)return;
-      checked=true;
-      void run(async()=>{
-        local=await device.current();update({on:!!local});check();
-        if(!local)return;await identify(local);check();
-        const answer=await write<{status:string}>('notifications.subscribe',{sub:local.toJSON(),again:true});
-        if(answer.status==='removed'){await local.unsubscribe();local=null;update({on:false});}
-      });
+      reconcile();
     },
     enable(){return run(async()=>{
       // Ask directly from the user's click, before any asynchronous work.
       if(await device.ask()!=='granted'){update({message:'Notifications are blocked. Allow them in this browser’s site settings.'});return;}
       check();const {publicKey}=await write<{publicKey:string}>('notifications.key',{});check();
       local=await device.current();check();
-      if(!local)local=await device.create(publicKey);check();await identify(local);check();
+      if(!local)local=await device.create(publicKey,check);check();await identify(local);check();
       const answer=await write<{status:string}>('notifications.subscribe',{sub:local.toJSON()});
       update({on:answer.status==='added'});
     });},

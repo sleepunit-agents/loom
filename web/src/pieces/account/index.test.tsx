@@ -4,7 +4,7 @@ import { createElement as h } from 'react';
 import { act, create } from 'react-test-renderer';
 import type { CallState, Result, Snapshot } from '../../data';
 const f=vi.hoisted(()=>({snapshot:{status:'live',records:[]} as Snapshot,call:vi.fn(),once:vi.fn()}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>type==='notifications.devices'?{status:f.snapshot.status,records:f.snapshot.records.length?[{id:'jonathan',member:'jonathan',devices:[{ref:'c'.repeat(64),session:'b'.repeat(64),device:'Kitchen tablet',at:1760000000,seenAt:1760009000}]}]:[]}:f.snapshot,call:f.call,callOnce:f.once}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>type==='notifications.devices'?{status:f.snapshot.status,records:f.snapshot.records.length?[{id:'jonathan',member:'jonathan',devices:[{ref:'c'.repeat(64),session:'b'.repeat(64),device:'Kitchen tablet',at:1760000000,seenAt:1760009000,endpoint:'PRIVATE_ENDPOINT',keys:{auth:'PRIVATE_AUTH',p256dh:'PRIVATE_KEY'},token:'PRIVATE_TOKEN',vapid:{privateKey:'PRIVATE_VAPID'}}]}]:[]}:f.snapshot,call:f.call,callOnce:f.once}));
 vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':'div',props)])));
 import Account from './index';
 import { mutation } from './model';
@@ -67,7 +67,9 @@ it('removes the exact live notification device and keeps its original uncertain 
   const r=request();f.call.mockReturnValue(r.handle);
   await act(async()=>{tree=create(h(Account));});const reset=vi.fn(),e={preventDefault:vi.fn(),currentTarget:{reset}};
   const form=()=>tree.root.findByProps({'aria-label':`Remove notification device ${'c'.repeat(64)}`});
-  expect(JSON.stringify(tree.toJSON())).toContain('Kitchen tablet');
+  const rendered=JSON.stringify(tree.toJSON());expect(rendered).toContain('Kitchen tablet');
+  for(const time of [1760000000,1760009000])expect(rendered).toContain(new Date(time*1000).toLocaleString());
+  for(const secret of ['PRIVATE_ENDPOINT','PRIVATE_AUTH','PRIVATE_KEY','PRIVATE_TOKEN','PRIVATE_VAPID'])expect(rendered).not.toContain(secret);
   await act(async()=>form().props.onSubmit(e));expect(f.call).toHaveBeenCalledExactlyOnceWith('notifications.remove',{ref:'c'.repeat(64)});expect(reset).toHaveBeenCalledOnce();
   await act(async()=>form().props.onSubmit(e));expect(f.call).toHaveBeenCalledOnce();await r.finish({ok:false,code:'unavailable',message:'Uncertain'});
   await act(async()=>tree.unmount());await act(async()=>{tree=create(h(Account,{active:false}));});
@@ -77,4 +79,20 @@ it('removes the exact live notification device and keeps its original uncertain 
   await act(async()=>retry().props.onClick());expect(r.handle.retry).not.toHaveBeenCalled();
   await act(async()=>{f.snapshot={...f.snapshot,status:'live'};tree.update(h(Account));});await act(async()=>retry().props.onClick());expect(r.handle.retry).toHaveBeenCalledOnce();expect(f.call).toHaveBeenCalledOnce();
   await act(async()=>{f.snapshot={...f.snapshot,status:'denied'};tree.update(h(Account));});expect(tree.root.findAllByProps({'aria-label':'Notifications'})).toHaveLength(0);
+});
+
+it('keeps a browser flow request from being overwritten by a competing Account change',async()=>{
+  vi.stubGlobal('window',{isSecureContext:true,PushManager:function(){},Notification:{}});
+  vi.stubGlobal('Notification',{permission:'granted',requestPermission:async()=> 'granted'});
+  vi.stubGlobal('navigator',{serviceWorker:{getRegistration:async()=>({pushManager:{getSubscription:async()=>null}})}});
+  const r=request();f.call.mockReturnValue(r.handle);
+  await act(async()=>{tree=create(h(Account));});
+  const button=tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Enable notifications on this browser');
+  await act(async()=>button.props.onClick());
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('notifications.key',{});
+  await r.finish({ok:false,code:'unavailable',message:'Uncertain'});
+  await act(async()=>tree.root.findByProps({'aria-label':'Remove passkey Phone'}).props.onSubmit({preventDefault:vi.fn(),currentTarget:{reset:vi.fn()}}));
+  expect(f.call).toHaveBeenCalledOnce();expect(mutation.getSnapshot().request).toBe(r.handle);
+  await act(async()=>tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Retry this change').props.onClick());
+  expect(r.handle.retry).toHaveBeenCalledOnce();await r.finish({ok:false,code:'denied',message:'No'});
 });

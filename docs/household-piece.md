@@ -821,3 +821,12 @@ Live updates and six notification-focused images. It does not contact a push hos
 
 Test sending and daemon dispatch remain pending; registering a device does not yet
 send notifications. The existing worker display/tap behavior is unchanged.
+
+Quiet reconciliation intentionally runs automatically, rather than asking for a
+click to restore an already-enabled browser. This is a narrow exception to the
+app guide's event-handler request pattern: a window-lifetime controller owns its
+once-only guard, shared mutation lock and stable retry handle, outside React.
+Replaying the screen effect cannot create another reconciliation request.
+Entering while another mutation is uncertain waits for that same request to settle.
+The browser adapter rechecks activation after its worker lookup and immediately
+before calling the browser's subscribe API.

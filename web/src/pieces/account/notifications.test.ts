@@ -1,7 +1,8 @@
-import { expect, it, vi } from 'vitest';
-import { notificationController, type NotificationBrowser } from './notifications';
+import { afterEach, expect, it, vi } from 'vitest';
+import { notificationController, notificationBrowser, type NotificationBrowser } from './notifications';
 import { createMutationStore } from '../../data/mutation';
 import type { Call, CallState, Result } from '../../data';
+afterEach(()=>vi.unstubAllGlobals());
 function fixture(){
   const sub={toJSON:()=>({endpoint:'https://fcm.googleapis.com/private',expirationTime:null,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}}),unsubscribe:vi.fn(async()=>true)};
   let current:typeof sub|null=null;
@@ -43,4 +44,32 @@ it('quietly registers an existing subscription once and honors a remote removal'
 it('does not register on permission refusal or discard the browser subscription after server denial',async()=>{
   const f=fixture();await f.ready();vi.mocked(f.browser.ask).mockResolvedValue('denied');await f.controller.enable();expect(f.requests).toHaveLength(0);
   expect(f.controller.getSnapshot().message).toContain('blocked');f.setCurrent();const work=f.controller.disable();await vi.waitFor(()=>expect(f.requests).toHaveLength(1));f.requests[0].finish({ok:false,code:'denied',message:'No'});await work;expect(f.sub.unsubscribe).not.toHaveBeenCalled();
+});
+
+it('waits for an existing Account request before quiet reconciliation, then permits explicit reenable after a tombstone',async()=>{
+  const f=fixture();f.setCurrent();
+  const account=f.changes;
+  // A real shared request is already uncertain when Account opens.
+  let answer:CallState={pending:false,status:'done',result:{ok:false,code:'unavailable',message:'Uncertain'}};
+  const listeners=new Set<()=>void>();
+  const handle:Call={id:'existing-account',result:new Promise(()=>{}),getSnapshot:()=>answer,subscribe:fn=>{listeners.add(fn);return()=>{listeners.delete(fn);};}};
+  account.set(handle,'account.removePasskey');f.controller.setEnabled(true);expect(f.requests).toHaveLength(0);
+  answer={pending:false,status:'done',result:{ok:true,value:{}}};listeners.forEach(fn=>fn());
+  await vi.waitFor(()=>expect(f.requests).toHaveLength(1));expect(f.requests[0].input).toEqual({sub:f.sub.toJSON(),again:true});
+  f.requests[0].finish({ok:true,value:{status:'removed'}});await vi.waitFor(()=>expect(f.controller.getSnapshot().busy).toBe(false));
+  const work=f.controller.enable();await vi.waitFor(()=>expect(f.requests).toHaveLength(2));f.requests[1].finish({ok:true,value:{publicKey:'public'}});
+  await vi.waitFor(()=>expect(f.requests).toHaveLength(3));expect(f.requests[2].input).toEqual({sub:f.sub.toJSON()});
+  f.requests[2].finish({ok:true,value:{status:'added'}});await work;expect(f.controller.getSnapshot().on).toBe(true);
+});
+it('checks generation inside the actual browser adapter after a delayed worker lookup',async()=>{
+  const f=fixture();await f.ready();
+  let resolve!:(value:unknown)=>void;const lookup=new Promise(r=>{resolve=r;});
+  const subscribe=vi.fn(async()=>f.sub);
+  vi.stubGlobal('navigator',{serviceWorker:{getRegistration:()=>lookup}});
+  f.browser.create=notificationBrowser.create;
+  const work=f.controller.enable();await vi.waitFor(()=>expect(f.requests).toHaveLength(1));
+  f.requests[0].finish({ok:true,value:{publicKey:'cHVibGlj'}});
+  await vi.waitFor(()=>expect(f.browser.current).toHaveBeenCalledTimes(2));
+  f.controller.setEnabled(false);f.controller.setEnabled(true);resolve({pushManager:{subscribe}});await work;
+  expect(subscribe).not.toHaveBeenCalled();expect(f.requests).toHaveLength(1);
 });

@@ -53,7 +53,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes 
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'household.setPreferences',{look},`account-look-${look}-${width}`).ok).toBe(true);
       await b.setViewportSize({width,height:1000});await b.reload();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(1);await expect.poll(()=>b.locator('html').getAttribute('data-look')).toBe(look);
-      await b.getByRole('region',{name:'Notifications',exact:true}).scrollIntoViewIfNeeded();expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+      await b.getByRole('region',{name:'Notifications',exact:true}).scrollIntoViewIfNeeded();expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${look}-${width}.png`),fullPage:false,animations:'disabled'});
     }
     await remote.getByRole('button').click();expect(s.sessions.read().push?.subs?.['https://fcm.googleapis.com/account-browser-proof']).toBeDefined();
     await remote.getByRole('checkbox').check();await remote.getByRole('button').click();await expect.poll(()=>a.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true}).count()).toBe(0);

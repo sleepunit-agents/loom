@@ -18,6 +18,7 @@ export default function Notifications({enabled}:{enabled:boolean}){
     <h2 className="text-xl font-semibold">Notifications</h2>
     <p>Notifications belong to you and stay enabled after ordinary sign-out. Signing out a browser from the list above stops its notifications. Notification delivery is not available yet.</p>
     {feed.status==='loading'?<Loading label="Opening notification devices…"/>:!record?<p>Notification devices are unavailable.</p>:<>
+      {held.label?.startsWith('notifications.')&&<section aria-live="polite">{request.pending?<Loading label="Saving notification change…"/>:request.result?.ok?<p role="status">Saved</p>:request.result&&<><ErrorView text={request.result.message}/>{request.result.code==='unavailable'&&<Button disabled={!connected} onClick={()=>{if(connected)held.request?.retry?.();}}>Retry this change</Button>}</>}</section>}
       {feed.status!=='live'&&<ErrorView text="Connection lost. Notification changes are disabled."/>}
       {!state.supported?<p>This browser cannot receive notifications. On iPhone or iPad, add loom to the Home Screen and open it there.</p>:<>
         <p>This browser: {state.permission==='denied'?'Blocked in browser settings':state.on&&record.devices.some(d=>d.ref===state.ref)?'Enabled':'Off'}</p>
