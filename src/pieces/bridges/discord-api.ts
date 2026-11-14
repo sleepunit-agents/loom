@@ -1,26 +1,29 @@
 /** Fresh Discord REST evidence. No admission, receipt storage or registration. */
+import { isDiscordId as snowflake } from './discord-id.js';
 import type { SecretUse } from '../secrets/role.js';
 import type { Venue } from './model.js';
 import type { DiscordChannel } from './discord.js';
+import { discordHistoryQuery, discordHistoryMessages, type DiscordHistoryPermit, type DiscordHistoryMessage } from './discord-history.js';
 
 type Json = Record<string, unknown>;
 const object = (x: unknown): x is Json => !!x && typeof x === 'object' && !Array.isArray(x);
-const snowflake = (x: unknown): x is string => typeof x === 'string' && /^[1-9]\d{0,19}$/.test(x) && BigInt(x) <= 18446744073709551615n;
 const setup = (v: Venue) => v.enabled && v.platform === 'discord' && snowflake(v.bot) && snowflake(v.workspace);
 class Refused extends Error {}
 export interface DiscordPlace { channel: string; user: string; dm: boolean }
 /** Composition supplies the service's SecretUse and current lifetime/staging gate.
  * Every HTTP call reacquires authority; no token or metadata cache survives it. */
 export function discordApi(secrets: SecretUse, beforeRead: () => boolean, request: typeof fetch = fetch) {
-  async function read(venue: Venue, path: string): Promise<Json | 'refused'> {
-    if (!beforeRead()) throw Error('Discord read held');
+  async function read(venue: Venue, path: string, array = false, permitted: () => boolean = () => true): Promise<Json | unknown[] | 'refused'> {
+    const current=()=>beforeRead()&&permitted();
+    if (!current()) throw Error('Discord read held');
     // A holder may complete after setup, staging or the lifetime has changed.
     return secrets.withValue(venue.tokenSecret, async token => {
-      if (!beforeRead()) throw Error('Discord read held');
+      if (!current()) throw Error('Discord read held');
       const response = await request(`https://discord.com/api/v10/${path}`, {
         method:'GET', redirect:'error', signal:AbortSignal.timeout(15_000),
         headers:{Authorization:`Bot ${token}`},
       });
+      if (!current()) { await response.body?.cancel(); throw Error('Discord read held'); }
       if (!response.ok) {
         await response.body?.cancel();
         // Only a completed platform refusal is final. Credential, rate-limit and
@@ -32,15 +35,19 @@ export function discordApi(secrets: SecretUse, beforeRead: () => boolean, reques
       const chunks: Uint8Array[] = []; let size = 0;
       try {
         while (true) {
-          const next = await reader.read(); if (next.done) break;
+          if (!current()) throw Error('Discord read held');
+          const next = await reader.read();
+          if (!current()) throw Error('Discord read held');
+          if (next.done) break;
           size += next.value.byteLength;
           if (size > 1024*1024) throw Error('Discord reply too large');
           chunks.push(next.value);
         }
       } finally { await reader.cancel(); }
+      if (!current()) throw Error('Discord read held');
       const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-      if (!object(parsed)) throw Error('Discord unavailable');
-      return parsed;
+      if (array ? !Array.isArray(parsed) : !object(parsed)) throw Error('Discord unavailable');
+      return parsed as Json | unknown[];
     });
   }
   async function call(venue: Venue, path: string): Promise<Json> {
@@ -48,9 +55,34 @@ export function discordApi(secrets: SecretUse, beforeRead: () => boolean, reques
     // Classify outside withValue: the holder sanitizes callback exceptions.
     if (!beforeRead()) throw Error('Discord lifetime ended');
     if (result === 'refused') throw new Refused();
+    if (!object(result)) throw Error('Discord unavailable');
     return result;
   }
   return {
+    /** Unregistered transport only. No installed Runtime history permit issuer or
+     * public command exists yet; composition must not substitute DM admission. */
+    async history(input:Venue,query:unknown,permit:DiscordHistoryPermit):Promise<{messages:DiscordHistoryMessage[]}|'drop'|'wait'> {
+      const venue=structuredClone(input),parsed=discordHistoryQuery.safeParse(query);
+      if(!parsed.success||!setup(venue))return 'wait';
+      const q=parsed.data,limit=q.limit??(q.after===undefined?1:100);
+      const current=()=>beforeRead()&&permit.agent===venue.agent&&permit.workspace===venue.workspace
+        &&permit.channel===q.channel&&permit.kind===q.kind&&permit.current();
+      try{
+        if(!current())return 'wait';
+        const channel=await read(venue,`channels/${q.channel}`,false,current);
+        if(!current())return 'wait';
+        if(channel==='refused')return 'drop';
+        if(!object(channel)||channel.id!==q.channel||!snowflake(channel.guild_id)||!Number.isInteger(channel.type))return 'wait';
+        if(channel.guild_id!==venue.workspace)return 'drop';
+        if(!(q.kind==='thread'?[10,11,12]:[0,5]).includes(channel.type as number))return 'drop';
+        const raw=await read(venue,`channels/${q.channel}/messages?${q.after===undefined?'':`after=${q.after}&`}limit=${limit}`,true,current);
+        if(!current())return 'wait';
+        if(raw==='refused')return 'drop';
+        const messages=discordHistoryMessages(raw,q.channel,venue.workspace,q.after);
+        if(messages.length>limit||!current())return 'wait';
+        return {messages};
+      }catch{return 'wait';}
+    },
     /** Bot-token identity and access to the configured guild, never an authority
      * lease. Composition must recreate after setup/credential-generation changes. */
     async authenticate(input: Venue): Promise<{bot:string;workspace:string} | 'wait'> {
