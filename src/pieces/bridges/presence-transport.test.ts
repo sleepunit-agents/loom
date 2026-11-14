@@ -27,6 +27,25 @@ function fixture(slack = false) {
   return {venue,place,use,request,effects:presenceTransport(venue,place,{withValue:use},()=>released,request),
     facts:()=>owed,live:(v:boolean)=>{live=v;},released:(v:boolean)=>{released=v;},owed:(v:boolean)=>{owed=v;}};
 }
+/** Real Secrets accounting; fake exact-place owner, source and platform IO. */
+async function accountingFixture(slack:boolean) {
+  const home=mkdtempSync(join(tmpdir(),'presence-accounting-'));homeFixture(home);
+  const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue'],operations:[]}}});
+  const clock=new FakeClock(100_000),app=await startLoom({home,next:true,clock,sharing,stdout:()=>{}});
+  installSecretServices(app.db,app.operations,sharing);
+  const f=fixture(slack),owner={kind:'member' as const,id:'jonathan'},buffers:Uint8Array[]=[];
+  const source={read:vi.fn(async(_name:string)=>{const bytes=Buffer.from('FIXTURE-CREDENTIAL');buffers.push(bytes);return bytes;})};
+  let seq=0;
+  const call=(name:string,input:unknown)=>app.operations.call('direct',owner,`secrets.${name}`,input,`presence-${++seq}`);
+  const usage=(name='bot')=>{
+    const result=call('usage',{name});expect(result.ok).toBe(true);
+    if(!result.ok)throw Error(result.message);
+    return result.value as {events:SecretUsage[];count:number;lastUsedAt:number|null};
+  };
+  const secrets=secretUseRole(app.db,source,sharing,{kind:'service',id:'bridges'},()=>clock.now(),app.live);
+  const effects=(name='bot')=>presenceTransport({...f.venue,tokenSecret:name},f.place,secrets,()=>f.facts(),f.request);
+  return {app,clock,f,buffers,source,call,usage,effects,async close(){await app.close();rmSync(home,{recursive:true,force:true});}};
+}
 describe('unregistered service presence transport with fake owning place',()=>{
   it('uses exact Discord own-eyes routes and typing, reacquiring service credentials for each call',async()=>{
     const f=fixture();
@@ -137,21 +156,9 @@ describe('unregistered service presence transport with fake owning place',()=>{
     finally {await controller.close();}
   });
   it.each([false,true])('accounts each real service acquisition through presence, independently of HTTP success (Slack=%s)',async slack=>{
-    const home=mkdtempSync(join(tmpdir(),'presence-transport-'));homeFixture(home);
-    const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue'],operations:[]}}});
-    const clock=new FakeClock(100_000),app=await startLoom({home,next:true,clock,sharing,stdout:()=>{}});
+    const setup=await accountingFixture(slack);
+    const {clock,f,buffers,source,call,usage}=setup,effects=setup.effects();
     try {
-      installSecretServices(app.db,app.operations,sharing);
-      const f=fixture(slack),owner={kind:'member' as const,id:'jonathan'},buffers:Uint8Array[]=[];
-      const source={read:vi.fn(async()=>{const bytes=Buffer.from('FIXTURE-CREDENTIAL');buffers.push(bytes);return bytes;})};
-      let seq=0;
-      const call=(name:string,input:unknown)=>app.operations.call('direct',owner,`secrets.${name}`,input,`presence-${++seq}`);
-      const usage=()=>{
-        const result=call('usage',{name:'bot'});expect(result.ok).toBe(true);
-        if(!result.ok)throw Error(result.message);
-        return result.value as {events:SecretUsage[];count:number;lastUsedAt:number|null};
-      };
-      const effects=presenceTransport(f.venue,f.place,secretUseRole(app.db,source,sharing,{kind:'service',id:'bridges'},()=>clock.now(),app.live),()=>f.facts(),f.request);
       const id=slack?'1700000000.000001':'101';
       f.request.mockImplementation(async(_u,i)=>{
         expect(i?.headers).toMatchObject({Authorization:`${slack?'Bearer':'Bot'} FIXTURE-CREDENTIAL`});
@@ -181,35 +188,41 @@ describe('unregistered service presence transport with fake owning place',()=>{
       expect(new Set(accounted.events.map(event=>event.id)).size).toBe(times.length);
       expect(source.read.mock.calls).toEqual(times.map(()=>['bot']));
       expect(buffers).toHaveLength(times.length);expect(buffers.every(b=>b.every(v=>v===0))).toBe(true);
+      // A second presence credential must not inflate the first name's history.
+      expect(call('describe',{name:'other-bot',description:'Second bot'}).ok).toBe(true);
+      expect(call('grantService',{service:'bridges',name:'other-bot'}).ok).toBe(true);
+      clock.advance(5000);await setup.effects('other-bot').reaction(id,true,()=>true);
+      expect(usage('other-bot')).toEqual({count:1,lastUsedAt:clock.now(),events:[{
+        id:expect.stringMatching(/^use-/),name:'other-bot',action:'service-use',by:{kind:'service',id:'bridges'},at:clock.now(),state:'released',
+      }]});
+      expect(usage()).toEqual(accounted);
+      expect(source.read.mock.calls).toEqual([...times.map(()=>['bot']),['other-bot']]);
+      expect(buffers).toHaveLength(times.length+1);expect(buffers.every(b=>b.every(v=>v===0))).toBe(true);
       expect(call('revokeService',{service:'bridges',name:'bot'}).ok).toBe(true);
       await expect(effects.reaction(id,false,()=>true)).rejects.toEqual(Error(uncertain));
-      expect(f.request).toHaveBeenCalledTimes(times.length);expect(source.read).toHaveBeenCalledTimes(times.length);
+      expect(f.request).toHaveBeenCalledTimes(times.length+1);expect(source.read).toHaveBeenCalledTimes(times.length+1);
       expect(usage()).toEqual(accounted);
-    } finally {await app.close();rmSync(home,{recursive:true,force:true});}
+    } finally {await setup.close();}
   });
   it.each([
     {slack:false,phase:'admission'},{slack:true,phase:'admission'},
     {slack:false,phase:'settlement'},{slack:true,phase:'settlement'},
   ] as const)('holds presence before HTTP on durable audit $phase failure (Slack=$slack)',async({slack,phase})=>{
-    const home=mkdtempSync(join(tmpdir(),'presence-audit-'));homeFixture(home);
-    const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue'],operations:[]}}});
-    const clock=new FakeClock(100_000),app=await startLoom({home,next:true,clock,sharing,stdout:()=>{}});
+    const setup=await accountingFixture(slack);
+    const {app,clock,f,buffers,source,call,usage}=setup;
     try {
-      installSecretServices(app.db,app.operations,sharing);
-      const f=fixture(slack),owner={kind:'member' as const,id:'jonathan'},buffers:Uint8Array[]=[];
-      const source={read:vi.fn(async()=>{const bytes=Buffer.from('FIXTURE-CREDENTIAL');buffers.push(bytes);return bytes;})};
-      expect(app.operations.call('direct',owner,'secrets.describe',{name:'bot',description:'Bot'},'describe').ok).toBe(true);
-      expect(app.operations.call('direct',owner,'secrets.grantService',{service:'bridges',name:'bot'},'grant').ok).toBe(true);
+      expect(call('describe',{name:'bot',description:'Bot'}).ok).toBe(true);
+      expect(call('grantService',{service:'bridges',name:'bot'}).ok).toBe(true);
       app.db.exec(`CREATE TRIGGER fail_presence_audit BEFORE ${phase==='admission'?'INSERT':'UPDATE'} ON secrets_uses BEGIN SELECT RAISE(ABORT,'fixture'); END`);
-      const effects=presenceTransport(f.venue,f.place,secretUseRole(app.db,source,sharing,{kind:'service',id:'bridges'},()=>clock.now(),app.live),()=>true,f.request);
+      const effects=setup.effects();
       clock.advance(5000);
       await expect(effects.reaction(slack?'1700000000.000001':'101',true,()=>true)).rejects.toEqual(Error(uncertain));
       expect(f.request).not.toHaveBeenCalled();expect(source.read).toHaveBeenCalledTimes(phase==='admission'?0:1);
       expect(buffers.every(b=>b.every(v=>v===0))).toBe(true);
-      expect(app.operations.call('direct',owner,'secrets.usage',{name:'bot'})).toEqual({ok:true,value:{
+      expect(usage()).toEqual({
         events:phase==='admission'?[]:[{id:expect.stringMatching(/^use-/),name:'bot',action:'service-use',by:{kind:'service',id:'bridges'},at:clock.now(),state:'started'}],
         count:0,lastUsedAt:null,
-      }});
-    } finally {await app.close();rmSync(home,{recursive:true,force:true});}
+      });
+    } finally {await setup.close();}
   });
 });

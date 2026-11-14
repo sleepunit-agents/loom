@@ -1501,7 +1501,9 @@ An upstream HTTP exception still counts credential delivery. Revocation denies
 another acquisition without adding usage; audit INSERT failure prevents source
 access, and audit UPDATE failure prevents HTTP while retaining an unconfirmed
 started attempt with zero confirmed uses. Every returned source buffer is erased.
-Focused settlement, audit-admission and cached-time mutants fail these checks.
+A second presence credential verifies independent per-name histories. Focused
+settlement, audit-admission, cached-time and cross-name total mutants fail these
+checks.
 
 This is the unregistered presence transport with a fake exact-place owner and fake
 HTTP/source bytes, not an installed owning Runtime lifecycle or holder OS-process
