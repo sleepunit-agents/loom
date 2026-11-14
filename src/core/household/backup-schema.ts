@@ -4,21 +4,25 @@ import { Encrypter } from 'age-encryption';
 import { createPublicKey } from 'node:crypto';
 
 /** Parse once for schema validation and the local filesystem boundary. */
+const localTarget = (path: string) => isAbsolute(path) && !path.split('/').includes('..') ? { localPath: path } : undefined;
 export function parseBackupTarget(value: string): { localPath?: string } | undefined {
   if (/[\x00-\x1f\x7f]/.test(value)) return;
-  if (value.startsWith('path:')) return isAbsolute(value.slice(5)) ? { localPath: value.slice(5) } : undefined;
+  if (value.startsWith('path:')) return localTarget(value.slice(5));
   if (!value.startsWith('git:') || /\s/.test(value)) return;
   const url = value.slice(4);
   if (url.startsWith('-')) return;
-  if (url.startsWith('/')) return { localPath: url };
+  if (url.startsWith('/')) return localTarget(url);
   if (/^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^\s]+$/.test(url)) return {};
   try {
     const parsed = new URL(url);
     if (!['https:', 'ssh:', 'file:'].includes(parsed.protocol) || parsed.password || parsed.search || parsed.hash
       || parsed.protocol !== 'ssh:' && parsed.username) return;
     if (parsed.protocol !== 'file:') return parsed.host ? {} : undefined;
+    // WHATWG URL normalizes dot segments before pathname is available. Reject
+    // them in the source too: symlink/../ traversal is not lexical resolution.
+    if (decodeURIComponent(url).split('/').includes('..')) return;
     const localPath = decodeURIComponent(parsed.pathname);
-    if (!parsed.host && isAbsolute(localPath) && !/[\x00-\x1f\x7f]/.test(localPath)) return { localPath };
+    if (!parsed.host && isAbsolute(localPath) && !/[\x00-\x1f\x7f]/.test(localPath)) return localTarget(localPath);
   } catch { /* invalid URLs and percent encoding */ }
 }
 

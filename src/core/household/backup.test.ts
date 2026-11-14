@@ -1,3 +1,5 @@
+import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import * as childProcess from 'node:child_process';
 import { validBackupRecipient } from './backup-schema.js';
 vi.mock('node:child_process', async original => {
@@ -23,11 +25,17 @@ const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const config = { target: 'path:/mnt/backups', recipients: ['age1lq8a7xcvnkxrp8ym2278tfv70yk73r6uxluqdgdfak38ftatcu7qz6vcmh'], at: '03:17', tz: 'America/Chicago', keep: 7, required: ['tasks'] };
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'next-backup-')); fixture(home);
-  const app = await startLoom({ home, next: true, install: installFixture, stdout: () => {} });
+  const app = await startLoom({ home, next: true, install: installFixture, stdout: () => {}, authenticate: () => ({ viewer: owner, valid: () => true }) });
   cleanup.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
   const db = new HouseholdDatabase(app.db);
   const call = (name: string, input: unknown = {}) => app.operations.call('direct', owner, `household.${name}`, input, randomUUID());
   return { app, home, db, call };
+}
+function revokeOwner(db: HouseholdDatabase, home: string) {
+  db.change(home, raw => {
+    (raw.members as unknown[]).push({ person: 'replacement', role: 'owner', agents: '*' });
+    (raw.members as { person: string; agents: unknown }[]).find(m => m.person === 'jonathan')!.agents = ['art'];
+  });
 }
 it('projects imported settings without old file reads, private fields or a false scheduled/success claim', async () => {
   const { home, db, call } = await setup();
@@ -54,7 +62,7 @@ it('uses current household ownership for every door and live projection', async 
   const record = types.get('household.backup');
   expect(record?.read('household', owner)).toMatchObject({ id: 'household', settings: config });
   for (const viewer of denied) expect(record?.read('household', viewer)).toBeUndefined();
-  db.change(home, raw => { (raw.members as unknown[]).push({ person: 'replacement', role: 'owner', agents: '*' }); (raw.members as { person: string; agents: unknown }[]).find(m => m.person === 'jonathan')!.agents = ['art']; });
+  revokeOwner(db, home);
   expect(record?.read('household', owner)).toBeUndefined();
   expect(app.operations.call('direct', owner, 'household.backupOff', {}, randomUUID())).toMatchObject({ code: 'denied' });
 });
@@ -82,8 +90,12 @@ it('rejects credentials, bad schedule/keys/retention and targets inside the home
   const outside = mkdtempSync(join(tmpdir(), 'backup-alias-'));
   cleanup.push(async () => rmSync(outside, { recursive: true, force: true }));
   const alias = join(outside, 'link'); symlinkSync(home, alias);
+  mkdirSync(join(home, 'subdir'));
+  const nested = join(outside, 'nested'); symlinkSync(join(home, 'subdir'), nested);
+  const traversal = [`path:${nested}/../bundles`, `git:${nested}/../repo`, `git:file://${nested}/../repo`, `git:FILE://${nested}/%2E%2E/repo`];
   const dangling = join(outside, 'dangling'); symlinkSync(join(home, 'missing-parent'), dangling);
   for (const patch of [
+    ...traversal.map(target => ({ target })),
     { target: `path:${home}/bundles` }, { target: `git:file://${home}/repo` }, { target: `git:FILE://${home}/repo` }, { target: `path:${alias}/missing/deep` }, { target: `path:${dangling}/deep` },
     { target: 'git:https://user:secret@example.com/repo' }, { target: 'git:https://example.com/repo?token=secret' },
     { target: 'git:ssh://user:secret@example.com/repo' }, { target: 'path:relative' }, { target: 'git:file:///tmp/%ZZ' }, { target: 'git:file:///tmp/%00' }, { target: 'git:-user@example.com:repo' },
@@ -91,7 +103,7 @@ it('rejects credentials, bad schedule/keys/retention and targets inside the home
     { alertCommand: 'never run' },
   ]) expect(call('setBackup', { ...config, ...patch })).toMatchObject({ ok: false, code: 'invalid' });
   expect(db.document()).toEqual(before);
-  for (const target of [`path:${alias}/missing/deep`, `git:FILE://${home}/repo`]) {
+  for (const target of [...traversal, `path:${alias}/missing/deep`, `git:FILE://${home}/repo`]) {
     db.change(home, raw => { raw.backup = { ...config, target }; });
     expect(call('backup')).toMatchObject({ ok: true, value: { settings: null, state: 'invalid' } });
   }
@@ -106,10 +118,7 @@ it('never creates a drill key or invokes any program, and rejects revoked-owner 
   expect(app.operations.call('direct', owner, 'household.backupOff', {}, offId)).toMatchObject({ ok: true });
   expect(existsSync(join(home, 'backup'))).toBe(false);
   for (const name of ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'] as const) expect(childProcess[name]).not.toHaveBeenCalled();
-  db.change(home, raw => {
-    (raw.members as unknown[]).push({ person: 'replacement', role: 'owner', agents: '*' });
-    (raw.members as { person: string; agents: unknown }[]).find(m => m.person === 'jonathan')!.agents = ['art'];
-  });
+  revokeOwner(db, home);
   expect(app.operations.call('direct', owner, 'household.setBackup', config, id)).toMatchObject({ code: 'denied' });
   expect(app.operations.call('direct', owner, 'household.backupOff', {}, offId)).toMatchObject({ code: 'denied' });
   expect(call('backup')).toMatchObject({ code: 'denied' });
@@ -122,4 +131,21 @@ it('checks SSH key envelopes rather than only their prefix', () => {
   expect(validBackupRecipient('ssh-rsa ' + key.toString('base64'))).toBe(false);
   expect(validBackupRecipient('ssh-ed25519 ' + key.subarray(0, -1).toString('base64'))).toBe(false);
   expect(validBackupRecipient('ssh-ed25519 ' + Buffer.concat([key, Buffer.from('trailing')]).toString('base64'))).toBe(false);
+});
+
+it('publishes installed Live changes for save/off and removes retained owner records on revocation', async () => {
+  const { app, home, db, call } = await setup();
+  const ws = new WebSocket(app.url.replace('http:', 'ws:') + '/live');
+  cleanup.push(async () => { ws.terminate(); });
+  const queue: unknown[] = [], waiting: ((message: unknown) => void)[] = [];
+  ws.on('message', raw => { const message: unknown = JSON.parse(raw.toString()); const resolve = waiting.shift(); if (resolve) resolve(message); else queue.push(message); });
+  const next = () => queue.length ? Promise.resolve(queue.shift()) : new Promise(resolve => waiting.push(resolve));
+  await once(ws, 'open'); ws.send(JSON.stringify({ kind: 'subscribe', type: 'household.backup' }));
+  expect(await next()).toMatchObject({ kind: 'set', records: [{ id: 'household', state: 'off' }] });
+  expect(call('setBackup', config)).toMatchObject({ ok: true });
+  expect(await next()).toMatchObject({ kind: 'put', record: { settings: config, state: 'awaiting-runner' } });
+  expect(call('backupOff')).toMatchObject({ ok: true });
+  expect(await next()).toMatchObject({ kind: 'put', record: { settings: null, state: 'off' } });
+  revokeOwner(db, home); app.live.changed([{ type: 'core.access', id: 'household' }]);
+  expect(await next()).toMatchObject({ kind: 'set', records: [] });
 });
