@@ -152,7 +152,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     const job=bound(viewer);
     // Model selection and compiled central body policy remain held by this
     // first native consumer. No silent model substitution or policy bypass.
-    if(!job||job.model!==undefined)throw new OperationError('denied','Native scheduled input unavailable');
+    if(!job||job.model!==undefined||job.account!==undefined||job.claimedAt===undefined||!job.made)throw new OperationError('denied','Native scheduled input unavailable');
     const value=read(viewer),snapshot=reads.get(value)!;
     const row=[...snapshot.rows].reverse().find(row=>row.consumed===null);
     // Do not skip an older unconsumed source outside the bounded read window.
@@ -162,7 +162,8 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     const binding=store.read('binding',job.conversation!)!;
     const identity=(r:Turn|undefined)=>r&&JSON.stringify([r.seq,r.id,r.conversation,r.job,r.record]);
     const rootKey=identity(root),rowKey=identity(row);
-    return {job:job.id,binding:{agent:job.agent,conversation:job.conversation!,venue:'wake' as const,place:binding.place},
+    return {job:job.id,assignment:{runner:job.runner,box:job.box,claimedAt:job.claimedAt,house:job.made},
+      binding:{agent:job.agent,conversation:job.conversation!,venue:'wake' as const,place:binding.place},
       message:{seq:row.seq,id:row.id,kind:'wake' as const,text:(JSON.parse(row.record) as {text:string}).text},
       current(caller:Viewer){
         const callerJob=bound(caller);

@@ -1,12 +1,15 @@
 /** Owning Runtime admission for one native Clock input. No worker paths,
  * harness handles or credentials are accepted from a request. */
+import { buildIdentity } from './records.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { operation, OperationError, type Context, type Viewer } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
 
+export const clockExecutionAssignment=z.object({runner:z.string().min(1),box:z.string().min(1),claimedAt:z.number().int(),house:buildIdentity}).strict();
 export interface ClockExecutionInput {
+  assignment:z.infer<typeof clockExecutionAssignment>;
   job:string;
   binding:{agent:string;conversation:string;venue:'wake';place:string};
   message:{seq:number;id:string;kind:'wake';text:string};
@@ -27,7 +30,7 @@ export function installClockExecution(app:Foundation,effects:OutsideEffects,
   };
   app.onClose(()=>executions.clear());
   operations.register(operation({name:'runtime.beginClockExecution',doors:['http','direct'],
-    input:z.object({}).strict(),output:z.object({execution:z.uuid(),job:z.string(),
+    input:z.object({}).strict(),output:z.object({execution:z.uuid(),job:z.string(),assignment:clockExecutionAssignment,
       binding:z.object({agent:z.string(),conversation:z.string(),venue:z.literal('wake'),place:z.string()}),
       batch:z.object({conversation:z.string(),messages:z.array(z.object({seq:z.number(),id:z.string(),kind:z.literal('wake'),text:z.string()})).length(1)}),
       ttl:z.literal(5000)}),
@@ -51,7 +54,7 @@ export function installClockExecution(app:Foundation,effects:OutsideEffects,
       prune();if(executions.size>=1024)throw new OperationError('unavailable','Scheduled execution is busy');
       const execution=randomUUID();
       executions.set(execution,{input,expires:ctx.now+30*60_000});
-      return {execution,job:input.job,binding:input.binding,
+      return {execution,job:input.job,assignment:input.assignment,binding:input.binding,
         batch:{conversation:input.binding.conversation,messages:[input.message]},ttl:5000 as const};
     },
   }));

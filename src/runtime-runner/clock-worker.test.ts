@@ -1,4 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
+import {ServerResponse} from 'node:http';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
 import {mkdtempSync,rmSync} from 'node:fs';
@@ -10,6 +11,8 @@ import {builtinServices} from '../core/services.js';
 import {fixture,fixtureSharing} from '../fixture.js';
 import {FakeClock,type Viewer} from '../core/index.js';
 import {signin,hash} from '../core/signin/index.js';
+import {currentExecution} from '../pieces/runtime/control.js';
+import {hearJob} from '../pieces/runtime/heartbeat.js';
 import {runtimeStore} from '../pieces/runtime/store.js';
 import {startClockWorker,type ClockWorkerConfig} from './clock-worker.js';
 import type {SpawnClaude} from './session.js';
@@ -18,11 +21,11 @@ const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
 const owner:Viewer={kind:'member',id:'jonathan'};
 const settle=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
-async function setup(staging=false){
+async function setup(staging=false,privateInput=false){
  const home=mkdtempSync(join(tmpdir(),'clock-native-'));fixture(home);closes.push(()=>rmSync(home,{recursive:true,force:true}));
  const access=structuredClone(fixtureSharing());
  const clock=new FakeClock(),app=await startLoom({home,clock,next:true,staging,sharing:()=>access,stdout(){}});closes.push(app.close);access.services=builtinServices(app.db);
- const storage=runtimeStore(app.db),store={...storage,put:(...args:Parameters<typeof storage.put>)=>app.db.transaction(()=>storage.put(...args))()};let n=0;
+ const storage=runtimeStore(app.db),store={...storage,put:(kind:Parameters<typeof storage.put>[0],value:Parameters<typeof storage.put>[1]&{changedAt?:number},at:number)=>{const {changedAt:_,...record}=value;return app.db.transaction(()=>storage.put(kind,record,at))();}};let n=0;
  const call=(name:string,input:unknown,viewer=owner)=>app.operations.call('direct',viewer,name,input,`fixture-${++n}`);
  app.db.transaction(()=>signin(app).tokens.replace({v:1,tokens:[]},{}))();
  store.put('settings',{id:'art',agent:'art',boxes:['a'],house:{repo:'/fixture/art',houseFile:'house/house.json'}},clock.now());
@@ -31,7 +34,8 @@ async function setup(staging=false){
  const runner=randomBytes(32).toString('hex');
  signin(app).tokens.change(ts=>ts.push({role:'runner:a',label:'fixture runner',sha256:hash(runner),created:new Date(clock.now()).toISOString()}));
  const post=async(token:string,name:string,input={})=>(await fetch(`${app.url}/api/runtime/${name}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({input,id:`http-${++n}`})})).json();
- const scheduled=call('clock.in',{agent:'art',prompt:'ONLY CURRENT SCHEDULED WORDS',note:'fixture',when:'1s'});
+ const work={agent:'art',prompt:'ONLY CURRENT SCHEDULED WORDS',note:'fixture',when:'1s'};
+ const scheduled=privateInput?await app.operations.callAsync('socket',owner,'clock.in',{...work,member:'jonathan',project:'pond'},`private-${++n}`,true):call('clock.in',work);
  expect(scheduled).toMatchObject({ok:true});const wake=(scheduled as {ok:true;value:{id:string}}).value.id;
  clock.advance(1000);await settle();const job=store.ids('job')[0];expect(job).toBeTruthy();
  expect(await post(runner,'claimJob',{job})).toMatchObject({ok:true});
@@ -39,7 +43,9 @@ async function setup(staging=false){
  const input=await post(runner,'takeInput',{job});expect(input).toMatchObject({ok:true,value:{credential:expect.any(String)}});
  expect(await post(runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});
  const b=store.read('binding',input.value.conversation)!;
+ const assigned=store.read('job',job)!;
  const config:ClockWorkerConfig={url:app.url,credential:input.value.credential,job,
+  assignment:{runner:assigned.runner,box:assigned.box,claimedAt:assigned.claimedAt!,house:assigned.made!},
   binding:{agent:'art',conversation:b.id,venue:'wake',place:b.place},checkout:home,command:'/worker/claude',env:{WORKER:'yes'},
   rules:{key:'a'.repeat(64),deny:['Bash(rm *)'],sections:[{text:'LOCAL OWNER RULES'}]}};
  const calls:Array<{args:readonly string[];input:string;child:EventEmitter&{stdin:PassThrough;stdout:PassThrough;stderr:PassThrough;kill:()=>boolean;killed:boolean};options:unknown}>=[];
@@ -55,8 +61,9 @@ async function setup(staging=false){
  const start=(override=config)=>{const worker=startClockWorker(override,{clock,launch});closes.push(worker.close);return worker;};
  const withdraw=()=>{fenceSource();};
  const fenceSource=()=>{app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.withdrawn',json('true')) WHERE id=?").run(wake);};
+ const attempt=()=>{const worker=start();void ready.then(finish);return worker.completed;};
  const consumed=()=>app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${wake}`) as {consumed:number|null};
- return {home,app,clock,store,call,post,wake,job,config,calls,ready,finish,start,consumed,withdraw,access};
+ return {home,app,clock,store,call,post,wake,job,config,calls,ready,finish,start,attempt,consumed,withdraw,access};
 }
 it('actual worker startup obtains owning Runtime admission, executes the original words and only then ACKs',async()=>{
  const f=await setup(),worker=f.start();await f.ready;
@@ -71,23 +78,26 @@ it('actual worker startup obtains owning Runtime admission, executes the origina
 it('a withdrawn source between Runtime read and native admission refresh never reaches the actual spawn',async()=>{
  const f=await setup(),original=preparation.prepareClockInput;
  vi.spyOn(preparation,'prepareClockInput').mockImplementation((...args)=>{const value=original(...args);f.withdraw();return value;});
- expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(0);expect(f.consumed().consumed).toBeNull();
+ expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(0);expect(f.consumed().consumed).toBeNull();
 });
 it.each(['place','claim','conversation','policy','credential'] as const)('refuses changed owning %s after read and before native launch',async kind=>{
- const f=await setup(),original=preparation.prepareClockInput;
+ const f=await setup(),original=preparation.prepareClockInput;let mutated=false;
  vi.spyOn(preparation,'prepareClockInput').mockImplementation((...args)=>{
   const value=original(...args),job=f.store.read('job',f.job)!,binding=f.store.read('binding',f.config.binding.conversation)!;
   if(kind==='place')f.store.put('binding',{...binding,place:'another-valid-place'},f.clock.now());
   if(kind==='claim')f.store.put('job',{...job,claimedAt:job.claimedAt!+1},f.clock.now());
   if(kind==='conversation'){
-   f.store.put('binding',{...binding,id:'another-conversation'},f.clock.now());
+   f.store.put('binding',{...binding,id:'another-conversation',place:'another-conversation-place'},f.clock.now());
    f.store.put('job',{...job,conversation:'another-conversation'},f.clock.now());
+   f.app.db.prepare('UPDATE runtime_clock_turns SET conversation=? WHERE job=?').run('another-conversation',f.job);
+   f.app.db.prepare('UPDATE runtime_provenance SET conversation=? WHERE conversation=?').run('another-conversation',binding.id);
   }
   if(kind==='policy')expect(f.call('runtime.configureBodyPolicy',{agent:'art',revision:0,gates:{people:{}},policy:{deny:['Bash']}}).ok).toBe(true);
   if(kind==='credential')signin(f.app).tokens.change(tokens=>{for(const t of tokens)if(t.sha256===hash(f.config.credential))t.revoked=new Date(f.clock.now()).toISOString();});
-  return value;
+  mutated=true;return value;
  });
- expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(0);expect(f.consumed().consumed).toBeNull();
+ expect(await f.attempt()).toBe(false);expect(mutated).toBe(true);expect(f.calls).toHaveLength(0);expect(f.consumed().consumed).toBeNull();
+ if(['place','claim','conversation'].includes(kind))expect(await f.post(f.config.credential,'readConversation',{})).toMatchObject({ok:true});
 });
 it('withholds ACK on source withdrawal after native output and never retries the uncertain input',async()=>{
  const f=await setup(),worker=f.start();await f.ready;f.finish();f.withdraw();
@@ -111,5 +121,66 @@ it('holds the native execution effect in staging independently of the input/read
  expect(f.call('core.releaseEffect',{id:read.id}).ok).toBe(true);
  expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(0);
  const native=`runtime:clock-native:clock:${f.wake}`;expect(f.call('core.releaseEffect',{id:native}).ok).toBe(true);
+ const worker=f.start();await f.ready;f.finish();expect(await worker.completed).toBe(true);
+});
+it('keeps generic box execution valid while independently revoking owning Clock source policy',async()=>{
+ const f=await setup(),original=preparation.prepareClockInput;let mutated=false;
+ f.store.put('box',{...f.store.read('box','a')!,lentTo:['art']},f.clock.now());
+ vi.spyOn(preparation,'prepareClockInput').mockImplementation((...args)=>{
+  const value=original(...args);f.access.members.jonathan.agents=[];expect(currentExecution(f.store,f.store.read('job',f.job)!,f.access)).toBe(true);mutated=true;return value;
+ });
+ expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(0);expect(f.consumed().consumed).toBeNull();
+ expect(mutated).toBe(true);
+});
+it.each(['runner','box','claimedAt'] as const)('refuses a replacement of the original local %s before startup',async key=>{
+ const f=await setup(),assignment={...f.config.assignment,[key]:key==='claimedAt'?f.config.assignment.claimedAt+1:'other'};
+ expect(await f.start({...f.config,assignment}).completed).toBe(false);expect(f.calls).toHaveLength(0);
+});
+it('captures local rules and assignment before startup awaits',async()=>{
+ const f=await setup(),worker=f.start();f.config.binding.place='replacement';f.config.assignment.claimedAt++;
+ (f.config.rules as {deny:string[]}).deny=[];f.config.env.WORKER='changed';await f.ready;
+ expect(f.calls[0].args).toContain('Bash(rm *)');expect(f.calls[0].options).toMatchObject({env:{WORKER:'yes'}});
+ f.finish();expect(await worker.completed).toBe(true);
+});
+
+function holdResponse(op:string,n=1){
+ const end=ServerResponse.prototype.end;let count=0,release=()=>{},entered!:()=>void;
+ const ready=new Promise<void>(resolve=>{entered=resolve;});
+ const spy=vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<typeof end>){
+  if(this.req.url===`/api/runtime/${op}`&&++count===n){release=()=>{end.apply(this,args);};entered();return this;}
+  return end.apply(this,args);
+ });
+ return {ready,release:()=>release(),spy,get count(){return count;}};
+}
+it('a stalled watchdog cannot keep the original foreground child past its local authority window',async()=>{
+ const f=await setup(),held=holdResponse('currentClockExecution',2),worker=f.start();
+ try {await f.ready;f.clock.advance(1000);await held.ready;f.clock.advance(5000);
+  expect(await worker.completed).toBe(false);expect(f.calls[0].child.killed).toBe(true);expect(f.consumed().consumed).toBeNull();
+ }finally {held.release();held.spy.mockRestore();}
+});
+it('a watchdog read begun before native output cannot stand in for the final owning check',async()=>{
+ const f=await setup(),held=holdResponse('currentClockExecution',2),worker=f.start();
+ try {await f.ready;f.clock.advance(1000);await held.ready;f.finish();f.withdraw();held.release();
+  expect(await worker.completed).toBe(false);expect(held.count).toBeGreaterThanOrEqual(3);expect(f.consumed().consumed).toBeNull();
+ }finally {held.release();held.spy.mockRestore();}
+});
+it('a lost native admission response consumes the source and cannot authorize a replacement worker',async()=>{
+ const f=await setup(),held=holdResponse('beginClockExecution'),worker=f.start();
+ try {await held.ready;f.clock.advance(5000);expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(0);}
+ finally {held.release();held.spy.mockRestore();}
+ expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(0);expect(f.consumed().consumed).toBeNull();
+});
+
+it('uses the same owning native protocol for an independently authorized member-scoped prompt',async()=>{
+ const f=await setup(false,true),worker=f.start();await f.ready;expect(f.store.read('job',f.job)?.member).toBe('jonathan');
+ f.finish();expect(await worker.completed).toBe(true);expect(f.consumed().consumed).not.toBeNull();
+});
+it('allows harmless progress timestamps to advance during preparation',async()=>{
+ const f=await setup(),original=preparation.prepareClockInput;
+ vi.spyOn(preparation,'prepareClockInput').mockImplementation((...args)=>{
+  const value=original(...args);f.clock.advance(200);f.store.put('job',f.store.read('job',f.job)!,f.clock.now());
+  f.store.put('binding',f.store.read('binding',f.config.binding.conversation)!,f.clock.now());
+  f.app.db.transaction(()=>hearJob(f.app.db,f.job,f.clock.now()))();return value;
+ });
  const worker=f.start();await f.ready;f.finish();expect(await worker.completed).toBe(true);
 });

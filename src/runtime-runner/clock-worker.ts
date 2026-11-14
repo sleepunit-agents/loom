@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { z } from 'zod';
+import {clockExecutionAssignment} from '../pieces/runtime/clock-execution.js';
 import { clock as realClock, type Clock } from '../core/clock.js';
 import { ClaudeWorkerSession, type RunnerBinding, type SpawnClaude } from './session.js';
 import { prepareClockInput } from './clock-input.js';
@@ -12,6 +13,8 @@ export interface ClockWorkerConfig {
   /** Existing job-bearing Signin credential from Runtime's takeInput path. */
   credential:string;
   job:string;
+  /** Original locally assigned claim and built house, selected by the runner. */
+  assignment:z.infer<typeof clockExecutionAssignment>;
   binding:RunnerBinding;
   checkout:string;
   command:string;
@@ -19,7 +22,7 @@ export interface ClockWorkerConfig {
   rules:unknown;
 }
 const binding=z.object({agent:z.string(),conversation:z.string(),venue:z.literal('wake'),place:z.string()}).strict();
-const begin=z.object({execution:z.uuid(),job:z.string(),binding,
+const begin=z.object({execution:z.uuid(),job:z.string(),assignment:clockExecutionAssignment,binding,
   batch:z.object({conversation:z.string(),messages:z.array(z.object({seq:z.number().int().positive(),id:z.string().startsWith('clock:'),kind:z.literal('wake'),text:z.string()})).length(1)}).strict(),
   ttl:z.literal(5000)}).strict();
 const fail=()=>new Error('Scheduled worker unavailable');
@@ -28,7 +31,7 @@ const fail=()=>new Error('Scheduled worker unavailable');
  * HTTP authority is exact-source Runtime admission, not a caller current()
  * witness. Owner lifecycle events fence synchronously across every await. */
 export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch?:SpawnClaude}={}) {
-  const config={...raw,binding:binding.parse(raw.binding),env:{...raw.env},rules:structuredClone(raw.rules)};
+  const config={...raw,binding:binding.parse(raw.binding),assignment:clockExecutionAssignment.parse(raw.assignment),env:{...raw.env},rules:structuredClone(raw.rules)};
   const endpoint=new URL(config.url);
   if(endpoint.username||endpoint.password||endpoint.search||endpoint.hash||endpoint.pathname!=='/'
     ||!(endpoint.protocol==='https:'||endpoint.protocol==='http:'&&endpoint.hostname==='127.0.0.1')
@@ -64,7 +67,7 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
   const completed=(async()=>{
     try {
       const started=clock.now(),input=begin.parse(await call('beginClockExecution',{}));
-      if(input.job!==config.job||JSON.stringify(input.binding)!==JSON.stringify(config.binding))throw fail();
+      if(input.job!==config.job||JSON.stringify(input.binding)!==JSON.stringify(config.binding)||JSON.stringify(input.assignment)!==JSON.stringify(config.assignment))throw fail();
       // This deadline starts BEFORE the request. A delayed successful response
       // cannot mint a fresh local execution window from old authority.
       deadline=started+input.ttl;
