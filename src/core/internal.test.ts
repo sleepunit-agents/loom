@@ -76,3 +76,14 @@ it('revokes authority across an asynchronous wait', async()=>{
  const result=module.callAsync('tasks.wait',{});app.operations.close();release(42);
  expect(await result).toMatchObject({code:'denied'});expect(run).not.toHaveBeenCalled();
 });
+
+it('preserves windowOnly and requiresWindow independently of offered doors',async()=>{
+ const app=fixture(),module=app.operations.internal('changes'),run=vi.fn(()=>null);
+ app.operations.register({name:'tasks.windowOnly',windowOnly:true,input:z.object({}),output:z.null(),may:()=>false,run});
+ app.operations.register({name:'tasks.requiresWindow',requiresWindow:()=>true,input:z.object({}),output:z.null(),may:()=>false,run});
+ for(const name of ['tasks.windowOnly','tasks.requiresWindow']){
+  expect(module.call(name,{})).toMatchObject({code:'denied'});
+  expect(await module.callAsync(name,{})).toMatchObject({code:'denied'});
+ }
+ expect(run).not.toHaveBeenCalled();
+});
