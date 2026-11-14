@@ -23,3 +23,6 @@
 .desk-rail-badge{font:600 9px var(--loom-font-data,monospace);color:var(--v-yellow)}
 .desk-rail-unread{font:11px var(--loom-font-data,monospace);color:var(--v-blue)}
 @container rail (max-width:100px){.desk-rail-compact .loom-kit-words,.desk-rail-dot,.desk-rail-badge,.desk-rail-unread{display:none}.desk-rail-compact>[data-split-row]{display:flex;justify-content:center}}
+
+.desk-rail-card[data-companion]{border-bottom:2px solid var(--v-blue)}
+.desk-rail-with{color:var(--v-blue);padding-bottom:8px;border-bottom:1px solid var(--v-border)}

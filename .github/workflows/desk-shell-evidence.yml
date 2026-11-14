@@ -11,6 +11,8 @@ on:
       - 'src/core/household/display*'
       - 'web/src/pieces/attention/rail*'
       - 'web/src/pieces/attention/desk-signals*'
+      - 'web/src/pieces/comms/index.tsx'
+      - 'web/src/desk-rail.ts'
       - 'web/src/pieces/attention/home*'
       - 'web/src/apps.ts'
       - 'src/next*'
@@ -37,6 +39,10 @@ jobs:
           nice -n 19 npm ci --no-audit --no-fund
           nice -n 19 npm run build
           npx playwright-core install --with-deps chromium
+      - name: Install age for the old Comms comparison fixture
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
       - name: Verify desk and capture three looks at three sizes
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"

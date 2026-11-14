@@ -6,6 +6,7 @@ import type { Snapshot } from '../../data';
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>()}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])}));
 import Rail from './rail';
+import { RailContext } from '../../desk-rail';
 import DeskSignals from './desk-signals';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
@@ -79,4 +80,17 @@ it('reports only live attention and opens alphabetical agents by shortcut while 
  await act(async()=>{events.dispatchEvent(press('Digit1'));});expect(go).toHaveBeenLastCalledWith('/p/comms-preview');
  await publish('attention.ownedAgent','offline');go.mockClear();
  await act(async()=>{events.dispatchEvent(press('Digit1'));});expect(go).not.toHaveBeenCalled();
+});
+
+it('puts the selected owned Comms companion above Needs you and returns it to alphabetical order',async()=>{
+ const go=vi.fn(),onAir=vi.fn();const view=(selected?:string)=>h(RailContext.Provider,{value:{onAir,shown:true,screen:null,selected}},h(Rail,{go}));
+ await act(async()=>{tree=create(view('mark'));});
+ expect(tree.root.findAllByType('section').map((n:any)=>n.props['data-agent'])).toEqual(['mark','art']);
+ expect(tree.root.findByProps({className:'desk-rail-kicker desk-rail-with'}).children.join('')).toBe('With Mark in Comms');
+ await act(async()=>tree.update(view()));
+ expect(tree.root.findAllByType('section').map((n:any)=>n.props['data-agent'])).toEqual(['art','mark']);
+ expect(tree.root.findAllByProps({className:'desk-rail-kicker desk-rail-with'})).toHaveLength(0);
+ await act(async()=>tree.update(view('unowned')));expect(text()).not.toContain('in Comms');
+ await act(async()=>tree.update(view('mark')));await publish('attention.ownedAgent','denied');
+ expect(text()).not.toContain('in Comms');expect(text()).not.toContain('Mark rail card');
 });

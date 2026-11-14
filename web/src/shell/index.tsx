@@ -10,16 +10,18 @@ import { AppIcon } from '../app-icon';
 import { tintOf } from '../tint';
 import Launcher from './launcher';
 import { useHiding } from './hiding';
-export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean }>> }
+import { useCompanion } from './companion';
+import { RailContext } from '../desk-rail';
+export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean; visible?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed:false };
   static getDerivedStateFromError() { return { failed:true }; }
   render() { return this.state.failed ? <Error text="This app could not open. Close it and try again." /> : this.props.children; }
 }
-function Screen({ app, tile, router, active }: { app: RegisteredApp; tile: Tile; router: DeskRouter; active: boolean }) {
+function Screen({ app, tile, router, active, visible }: { app: RegisteredApp; tile: Tile; router: DeskRouter; active: boolean; visible:boolean }) {
   const View = app.Screen;
-  return <AppBoundary><Suspense fallback={<Loading label={`Opening ${app.title}…`} />}><View active={active} path={currentPath(tile)} go={path => router.go(tile.id,path)} /></Suspense></AppBoundary>;
+  return <AppBoundary><Suspense fallback={<Loading label={`Opening ${app.title}…`} />}><View active={active} visible={visible} path={currentPath(tile)} go={path => router.go(tile.id,path)} /></Suspense></AppBoundary>;
 }
 export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void }>; Signals?: ComponentType<{ go(path:string):void; onAttention:(value:boolean)=>void }>; Bar?: ComponentType<{ title: string; go(path: string): void; actions: ReactNode }> }
 export default function Shell({ apps, surfaces = {} }: { apps: readonly RegisteredApp[]; surfaces?: ShellSurfaces }) {
@@ -46,6 +48,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const visible = route.tiles.filter(t => !t.minimized);
   // Until Home's piece registers a rail there is no invented agent data or empty reserved column.
   const { Home, Rail, Bar, Signals } = surfaces;
+  const companion = useCompanion(!phone&&!!Rail&&visible.length>0&&railAs==='always');
   const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railAs==='always'?railWidth(width)+10:railAs==='strip'?24:0) : 0)) };
   useEffect(() => { if(!phone) {const notices=router.fit(workArea,width);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,router]);
   const boxes = layout(router.asTiles(),workArea,width).apps;
@@ -81,7 +84,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     window.addEventListener('keydown',key); return () => window.removeEventListener('keydown',key);
   },[visible,route.focused,router]);
   const focused = visible.find(t => t.id === route.focused) ?? visible[0];
-  return <div className="next-shell" data-shell={phone ? 'phone' : 'desk'} data-dock-mode={phone?'always':hiding.modes.dock}>
+  return <RailContext.Provider value={phone?null:companion}><div className="next-shell" data-shell={phone ? 'phone' : 'desk'} data-dock-mode={phone?'always':hiding.modes.dock}>
     {Bar ? <Bar title={apps.find(a => a.id === focused?.id)?.title ?? 'Home'} go={path => {
       if(path === '/') {router.home();return;}
       const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));
@@ -114,7 +117,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
             <Button variant="ghost" size="sm" aria-label={`Minimize ${app.title}`} onClick={() => router.remove(tile.id,true)}>−</Button>
             <Button variant="ghost" size="sm" aria-label={`Close ${app.title}`} onClick={() => router.remove(tile.id)}>×</Button>
           </header>
-          <div className="next-page"><Screen app={app} tile={tile} router={router} active={shown && route.focused === tile.id} /></div>
+          <div className="next-page"><Screen app={app} tile={tile} router={router} visible={shown} active={shown && route.focused === tile.id} /></div>
         </section>;
       })}
     </div>
@@ -131,5 +134,5 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     ]} /></div>
     {menu&&<ContextMenu at={menu} close={()=>setMenu(undefined)} />}
     <p className="next-notice" role="status" aria-live="polite">{notice}</p>
-  </div>;
+  </div></RailContext.Provider>;
 }
