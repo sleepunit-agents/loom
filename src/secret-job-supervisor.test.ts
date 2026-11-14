@@ -69,3 +69,15 @@ it('close during daemon startup joins the late owner without launching a holder'
 it('mismatched local job selection refuses all startup IO',async()=>{
  const f=setup();f.config.control.job='other';const owner=f.start();await expect(owner.ready).rejects.toThrow();expect(startSecretWorkers).not.toHaveBeenCalled();
 });
+it('failed route retirement still joins the held attempt and holder before releasing daemon authority',async()=>{
+ const f=setup(),attempt=gate(),child=gate();
+ vi.mocked(runRuntimeSecretJob).mockReturnValue(attempt.promise);
+ f.source.close.mockRejectedValue(Error('private-retirement-detail'));
+ f.holder.close.mockImplementation(async()=>{await child.promise;f.events.push('holder');});
+ const owner=f.start();await owner.ready;const running=owner.run();void running.catch(()=>{});await turn();
+ let settled=false;const closing=owner.close();void closing.catch(()=>{settled=true;});await turn();
+ expect(f.source.close).toHaveBeenCalledOnce();expect(settled).toBe(false);expect(f.holder.close).not.toHaveBeenCalled();expect(f.daemon.close).not.toHaveBeenCalled();
+ attempt.resolve();await turn();expect(f.holder.close).toHaveBeenCalledOnce();expect(f.daemon.close).not.toHaveBeenCalled();expect(settled).toBe(false);
+ child.resolve();await expect(closing).rejects.toThrow(/^Secret job supervisor unavailable$/);await expect(running).rejects.toThrow(/^Secret job supervisor unavailable$/);
+ expect(f.daemon.close).toHaveBeenCalledOnce();expect(f.events).toEqual(['holder','daemon']);
+});
