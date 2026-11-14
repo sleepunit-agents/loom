@@ -47,7 +47,7 @@ it('projects freshness, citations, referring pages, and stale checks without ren
   const read = () => mind.call(owner, 'knowledgeRead', { slug: 'fact' });
   expect(mind.call({ kind: 'member', id: 'partial' }, 'knowledgeRead', { slug: 'fact' })).toMatchObject({ code: 'denied' });
   expect(read()).toMatchObject({ ok: true, value: { id: 'fact', fresh: 'fresh', recent: true, citedBy: [{ slug: 'ref' }], sources: [{ href: 'https://example.com' }] } });
-  const result = read(); if (result.ok) expect((result.value as any).body).toHaveLength(20000);
+  const result = read(); if (result.ok) expect((result.value as any).body).toBe('a'.repeat(20001));
   await store.verifyPages({ slug: 'fact', outcome: 'stale', verified_at: '2026-11-11T00:00:00.000Z' });
   expect(read()).toMatchObject({ value: { fresh: 'due', verified_at: '2026-11-10T00:00:00.000Z', checked: { outcome: 'stale' } } });
   await store.archivePage({ slug: 'fact' });
