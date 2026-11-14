@@ -225,6 +225,10 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await p.goto(`${loom.url}/p/inbox-preview/ask/${encodeURIComponent(sealed.ref)}`);
     await p.getByText('This ask is no longer in view',{exact:true}).waitFor();expect(await p.getByText(sealedWords,{exact:true}).count()).toBe(0);
     clock.advance(14*86400_000);
+    // Retention also ages the real sign-in session. Reauthenticate before reading its wordless history.
+    await expect.poll(()=>b.getByText(sealedWords,{exact:true}).count()).toBe(0);
+    await signIn(b,'jonathan');
+    await b.goto(`${loom.url}/p/inbox-preview/ask/${encodeURIComponent(sealed.ref)}`);
     await b.getByText('Words no longer kept',{exact:true}).waitFor();expect(await b.getByText(sealedWords,{exact:true}).count()).toBe(0);
     await b.getByRole('button',{name:'Open private reply',exact:true}).click();
     await expect.poll(()=>new URL(b.url()).pathname).toBe(`/p/comms-preview/thread/${privateThread.replace(/^th:/,'')}`);
