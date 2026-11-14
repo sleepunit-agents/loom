@@ -330,6 +330,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await expect.poll(()=>page.locator('[data-tile=account]').count()).toBe(1);
               const accountTile=page.locator('[data-tile=account]');
               await expect.poll(()=>accountTile.getByRole('form',{name:'Add a passkey',exact:true}).count()).toBe(1);
+              await expect.poll(()=>accountTile.getByRole('button',{name:'Add a passkey',exact:true}).isEnabled()).toBe(true);
               await expect.poll(()=>accountTile.getByRole('button',{name:'Sign out this device',exact:true}).isEnabled()).toBe(true);
               await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
               await page.getByRole('button',{name:'All apps',exact:true}).first().click();
