@@ -69,6 +69,10 @@ export class SettledInbox {
         try {
           if (!this.admit(who, items)) this.offered.delete(key);
         } catch { this.offered.delete(key); }
+        // Admission may commit edits to any recipient and notify changed().
+        // Discard captured groups before offering more work; the outer loop
+        // rereads SQL and preserves the per-pass refusal guard.
+        if (this.again) return;
       } else next = Math.min(next ?? Infinity, pending.due);
     }
     if (!this.closed && next !== undefined) this.cancel = this.clock.at(next, () => this.changed());
