@@ -1,3 +1,4 @@
+import {pinPublicClaim} from './public-continuation.js';
 import { bodyPolicyExecutionHeld } from './policy-store.js';
 import { finishStartAttempt } from './start-retries.js';
 import { hearJob } from './heartbeat.js';
@@ -47,7 +48,9 @@ export function installRunnerJobs(db: Db, operations: Operations, sharing: () =>
       if (!made) throw new OperationError('conflict', 'Agent has no house configuration');
       if (job.startRequest?.house && !sameHouse(job.startRequest.house,made)) throw new OperationError('conflict','Retry house configuration changed; reconcile this job');
       const { changedAt: _, build: _build, buildAt: _buildAt, ...before } = job;
-      if (store.put('job', { ...before, state: 'starting', made, claimedAt: ctx.now }, ctx.now)) ctx.changed('runtime.job', id);
+      const after={ ...before, state: 'starting' as const, made, claimedAt: ctx.now };
+      pinPublicClaim(ctx,job,after);
+      if (store.put('job', after, ctx.now)) ctx.changed('runtime.job', id);
       return { job: id, state: 'starting' as const };
     },
   }));
