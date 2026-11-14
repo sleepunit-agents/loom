@@ -340,3 +340,12 @@ for(const invalid of ['expired','missing','sender','metadata','member','agent','
  const seal=vi.spyOn(f.key,'seal');expect(await f.call('comms.replyToAsk',{ref:r.ref,text:'No plaintext preparation'})).toMatchObject({ok:false});
  expect(seal).not.toHaveBeenCalled();expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').all(`private-reply:${r.ref}`)).toEqual([]);
 });
+
+it('rejects changed sealed typed words under the same and fresh operation ids without changing the first answer',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'typed',question}),input={ref:r.ref,text:'First sealed typed words'};
+ expect(await f.call('comms.replyToAsk',input,f.viewer,'typed-first')).toMatchObject({ok:true});
+ const saved=f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').get(`private-reply:${r.ref}`),answer=f.attention.get(f.viewer,{id:r.ref});
+ for(const op of ['typed-first','typed-changed'])expect(await f.call('comms.replyToAsk',{...input,text:'Conflicting sealed typed words'},f.viewer,op)).toMatchObject({ok:false,code:'conflict'});
+ expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').get(`private-reply:${r.ref}`)).toEqual(saved);
+ expect(f.attention.get(f.viewer,{id:r.ref})).toEqual(answer);
+});
