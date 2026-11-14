@@ -1,9 +1,10 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createDataSchema, type DataDatabase } from '../data/database.js';
-import { measuringSettings } from '../data/schema.js';
+import { agents, members, measuringSettings } from '../data/schema.js';
+import { approvalService } from '../../apps/approvals.js';
 import { DEFAULT_MEASURING } from './index.js';
-import { measuringSettingsService } from './settings.js';
+import { MEASURING_SETTINGS_OPERATION, measuringSettingsService } from './settings.js';
 
 let client: Database.Database, db: DataDatabase;
 beforeEach(() => { client = new Database(':memory:'); db = createDataSchema(client); });
@@ -54,4 +55,61 @@ it('validates every setting before a card is issued and binds application to the
   const altered = JSON.parse(card.details); altered.after.keep_days = 3;
   expect(() => service.apply({ ...card, details: JSON.stringify(altered) })).toThrow('card');
   expect(service.read()).toEqual(DEFAULT_MEASURING);
+});
+
+function approvalFixture() {
+  const at = '2026-11-14T20:00:00.000Z';
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: at }).run();
+  const recreate = () => approvalService(db, new Map([
+    [MEASURING_SETTINGS_OPERATION, measuringSettingsService(db).apply],
+  ]), () => at);
+  const service = recreate();
+  const propose = (after: typeof DEFAULT_MEASURING) => service.request({
+    ...measuringSettingsService(db).prepare(after), agent: 'art', askedFrom: 'house', actingFor: 'owner',
+    what: 'Change Measuring settings', why: 'Find slow requests', ask: 'Change Measuring settings?',
+    ifYes: 'Apply these settings', ifNo: 'Keep the current settings',
+  });
+  return { service, recreate, propose, at };
+}
+
+it('applies the persisted Measuring proposal through real Approvals after service recreation, only on Allow', () => {
+  const { service, recreate, propose, at } = approvalFixture();
+  const after = { ...DEFAULT_MEASURING, on: true, keep_days: 7 };
+  const denied = propose(after);
+  service.deny(denied.id, 'jonathan');
+  expect(measuringSettingsService(db).read()).toEqual(DEFAULT_MEASURING);
+  expect(db.select().from(measuringSettings).all()).toEqual([]);
+  const pending = propose(after);
+  expect(measuringSettingsService(db).read()).toEqual(DEFAULT_MEASURING);
+  const restarted = recreate();
+  expect(restarted.get(pending.id)).toMatchObject({ details: pending.details, changeSummary: pending.changeSummary });
+  expect(restarted.allow(pending.id, 'jonathan')).toMatchObject({ state: 'used', decidedBy: 'jonathan', usedAt: at });
+  expect(measuringSettingsService(db).read()).toEqual(after);
+  expect(restarted.record(pending.id).map(row => row.event)).toEqual(['request', 'allow', 'use']);
+  expect(() => restarted.allow(pending.id, 'jonathan')).toThrow('already answered');
+});
+
+it('rolls settings, the answer and audit back when the real approval use record fails after application', () => {
+  const { service, propose } = approvalFixture();
+  const pending = propose({ ...DEFAULT_MEASURING, on: true });
+  client.exec("CREATE TRIGGER fail_measuring_use BEFORE INSERT ON approval_record WHEN NEW.event = 'use' BEGIN SELECT RAISE(ABORT, 'use audit failed'); END");
+  expect(() => service.allow(pending.id, 'jonathan')).toThrow('use audit failed');
+  expect(db.select().from(measuringSettings).all()).toEqual([]);
+  expect(service.get(pending.id)).toMatchObject({ state: 'pending', decidedBy: null, decidedAt: null, usedAt: null });
+  expect(service.record(pending.id).map(row => row.event)).toEqual(['request']);
+  client.exec('DROP TRIGGER fail_measuring_use');
+  expect(service.allow(pending.id, 'jonathan').state).toBe('used');
+  expect(measuringSettingsService(db).read().on).toBe(true);
+});
+
+it('keeps a stale Measuring approval pending when another approved card has changed the settings', () => {
+  const { service, propose } = approvalFixture();
+  const first = propose({ ...DEFAULT_MEASURING, on: true });
+  const stale = propose({ ...DEFAULT_MEASURING, keep_days: 5 });
+  service.allow(first.id, 'jonathan');
+  expect(() => service.allow(stale.id, 'jonathan')).toThrow('fresh card');
+  expect(service.get(stale.id).state).toBe('pending');
+  expect(service.record(stale.id).map(row => row.event)).toEqual(['request']);
+  expect(measuringSettingsService(db).read()).toEqual({ ...DEFAULT_MEASURING, on: true });
 });
