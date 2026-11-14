@@ -101,6 +101,7 @@ project or the household never grants access to another member's thread.
 | `comms.conversationSteps` | Non-private conversation and optional before-sequence; newest 100 retained step labels in sequence order. Requires a trusted conversation lookup and the ordinary agent viewer gate. |
 | `comms.change` | Thread and title/project/pin/unpin/archive/unarchive/read/stop/delete action. |
 | `comms.resend` | Thread and sequence; retry an undelivered member message. |
+| `comms.replyToAsk` | Attention ask id and typed text (1–4000 characters); window-only encrypted member message and atomic opaque Attention reply acknowledgement. |
 | `comms.answer` | Thread, attention reference, yes/no; encrypted answer record. Freeform words are refused pending the private attention seam. |
 
 The `thread` live record contains thread state with the first-message dedupe
@@ -1055,3 +1056,34 @@ Pending actions and unavailable connections prevent pinning; operation errors
 remain above the list. The single browser proof covers hold timing, no
 navigation, cancellation and the resulting Unpin menu in all six views.
 Swipe and archive Undo remain unfinished.
+
+
+## Private typed reply seam
+
+`comms.replyToAsk({ref, text})` is the owning window-only operation for Inbox and
+Comms typed replies. `ref` is the actual Attention ask id. The source must be an
+unmanaged member-private conversation ask whose agent, conversation and original
+member match exactly one currently owned Comms thread. Other members, including
+household owners, bearer callers and non-socket doors are refused. Archived
+threads require an explicit unarchive. Waiting/managed asks keep their source's
+decision protocol; typed words cannot authorize an approval or finish a task.
+
+The words are encrypted before the transaction. Commit rechecks thread routing,
+current ownership, the exact ask snapshot and an existing reply row. One normal
+member message and Attention's `replied` acknowledgement commit together; the
+latter holds only member/time and a thread/sequence reference. Its in-process
+`privateReply` capability requires the caller's current database transaction and
+central answer policy. It accepts no words and is not a registry operation.
+Public `attention.answer` continues to refuse member-private typed words.
+
+Replies enter the ordinary Comms delivery/staging/receipt path. Same-input
+retries, including after restart or word expiry, keep the original sequence and
+ciphertext; changed words conflict. A competing answer wins once, and rejection
+rolls back message, status and retry receipt together. Core retry fingerprints
+are keyed; neither Attention rows nor generic retry receipts contain reply words.
+
+This is the backend seam, not the finished ask UI. Inbox must call it directly
+for private replies instead of forwarding text to `attention.answer`. Encrypted
+private question creation/projection, kept inline history and source/Inbox
+synchronization remain required. Existing `comms.answer` boolean/legacy behavior
+is unchanged. No importer, schema, installed state or real data is changed.

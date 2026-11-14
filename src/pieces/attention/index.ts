@@ -3,7 +3,7 @@ import { operation } from './commands.js';
 import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
-import type { Ask, AgentStatus, AttentionSources } from './role.js';
+import { registerPrivateReplies, type Ask, type AgentStatus, type AttentionSources } from './role.js';
 import { installWaitChecks, type AttentionWaits } from './waits.js';
 import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
@@ -43,6 +43,28 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     return row && JSON.parse(row.record) as Ask;
   };
   const saveAsk = (record: Ask) => db.prepare('INSERT INTO attention_asks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, JSON.stringify(record));
+  registerPrivateReplies(operations, (ctx, raw) => {
+    if (ctx.db !== db || !db.inTransaction) return failure('unavailable', 'Private reply needs its enclosing transaction');
+    const parsed = z.object({id, conversation: id, agent: id, member: id, thread: id, seq: z.number().int().positive()}).strict().safeParse(raw);
+    if (!parsed.success) return failure('invalid', 'Invalid private reply reference');
+    const input = parsed.data, record = readAsk(input.id);
+    if (!record || record.id !== input.id || record.member !== input.member || record.agent !== input.agent || record.source.kind !== 'conversation'
+      || record.source.id !== input.conversation || ctx.viewer.kind !== 'member' || ctx.viewer.id !== input.member
+      || !mayAct(ctx.viewer, scoped('attention.ask', record), sharing(), 'answer-person')) return failure('denied', 'Ask unavailable');
+    // Waiting and managed sources keep their own decision protocol. A typed
+    // reply cannot authorize an approval, complete a task or bypass its owner.
+    if (record.sourceManaged || record.waits_on) return failure('conflict', 'Answer this ask through its source');
+    if (record.state !== 'open') {
+      const answer = record.answer;
+      return record.state === 'answered' && answer?.kind === 'replied' && answer.by.kind === 'member' && answer.by.id === input.member
+        && answer.reply?.thread === input.thread && answer.reply.seq === input.seq
+        ? {ok: true, value: {answered: true}} : failure('conflict', 'Ask is no longer open');
+    }
+    record.state = 'answered'; record.changedAt = ctx.now;
+    record.answer = {kind: 'replied', reply: {thread: input.thread, seq: input.seq}, by: ctx.viewer, at: ctx.now};
+    saveAsk(record); ctx.changed('attention.ask', record.id);
+    return {ok: true, value: {answered: true}};
+  });
   const sources = new Map<string, (ctx: Context, ask: Ask) => void>();
   const managed = (record: Pick<Ask, 'source' | 'sourceManaged'>) => record.sourceManaged === true;
   operations.register(operation({ name: 'attention.raise', write: true, input: question, output: z.unknown(),
