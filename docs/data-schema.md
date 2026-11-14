@@ -62,3 +62,43 @@ integration must be explicit. [urql Graphcache](https://urql.dev/docs/graphcache
 is the chosen normalising client cache. The endpoint unit owns caller visibility,
 subscription deltas, transport lifecycle, and removing replaced Tasks reads;
 this schema unit exposes no unauthenticated generated endpoint or mutations.
+
+## Generated read module
+
+`dataQueries(client, { tables, visibility, relationsDepthLimit? })` in
+`src/core/data/queries.ts` generates a **read-only GraphQL schema**. `tables` is
+an explicit list of application table exports; plumbing is not eligible. Only
+relations between selected tables exist in this schema. Every selected table
+requires a function returning a Drizzle SQL predicate. Predicates are combined
+with the query's filters before sorting and pagination, at the root and at every
+connected table, including singular relations. Missing or non-SQL policies throw
+before a statement executes. Policy callbacks receive the columns for their own
+query alias; predicates can use SQL subqueries for current sharing membership.
+
+The module decorates a private Drizzle instance's relational builders before
+passing it to drizzle-graphql. It keeps the generator's field selection,
+filtering, ordering and one-statement relational reads. It does not fetch then
+filter rows. Tests observe the actual SQLite statements, denied root and
+connected rows, and independently generated caller schemas.
+
+This module does **not** authenticate a caller or supply household permission
+rules. The outside door must select safe tables/fields and provide the central
+SQL policy for its authenticated caller; never expose a schema generated with
+an installed module's unrestricted policy. Construct a separate schema for each
+identity/policy, and do not retain authority across session expiry or revocation.
+The policy map is copied at construction, but its functions must evaluate any
+changing sharing facts in SQL. Default relation depth is 2; supported depths are
+0–3. No HTTP route or installed-store composition uses this module yet.
+
+Still to connect: central household/project/private visibility predicates,
+authenticated GraphQL transport, Tasks `commentCount`, delta subscriptions,
+normalized client cache, Tasks tile replacement and configurable database provider.
+
+Pinned-library limits: drizzle-graphql 0.8.5 conflates differently aliased nested
+relation requests, so this module rejects nested relation aliases before SQL,
+including aliases inside fragments. Root and scalar aliases work. Use canonical
+relation field names; the transport/client integration must retain this guard
+until its generator can implement independent aliases. The module wraps visibility
+SQL in a deferred SQLWrapper: Drizzle's relational alias rewrite must not change
+unrelated table columns inside policy subqueries. Tests cover the otherwise
+permissive rewrite at both root and connected tables.
