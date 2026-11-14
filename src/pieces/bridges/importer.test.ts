@@ -6,6 +6,7 @@ import {join,dirname}from'node:path';
 import {openDb}from'../../core/index.js';
 import {importBridges}from'./importer.js';
 import {readBridgeImport,type BridgeImportSources}from'./import-plan.js';
+import {addressed}from'./routing.js';
 import type {BridgeSourceFile}from'./import-source.js';
 const roots:string[]=[];afterEach(()=>{for(const r of roots.splice(0))rmSync(r,{recursive:true,force:true});});
 const h={agents:['art','mark'],members:['jonathan','loren']};
@@ -169,6 +170,10 @@ it('an unprojectable route claim cannot be shadowed by another source or a threa
  const options={instances:[...f.options.instances,instance],connections:[...f.options.connections,{agent:'mark',platform:'discord',workspace:'789',bot:'200',tokenSecret:'mark-discord'}]};
  const source=readBridgeImport(f.sources,options,h,f.open);
  expect(source.expected.routes).toEqual([]);
+ for(const venue of source.expected.venues){
+  expect(venue.ignore).toContain('300');
+  for(const message of [{channel:'300'},{channel:'500',parent:'300'}])expect(addressed({...venue,enabled:true},{...message,id:'message',user:'123',dm:false,text:'hello',mentions:[venue.bot]},undefined,source.expected.venues)).toBe(false);
+ }
  expect(JSON.parse(source.evidence).retained).toContainEqual(expect.objectContaining({kind:'route',channel:'500'}));
 });
 

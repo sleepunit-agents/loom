@@ -104,6 +104,7 @@ it('rehearses the household shape: one local root, three bots, a work Slack bund
  try{
   const venues=d.prepare('SELECT record FROM bridges_venues').all() as{record:string}[];
   expect(venues.map(v=>JSON.parse(v.record))).toEqual([expect.objectContaining({agent:'art',platform:'discord',enabled:false,tokenSecret:'discord-token'})]);
+  expect(JSON.parse(venues[0].record).ignore).toEqual(expect.arrayContaining(['302','303']));
   const routes=d.prepare('SELECT record FROM bridges_routes').all() as{record:string}[];
   expect(routes.map(r=>JSON.parse(r.record).channel).sort()).toEqual(['300','301']);
   expect((d.prepare('SELECT record FROM bridges_links').all() as{record:string}[]).map(r=>JSON.parse(r.record).person)).toEqual(['jonathan','jonathan']);

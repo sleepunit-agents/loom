@@ -194,6 +194,12 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     // A retained unprojectable claim must not be shadowed by another source's
     // less restricted row, or by a thread inheriting that parent.
     for(const r of routes)if(r.parent&&blockedRoutes.has(`legacy:discord:${r.workspace}:${r.parent}`)){blockedRoutes.add(r.id);retained.push({kind:'route',channel:r.channel,reason:'parent has an unprojectable source claim'});}
+    // Missing routes permit explicit mentions. Preserve a fail-closed channel
+    // block as well as private evidence until the owner repairs that audience.
+    for(const v of venues)if(v.platform==='discord'){
+      const blocked=effective.routes.filter(r=>r.guild===v.workspace).flatMap(r=>r.channels.filter(c=>blockedRoutes.has(`legacy:discord:${r.guild}:${c.channel}`)).map(c=>c.parent??c.channel));
+      v.ignore=[...new Set([...v.ignore,...blocked])];
+    }
     const expected={venues:unique(venues),routes:unique(routes.filter(r=>!blockedRoutes.has(r.id))),links:unique(links)};
     const evidence=JSON.stringify({inventory,stores,incomplete,retained}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping]));
     return {expected,evidence,mapping,checksum};

@@ -935,7 +935,10 @@ People readers remain person slugs. Unknown members/accounts and routes whose
 primary or readers cannot be projected remain private evidence (`retained`);
 the importer creates no member, grant, link or audience-widened route for them.
 Thread routes also retain their parent's unprojectable audience rather than
-dropping its restrictions. Identities without a projectable workspace remain
+dropping its restrictions. Every unprojectable channel (or affected thread's
+parent) is also added to the imported Discord connection's ignore list: a missing
+route alone must not permit explicit-mention routing after enabling a connection.
+Repair that source audience before removing the block. Identities without a projectable workspace remain
 private evidence. Gates, proposals and restrictions remain
 Runtime-owned; private source evidence never grants or executes them.
 
