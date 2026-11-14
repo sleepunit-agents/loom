@@ -3,6 +3,7 @@ import {existsSync,readFileSync} from 'node:fs';
 import {Duplex} from 'node:stream';
 import {ServerResponse} from 'node:http';
 import {ChildProcess} from 'node:child_process';
+import {Server as NetServer} from 'node:net';
 import {admissionFixture,holdAdmissionResponse} from './worker-admission.fixture.js';
 import {startSecretWorker} from './secret-worker.js';
 const closes:Array<()=>unknown>=[];
@@ -116,4 +117,43 @@ it('revokes the original policy for both real jobs sharing the same name',async(
   expect(existsSync(first.marker)).toBe(false);expect(existsSync(second.marker)).toBe(false);
   expect(first.state(ids[0])).toEqual({state:'uncertain'});expect(second.state(ids[1])).toEqual({state:'uncertain'});
  }finally{resume();admitResume();spy.mockRestore();}
+});
+it.each(['revokePolicy','revokeGrant','stopJob','cancelRequest'] as const)('fences %s while actual input listener startup is held before process spawn',async action=>{
+ const f=await setup();let entered!:()=>void,resume!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;}),wait=new Promise<void>(r=>{resume=r;});
+ const listen=NetServer.prototype.listen,spawn=vi.spyOn(ChildProcess.prototype,'spawn');
+ const spy=vi.spyOn(NetServer.prototype,'listen').mockImplementation(function(this:NetServer,...args:Parameters<NetServer['listen']>){
+  const callback=args[args.length-1] as ()=>void;
+  args[args.length-1]=(()=>{entered();void wait.then(()=>callback());}) as never;
+  return Reflect.apply(listen,this,args);
+ });
+ try {
+  const worker=f.startWorker();await ready;let drained=false;
+  const closing=worker[action](f.binding.job).then(()=>{drained=true;});
+  await new Promise<void>(r=>setImmediate(r));expect(drained).toBe(false);expect(spawn).not.toHaveBeenCalled();
+  resume();await closing;
+  expect(await worker.jobs[0].delivery).toBe(false);expect(await worker.jobs[0].completed).toBe(false);
+  expect(spawn).not.toHaveBeenCalled();expect(existsSync(f.config.input.socket)).toBe(false);expect(f.source).not.toHaveBeenCalled();
+ }finally{resume();spy.mockRestore();}
+});
+it.each(['revokePolicy','revokeGrant','stopJob','cancelRequest','close'] as const)('awaits actual process/listener teardown for %s before resolving its lifecycle promise',async action=>{
+ const f=await setup(),authority=holdAdmissionResponse('/worker-current');
+ let entered!:()=>void,resume!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;}),wait=new Promise<void>(r=>{resume=r;});
+ const close=NetServer.prototype.close,kill=vi.spyOn(ChildProcess.prototype,'kill');
+ let spy:ReturnType<typeof vi.spyOn>|undefined;
+ try {
+  const worker=f.startWorker();await authority.ready;
+  spy=vi.spyOn(NetServer.prototype,'close').mockImplementation(function(this:NetServer,callback?: (error?:Error)=>void){
+   return close.call(this,(error?:Error)=>{entered();void wait.then(()=>callback?.(error));});
+  });
+  let drained=false;
+  const closing=(action==='close'?worker.close():worker[action](f.binding.job)).then(()=>{drained=true;});
+  await ready;await new Promise<void>(r=>setImmediate(r));expect(drained).toBe(false);
+  resume();await closing;expect(drained).toBe(true);
+  expect(kill).toHaveBeenCalledWith('SIGKILL');
+  for(const child of kill.mock.contexts)if(child.pid)expect(()=>process.kill(child.pid!,0)).toThrow();
+  expect(existsSync(f.config.input.socket)).toBe(false);
+  expect(await worker.jobs[0].completed).toBe(false);expect(await worker.jobs[0].delivery).toBe(false);
+ }finally{resume();authority.resume();spy?.mockRestore();}
 });
