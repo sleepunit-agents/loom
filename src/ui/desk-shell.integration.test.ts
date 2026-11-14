@@ -22,14 +22,14 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
   const app = await startLoom({home,next:true,staging:true,clock:new FakeClock(Date.parse('2026-11-13T18:41:00Z')),webRoot:root,install(app) {
     migrateHouseholdTables(app.db);
     app.db.transaction(() => {
-      new HouseholdDatabase(app.db).replace(home,{v:1,tz:'America/Chicago',agents:['art'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]});
+      new HouseholdDatabase(app.db).replace(home,{v:1,tz:'America/Chicago',agents:['art','birch','cedar','elm','fern'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]});
       new TokenDatabase(app.db).replace({v:1,tokens:[]},{});
       // Existing technical test sheet, never supplied artwork or screenshot evidence.
       const sample = sheet(), manifest = manifestFromPixelLab(JSON.parse(sample.json.toString()));
       new HouseholdRows(app.db,'settings').put('agent-sprite:art',{manifest,rawManifest:Buffer.from(JSON.stringify(manifest)).toString('base64'),sheets:{'sheet.png':sample.png.toString('base64')},v:'browser-fixture'});
     })();
   }});
-  const old = await deskHome({art:'art'},[{person:'owner',agents:'*'}]);
+  const old = await deskHome({art:'art',birch:'birch',cedar:'cedar',elm:'elm',fern:'fern'},[{person:'owner',agents:'*'}]);
   old.ask('art','OK to run the backup now?');
   const raised=app.operations.call('direct',{kind:'member',id:'owner'},'attention.raise',{id:'desk-ask',agent:'art',ask:'OK to run the backup now?',why:'Because it matters.',if_yes:'I do it.',if_no:'I leave it.',source:{kind:'piece',id:'desk-fixture'}},'desk-ask');
   expect(raised.ok).toBe(true);
@@ -81,7 +81,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await expect.poll(()=>painted(a,'.desk-rail-card .loom-pixel-face canvas')).toBe(true);
     set({pixel:false},'pixel-off');
     await expect.poll(()=>a.locator('.desk-rail-card [data-slot=agent-face]').count()).toBe(1);
-    await expect.poll(()=>b.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(1);
+    await expect.poll(()=>b.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);
     set({pixel:true},'pixel-on');
     await expect.poll(()=>painted(a,'.desk-rail-card .loom-pixel-face canvas')).toBe(true);
     await expect.poll(()=>painted(b,'.desk-home-card .loom-pixel-face canvas')).toBe(true);
@@ -91,23 +91,23 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await expect.poll(()=>a.locator('.desk-rail-card [data-slot=agent-face]').count()).toBe(1);
     await b.route('**/faces/art/sheet.png*',route=>route.fulfill({status:200,contentType:'image/png',body:'not a PNG'}));
     await b.reload();
-    await expect.poll(()=>b.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(1);
+    await expect.poll(()=>b.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);
     await a.unroute('**/faces/art/manifest.json*'); await b.unroute('**/faces/art/sheet.png*');
     new HouseholdRows(app.db,'settings').remove('agent-sprite:art');
     await a.getByRole('button',{name:'Home',exact:true}).click();
     // Home shares Comms' durable draft and opens exactly the acknowledged thread.
-    const homeComposer=b.locator('.desk-home-compose');
+    const homeComposer=b.locator('.desk-home-compose').first();
     await expect.poll(()=>homeComposer.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
     await homeComposer.getByRole('textbox',{name:'Message',exact:true}).fill('A Home conversation');
     await b.reload();
-    await expect.poll(()=>b.locator('.desk-home-compose').getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('A Home conversation');
-    await b.locator('.desk-home-compose').getByRole('button',{name:'Send',exact:true}).click();
+    await expect.poll(()=>b.locator('.desk-home-compose').first().getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('A Home conversation');
+    await b.locator('.desk-home-compose').first().getByRole('button',{name:'Send',exact:true}).click();
     await expect.poll(()=>b.locator('.comms-thread').count()).toBe(1);
     await expect.poll(()=>b.getByText('A Home conversation',{exact:true}).count()).toBe(1);
     expect(app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:1});
     await b.getByRole('button',{name:'Home',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-home-card').getByRole('button',{name:/Recent conversation/}).count()).toBe(1);
-    await expect.poll(()=>b.locator('.desk-home-compose').getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
+    await expect.poll(()=>b.locator('.desk-home-compose').first().getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
     // Comparison boards intentionally retain the fixture's ordinary drawn identity.
     expect((await context.request.get(app.url+'/manifest.webmanifest')).headers()['content-type']).toBe('application/manifest+json');
     await expect.poll(() => a.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL)).toBe(app.url+'/sw.js');
@@ -136,13 +136,13 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         await expect.poll(()=>page.locator('.next-system-clock').getAttribute('title')).toBe('12:41 PM, America/Chicago time');
         expect(await page.locator('.next-system-clock').isVisible()).toBe(width!==390);
         expect(await page.locator('.next-system-icons').isVisible()).toBe(width!==390);
-        expect(await page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('1 agent');
+        expect(await page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('5 agents');
         await expect.poll(()=>page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('Tasks · 0 in progress · 0 ready');
         await expect.poll(()=>page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('0 enrolled boxes · health unavailable');
         expect(await page.locator('.next-system-icons [aria-label="0 enrolled boxes; health unavailable"]').count()).toBe(1);
         expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
         await expect.poll(() => page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
-        await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(1);
+        await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);
         await reference.setViewportSize({width,height:900});
         await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
         for (const surface of ['home','work','launcher']) {
@@ -179,8 +179,12 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               // The real rail measures overflow and retries full cards when its room returns.
               await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.height='120px');
               await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe('true');
-              await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.removeProperty('height'));
+              expect(await page.locator('.desk-rail-compact').count()).toBe(4);
+              await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.height='3000px');
               await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe(null);
+              expect(await page.locator('.desk-rail-card').count()).toBe(5);
+              await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.removeProperty('height'));
+              await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe('true');
             }
           }
           if(surface==='launcher') {
