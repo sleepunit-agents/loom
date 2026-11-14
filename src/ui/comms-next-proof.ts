@@ -17,7 +17,7 @@ export async function proveNextComms(browser:Browser,webRoot:string) {
  const clock=new FakeClock(),app=await startLoom({home,clock,next:true,webRoot,stdout:()=>{}});
  const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
  try {
-  const auth=signin(app);auth.tokens.replace({v:1,tokens:[]},{});
+  const auth=signin(app);app.db.transaction(()=>auth.tokens.replace({v:1,tokens:[]},{}))();
   const token=(role:string)=>{const secret=randomBytes(32).toString('hex');auth.tokens.change(ts=>ts.push({role,sha256:hash(secret),label:'Comms browser fixture',created:new Date(clock.now()).toISOString()}));return secret;};
   const owner=token('owner'),runner=token('runner:a');
   expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'signin.setPrincipal',{kind:'runner',id:'a',active:true},'enable-runner')).toMatchObject({ok:true});
