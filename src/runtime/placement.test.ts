@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
-import { agents, members, memberAgents, boxes, boxAgents, boxFacts, agentBoxes, agentModels, modelAccounts, modelAccountBoxes } from '../core/data/schema.js';
+import { agents, members, memberAgents, boxes, boxAgents, boxFacts, agentBoxes, agentModels, modelAccounts, modelAccountWindows, modelAccountBoxes } from '../core/data/schema.js';
 import { selectPlacement } from './placement.js';
 const opened: Database.Database[] = [];
 afterEach(() => opened.splice(0).forEach(client => client.close()));
@@ -19,6 +19,7 @@ function fixture() {
   }
   db.insert(agentModels).values([{ agent: 'art', model: 'preferred', position: 0 }, { agent: 'art', model: 'backup', position: 1 }]).run();
   db.insert(modelAccounts).values({ id: 'shared', owner: 'owner', provider: 'provider', label: 'Subscription', hasRoom: true }).run();
+  db.insert(modelAccountWindows).values({ account: 'shared', window: 'week', usage: 0.2, usageReadAt: now, resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 7 * 86400_000 }).run();
   db.insert(modelAccountBoxes).values([{ account: 'shared', box: 'local' }, { account: 'shared', box: 'remote' }]).run();
   const input = { agent: 'art', now, roles: [{ model: 'unlisted', provider: 'provider', harness: 'runner', series: 'series' }, { model: 'preferred', provider: 'provider', harness: 'runner', series: 'series' }, { model: 'backup', provider: 'provider', harness: 'other', series: 'series' }] };
   return { db, input };
@@ -96,4 +97,11 @@ it('uses the persisted provider quota summary for all agents sharing the subscri
     windows: [{ name: 'week', usage: 1, readAt: input.now, resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 7 * 86400_000 }] });
   expect(selectPlacement(db, input)).toBeUndefined();
   expect(selectPlacement(db, other)).toBeUndefined();
+});
+
+it('closes placement when shared observations expire even while summary says room', () => {
+  const { db, input } = fixture();
+  db.update(modelAccountWindows).set({ resetsAt: input.now, usageReadAt: '2026-11-14T19:00:00.000Z' }).run();
+  expect(selectPlacement(db, input)).toBeUndefined();
+  expect(db.select().from(modelAccounts).get()!.hasRoom).toBe(true);
 });
