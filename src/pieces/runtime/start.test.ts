@@ -683,3 +683,24 @@ it('refuses a destination replaced by the outside gate before marking Clock word
   expect(f.app.db.prepare('SELECT released,consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${id}`)).toEqual({released:null,consumed:null});
  }finally {gate.mockRestore();}
 });
+
+it.each(['preparation','outside-gate'] as const)('refuses Clock policy revoked during %s',async boundary=>{
+ const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);access.services=builtinServices(f.app.db);
+ const id=await f.schedule(),job=f.store.ids('job')[0];
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const payload=await f.post(f.runner,'takeInput',{job});
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+ const viewer=signin(f.app).token(hash(payload.value.credential))!.viewer;
+ const original=f.app.effects!.beforeOutside.bind(f.app.effects!);
+ const gate=boundary==='outside-gate'?vi.spyOn(f.app.effects!,'beforeOutside').mockImplementation(action=>{
+  if(action.id.startsWith('runtime:clock-read:'))access.members.jonathan.agents=[];
+  return original(action);
+ }):undefined;
+ try {
+  const pending=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
+  if(boundary==='preparation')access.members.jonathan.agents=[];
+  expect(await pending).toMatchObject({ok:false,code:'denied'});
+  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${id}`)).toEqual({consumed:null});
+  if(boundary==='outside-gate')expect(f.app.db.prepare('SELECT released FROM runtime_clock_turns WHERE id=?').get(`clock:${id}`)).toEqual({released:null});
+ }finally {gate?.mockRestore();}
+});

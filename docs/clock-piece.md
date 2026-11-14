@@ -1353,3 +1353,9 @@ This is a check on the existing stored-prompt inbox, not a native execution
 lease. It supplies no authority after the read returns. Standalone files remain
 held; the owning worker consumer must still connect exact source/withdrawal and
 original-destination checks to native launch, with credentials and staging intact.
+
+Final dispatch also follows the captured Clock preparation, even if a replacement
+Comms or bridge binding independently authorizes the same body by the time the
+read completes. A different consumer cannot return a prepared Clock payload
+without its original Clock validation. Fixtures retarget to a real, separately
+authorized Comms thread and revoke policy during preparation and at the gate.

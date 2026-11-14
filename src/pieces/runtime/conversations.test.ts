@@ -1198,3 +1198,28 @@ it('delivers a private restricted-service timer from a real member body and reta
  expect(store.ids('job')).toHaveLength(3);
  expect(thread).toBeTruthy();
 });
+
+it('does not return prepared Clock words through a separately valid replacement Comms binding',async()=>{
+ const f=await setup();await f.open();const commsJob=await f.queued(),store=runtimeStore(f.app.db);
+ const comms=store.read('job',commsJob)!,conversation=comms.conversation!;
+ value(await f.socket('clock.in',{agent:'art',prompt:'PRIVATE Clock words for original destination',note:'race',when:'1s'}));
+ f.clock.advance(1000);
+ let jobs:string[]=[];
+ for(let i=0;i<15&&!jobs.some(j=>j!==commsJob);i++)jobs=value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs;
+ const job=jobs.find(j=>j!==commsJob)!;expect(job).toBeTruthy();
+ value(await f.post(f.runner,'runtime.claimJob',{job}));
+ const payload=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job}));
+ value(await f.post(f.runner,'runtime.reportJob',{job,state:'running'}));
+ const viewer=signin(f.app).token(hash(payload.credential))!.viewer;
+ const pending=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...j}=store.read('job',job)!,{changedAt:__,...b}=store.read('binding',conversation)!;
+  store.put('job',{...j,conversation,member:comms.member,project:comms.project},f.clock.now());
+  store.put('binding',{...b,job},f.clock.now());
+ })();
+ expect(await pending).toMatchObject({ok:false,code:'denied'});
+ // Prove the alternate consumer really is authorized; a denied replacement
+ // cannot discriminate the branch-switch bypass.
+ expect(await f.post(payload.credential,'runtime.describeConversation',{})).toMatchObject({ok:true});
+ expect(await f.post(payload.credential,'runtime.readConversation',{})).toMatchObject({ok:true,value:{messages:[expect.objectContaining({text:'PRIVATE inbound sentinel'})]}});
+});

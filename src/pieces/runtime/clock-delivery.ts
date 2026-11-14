@@ -147,6 +147,9 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     return {agent:job.agent,member:job.member,conversation:job.conversation,project:job.project,service:job.service,principal:principalForWork(p.history,owners())};
   };
   return {valid,bound,read,clockProvenance,
+    // Final dispatch must follow the owning preparation, even if a different
+    // conversation consumer would independently authorize the viewer now.
+    preparedRead(value:unknown){return !!value&&typeof value==='object'&&reads.has(value);},
     currentRead(v:Viewer,value:unknown){
       const snapshot=value&&typeof value==='object'?reads.get(value):undefined,job=bound(v);
       return !!snapshot&&!!job&&snapshot.job===job.id&&snapshot.destination===readDestination(job)
