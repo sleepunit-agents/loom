@@ -330,3 +330,14 @@ it('rechecks lifetime after deferred credential acquisition before starting HTTP
   await started;open=false;release();
   expect(await pending).toBe('wait'); expect(f.read).toHaveBeenCalledTimes(1); expect(f.request).not.toHaveBeenCalled();
 });
+it('keeps authentication bound to its original venue across auth.test',async()=>{
+  const f=fixture(),v=structuredClone(venue);
+  f.request.mockImplementationOnce(async()=>{
+    v.workspace='T999';v.bot='U111';v.tokenSecret='replacement';
+    return Response.json({ok:true,team_id:'T123',user_id:'U999',bot_id:'B999'});
+  });
+  f.request.mockResolvedValueOnce(Response.json({ok:true,bot:{id:'B999',user_id:'U999',app_id:'A123',deleted:false}}));
+  expect(await f.api.authenticate(v)).toEqual({workspace:'T123',bot:'U999',app:'A123'});
+  expect(Object.fromEntries(f.request.mock.calls[1][1]?.body as URLSearchParams)).toEqual({bot:'B999',team_id:'T123'});
+  expect(f.read.mock.calls.map(c=>c[0])).toEqual(['slack-bot','slack-bot']);
+});
