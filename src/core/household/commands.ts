@@ -5,7 +5,12 @@ import { memberSchema } from './members.js';
 import { agentAccountsSchema } from './accounts.js';
 import { projectSchema, projectSlug } from './sharing.js';
 
+const profileResponse = z.object({ agent: z.string(), description: z.string().optional(), requestedAt: z.string().optional() }).strict();
 export const householdResponses = {
+  profile: profileResponse,
+  setProfile: profileResponse,
+  requestProfile: profileResponse,
+  describeSelf: profileResponse,
   bootstrapAgent: z.object({ agent: z.string(), contextDir: z.string(), mcp: z.object({ command: z.literal('loom'), args: z.array(z.string()) }).strict() }).strict(),
   show: z.object({ home: z.string(), agents: z.array(z.string()), default: z.string(), owner: z.string().optional() }).strict(),
   setMember: z.array(memberSchema),
@@ -19,7 +24,7 @@ export const householdResponses = {
   setProjectAgents: projectSchema,
 };
 export const householdCommands: readonly CliCommand[] = Object.keys(householdResponses)
-  .map(name => ({ name, write: name !== 'show', positional: ['json'] }));
+  .map(name => ({ name, write: !['show', 'profile'].includes(name), positional: ['json'] }));
 export function householdOperation<I>(op: Omit<Operation<I>, 'output' | 'cli'>): Operation<I> {
   const name = op.name.slice('household.'.length) as keyof typeof householdResponses;
   const cli = householdCommands.find(command => `household.${command.name}` === op.name);

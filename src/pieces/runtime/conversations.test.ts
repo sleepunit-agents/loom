@@ -543,10 +543,15 @@ it('composes Clock local filing and approval-only recovery from the exact runnin
  expect(command).toMatchObject({exit:0,stdout:expect.stringContaining('nothing armed')});
  const second=command.stdout.match(/a-[0-9a-f]{8}/)![0];
  value(await f.socket('approvals.answer',{id:second,action:'allow'}));
- const recovered=value<{exit:number;stdout:string}>(await f.post(body,'clock.command',{agent:'art',argv:['in','1h','--approval',second]}));
+ const original=signin(f.app).token(hash(body))!.viewer;
+ const localCommand={agent:'art',argv:['in','1h','--approval',second]};
+ const recoveredResult=f.app.operations.call('http',original,'clock.command',localCommand,'local-history-independent');
+ const recovered=value<{exit:number;stdout:string}>(recoveredResult);
  expect(recovered).toMatchObject({exit:0,stdout:expect.stringContaining('will wake at')});
  expect(JSON.stringify(recovered)).not.toContain('COMMAND PRIVATE');
  expect(wakes(f.app.db)).toHaveLength(2);
+ f.app.db.prepare('DELETE FROM runtime_provenance WHERE conversation=?').run(runtimeStore(f.app.db).read('job',job)!.conversation);
+ expect(f.app.operations.call('http',original,'clock.command',localCommand,'local-history-independent')).toEqual(recoveredResult);
  expect(await f.post(body,'clock.list',{agent:'art'})).toMatchObject({ok:true,value:[]});
  expect(await f.socket('clock.list',{agent:'art'})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({prompt,note})])});
 });
@@ -618,6 +623,10 @@ it('gives Clock capacity only to a current owning conversation, never copied pro
  const first=value<{id:string}>(await f.post(body,'clock.in',{...input,conversation:'forged',apiCapacity:{origin:'other',bucket:'forged'}}));
  const bucket=wakes(f.app.db).find(w=>w.id===first.id)!.apiCapacity!.bucket;
  expect(bucket).toMatch(/^[a-f0-9]{64}$/);expect(bucket).not.toBe(conversation);
+ expect(first).toEqual({id:first.id,due:f.clock.now()+3600_000,state:'pending',private:true});
+ expect(wakes(f.app.db).find(w=>w.id===first.id)).toMatchObject({member:'jonathan',authorship:{origin:'art',conversation,member:'jonathan',principal:{for:'owner',people:[]}}});
+ expect(JSON.stringify(await f.post(body,'clock.list',{}))).not.toContain('Ordinary future work');
+ expect(JSON.stringify(exportDatabase(f.app.db))).not.toContain(first.id);
  const viewer=signin(f.app).token(hash(body))!.viewer;
  const copy=value<{id:string}>(f.app.operations.call('direct',{...viewer},'clock.in',input,'capacity-copy'));
  expect(wakes(f.app.db).find(w=>w.id===copy.id)?.apiCapacity).toEqual({origin:'art'});

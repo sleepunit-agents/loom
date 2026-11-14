@@ -170,3 +170,9 @@ export function localCommandInput(viewer:Viewer,request:ClockCommandInput):{agen
  if(!flags.approval&&!String(flags.prompt??'').includes('<!-- house: local -->'))return;
  return {agent:agent??'',...(typeof flags.approval==='string'?{approval:flags.approval}:{}),...(flags.standing?{standing:true}:{})};
 }
+/** Replay of an ordinary creation command must recheck the same filing policy. */
+export function oneOffCommandInput(viewer:Viewer,request:ClockCommandInput):{agent:string;note:string;on?:string}|undefined {
+ const parsed=parseCommand(viewer,request);if('reply' in parsed)return;
+ const {agent,name,flags}=parsed;if(!['at','in','park'].includes(name))return;
+ return {agent:agent??'',note:'',...(name==='park'&&typeof flags.on==='string'?{on:flags.on}:{})};
+}

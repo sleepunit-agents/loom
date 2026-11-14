@@ -14,13 +14,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 
+- Keep ordinary one-off Clock work filed by authenticated private bodies member-private, with original steering evidence and acknowledgements that omit words.
 - Bind authenticated HOUSE request/status metadata in the typed Secrets client, with exact-job assertions, stable retries and value-free JSON acknowledgements.
+- Add worker-local Claude turns with exact tool denies and original-binding native history isolation; daemon policy execution remains held.
 
 - Reserve one-off Clock capacity: at most forty API-created wakes per agent and twenty per proven conversation, with unbound bodies sharing one bucket.
 - Add an internal Runtime role for current authenticated Clock conversation provenance, retaining private scope and sender history.
 - Match imported private spawn bindings to Comms by conversation ownership, preserving job and spawn handles independently of thread ids.
 
 - Preserve authoritative shuttle and Runtime store documents and revisions as bounded offline Bridges import evidence; do not select or apply authority.
+- Import Bridges setup from explicit completed snapshots with authoritative source resolution, disabled connections, private evidence and independent verification.
 
 - Limit newly created agent API schedules to twenty per target agent, preserving owner schedules and existing-schedule replacements.
 - Prepare required Runtime policy files on Linux workers with descriptor-pinned reads and resolved-content history keys; configured-policy execution remains held.
@@ -1172,6 +1175,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Fresh next-mode households publish a complete default assistant context before first sign-in, with exclusive filesystem recovery on failed initialization.
 
 - Add a private Your account app for named passkey registration, confirmed passkey/cascade removal and signing out individual browsers, with Live records and a generated `loom-account` client.
+
+- Add row-backed agent profile descriptions to Setup, with owner edits/requests, scoped Live records and once-only authenticated agent replies.
 
 ## [0.16.1] - 2026-10-25
 

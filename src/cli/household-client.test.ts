@@ -20,7 +20,7 @@ async function setup() {
   mkdirSync(join(home, 'agents', 'new-agent'), { recursive: true });
   writeFileSync(join(home, 'agents', 'new-agent', 'IDENTITY.md'), '# New agent\nPrepared context\n');
   const app = await startLoom({ home, next: true, clock: new FakeClock(), install: installFixture,
-    authenticate: req => ({ viewer: { kind: 'member', id: req.headers.authorization === 'Bearer owner-token' ? 'jonathan' : 'pollock' }, valid: () => true }) });
+    authenticate: req => ({ viewer: req.headers.authorization === 'Bearer art-token' ? { kind: 'agent', id: 'art' } : { kind: 'member', id: req.headers.authorization === 'Bearer owner-token' ? 'jonathan' : 'pollock' }, valid: () => true }) });
   cleanup.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
   const tokenFile = join(home, 'token'); writeFileSync(tokenFile, 'owner-token');
   const run = async (args: string[], request: typeof fetch = fetch, env = { LOOM_URL: app.url, LOOM_TOKEN_FILE: tokenFile }) => {
@@ -33,6 +33,7 @@ async function setup() {
   return { app, home, tokenFile, run };
 }
 const inputs: Record<string, unknown> = {
+  profile: { agent: 'art' }, setProfile: { agent: 'art', text: 'Owner description.' }, requestProfile: { agent: 'art' }, describeSelf: { text: 'I help the household.' },
   bootstrapAgent: { agent: 'gabe', name: 'Gabe', purpose: 'Help with the garden.', voice: 'Warm and direct.', rules: 'Keep private things private.', ask: 'Before spending money.' },
   show: {}, setMember: { person: 'guest', agents: ['art'] }, removeMember: { person: 'guest' },
   addAgent: { agent: 'new-agent' }, setMemberProjects: { person: 'pollock', projects: ['other'] },
@@ -41,18 +42,20 @@ const inputs: Record<string, unknown> = {
   setProjectMembers: { slug: 'new-project', members: ['pollock'] }, setProjectAgents: { slug: 'new-project', agents: ['art'] },
 };
 it('generates registry metadata/help and runs every household command through real HTTP', async () => {
-  const { app, run, home } = await setup();
+  const { app, run, home, tokenFile } = await setup();
   const offered = app.operations.offered('http').filter(o => o.name.startsWith('household.') && o.cli);
   expect(offered.map(o => o.cli)).toEqual(householdCommands);
   const help = await run(['--help']); expect(help.code).toBe(0);
   for (const command of householdCommands) {
     expect(help.stdout).toContain(command.name);
+    writeFileSync(tokenFile, command.name === 'describeSelf' ? 'art-token' : 'owner-token');
     const result = await run([command.name, JSON.stringify(inputs[command.name])]);
     expect(result).toMatchObject({ code: 0, stderr: '' });
     const operation = offered.find(o => o.name === `household.${command.name}`)!;
     expect(operation.output.safeParse(JSON.parse(result.stdout)).success).toBe(true);
     expect(JSON.parse(result.bodies[0]).input).toEqual(inputs[command.name]);
   }
+  writeFileSync(tokenFile, 'owner-token');
   const document = new HouseholdDatabase(app.db).document()!;
   expect(document.agents).toContain('new-agent');
   expect(document.members).not.toEqual(expect.arrayContaining([expect.objectContaining({ person: 'guest' })]));
