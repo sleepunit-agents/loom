@@ -184,7 +184,7 @@ for(const origin of ['file','store'] as const)it(`verifies arbitrary note member
 
 it('captures only explicitly selected document bytes and verifies them after interruption and repeat',async()=>{
  const f=await fixture('file',true),snapshot=join(f.root,'documents-snapshot'),document=join(f.root,'selected.md');
- const content='\uFEFFPRIVATE selected context\r\n$unchanged 🐟\n';writeFileSync(document,content);
+ const content='SQLite format 3\0\uFEFFPRIVATE selected context\r\n$unchanged 🐟\n';writeFileSync(document,content);
  writeFileSync(join(f.instance,'unselected.md'),'NEVER_COLLECT');
  await createSnapshot(f.old,snapshot,undefined,{bridges:[f.instance],'bridges-document':[document]});
  const plan=prepareMigrationPlan(snapshot).plan;

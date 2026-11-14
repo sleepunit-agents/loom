@@ -1,3 +1,4 @@
+import {bridgeDocumentPath} from '../pieces/bridges/import-documents.js';
 /** Explicit snapshot path classification; no configured path is ever opened. */
 import { basename } from 'node:path';
 import type { BridgeImportSources } from '../pieces/bridges/import-plan.js';
@@ -5,7 +6,7 @@ export function bridgeMigrationSources(paths:{name:string;path:string}[]):Bridge
   const result:BridgeImportSources={files:[],stores:[]};
   for(const f of paths){
     const leaf=basename(f.name);
-    if(/^bridges-documents\/[0-9]+\.md$/.test(f.name)){(result.documents??=[]).push(f);continue;}
+    if(bridgeDocumentPath(f.name)){(result.documents??=[]).push(f);continue;}
     if(leaf==='shuttle.db'||leaf==='runtime.db')result.stores.push({...f,kind:leaf==='shuttle.db'?'shuttle':'runtime'});
     else{
       const kind=leaf==='shuttle.json'?'shuttle':leaf==='people.json'?'people':leaf==='routes.json'?'routes':f.name.endsWith('/discord/settings.json')?'discord-settings':f.name.endsWith('/slack/settings.json')?'slack-settings':undefined;
@@ -14,4 +15,4 @@ export function bridgeMigrationSources(paths:{name:string;path:string}[]):Bridge
   }
   return result;
 }
-export const bridgeSourcePath=(p:string)=>/^bridges-documents\/[0-9]+\.md$/.test(p)||/(?:^|\/)(?:shuttle|people|routes)\.json$/.test(p)||/\/pieces\/(?:discord|slack)\/settings\.json$/.test(p)||p==='home/commons/stores/shuttle.db'||p==='home/commons/stores/runtime.db';
+export const bridgeSourcePath=(p:string)=>bridgeDocumentPath(p)||/(?:^|\/)(?:shuttle|people|routes)\.json$/.test(p)||/\/pieces\/(?:discord|slack)\/settings\.json$/.test(p)||p==='home/commons/stores/shuttle.db'||p==='home/commons/stores/runtime.db';

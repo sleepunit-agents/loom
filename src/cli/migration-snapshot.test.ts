@@ -451,3 +451,39 @@ test('all explicitly empty external roots refuse instead of silently dropping co
     }
   }
 });
+
+test('snapshot CLI explicitly selects repeated document files and enforces count/size limits',async()=>{
+ const f=fixture(),one=join(f.root,'one.md'),two=join(f.root,'two.md');writeFileSync(one,'one\r\n');writeFileSync(two,'two 🐟');
+ let out='',err='';const io={env:{},stdin:Readable.from([]),stdout:(s:string)=>{out+=s;},stderr:(s:string)=>{err+=s;}};
+ expect(await migrateSnapshot(['--from',f.home,'--to',f.to,'--bridges-document',one,'--bridges-document',two],io)).toBe(0);
+ expect(err).toBe('');expect(readFileSync(join(f.to,'bridges-documents/0.md'),'utf8')).toBe('one\r\n');expect(readFileSync(join(f.to,'bridges-documents/1.md'),'utf8')).toBe('two 🐟');
+ writeFileSync(one,'a'.repeat(1024*1024+1));
+ await expect(createSnapshot(f.home,join(f.root,'oversized'),undefined,{'bridges-document':[one]})).rejects.toThrow('at most 1 MiB');
+ writeFileSync(one,'a'.repeat(1024*1024));
+ await expect(createSnapshot(f.home,join(f.root,'aggregate'),undefined,{'bridges-document':Array(9).fill(one)})).rejects.toThrow('8 MiB total');
+ writeFileSync(one,'a');
+ await expect(createSnapshot(f.home,join(f.root,'count'),undefined,{'bridges-document':Array(129).fill(one)})).rejects.toThrow('128 files');
+});
+
+test('refuses selected document growth after inventory while a preceding SQLite backup awaits',async()=>{
+ const f=fixture(),approvals=join(f.root,'approvals'),document=join(f.root,'selected.md');mkdirSync(approvals);
+ const db=new Database(join(approvals,'approvals.json'));db.exec('CREATE TABLE example(id)');db.close();writeFileSync(document,'initial');
+ const backup=Database.prototype.backup;
+ vi.spyOn(Database.prototype,'backup').mockImplementation(async function(this:Database.Database,...args:Parameters<typeof backup>){
+  const result=await backup.apply(this,args);writeFileSync(document,'a'.repeat(1024*1024+1));return result;
+ });
+ await expect(createSnapshot(f.home,f.to,undefined,{approvals,'bridges-document':[document]})).rejects.toThrow('data copy failed');
+ expect(existsSync(join(f.to,'manifest.json'))).toBe(false);
+});
+
+test('refuses aggregate document growth after inventory before completion',async()=>{
+ const f=fixture(),approvals=join(f.root,'approvals');mkdirSync(approvals);
+ const db=new Database(join(approvals,'approvals.json'));db.exec('CREATE TABLE example(id)');db.close();
+ const documents=Array.from({length:9},(_,i)=>join(f.root,`${i}.md`));for(const path of documents)writeFileSync(path,'initial');
+ const backup=Database.prototype.backup;
+ vi.spyOn(Database.prototype,'backup').mockImplementation(async function(this:Database.Database,...args:Parameters<typeof backup>){
+  const result=await backup.apply(this,args);for(const path of documents)writeFileSync(path,'a'.repeat(1024*1024));return result;
+ });
+ await expect(createSnapshot(f.home,f.to,undefined,{approvals,'bridges-document':documents})).rejects.toThrow('data copy failed');
+ expect(existsSync(join(f.to,'manifest.json'))).toBe(false);
+});

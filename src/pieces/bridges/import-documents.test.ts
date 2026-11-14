@@ -19,5 +19,12 @@ it('refuses unsafe names, duplicates, missing files, links, directories, invalid
  const directory=join(f.root,'directory');mkdirSync(directory);expect(()=>readBridgeDocuments([{...f,path:directory}])).toThrow();
  writeFileSync(f.path,Buffer.from([0xff]));expect(()=>readBridgeDocuments([f])).toThrow();
  writeFileSync(f.path,Buffer.alloc(1024*1024+1));expect(()=>readBridgeDocuments([f])).toThrow();
- expect(()=>readBridgeDocuments(Array.from({length:129},(_,i)=>({...f,name:`bridges-documents/${i}.md`,path:`missing-${i}`})))).toThrow();
+ for(let i=0;i<129;i++)writeFileSync(join(f.root,`${i}.md`),'a');
+ expect(()=>readBridgeDocuments(Array.from({length:129},(_,i)=>({...f,name:`bridges-documents/${i}.md`,path:join(f.root,`${i}.md`)})))).toThrow();
+});
+it('accepts exactly 8 MiB total and refuses one extra selected byte',()=>{
+ const f=fixture(),files=Array.from({length:9},(_,i)=>({name:`bridges-documents/${i}.md`,path:join(f.root,`${i}.md`)}));
+ for(const file of files.slice(0,8))writeFileSync(file.path,'a'.repeat(1024*1024));
+ expect(readBridgeDocuments(files.slice(0,8))).toHaveLength(8);
+ writeFileSync(files[8].path,'a');expect(()=>readBridgeDocuments(files)).toThrow('Invalid offline Bridges selected documents');
 });

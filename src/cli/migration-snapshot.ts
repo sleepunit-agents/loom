@@ -1,3 +1,4 @@
+import {bridgeDocumentLimits,bridgeDocumentPath,readBridgeDocuments} from '../pieces/bridges/import-documents.js';
 import { runtimeRepositoryCacheRule } from '../pieces/runtime/import-source.js';
 import { copyMigrationFile, fileDigest } from '../core/migration-files.js';
 import { randomUUID } from 'node:crypto';
@@ -158,7 +159,7 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
     const stat = guarded(`<${name}>`, 'cannot inspect source root', () => lstatSync(source));
     if(name.startsWith('bridges-document/')){
       documentBytes+=stat.size;documentCount++;
-      if(!stat.isFile()||stat.size>1024*1024||documentBytes>8*1024*1024||documentCount>128)refusal('<bridges-document>','selected documents require regular files, at most 1 MiB each, 8 MiB total and 128 files');
+      if(!stat.isFile()||stat.size>bridgeDocumentLimits.bytes||documentBytes>bridgeDocumentLimits.total||documentCount>bridgeDocumentLimits.count)refusal('<bridges-document>','selected documents require regular files, at most 1 MiB each, 8 MiB total and 128 files');
       addCopy(`bridges-documents/${name.split('/')[1]}.md`,source,stat.size);continue;
     }
     if (name === 'changes') {
@@ -205,6 +206,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
   const manifest: SnapshotManifest = { version: 1, consistency: 'per-database', files: [], skipped: inventory.skipped, followed: inventory.followed };
   const runtimeRoots = (['runtime','runtime-data'] as const).filter(name=>roots[name]!==undefined);
   if(runtimeRoots.length)manifest.runtimeRoots=runtimeRoots;
+  let capturedDocumentBytes=0;
   const copied = new Map<string, string>();
   try {
     destinationPath(join(target, 'home'));
@@ -222,10 +224,17 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
       guarded(path, 'cannot create private destination directory', () => mkdirSync(dirname(output), { recursive: true, mode: 0o700 }));
       destinationPath(output);
       if (existsSync(output)) refusal(path, 'destination entry already exists');
-      const sqlite = guarded(path, 'cannot read data header', () => isSqlite(file.source));
+      const selectedDocument=bridgeDocumentPath(file.path);
+      const sqlite = !selectedDocument&&guarded(path, 'cannot read data header', () => isSqlite(file.source));
       try {
         const previous = copied.get(file.source);
-        if (previous) copyMigrationFile(previous, output);
+        if(selectedDocument){
+          const document=readBridgeDocuments([{name:file.path,path:file.source}])[0];
+          capturedDocumentBytes+=document.bytes;
+          if(capturedDocumentBytes>bridgeDocumentLimits.total)throw Error();
+          writeFileSync(output,document.content,{encoding:'utf8',flag:'wx',mode:0o600});
+        }
+        else if (previous) copyMigrationFile(previous, output);
         else if (sqlite) {
           const db = new Database(file.source, { readonly: true, fileMustExist: true });
           // Linux descriptor-relative path keeps the backup in our reserved inode
@@ -243,7 +252,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
           try { fchmodSync(out, 0o600); } finally { closeSync(out); }
         } else copyMigrationFile(file.source, output);
         const digest = fileDigest(output);
-        copied.set(file.source, output);
+        if(!selectedDocument)copied.set(file.source, output);
         manifest.files.push({ path: file.path, ...digest, kind: sqlite ? 'sqlite' : 'file' });
       } catch { refusal(path, sqlite ? 'SQLite backup failed' : 'data copy failed'); }
     }
