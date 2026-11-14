@@ -639,3 +639,31 @@ it.each(['identity','consumption'] as const)('retained source %s tampering block
   expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${third}`)).toEqual({consumed:null});
  }
 });
+
+it.each(['words','model','authority'] as const)('retained owning Clock source %s changes cannot carry native history forward',async kind=>{
+ for(const phase of ['before-admission','during-turn'] as const){
+  const f=await setup(),worker=f.start();await f.ready;const earlier=await f.joinInput(),third=await f.joinInput({prompt:'THIRD SOURCE'});
+  f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+  const tamper=()=>{
+   const row=f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(earlier) as {record:string},w=JSON.parse(row.record);
+   if(kind==='words')w.prompt='REPLACED EARLIER WORDS';
+   if(kind==='model')w.model='changed-earlier-model';
+   // Pollock has no grant to give work to Art. The current root and third
+   // source, their Runtime rows and the conversation steering stay untouched.
+   if(kind==='authority')w.by={kind:'member',id:'pollock'};
+   f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(w),earlier);
+  };
+  if(phase==='before-admission'){
+   const original=globalThis.fetch;
+   const spy=vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+    const response=await original(...args);if(String(args[0]).endsWith('/completeClockExecution'))tamper();return response;
+   });
+   f.finish();expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(2);spy.mockRestore();
+  }else {
+   f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(3));tamper();f.clock.advance(1000);
+   expect(await worker.completed).toBe(false);expect(f.calls[2].child.killed).toBe(true);
+  }
+  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${earlier}`)).toEqual({consumed:expect.any(Number)});
+  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${third}`)).toEqual({consumed:null});
+ }
+});
