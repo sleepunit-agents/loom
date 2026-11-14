@@ -54,9 +54,11 @@ export class BridgeEvents {
     this.db.delete(bridgeResume).where(eq(bridgeResume.connection, connection)).run();
   }
 
-  /** One bounded pass. Throwing leaves the failed event and its writes intact
-   * for retry; successfully committed earlier events stay consumed. */
-  drain(connection: string, consume: (id: string, event: Buffer) => void, limit = 64): number {
+  /** One bounded pass. Returning false commits any writes but retains the raw
+   * receipt for retry, without blocking later rows in this pass. Throwing rolls
+   * back that event's writes; earlier committed events stay consumed. The limit
+   * bounds rows examined, and the return value counts receipts removed. */
+  drain(connection: string, consume: (id: string, event: Buffer) => void | boolean, limit = 64): number {
     this.assertAvailable();
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 64) throw Error('Drain limit must be 1 through 64');
     this.sweep();
@@ -71,6 +73,7 @@ export class BridgeEvents {
         if (!current || Date.parse(current.expiresAt) <= this.clock.now()) return;
         const result: unknown = consume(current.id, current.event);
         if (result && typeof (result as PromiseLike<unknown>).then === 'function') throw Error('Event consumer must be synchronous');
+        if (result === false) return;
         tx.delete(bridgeRawEvents).where(key).run();
         count++;
       });
