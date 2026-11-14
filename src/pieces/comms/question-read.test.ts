@@ -131,3 +131,16 @@ for(const live of [false,true])it(`drops private words when page validity ends d
  if(live){const s=await subscribe(f,r.ref);await expect.poll(()=>s.ws.readyState).toBe(WebSocket.CLOSED);expect(JSON.stringify(s.frames)).not.toContain(question.ask);}
  else expect(await f.app.operations.callAsync('socket',f.viewer,'comms.question',{ref:r.ref},undefined,true,()=>valid)).toMatchObject({ok:false,code:'denied'});
 });
+for(const corrupt of ['id','kind','sender','ref','ambiguous-owner'] as const)it(`refuses an already inconsistent owning source on both read surfaces (${corrupt})`,async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'question',question});
+ if(corrupt==='ambiguous-owner'){
+  const saved=f.app.db.prepare('SELECT * FROM comms_threads WHERE id=?').get(f.place) as {id:string;member:string;agent:string;project:string|null;record:string};
+  const duplicate={...JSON.parse(saved.record),id:'duplicate-owning-thread'};
+  f.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(duplicate.id,saved.member,saved.agent,saved.project,JSON.stringify(duplicate));
+ }else if(corrupt==='ref')f.app.db.prepare('UPDATE comms_messages SET record=? WHERE thread=? AND seq=?').run(JSON.stringify({encoding:'ask',ref:'different-ref'}),f.place,r.seq);
+ else f.app.db.prepare(`UPDATE comms_messages SET ${corrupt}=? WHERE thread=? AND seq=?`).run('different',f.place,r.seq);
+ const open=vi.spyOn(f.key,'open');
+ expect(await f.call('comms.question',{ref:r.ref})).toMatchObject({ok:false});
+ const s=await subscribe(f,r.ref);await expect.poll(()=>s.latest()).toEqual([]);
+ expect(JSON.stringify(s.frames)).not.toContain(question.ask);expect(open).not.toHaveBeenCalled();
+});
