@@ -18,7 +18,7 @@ export class SettledInbox {
   private offered = new Map<string, string>();
   private pending = new Map<string, { signature: string; due: number }>();
   readonly volume: InboxVolume;
-  constructor(private db: DataDatabase, private clock: Clock, private admit: AdmitInbox) {
+  constructor(private db: DataDatabase, private clock: Clock, private admit: AdmitInbox, private volumeExpired?: () => void) {
     this.volume = new InboxVolume(db, clock);
   }
 
@@ -38,7 +38,7 @@ export class SettledInbox {
 
   private scan(attempted: Set<string>): void {
     this.cancel?.(); this.cancel = undefined;
-    let next = this.volume.expire();
+    let next = this.volume.expire(this.volumeExpired);
     const groups = new Map<string, { who: Recipient; items: WaitingItem[] }>();
     for (const item of this.db.select().from(inbox).where(and(eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.at), asc(inbox.seq), asc(inbox.id)).all()) {
       const key = JSON.stringify([item.toKind, item.to]);

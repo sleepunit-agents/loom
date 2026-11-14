@@ -31,10 +31,9 @@ arithmetic mean (`total_ms/count`). Its key is `(day, kind, name)`. These are
 the page's real columns, not a JSON document or a separate monitoring database.
 Kinds are request, operation and job. A span is assigned to its completion
 day in UTC. `prune` deletes days before the supplied cutoff; today counts as
-one of `keep_days`. Retention runs on the first completed span of a new UTC
-day, including after idle periods or restart. The integration must handle
-expired rows when reading an idle or disabled store if it promises immediate
-expiry. Storage failures are reported through a payload-free callback and do
+one of `keep_days`. Retention runs at startup and each UTC midnight, even while idle,
+and also before the first completed span of a new UTC day. Closing cancels
+the timer. Disabled and outside-only instances schedule no retention work. Storage failures are reported through a payload-free callback and do
 not change the outcome of application work.
 
 Choices where the page is silent: 90 days by default, configurable from 1 to
@@ -53,11 +52,34 @@ exported. Turning off must replace the instance with the off instance; an
 unapproved request must never be allowed to call the internal factory with
 enabled settings.
 
+`measuringSettingsService(db)` reads the shared singleton without creating a
+row for an unconfigured household. `prepare(settings)` returns the setting
+request fields for the shared Approvals service: target `measuring`, operation
+`measuring.settings`, persisted before/after details and their exact displayed
+summary. It makes no changes. Register `service.apply` under that operation in
+Approvals' operation map. Allow then applies the validated change in the same
+database transaction as the answer and audit; stale proposals fail and require
+a fresh card. Pending proposals survive process restart without closures or a
+second payload store. The authenticated outside door restricts Allow to a
+household owner. Reload the Measuring instance only after that transaction
+commits; the handler performs no SDK, timer or outside work. The service is not
+yet mounted in the running program.
+
 Still required by the Measuring page: owner-only settings changes through the
 normal approval mechanism;
 owners and agents reading daily rows through the one query endpoint; wiring
 the wrappers to its actual request, operation and job boundaries. Those
 integration points depend on the concrete model and endpoint work in t-2235.
+
+`src/core/measuring/visibility.ts` supplies the read policy for that endpoint:
+include `timingDays` and `measuringSettings` in its selected tables and merge
+`measuringVisibility(authenticatedViewer)` into its visibility map. Registered
+agents and current household owners can read daily rows; settings are visible
+only to current owners. The predicates check membership in SQL on every read,
+including for a retained generated schema. They snapshot the supplied identity;
+the outside door must still authenticate it and check token/session validity.
+This module creates no endpoint and grants no settings writes. Mounting it in
+the shared endpoint remains integration work for t-2235.
 
 OpenTelemetry references: [JavaScript instrumentation](https://opentelemetry.io/docs/languages/js/instrumentation/)
 and [exporters](https://opentelemetry.io/docs/languages/js/exporters/).

@@ -7,7 +7,7 @@ import { buildSchema } from 'drizzle-graphql';
 import { graphql } from 'graphql/index.js';
 import { createDataSchema } from './database.js';
 import { referenceStatements } from './references.js';
-import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, digests, migrations, operationResults, signinChallenges, household as householdSettings, secrets, secretRules, secretRuleAgents, deletedThreads, approvalRecord, agentAccounts, boxes } from './schema.js';
+import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, modelAccountWindows, digests, migrations, operationResults, signinChallenges, household as householdSettings, secrets, secretRules, secretRuleAgents, deletedThreads, approvalRecord, agentAccounts, boxes } from './schema.js';
 
 const opened: Database.Database[] = [];
 function fresh() {
@@ -32,6 +32,11 @@ describe('the approved data model', () => {
     }
     expect(Object.keys(expected)).toHaveLength(79);
     const actual = Object.fromEntries(Object.values(tables).map(table => [getTableName(table), Object.values(getTableColumns(table)).map(c => c.name).filter(n => n !== 'singleton')]));
+    // Runtime placement and per-provider windows fill in details the approved
+    // summary is silent on; preserve exact coverage for all approved columns.
+    expect(actual.model_account_windows).toEqual(['account', 'window', 'usage', 'usage_read_at', 'resets_at', 'duration_ms', 'reserve']);
+    delete actual.model_account_windows;
+    actual.jobs = actual.jobs.filter(n => !['account', 'harness'].includes(n));
     expect(actual).toEqual(expected);
     const names = [...model.matchAll(/^ \("([a-z_]+)", /gm)].map(m => m[1]);
     expect(Object.values(plumbing).map(getTableName).sort()).toEqual(names.sort());
@@ -105,6 +110,33 @@ describe('the approved data model', () => {
     db.insert(tasks).values(task).run();
     return { ...store, at, task };
   }
+
+  it('shares provider windows across agents and records actual job account placement', () => {
+    const { db, client, at } = household();
+    const account = { id: 'ma-1', owner: 'jonathan', provider: 'test', label: 'Test', hasRoom: false };
+    db.insert(modelAccounts).values(account).run();
+    db.insert(modelAccounts).values({ ...account, id: 'ma-2' }).run();
+    const window = { account: 'ma-1', window: 'five-hour', durationMs: 18_000_000 };
+    db.insert(modelAccountWindows).values(window).run();
+    db.insert(modelAccountWindows).values({ ...window, window: 'weekly', durationMs: 604_800_000, usage: 0.8, usageReadAt: at, resetsAt: '2026-11-21T00:00:00Z', reserve: 0.1 }).run();
+    db.insert(modelAccountWindows).values({ ...window, account: 'ma-2' }).run();
+    expect(db.select().from(modelAccountWindows).all()).toHaveLength(3);
+    expect(db.select().from(modelAccountWindows).get()).toMatchObject({ usage: null, usageReadAt: null, resetsAt: null, reserve: 0.05 });
+    expect(() => db.insert(modelAccountWindows).values(window).run()).toThrow();
+    for (const bad of [{ usage: -0.1 }, { usage: 1.1 }, { reserve: -0.01 }, { reserve: 1.01 }, { durationMs: 0 }, { durationMs: -1 }, { durationMs: Infinity }, { window: ' ' }, { usageReadAt: 'yesterday' }, { resetsAt: '2026-11-21T00:00:00+01:00' }, { account: 'missing' }]) {
+      expect(() => db.insert(modelAccountWindows).values({ ...window, window: 'invalid', ...bad }).run()).toThrow();
+    }
+    const job = { id: 'j-placed', agent: 'art', conversation: 'cv-1', title: 'Test', state: 'queued' as const, brief: 'Test', model: 'test', startedByKind: 'member', startedBy: 'jonathan', houseRepository: 'repo', houseFile: 'house', houseBranch: 'main', queuedAt: at };
+    db.insert(jobs).values(job).run();
+    expect(db.select().from(jobs).get()).toMatchObject({ account: null, harness: null });
+    expect(() => db.update(jobs).set({ account: 'missing' }).run()).toThrow();
+    db.update(jobs).set({ account: 'ma-1', harness: 'claude-code' }).run();
+    const placed = db.query.jobs.findFirst({ with: { accountRow: { with: { modelAccountWindowsByAccount: true } } } }).sync();
+    expect(placed?.accountRow?.modelAccountWindowsByAccount.map(w => w.window).sort()).toEqual(['five-hour', 'weekly']);
+    expect(placed?.harness).toBe('claude-code');
+    expect(() => db.delete(modelAccounts).where(eq(modelAccounts.id, 'ma-1')).run()).toThrow();
+    expect(client.pragma('foreign_key_check')).toEqual([]);
+  });
 
   it('requires one matching token identity and valid polymorphic references on writes and parent changes', () => {
     const { db, client, at, task } = household();

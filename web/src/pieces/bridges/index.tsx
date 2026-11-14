@@ -3,6 +3,8 @@ import { useRecords, call, type Call } from '../../data';
 import { newId } from '../../data/id';
 import { Split, List, Row, Empty, Error, Loading, Button } from '../../kit';
 import { bridgeEffects, sendStatus, type VenueRecord, type RouteRecord, type SendRecord, type EffectRecord } from './model';
+import { BridgesView } from '../bridges-view';
+import type { ComponentProps } from 'react';
 
 import { DismissSend, type DismissInput } from './dismiss-send';
 import { RouteEditor, type RouteWrite } from './route-editor';
@@ -27,7 +29,15 @@ function Release({ effect, enabled }: { effect: EffectRecord; enabled: boolean }
   </section>;
 }
 
-export default function BridgesApp({ path: shellPath, go }: { path?: string; go?: (path: string) => void } = {}) {
+/** Shared-data hosts supply authenticated snapshots and their approval controls.
+ * The existing host remains usable while its composition is replaced. */
+export default function BridgesApp({ shared, ...navigation }: {
+  path?: string; go?: (path: string) => void; shared?: ComponentProps<typeof BridgesView>;
+} = {}) {
+  return shared ? <BridgesView {...shared} /> : <LegacyBridgesApp {...navigation} />;
+}
+
+function LegacyBridgesApp({ path: shellPath, go }: { path?: string; go?: (path: string) => void }) {
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? '/p/bridges-preview' : location.pathname);
   const path = (shellPath ?? localPath).split('?')[0];
   const match = /\/item\/([^/]+)\/([^/]+)$/.exec(path);

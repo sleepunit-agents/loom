@@ -2,9 +2,33 @@ import { expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { and, eq } from 'drizzle-orm';
 import { createDataSchema } from '../data/database.js';
-import { agents, conversations, inbox } from '../data/schema.js';
+import { agents, approvals, conversations, inbox, members, triggerLog } from '../data/schema.js';
 import { FakeClock } from '../clock.js';
 import { createTempo, type TempoConversations } from './tempo.js';
+
+it('publishes committed dim and mute expiry to subscriptions without an unrelated trigger or inbox write', () => {
+  const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock();
+  const at = new Date(clock.now()).toISOString();
+  db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: at }).run();
+  for (const id of ['dimmed', 'muted']) db.insert(inbox).values({ id, toKind: 'person', to: 'jonathan', source: 'notice', fromKind: 'unknown', words: id, at, changedAt: at, state: 'waiting' }).run();
+  const snapshots: string[][] = [];
+  const tempo = createTempo(db, clock, {
+    conversations: { open: () => { throw new Error('No trigger'); }, send: () => { throw new Error('No trigger'); } },
+    admit: () => true, operation: () => { throw new Error('No operation'); },
+    changed: () => { snapshots.push(db.select().from(inbox).all().map(item => item.volume)); },
+  });
+  try {
+    const who = { kind: 'person' as const, id: 'jonathan' };
+    const until = new Date(clock.now() + 10_000).toISOString();
+    tempo.volume.set(who, 'dimmed', 'dim', until);
+    tempo.volume.set(who, 'muted', 'mute', until);
+    tempo.start(); snapshots.length = 0;
+    clock.advance(9_999); expect(snapshots).toEqual([]);
+    clock.advance(1); expect(snapshots).toEqual([['full', 'full']]);
+    expect(db.select().from(inbox).all().every(item => item.quietUntil === null && item.changedAt === at)).toBe(true);
+    clock.advance(60_000); expect(snapshots).toHaveLength(1);
+  } finally { tempo.close(); client.close(); }
+});
 it('composes trigger/sweep delivery through conversations and only admits a settled inbox', () => {
   const client = new Database(':memory:');
   const db = createDataSchema(client), clock = new FakeClock(), at = () => new Date(clock.now()).toISOString();
@@ -36,5 +60,38 @@ it('composes trigger/sweep delivery through conversations and only admits a sett
     tempo.triggers.event('answer', 'approval:1', 'allowed'); clock.advance(4_999); expect(admitted).toHaveLength(1);
     clock.advance(1); expect(admitted).toHaveLength(2); expect(admitted[1]).toContain('Continue');
     expect(db.select().from(conversations).all()).toHaveLength(2);
+  } finally { tempo.close(); client.close(); }
+});
+
+it('recovers a committed answer missed by its callback, holds it while paused, and never repeats it after restart', () => {
+  const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock();
+  const at = () => new Date(clock.now()).toISOString();
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(approvals).values({ id: 'a', kind: 'command', target: 'test', what: 'test', why: 'test', agent: 'art', askedFrom: 'test', actingFor: 'art', state: 'pending', minutes: 1, ask: 'Run?', ifYes: 'Run', ifNo: 'Stop', details: '', askedAt: at() }).run();
+  const deliveries: string[] = [];
+  const options = {
+    conversations: { open: () => { throw new Error('Operation needs no conversation'); }, send: () => { throw new Error('Operation needs no inbox'); } },
+    admit: () => true,
+    operation: (_: string, _trigger: unknown, occurrence: string) => { deliveries.push(occurrence); },
+  };
+  let tempo = createTempo(db, clock, options);
+  try {
+    tempo.triggers.set({ id: 'wait', ownerKind: 'agent', owner: 'art', sourceKind: 'answer', watches: 'approval:a', lifespan: 'until-stopped', targetKind: 'operation', target: 'test', note: 'Wait for approval' });
+    tempo.triggers.pause('art');
+    tempo.close();
+    // Source commits, then the process dies before sources.approval can run.
+    db.update(approvals).set({ state: 'allowed', decidedAt: at() }).where(eq(approvals.id, 'a')).run();
+    tempo = createTempo(db, clock, options);
+    tempo.start(); tempo.start();
+    expect(deliveries).toEqual([]);
+    expect(db.select().from(triggerLog).all().filter(row => row.event === 'observed')).toHaveLength(1);
+    tempo.triggers.resume('art');
+    expect(deliveries).toHaveLength(1);
+    tempo.sources.approval('a');
+    tempo.close();
+    tempo = createTempo(db, clock, options);
+    tempo.start(); tempo.sources.approval('a');
+    expect(deliveries).toHaveLength(1);
+    expect(db.select().from(triggerLog).all().filter(row => row.event === 'fired')).toHaveLength(1);
   } finally { tempo.close(); client.close(); }
 });
