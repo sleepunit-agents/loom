@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { inspect } from 'node:util';
+import type { SecretUsage } from '../secrets/usage.js';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -29,13 +31,14 @@ const payload={type:'event_callback',team_id:'T123',api_app_id:'A123',event_id:'
 async function until(fn:()=>boolean){for(let i=0;i<2000;i++){if(fn())return;await Promise.resolve();}throw Error('condition not reached');}
 async function settle(){for(let i=0;i<150;i++)await Promise.resolve();}
 function deferred<T>(){let resolve!:(v:T)=>void;const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};}
-async function setup({staging=false,grant=true,pending=false,generation,receive=vi.fn(async()=>{})}: {staging?:boolean;grant?:boolean;pending?:boolean;generation?:()=>Promise<string>;receive?: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof startLoom>[0]['bridges']>['receive']>>}={}){
+async function setup({staging=false,grant=true,pending=false,audit,requestFailure=false,generation,receive=vi.fn(async()=>{})}: {staging?:boolean;grant?:boolean;pending?:boolean;audit?:'admission'|'settlement';requestFailure?:boolean;generation?:()=>Promise<string>;receive?: ReturnType<typeof vi.fn<NonNullable<Parameters<typeof startLoom>[0]['bridges']>['receive']>>}={}){
   const home=mkdtempSync(join(tmpdir(),'slack-root-'));fixture(home);
   const clock=new FakeClock();let epoch='00000000-0000-4000-8000-000000000000';
   const sharing=()=>({...fixtureSharing(),services:{bridges:{types:['bridges.venue','bridges.route','bridges.link','bridges.send'],operations:[]}}});
   const sockets:FakeSocket[]=[];const buffers:Uint8Array[]=[];
   const source={generation:vi.fn(generation ?? (async()=>epoch)),read:vi.fn(async(name:string)=>{const b=Buffer.from(`PRIVATE-${name}`);buffers.push(b);return b;})};
   const request=vi.fn<typeof fetch>(async url=>{
+    if(requestFailure)throw Error('PRIVATE-bot');
     const method=String(url).split('/').pop();
     if(method==='auth.test')return Response.json({ok:true,team_id:'T123',user_id:'U123',bot_id:'B123'});
     if(method==='bots.info')return Response.json({ok:true,bot:{id:'B123',user_id:'U123',deleted:false,app_id:'A123'}});
@@ -43,6 +46,8 @@ async function setup({staging=false,grant=true,pending=false,generation,receive=
     if(method==='conversations.info')return Response.json({ok:true,channel:{id:'D123',is_im:true,is_mpim:false,user:'U200'}});
     return Response.json({ok:true,user:{id:'U200',team_id:'T123',deleted:false,is_bot:false,is_restricted:false,is_ultra_restricted:false}});
   });
+  const published:unknown[]=[],diagnostics:unknown[]=[];
+  for(const level of ['log','warn','error'] as const)vi.spyOn(console,level).mockImplementation((...args)=>{diagnostics.push(args);});
   const startOptions: Parameters<typeof startLoom>[0]={home,next:true,staging,clock,sharing,stdout:()=>{},
     bridges:{source,name:()=> 'Jonathan',receive,request,socket:()=>{const s=new FakeSocket();sockets.push(s);return s as unknown as ReturnType<NonNullable<SlackSocketOptions['socket']>>;}},
     install(a){
@@ -51,18 +56,43 @@ async function setup({staging=false,grant=true,pending=false,generation,receive=
         expect(a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name,description:name},`d${n++}`).ok).toBe(true);
         if(grant)expect(a.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.grantService',{service:'bridges',name},`g${n++}`).ok).toBe(true);
       }
+      a.live.observe(changes=>{published.push(changes);});
+      if(audit)a.db.exec(`CREATE TRIGGER fail_bridge_usage BEFORE ${audit==='admission'?'INSERT':'UPDATE'} ON secrets_uses BEGIN SELECT RAISE(ABORT,'PRIVATE-bot'); END`);
       put(a.db,'venues',venue);
       if(pending)void slackInbox(a.db,clock,{venue,app:'A123'}).receive(payload);
     }};
   const app=await startLoom(startOptions);
   cleanups.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
-  return {app,clock,sockets,source,buffers,request,receive,rotate(){epoch=randomUUID();},async restart(){await app.close();const restarted=await startLoom({...startOptions,install:undefined});cleanups.unshift(restarted.close);return restarted;}};
+  const uses=()=>(app.db.prepare('SELECT record FROM secrets_uses').all() as {record:string}[]).map(row=>JSON.parse(row.record) as SecretUsage);
+  const privateMetadata=()=>{
+    const tables=app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[];
+    const dump=tables.map(t=>app.db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all());
+    for(const value of ['PRIVATE-bot','PRIVATE-app'])expect(inspect([dump,published,diagnostics],{depth:null})).not.toContain(value);
+    expect(buffers.every(b=>b.every(byte=>byte===0))).toBe(true);
+  };
+  return {app,clock,sockets,source,buffers,request,receive,uses,privateMetadata,rotate(){epoch=randomUUID();},async restart(){await app.close();const restarted=await startLoom({...startOptions,install:undefined});cleanups.unshift(restarted.close);return restarted;}};
 }
 it('root uses real service grants, authenticates before socket startup, drains saved receipts without new input',async()=>{
   const f=await setup({pending:true});await until(()=>f.receive.mock.calls.length===1 && f.sockets.length===1);await settle();
   expect(f.request.mock.calls.slice(0,2).map(c=>String(c[0]).split('/').pop())).toEqual(['auth.test','bots.info']);
   expect(f.app.db.prepare('SELECT state,event FROM bridges_slack_receipts').get()).toEqual({state:'consumed',event:null});
   expect(f.source.read.mock.calls.map(c=>c[0])).toContain('app');expect(f.buffers.every(b=>b.every(x=>x===0))).toBe(true);
+  expect(f.uses()).toHaveLength(f.source.read.mock.calls.length);expect(f.uses().map(u=>u.name).sort()).toEqual(f.source.read.mock.calls.map(([name])=>name).sort());
+  for(const use of f.uses())expect(use).toEqual({id:expect.stringMatching(/^use-/),name:expect.stringMatching(/^(bot|app)$/),action:'service-use',by:{kind:'service',id:'bridges'},at:f.clock.now(),state:'released'});
+  f.privateMetadata();
+});
+it('root counts delivered credentials even when the platform callback fails without retaining diagnostics',async()=>{
+  const f=await setup({requestFailure:true});await settle();
+  expect(f.source.read).toHaveBeenCalledExactlyOnceWith('bot');expect(f.request).toHaveBeenCalledOnce();expect(f.sockets).toHaveLength(0);
+  expect(f.uses()).toEqual([{id:expect.stringMatching(/^use-/),name:'bot',action:'service-use',by:{kind:'service',id:'bridges'},at:f.clock.now(),state:'released'}]);
+  f.privateMetadata();
+});
+it.each(['admission','settlement'] as const)('root %s audit failure prevents credential use and retains no confirmed delivery',async audit=>{
+  const f=await setup({audit});await settle();
+  expect(f.source.read).toHaveBeenCalledTimes(audit==='admission'?0:1);expect(f.request).not.toHaveBeenCalled();expect(f.sockets).toHaveLength(0);
+  expect(f.uses().map(u=>u.state)).toEqual(audit==='admission'?[]:['started']);
+  expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.usage',{name:'bot'})).toMatchObject({ok:true,value:{count:0,lastUsedAt:null}});
+  f.privateMetadata();
 });
 it('missing service grants cause no holder or network IO and recover after the owner grants',async()=>{
   const f=await setup({grant:false});await settle();expect(f.source.read).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
@@ -70,11 +100,12 @@ it('missing service grants cause no holder or network IO and recover after the o
   f.clock.advance(5000);await until(()=>f.sockets.length===1);
 });
 it('staging holds authentication and dial, then releases one stable connection attempt',async()=>{
-  const f=await setup({staging:true});await settle();expect(f.request).not.toHaveBeenCalled();expect(f.source.read).not.toHaveBeenCalled();
+  const f=await setup({staging:true});await settle();expect(f.request).not.toHaveBeenCalled();expect(f.source.read).not.toHaveBeenCalled();expect(f.uses()).toEqual([]);
   f.clock.advance(5000);await settle();
   const rows=f.app.db.prepare("SELECT id FROM core_effects WHERE kind='bridge-send'").all() as {id:string}[];expect(rows).toHaveLength(1);
   expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:rows[0].id},'release').ok).toBe(true);
   f.clock.advance(0);await until(()=>f.sockets.length===1);expect(f.request.mock.calls.filter(c=>String(c[0]).endsWith('auth.test'))).toHaveLength(1);
+  await settle();expect(f.uses()).toHaveLength(f.source.read.mock.calls.length);expect(f.uses().length).toBeGreaterThan(0);expect(f.uses().every(u=>u.state==='released')).toBe(true);f.privateMetadata();
 });
 it('ACKs a raw commit while normalization waits, and root close waits before closing SQLite',async()=>{
   const handoff=deferred<void>();const receive=vi.fn(async()=>handoff.promise);const f=await setup({receive});await until(()=>f.sockets.length===1);

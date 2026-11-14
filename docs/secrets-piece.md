@@ -1467,6 +1467,26 @@ this migration alone. Whole-path staging/value-free accounting, public/granted-g
 remaining Settings history, owner-encrypted holder recovery, and the final
 old-to-new/move/leak/import ledger remain open before activation.
 
+### Bridge connection usage accounting evidence
+
+The existing installed-next Slack and Discord daemon fixtures now check the
+real Secrets service role's usage events alongside their actual credential
+source calls. Connection setup, saved receipt draining and staging release
+record one `service-use` event per acquisition with exact secret-name counts,
+service identity, daemon time and no unsolicited house/service scope. A held
+staging connection records no usage. Failed platform callbacks still count
+credential delivery; audit admission failure prevents the byte-source read,
+and audit settlement failure prevents the platform request and socket startup
+while retaining only `started`, count 0. These fixtures check all database
+tables, Live change notifications and captured diagnostics (including Error
+objects) for the fixture credentials and verify erasure of source buffers.
+
+This is connection-path evidence with fixture holder bytes, platform requests
+and sockets. It does not prove a holder OS process, all bridge inspection,
+reply, file or presence consumers, production activation, upgrade/rollback
+retirement, encrypted holder recovery, public/granted-get parity or the final
+move safe. Those remain owning audit obligations.
+
 ### Dedicated handoff usage accounting
 
 The original central ticket claim persists a `secret.use` attempt before it can
