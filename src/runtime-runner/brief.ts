@@ -112,3 +112,28 @@ export function prepareRunnerBrief(raw:unknown,repo?:string):PreparedRunnerBrief
     if(root!==undefined)closeSync(root);
   }
 }
+
+/** Same descriptor-pinned file reader as required policy sections. Scheduled
+ * words are input, never a policy compiler key or a native resume capability. */
+export function prepareScheduledFile(file:string,checkout:string):string {
+  const parsed=path.safeParse(file);
+  if(!parsed.success)throw new RunnerBriefError('Invalid scheduled file path');
+  let root:number|undefined;
+  try {
+    if(process.platform!=='linux')throw new RunnerBriefError('Scheduled files need a Linux worker checkout');
+    root=openCheckout(checkout);
+    return scheduledText(requiredFile(root,parsed.data));
+  } catch(error) {
+    if(error instanceof RunnerBriefError)throw error;
+    throw new RunnerBriefError('Worker checkout is unavailable or unsafe');
+  } finally {if(root!==undefined)closeSync(root);}
+}
+
+/** Keep inline and file scheduled-text validity identical without altering
+ * valid bytes. Under /u a valid surrogate pair is one astral code point;
+ * the surrogate range therefore matches only unpaired UTF-16 code units. */
+export function scheduledText(text:string):string {
+  if(!text.trim()||text.includes('\0')||text.includes('<!-- house: local -->')||/[\uD800-\uDFFF]/u.test(text))
+    throw new RunnerBriefError('Scheduled input requires a different execution boundary');
+  return text;
+}

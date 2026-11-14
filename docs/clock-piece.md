@@ -1302,3 +1302,39 @@ If that owner is later demoted but retains agent/project grants, the next body
 narrows the steering principal to that named person. The provenance and actual
 private rearm fixtures exercise this transition. Anonymous owner markers are not
 backfilled with names from member scope or archived text.
+
+
+## Worker-checkout file preparation
+
+`src/runtime-runner/clock-input.ts` provides pure `prepareClockInput` for the
+future owning worker consumer. It accepts a conversation-bound ordered batch of
+prompt/file data, resolves every pending file before returning any words, and
+returns the combined exact text and last pending sequence. Already acknowledged
+history can be skipped, but that field is input data, never an owning receipt.
+Preparation authorizes no source read, execution, acknowledgement or native reuse.
+
+File reads reuse the descriptor-pinned brief-file reader on Linux: no symlink at
+any checkout/relative component, no dot/empty/parent or absolute component, bounded
+regular UTF-8 file, stable metadata during the read, nonempty and no NUL. Paths use
+the existing brief-file ASCII component alphabet and 200-character limit. Each file
+has the existing 20,000-byte brief-file bound; the complete input is bounded at
+1 MiB. Local-work markers are refused in files and inline input. These are
+explicit safety bounds for the worker protocol, not legacy host-file compatibility.
+
+Executable standalone file admission remains held in next mode. Before enabling
+it, the owning Runtime runner consumer must connect the authenticated input and
+credential roles to the actual worker adapter, independently validate every exact
+Clock source/withdrawal marker and original conversation across awaits and before
+launch, retain compiled policy/denies, pass staging, and acknowledge only after the
+appropriate delivery boundary. A generic job/box destination check is insufficient
+source authority. The current generic inbox brief must not invite ACK of an unread
+file descriptor. Neither an API flag nor a test's manual invocation of a helper
+proves this connection. Native joining/resume and local/approval/continuation
+capabilities remain separate work under t-2201. No daemon-host file reads, installed
+consumer, new schema/credential role or executable file-delivery claim is added.
+
+The worker preparation fixtures cover exact/current bytes, mixed ordered input,
+whole-batch failure, original-conversation mismatch, malformed/capability-shaped
+input, unsafe/missing/invalid/local-marked files, acknowledged history and combined
+UTF-8 byte bounds. Existing next-mode Clock fixtures still require standalone
+files to create no Runtime job. Actual end-to-end file delivery remains unproved.
