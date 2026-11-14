@@ -27,6 +27,7 @@ it('allows one exact head once and keeps rejected uses in the permanent record',
   expect(service.use(request.id, 'art', 'merge', target).ok).toBe(false);
   expect(service.record(request.id).map(r => r.event)).toEqual(['request', 'refused-use', 'allow', 'refused-use', 'refused-use', 'refused-use', 'use', 'refused-use']);
   expect(() => client.prepare('DELETE FROM approval_record').run()).toThrow('permanent record');
+  expect(() => client.prepare("UPDATE approval_record SET note='changed'").run()).toThrow('permanent record');
   expect(() => service.request({ ...proposal(), target: 'github:house/loom#12' })).toThrow('exact commit');
 });
 
@@ -81,4 +82,11 @@ it('keeps reported steps as named facts and lists them in time order', () => {
   at = '2026-11-14T20:01:00.000Z';
   const second = service.report({ agent: 'art', kind: 'merge', target, what: 'Merged the pump script' });
   expect(service.notices()).toEqual([step, second]);
+});
+
+it('withdraws an allowed request and permanently records refusal of a later spend', () => {
+  const row = service.request(proposal()); service.allow(row.id, 'jonathan');
+  expect(service.withdraw(row.id, 'art').state).toBe('withdrawn');
+  expect(service.use(row.id, 'art', 'merge', target).ok).toBe(false);
+  expect(service.record(row.id).map(r => r.event)).toEqual(['request', 'allow', 'withdraw', 'refused-use']);
 });
