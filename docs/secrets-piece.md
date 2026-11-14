@@ -1365,3 +1365,29 @@ valid ticket. They do not acquire inherited ownership or claim its transfer
 guarantees. Both modes still fence retired routing generations and join
 original pending acquisitions during explicit replacement/close; failed
 retirement settlement cannot become a clean transfer acknowledgement.
+
+### Original holder child lifetime
+
+`startHolderProcess` in `src/secret-holder-process.ts` launches only the packaged
+`secret-holder.js --config FILE --owned` with the current Node executable,
+empty environment and loader arguments, ignored standard streams, and its own
+inherited IPC channel. The daemon never reads this holder configuration. The
+returned route capability is the original `holderOwner`, with no pid discovery,
+restart, adoption, public registration or executable option.
+
+Its abort signal fences channel loss immediately. A clean close joins both the
+holder protocol acknowledgement and the original ChildProcess `close` event.
+A failed protocol burns the owner, kills the original child and still joins
+that event before rejecting. A child that acknowledges but stays alive is
+killed after a bounded grace period; sending a signal never proves exit.
+Callers must await close, including its rejected settlement, before releasing
+their process slot. Rejection requires a fresh owner, not a retry.
+
+Tests substitute the Node fork boundary with a controlled ChildProcess fixture;
+they establish acknowledgement-versus-exit ordering and failure joins, not an
+OS-process integration witness. This module is source-only. The production
+selection supervisor must still compose the original daemon replacement owner,
+this holder process and its abort signal, and the single-use Runtime assignment
+and worker drain. Normal daemon startup, installed configuration and deployment
+are unchanged. The full task remains open until that composition and the other
+listed lifecycle/parity/move requirements are merged.
