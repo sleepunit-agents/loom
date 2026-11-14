@@ -21,7 +21,7 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
  const allowed=(v:Viewer,agent:string,type='memory')=>maySee(v,{type,agent},options.sharing());
  const agents=(v:Viewer)=>options.agents.filter(a=>allowed(v,a.agent)||allowed(v,a.agent,'conversation'));
  // These are private agent records, never project-scoped. A member scope is
- // checked independently so even the household owner cannot read another thread.
+ // checked independently: only that member and household owners see it.
  const seesConversation=(v:Viewer,c:ActivityConversation,agent:string)=>(c.expires===undefined||c.expires>operations.clock.now())&&c.agent===agent&&allowed(v,agent,'conversation')&&maySee(v,{type:'conversation',agent,...(c.member!==undefined?{member:c.member}:{})},options.sharing())&&(venueKey(c.venue)!=='comms'||c.member!==undefined);
  const conversation=(v:Viewer,agent:string,id:string)=>{const raw=options.conversations?.conversation(v,agent,id);if(!raw)return;const c=conversationSchema.parse(raw);return c.id===id&&seesConversation(v,c,agent)?c:undefined;};
  const ownerPerson=(v:Viewer)=>v.kind==='member'?v.id:options.owner;

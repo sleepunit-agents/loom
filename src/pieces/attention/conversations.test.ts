@@ -10,7 +10,7 @@ import { conversationId } from './conversations.js';
 import { schema } from './schema/001.js';
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
-const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] }, carol: { owner: false, agents: [] } }, projects: { shared: { members: ['alice'], agents: ['art'] }, other: { members: ['alice'], agents: ['art'] } }, services: { reader: { types: ['attention.conversation', 'attention.turn'], operations: [] }, listed: { types: ['attention.conversation'], operations: ['attention.conversations'] } } });
+const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: false, agents: ['art'] }, carol: { owner: false, agents: [] } }, projects: { shared: { members: ['alice'], agents: ['art'] }, other: { members: ['alice'], agents: ['art'] } }, services: { reader: { types: ['attention.conversation', 'attention.turn'], operations: [] }, listed: { types: ['attention.conversation'], operations: ['attention.conversations'] } } });
 const alice: Viewer = { kind: 'member', id: 'alice' };
 const art: Viewer = { kind: 'agent', id: 'art' };
 const turn = { venue: 'relay', place: 'test', at: '2026-11-12T00:00:00Z', from: { kind: 'person', slug: 'alice' }, kind: 'message' };

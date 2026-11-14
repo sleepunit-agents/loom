@@ -11,7 +11,7 @@ import { findingId, median, dueToProgressSeconds, startAttentionRetention } from
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const alice: Viewer = { kind: 'member', id: 'alice' }, art: Viewer = { kind: 'agent', id: 'art' };
-const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] }, carol: { owner: false, agents: [] } }, projects: { shared: { members: ['carol'], agents: ['art'] }, restricted: { members: ['alice'], agents: [] } }, services: {
+const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: false, agents: ['art'] }, carol: { owner: false, agents: [] } }, projects: { shared: { members: ['carol'], agents: ['art'] }, restricted: { members: ['alice'], agents: [] } }, services: {
   reader: { types: ['attention.day', 'attention.finding', 'attention.turn'], operations: [] },
   worker: { types: ['attention.day', 'attention.finding', 'attention.turn'], operations: ['attention.fold', 'attention.retain', 'attention.findings', 'attention.writeFinding'] },
   dayOnly: { types: ['attention.day'], operations: ['attention.retain'] },

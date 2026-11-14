@@ -14,7 +14,7 @@ describe('ordered household policy', () => {
     ['bot personal', { agent: 'pond-bot' }, [true, true, false, false, true, false, false]],
     ['Art personal', { agent: 'art' }, [true, false, true, false, false, false, false]],
     ['Jonathan private overrides project and agent', { member: 'jonathan', project: 'pond', agent: 'pond-bot' }, [true, false, false, false, false, false, false]],
-    ['Pollock private overrides owner', { member: 'pollock', project: 'other', agent: 'art' }, [false, true, false, false, false, false, false]],
+    ['Household owner sees Pollock private', { member: 'pollock', project: 'other', agent: 'art' }, [true, true, false, false, false, false, false]],
     ['unfiled', {}, [true, false, false, false, false, false, false]],
     ['unknown project', { project: 'unknown', agent: 'pond-bot' }, [true, false, false, false, false, false, false]],
     ['empty field is set', { project: '', agent: 'pond-bot' }, [true, false, false, false, false, false, false]],
@@ -94,7 +94,7 @@ describe('authored work authority',()=>{
       expect(mayReuseAuthoredWork(v,r,access,o,p)).toBe(v.kind==='agent'&&v.id==='art');
     }
     expect(maySee({kind:'agent',id:'art'},r,access)).toBe(false);
-    expect(maySee({kind:'member',id:member==='jonathan'?'other':'jonathan'},r,access)).toBe(false);
+    expect(maySee({kind:'member',id:member==='jonathan'?'other':'jonathan'},r,access)).toBe(true);
   });
   type Change={record?:Partial<typeof record>;original?:Partial<WorkAuthorship>;current?:Partial<WorkAuthority>};
   it.each<[string,Change]>([
@@ -152,4 +152,21 @@ it('requires current independent member and project grants for owning private ex
  expect(mayRunPrivateWork({member:'jonathan',agent:'pond-bot',project:'pond'},access)).toBe(true);
  for(const viewer of [{kind:'agent',id:'pond-bot'},{kind:'service',id:'clock'},{kind:'runner',id:'a'}] as Viewer[])
   expect(maySee(viewer,{...scope,type:'wake'},access)).toBe(false);
+});
+
+it('checks current household ownership before private labels without lending it to other callers', () => {
+  const access = fixtureSharing();
+  access.members.observer = { owner: true, agents: [] };
+  const viewer: Viewer = { kind: 'member', id: 'observer' };
+  const record = { member: 'pollock', project: 'other', agent: 'pond-bot', type: 'secret' };
+  expect(maySee(viewer, record, access)).toBe(true);
+  access.members.observer.owner = false;
+  expect(maySee(viewer, record, access)).toBe(false);
+  access.members.observer.agents = ['pond-bot'];
+  access.projects.other.members.push('observer');
+  expect(maySee(viewer, record, access)).toBe(false);
+  delete access.members.observer;
+  expect(maySee(viewer, record, access)).toBe(false);
+  for (const outsider of [{ kind: 'agent', id: 'pond-bot' }, { kind: 'runner', id: 'box' }, { kind: 'service', id: 'keyholder' }] as Viewer[])
+    expect(maySee(outsider, record, access)).toBe(false);
 });
