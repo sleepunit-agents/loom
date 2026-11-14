@@ -352,10 +352,12 @@ it.each([false,true])('native worker reads a standalone checkout file and ACKs a
  expect(await f.post(f.config.credential,'readConversation',{})).toMatchObject({ok:false});
  const seq=(f.app.db.prepare('SELECT seq FROM runtime_clock_turns WHERE id=?').get(`clock:${f.wake}`) as {seq:number}).seq;
  expect(await f.post(f.config.credential,'acknowledgeClockInput',{through:seq})).toMatchObject({ok:false});
- const worker=f.start();await f.ready;
+ const input=new PassThrough(),signals=new EventEmitter(),stderr=vi.fn();
+ const completed=runClockWorker({input,args:[],signals,stderr},{clock:f.clock,launch:f.launch});
+ input.end(JSON.stringify(f.config));await f.ready;
  expect(f.calls[0].input).toBe('LOCAL OWNER RULES\nACTUAL CHECKOUT WORDS');
  expect(f.calls[0].input).not.toContain('routines/native.md');expect(f.consumed().consumed).toBeNull();
- f.finish();expect(await worker.completed).toBe(true);expect(f.consumed().consumed).not.toBeNull();
+ f.finish();expect(await completed).toBe(0);expect(stderr).not.toHaveBeenCalled();expect(f.consumed().consumed).not.toBeNull();
  expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(1);
  expect(JSON.stringify(f.app.db.prepare('SELECT * FROM runtime_clock_turns').all())).not.toContain('ACTUAL CHECKOUT WORDS');
 });
@@ -403,6 +405,15 @@ it('standalone file native execution retains all three independent staging gates
 it('prompt joining into a standalone file conversation stays held',async()=>{
  const f=await setup(false,false,false,'native.md');
  const joined=await f.joinInput();
+ expect(f.store.ids('job')).toEqual([f.job]);
+ const row=f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(joined) as {record:string};
+ expect(JSON.parse(row.record).state).toBe('held');
+ expect(f.app.db.prepare('SELECT id FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toBeUndefined();
+});
+
+it('standalone file joining an authenticated prompt conversation stays held',async()=>{
+ const f=await setup();
+ const joined=await f.joinInput({prompt:undefined,file:'native.md'});
  expect(f.store.ids('job')).toEqual([f.job]);
  const row=f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(joined) as {record:string};
  expect(JSON.parse(row.record).state).toBe('held');
