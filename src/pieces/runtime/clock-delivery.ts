@@ -12,18 +12,29 @@ import { provenanceStore } from './provenance-store.js';
 import { principalFromHistory } from './provenance.js';
 import { currentExecution } from './control.js';
 import { bodyPolicyExecutionHeld } from './policy-store.js';
+import type { Wake } from '../clock/store.js';
+import type { RuntimeRecords } from './records.js';
 import type { ClockProvenanceReader } from './role.js';
 export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation. After reading, acknowledge through the last seq with runtime.acknowledgeClockInput. New inputs may arrive in this conversation.';
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,40);
 const id=z.string().min(1).max(200);
 interface Turn {seq:number;id:string;conversation:string;job:string;record:string;released:number|null;consumed:number|null}
+const sourceRecord=(wake:Wake,attempt:string)=>JSON.stringify({text:wake.prompt,project:wake.project,agent:wake.agent,service:wake.authorship?.service,authorship:wake.authorship,by:wake.by,attempt});
 interface Proof {agent:string;job?:string;service?:string;valid():boolean}
 export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:OutsideEffects,proof:(v:Viewer)=>Proof|undefined) {
   const {db,operations}=app,store=runtimeStore(db),destination=clockDestination(app,sharing);
   const owners=()=>Object.entries(sharing().members).filter(([,m])=>m.owner).map(([id])=>id);
+  const currentSource=(row:Turn,job:RuntimeRecords['job'])=>{
+    const record=JSON.parse(row.record) as {text:string;attempt:string};
+    const source=clockDispatchSource(operations,row.id.slice('clock:'.length),record.attempt,true);
+    return !!source && sourceRecord(source,record.attempt)===row.record && source.agent===job.agent
+      && source.member===job.member && source.project===job.project && source.authorship?.service===job.service;
+  };
   const valid=(jobId:string)=>{
     const job=store.read('job',jobId),binding=job?.conversation?store.read('binding',job.conversation):undefined;
-    return !isClosing(app)&&!!job&&!job.member&&!job.imported&&!job.principalReset&&!job.writtenOff
+    const root=job?.conversation?db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(job.conversation) as Turn|undefined:undefined;
+    return !!root&&!!job&&currentSource(root,job)
+      &&!isClosing(app)&&!job.member&&!job.imported&&!job.principalReset&&!job.writtenOff
       &&job.endedAt===undefined&&!bodyPolicyExecutionHeld(db,job.agent)&&!!binding&&binding.venue==='wake'
       &&binding.job===job.id&&binding.agent===job.agent&&binding.member===job.member&&binding.project===job.project
       &&provenanceStore(db).read(binding.id)?.agent===job.agent&&currentExecution(store,job,sharing())
@@ -48,7 +59,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       const w=source(i.wake,i.attempt);if(!w)throw new OperationError('denied','Clock source ended');
       const key=`clock:${w.id}`,old=db.prepare('SELECT * FROM runtime_clock_turns WHERE id=?').get(key) as Turn|undefined;
       if(old){
-        if(old.record!==JSON.stringify({text:w.prompt,project:w.project,agent:w.agent,service:w.authorship?.service,attempt:i.attempt}))throw new OperationError('conflict','Wake source changed');
+        if(old.record!==sourceRecord(w,i.attempt))throw new OperationError('conflict','Wake source changed');
         return {job:old.job,source:key,joined:old.conversation!==`clock-${hash(w.id)}`};
       }
       const route=clockRoute(w,destination);
@@ -70,7 +81,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
           service:w.authorship?.service,model:w.model},{brief:CLOCK_BRIEF});
       }
       db.prepare('INSERT INTO runtime_clock_turns(id,conversation,job,record) VALUES (?,?,?,?)').run(key,conversation,job,
-        JSON.stringify({text:w.prompt,project:w.project,agent:w.agent,service:w.authorship?.service,attempt:i.attempt}));
+        sourceRecord(w,i.attempt));
       const principal=w.authorship?.principal;
       // Retain every named steering source; unknown stays unknown even if people are named.
       const provenance=provenanceStore(db);
@@ -83,13 +94,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   const read=(v:Viewer,before?:number)=>{
     const job=bound(v);if(!job)throw new OperationError('denied','Clock body binding ended');
     const rows=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT 100').all(job.conversation,before??Number.MAX_SAFE_INTEGER) as Turn[];
-    const pending=rows.filter(r=>r.consumed===null);
-    const currentSources=()=>pending.every(row=>{
-      const record=JSON.parse(row.record) as {text:string;attempt:string};
-      const source=clockDispatchSource(operations,row.id.slice('clock:'.length),record.attempt,true);
-      return !!source && source.prompt===record.text && source.agent===job.agent && source.member===job.member
-        && source.project===job.project && source.authorship?.service===job.service;
-    });
+    const currentSources=()=>rows.every(row=>currentSource(row,job));
     if(!currentSources())throw new OperationError('denied','Clock delivery authority ended');
     // Central staging hold runs at the words boundary, including later joined turns.
     if(rows.some(r=>r.released===null)&&!effects.beforeOutside({id:`runtime:clock-read:${job.id}:${rows[0]?.seq}`,kind:'body-start',title:'Release scheduled conversation input'}))
@@ -108,6 +113,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     may:v=>!!bound(v),run(ctx,i){
       const job=bound(ctx.viewer);if(!job)throw new OperationError('denied','Clock body binding ended');
       const rows=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<=?').all(job.conversation,i.through) as Turn[];
+      if(!rows.every(row=>currentSource(row,job)))throw new OperationError('denied','Clock delivery authority ended');
       if(!rows.some(row=>row.seq===i.through)||rows.some(row=>row.released===null))throw new OperationError('conflict','Input has not been released to this body');
       for(const row of rows)db.prepare('UPDATE runtime_clock_turns SET consumed=COALESCE(consumed,?) WHERE id=?').run(ctx.now,row.id);
       const keys=provenanceStore(db).read(job.conversation!)?.queue.map(row=>row.key)??[];

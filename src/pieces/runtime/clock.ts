@@ -30,7 +30,7 @@ export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'stat
       {wake:wake.id,attempt:intent},`runtime:clock:${wake.id}:${intent}`);
     if(!answer.ok) return existing()
       ? {state:'uncertain',reason:'This wake already has an accepted start intent; reconcile it before retrying'}
-      : {state:'not-started',reason:answer.message};
+      : {state:answer.code==='denied'?'held':'not-started',reason:answer.message};
     const {job,source,joined}=answer.value as {job:string;source?:string;joined?:boolean};
     return new Promise<StartResult>(resolve=>{
       let settled=false;

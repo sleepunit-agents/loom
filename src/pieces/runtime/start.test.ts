@@ -333,9 +333,8 @@ it('uses the destination reader in installed Clock dispatch and rechecks memberl
  scheduled.authorship={origin:'art',conversation:'cv-clock-lane',project:'pond',principal:{for:'?',people:[]}};
  f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(scheduled),id);
  f.clock.advance(1000);await settle();
- expect(wake(f.app.db,id)).toMatchObject({state:'firing'});
- f.clock.advance(START_CONFIRM_MS);await settle();
- expect(wake(f.app.db,id)).toMatchObject({state:'held',hold:'uncertain'});
+ expect(wake(f.app.db,id)).toMatchObject({state:'held'});
+ expect(f.app.db.prepare('SELECT * FROM runtime_clock_turns').all()).toEqual([]);
  expect(f.store.ids('job')).toEqual([job]);
 });
 
@@ -371,6 +370,11 @@ it('creates a real wake binding and joins only after the authenticated body read
  // The permanent sender history survives consumption and restart. A copied viewer gets none.
  await f.restart();
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'},{text:'Joined lane input'}]}});
+ const after=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'after-restart',input:{agent:'art',prompt:'After restart',note:'history',when:'1h'}})})).json();
+ expect(after.ok).toBe(true);
+ expect(wake(f.app.db,after.value.id)?.authorship).toMatchObject({origin:'art',conversation:cv,principal:{for:'owner',people:[]}});
+ expect(JSON.parse((f.app.db.prepare('SELECT record FROM runtime_provenance WHERE conversation=?').get(cv) as {record:string}).record).history).toMatchObject({owners:['jonathan'],owner:true,unknown:false});
+
  const box=f.store.read('box','a')!;
  f.app.db.transaction(()=>{const {changedAt:_,...b}=box;f.store.put('box',{...b,revokedAt:f.clock.now()},f.clock.now());})();
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
@@ -413,6 +417,14 @@ it('rechecks original Clock source authority at the words boundary, without acce
  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns').get()).toEqual({consumed:null});
  access.members.jonathan.agents=['art'];
  expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'Revocable scheduled input'}]}});
+ access.members.jonathan.agents=[];
+ expect(await f.post(payload.value.credential,'acknowledgeClockInput',{through:1})).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns').get()).toEqual({consumed:null});
+ access.members.jonathan.agents=['art'];
+ expect(await f.post(payload.value.credential,'acknowledgeClockInput',{through:1})).toMatchObject({ok:true});
+ access.members.jonathan.agents=[];
+ expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+
 });
 
 it('issues the original restricted service on the scheduled body credential, separately from Clock dispatch',async()=>{
