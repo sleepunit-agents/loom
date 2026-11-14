@@ -157,3 +157,23 @@ it.each(['revokePolicy','revokeGrant','stopJob','cancelRequest','close'] as cons
   expect(await worker.jobs[0].completed).toBe(false);expect(await worker.jobs[0].delivery).toBe(false);
  }finally{resume();authority.resume();spy?.mockRestore();}
 });
+
+it.each(['command','cwd','input','authority','admission','holderPin','daemonPin','ca','servername','args','env','socketAlias'] as const)('rejects a later invalid %s selection before the first valid job starts IO',async invalid=>{
+ const f=await setup(),listen=vi.spyOn(NetServer.prototype,'listen'),spawn=vi.spyOn(ChildProcess.prototype,'spawn');
+ const binding={...f.binding,job:'00000000-0000-4000-8000-000000000000'};
+ const config={...f.config,args:[...f.config.args],env:{...f.config.env},input:{...f.config.input,socket:f.home+'/second.sock'},
+  authority:{...f.config.authority},admission:{...f.config.admission}};
+ if(invalid==='command')config.command='relative';
+ if(invalid==='cwd')config.cwd='relative';
+ if(invalid==='input'||invalid==='authority'||invalid==='admission')config[invalid].socket='relative';
+ if(invalid==='holderPin')config.holderFingerprint='invalid';
+ if(invalid==='daemonPin')config.daemonFingerprint='invalid';
+ if(invalid==='ca')config.authority.ca='relative';
+ if(invalid==='servername')config.admission.servername='';
+ if(invalid==='args')config.args=['bad\0arg'];
+ if(invalid==='env')config.env={BAD:'bad\0value'};
+ if(invalid==='socketAlias')config.input.socket=f.home+'/unused/../admitted-input.sock';
+ const selected={...f.workerConfig,grants:[...f.workerConfig.grants,{...f.workerConfig.grants[0],binding}],jobs:[f.localJob,{...f.localJob,binding,config}]};
+ expect(()=>{const worker=startSecretWorker(selected);closes.push(worker.close);}).toThrow('Secret worker unavailable');
+ expect(listen).not.toHaveBeenCalled();expect(spawn).not.toHaveBeenCalled();expect(f.source).not.toHaveBeenCalled();
+});

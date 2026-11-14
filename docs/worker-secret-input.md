@@ -231,7 +231,8 @@ continues using prompt stdin and is not an fd3 consumer.
 `runtime-runner/secret-worker.ts` provides a separate worker-side startup root.
 Owner configuration supplies a local name policy, expiring grants for exact job
 assignments, and dedicated fd3 consumer jobs. Startup validates every selection
-before IO, snapshots configuration, and mints its own private policy, grant,
+before IO (including command paths, peer endpoints, pins, arguments, environment
+and duplicate normalized socket paths), snapshots configuration, and mints its own private policy, grant,
 assignment and request records. It starts the actual commands using the existing
 `startAdmittedSecretCommand` path. Neither a daemon response nor an externally
 supplied `current` callback creates local authority. Local grants are explicit
@@ -242,7 +243,9 @@ cancel a request or close the worker. Each event fences original local records
 synchronously before draining started resources, including startup still awaiting
 listener creation. Revocations cannot be reversed with equal metadata. Policy
 revocation fences every configured job for that name. Each startup attempts each
-job once, without restart or retry; a fresh assignment requires a fresh worker
+job once, without restart or retry. TLS file contents, permissions and process
+execution are checked during IO; failure retires that job without restarting it.
+A fresh assignment requires a fresh worker
 and daemon peer configuration. Jobs have distinct input sockets. Delivery and
 process completion remain separate results. This root must run in a worker
 process, never in the daemon that cannot receive credential bytes.

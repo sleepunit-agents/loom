@@ -1,6 +1,8 @@
 /** Private worker-side startup owner. Never instantiate in the loom daemon.
  * Configuration and lifecycle methods are owner capabilities, not operations.
  * No supplied current callback, viewer or daemon receipt is local authority. */
+import {isAbsolute,normalize} from 'node:path';
+import {certificateFingerprint,holderTls} from '../pieces/secrets/holder-authority.js';
 import {startAdmittedSecretCommand} from './admitted-secret-command.js';
 import type {SecretCommandConfig} from './secret-command.js';
 import type {LocalHolderConfig} from '../pieces/secrets/local-holder.js';
@@ -30,6 +32,19 @@ export function startSecretWorker(config:{policy:readonly string[];grants:readon
     const binding=Object.freeze(secretInputBindingSchema.parse(job.binding));
     const config={...job.config,args:[...job.config.args],env:{...job.config.env},
       input:{...job.config.input},authority:{...job.config.authority},admission:{...job.config.admission}};
+    // Preflight ALL selections before any job can read TLS files/listen/spawn.
+    // File existence, permissions and certificate contents remain IO-time checks.
+    const path=(value:unknown)=>typeof value==='string'&&isAbsolute(value)&&!value.includes('\0');
+    const endpoint=(value:LocalHolderConfig|Omit<LocalHolderConfig,'servername'>)=>{
+      const {socket,ca,cert,key}=value;
+      return holderTls.safeParse({socket,ca,cert,key}).success&&[socket,ca,cert,key].every(path);
+    };
+    if(!path(config.command)||!path(config.cwd)||config.args.some(arg=>typeof arg!=='string'||arg.includes('\0'))
+      ||Object.entries(config.env).some(([key,value])=>!key||/[=\0]/.test(key)
+        ||value!==undefined&&(typeof value!=='string'||value.includes('\0')))
+      ||![config.input,config.authority,config.admission].every(endpoint)
+      ||![config.authority,config.admission].every(peer=>typeof peer.servername==='string'&&!!peer.servername&&!peer.servername.includes('\0'))
+      ||![config.holderFingerprint,config.daemonFingerprint].every(pin=>certificateFingerprint.safeParse(pin).success))throw failed();
     const name=secretName.parse(job.name);
     const matching=grants.filter(g=>g.name===name&&JSON.stringify(g.binding)===JSON.stringify(binding));
     if(!policy.allowed.has(name)||matching.length!==1||!Number.isFinite(matching[0].expiresAt)
@@ -43,7 +58,7 @@ export function startSecretWorker(config:{policy:readonly string[];grants:readon
   });
   if(records.length>1024||new Set(records.map(r=>r.assignment.binding.job)).size!==records.length)throw failed();
   // Each job owns a distinct listener. Refuse aliasing before starting anything.
-  if(new Set(records.map(r=>r.config.input.socket)).size!==records.length)throw failed();
+  if(new Set(records.map(r=>normalize(r.config.input.socket))).size!==records.length)throw failed();
   const fence=(record:typeof records[number])=>{record.request.active=false;};
   const drain=async(record:typeof records[number])=>{
     fence(record);
