@@ -278,7 +278,8 @@ in both isolated fixtures and a real Household profile update across two windows
 The app composition audit found every registered app already uses the shared kit
 and desk frame: Tasks, Approvals, Changes, Knowledge, Inbox, Bridges, Clock,
 Comms, People, Projects, Activity and Settings use Split; Home, Sharing, Setup and
-Your account use AppFrame. Comms retains its domain transcript and portrait
+Your account use AppFrame. Agents reuses the Home cut card inside AppFrame,
+with two detail columns where the tile has room and one column on a phone. Comms retains its domain transcript and portrait
 inside Split. Account owns passkeys/session controls. No other provisional shell
 control or shell-owned piece data was found. Fixture evidence does not replace
 Jonathan's final visual acceptance.
