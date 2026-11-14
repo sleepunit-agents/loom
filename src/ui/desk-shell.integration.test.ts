@@ -122,6 +122,19 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await b.getByRole('menuitem',{name:'Always show',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
     expect(await b.locator('.next-comm-screen').count()).toBe(1);
+    // Same five-agent scenario: a real sprite uses integer pixels in the rail and compact phone reader.
+    const commSample=sheet(),commManifest=manifestFromPixelLab(JSON.parse(commSample.json.toString()));
+    new HouseholdRows(app.db,'settings').put('agent-sprite:art',{manifest:commManifest,rawManifest:Buffer.from(JSON.stringify(commManifest)).toString('base64'),sheets:{'sheet.png':commSample.png.toString('base64')},v:'comms-scale-fixture'});
+    await expect.poll(()=>painted(b,'.next-comm-screen canvas')).toBe(true);
+    const pixelWidth=()=>b.locator('.next-comm-screen canvas').evaluate(cv=>cv.getBoundingClientRect().width);
+    await expect.poll(pixelWidth).toBe(192);
+    await b.setViewportSize({width:390,height:900});
+    await expect.poll(()=>b.locator('.comms-thread .next-comm-screen').count()).toBe(1);
+    await expect.poll(pixelWidth).toBe(96);
+    await b.setViewportSize({width:1280,height:900});
+    await expect.poll(()=>b.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
+    await expect.poll(pixelWidth).toBe(192);
+    new HouseholdRows(app.db,'settings').remove('agent-sprite:art');
     await b.getByRole('button',{name:'Open Inbox',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(1);
     // Observe real FLIP requests while exercising full and reduced motion, without racing260ms.
