@@ -127,9 +127,11 @@ Slack becomes explicit incomplete evidence with no invented bot or split names.
 Off-machine bots, unknown audiences, exact stored docs/revisions and proposals
 stay private evidence. Unprojectable channel/parent IDs also block default routing.
 
-Webhook-peer, notify, peer budgets and channel-note references are retained evidence
-pending explicit dispositions in this inventory; not active configuration. Obsolete
-raw identity/session disposition also remains required. Status JSON output/exit fixtures are retained; send/read/describe/presence command
+Webhook-peer, notify, peer budgets, channel-note references and old/new raw
+identity/session state now have explicit [source dispositions](bridges-dispositions.md).
+The semantic replacements and obsolete next-side identity cleanup remain required;
+retained metadata is not active configuration. Old process-state retirement does
+not retire Runtime history or authorize deleting the source snapshot. Status JSON output/exit fixtures are retained; send/read/describe/presence command
 parity and final move inventory are not complete. No owner decision, deployment,
 real import or workspace contact is implied by the code or this inventory.
 
