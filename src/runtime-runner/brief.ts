@@ -122,11 +122,18 @@ export function prepareScheduledFile(file:string,checkout:string):string {
   try {
     if(process.platform!=='linux')throw new RunnerBriefError('Scheduled files need a Linux worker checkout');
     root=openCheckout(checkout);
-    const text=requiredFile(root,parsed.data);
-    if(text.includes('<!-- house: local -->'))throw new RunnerBriefError('Scheduled local work requires its own execution boundary');
-    return text;
+    return scheduledText(requiredFile(root,parsed.data));
   } catch(error) {
     if(error instanceof RunnerBriefError)throw error;
     throw new RunnerBriefError('Worker checkout is unavailable or unsafe');
   } finally {if(root!==undefined)closeSync(root);}
+}
+
+/** Keep inline and file scheduled-text validity identical without altering
+ * valid bytes. Under /u a valid surrogate pair is one astral code point;
+ * the surrogate range therefore matches only unpaired UTF-16 code units. */
+export function scheduledText(text:string):string {
+  if(!text.trim()||text.includes('\0')||text.includes('<!-- house: local -->')||/[\uD800-\uDFFF]/u.test(text))
+    throw new RunnerBriefError('Scheduled input requires a different execution boundary');
+  return text;
 }

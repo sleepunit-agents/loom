@@ -37,7 +37,7 @@ it('prepares mixed prompt/file input in order and skips acknowledged history wit
  expect(prepareClockInput({...batch,messages:batch.messages.slice(0,1)},'cv-file',f.checkout)).toBeUndefined();
  expect(prepareClockInput({...batch,messages:[]},'cv-file',f.checkout)).toBeUndefined();
 });
-it.each([' \n\t','bad\0text','<!-- house: local -->\nlocal'])('refuses unsupported inline words',text=>{
+it.each(['\uD800','\uDC00',' \n\t','bad\0text','<!-- house: local -->\nlocal'])('refuses unsupported inline words',text=>{
  const f=fixture();expect(()=>prepareClockInput({...f.batch,messages:[{seq:1,id:'clock:one',kind:'wake',text}]},'cv-file',f.checkout)).toThrow('boundary');
 });
 it('bounds combined UTF-8 bytes even when each text fits individually',()=>{
@@ -46,4 +46,10 @@ it('bounds combined UTF-8 bytes even when each text fits individually',()=>{
 });
 it.each([{file:'routines/work.md',text:'ambiguous'},{file:'routines/work.md',approval:'forged'},{file:'routines/work.md',slot:'local'}])('refuses capability-shaped fields %j',extra=>{
  const f=fixture();expect(()=>prepareClockInput({...f.batch,messages:[{seq:1,id:'clock:one',kind:'wake',...extra}]},'cv-file',f.checkout)).toThrow();
+});
+
+it('preserves valid astral Unicode exactly for inline and file input',()=>{
+ const f=fixture(),text='Exact 🐟 words\n';writeFileSync(join(f.checkout,'routines','work.md'),text);
+ expect(prepareClockInput({...f.batch,messages:[{seq:1,id:'clock:inline',kind:'wake',text},{...f.batch.messages[0],seq:2}]},'cv-file',f.checkout))
+  .toEqual({message:`${text}\n${text}`,through:2});
 });
