@@ -20,7 +20,7 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | Home composition | Full question first; work/runtime and recent conversation beside Clock on a wide single-agent card, stacked on narrower cards; composer follows the details |
 | Phone bar and centered desktop ticker | Registration title, shared existing ticker renderer, owned roster/status and live Needs you count; exact Inbox navigation, appearance gear on phone; all apps stays in dock |
 | System clock and status glyphs | Member-private `household.time` carries server minutes and database timezone; desktop shows connection and working-agent glyphs. Phone retains its device status bar |
-| Boxes/backup status glyphs, piece-stat ticker items | Follow-up proper new-side sources; no fabricated piece stats or old-store reads |
+| Boxes/backup status glyphs, piece-stat ticker items | Runtime enrollment count with unknown health; policy-filtered Tasks/Clock/Bridges/Changes records supply live counts. Backup has no new-side source and stays absent |
 | Last steps, phone Home accordion, per-app parity | Follow-up slices before owner acceptance; no invented tape steps |
 
 Every unavailable live feed drops its old content immediately. Roster loss removes cards; directory failure uses canonical roster names; status, ask and thread failures show unavailable words instead of stale values. Rail navigation is read-only. Approval and private ask actions stay in the owning reader.
@@ -106,3 +106,23 @@ explicit follow-ups, pending proper owning sources. No tiling behavior changes.
 The former 640–1023 two-line tablet status bar is omitted: the new shell treats
 all widths below 1024 as phone composition, keeping its compact single bar.
 Desktop separators/order match the present clock/title and brand/glyphs/count.
+
+### Piece counts and Boxes
+
+The bar subscribes to existing policy-filtered `task`, `wake`, `bridges.venue`,
+`change` and `runtime.box` records through the same live feed. Tasks counts in
+progress and ready work, Clock counts active wakes (pending/parked/held/firing),
+Bridges counts enabled venues, Changes counts open pull requests and failing CI.
+CI trouble precedes ordinary piece counts. Each links to its registered app.
+Unavailable sources replace their own counts immediately; they never become zero.
+Counts describe the visible records, not a household-wide total or health check.
+
+Boxes counts nonrevoked enrollments. The rack glyph and ticker explicitly say
+health is unavailable: `runtime.box` carries enrollment and last-seen metadata,
+but no authoritative health/alert record. Placement eligibility is not a health
+contract, so the desk does not infer “all quiet” from it. There is no registered
+Boxes screen yet, so its glyph is a focusable tooltip rather than a dead link.
+The backup glyph stays absent because no new-side backup record or owning role
+exists; neither backup results nor their age can be inferred from the clock or
+old files. These are deliberate honest gaps, not claims of operational parity.
+No schema, operation, importer, generated command or permission change is needed.

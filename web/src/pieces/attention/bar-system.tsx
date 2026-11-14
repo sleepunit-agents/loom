@@ -17,11 +17,12 @@ export function BarClock() {
   const words = text && minute ? serverTime(minute.at, minute.timezone, true) : 'Loom time unavailable';
   return <span className="next-system-clock loom-sys__clock" title={words}><span aria-hidden="true">{text || '—:—'}</span><span className="sr-only">{words}</span></span>;
 }
-export function BarStatus({ roster, statuses, available, live, go }: { roster: readonly OwnedAgent[]; statuses: readonly AgentStatus[]; available: boolean; live: boolean; go(path:string):void }) {
+export function BarStatus({ boxes, roster, statuses, available, live, go }: { boxes: number | undefined; roster: readonly OwnedAgent[]; statuses: readonly AgentStatus[]; available: boolean; live: boolean; go(path:string):void }) {
   const working = roster.filter(a=>latestStatus(statuses,a.id)?.state==='working').length;
   const known = available && roster.every(a=>latestStatus(statuses,a.id)!==undefined);
   const agents = known ? `${working} of ${roster.length} agents at work` : 'Agent status unavailable';
   const signal = live ? 'Live: connected to loom' : 'Live updates unavailable';
+  const boxWords = boxes===undefined ? 'Boxes unavailable' : `${boxes} enrolled box${boxes===1?'':'es'}; health unavailable`;
   return <span className="next-system-icons loom-sys__icons" role="group" aria-label="Status">
     <span role="img" tabIndex={0} className="loom-sys__icon" data-dim={!live?'':undefined} aria-label={signal}>
       <svg {...glyph}>{[0,1,2,3].map(i=><rect key={i} x={1+i*3.75} y={10-i*3} width={2.6} height={4+i*3} rx={0.7} fill={live||i===0?'currentColor':'none'} stroke="currentColor" strokeWidth={live||i===0?0:0.9}/>)}</svg>
@@ -31,5 +32,9 @@ export function BarStatus({ roster, statuses, available, live, go }: { roster: r
       <svg {...glyph} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round"><circle cx={6} cy={5.5} r={2.5}/><path d="M1.75 13.5a4.25 4.25 0 0 1 8.5 0M10.5 3.2a2.5 2.5 0 0 1 0 4.6M12 9.6a4.25 4.25 0 0 1 2.25 3.9"/></svg>
       <span className="loom-sys__n loom-data" aria-hidden="true">{known?working:'?'}</span><span className="loom-sys__tip" aria-hidden="true">{agents}</span>
     </a>
+    <span role="img" tabIndex={0} className="loom-sys__icon" data-dim="" aria-label={boxWords}>
+      <svg {...glyph} fill="none" stroke="currentColor" strokeWidth={1.2}><rect x={2} y={1} width={12} height={14} rx={1}/><path d="M2 6h12M2 10h12M5 3.5h1M5 8h1M5 12.5h1"/></svg>
+      <span className="loom-sys__n loom-data" aria-hidden="true">{boxes??'?'}</span><span className="loom-sys__tip" aria-hidden="true">{boxWords}</span>
+    </span>
   </span>;
 }
