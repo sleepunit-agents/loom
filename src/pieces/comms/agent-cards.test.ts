@@ -5,6 +5,7 @@ import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {startLoom} from '../../foundation.js';
+import {HouseholdDatabase} from '../../core/household/document.js';
 import {fixture,installFixture} from '../../fixture.js';
 import {FakeClock,type Sharing,type Viewer} from '../../core/index.js';
 const cleanup:(()=>unknown)[]=[];
@@ -22,16 +23,28 @@ async function setup(){
 it('uses the real household profile and owning Agents roster, never project-only or old-file metadata',async()=>{
  const s=await setup();
  writeFileSync(join(s.home,'household.json'),JSON.stringify({agents:['ghost'],about:{ghost:'Old private description'}}));
+ new HouseholdDatabase(s.app.db).change(s.home,raw=>{raw.about={art:'Installed private profile words',mark:'Other private profile words'};});
  s.sharing.members.jonathan.agents.push('ghost');
  const answer=await s.call('comms.refCards',{thread:s.thread,refs:['agent:art','at:art','agent:mark','at:pond-bot','agent:ghost','agent:Art','at:../art']});
- expect(answer).toMatchObject({ok:true,value:{cards:{'agent:art':{kind:'agent',title:'art',status:'Agent',url:'/p/agents-preview/agent/art'},'at:art':{kind:'agent',url:'/p/agents-preview/agent/art'},'agent:mark':{kind:'agent',url:'/p/agents-preview/agent/mark'},'at:pond-bot':null,'agent:ghost':null,'agent:Art':null,'at:../art':null}}});
+ expect(answer).toEqual({ok:true,value:{thread:s.thread,cards:{'agent:art':{kind:'agent',title:'art',status:'Agent',url:'/p/agents-preview/agent/art'},'at:art':{kind:'agent',title:'art',status:'Agent',url:'/p/agents-preview/agent/art'},'agent:mark':{kind:'agent',title:'mark',status:'Agent',url:'/p/agents-preview/agent/mark'},'at:pond-bot':null,'agent:ghost':null,'agent:Art':null,'at:../art':null}}});
  expect(JSON.stringify(answer)).not.toContain('Old private description');
- const original=s.app.operations.call.bind(s.app.operations),seen:string[]=[];
+ const original=s.app.operations.call.bind(s.app.operations),seen:string[]=[],people=vi.fn();
+ let profileResult:ReturnType<typeof s.app.operations.call>={ok:false,code:'denied',message:'Private rejected words'};
  const spy=vi.spyOn(s.app.operations,'call').mockImplementation((door,viewer,name,input,id,window)=>{
-  if(name==='household.profile'){seen.push(viewer.id);return {ok:true,value:{agent:'wrong'}};}
+  if(name==='household.profile'){seen.push(viewer.id);return profileResult;}
+  if(name==='mind.personRead'){people();return {ok:true,value:{id:'commons:mark',slug:'mark',name:'Private directory name',kind:'agent',card:{summary:'Private directory data'}}};}
   return original(door,viewer,name,input,id,window);
  });
- try{expect(await s.call('comms.refCards',{thread:s.thread,refs:['at:mark','agent:mark']})).toMatchObject({ok:true,value:{cards:{'at:mark':null,'agent:mark':null}}});expect(seen).toEqual(['jonathan','jonathan']);}finally{spy.mockRestore();}
+ try{
+  for(const response of [{ok:false,code:'denied',message:'Private rejected words'},{ok:true,value:{}},{ok:true,value:{agent:42}},{ok:true,value:{agent:'wrong'}}] as ReturnType<typeof s.app.operations.call>[]){
+   profileResult=response;
+   expect(await s.call('comms.refCards',{thread:s.thread,refs:['at:mark','agent:mark']})).toEqual({ok:true,value:{thread:s.thread,cards:{'at:mark':null,'agent:mark':null}}});
+  }
+  profileResult={ok:true,value:{agent:'mark',description:'Private profile data'}};
+  const card={kind:'agent',title:'mark',status:'Agent',url:'/p/agents-preview/agent/mark'};
+  expect(await s.call('comms.refCards',{thread:s.thread,refs:['at:mark','agent:mark']})).toEqual({ok:true,value:{thread:s.thread,cards:{'at:mark':card,'agent:mark':card}}});
+  expect(seen).toEqual(Array(10).fill('jonathan'));expect(people).not.toHaveBeenCalled();
+ }finally{spy.mockRestore();}
 });
 it('withdraws target agent and at cards independently of source access in two windows',async()=>{
  const s=await setup(),scope=JSON.stringify({thread:s.thread,refs:['agent:mark','at:mark']});
