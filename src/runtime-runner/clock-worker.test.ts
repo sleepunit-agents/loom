@@ -667,3 +667,57 @@ it.each(['words','model','authority'] as const)('retained owning Clock source %s
   expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${third}`)).toEqual({consumed:null});
  }
 });
+
+// Completion must have reached the worker and armed its next idle tick before
+// advancing the fake clock; a persisted ACK alone doesn't prove that boundary.
+async function finishToIdle(f:Awaited<ReturnType<typeof setup>>){
+ const at=vi.spyOn(f.clock,'at');
+ f.finish();
+ await vi.waitFor(()=>expect(at).toHaveBeenCalledWith(f.clock.now()+1000,expect.any(Function)));
+ at.mockRestore();
+}
+it.each([false,true])('executable worker resumes an arrival after an empty-queue completion (private=%s)',async privateInput=>{
+ const f=await setup(false,privateInput),input=new PassThrough(),signals=new EventEmitter(),stderr=vi.fn();
+ const completed=runClockWorker({input,args:[],signals,stderr},{clock:f.clock,launch:f.launch});
+ input.end(JSON.stringify({...f.config,idleMs:4000}));await f.ready;
+ await finishToIdle(f);expect(f.consumed().consumed).not.toBeNull();
+ const joined=await f.joinInput();
+ await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+ expect(f.calls[1].args).toContain('--resume');
+ expect(f.calls[1].args[f.calls[1].args.indexOf('--resume')+1]).toBe(f.calls[0].args[f.calls[0].args.indexOf('--session-id')+1]);
+ expect(f.calls[1].input).toBe('LOCAL OWNER RULES\nLATER JOINED WORDS');
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+ await finishToIdle(f);f.clock.advance(4000);
+ expect(await completed).toBe(0);expect(stderr).not.toHaveBeenCalled();
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:expect.any(Number)});
+});
+it('empty idle wait expires successfully without launching or retrying another child',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:3000});await f.ready;
+ await finishToIdle(f);f.clock.advance(3000);
+ expect(await worker.completed).toBe(true);expect(f.calls).toHaveLength(1);
+ expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(1);
+});
+it.each(['revokePolicy','stopJob','cancelRequest','close'] as const)('owner %s ends an idle wait promptly',async action=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:30_000});await f.ready;
+ await finishToIdle(f);await worker[action]();
+ expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(1);
+});
+it.each(['withdraw','credential','claim','model','policy'] as const)('idle probe rechecks original owning %s before retaining native history',async kind=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:30_000});await f.ready;await finishToIdle(f);
+ if(kind==='withdraw')f.withdraw();
+ if(kind==='credential')signin(f.app).tokens.change(ts=>ts.splice(0,ts.length));
+ if(kind==='claim'){const job=f.store.read('job',f.job)!;f.store.put('job',{...job,claimedAt:job.claimedAt!+1},f.clock.now());}
+ if(kind==='model'){const job=f.store.read('job',f.job)!;f.store.put('job',{...job,model:'other'},f.clock.now());}
+ if(kind==='policy')expect(f.call('runtime.configureBodyPolicy',{agent:'art',revision:0,gates:{people:{}},policy:{deny:['Bash']}}).ok).toBe(true);
+ f.clock.advance(1000);expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(1);
+});
+it('a stalled idle probe expires without resuming from a late reply',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:30_000});await f.ready;await finishToIdle(f);
+ const held=holdResponse('idleClockExecution');
+ try{f.clock.advance(1000);await held.ready;f.clock.advance(5000);
+  expect(await worker.completed).toBe(false);held.release();await settle();expect(f.calls).toHaveLength(1);
+ }finally{held.release();}
+});
+it.each([-1,30_001,1.5,'3000',null])('rejects invalid owner idle wait %s before release',async idleMs=>{
+ const f=await setup();expect(()=>f.start({...f.config,idleMs:idleMs as number})).toThrow();expect(f.calls).toHaveLength(0);
+});

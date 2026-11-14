@@ -33,7 +33,8 @@ The executable takes no arguments, bounds and validates stdin, drains signals
 through the owning startup, and prints no result words/native handles;
 exit 0 means the admitted turns completed and Runtime acknowledged them, exit 1
 means failed or uncertain. It performs no retry. During this one startup it retains
-native history only for prompts already queued when the previous turn completes.
+native history for queued prompts and, when the owner opts in, prompts arriving
+during the bounded idle wait described below.
 
 | Native worker step | Owning behavior |
 | --- | --- |
@@ -73,7 +74,7 @@ before ACK and grants no file execution authority.
 
 This consumer supports stored prompts or a standalone checkout file with no model or
 account override on the job, root or selected source (including later joined
-inputs), rechecked throughout execution and no configured/imported central body policy. Cross-process/idle native joining, continuation handles, local/approval/slot execution,
+inputs), rechecked throughout execution and no configured/imported central body policy. Cross-process native joining, continuation handles, local/approval/slot execution,
 central compiled policy integration and the full runner lifecycle remain work
 under t-2201. The worker is present as a package entry point but is not installed
 or selected on any host by this PR. In-process tests exercise actual next-mode
@@ -120,9 +121,43 @@ existing local expiry still bounds a stalled completion.
 Public and private executable-stdin fixtures file joined prompts through Clock,
 claim/takeInput/report through the runner, and exercise real HTTP Signin plus the
 production worker at its existing fake-child seam. This is queued sequential
-resume in one worker lifetime. It does not interrupt a running child, wait idle for
-future arrivals, restore native history after restart, install an entry point on a
-host, or implement authenticated continuation handles. Those remain work here.
+resume in one worker lifetime. The optional bounded idle wait below extends
+that lifetime for future arrivals. It does not interrupt a running child, restore
+native history after restart, install an entry point on a host, or implement
+authenticated continuation handles. Those remain work here.
+
+
+### Bounded idle prompt joining
+
+The owner-supplied worker config accepts optional `idleMs`, an integer from 0 to
+30,000 milliseconds, default 0. After an empty-queue prompt completion, a positive
+value retains the completed Runtime source proof and the worker's native history
+for that idle window. The worker probes `runtime.idleClockExecution` at most once
+per second, serially, using the original credential and completed execution id.
+The probe rechecks the exact completed source, all retained sources, original
+binding/claim/house, effective steering and current policy. It returns only
+`current`, `more` and a bounded TTL; it releases no words or native handle, and
+never extends the completed proof's deadline.
+
+An arriving prompt still needs a new `beginClockExecution` with the previous
+Runtime id, its own durable source effect, preparation, new pre-spawn authority,
+watchdog, post-output check and ACK. The same worker-owned native session resumes
+only after those checks. Clean expiry with no arrival succeeds; a failed or
+uncertain probe/completion fails without retry. Idle HTTP requests are bounded by
+both five seconds and the original idle deadline. Owner close, cancellation,
+policy revocation and job stop end idle waiting promptly. Late responses cannot
+restart a closed worker. The idle window restarts only after another successfully
+executed prompt; 100 turns and 1024 total retained source slots remain the bounds.
+Standalone file completion never retains an idle join proof.
+
+Public/private fixtures file through actual Clock, claim/takeInput/report through
+Runtime, and run executable stdin startup with real HTTP Signin and the existing
+fake child seam. An arrival after an ACK resumes the original session and only
+ACKs after its own successful output. Expiry, owner shutdown, original-source
+withdrawal, credential/claim/model/policy changes and stalled replies are covered.
+This supplies bounded same-process idle joining. Cross-process recovery, active
+child interruption and authenticated continuation issuance remain open under
+t-2201; no native handle is serialized and no archive grants execution authority.
 
 
 The existing `runtime.takeInput` boundary now requires current owning Clock
@@ -141,7 +176,7 @@ only after agent house configuration and waits for runner-confirmed running or
 waiting state. Queue acceptance alone is never reported as started. Missing
 features (continuations, slots, approvals, local wakes) remain held.
 Local, approval, slot and continuation delivery remain held. Private timed prompt delivery is implemented below. Public prompt conversation delivery is implemented below. Native transport
-interrupt, idle/cross-process resume and authenticated continuation resolution
+interrupt, cross-process resume and authenticated continuation resolution
 remain unfinished; queued sequential resume is described above.
 
 Runtime now dispatches public prompt work as the Clock service, retaining

@@ -11,3 +11,4 @@ export const clockExecutionAdmission=z.object({execution:z.uuid(),job:z.string()
   ttl:z.literal(5000)}).strict();
 export const clockExecutionCurrent=z.object({current:z.literal(true),ttl:z.literal(5000)}).strict();
 export const clockExecutionCompletion=z.object({acknowledged:z.literal(true),more:z.boolean()}).strict();
+export const clockExecutionIdle=z.object({current:z.literal(true),more:z.boolean(),ttl:z.literal(5000)}).strict();
