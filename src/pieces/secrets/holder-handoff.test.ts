@@ -5,12 +5,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import https from 'node:https';
+import { ServerResponse, type IncomingMessage } from 'node:http';
+import { connect as netConnect } from 'node:net';
+import { connect as tlsConnect } from 'node:tls';
+import { startLoom } from '../../foundation.js';
+import { fixture } from '../../fixture.js';
+import { FakeClock } from '../../core/clock.js';
 import { listenHolderHandoff, localHolderHandoff, type HolderDestination } from './holder-handoff.js';
 const closes: Array<()=>unknown> = [];
-afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();vi.restoreAllMocks();});
+afterEach(async()=>{vi.useRealTimers();for(const close of closes.splice(0).reverse())await close();vi.restoreAllMocks();});
 function deferred<T>() {let resolve!:(value:T)=>void; const promise=new Promise<T>(r=>{resolve=r;});return {promise,resolve};}
 async function setup() {
  const home=mkdtempSync(join(tmpdir(),'loom-handoff-'));closes.push(()=>rmSync(home,{recursive:true,force:true}));
+ const daemonHome=join(home,'daemon');fixture(daemonHome);
+ const app=await startLoom({home:daemonHome,next:true,staging:true,host:'127.0.0.1',port:0,clock:new FakeClock(),stdout(){}});closes.push(()=>app.close());
  const fixtures=fileURLToPath(new URL('./fixtures/holder-tls/',import.meta.url));
  for(const name of ['ca.pem','holder.pem','holder.key','daemon.pem','daemon.key','stranger.pem','stranger.key'])writeFileSync(join(home,name),readFileSync(join(fixtures,name)),{mode:0o600});
  const common={socket:join(home,'handoff.sock'),ca:join(home,'ca.pem')};
@@ -105,4 +113,87 @@ it('refuses authority exceptions, invalid names and nonempty request bodies befo
   });expect(status).toBe(503);
  }
  expect(f.read).not.toHaveBeenCalled();expect(f.handTo).not.toHaveBeenCalled();
+});
+
+// Raw peers have no application deadline, so holder timeouts cannot be masked by
+// the daemon client's own timeout. The outside peer stays beside the next home.
+function rawPeer(f: Awaited<ReturnType<typeof setup>>, partial=false) {
+ let closed=false;
+ const responses:Buffer[]=[];
+ const peer=tlsConnect({path:f.config.socket,servername:f.config.servername,
+  ca:readFileSync(f.config.ca),cert:readFileSync(f.config.cert),key:readFileSync(f.config.key),minVersion:'TLSv1.3'},()=>{
+   peer.write(`POST /v1/handoff/${f.id} HTTP/1.1\r\nHost: holder.test\r\nContent-Length: 0\r\nConnection: close\r\n${partial?'':'\r\n'}`);
+  });
+ peer.on('data',b=>responses.push(b));peer.on('error',()=>{});peer.on('close',()=>{closed=true;});
+ closes.push(()=>{peer.destroy();});
+ return {peer,responses,closed:()=>closed};
+}
+it('wrong CA-valid holder pin sends no ticket to the HTTP handler',async()=>{
+ const f=await setup();await f.holder.close();const received=vi.fn((_req:IncomingMessage,res:ServerResponse)=>{res.writeHead(204,{'content-length':0});res.end();});
+ const server=https.createServer({ca:readFileSync(f.config.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),requestCert:true,rejectUnauthorized:true},received);
+ await new Promise<void>(resolve=>server.listen(f.server.socket,resolve));
+ const {chmodSync}=await import('node:fs');chmodSync(f.server.socket,0o600);
+ closes.push(()=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());}));
+ const client=localHolderHandoff(f.config,f.fingerprint('daemon'));closes.push(client.close);
+ await expect(client.handTo(f.id)).rejects.toThrow(/^Secret handoff unavailable$/);
+ expect(received).not.toHaveBeenCalled();
+});
+it('client close independently aborts a live request and disconnect fences late source release',async()=>{
+ const f=await setup(),entered=deferred<void>(),release=deferred<Buffer>();
+ f.read.mockImplementationOnce(async()=>{entered.resolve();return release.promise;});
+ const disconnected=deferred<void>(),emit=ServerResponse.prototype.emit;
+ vi.spyOn(ServerResponse.prototype,'emit').mockImplementation(function(this:ServerResponse,event,...args){
+  const result=Reflect.apply(emit,this,[event,...args]);if(event==='close'&&this.req.url===`/v1/handoff/${f.id}`)disconnected.resolve();return result;
+ });
+ const pending=f.client.handTo(f.id).catch(e=>e);await entered.promise;
+ await f.client.close();await disconnected.promise;expect((await pending).message).toBe('Secret handoff unavailable');
+ release.resolve(f.bytes);
+ // Draining the still-running holder waits for source settlement, without
+ // setting its closed flag until the disconnected handler has already ended.
+ await vi.waitFor(()=>expect(f.bytes.every(b=>b===0)).toBe(true));
+ expect(f.handTo).not.toHaveBeenCalled();expect(f.current).toHaveBeenCalledOnce();
+ // A separate client still uses the same live holder.
+ f.read.mockResolvedValueOnce(Buffer.from('FRESH'));
+ const next=localHolderHandoff(f.config,f.fingerprint('holder'));closes.push(next.close);
+ await next.handTo(f.id);expect(f.handTo).toHaveBeenCalledOnce();
+});
+it.each(['tls','headers'])('bounds the holder connection before complete %s',async phase=>{
+ const f=await setup();vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
+ let connected=false,closed=false;
+ const raw=phase==='tls'?netConnect(f.config.socket,()=>{connected=true;}):rawPeer(f,true).peer;
+ if(phase==='headers')raw.once('secureConnect',()=>{connected=true;});
+ raw.on('error',()=>{});raw.on('close',()=>{closed=true;});
+ try {
+  await vi.waitFor(()=>expect(connected).toBe(true));
+  await vi.advanceTimersByTimeAsync(5000);await vi.waitFor(()=>expect(closed).toBe(true));
+  expect(f.authority).not.toHaveBeenCalled();expect(f.read).not.toHaveBeenCalled();
+ }finally{raw.destroy();vi.useRealTimers();}
+});
+it.each(['authority','source','transfer'])('holder deadline fences late %s settlement and drains borrowed bytes',async phase=>{
+ const f=await setup(),entered=deferred<void>(),release=deferred<void>();
+ if(phase==='authority')f.authority.mockImplementationOnce(async()=>{entered.resolve();await release.promise;return f.destination;});
+ if(phase==='source')f.read.mockImplementationOnce(async()=>{entered.resolve();await release.promise;return f.bytes;});
+ if(phase==='transfer')f.handTo.mockImplementationOnce(async b=>{entered.resolve();await release.promise;expect(Buffer.from(b).toString()).toBe('HANDOFF-SECRET-SENTINEL');});
+ vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});const raw=rawPeer(f);
+ try {
+  await entered.promise;await vi.advanceTimersByTimeAsync(5000);await vi.waitFor(()=>expect(raw.closed()).toBe(true));
+  if(phase==='transfer')expect(f.bytes.toString()).toBe('HANDOFF-SECRET-SENTINEL');
+  release.resolve();
+  if(phase!=='authority')await vi.waitFor(()=>expect(f.bytes.every(b=>b===0)).toBe(true));
+  await f.holder.close();expect(Buffer.concat(raw.responses).length).toBe(0);
+  expect(f.handTo).toHaveBeenCalledTimes(phase==='transfer'?1:0);
+  if(phase==='authority')expect(f.read).not.toHaveBeenCalled();
+ }finally{release.resolve();raw.peer.destroy();vi.useRealTimers();}
+});
+it('client has its own absolute deadline against a holder with no response deadline',async()=>{
+ const f=await setup();await f.holder.close();const entered=deferred<void>();
+ const server=https.createServer({ca:readFileSync(f.config.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),requestCert:true,rejectUnauthorized:true},()=>{entered.resolve();});
+ await new Promise<void>(resolve=>server.listen(f.server.socket,resolve));
+ const {chmodSync}=await import('node:fs');chmodSync(f.server.socket,0o600);
+ closes.push(()=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());}));
+ vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
+ try {
+  const pending=expect(f.client.handTo(f.id)).rejects.toThrow(/^Secret handoff unavailable$/);
+  await entered.promise;await vi.advanceTimersByTimeAsync(5000);await pending;
+ }finally{vi.useRealTimers();}
 });
