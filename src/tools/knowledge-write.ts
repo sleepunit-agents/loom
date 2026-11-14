@@ -66,7 +66,7 @@ export function slugify(title: string): string {
  * as sourced, not internal.
  * The check is on the domain and source_kind only, never on the locator: any repo-kind citation
  * (ours or someone else's) on a domain that starts with "ours/" makes the page internal.
- * knowledgeWrite rejects an empty citation list before calling this.
+ * An empty citation list is provisional as well.
  */
 function determineSourcing(
   citations: KnowledgeWriteInput['citations'],
@@ -89,14 +89,6 @@ export async function knowledgeWrite(
   identity: string = 'art',
   selection?: KnowledgeSelection,
 ): Promise<string> {
-  if (input.citations.length === 0) {
-    return (
-      'Error: at least one citation is required — knowledge must be supported. ' +
-      'If this is a conversation-distilled insight, pass source_kind="conversation" ' +
-      'and the page will be stored provisional.'
-    );
-  }
-
   const slug = input.slug ?? slugify(input.title);
   if (!slug) {
     return 'Error: could not derive a slug from the title. Provide an explicit slug.';
@@ -121,7 +113,7 @@ export async function knowledgeWrite(
 
     const sourcingNote =
       sourcing === 'provisional'
-        ? '\n> **Provisional** — sole support is conversation citations. ' +
+        ? '\n> **Provisional** — No independent source recorded. ' +
           'Add a web or repo citation to promote to sourced/internal.'
         : sourcing === 'internal'
           ? '\n> **Internal** — ours/ class artifact; cited to repo/live-system sources.'

@@ -79,7 +79,7 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
       'On an existing slug: body REPLACES by default (mode: "append" adds to it instead), ' +
       'title/domain follow the write, citations always appended with exact-duplicate dedup — safe to re-send.\n' +
       'Epistemic gate (§E1):\n' +
-      '  • conversation-only citations → provisional (both classes).\n' +
+      '  • no citations or conversation-only citations → provisional (both classes).\n' +
       '  • ours/ domain + any repo citation → internal (ours/ class artifact; repo = git path / commit / live-system probe).\n' +
       '  • any web/repo citation on a non-ours/ domain → sourced (world/ default).\n' +
       '  NOTE: repo citations on world-class pages (domain not starting with "ours/") are treated as sourced, not internal.\n' +
@@ -121,8 +121,8 @@ export function registerKnowledgeTools(server: McpServer, opts: RegisterKnowledg
           ),
           source_locator: z.string().optional().describe('URL, memory ref, session ID, or repo path + commit hash'),
           excerpt: z.string().describe('Inline supporting quote or repo excerpt — link-rot insurance (max 4 KB)'),
-        })).describe(
-          'Support citations. At least one required. ' +
+        })).default([]).describe(
+          'Support citations. Without a source the page stays provisional. ' +
           'All-conversation → provisional. ours/ domain + repo → internal. Any web or repo on non-ours/ → sourced.',
         ),
         created_by: z.string().optional().describe(
