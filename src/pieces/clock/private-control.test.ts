@@ -104,3 +104,33 @@ it('retains public command names for noncanonical public schedule ids',async()=>
  expect(schedules(f.app.db)).toHaveLength(1);expect(schedules(f.app.db)[0].id).toBe('daily');
  expect(f.call('command',{argv:['schedule','run','daily']})).toMatchObject({ok:true,value:{exit:0}});
 });
+
+it('preserves a positive verified private project through replacement and each occurrence',async()=>{
+ const f=await setup();f.proof={...f.proof!,project:'pond'};
+ expect(f.call('scheduleSet',input).ok).toBe(true);
+ expect(schedules(f.app.db)[0]).toMatchObject({member:'jonathan',project:'pond',authorship:{member:'jonathan',project:'pond'}});
+ expect(wakes(f.app.db).every(w=>w.member==='jonathan' && w.project==='pond' && w.authorship?.project==='pond')).toBe(true);
+ expect(f.call('scheduleSet',{...input,prompt:'PRIVATE_PROJECT_EDIT'}).ok).toBe(true);
+ expect(schedules(f.app.db)[0]).toMatchObject({member:'jonathan',project:'pond',authorship:{project:'pond'}});
+ expect(wakes(f.app.db).filter(w=>w.state==='pending')).toHaveLength(1);
+ expect(wakes(f.app.db).filter(w=>w.state==='pending')[0]).toMatchObject({member:'jonathan',project:'pond',authorship:{project:'pond'}});
+});
+it.each(['direct','command'])('binds %s control receipt replay to a service-only proof change',async door=>{
+ const f=await setup();f.proof={...f.proof!,service:'bridge'};
+ const id=randomUUID(),op=door==='direct'?'scheduleSet':'command',data=door==='direct'?input:{argv:['schedule','set','daily','--at','13:17','-p','PRIVATE_SERVICE']};
+ const original=f.call(op,data,body,id);expect(original).toMatchObject({ok:true});
+ expect(f.call(op,data,body,id)).toEqual(original);
+ const before=f.snapshot();f.proof={...f.proof!,service:'other-bridge'};
+ expect(f.call(op,data,body,id)).toMatchObject({ok:false,code:'conflict'});expect(f.snapshot()).toEqual(before);
+});
+it('a colliding public wake cannot waive a removed private schedule id window guard',async()=>{
+ const f=await setup(false),publicProof=f.proof!;
+ expect(f.call('in',{agent:'art',when:'1h',prompt:'Public',note:''}).ok).toBe(true);
+ const id=wakes(f.app.db)[0].id;
+ f.proof={...publicProof,member:'jonathan'};
+ expect(f.call('scheduleSet',{...input,id}).ok).toBe(true);
+ expect(f.call('scheduleRemove',{id}).ok).toBe(true);
+ f.proof=publicProof;const before=f.snapshot();
+ expect(f.call('scheduleSet',{...input,id})).toMatchObject({ok:false,code:'denied'});
+ expect(f.snapshot()).toEqual(before);
+});

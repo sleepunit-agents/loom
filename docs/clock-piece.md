@@ -1120,7 +1120,7 @@ state/deadline and parked wait id; no private words, original people or saved
 Viewer is returned. Core passes the exact authenticated Viewer into the optional
 per-record window gate; existing input-only gates and signed-in windows retain
 their behavior. Private reads remain window-only. Deleted private ids retain their
-window gate, including receipt retries; removing a schedule does not make its
+window gate, including receipt retries and collisions with public wake ids; removing a schedule does not make its
 previous results token-readable. Public command names and response text remain
 unchanged; private schedule confirmation uses its deadline acknowledgement rather
 than reading a private list. A removed private id requires member-window recovery;

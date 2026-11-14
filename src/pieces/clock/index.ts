@@ -102,6 +102,13 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       && proof.member === w.member && proof.project === w.project
       && mayFile(v, w);
   };
+  const maySetSchedule = (v:Viewer, input:Work & {id:string}) => {
+    const saved=schedule(db,input.id);
+    return mayFile(v,input) && (!saved || (saved.laneDetails ? act(v,saved,true) : mayControl(v,saved)));
+  };
+  const mayScheduleControl = (v:Viewer, name:string, saved:Schedule) =>
+    saved.laneDetails || name==='scheduleRun' && v.kind!=='agent'
+      ? act(v,saved,true) && create(v,saved) : mayControl(v,saved);
   const filedWork = <T extends Work>(v: Viewer, w: T): T & Work => prepareFiling(v, w) as (T & Work) | undefined
     ?? (() => { throw new OperationError('denied', 'Work must retain its authenticated conversation scope'); })();
   const privateLocal=(w:Wake)=>w.member!==undefined && !!w.approval && !!filedLocal(db,w.approval);
@@ -123,8 +130,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       inputHash: ordinaryFiling || control ? filingHash : undefined,
       requiresWindow: internal ? undefined : (i,v)=>{
         const input=i as {id?:string;member?:string};
-        const saved=input.id ? wake(db,input.id)??schedule(db,input.id) : undefined;
+        const saved=input.id ? name.startsWith('schedule') ? schedule(db,input.id) : wake(db,input.id)??schedule(db,input.id) : undefined;
         const privateId=!!(input.id && db.prepare('SELECT 1 FROM clock_meta WHERE key=?').get('private-id:'+input.id));
+        // The durable marker also protects deleted schedules whose id collides
+        // with a public wake (and the reverse). A public row cannot waive it.
+        if(privateId && !saved?.member)return true;
         if(input.member===undefined && !saved?.member && !privateId)return false;
         // Only an authorized control can replace the window requirement. Reads
         // and historical removed ids remain window-only, including cache replay.
@@ -370,7 +380,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('agentNext', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (ctx, i) => agentNext(i.agent, deskWakes(ctx, i.agent), paused(db, i.agent)));
 
   const scheduleInput = workInput.extend({ id: text, at: z.union([text, z.array(text)]), days: z.string().default(''), lane: text.optional() });
-  register('scheduleSet', scheduleInput, true, (v, i) => mayFile(v, i) && (!schedule(db, i.id) || (schedule(db, i.id)!.laneDetails ? act(v,schedule(db,i.id)!,true) : mayControl(v,schedule(db,i.id)!))), (ctx, input) => {
+  register('scheduleSet', scheduleInput, true, maySetSchedule, (ctx, input) => {
     const i = filedWork(ctx.viewer, input);
     newWork(i); calendar(() => daysOf(i.days));
     const old = schedule(db, i.id);
@@ -384,11 +394,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     saveSchedule(ctx, s); next(ctx, s, ctx.now); return s;
   });
   register('schedules', z.object({}), false, () => true, ctx => schedules(db).filter(s => readSee(ctx, s, 'schedule')).map(publicWork));
-  register('scheduleRemove', idInput, true, (v, i) => { const s = schedule(db, i.id); return !s || (s.laneDetails ? act(v,s,true) && create(v,s) : mayControl(v,s)); }, (ctx, i) => {
+  register('scheduleRemove', idInput, true, (v, i) => { const s = schedule(db, i.id); return !s || mayScheduleControl(v,'scheduleRemove',s); }, (ctx, i) => {
     const s = schedule(db, i.id); if (!s) throw new OperationError('not-found', 'Schedule not found');
     removeSchedule(ctx, s); return { id: s.id };
   });
-  register('scheduleRun', idInput.extend({ note:z.string().max(100_000).optional() }), true, (v, i) => { const s = schedule(db, i.id); return !!s && (s.laneDetails ? act(v,s,true) && create(v,s) : v.kind==='agent' ? mayControl(v,s) : act(v,s,true) && create(v,s)); }, (ctx, i) => {
+  register('scheduleRun', idInput.extend({ note:z.string().max(100_000).optional() }), true, (v, i) => { const s = schedule(db, i.id); return !!s && mayScheduleControl(v,'scheduleRun',s); }, (ctx, i) => {
     const s = schedule(db, i.id)!;
     oneOffRoom(ctx, s.agent);
     const caller = filedWork(ctx.viewer, { agent: s.agent, member: s.member, project: s.project, note: '' }).authorship!;
@@ -459,11 +469,10 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       const control=controlCommandInput(viewer,input,schedules(db).filter(s=>see(viewer,s,'schedule')));
       if(control){
         const saved=control.operation==='cancel'?wake(db,control.id):schedule(db,control.id);
-        if(!saved && db.prepare('SELECT 1 FROM clock_meta WHERE key=?').get('private-id:'+control.id))return false;
-        if(control.operation==='scheduleSet')return mayFile(viewer,{agent:control.agent,note:''}) && (!saved || !('laneDetails' in saved && saved.laneDetails) && mayControl(viewer,saved));
+        if(!saved?.member && db.prepare('SELECT 1 FROM clock_meta WHERE key=?').get('private-id:'+control.id))return false;
+        if(control.operation==='scheduleSet')return maySetSchedule(viewer,{id:control.id,agent:control.agent,note:''});
         if(!saved)return viewer.kind==='member';
-        if('laneDetails' in saved && saved.laneDetails)return act(viewer,saved,true) && create(viewer,saved);
-        return control.operation==='scheduleRun' && viewer.kind!=='agent' ? act(viewer,saved,true) && create(viewer,saved) : mayControl(viewer,saved);
+        return control.operation==='cancel' ? mayControl(viewer,saved) : mayScheduleControl(viewer,control.operation,saved as Schedule);
       }
       const oneOff = oneOffCommandInput(viewer,input);
       return oneOff && options.provenance?.(viewer) ? mayFile(viewer,oneOff) && (!oneOff.on || !!options.approvals?.check(oneOff.on,viewer))
