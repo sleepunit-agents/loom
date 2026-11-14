@@ -237,6 +237,7 @@ it.each([
  {href:'https://github.com.evil/acme/app/issues/3'},
  {href:'https://github.com/acme/app/issues/3?next=evil'},
  {href:'https://github.com/acme/app/issues/4'},
+ {page:'',href:'https://github.com/acme/app/issues/3'},
  {page:'../../evil'},
  {page:'c/github/acme/app/4'},
  {page:'c/github/acme/app/3',href:'https://github.com/acme/app/issues/3'},

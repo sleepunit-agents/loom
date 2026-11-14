@@ -5,7 +5,7 @@ import type { ThreadRef } from './refs.js';
 import { tasksRole } from '../tasks/role.js';
 const task = z.object({id:z.string(),title:z.string(),status:z.enum(['open','in_progress','closed']),source:z.string().optional(),assignee:z.string().optional(),createdAt:z.string(),startedAt:z.string().optional(),closedAt:z.string().optional(),closeReason:z.string().optional()});
 const exported = z.object({result:z.object({ok:z.literal(true),tasks:z.array(task),links:z.array(z.object({id:z.string(),dependsOn:z.string(),type:z.string()}))})});
-const feed = z.object({items:z.array(z.object({title:z.string().max(200),ref:z.string().max(200),status:z.string().max(24),when:z.string().optional(),tone:z.enum(['bad','warn','ok']).optional(),made:z.boolean().optional(),page:z.string().optional(),href:z.string().optional()}).strict().refine(item=>!(item.page&&item.href))).max(50)}).strict();
+const feed = z.object({items:z.array(z.object({title:z.string().max(200),ref:z.string().max(200),status:z.string().max(24),when:z.string().optional(),tone:z.enum(['bad','warn','ok']).optional(),made:z.boolean().optional(),page:z.string().optional(),href:z.string().optional()}).strict().refine(item=>item.page===undefined||item.href===undefined)).max(50)}).strict();
 export interface WorkItem { title:string;ref:string;status:string;from:'tasks'|'changes'|'notes';made?:true;when?:string;tone?:'bad'|'warn'|'ok';url?:string }
 interface Options {operations:Operations;live:Live;clock:Clock;sharing():Sharing;thread(viewer:Viewer,id:string):{conversation:string}|undefined;refs(id:string):ThreadRef[]}
 // Feed pointers never choose a navigation destination. Only the exact canonical
