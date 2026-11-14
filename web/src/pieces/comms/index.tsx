@@ -13,6 +13,7 @@ import { folderThreads, watchingJob } from './threads';
 import { Work } from './work';
 import { ThreadRow } from './thread-row';
 import './comms.css';
+import { CommPortrait } from './portrait';
 import { RailContext } from '../../desk-rail';
 interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};job?:false|{joined:boolean};[key:string]:unknown}
 function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
@@ -47,7 +48,7 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
  const working=workingView(thread,all,now,status==='live'),thinking=thinkingView(thread,all,status==='live'),on=latestHarness(all);
  const scroller=useRef<HTMLDivElement>(null);const follow=useReplyFollow(scroller,records,status==='live');
  return <article className="comms-thread flex min-h-0 flex-1 flex-col">
-  <header className="grid gap-2 border-b p-4"><h1>{thread.title??`New thread with ${thread.agent}`}</h1><p>{thread.agent}{on&&<span aria-label="Reply harness"> · ON {on.toUpperCase()}</span>}</p>
+  <header className="grid gap-2 border-b p-4"><CommPortrait agent={thread.agent} messages={all} connected={status==='live'} working={!!working} thinking={!!thinking} on={on}/><h1>{thread.title??`New thread with ${thread.agent}`}</h1><p>{thread.agent}{on&&<span aria-label="Reply harness"> · ON {on.toUpperCase()}</span>}</p>
    {thinking&&<p role="status" aria-label="Thinking status">{thinking}</p>}
    {working&&<p role="status" aria-label="Working status" data-alive={working.face}>{working.text}</p>}
    {status==='live'&&thread.working&&thread.alive&&<p aria-label="Body activity">Last body activity <time dateTime={new Date(thread.alive.at).toISOString()}>{new Date(thread.alive.at).toLocaleString('en-US',{timeZone:'America/Chicago'})} CT</time>{thread.alive.tokens!==undefined&&` · ${thread.alive.tokens.toLocaleString('en-US')} tokens`}</p>}

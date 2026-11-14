@@ -19,3 +19,20 @@ it('retains selection while hidden and refuses late cleanup from a previous pane
   await act(async()=>link.onAir(null,second));expect(link.selected).toBeUndefined();
  } finally {await act(async()=>tree.unmount());}
 });
+it('publishes only the selected shown destination and fences late slot cleanup',async()=>{
+ let link!:RailLink;
+ function Probe({shown}:{shown:boolean}){link=useCompanion(shown);return null;}
+ let tree!:ReturnType<typeof create>;
+ await act(async()=>{tree=create(h(Probe,{shown:true}));});
+ try {
+  const first={},second={},pane={},el={} as HTMLElement,other={} as HTMLElement;
+  await act(async()=>link.onAir({agent:'art'},pane));
+  await act(async()=>link.setScreen!({agent:'art',el},first));expect(link.screen?.el).toBe(el);
+  await act(async()=>link.setScreen!({agent:'mark',el:other},second));expect(link.screen).toBeNull();
+  await act(async()=>link.onAir({agent:'mark'},pane));expect(link.screen?.el).toBe(other);
+  await act(async()=>link.setScreen!(null,first));expect(link.screen?.el).toBe(other);
+  await act(async()=>tree.update(h(Probe,{shown:false})));expect(link.screen).toBeNull();
+  await act(async()=>tree.update(h(Probe,{shown:true})));expect(link.screen?.el).toBe(other);
+  await act(async()=>link.onAir(null,pane));expect(link.screen).toBeNull();
+ } finally {await act(async()=>tree.unmount());}
+});
