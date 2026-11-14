@@ -17,7 +17,8 @@
     "loom-wake-client": "dist/wake-client.js",
     "loom-token": "dist/token-client.js",
     "loom-account": "dist/account-client.js",
-    "loom-sessions": "dist/sessions-client.js"
+    "loom-sessions": "dist/sessions-client.js",
+    "loom-claude-worker": "dist/claude-worker.js"
   },
   "files": [
     "dist",

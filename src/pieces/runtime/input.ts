@@ -29,7 +29,8 @@ export function installRunnerInput(db: Db, operations: Operations, sharing: () =
       throw new OperationError('denied', 'Box capabilities changed; reconcile this job');
     // No login, secret, port, socket or agent credential is conferred by this payload.
       return { job: id, agent: job.agent, house: job.made!, brief: input.brief, needs,
-        ...(job.model===undefined?{}:{model:job.model}) };
+        ...(job.model===undefined?{}:{model:job.model}),
+        ...(job.conversation===undefined?{}:{conversation:job.conversation}) };
   };
   operations.register(operation({
     name: 'runtime.takeInput', doors: ['http', 'direct'],

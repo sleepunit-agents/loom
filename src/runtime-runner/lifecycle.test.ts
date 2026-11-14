@@ -1,0 +1,114 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { afterEach, expect, it } from 'vitest';
+import { startLoom } from '../foundation.js';
+import { FakeClock } from '../core/index.js';
+import { fixture } from '../fixture.js';
+import { signin, hash } from '../core/signin/index.js';
+import { runtimeStore } from '../pieces/runtime/store.js';
+import { connectClaudeWorker, type WorkerControlRuntime } from './lifecycle.js';
+import { runClaudeJob } from './once.js';
+import type { SpawnClaude } from './session.js';
+const cleanups:Array<()=>unknown>=[];
+afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();});
+const house={repo:'/fixture/art',houseFile:'house/house.json'};
+const rules={key:'a'.repeat(64),deny:['mcp__secrets'],sections:[{text:'OWNER FLOOR'}]};
+const binding={agent:'art',conversation:'j',venue:'worker',place:'j'};
+async function setup() {
+ const home=mkdtempSync(join(tmpdir(),'worker-control-'));cleanups.push(()=>rmSync(home,{recursive:true,force:true}));fixture(home);
+ const clock=new FakeClock(),app=await startLoom({home,clock,next:true});cleanups.push(app.close);
+ const store=runtimeStore(app.db),auth=signin(app),token=randomBytes(32).toString('hex');
+ app.db.transaction(()=>{
+  store.put('settings',{id:'art',agent:'art',boxes:[],house},clock.now());
+  store.put('box',{id:'r',name:'r',owner:'jonathan',local:false,mayHost:'*',lentTo:[],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:1},clock.now());
+  store.put('job',{id:'j',agent:'art',runner:'r',box:'r',title:'work',state:'queued',createdAt:1},clock.now());
+  app.db.prepare('INSERT INTO runtime_inputs(job,brief,needs) VALUES (?,?,?)').run('j','PRIVATE WORK','[]');
+ })();
+ app.operations.call('direct',{kind:'member',id:'jonathan'},'signin.setPrincipal',{kind:'runner',id:'r',active:true},'principal');
+ auth.tokens.change(tokens=>tokens.push({role:'runner:r',label:'worker',sha256:hash(token),created:new Date(clock.now()).toISOString()}));
+ const config={url:app.url,token,job:'j'};
+ const calls:Array<{args:readonly string[];input:string;child:EventEmitter&{stdin:PassThrough;stdout:PassThrough;stderr:PassThrough;kill:()=>boolean;killed:boolean}}>=[];
+ const listeners:Array<()=>void>=[];
+ const waitSpawn=(count:number)=>new Promise<void>(resolve=>{if(calls.length>=count)resolve();else listeners.push(()=>{if(calls.length>=count)resolve();});});
+ const spawn:SpawnClaude=(_command,args)=>{
+  const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough(),killed:false,kill(){this.killed=true;queueMicrotask(()=>this.emit('close',null));return true;}});
+  const call={args,input:'',child};child.stdin.on('data',data=>call.input+=data.toString());calls.push(call);for(const notify of listeners)notify();
+  return child as ReturnType<SpawnClaude>;
+ };
+ const selected={command:'/worker/claude',env:{WORKER:'true'},checkout:'/fixture/art',house,binding,rules,spawn};
+ let tick:(()=>void)|undefined;
+ const runtime:WorkerControlRuntime={request:fetch,every(callback){tick=callback;return ()=>{tick=undefined;};}};
+ const update=(set:object)=>app.db.transaction(()=>{const {changedAt:_,...job}=store.read('job','j')!;store.put('job',{...job,...set},clock.now());})();
+ const finish=()=>{const c=calls.at(-1)!;const flag=c.args.includes('--resume')?'--resume':'--session-id';c.child.stdout.write(JSON.stringify({type:'result',is_error:false,session_id:c.args[c.args.indexOf(flag)+1],result:'PRIVATE RESULT'}));c.child.emit('close',0);};
+ const connect=async()=>{const worker=await connectClaudeWorker(config,selected,runtime);cleanups.push(worker.close);return worker;};
+ return {app,clock,store,config,calls,selected,runtime,update,finish,connect,waitSpawn,tick:()=>tick?.()};
+}
+it('actual API control wraps the real Claude argv/stdin path and retains only its own history',async()=>{
+ const f=await setup(),worker=await f.connect();
+ // A queued job is not executable merely because control says retain: the
+ // owning start path must claim/take/report, exercised separately below.
+ const turn={binding,rules,message:'PRIVATE TURN',checkout:'/fixture/art',current:()=>true};
+ const p=worker.turn(turn);await f.app.operations.callAsync('direct',{kind:'runner',id:'r'},'runtime.jobControl',{job:'j'});
+ // Wait on the observable spawn, never elapsed time.
+ await f.waitSpawn(1);f.finish();await p;
+ const q=worker.turn(turn);await f.waitSpawn(2);expect(f.calls[1].args).toContain('--resume');f.finish();await q;
+ expect(f.calls[0].input).toBe('OWNER FLOOR\nPRIVATE TURN');worker.close();
+});
+
+it.each(['principalReset','writtenOff','imported','uncertain','denied'] as const)('kills active execution and rejects late results/history after %s',async reason=>{
+ const f=await setup(),worker=await f.connect();
+ const turn={binding,rules,message:'PRIVATE TURN',current:()=>true};
+ const p=worker.turn(turn);const rejected=expect(p).rejects.toThrow();await f.waitSpawn(1);
+ if(reason==='uncertain')f.update({state:'uncertain'});
+ else if(reason==='denied')f.app.db.transaction(()=>{const {changedAt:_,...box}=f.store.read('box','r')!;f.store.put('box',{...box,revokedAt:f.clock.now()},f.clock.now());})();
+ else f.update(reason==='imported'?{imported:{history:'unknown'}}:{[reason]:{approval:'a-owner',by:'jonathan',at:f.clock.now()}});
+ await expect(worker.refresh()).rejects.toThrow();await rejected;
+ expect(f.calls[0].child.killed).toBe(true);await expect(worker.turn(turn)).rejects.toThrow();expect(f.calls).toHaveLength(1);
+});
+it('a returning worker cannot start a written-off job, and a fresh connection has no old resume authority',async()=>{
+ const f=await setup();f.update({writtenOff:{approval:'a-owner',by:'jonathan',at:1},state:'lost'});
+ await expect(f.connect()).rejects.toThrow();expect(f.calls).toHaveLength(0);
+});
+it('the external startup claims, takes one gated input, runs and finishes through the real API',async()=>{
+ const f=await setup(),p=runClaudeJob(f.config,f.selected,f.runtime);
+ await f.waitSpawn(1);expect(f.store.read('job','j')?.state).toBe('running');
+ expect(f.calls[0].input).toBe('OWNER FLOOR\nPRIVATE WORK');f.finish();await p;
+ expect(f.store.read('job','j')?.state).toBe('done');
+ await expect(runClaudeJob(f.config,f.selected,f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(1);
+});
+it('does not launch an input with a conversation that lacks owning policy delivery',async()=>{
+ const f=await setup();f.update({conversation:'cv-bridge'});
+ await expect(runClaudeJob(f.config,f.selected,f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(0);
+});
+it('does not start after an uncertain input response and never retries that request',async()=>{
+ const f=await setup();let takes=0;
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{if(String(args[0]).endsWith('/takeInput')){takes++;await fetch(...args);throw Error('lost');}return fetch(...args);}};
+ await expect(runClaudeJob(f.config,f.selected,runtime)).rejects.toThrow();expect(takes).toBe(1);expect(f.calls).toHaveLength(0);
+});
+it('the scheduled control consumer fences an idle session before another turn',async()=>{
+ const f=await setup(),worker=await f.connect();
+ f.update({writtenOff:{approval:'a-owner',by:'jonathan',at:1},state:'lost'});f.tick();
+ // Join the scheduled read rather than advance elapsed wall-clock time.
+ await expect(worker.refresh()).rejects.toThrow();
+ await expect(worker.turn({binding,rules,message:'late',current:()=>true})).rejects.toThrow();expect(f.calls).toHaveLength(0);
+});
+it('an unavailable daemon revokes an active session instead of preserving an offline execution lease',async()=>{
+ const f=await setup();let offline=false;
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{if(offline)throw Error('PRIVATE TRANSPORT');return fetch(...args);}};
+ const worker=await connectClaudeWorker(f.config,f.selected,runtime);cleanups.push(worker.close);
+ const p=worker.turn({binding,rules,message:'private',current:()=>true}),rejected=expect(p).rejects.toThrow();
+ await f.waitSpawn(1);offline=true;await expect(worker.refresh()).rejects.toThrow('authority');await rejected;expect(f.calls[0].child.killed).toBe(true);
+});
+it('a new connection after an ordinary worker restart cannot resume the previous native history',async()=>{
+ const f=await setup(),first=await f.connect(),turn={binding,rules,message:'private',current:()=>true};
+ const p=first.turn(turn);await f.waitSpawn(1);f.finish();const original=await p;first.close();
+ const second=await f.connect(),q=second.turn(turn);await f.waitSpawn(2);expect(f.calls[1].args).not.toContain('--resume');f.finish();expect((await q).session).not.toBe(original.session);
+});
+it.each(['house','model'] as const)('refuses unsupported or mismatched %s input without a process',async drift=>{
+ const f=await setup();if(drift==='model')f.update({model:'some-model'});
+ await expect(runClaudeJob(f.config,{...f.selected,...(drift==='house'?{house:{...house,repo:'/different'}}:{})},f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(0);
+});
