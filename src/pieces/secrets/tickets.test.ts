@@ -473,3 +473,38 @@ it('keeps pending UUIDs and denial digests out of public records, results, store
   expect(f.tickets.claim(t.id)).toBeNull(); // staging still holds, no credential read
  }finally {stop();for(const spy of spies)spy.mockRestore();}
 });
+it.each([undefined,'slack'])('accounts the original claim only after staging release, with exact service %s',async service=>{
+ const f=await setup(service),ticket=f.admit();
+ const usage=()=>f.call('secrets.usage',{name:'API'});
+ expect(f.tickets.claim(ticket.id)).toBeNull();
+ expect(usage()).toMatchObject({value:{count:0,events:[]}});
+ f.release(ticket.id);const original=f.tickets.claim(ticket.id)!;
+ expect(usage()).toMatchObject({value:{count:0,events:[{state:'started',action:'issue',by:{kind:'agent',id:'art'},house:f.id,...(service?{service}:{})}]}});
+ original.finish(true);original.finish(true);
+ expect(usage()).toMatchObject({value:{count:1,events:[{state:'released'}]}});
+ expect(f.tickets.claim(ticket.id)).toBeNull();
+});
+it('burns the original claim before holder access when usage admission cannot persist',async()=>{
+ const f=await setup(),ticket=f.admit();expect(f.tickets.claim(ticket.id)).toBeNull();f.release(ticket.id);
+ f.app.db.exec("CREATE TRIGGER deny_use BEFORE INSERT ON secrets_uses BEGIN SELECT RAISE(ABORT,'synthetic-private-error'); END");
+ expect(f.tickets.claim(ticket.id)).toBeNull();
+ expect(f.app.effects!.status(`secrets:handoff:${ticket.id}`)).toBe('uncertain');
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(ticket.id)).toEqual({state:'uncertain'});
+ f.app.db.exec('DROP TRIGGER deny_use');expect(f.tickets.claim(ticket.id)).toBeNull();
+ expect(f.call('secrets.usage',{name:'API'})).toMatchObject({value:{count:0,events:[]}});
+});
+it('does not count abandonment or lost final authority as a confirmed release',async()=>{
+ const f=await setup();
+ const first=f.claim();first.c.finish(false);
+ const second=f.claim();f.job({claimedAt:f.clock.now()+1});second.c.finish(true);
+ expect(f.call('secrets.usage',{name:'API'})).toMatchObject({value:{count:0,events:[{state:'failed'},{state:'failed'}]}});
+});
+it('keeps an interrupted attempt unconfirmed when final usage persistence fails',async()=>{
+ const f=await setup(),{ticket,c}=f.claim();
+ f.app.db.exec("CREATE TRIGGER deny_use_finish BEFORE UPDATE ON secrets_uses BEGIN SELECT RAISE(ABORT,'synthetic-private-error'); END");
+ expect(()=>c.finish(true)).toThrow('Secret handoff unavailable');
+ expect(f.call('secrets.usage',{name:'API'})).toMatchObject({value:{count:0,events:[{state:'started'}]}});
+ f.app.db.exec('DROP TRIGGER deny_use_finish');c.finish(true);
+ expect(f.tickets.claim(ticket.id)).toBeNull();
+ expect(f.call('secrets.usage',{name:'API'})).toMatchObject({value:{count:0,events:[{state:'started'}]}});
+});

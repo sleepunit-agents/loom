@@ -96,6 +96,7 @@ it('production source root owns queued claim, daemon, inherited holder and dedic
  expect(f.calls.filter(c=>c.name!=='jobControl').map(c=>c.name)).toEqual(['claimJob','takeInput','reportJob','finishJob']);
  const row=f.app.db.prepare('SELECT destination,state FROM secrets_tickets').get() as {destination:string;state:string};
  expect(JSON.parse(row.destination)).toMatchObject({job:f.id,claimedAt:f.clock.now()});expect(row.state).toBe('released');
+ expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.usage',{name:'API'})).toMatchObject({ok:true,value:{count:1,events:[{state:'released',action:'issue',by:{kind:'agent',id:'art'},house:f.id}]}});
  for(const {name} of f.app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])expect(JSON.stringify(f.app.db.prepare('SELECT * FROM "'+name.replaceAll('"','""')+'"').all())).not.toContain('synthetic-owner-value');
  expect(JSON.stringify(f.calls)).not.toContain('synthetic-owner-value');
  expect(existsSync(f.config.command.input.socket)).toBe(false);
@@ -105,4 +106,20 @@ it('production source root staging holds the actual input without spawning a com
  const f=await setup(true),spawn=vi.spyOn(ChildProcess.prototype,'spawn');await expect(f.owner.run()).rejects.toThrow();
  expect(spawn).not.toHaveBeenCalled();expect(existsSync(f.marker)).toBe(false);expect(f.channels.closed.seen).toBe(true);
  expect(inspectWorkerReceipts(f.receipts)).toMatchObject([{phase:'input-attempt'}]);
+ expect(f.app.db.prepare('SELECT * FROM secrets_tickets').all()).toEqual([]);
+ expect(f.app.db.prepare('SELECT * FROM secrets_uses').all()).toEqual([]);
+ const held=f.app.db.prepare("SELECT id,kind,state FROM core_effects WHERE kind='body-start'").all() as {id:string;kind:string;state:string}[];
+ expect(held).toEqual([{id:expect.any(String),kind:'body-start',state:'due'}]);
+ expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:held[0].id},randomUUID()).ok).toBe(true);
+ f.clock.advance(1);await expect(f.owner.run()).rejects.toThrow();
+ expect(spawn).not.toHaveBeenCalled();
+ expect(f.app.db.prepare('SELECT * FROM secrets_uses').all()).toEqual([]);
+});
+
+it('counts acknowledged delivery even when the original command subsequently fails, without finishing Runtime',async()=>{
+ const f=await setup(false,1);await expect(f.owner.run()).rejects.toThrow();
+ expect(f.store.read('job',f.id)?.state).toBe('running');
+ expect(f.calls.some(c=>c.name==='finishJob')).toBe(false);
+ expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.usage',{name:'API'})).toMatchObject({ok:true,value:{count:1,events:[{state:'released'}]}});
+ expect(f.channels.closed.seen).toBe(true);
 });
