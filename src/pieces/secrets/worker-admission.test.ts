@@ -125,3 +125,19 @@ it('peer replacement fences a real dispatch while the holder source is awaiting'
   expect(await command.completed).toBe(false);
  }finally{resume();await command.close();}
 });
+it('rejects the original dispatch HTTP response when its retired completion resolves successfully',async()=>{
+ const f=await setup(false),original=f.tickets.admitHandoff;
+ let entered!:()=>void,resume!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;}),wait=new Promise<void>(r=>{resume=r;});
+ // Isolate the listener's own post-await generation fence independently of the
+ // ticket owner's rejection, which the real source/command test covers above.
+ vi.spyOn(f.tickets,'admitHandoff').mockImplementation((...args)=>{
+  const admission=original(...args);
+  return {...admission,async dispatch(){entered();await wait;}};
+ });
+ const client=workerAdmission(f.config.admission,f.fingerprint('daemon'),randomUUID());closes.push(client.close);
+ const id=await client.admit('API'),dispatch=expect(client.dispatch()).rejects.toThrow('Worker admission unavailable');
+ try {await ready;f.listener.replaceWorkers([f.peer]);expect(f.state(id)).toEqual({state:'uncertain'});}
+ finally {resume();}
+ await dispatch;
+});

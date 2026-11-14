@@ -1,6 +1,12 @@
 import {afterEach,expect,test} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {join} from 'node:path';
+import {readFileSync} from 'node:fs';
+import {startSecretCommand} from './runtime-runner/secret-command.js';
+import {workerSecretTransport} from './runtime-runner/secret-transport.js';
+import {listenHolderHandoff} from './pieces/secrets/holder-handoff.js';
+import {routedHolderAuthority} from './pieces/secrets/holder-routing.js';
+import {runtimeHouseDestination} from './pieces/runtime/role.js';
 import {ticketAuthorityFixture} from './runtime-runner/ticket-authority.fixture.js';
 import {SharingDatabase} from './core/household/sharing.js';
 import {signin,hash} from './core/signin/index.js';
@@ -46,6 +52,21 @@ test('replacement resolves a new original authenticated job instead of retaining
  const next=await f.client().admit('API');
  const row=f.app.db.prepare('SELECT destination FROM secrets_tickets WHERE id=?').get(next) as {destination:string};
  expect(JSON.parse(row.destination)).toMatchObject({job,claimedAt:f.clock.now()+1});
+ const binding=JSON.parse(row.destination),input=join(f.home,'new-job-input.sock'),marker=join(f.home,'new-job-consumed');
+ const holderIdentity={...f.server,cert:join(f.home,'holder.pem'),key:join(f.home,'holder.key')};
+ const transport=workerSecretTransport({...holderIdentity,socket:input,servername:'daemon.test'},f.fingerprint('daemon'));closes.push(transport.close);
+ const holder=await listenHolderHandoff({...holderIdentity,socket:f.config.holder.config.socket},{read:async()=>Buffer.from('synthetic-refresh-value')},f.fingerprint('daemon'),routedHolderAuthority(f.remote,[{binding,transport}]));closes.push(holder.close);
+ const viewer=signin(f.app).token(hash(token))!.viewer;
+ const destination=runtimeHouseDestination(f.app,()=>new SharingDatabase(f.app.db,f.home).sharing(),viewer)!;
+ const script="const fs=require('node:fs');let b=[];fs.createReadStream(null,{fd:3}).on('data',v=>b.push(v)).on('end',()=>{const ok=Buffer.concat(b).toString()==='synthetic-refresh-value';if(ok)fs.writeFileSync(process.argv[1],'accepted');setTimeout(()=>process.exit(ok?0:1),200);});";
+ const command=await startSecretCommand({command:process.execPath,args:['-e',script,marker],cwd:f.home,env:{},
+  input:{...f.server,socket:input},holderFingerprint:f.fingerprint('holder'),authority:{...f.server,servername:'daemon.test'},daemonFingerprint:f.fingerprint('daemon')},
+  {binding,current:()=>destination.current(),expiresAt:Date.now()+20_000});closes.push(command.close);
+ const client=f.client(command.pending.id),ticket=await client.admit('API');command.bindTicket(ticket);
+ expect(await f.remote.claim(ticket)).toBeNull();f.release(ticket);
+ await client.dispatch();expect(await command.completed).toBe(true);expect(readFileSync(marker,'utf8')).toBe('accepted');
+ expect(f.state(ticket)).toEqual({state:'released'});
+
 });
 test.each(['unknown','malformed-pin','holder-pin','duplicate','overflow','revoked'] as const)('invalid %s replacement does not partially retire the current generation',async failure=>{
  const f=await setup(),id=await f.client().admit('API');
