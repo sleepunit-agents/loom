@@ -60,3 +60,31 @@ This is protocol coverage, not standalone startup: trusted admission transport,
 owner-created standalone pending requests, configured holder routing,
 `listenHolderHandoff` completion/uncertainty wiring and staging/value-free
 accounting remain required. No public operation or installed startup is activated.
+
+## Owner-configured holder routing and early failure retirement
+
+`routedHolderAuthority(remoteTicketAuthority(...), routes)` snapshots exact
+assignment-to-transport capabilities supplied by the owner. Each route contains
+an already pinned `workerSecretTransport`, never a caller endpoint. Duplicate
+assignments are rejected. Every assignment field, including an absent service,
+must match the original remote claim; legacy claims without a pending id are
+retired uncertain. The selected transport and pending id are retained for that
+original claim, and delivery is attempted at most once.
+
+The returned destination provides `abandon()`. `listenHolderHandoff` invokes it
+on every unsuccessful acquired destination, including invalid metadata, current
+checks, source failures, late authority resolution, timeout, disconnect and
+shutdown. It drains retirement on close, after any borrowed bytes have settled
+and been erased. Retirement is consumed before IO and is never retried after a
+lost settlement acknowledgement. Existing unactivated destinations may omit the
+hook; actual routed composition always provides it.
+
+Successful holder delivery leaves the central ticket **claimed**. This unit does
+not implement the daemon's final completion/uncertainty protocol: that owner must
+retain the original ticket separately and settle it after the holder response,
+or uncertain on every missing/failed response. No success settlement is inferred
+from socket writes. The real TLS tests demonstrate source failure and local
+cancellation retiring the claim, and a lost worker acknowledgement retiring it
+uncertain even when the original stream received bytes. Trusted admission,
+standalone runner-owned input creation, daemon completion, production capacity
+and staging/value-free accounting remain prerequisites to activation.
