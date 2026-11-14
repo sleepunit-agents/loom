@@ -1,5 +1,5 @@
 import { saveLocalReceipt } from './local-receipt.js';
-import { filing } from './authorship.js';
+import { filing, replacementAuthorship, runAuthorship } from './authorship.js';
 import type { ClockProvenanceReader } from '../runtime/role.js';
 import { installLocalWindow } from './local-window.js';
 import { installLocalPublic, localPublicPolicy } from './local-public.js';
@@ -108,7 +108,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   };
   function register<I>(name: string, input: z.ZodType<I>, write: boolean, may: (v: Viewer, i: I) => boolean, run: (ctx: Context, i: I) => unknown, internal = false) {
     const ordinaryFiling = ['at','in','park'].includes(name);
-    operations.register(operation({ name: `clock.${name}`, input, output, write, recheckPolicy: write && ordinaryFiling ? viewer => !!options.provenance?.(viewer) : false, inputHash: ordinaryFiling ? filingHash : undefined, requiresWindow: internal ? undefined : (i)=>{const input=i as {id?:string;member?:string};return input.member!==undefined || !!(input.id && (wake(db,input.id)??schedule(db,input.id))?.member);}, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
+    operations.register(operation({ name: `clock.${name}`, input, output, write, recheckPolicy: name === 'scheduleSet' ? true : write && ordinaryFiling ? viewer => !!options.provenance?.(viewer) : false, inputHash: ordinaryFiling || name === 'scheduleSet' ? filingHash : undefined, requiresWindow: internal ? undefined : (i)=>{const input=i as {id?:string;member?:string};return input.member!==undefined || !!(input.id && ((wake(db,input.id)??schedule(db,input.id))?.member || db.prepare('SELECT 1 FROM clock_meta WHERE key=?').get('private-id:'+input.id)));}, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
       run(ctx, i) {
         if (closed) throw new OperationError('unavailable', 'Clock stopped');
         const result = run(ctx, i);
@@ -349,18 +349,20 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('agentNext', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (ctx, i) => agentNext(i.agent, deskWakes(ctx, i.agent), paused(db, i.agent)));
 
   const scheduleInput = workInput.extend({ id: text, at: z.union([text, z.array(text)]), days: z.string().default(''), lane: text.optional() });
-  register('scheduleSet', scheduleInput, true, (v, i) => create(v, i) && (!schedule(db, i.id) || act(v, schedule(db, i.id)!, !!schedule(db, i.id)!.laneDetails)), (ctx, i) => {
+  register('scheduleSet', scheduleInput, true, (v, i) => !!prepareFiling(v, i) && create(v, prepareFiling(v, i)!) && (!schedule(db, i.id) || act(v, schedule(db, i.id)!, !!schedule(db, i.id)!.laneDetails)), (ctx, input) => {
+    const i = filedWork(ctx.viewer, input);
     newWork(i); calendar(() => daysOf(i.days));
     const old = schedule(db, i.id);
     if (old?.laneDetails) invalid('Edit household lanes with laneSet');
     if (old && (old.agent !== i.agent || old.project !== i.project || old.member !== i.member)) invalid('Remove a schedule before changing its scope');
     if (!old && ctx.viewer.kind === 'agent' && schedules(db).filter(s => s.agent === i.agent && s.apiOrigin).length >= 20)
       invalid('At most 20 API-origin schedules per agent; remove some first');
-    const s: Schedule = { ...i, ...(ctx.viewer.kind === 'agent' ? { apiOrigin: ctx.viewer.id } : {}), at: calendar(() => timesOf(i.at)), scheduleRevision: randomUUID(), by: ctx.viewer, enabled: true, changedAt: ctx.now };
+    const authorship = old ? replacementAuthorship(old.authorship, i.authorship!) : i.authorship;
+    const s: Schedule = { ...i, authorship, ...(ctx.viewer.kind === 'agent' ? { apiOrigin: ctx.viewer.id } : {}), at: calendar(() => timesOf(i.at)), scheduleRevision: randomUUID(), by: ctx.viewer, enabled: true, changedAt: ctx.now };
     cancelOccurrences(ctx, s.id, 'Schedule changed');
     saveSchedule(ctx, s); next(ctx, s, ctx.now); return s;
   });
-  register('schedules', z.object({}), false, () => true, ctx => schedules(db).filter(s => readSee(ctx, s, 'schedule')));
+  register('schedules', z.object({}), false, () => true, ctx => schedules(db).filter(s => readSee(ctx, s, 'schedule')).map(publicWork));
   register('scheduleRemove', idInput, true, (v, i) => { const s = schedule(db, i.id); return !s || act(v, s, !!s.laneDetails) && (!s.laneDetails || create(v, s)); }, (ctx, i) => {
     const s = schedule(db, i.id); if (!s) throw new OperationError('not-found', 'Schedule not found');
     removeSchedule(ctx, s); return { id: s.id };
@@ -368,7 +370,9 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('scheduleRun', idInput.extend({ note:z.string().max(100_000).optional() }), true, (v, i) => { const s = schedule(db, i.id); return !!s && act(v, s, true) && create(v, s); }, (ctx, i) => {
     const s = schedule(db, i.id)!;
     oneOffRoom(ctx, s.agent);
-    return make(ctx, i.note === undefined ? s : { ...s, note: `${s.lane ?? s.id.split('/').pop()} run now${i.note ? `: ${i.note}` : ''}` }, ctx.now, { bypassPause: true, runNow: true, ...(s.laneDetails ? { schedule: s.id } : {}) });
+    const caller = filedWork(ctx.viewer, { agent: s.agent, member: s.member, project: s.project, note: '' }).authorship!;
+    const run = { ...s, authorship: runAuthorship(s.authorship, caller) };
+    return make(ctx, i.note === undefined ? run : { ...run, note: `${s.lane ?? s.id.split('/').pop()} run now${i.note ? `: ${i.note}` : ''}` }, ctx.now, { bypassPause: true, runNow: true, ...(s.laneDetails ? { schedule: s.id } : {}) });
   });
   const laneName = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
   const laneId = (name: string) => `lane/${name}`;

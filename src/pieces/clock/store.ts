@@ -46,6 +46,7 @@ export function saveWake(ctx: Context, w: Wake) {
 }
 export function saveSchedule(ctx: Context, s: Schedule) {
   s.changedAt = ctx.now;
+  if(s.member)ctx.db.prepare("INSERT OR IGNORE INTO clock_meta(key,value) VALUES (?,?)").run("private-id:"+s.id,JSON.stringify({member:s.member}));
   ctx.db.prepare('INSERT INTO clock_schedules VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record, changed_at=excluded.changed_at').run(s.id, JSON.stringify(s), ctx.now);
   ctx.changed('schedule', s.id);
 }
