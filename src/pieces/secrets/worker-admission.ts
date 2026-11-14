@@ -32,7 +32,7 @@ export async function listenWorkerAdmission(config:Omit<LocalHolderConfig,'serve
     assertPrivateDirectory(dirname(config.socket));
     const snapshot=(workers:readonly AdmissionWorker[])=>{
     if(workers.length>1024)throw failed();
-    const peers=workers.map(w=>{
+    const peers=Array.from(workers,w=>{
       authenticatedHolderDispatch(w.holder);
       return {fingerprint:certificateFingerprint.parse(w.fingerprint),binding:secretInputBindingSchema.parse(w.binding),
         viewer:w.viewer,holder:w.holder};
@@ -106,10 +106,12 @@ export async function listenWorkerAdmission(config:Omit<LocalHolderConfig,'serve
     /** Owner-only generation replacement. Retire originals before new requests
      * can enter, and fence old dispatch continuations after their awaits. */
     replaceWorkers(workers:readonly AdmissionWorker[]) {
+      try {
       if(closed)throw failed();
       const next=snapshot(workers);
       peers=next;
       for(const pendingId of retained.keys())retire(pendingId);
+      }catch {throw failed();}
     },
     close(){return closing??=(async()=>{
       closed=true;for(const pendingId of retained.keys())retire(pendingId);

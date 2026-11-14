@@ -35,7 +35,7 @@ export async function listenTicketAuthority(config:Omit<LocalHolderConfig,'serve
     certificateFingerprint.parse(holderFingerprint);
     const snapshot=(workers:ReadonlyArray<Readonly<{fingerprint:string;binding:SecretInputBinding}>>)=>{
       if(workers.length>1024)throw failed();
-      const peers=workers.map(w=>({fingerprint:certificateFingerprint.parse(w.fingerprint),binding:secretInputBindingSchema.parse(w.binding)}));
+      const peers=Array.from(workers,w=>({fingerprint:certificateFingerprint.parse(w.fingerprint),binding:secretInputBindingSchema.parse(w.binding)}));
       if(peers.some(w=>w.fingerprint===holderFingerprint))throw failed();
       return peers;
     };
@@ -120,10 +120,12 @@ export async function listenTicketAuthority(config:Omit<LocalHolderConfig,'serve
     /** Private owner capability. Every replacement burns retained claims, even
      * when equal metadata is reinstalled. A worker cannot call this over TLS. */
     replaceWorkers(workers:ReadonlyArray<Readonly<{fingerprint:string;binding:SecretInputBinding}>>) {
+      try {
       if(closed)throw failed();
       const next=snapshot(workers);
       peers=next;
       for(const id of claims.keys())try {finish(id,false);}catch { /* fenced, never reconstructed */ }
+      }catch {throw failed();}
     },
     close() {
       if(closing)return closing;

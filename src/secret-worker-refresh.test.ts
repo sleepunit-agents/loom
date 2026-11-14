@@ -112,3 +112,28 @@ test('a mixed batch with a valid prefix and invalid tail preserves the original 
  expect(()=>f.owner.replaceWorkers(batch)).toThrow();expect(f.state(undispatched)).toEqual({state:'admitted'});
  await claim.finish(false);
 });
+test.each(['sparse','member','agent','ended-job','split-assignment','imported-job'] as const)('rejects %s selection before touching either original listener generation',async failure=>{
+ const f=await setup(),pending=randomUUID(),id=await f.client(pending).admit('API');
+ expect(await f.remote.claim(id)).toBeNull();f.release(id);const claim=(await f.remote.claim(id))!;
+ let selected=f.config.workers;
+ if(failure==='sparse')selected=new Array(1);
+ else {
+  const auth=signin(f.app);let token='synthetic-refresh-'+failure;
+  if(failure==='member'||failure==='agent')auth.tokens.change(tokens=>tokens.push({role:failure==='member'?'owner':'agent:art',...(failure==='member'?{member:'jonathan'}:{}),sha256:hash(token),label:failure,created:new Date(f.clock.now()).toISOString()}));
+  else {
+   const store=runtimeStore(f.app.db),job=randomUUID();
+   token=f.app.db.transaction(()=>{
+    const {changedAt:_,...before}=store.read('job',f.id)!;
+    store.put('job',{...before,id:job,...(failure==='ended-job'?{state:'done' as const}:failure==='split-assignment'?{runner:'other'}:{imported:{history:'unknown' as const}})},f.clock.now());
+    return auth.issueBody('art',job);
+   })();
+  }
+  expect(auth.token(hash(token))).toBeDefined();
+  selected=[...selected,{tokenDigest:hash(token),fingerprint:f.fingerprint('stranger')}];
+ }
+ expect(()=>f.owner.replaceWorkers(selected)).toThrow('Secret worker startup unavailable');
+ expect(f.state(id)).toEqual({state:'claimed'});expect(await claim.current()).toBe(true);
+ const proof=remoteWorkerTicketProof({...f.server,servername:'daemon.test'},f.fingerprint('daemon'),id,pending);closes.push(proof.close);expect(await proof.current()).toBe(true);
+ const next=await f.client().admit('API');expect(f.state(next)).toEqual({state:'admitted'});
+ await claim.finish(false);
+});

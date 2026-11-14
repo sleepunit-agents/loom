@@ -26,7 +26,7 @@ const failed=()=>new Error('Secret worker startup unavailable');
 export function snapshotSecretWorkers(config:SecretWorkersConfig):SecretWorkersConfig {
   return {authority:{...config.authority},admission:{...config.admission},
     holder:{config:{...config.holder.config},fingerprint:config.holder.fingerprint},
-    workers:config.workers.map(w=>({tokenDigest:w.tokenDigest,fingerprint:w.fingerprint}))};
+    workers:Array.from(config.workers,w=>({tokenDigest:w.tokenDigest,fingerprint:w.fingerprint}))};
 }
 
 export async function startSecretWorkers(app:Foundation,sharing:()=>Sharing,effects:OutsideEffects,config:SecretWorkersConfig) {
@@ -47,7 +47,7 @@ export async function startSecretWorkers(app:Foundation,sharing:()=>Sharing,effe
     const originalHolder=holder;
     const resolve=(selected:SecretWorkersConfig['workers'])=>{
     if(selected.length>1024)throw failed();
-    const workers=selected.map(worker=>{
+    const workers=Array.from(selected,worker=>{
       const fingerprint=certificateFingerprint.parse(worker.fingerprint);
       if(fingerprint===config.holder.fingerprint)throw failed();
       if(!/^[a-f0-9]{64}$/.test(worker.tokenDigest))throw failed();

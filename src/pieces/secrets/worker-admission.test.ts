@@ -141,3 +141,8 @@ it('rejects the original dispatch HTTP response when its retired completion reso
  finally {resume();}
  await dispatch;
 });
+it('refuses sparse owner replacement before retiring any original admission',async()=>{
+ const f=await setup(false),client=workerAdmission(f.config.admission,f.fingerprint('daemon'),randomUUID());closes.push(client.close);
+ const id=await client.admit('API');expect(()=>f.listener.replaceWorkers(new Array(1))).toThrow(/^Worker admission unavailable$/);
+ expect(f.state(id)).toEqual({state:'admitted'});
+});
