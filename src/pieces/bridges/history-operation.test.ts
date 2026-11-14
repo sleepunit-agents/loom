@@ -141,9 +141,12 @@ it('suppresses late history after holder-generation replacement',async()=>{
 it('rechecks the transport lifetime in the final transaction after preparation',async()=>{
  const f=await configured();
  const viewer=signin(f.app).token(hash(f.body))!.viewer;
+ let checks=0;
+ expect(await f.app.operations.callAsync('http',viewer,'bridges.discordHistory',query)).toMatchObject({ok:true});
  const result=await f.app.operations.callAsync('http',viewer,'bridges.discordHistory',query,undefined,false,()=>{
+  if(++checks===1)return true;
   value(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.revokeService',{service:'bridges',name:'discord'},'last-moment-revoke'));
   return true;
  });
- expect(result).toMatchObject({ok:false});
+ expect(checks).toBe(2);expect(result).toMatchObject({ok:false});
 });
