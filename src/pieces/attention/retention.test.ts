@@ -248,3 +248,31 @@ it.each([10, 1000])('retains %i conversations with one operation call and preser
   expect(call('retain', {})).toEqual({ ok: true, value: { days: count, turns: count } });
   expect(calls).toHaveBeenCalledTimes(1);
 });
+
+it('rolls back only the failing retention page, replays its receipt and retries with fresh authority', async () => {
+  const { app, call } = await setup();
+  const putConversation = app.db.prepare('INSERT INTO attention_conversations VALUES (?,?)');
+  const putTurn = app.db.prepare('INSERT INTO attention_turns VALUES (?,?,?,?)');
+  app.db.transaction(() => {
+    for (let n = 0; n < 1002; n++) {
+      const id = `cv-${n.toString(16).padStart(12, '0')}`;
+      putConversation.run(id, JSON.stringify({ id, agent: 'art' }));
+      putTurn.run(`${id}:1`, id, 1, JSON.stringify({ id: `${id}:1`, conversation: id, seq: 1, at: base.at, kind: 'message' }));
+    }
+  })();
+  const first = call('retain', {}, alice, 'page-one');
+  expect(first).toEqual({ ok: true, value: { days: 1000, turns: 1000, next: 1000 } });
+  const changes = vi.spyOn(app.live, 'changed');
+  expect(call('retain', {}, alice, 'page-one')).toEqual(first);
+  expect(changes).not.toHaveBeenCalled();
+  app.db.exec("CREATE TRIGGER fail_page BEFORE INSERT ON attention_days WHEN NEW.conversation='cv-0000000003e9' BEGIN SELECT RAISE(ABORT, 'fixture'); END");
+  const before = app.db.prepare('SELECT * FROM core_operations').all();
+  expect(call('retain', { after: 1000 }, alice, 'page-two')).toMatchObject({ code: 'unavailable' });
+  expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
+  expect(app.db.prepare('SELECT count(*) AS n FROM attention_days').get()).toEqual({ n: 1000 });
+  expect(app.db.prepare('SELECT count(*) AS n FROM attention_turns').get()).toEqual({ n: 2 });
+  expect(changes).not.toHaveBeenCalled();
+  app.db.exec('DROP TRIGGER fail_page');
+  expect(call('retain', { after: 1000 }, alice, 'page-two')).toEqual({ ok: true, value: { days: 2, turns: 2 } });
+  expect(changes).toHaveBeenCalledTimes(1);
+});

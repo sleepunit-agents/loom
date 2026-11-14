@@ -70,17 +70,19 @@ export function installRetention(db: Db, operations: Operations, live: Live, sha
     may(v, i) { const c = conversation(i.conversation); return !!c && mayAct(v, { type: 'attention.day', ...scopeOf(c) }, sharing(), 'act', 'attention.fold'); },
     run(ctx, i) { return fold(ctx, conversation(i.conversation)!); }
   }));
-  operations.register(operation({ name: 'attention.retain', write: true, input: z.object({}).strict(), output: z.unknown(),
+  operations.register(operation({ name: 'attention.retain', write: true, input: z.object({ after: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional() }).strict(), output: z.unknown(),
     may: v => v.kind !== 'service' || mayAct(v, { type: 'attention.day' }, sharing(), 'act', 'attention.retain'),
-    run(ctx) {
+    run(ctx, input) {
       let days = 0, turns = 0;
       const held = sharing();
-      for (const row of statement(db, 'SELECT record FROM attention_conversations ORDER BY id').all() as { record: string }[]) {
+      const inventory = statement(db, 'SELECT rowid AS cursor, record FROM attention_conversations WHERE rowid > ? ORDER BY rowid LIMIT 1001').all(input.after ?? 0) as { cursor: number; record: string }[];
+      const page = inventory.slice(0, 1000);
+      for (const row of page) {
         const c = JSON.parse(row.record) as Conversation;
         if (!mayAct(ctx.viewer, { type: 'attention.day', ...scopeOf(c) }, held, 'act', 'attention.fold')) continue;
         const count = fold(ctx, c); days += count.days; turns += count.turns;
       }
-      return { days, turns };
+      return { days, turns, ...(inventory.length > 1000 ? { next: page[page.length - 1].cursor } : {}) };
     },
   }));
   operations.register(operation({ name: 'attention.days', input: z.object({ conversation: key }).strict(), output: z.unknown(),
@@ -131,13 +133,17 @@ export function installRetention(db: Db, operations: Operations, live: Live, sha
   });
 }
 /** Explicit daemon composition hook. No files, polling process or host timer. Stop before closing the foundation. */
-export function startAttentionRetention(operations: Operations, viewer: Viewer, report: (result: Result) => void): () => void {
+export function startAttentionRetention(operations: Operations, viewer: Viewer, report: (result: Result) => void, active: () => boolean = () => true): () => void {
   const clock: Clock = operations.clock;
   let stopped = false, cancel: (() => void) | undefined;
+  let after: number | undefined;
   const sweep = () => {
-    if (stopped) return;
-    report(operations.call('direct', viewer, 'attention.retain', {}, `attention-retain:${randomUUID()}`));
-    if (!stopped) cancel = clock.at(clock.now() + DAY_MS, sweep);
+    if (stopped || !active()) return;
+    cancel = undefined;
+    const result = operations.call('direct', viewer, 'attention.retain', after === undefined ? {} : { after }, `attention-retain:${randomUUID()}`);
+    report(result);
+    after = result.ok ? (result.value as { next?: number }).next : undefined;
+    if (!stopped) cancel = clock.at(clock.now() + (after === undefined ? DAY_MS : 0), sweep);
   };
   cancel = clock.at(clock.now(), sweep);
   return () => { stopped = true; cancel?.(); };

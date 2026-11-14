@@ -128,3 +128,36 @@ it('member retention folds its own private metadata after service retention, lea
   expect(app.operations.call('direct', { kind: 'member', id: 'owner' }, 'attention.retain', {}, 'member-retain')).toEqual(result);
   expect(app.operations.call('direct', { kind: 'member', id: 'owner' }, 'attention.retain', {}, 'member-retain-again')).toEqual({ ok: true, value: { days: 0, turns: 0 } });
 });
+
+it.each(['continue', 'revoke', 'stop'] as const)('yields retention inventory after 1000 conversations: %s', async mode => {
+  const denied = { value: false };
+  const { app, clock } = await setup(false, denied);
+  const putConversation = app.db.prepare('INSERT INTO attention_conversations VALUES (?,?)');
+  const putTurn = app.db.prepare('INSERT INTO attention_turns VALUES (?,?,?,?)');
+  app.db.transaction(() => {
+    for (let n = 0; n < 2001; n++) {
+      const id = `cv-${n.toString(16).padStart(12, '0')}`;
+      putConversation.run(id, JSON.stringify({ id, agent: 'art' }));
+      putTurn.run(`${id}:1`, id, 1, JSON.stringify({ id: `${id}:1`, conversation: id, seq: 1, at: '2026-07-01T09:00:00Z', kind: 'message' }));
+    }
+  })();
+  const count = () => (app.db.prepare('SELECT count(*) AS n FROM attention_days').get() as { n: number }).n;
+  const calls = vi.spyOn(app.operations, 'call');
+  const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  let stopClose: Promise<void> | undefined;
+  clock.at(clock.now(), () => {
+    expect(count()).toBe(1000);
+    if (mode === 'revoke') denied.value = true;
+    if (mode === 'stop') stopClose = app.close();
+  });
+  clock.advance(0);
+  if (stopClose) await stopClose;
+  else expect(count()).toBe(mode === 'continue' ? 2001 : 1000);
+  const sweeps = calls.mock.calls.filter(c => c[2] === 'attention.retain');
+  expect(sweeps.map(c => c[3])).toEqual(mode === 'continue' ? [{}, { after: 1000 }, { after: 2000 }] : mode === 'revoke' ? [{}, { after: 1000 }] : [{}]);
+  if (mode === 'revoke') {
+    expect(warning).toHaveBeenCalledWith('Attention retention failed (denied)');
+    denied.value = false; clock.advance(86_400_000);
+    expect(count()).toBe(2001);
+  }
+});
