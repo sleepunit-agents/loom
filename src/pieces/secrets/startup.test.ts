@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
-import { agents, members, secrets, secretGrants, secretRules, secretRequests, secretUses, household, inbox, jobs } from '../../core/data/schema.js';
+import { agents, members, secrets, secretGrants, secretRules, secretRequests, secretUses, household, inbox, jobs, agentHouseSecrets } from '../../core/data/schema.js';
 import { SecretRequests } from './requests.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -39,6 +39,14 @@ describe('shared startup secret grants', () => {
     f.rule('auto', 'on_request');
     expect(f.service.grantAtStart('job-art')).toEqual([]);
     expect(f.db.select().from(secretGrants).all()).toEqual([]);
+  });
+  it('does not turn a configured house alias into startup authority', () => {
+    const f = fixture();
+    f.db.insert(agentHouseSecrets).values({ agent: 'art', alias: 'GITHUB_TOKEN', secret: 'github-token' }).run();
+    expect(f.service.grantAtStart('job-art')).toEqual([]);
+    expect(f.db.select().from(secretGrants).all()).toEqual([]);
+    f.rule();
+    expect(f.service.grantAtStart('job-art')).toHaveLength(1);
   });
   it('a never rule blocks an explicitly listed startup agent', () => {
     const f = fixture(); f.rule('never');
