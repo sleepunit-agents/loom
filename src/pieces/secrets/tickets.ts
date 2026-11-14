@@ -151,6 +151,7 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
       daemonOwned.add(admitted.id);
       let attempted=false;
       const abandon=()=>{
+        if(app.db.inTransaction)throw failed();
         attempted=true;
         const original=claimed.get(admitted.id);
         try {

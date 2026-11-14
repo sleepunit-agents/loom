@@ -182,8 +182,8 @@ bounded cancellation of a known ticket. A lost reply is consumed, never retried.
 The original local proof remains the final synchronous fence after central
 worker-current; owner policy, grant, job and request replacement must be included.
 
-Real TLS/subprocess tests now use this admission path rather than calling
-admission directly. Synthetic staging effects are explicitly released by the
+The admitted-command TLS/subprocess suite uses this admission path; primitive
+command tests retain direct trusted admission for their narrower contracts. Synthetic staging effects are explicitly released by the
 test owner before the admission response; without release, dispatch is refused
 and no source is read. Pipe cancellation drains while an intercepted native
 completion callback remains held. These tests do not establish production
@@ -193,9 +193,8 @@ installed daemon wiring or host activation is claimed by this source-only unit.
 
 
 Admission transport entry saturation is not independently exercised; production
-central tombstone lifecycle/capacity remains a prerequisite. Connection fences
-stay local to each existing protocol to avoid changing unrelated transports in
-this unit. The small response-hold and timer-scaling test helpers remain local.
-The server readiness flag rejects duplicate requests before their cleanup can
-retire an already-running original dispatch; client flags cannot guard remote
-requests. Successful client close skips cancellation once dispatch is acknowledged.
+central tombstone lifecycle/capacity remains required. The server dispatch flag
+rejects duplicate requests before their cleanup can retire a running original
+request. A rejected or lost complete admission reply can remain undispatched
+until bounded expiry. A deadline may lose acknowledgement even after release;
+`delivery: false` never licenses retry. Command expiry closes its admission client.

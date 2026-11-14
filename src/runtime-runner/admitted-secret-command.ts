@@ -11,14 +11,15 @@ export async function startAdmittedSecretCommand(config:SecretCommandConfig&{adm
   const command=await startSecretCommand(config,request);
   let client:ReturnType<typeof workerAdmission>;
   try {client=workerAdmission(admission,pin,command.pending.id);}
-  catch {await command.close();throw new Error('Worker admission unavailable');}
+  catch {try {await command.close();}catch { /* already fenced */ }throw new Error('Worker admission unavailable');}
   const close=async()=>{await Promise.all([command.close(),client.close()]);};
+  void command.completed.then(ok=>{if(!ok)void close().catch(()=>{});});
   const delivery=(async()=>{
     try {
       const ticketId=await client.admit(name);
       command.bindTicket(ticketId);
       await client.dispatch();return true;
-    }catch {await close();return false;}
+    }catch {try {await close();}catch { /* uncertain; preserve boolean result */ }return false;}
     finally {await client.close();}
   })();
   return Object.freeze({completed:command.completed,delivery,close});

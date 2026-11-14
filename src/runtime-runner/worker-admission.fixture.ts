@@ -1,3 +1,5 @@
+import {runtimeHouseDestination} from '../pieces/runtime/role.js';
+import {SharingDatabase} from '../core/household/sharing.js';
 import {expect,vi} from 'vitest';
 import {join} from 'node:path';
 import {ServerResponse} from 'node:http';
@@ -22,13 +24,14 @@ export async function admissionFixture(closes:Array<()=>unknown>,releaseStaging=
  const socket=join(f.home,'admission.sock');
  const peer={fingerprint:f.fingerprint('daemon'),binding:{...binding},viewer:f.viewer,holder:client};
  const listener=await listenWorkerAdmission({...f.server,socket},f.tickets,[peer]);closes.push(listener.close);
+ const ticketRow=()=>f.app.db.prepare('SELECT id FROM secrets_tickets').get() as {id:string}|undefined;
  // Release only the synthetic staging effect, before admission reply reaches
  // the real worker. This is an owner action, not a transport retry or claim.
  if(releaseStaging) {
   const writeHead=ServerResponse.prototype.writeHead;
   vi.spyOn(ServerResponse.prototype,'writeHead').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['writeHead']>){
    if(this.req.url?.endsWith('/admit')&&args[0]===200) {
-    const row=f.app.db.prepare('SELECT id FROM secrets_tickets').get() as {id:string};
+    const row=ticketRow()!;
     expect(f.tickets.claim(row.id)).toBeNull();f.release(row.id);
    }
    return Reflect.apply(writeHead,this,args);
@@ -39,12 +42,20 @@ export async function admissionFixture(closes:Array<()=>unknown>,releaseStaging=
  const config={command:process.execPath,args:['-e',script,marker],cwd:f.home,env:{},
   input:{...f.server,socket:input},holderFingerprint:f.fingerprint('holder'),authority:{...f.config,cert:f.server.cert,key:f.server.key},
   daemonFingerprint:f.fingerprint('daemon'),admission:{...f.config,socket,cert:f.server.cert,key:f.server.key}};
- let current=true;
- const request={name:'API',binding,current:()=>current,expiresAt:Date.now()+20_000};
+ const destination=runtimeHouseDestination(f.app,()=>new SharingDatabase(f.app.db,f.home).sharing(),f.viewer)!;
+ const metadata=()=>JSON.stringify([f.app.db.prepare('SELECT id,record FROM secrets_grants ORDER BY id').all(),f.app.db.prepare("SELECT value FROM secrets_meta WHERE key='policy'").get()]);
+ const original=metadata();let current=true;
+ const request={name:'API',binding,current:()=>current&&destination.current()&&metadata()===original,expiresAt:Date.now()+20_000};
  const start=async()=>{const c=await startAdmittedSecretCommand(config,request);closes.push(c.close);return c;};
  const admitted=async()=>{
-  await expect.poll(()=>f.app.db.prepare('SELECT id FROM secrets_tickets').get()).toBeTruthy();
-  return (f.app.db.prepare('SELECT id FROM secrets_tickets').get() as {id:string}).id;
+  await expect.poll(ticketRow).toBeTruthy();
+  return ticketRow()!.id;
  };
  return {...f,binding,config,request,peer,listener,marker,source,start,admitted,revoke(){current=false;}};
+}
+
+export function holdAdmissionResponse(suffix:string) {
+ let entered!:()=>void,resume!:()=>void;const ready=new Promise<void>(r=>{entered=r;}),wait=new Promise<void>(r=>{resume=r;}),end=ServerResponse.prototype.end;
+ const spy=vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){if(this.req.url?.endsWith(suffix)&&this.statusCode<300){entered();void wait.then(()=>end.apply(this,args));return this;}return end.apply(this,args);});
+ return {ready,resume,spy};
 }

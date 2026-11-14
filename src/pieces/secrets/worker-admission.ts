@@ -47,7 +47,7 @@ export async function listenWorkerAdmission(config:Omit<LocalHolderConfig,'serve
     };
     const server=https.createServer({...material,requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3',maxHeaderSize:8192},(req,res)=>{
       const work=(async()=>{
-        res.on('error',()=>{});
+        res.on('error',()=>{});let admittedPending:string|undefined;
         try {
           const socket=req.socket as TLSSocket;
           const connection=connections.get(socket)??connections.get((socket as TLSSocket&{_parent?:object})._parent??{});
@@ -63,7 +63,7 @@ export async function listenWorkerAdmission(config:Omit<LocalHolderConfig,'serve
             if(retained.has(pendingId)||retained.size>=1024||req.headers['x-loom-ticket'])throw failed();
             const admission=tickets.admitHandoff(peer.viewer,name,{id:pendingId,binding:peer.binding},peer.holder);
             const timer=setTimeout(()=>retire(pendingId),30_000);
-            retained.set(pendingId,{peer,admission,ready:false,timer});
+            retained.set(pendingId,{peer,admission,ready:false,timer});admittedPending=pendingId;
             res.once('close',()=>{if(!res.writableFinished)retire(pendingId);});
             body=JSON.stringify({id:admission.id,pendingId});
           }else {
@@ -81,6 +81,7 @@ export async function listenWorkerAdmission(config:Omit<LocalHolderConfig,'serve
           if(!alive())throw failed();
           res.writeHead(body?200:204,{'content-length':Buffer.byteLength(body),'cache-control':'no-store','connection':'close'});res.end(body);
         }catch {
+          if(admittedPending)retire(admittedPending);
           if(!res.headersSent&&!res.destroyed)res.writeHead(503,{'content-length':0,'cache-control':'no-store','connection':'close'});
           res.end();
         }

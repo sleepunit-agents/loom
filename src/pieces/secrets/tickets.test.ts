@@ -328,7 +328,7 @@ it.each([false,true])('abandons the original daemon admission before/after claim
  const f=await ticketAuthorityFixture(closes),pending={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
  const holder=localHolderHandoff({...f.server,socket:join(f.home,'unused-holder.sock'),servername:'holder.test'},f.fingerprint('holder'));closes.push(holder.close);
  const admission=f.tickets.admitHandoff(f.viewer,'API',pending,holder);expect(f.tickets.claim(admission.id)).toBeNull();f.release(admission.id);
- const claim=afterClaim?f.tickets.claim(admission.id):null;admission.abandon();admission.abandon();
+ const claim=afterClaim?f.tickets.claim(admission.id):null;f.app.db.transaction(()=>expect(admission.abandon).toThrow('Secret handoff unavailable'))();admission.abandon();admission.abandon();
  expect(f.state(admission.id)).toEqual({state:'uncertain'});if(claim)expect(claim.current()).toBe(false);
  await expect(admission.dispatch()).rejects.toThrow();expect(f.tickets.claim(admission.id)).toBeNull();
  expect(()=>f.tickets.admitHandoff(f.viewer,'API',pending,holder)).toThrow();
