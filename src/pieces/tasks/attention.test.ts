@@ -129,9 +129,9 @@ it('keeps a withdrawn projection on the source current audience after later move
   const s=await setup(),id=s.create({project:'pond',agent:'art'});
   expect(s.call('tasks.close',{id,actor:'art',at:'2026-11-13T00:01:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
   expect(s.ask(id,member).ok).toBe(true);
-  expect(s.call('tasks.update',{id,set:{project:'other',agent:'pond-bot'},actor:'art',at:'2026-11-13T00:02:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
+  expect(s.call('tasks.update',{id,set:{project:'other',agent:'art'},actor:'art',at:'2026-11-13T00:02:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
   expect(s.ask(id,member)).toMatchObject({ok:false,code:'denied'});
-  expect(s.ask(id)).toMatchObject({ok:true,value:{state:'resolved',project:'other',agent:'pond-bot',ask:'Task no longer needs you'}});
+  expect(s.ask(id)).toMatchObject({ok:true,value:{state:'resolved',project:'other',agent:'art',ask:'Task no longer needs you'}});
   expect(s.types.get('attention.ask')!.read(taskAskId(id),member)).toBeUndefined();
 });
 it('does not narrow valid empty or unrestricted legacy task fields through filing validation',async()=>{

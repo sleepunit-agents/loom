@@ -80,8 +80,8 @@ it('reconciles existing new-side cards on startup without no-op receipts on reop
 });
 it('redacts withdrawn words and follows source scope moves even after resolution',async()=>{
   const s=await setup();s.seed(card({project:'pond'}));expect(s.ask(undefined,pollock).ok).toBe(true);
-  s.seed(card({state:'denied',project:'other',agent:'pond-bot'}));
-  expect(s.ask(undefined,pollock).ok).toBe(false);expect(s.ask()).toMatchObject({ok:true,value:{project:'other',agent:'pond-bot',state:'resolved',ask:'Approval no longer needs you'}});
+  s.seed(card({state:'denied',project:'other',agent:'art'}));
+  expect(s.ask(undefined,pollock).ok).toBe(false);expect(s.ask()).toMatchObject({ok:true,value:{project:'other',agent:'art',state:'resolved',ask:'Approval no longer needs you'}});
   expect(s.ask()).not.toHaveProperty('value.why');
 });
 it('reserves future approval keys and refuses reconciliation over public doors or other identities',async()=>{

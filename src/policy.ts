@@ -21,7 +21,9 @@ export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
   if (r.member !== undefined) return v.kind === 'member' && v.id === r.member && !!m;
   if (r.project !== undefined) {
     const p = entry(s.projects, r.project);
-    return !!p && (v.kind === 'member' ? !!m && p.members.includes(v.id) : p.agents.includes(v.id));
+    const inProject = !!p && (v.kind === 'member' ? !!m && p.members.includes(v.id) : p.agents.includes(v.id));
+    // Tasks explicitly share by project first; other records also share by agent.
+    if (inProject || r.type === 'task') return inProject;
   }
   if (r.agent !== undefined) return v.kind === 'agent' ? v.id === r.agent : !!m?.agents.includes(r.agent);
   return false;
