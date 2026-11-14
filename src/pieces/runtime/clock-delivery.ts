@@ -147,6 +147,21 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     return {agent:job.agent,member:job.member,conversation:job.conversation,project:job.project,service:job.service,principal:principalForWork(p.history,owners())};
   };
   return {valid,bound,read,clockProvenance,
+    // The existing runner input boundary needs owning Clock authority for
+    // public jobs too. A generic replacement destination cannot authorize a
+    // payload prepared for the original claim. This proof ends at takeInput;
+    // it is not native launch authority after the payload leaves Runtime.
+    inputCurrent(jobId:string){
+      const root=db.prepare('SELECT * FROM runtime_clock_turns WHERE job=? ORDER BY seq LIMIT 1').get(jobId) as Turn|undefined;
+      if(!root)return ()=>true;
+      const job=store.read('job',jobId),original=job&&readDestination(job);
+      return ()=>{
+        const current=store.read('job',jobId);
+        return !!current&&current.state==='starting'&&valid(jobId)
+          &&readDestination(current)===original&&currentSource(root,current)
+          &&!withdrawn(root);
+      };
+    },
     // Final dispatch must follow the owning preparation, even if a different
     // conversation consumer would independently authorize the viewer now.
     preparedRead(value:unknown){return !!value&&typeof value==='object'&&reads.has(value);},

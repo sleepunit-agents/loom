@@ -12,6 +12,15 @@ runtime. `loom wake` loads identity and is unrelated to scheduling.
 
 ## Remaining work and evidence
 
+The existing `runtime.takeInput` boundary now requires current owning Clock
+source authority for public starts as well as private starts. It captures the
+original job, conversation, wake binding, place, claim, runner, box and house,
+then rechecks after the effects gate and at final input release before issuing a
+body credential. Withdrawal before preparation leaves no input effect; a race
+after effect consumption stays consumed and cannot authorize another start.
+This proof ends when the start payload leaves Runtime. It does not authorize a
+later native launch or enable standalone file delivery, both still unfinished.
+
 At base `27a1e59`, runtime installs `runtime.startBody` and next mode composes
 Clock with `src/pieces/runtime/clock.ts`. The bridge accepts plain prompt wakes
 only after agent house configuration and waits for runner-confirmed running or
