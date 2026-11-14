@@ -21,6 +21,7 @@ import {localHolderHandoff} from './holder-handoff.js';
 import * as storage from './holder-store.js';
 import {holderOwner,serveHolderOwner} from '../../secret-holder-owner.js';
 import {pair} from '../../secret-holder-owner.fixture.js';
+import {run as runHolder} from '../../secret-holder.js';
 import * as authority from './ticket-authority.js';
 import * as workerTransport from '../../runtime-runner/secret-transport.js';
 const closes:Array<()=>unknown>=[];
@@ -45,7 +46,9 @@ async function setup(staging=false) {
  const input={...daemon,socket:endpoint('input')};
  config.handoff.workers.push({binding,config:{...f.config,socket:input.socket},fingerprint:f.fingerprint('daemon')});
  const file=join(f.home,'persistent-holder.json');const save=()=>writeFileSync(file,JSON.stringify(config),{mode:0o600});save();
- const start=async()=>{const h=await startPersistentHolder(file);closes.push(h.close);return h;};
+ const start=async(uncertain=false)=>{const h=await startPersistentHolder(file);closes.push(async()=>{
+  if(uncertain)await expect(h.close()).rejects.toThrow('Persistent secret holder could not close');else await h.close();
+ });return h;};
  const mutate=localHolderMutations({...daemon,socket:config.mutation.socket,servername:'holder.test'});
  const inputs=workerSecretInputs(),received:string[]=[],borrowed:Buffer[]=[];
  let proof:ReturnType<typeof remoteWorkerTicketProof>|undefined;
@@ -58,7 +61,7 @@ async function setup(staging=false) {
  return {...f,app,config,file,save,start,put,admit,admission,received,borrowed};
 }
 it.each([false,true])('persistent startup reaches real Runtime-selected worker with central proof (staging=%s)',async staging=>{
- const f=await setup(staging);await f.start();await f.put();const id=await f.admit();
+ const f=await setup(staging);await f.start(staging);await f.put();const id=await f.admit();
  if(staging)await expect(f.admission.dispatch()).rejects.toThrow();else await f.admission.dispatch();
  expect(f.received).toEqual(staging?[]:['SYNTHETIC-PERSISTENT-HANDOFF']);
  expect(f.borrowed.every(b=>b.every(v=>v===0))).toBe(true);
@@ -331,7 +334,10 @@ it.each([false,true])('inherited owner selects configured holder peers only and 
  expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(id)).toEqual({state:staging?'uncertain':'released'});
  expect(JSON.stringify([...parent.messages,...child.messages])).not.toMatch(/SYNTHETIC|\.pem|\.key|socket|config/);
  for(const name of ['holder.db','holder.db-wal'])expect(readFileSync(join(f.config.directory,name)).includes('SYNTHETIC-PERSISTENT-HANDOFF')).toBe(false);
- await client.replaceWorkers([]);await client.close();await server.close();
+ if(staging) {
+  // Opaque denied/uncertain acquisition cannot be promoted to a clean transfer.
+  await expect(client.replaceWorkers([])).rejects.toThrow('Secret holder owner unavailable');await expect(server.done).rejects.toThrow();
+ }else {await client.replaceWorkers([]);await client.close();await server.close();}
  expect(existsSync(f.config.handoff.listen.socket)).toBe(false);
 });
 it('inherited owner cannot add an unconfigured peer and lost channel closes actual holder sockets',async()=>{
@@ -357,7 +363,7 @@ it.each(['no-peers','bound-startup','legacy-mode','duplicate-peer','peer-tls','p
  expect(existsSync(join(f.config.directory,'holder.db'))).toBe(false);
 });
 
-it.each(['claim','settlement'] as const)('inherited replacement joins actual pending %s and withholds uncertain success ack',async phase=>{
+it.each(['claim','claim-lost','settlement'] as const)('inherited replacement joins actual pending %s and withholds uncertain success ack',async phase=>{
  const f=await setup(),selected=structuredClone(f.config.handoff.workers);
  f.config.handoff.workers=[];Object.assign(f.config.handoff,{ownerPeers:selected.map(({config,fingerprint})=>({config,fingerprint}))});f.save();
  const {parent,child}=pair(),server=serveHolderOwner(child,()=>startPersistentHolder(f.file,true)),client=holderOwner(parent);
@@ -366,7 +372,7 @@ it.each(['claim','settlement'] as const)('inherited replacement joins actual pen
  let entered!:()=>void,resume!:()=>void;const ready=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{resume=r;});
  const end=ServerResponse.prototype.end;
  vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
-  if(phase==='claim'&&this.req.url?.endsWith('/claim')) {entered();void hold.then(()=>end.apply(this,args));return this;}
+  if(phase!=='settlement'&&this.req.url?.endsWith('/claim')) {entered();void hold.then(()=>phase==='claim-lost'?this.destroy():end.apply(this,args));return this;}
   if(phase==='settlement'&&this.req.url?.endsWith('/uncertain')) {entered();void hold.then(()=>this.destroy());return this;}
   if(phase==='settlement'&&this.req.url?.endsWith('/current')){readEntered();void readHold.then(()=>end.apply(this,args));return this;}
   return end.apply(this,args);
@@ -374,7 +380,7 @@ it.each(['claim','settlement'] as const)('inherited replacement joins actual pen
  let readEntered!:()=>void,readResume!:()=>void;const reading=new Promise<void>(r=>{readEntered=r;}),readHold=new Promise<void>(r=>{readResume=r;});
  // Hold the actual HTTP response, never replace the original proof capability.
  const delivery=f.admission.dispatch().catch(e=>e);
- if(phase==='claim')await ready;else await reading;
+ if(phase!=='settlement')await ready;else await reading;
  let acknowledged=false;const replacing=client.replaceWorkers([]).then(()=>{acknowledged=true;});void replacing.catch(()=>{});
  if(phase==='settlement')await ready;
  await new Promise<void>(r=>setImmediate(r));expect(acknowledged).toBe(false);
@@ -383,4 +389,19 @@ it.each(['claim','settlement'] as const)('inherited replacement joins actual pen
  else {await expect(replacing).rejects.toThrow('Secret holder owner unavailable');await expect(server.done).rejects.toThrow();}
  expect(await delivery).toBeInstanceOf(Error);expect(f.received).toEqual([]);
  expect(child.messages.filter(m=>(m as {op:string}).op==='replaced')).toHaveLength(phase==='claim'?2:1);
+});
+
+it.each(['SIGTERM','SIGINT'] as const)('owned packaged entrypoint joins actual holder storage/listeners on %s',async signal=>{
+ const f=await setup(),selected=structuredClone(f.config.handoff.workers),open=storage.openHolderStore,closed=vi.fn();
+ vi.spyOn(storage,'openHolderStore').mockImplementation(async(...args)=>{const store=await open(...args);return {...store,close(){closed();store.close();}};});
+ f.config.handoff.workers=[];Object.assign(f.config.handoff,{ownerPeers:selected.map(({config,fingerprint})=>({config,fingerprint}))});f.save();
+ const {parent,child}=pair(),client=holderOwner(parent),stderr=vi.fn();
+ const running=runHolder(['--config',f.file,'--owned'],stderr,child);
+ closes.push(async()=>{client.abort();await running;});
+ await client.ready;await client.replaceWorkers(selected);
+ expect(existsSync(f.config.read.socket)).toBe(true);expect(existsSync(f.config.handoff.listen.socket)).toBe(true);
+ expect(closed).not.toHaveBeenCalled();process.emit(signal);
+ expect(await running).toBe(0);expect(stderr).not.toHaveBeenCalled();expect(closed).toHaveBeenCalledOnce();
+ for(const endpoint of [f.config.read,f.config.mutation,f.config.handoff.listen])expect(existsSync(endpoint.socket)).toBe(false);
+ await expect(client.replaceWorkers(selected)).rejects.toThrow('Secret holder owner unavailable');
 });

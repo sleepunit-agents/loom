@@ -48,6 +48,7 @@ export function managedHolderAuthority(
   const retained = new Set<() => Promise<void>>();
   const draining = new Set<Promise<void>>();
   const acquiring = new Set<Promise<unknown>>();
+  const poison=()=>{uncertain=true;closed=true;generation++;routes.clear();};
   const retire = async () => {
     const abandoned = [...retained];
     retained.clear();
@@ -59,8 +60,11 @@ export function managedHolderAuthority(
     if (closed) return null;
     const original = generation;
     let claim: RemoteTicketClaim | null;
-    try { claim = await tickets.claim(id); } catch { return null; }
-    if (!claim) return null;
+    try { claim = await tickets.claim(id); } catch { poison();return null; }
+    // The production client deliberately hides transport/denial diagnostics as
+    // null. That cannot prove no claim was consumed before its ack was lost.
+    // Fail closed for both outcomes rather than adopting an equal generation.
+    if (!claim) {poison();return null;}
     let invalid = false, attempted = false, abandoned = false;
     const abandon = async () => {
       invalid = true;
@@ -71,7 +75,7 @@ export function managedHolderAuthority(
         try { await claim.finish(false); } catch {
           // Lost settlement is sticky. A new equal route cannot repair the
           // original receipt or make this controller safe to transfer again.
-          uncertain=true;closed=true;generation++;routes.clear();throw failed();
+          poison();throw failed();
         }
       })();
       draining.add(pending);

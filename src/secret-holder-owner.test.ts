@@ -53,6 +53,18 @@ it.each(['extra','value','path','duplicate','sequence','unknown'] as const)('poi
   if(kind==='duplicate')message={op:'replace',seq:0,workers:[]};
   f.parent.send(message,()=>{});await expect(f.server.done).rejects.toThrow();expect(f.replaceOwnedWorkers).not.toHaveBeenCalled();
 });
+it.each(['capacity','nested-extra','nested-invalid','pin-invalid','missing-binding','non-array'])('protocol refuses %s worker selection before invoking original holder',async kind=>{
+  const f=await setup(),selected:{binding?:unknown;fingerprint:string}={binding:binding(),fingerprint};
+  if(kind==='nested-extra')Object.assign(selected.binding!,{value:'PRIVATE-SENTINEL'});
+  if(kind==='nested-invalid')Object.assign(selected.binding!,{claimedAt:'42'});
+  if(kind==='pin-invalid')selected.fingerprint='not-a-pin';
+  if(kind==='missing-binding')delete selected.binding;
+  f.parent.send({op:'replace',seq:1,workers:kind==='capacity'?Array(1025).fill(selected):kind==='non-array'?selected:[selected]},()=>{});
+  await new Promise<void>(resolve=>setImmediate(resolve));expect(f.replaceOwnedWorkers).not.toHaveBeenCalled();expect(f.parent.connected).toBe(false);
+  await expect(f.server.done).rejects.toThrow();
+  await expect(f.client.replaceWorkers([worker()])).rejects.toThrow();
+  expect(f.close).toHaveBeenCalledOnce();
+});
 it('fences a second request while replacement is draining and joins the first before holder close',async()=>{
   const f=await setup(),hold=deferred(),entered=deferred();
   f.replaceOwnedWorkers.mockImplementation(async()=>{entered.resolve();await hold.promise;});

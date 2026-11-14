@@ -1348,3 +1348,11 @@ central settlement can drain storage successfully while returning a generic
 failure; the owner must preserve that uncertainty instead of accepting a new
 routing generation. Invalid traffic during a held shutdown suppresses its
 success acknowledgement too.
+
+The existing remote ticket client deliberately hides denied and lost-ack
+acquisitions behind the same `null` result. Routing therefore treats both
+`null` and thrown acquisition as sticky uncertainty, fences every generation,
+and refuses a clean replacement or close acknowledgement. This conservative
+choice includes staging denial: no value is read or delivered, and a fresh
+owner is required rather than inferring that the original claim was never
+consumed. The inherited protocol still cannot reconnect or adopt a receipt.

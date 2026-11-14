@@ -7,7 +7,7 @@ import { listenLocalHolder } from './pieces/secrets/local-holder.js';
 import { startPersistentHolder } from './secret-holder-startup.js';
 import { ageSecretSource } from './pieces/secrets/age-source.js';
 import {serveHolderOwner,type HolderOwnerChannel} from './secret-holder-owner.js';
-export async function run(argv: string[], stderr: (text:string)=>void): Promise<number> {
+export async function run(argv: string[], stderr: (text:string)=>void,ownerChannel?:HolderOwnerChannel): Promise<number> {
   // A signal can arrive after bind but before the listen promise resumes.
   // Latch it before starting so shutdown cannot be lost during startup.
   let stop!:()=>void;
@@ -19,8 +19,9 @@ export async function run(argv: string[], stderr: (text:string)=>void): Promise<
     if (v.config) {
       if (Object.keys(v).some(k=>k!=='config'&&k!=='owned')) throw Error();
       if(v.owned) {
-        if(!process.send||!process.connected)throw Error();
-        const owner=serveHolderOwner(process as unknown as HolderOwnerChannel,()=>startPersistentHolder(v.config!,true));
+        const channel=ownerChannel??process as unknown as HolderOwnerChannel;
+        if(!channel.send||!channel.connected)throw Error();
+        const owner=serveHolderOwner(channel,()=>startPersistentHolder(v.config!,true));
         try {await Promise.race([stopped,owner.done]);}finally {await owner.close();}
         await owner.done;return 0;
       }

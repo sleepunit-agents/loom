@@ -113,7 +113,13 @@ it('keeps acquisition diagnostics private',async()=>{
  f.tickets.claim.mockRejectedValueOnce(Error('PRIVATE-ACQUISITION-SENTINEL'));
  expect(await c.authority(randomUUID())).toBeNull();
  expect(f.transport.deliver).not.toHaveBeenCalled();expect(f.claim.finish).not.toHaveBeenCalled();
- await c.close();
+ await expect(c.close()).rejects.toThrow(/^Secret handoff unavailable$/);
+ expect(await c.authority(randomUUID())).toBeNull();expect(f.tickets.claim).toHaveBeenCalledOnce();
+});
+it('treats an opaque null acquisition as uncertainty and never adopts a replacement generation',async()=>{
+ const f=setup(),c=managedHolderAuthority({claim:vi.fn(async()=>null)},f.configured);
+ expect(await c.authority(randomUUID())).toBeNull();await expect(c.replace(f.configured)).rejects.toThrow();
+ await expect(c.close()).rejects.toThrow();
 });
 it('shutdown retires an outstanding destination exactly once',async()=>{
  const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
