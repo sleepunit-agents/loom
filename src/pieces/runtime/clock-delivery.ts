@@ -162,12 +162,19 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     const binding=store.read('binding',job.conversation!)!;
     const identity=(r:Turn|undefined)=>r&&JSON.stringify([r.seq,r.id,r.conversation,r.job,r.record]);
     const rootKey=identity(root),rowKey=identity(row);
+    const known=(principal:{for:string}|undefined)=>!!principal&&(principal.for==='owner'||Object.hasOwn(sharing().members,principal.for));
+    const steering=()=>{
+      const p=provenanceStore(db).read(job.conversation!);
+      const principal=p&&principalForWork(p.history,owners());
+      return known(principal)?JSON.stringify(principal):undefined;
+    };
+    const originalSteering=steering();
     const nativeSource=(row:Turn)=>{
       const attempt=(JSON.parse(row.record) as {attempt:string}).attempt;
       const source=clockDispatchSource(operations,row.id.slice('clock:'.length),attempt,true);
-      return !!source&&source.model===undefined&&supportedClockPrompt(source);
+      return !!source&&known(source.authorship?.principal)&&source.model===undefined&&supportedClockPrompt(source);
     };
-    if(!nativeSource(root)||!nativeSource(row))throw new OperationError('denied','Native scheduled source is unsupported');
+    if(!originalSteering||!nativeSource(root)||!nativeSource(row))throw new OperationError('denied','Native scheduled source is unsupported');
     return {job:job.id,assignment:{runner:job.runner,box:job.box,claimedAt:job.claimedAt,house:job.made},
       binding:{agent:job.agent,conversation:job.conversation!,venue:'wake' as const,place:binding.place},
       message:{seq:row.seq,id:row.id,kind:'wake' as const,text:(JSON.parse(row.record) as {text:string}).text},
@@ -176,7 +183,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
         const live=db.prepare('SELECT * FROM runtime_clock_turns WHERE id=?').get(row.id) as Turn|undefined;
         const liveRoot=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(job.conversation) as Turn|undefined;
         return callerJob?.id===job.id&&callerJob.model===undefined&&callerJob.account===undefined
-          &&nativeSource(root)&&nativeSource(row)&&currentRead(viewer,value)&&!withdrawn(root)&&!withdrawn(row)
+          &&steering()===originalSteering&&nativeSource(root)&&nativeSource(row)&&currentRead(viewer,value)&&!withdrawn(root)&&!withdrawn(row)
           &&identity(liveRoot)===rootKey&&identity(live)===rowKey&&live?.consumed===null;
       },
       acknowledge(ctx:Context){acknowledge(ctx,row.seq);},

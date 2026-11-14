@@ -13,6 +13,7 @@ import {FakeClock,type Viewer} from '../core/index.js';
 import {signin,hash} from '../core/signin/index.js';
 import {currentExecution} from '../pieces/runtime/control.js';
 import {hearJob} from '../pieces/runtime/heartbeat.js';
+import {provenanceStore} from '../pieces/runtime/provenance-store.js';
 import {runtimeStore} from '../pieces/runtime/store.js';
 import {runClockWorker} from './clock-worker-entry.js';
 import {startClockWorker,type ClockWorkerConfig} from './clock-worker.js';
@@ -22,7 +23,7 @@ const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
 const owner:Viewer={kind:'member',id:'jonathan'};
 const settle=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
-async function setup(staging=false,privateInput=false){
+async function setup(staging=false,privateInput=false,unknownRoot=false){
  const home=mkdtempSync(join(tmpdir(),'clock-native-'));fixture(home);closes.push(()=>rmSync(home,{recursive:true,force:true}));
  const access=structuredClone(fixtureSharing());
  const clock=new FakeClock(),app=await startLoom({home,clock,next:true,staging,sharing:()=>access,stdout(){}});closes.push(app.close);access.services=builtinServices(app.db);
@@ -36,7 +37,7 @@ async function setup(staging=false,privateInput=false){
  signin(app).tokens.change(ts=>ts.push({role:'runner:a',label:'fixture runner',sha256:hash(runner),created:new Date(clock.now()).toISOString()}));
  const post=async(token:string,name:string,input={})=>(await fetch(`${app.url}/api/runtime/${name}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({input,id:`http-${++n}`})})).json();
  const work={agent:'art',prompt:'ONLY CURRENT SCHEDULED WORDS',note:'fixture',place:'lane:native',when:'1s'};
- const scheduled=privateInput?await app.operations.callAsync('socket',owner,'clock.in',{...work,member:'jonathan',project:'pond'},`private-${++n}`,true):call('clock.in',work);
+ const scheduled=privateInput?await app.operations.callAsync('socket',owner,'clock.in',{...work,member:'jonathan',project:'pond'},`private-${++n}`,true):call('clock.in',work,unknownRoot?{kind:'agent',id:'art'}:owner);
  expect(scheduled).toMatchObject({ok:true});const wake=(scheduled as {ok:true;value:{id:string}}).value.id;
  clock.advance(1000);await settle();const job=store.ids('job')[0];expect(job).toBeTruthy();
  expect(await post(runner,'claimJob',{job})).toMatchObject({ok:true});
@@ -286,12 +287,61 @@ it.each(['revokePolicy','stopJob','cancelRequest','close'] as const)('running lo
   held.release();await stopped;expect(await worker.completed).toBe(false);expect(f.consumed().consumed).toBeNull();
  }finally {held.release();held.spy.mockRestore();}
 });
-it.each(['job-finish','job-state','credential','policy','job-model'] as const)('remote %s during native execution kills the foreground child without ACK',async kind=>{
+it.each(['job-finish','job-state','credential','policy','job-model','job-account'] as const)('remote %s during native execution kills the foreground child without ACK',async kind=>{
  const f=await setup(),worker=f.start();await f.ready;
  if(kind==='job-finish')expect(await f.post(f.runner,'finishJob',{job:f.job,state:'failed'})).toMatchObject({ok:true});
  if(kind==='job-state')f.store.put('job',{...f.store.read('job',f.job)!,state:'stopped'},f.clock.now());
+ if(kind==='job-account')f.store.put('job',{...f.store.read('job',f.job)!,account:'other-account'},f.clock.now());
  if(kind==='job-model')f.store.put('job',{...f.store.read('job',f.job)!,model:'other-model'},f.clock.now());
  if(kind==='credential')signin(f.app).tokens.change(tokens=>{for(const t of tokens)if(t.sha256===hash(f.config.credential))t.revoked=new Date(f.clock.now()).toISOString();});
  if(kind==='policy')expect(f.call('runtime.configureBodyPolicy',{agent:'art',revision:0,gates:{people:{}},policy:{deny:['Bash']}}).ok).toBe(true);
  f.clock.advance(1000);expect(await worker.completed).toBe(false);expect(f.calls[0].child.killed).toBe(true);expect(f.consumed().consumed).toBeNull();
+});
+
+it('holds unknown root steering filed by an authenticated unbound agent',async()=>{
+ const f=await setup(false,false,true);expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(0);
+ expect(f.app.effects!.status(`runtime:clock-native:clock:${f.wake}`)).toBeUndefined();expect(f.consumed().consumed).toBeNull();
+});
+it('holds unknown selected steering independently of a known root and known current history',async()=>{
+ const f=await setup(),first=f.start();await f.ready;f.finish();expect(await first.completed).toBe(true);
+ const p=provenanceStore(f.app.db),before=p.read(f.config.binding.conversation)!;
+ f.app.db.transaction(()=>p.put(f.config.binding.conversation,{...before,history:{...before.history,unknown:true}}))();
+ const selected=await f.joinInput();
+ const after=p.read(f.config.binding.conversation)!;
+ f.app.db.transaction(()=>p.put(f.config.binding.conversation,{...after,history:before.history}))();
+ expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(1);
+ expect(f.app.effects!.status(`runtime:clock-native:clock:${selected}`)).toBeUndefined();
+});
+it.each(['preparation','running'] as const)('unknown conversation history introduced during %s cannot retain native authority',async phase=>{
+ const f=await setup(),p=provenanceStore(f.app.db);
+ const change=()=>{const before=p.read(f.config.binding.conversation)!;f.app.db.transaction(()=>p.put(f.config.binding.conversation,{...before,history:{...before.history,unknown:true}}))();};
+ if(phase==='preparation'){
+  const original=preparation.prepareClockInput;vi.spyOn(preparation,'prepareClockInput').mockImplementation((...args)=>{const value=original(...args);change();return value;});
+  expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(0);
+ }else {const worker=f.start();await f.ready;change();f.clock.advance(1000);expect(await worker.completed).toBe(false);expect(f.calls[0].child.killed).toBe(true);}
+ expect(f.consumed().consumed).toBeNull();expect(await f.post(f.config.credential,'readConversation',{})).toMatchObject({ok:true});
+});
+it('holds an account override at native admission before consuming a source attempt',async()=>{
+ const f=await setup();f.store.put('job',{...f.store.read('job',f.job)!,account:'other-account'},f.clock.now());
+ expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(0);expect(f.app.effects!.status(`runtime:clock-native:clock:${f.wake}`)).toBeUndefined();
+});
+it.each(['schema','malformed','oversized'] as const)('invalid %s admission response cannot launch a child',async kind=>{
+ const f=await setup(),original=globalThis.fetch;let injected=false;
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+  const response=await original(...args);if(!String(args[0]).endsWith('/beginClockExecution'))return response;
+  const data=await response.json();expect(data.ok).toBe(true);injected=true;
+  if(kind==='schema')data.value.ttl=99999;
+  return new Response(kind==='malformed'?'PRIVATE INVALID JSON':(kind==='oversized'?' '.repeat(1_048_577):'')+JSON.stringify(data),{status:200});
+ });
+ expect(await f.attempt()).toBe(false);expect(injected).toBe(true);expect(f.calls).toHaveLength(0);expect(f.consumed().consumed).toBeNull();
+});
+it.each(['schema','malformed'] as const)('invalid %s running authority response fences the actual child without ACK',async kind=>{
+ const f=await setup(),worker=f.start();await f.ready;const original=globalThis.fetch;
+ let entered!:()=>void;const poisoned=new Promise<void>(resolve=>{entered=resolve;});
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+  const response=await original(...args);if(!String(args[0]).endsWith('/currentClockExecution'))return response;
+  await response.arrayBuffer();entered();return new Response(kind==='malformed'?'PRIVATE INVALID JSON':JSON.stringify({ok:true,value:{current:false,ttl:5000}}),{status:200});
+ });
+ f.clock.advance(1000);await poisoned;await settle();f.finish();
+ expect(await worker.completed).toBe(false);expect(f.calls[0].child.killed).toBe(true);expect(f.consumed().consumed).toBeNull();
 });

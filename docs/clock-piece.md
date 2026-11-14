@@ -42,6 +42,14 @@ or uncertain. It performs no retry and owns no retained native session.
 | Watchdog and expiry | Check Runtime every second. Each successful read supplies at most a five-second local authority window measured from BEFORE its request; a stalled response cannot extend its own age. Expiry or any failure fences the original execution. This is bounded remote revocation, not instantaneous cross-machine cancellation; execution may continue within an already admitted window. The server id expires after 30 minutes and is never restart authority. |
 | Output and `runtime.completeClockExecution` | Start a new source check after output, independently of any in-flight watchdog read. Only a current result can ACK the selected sequence; no native result words are persisted or returned by this startup. A failed or lost completion stays uncertain and never starts another child. |
 
+Unknown steering is held for this native consumer: the root, selected source and
+current conversation history must have a known principal. The effective original
+steering is pinned across execution; an added unknown source or a change to a
+different known principal cannot retain the old local rules. This hold adds no
+owner identity inferred from a saved Viewer or archive, and it leaves the generic
+inbox behavior unchanged. Native unknown-principal execution needs the remaining
+compiled policy integration before it can be supported.
+
 The native effect is separate from the existing input/read effects; all three
 honor staging. A denied/uncertain native attempt leaves source consumption null.
 Generic prompt consumers still use `runtime.readConversation` and

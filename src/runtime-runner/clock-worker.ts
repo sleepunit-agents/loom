@@ -2,8 +2,8 @@
  * imports this module. Config is a local owner capability, not body input. */
 import { randomUUID } from 'node:crypto';
 import { isAbsolute } from 'node:path';
-import { z } from 'zod';
-import {clockExecutionAssignment} from '../pieces/runtime/clock-execution.js';
+import type { z } from 'zod';
+import {clockExecutionAssignment,clockExecutionBinding as binding,clockExecutionAdmission as begin,clockExecutionCurrent,clockExecutionCompletion} from '../pieces/runtime/clock-protocol.js';
 import { clock as realClock, type Clock } from '../core/clock.js';
 import { ClaudeWorkerSession, type RunnerBinding, type SpawnClaude } from './session.js';
 import { prepareClockInput } from './clock-input.js';
@@ -21,10 +21,6 @@ export interface ClockWorkerConfig {
   env:NodeJS.ProcessEnv;
   rules:unknown;
 }
-const binding=z.object({agent:z.string(),conversation:z.string(),venue:z.literal('wake'),place:z.string()}).strict();
-const begin=z.object({execution:z.uuid(),job:z.string(),assignment:clockExecutionAssignment,binding,
-  batch:z.object({conversation:z.string(),messages:z.array(z.object({seq:z.number().int().positive(),id:z.string().startsWith('clock:'),kind:z.literal('wake'),text:z.string()})).length(1)}).strict(),
-  ttl:z.literal(5000)}).strict();
 const fail=()=>new Error('Scheduled worker unavailable');
 
 /** One foreground child, one original local assignment, no resume/retry. The
@@ -75,7 +71,7 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
       if(!message||!local())throw fail();
       const refresh=async()=>{
         const started=clock.now();
-        const value=z.object({current:z.literal(true),ttl:z.literal(5000)}).strict().parse(await call('currentClockExecution',{execution:input.execution}));
+        const value=clockExecutionCurrent.parse(await call('currentClockExecution',{execution:input.execution}));
         if(!local()||clock.now()>=started+value.ttl)throw fail();
         // Out-of-order successful reads cannot shorten/restore a fenced lease.
         deadline=Math.max(deadline,started+value.ttl);
@@ -95,7 +91,7 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
       // Always start a NEW authority request after output. Never coalesce this
       // with a watchdog read begun while the child was still running.
       await refresh();if(!local())throw fail();
-      const receipt=z.object({acknowledged:z.literal(true)}).strict().parse(await call('completeClockExecution',{execution:input.execution}));
+      const receipt=clockExecutionCompletion.parse(await call('completeClockExecution',{execution:input.execution}));
       if(!local()||!receipt.acknowledged)throw fail();
       // No words or native handle escape this dedicated one-turn startup.
       void output;return true;

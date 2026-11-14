@@ -1,13 +1,12 @@
 /** Owning Runtime admission for one native Clock input. No worker paths,
  * harness handles or credentials are accepted from a request. */
-import { buildIdentity } from './records.js';
+import {clockExecutionAssignment,clockExecutionAdmission,clockExecutionCurrent,clockExecutionCompletion} from './clock-protocol.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { operation, OperationError, type Context, type Viewer } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
 
-export const clockExecutionAssignment=z.object({runner:z.string().min(1),box:z.string().min(1),claimedAt:z.number().int(),house:buildIdentity}).strict();
 export interface ClockExecutionInput {
   assignment:z.infer<typeof clockExecutionAssignment>;
   job:string;
@@ -30,10 +29,7 @@ export function installClockExecution(app:Foundation,effects:OutsideEffects,
   };
   app.onClose(()=>executions.clear());
   operations.register(operation({name:'runtime.beginClockExecution',doors:['http','direct'],
-    input:z.object({}).strict(),output:z.object({execution:z.uuid(),job:z.string(),assignment:clockExecutionAssignment,
-      binding:z.object({agent:z.string(),conversation:z.string(),venue:z.literal('wake'),place:z.string()}),
-      batch:z.object({conversation:z.string(),messages:z.array(z.object({seq:z.number(),id:z.string(),kind:z.literal('wake'),text:z.string()})).length(1)}),
-      ttl:z.literal(5000)}),
+    input:z.object({}).strict(),output:clockExecutionAdmission,
     may:v=>v.kind==='agent',
     async prepare(_input,{viewer}) {
       prune();if(executions.size>=1024)throw new OperationError('unavailable','Scheduled execution is busy');
@@ -59,11 +55,11 @@ export function installClockExecution(app:Foundation,effects:OutsideEffects,
     },
   }));
   operations.register(operation({name:'runtime.currentClockExecution',doors:['http','direct'],
-    input:token,output:z.object({current:z.literal(true),ttl:z.literal(5000)}),
+    input:token,output:clockExecutionCurrent,
     may:v=>v.kind==='agent',run(ctx,i){current(ctx.viewer,i.execution);return {current:true as const,ttl:5000 as const};},
   }));
   operations.register(operation({name:'runtime.completeClockExecution',doors:['http','direct'],write:true,recheckPolicy:true,
-    input:token,output:z.object({acknowledged:z.literal(true)}),may:v=>v.kind==='agent',
+    input:token,output:clockExecutionCompletion,may:v=>v.kind==='agent',
     run(ctx,i){const e=current(ctx.viewer,i.execution);e.input.acknowledge(ctx);executions.delete(i.execution);return {acknowledged:true as const};},
   }));
 }
