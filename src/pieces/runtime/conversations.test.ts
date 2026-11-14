@@ -543,10 +543,15 @@ it('composes Clock local filing and approval-only recovery from the exact runnin
  expect(command).toMatchObject({exit:0,stdout:expect.stringContaining('nothing armed')});
  const second=command.stdout.match(/a-[0-9a-f]{8}/)![0];
  value(await f.socket('approvals.answer',{id:second,action:'allow'}));
- const recovered=value<{exit:number;stdout:string}>(await f.post(body,'clock.command',{agent:'art',argv:['in','1h','--approval',second]}));
+ const original=signin(f.app).token(hash(body))!.viewer;
+ const localCommand={agent:'art',argv:['in','1h','--approval',second]};
+ const recoveredResult=f.app.operations.call('http',original,'clock.command',localCommand,'local-history-independent');
+ const recovered=value<{exit:number;stdout:string}>(recoveredResult);
  expect(recovered).toMatchObject({exit:0,stdout:expect.stringContaining('will wake at')});
  expect(JSON.stringify(recovered)).not.toContain('COMMAND PRIVATE');
  expect(wakes(f.app.db)).toHaveLength(2);
+ f.app.db.prepare('DELETE FROM runtime_provenance WHERE conversation=?').run(runtimeStore(f.app.db).read('job',job)!.conversation);
+ expect(f.app.operations.call('http',original,'clock.command',localCommand,'local-history-independent')).toEqual(recoveredResult);
  expect(await f.post(body,'clock.list',{agent:'art'})).toMatchObject({ok:true,value:[]});
  expect(await f.socket('clock.list',{agent:'art'})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({prompt,note})])});
 });

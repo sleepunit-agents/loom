@@ -89,3 +89,18 @@ it('scopes generated-command receipts as well as direct one-off receipts to the 
  f.proof={...f.proof!,conversation:'cv-proof',member:'jonathan'};f.access.members.jonathan.agents=[];
  expect(f.app.operations.call('direct',body,'clock.command',input,id)).toMatchObject({ok:false,code:'denied'});
 });
+
+it('preserves public response fields and cached public retries while retaining original internal evidence',async()=>{
+ const f=await setup();f.proof=undefined;const id=randomUUID();
+ const first=f.call('in',{project:'pond'},body,id);expect(first).toMatchObject({ok:true});
+ expect((first as {value:object}).value).not.toHaveProperty('authorship');
+ expect(wakes(f.app.db)[0].authorship).toMatchObject({origin:'art',principal:{for:'?',people:[]}});
+ expect(JSON.stringify(f.app.operations.call('direct',body,'clock.list',{},randomUUID()))).not.toContain('authorship');
+ f.access.projects.pond.agents=[];
+ expect(f.call('in',{project:'pond'},body,id)).toEqual(first);expect(f.call('in',{project:'pond'})).toMatchObject({ok:false,code:'denied'});
+});
+it('keeps unrelated generated-command receipt identity independent of the provenance reader',async()=>{
+ const f=await setup(),id=randomUUID(),input={agent:'art',argv:['schedule','list']};
+ const first=f.app.operations.call('direct',body,'clock.command',input,id);expect(first).toMatchObject({ok:true});
+ f.proof=undefined;expect(f.app.operations.call('direct',body,'clock.command',input,id)).toEqual(first);
+});
