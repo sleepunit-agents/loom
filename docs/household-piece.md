@@ -662,3 +662,41 @@ logout keep their existing cryptographic/CSRF policy. No schema, job, legacy
 route adaptation or host installation is added. Account's single browser test
 uses two windows and actual virtual-authenticator WebAuthn registration; CI
 captures 390/1280/1920 Neon Noir and Daylight in `artifacts/household-account/`.
+
+### Agent profile descriptions
+
+`household.profile({agent})` and agent-scoped `household.profile` Live records
+project the imported `about` description and an unexpired `aboutAsk` timestamp,
+without returning the household envelope or reading an identity file. Only callers
+who can see that agent through central policy can read its profile.
+
+An agent’s owners use `household.setProfile({agent,text})` to set/clear a description
+(up to 600 normalized characters), or `household.requestProfile({agent})` to ask
+for one. Both have Setup controls, available to scoped owners for their agents even without household administration. Central policy’s agent-setup action supplies this authority. The authenticated agent answers with
+`household.describeSelf({text})`: no agent selector, at most 300 characters and
+two sentences, only once during the next 24 hours. Blank replies refuse without
+consuming the request. Owner edits close an open request. Future or expired imported
+timestamps grant no answer. Reads/expiry use the daemon clock, with Live expiry
+scheduled at the request deadline; no poller or external job is added.
+
+These operations mutate the existing household envelope, preserving unrelated
+metadata and other agents' descriptions. Mutation, request consumption, retry
+receipt and notification commit together. Retrying a committed answer returns
+its original result without overwriting later owner words. Setup keeps the
+original uncertain request handle and disables inactive/offline edits and retries.
+Neither an edit nor a request changes a creed. Explicit offline `describe_self`
+continues to refuse app writes; the daemon exposes `household.describeSelf` over
+its registry MCP endpoint. Generated `loom-household profile`, `setProfile`,
+`requestProfile` and `describeSelf` use the same schemas (JSON argument/output).
+
+| Old profile action | Next replacement |
+| --- | --- |
+| `about-set` (including Setup description) | `household.setProfile`; empty text clears and closes the request |
+| `about-ask` / Regenerate | `household.requestProfile`; server-timed 24-hour request |
+| Agent `describe_self` | Authenticated daemon `household.describeSelf`; same once-only request/length/sentence rules, no caller-selected agent |
+
+The existing single two-window Setup browser test edits, requests and observes an
+agent reply through Live, and captures the profile section at all three widths in
+Neon Noir and Daylight. CI supplies these screenshots; no local browser run is
+required or claimed. Device sign-in links, push devices/delivery and backup remain
+separate inventory gaps.

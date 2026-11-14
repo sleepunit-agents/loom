@@ -1172,6 +1172,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add a private Your account app for named passkey registration, confirmed passkey/cascade removal and signing out individual browsers, with Live records and a generated `loom-account` client.
 
+- Add row-backed agent profile descriptions to Setup, with owner edits/requests, scoped Live records and once-only authenticated agent replies.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
