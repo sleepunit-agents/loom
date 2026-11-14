@@ -463,8 +463,12 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     && create(v, { agent: i.agent, note: '' }), (ctx, i) => ensureDeadman(ctx, i.agent), true);
   operations.register(operation({ name: 'clock.command', write: true, recheckPolicy:true, inputHash:(body, identity) => {
       const input = identity.input;
-      return !localCommandInput(identity.actor,input) && (oneOffCommandInput(identity.actor,input) || controlCommandInput(identity.actor,input,commandSchedules(identity.actor)))
-        ? filingHash(body,identity) : createHash('sha256').update(body).digest('hex');
+      if(localCommandInput(identity.actor,input))return createHash('sha256').update(body).digest('hex');
+      const control=controlCommandInput(identity.actor,input,commandSchedules(identity.actor));
+      // A name may resolve to a different id after removal. That is never a
+      // replay of the original private acknowledgement, even in the same body.
+      return control ? filingHash(JSON.stringify([body,control.id]),identity)
+        : oneOffCommandInput(identity.actor,input) ? filingHash(body,identity) : createHash('sha256').update(body).digest('hex');
     },
     input: z.object({ argv: z.array(z.string()).max(100), agent: text.optional(), laneFile: z.object({path:text,text:z.string().max(100_000)}).optional() }),
     output: z.object({ exit:z.number().int(), stdout:z.string(), stderr:z.string() }),

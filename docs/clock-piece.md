@@ -1115,7 +1115,8 @@ administration and household run-now keep their separate owner requirements.
 
 Both the direct operation and the outer generated-command receipt check current
 authority before replay. Their fingerprints bind Runtime's current independent
-conversation/member/project/service. Private body results acknowledge only id,
+conversation/member/project/service, and command controls also bind the resolved
+schedule id so a later same-name schedule cannot inherit a private receipt. Private body results acknowledge only id,
 state/deadline and parked wait id; no private words, original people or saved
 Viewer is returned. Core passes the exact authenticated Viewer into the optional
 per-record window gate; existing input-only gates and signed-in windows retain

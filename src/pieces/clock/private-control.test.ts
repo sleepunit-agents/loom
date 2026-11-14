@@ -165,3 +165,12 @@ it.each(['direct','command'])('reauthorizes public body cancellation receipt rep
  f.proof=originalProof;f.access.projects.pond.agents=[];expect(f.call(op,data,body,receipt)).toMatchObject({ok:false,code:'denied'});
  expect(f.snapshot()).toEqual(before);
 });
+
+it('does not replay a deleted private noncanonical acknowledgement against a different schedule with the same name',async()=>{
+ const f=await setup();expect(f.call('scheduleSet',{...input,id:'daily'}).ok).toBe(true);
+ const receipt=randomUUID(),data={argv:['schedule','set','daily','--at','13:17','-p','PRIVATE_FIRST']};
+ const ack=f.call('command',data,body,receipt);expect(ack).toMatchObject({ok:true,value:{exit:0}});
+ expect(f.call('scheduleRemove',{id:'daily'}).ok).toBe(true);
+ expect(f.call('scheduleSet',input).ok).toBe(true);
+ const before=f.snapshot();expect(f.call('command',data,body,receipt)).toMatchObject({ok:false,code:'conflict'});expect(f.snapshot()).toEqual(before);
+});
