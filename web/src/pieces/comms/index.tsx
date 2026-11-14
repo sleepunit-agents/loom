@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useContext, useEffect, useRef, useState } from 'react';
 import { useRecords, call, type Call } from '../../data';
 import { Split, List, Empty, Error, Loading, Button, Input } from '../../kit';
 import { Composer, Answer, useRequest } from './composer';
@@ -13,6 +13,7 @@ import { folderThreads, watchingJob } from './threads';
 import { Work } from './work';
 import { ThreadRow } from './thread-row';
 import './comms.css';
+import { RailContext } from '../../desk-rail';
 interface Thread {id:string;member:string;agent:string;title:string|null;project?:string;pinned:boolean;archived:number|null;last:number;readSeq:number;unread:boolean;working:boolean;workingSince?:number|null;alive?:{at:number;tokens?:number};job?:false|{joined:boolean};[key:string]:unknown}
 function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
  const [joining,setJoining]=useState(false);const watching=watchingJob(thread.job,joining);
@@ -63,7 +64,7 @@ function ThreadReader({thread,onDeleted}:{thread:Thread;onDeleted():void}){
   {thread.archived!==null?<p className="p-4">Unarchive this thread to send a message.</p>:watching?<div className="flex items-center justify-between gap-3 border-t p-4" role="status" aria-label="Watching job"><p><strong>Watching</strong> · {thread.working?`${thread.agent} keeps working when you close this.`:'Closing this leaves the job as it is.'}</p><Button disabled={status!=='live'} onClick={()=>setJoining(true)}>Join in</Button></div>:<Composer member={thread.member} place={thread.id} agent={thread.agent} onOpened={()=>{}} enabled={status==='live'}/>}
  </article>;
 }
-export default function CommsApp({path:shellPath,go}:{path?:string;go?:(path:string)=>void}={}){
+export default function CommsApp({path:shellPath,go,visible=true}:{path?:string;go?:(path:string)=>void;visible?:boolean}={}){
  const [localPath,setLocalPath]=useState(()=>typeof location==='undefined'?'/p/comms-preview':location.pathname);const path=shellPath??localPath;const selected=path.split('/thread/')[1]?`th:${path.split('/thread/')[1]}`:undefined;const base='/p/comms-preview';
  const [rowRequest,setRowRequest]=useState<Call>();const rowState=useRequest(rowRequest);
  const [folder,setFolder]=useState('live');const creating=path===`${base}/new`;const [agent,setAgent]=useState('');
@@ -76,8 +77,11 @@ export default function CommsApp({path:shellPath,go}:{path?:string;go?:(path:str
  useEffect(()=>{if(go)return;const pop=()=>setLocalPath(location.pathname);window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);},[go]);
  const conversationPath=path.startsWith(`${base}/conversation/`)?path.slice(`${base}/conversation/`.length):undefined;
  let conversation:string|undefined;try{conversation=conversationPath?decodeURIComponent(conversationPath):undefined;}catch{/* Invalid route stays unavailable. */}
+ const rail=useContext(RailContext),source=useRef({});
+ const current=status==='live'&&!conversation?records.find(t=>t.id===selected):undefined;
+ useEffect(()=>{if(!visible||!current||!rail?.onAir)return;rail.onAir({agent:current.agent},source.current);return()=>rail.onAir(null,source.current);},[visible,current?.id,current?.agent,rail?.onAir]);
  if(conversation)return <ConversationActivity key={conversation} conversation={conversation} onBack={()=>navigate()}/>;
- const listed=folderThreads(records,folder);const current=records.find(t=>t.id===selected);const ownedAgent=agent||mine?.agents[0]||'';
+ const listed=folderThreads(records,folder);const ownedAgent=agent||mine?.agents[0]||'';
  return <Split className="loom-comms" label="Comms" folder={folder} folders={[{id:'live',label:'Threads'},{id:'background',label:'Background work'},{id:'archived',label:'Archived'}]} onFolder={setFolder} listTitle={folder==='background'?'Background work':folder==='archived'?'Archived':'Threads'} listMeta={listed.length}
   listTop={<div className="p-3"><Button disabled={status!=='live'} onClick={()=>visit(`${base}/new`)}>New thread</Button><Answer request={rowRequest}/></div>}
   list={status==='loading'?<Loading label="Opening Comms…"/>:status!=='live'?<Error text="Waiting for your signed-in connection."/>:<List label="Thread list">{listed.map(t=><ThreadRow key={t.id} thread={t} selected={selected===t.id} disabled={status!=='live'||rowState.pending} onOpen={()=>navigate(t.id)} onAction={action=>setRowRequest(call('comms.change',{thread:t.id,action}))}/>)}</List>}

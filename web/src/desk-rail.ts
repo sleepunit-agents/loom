@@ -6,6 +6,8 @@ import { createContext } from 'react';
 
 export type OnAir = { agent: string } | null;
 export type RailLink = {
+  /** The visible selected Comms agent, including while the rail is temporarily hidden. */
+  selected?: string;
   /** A Comms pane says whose thread it shows (null as it goes). */
   onAir: (who: OnAir, from: object) => void;
   /** The rail is shown beside the tiles now (so a thread's comm screen goes there, not in its band). */

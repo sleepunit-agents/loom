@@ -14,7 +14,8 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | Per-agent face sheets / colours | Live `household.agentDisplay` projects database colours and drawn face shapes/eyes; existing lazy Face shows reported state. Imported pixel sheets now travel with the offline household import and are served from the new database; no old file lookup or invented sprite |
 | Rail accordion | Measures full cards before paint; on overflow keeps one open, working thread then ask then unread then first, while the rest become compact lines in alphabetical order. Comms selection priority comes with the companion slice |
 | Per-device dock/rail hide modes | Always show / Minimize to strip / Auto-hide; browser-local next-only keys, overlay reveals, live ask/unread dot, keyboard agent shortcuts. Below 1280 the rail is a 14px strip |
-| Comms companion portal | Follow-up desk slice |
+| Selected Comms companion | Visible live thread selects its owned agent above Needs you; others stay alphabetical. Minimize, list navigation or source loss releases it; short move respects reduced motion |
+| Comms portrait portal | Next slice; the selected companion currently retains its card |
 | Grouped launcher sections and account tile | Flat registration inventory for now; no old Shell discovery or fabricated live stats |
 | Home Needs you band and full questions, clock, runtime jobs, reported work | Existing live Home content in desk-coloured cut cards; desktop cards scroll within the available height; phone cards grow |
 | Depth / Contours / Wash | Existing lazy ground components, selected by member `household.preferences`; Appearance offers all three |
@@ -138,7 +139,7 @@ then open ask, then unread thread, then first agent. Alphabetical order stays
 fixed. Lines open the same first unread/latest thread as the full cards.
 Changes to authorized content or available width/height retry full cards.
 No message words are fetched. Lost feeds clear their facts and priority.
-Comms' selected companion priority and portal remain the next slice.
+Comms' portrait portal remains the next slice.
 Device hide choices below preserve the tiling algorithm.
 
 
@@ -166,3 +167,21 @@ follow-up; no tiling algorithm, operation, importer, client or schema is added.
 Desk signals render no hidden cards. Their small registered surface keeps the
 dock glow and agent shortcuts alive on Home as well as Work; the rail mounts
 only while apps are visible. No Home composition or reader is duplicated.
+
+
+### Selected Comms companion
+
+The new shell provides the existing pure RailContext. Only the visible Comms
+pane announces its live selected thread's agent, and clears it on minimize,
+list navigation, unmount or source loss. Focusing another app keeps the visible
+thread's companion. Ownership is still the rail's authoritative roster; an
+unknown agent never gains a card. A late cleanup from an earlier pane cannot
+clear a newer selection. Context carries agent identity only, no thread words.
+
+That agent sits above Needs you with “With … in Comms”; the rest remain in
+alphabetical order below it. It wins the measured accordion priority. Selection
+changes retry full cards. The selected and previous companion slide260ms from
+their measured previous position; reduced motion moves immediately. No tiling
+algorithm or Home composition changes. The companion retains its existing card
+until the next portrait/portal slice: Comms has no new-side portrait screen yet.
+The shared context's old provider remains compatible and reads no new data.

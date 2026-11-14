@@ -31,6 +31,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
   }});
   const old = await deskHome({art:'art',birch:'birch',cedar:'cedar',elm:'elm',fern:'fern'},[{person:'owner',agents:'*'}]);
   old.ask('art','OK to run the backup now?');
+  const oldThread=old.thread('owner','art','A Home conversation','A Home conversation');
   const raised=app.operations.call('direct',{kind:'member',id:'owner'},'attention.raise',{id:'desk-ask',agent:'art',ask:'OK to run the backup now?',why:'Because it matters.',if_yes:'I do it.',if_no:'I leave it.',source:{kind:'piece',id:'desk-fixture'}},'desk-ask');
   expect(raised.ok).toBe(true);
   const browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
@@ -105,6 +106,17 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await expect.poll(()=>b.locator('.comms-thread').count()).toBe(1);
     await expect.poll(()=>b.getByText('A Home conversation',{exact:true}).count()).toBe(1);
     expect(app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:1});
+    const commsId=(app.db.prepare('SELECT id FROM comms_threads').get() as {id:string}).id.replace(/^th:/,'');
+    // A visible Comms thread is the companion even while another app has focus.
+    await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').getAttribute('data-agent')).toBe('art');
+    expect(await b.locator('.desk-agent-rail').locator(':scope > *').first().getAttribute('data-agent')).toBe('art');
+    await b.getByRole('button',{name:'Open Inbox',exact:true}).click();
+    await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(1);
+    await b.getByRole('button',{name:'Minimize Comms',exact:true}).click();
+    await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(0);
+    await b.getByRole('button',{name:'Open Comms',exact:true}).click();
+    await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(1);
+
     await b.getByRole('button',{name:'Home',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-home-card').getByRole('button',{name:/Recent conversation/}).count()).toBe(1);
     await expect.poll(()=>b.locator('.desk-home-compose').first().getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
@@ -145,7 +157,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);
         await reference.setViewportSize({width,height:900});
         await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
-        for (const surface of ['home','work','launcher']) {
+        for (const surface of ['home','work','companion','launcher']) {
           if(surface==='home') {
             await page.getByRole('button',{name:'Check again',exact:true}).click();
             await expect.poll(()=>page.getByRole('button',{name:'Yes',exact:true}).isEnabled()).toBe(true);
@@ -233,6 +245,15 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.removeProperty('height'));
               await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe('true');
             }
+          }
+          if(surface==='companion') {
+            await page.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(commsId));
+            await expect.poll(()=>page.locator('.comms-thread').count()).toBe(1);
+            await reference.goto(old.base+'/comms/'+oldThread.id.slice(3)+(width<1024?'':'?t=*comms'));
+            if(width>=1024){
+              await expect.poll(()=>page.locator('.desk-rail-card[data-companion]').getAttribute('data-agent')).toBe('art');
+              expect(await page.locator('.desk-agent-rail').locator(':scope > *').first().getAttribute('data-agent')).toBe('art');
+            }else expect(await page.locator('.desk-rail-card[data-companion]').count()).toBe(0);
           }
           if(surface==='launcher') {
             await page.getByRole('button',{name:'All apps',exact:true}).first().click();
