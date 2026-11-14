@@ -12,7 +12,7 @@ import { digestId } from './digests.js';
 import { findingId } from './retention.js';
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [], sources: Database.Database[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const s of sources.splice(0)) s.close(); for (const dir of dirs.splice(0)) rmSync(dir,{recursive:true,force:true}); });
-const sharing = () => ({ members: { alice: { owner:true,agents:['art','mark'] }, bob: { owner:true,agents:['art'] } }, projects: { loom: { members:['alice'], agents:['art'] } }, services:{} });
+const sharing = () => ({ members: { alice: { owner:true,agents:['art','mark'] }, bob: { owner:false,agents:['art'] } }, projects: { loom: { members:['alice'], agents:['art'] } }, services:{} });
 async function setup(install = false) {
   const dir = mkdtempSync(join(tmpdir(),'attention-import-')); dirs.push(dir);
   const app = await startLoom({ home:join(dir,'new'), clock:new FakeClock(), sharing, install: install ? a => installAttention(a.db,a.operations,a.live,sharing) : undefined }); closes.push(app.close);

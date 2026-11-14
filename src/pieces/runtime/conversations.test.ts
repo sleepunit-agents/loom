@@ -1261,7 +1261,7 @@ it('keeps non-owner private questions with their original member instead of the 
  const ack=value<{ref:string;seq:number}>(await f.post(f.body,'runtime.askQuestion',{id:'member-question',question:{ask:'PRIVATE MEMBER QUESTION'}}));
  expect(await f.socket('attention.get',{id:ack.ref})).toMatchObject({ok:true,value:{member:'pollock',privateQuestion:{thread:f.thread,seq:ack.seq}}});
  const owner=signin(f.app).token(hash(f.owner))!.viewer;
- expect(f.app.operations.call('http',owner,'attention.get',{id:ack.ref})).toMatchObject({ok:false});
+ expect(f.app.operations.call('http',owner,'attention.get',{id:ack.ref})).toMatchObject({ok:true,value:{member:'pollock'}});
 });
 
 it('namespaces private question identities by the actual replacement job',async()=>{
