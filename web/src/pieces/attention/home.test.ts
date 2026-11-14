@@ -257,5 +257,5 @@ it('folds only phone rosters over four, prioritizes fresh working threads then a
  await act(async()=>{matches=false;changes.forEach(f=>f());});expect(cards()).toHaveLength(5);expect(rows()).toHaveLength(0);
  await act(async()=>{matches=true;changes.forEach(f=>f());});expect(cards()).toEqual(['art']);
  await publish('attention.ownedAgent',live(agents.slice(0,4)));expect(cards()).toHaveLength(4);expect(rows()).toHaveLength(0);
- } finally {vi.unstubAllGlobals();}
+ } finally {await act(async()=>tree?.unmount());tree=undefined;vi.unstubAllGlobals();}
 });
