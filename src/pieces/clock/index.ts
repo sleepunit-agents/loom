@@ -9,7 +9,7 @@ import { localOwner, sameLocalCaller } from '../approvals/role.js';
 import { standingBinding, bindStandingWake, checkStandingWake } from './local-standing.js';
 import { filedLocal, localFilingWords, installLocalFiling } from './local-filing.js';
 import { clockCommands, clockOperationCommands } from './commands.js';
-import { command, localCommandInput } from './binding.js';
+import { command, localCommandInput, oneOffCommandInput } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -101,11 +101,13 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   const disarm = () => { cancelTimer?.(); cancelTimer = undefined; };
   const queue = () => { if (!closed) { cancelTimer?.(); cancelTimer = clock.at(clock.now(), pump); } };
   const output = z.unknown();
+  const filingHash = (body: string, identity: { actor: Viewer }) => {
+    const proof = options.provenance?.(identity.actor);
+    return createHash('sha256').update(proof ? JSON.stringify([body,
+      [proof.agent,proof.conversation,proof.member,proof.project,proof.service]]) : body).digest('hex');
+  };
   function register<I>(name: string, input: z.ZodType<I>, write: boolean, may: (v: Viewer, i: I) => boolean, run: (ctx: Context, i: I) => unknown, internal = false) {
-    operations.register(operation({ name: `clock.${name}`, input, output, write, recheckPolicy: write && ['at','in','park'].includes(name), inputHash: ['at','in','park'].includes(name) ? (body, identity) => {
-      const proof = options.provenance?.(identity.actor);
-      return createHash('sha256').update(proof ? JSON.stringify([body, [proof.agent,proof.conversation,proof.member,proof.project,proof.service]]) : body).digest('hex');
-    } : undefined, requiresWindow: internal ? undefined : (i)=>{const input=i as {id?:string;member?:string};return input.member!==undefined || !!(input.id && (wake(db,input.id)??schedule(db,input.id))?.member);}, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
+    operations.register(operation({ name: `clock.${name}`, input, output, write, recheckPolicy: write && ['at','in','park'].includes(name), inputHash: ['at','in','park'].includes(name) ? filingHash : undefined, requiresWindow: internal ? undefined : (i)=>{const input=i as {id?:string;member?:string};return input.member!==undefined || !!(input.id && (wake(db,input.id)??schedule(db,input.id))?.member);}, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
       run(ctx, i) {
         if (closed) throw new OperationError('unavailable', 'Clock stopped');
         const result = run(ctx, i);
@@ -415,12 +417,15 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('rearm', z.object({}), true, (v) => mayAct(v, {}, sharing(), 'household'), () => ({ rearmed: true }));
   register('deadman', agentInput, true, (v, i) => deadmanAgents.has(i.agent) && v.kind === 'agent' && v.id === i.agent
     && create(v, { agent: i.agent, note: '' }), (ctx, i) => ensureDeadman(ctx, i.agent), true);
-  operations.register(operation({ name: 'clock.command', write: true, recheckPolicy:true,
+  operations.register(operation({ name: 'clock.command', write: true, recheckPolicy:true, inputHash:filingHash,
     input: z.object({ argv: z.array(z.string()).max(100), agent: text.optional(), laneFile: z.object({path:text,text:z.string().max(100_000)}).optional() }),
     output: z.object({ exit:z.number().int(), stdout:z.string(), stderr:z.string() }),
     may: (viewer,input) => {
       const local=localCommandInput(viewer,input);
-      return local ? localPublicPolicy(operations,sharing,options.caller,viewer,local) : viewer.kind === 'member' || viewer.kind === 'agent';
+      if (local) return localPublicPolicy(operations,sharing,options.caller,viewer,local);
+      const oneOff = oneOffCommandInput(viewer,input);
+      return oneOff && options.provenance?.(viewer) ? mayFile(viewer,oneOff) && (!oneOff.on || !!options.approvals?.check(oneOff.on,viewer))
+        : viewer.kind === 'member' || viewer.kind === 'agent';
     },
     run: (ctx,input) => {
       const result=command(operations,ctx.viewer,input);

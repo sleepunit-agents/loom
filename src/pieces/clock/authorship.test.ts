@@ -78,3 +78,14 @@ it('limits central private filing to the proved own body, member relationship an
  for(const v of [owner,{kind:'service',id:'clock'},{kind:'runner',id:'runner'}] as Viewer[])
   expect(mayFilePrivateWork(v,scope,f.access)).toBe(false);
 });
+it('scopes generated-command receipts as well as direct one-off receipts to the original conversation',async()=>{
+ const f=await setup(),id=randomUUID(),input={agent:'art',argv:['in','1h','-p','PRIVATE_COMMAND']};
+ const original=f.app.operations.call('direct',body,'clock.command',input,id);
+ expect(original).toMatchObject({ok:true,value:{exit:0}});
+ expect(f.app.operations.call('direct',body,'clock.command',input,id)).toEqual(original);
+ f.proof={...f.proof!,conversation:'cv-other',member:'other'};
+ expect(f.app.operations.call('direct',body,'clock.command',input,id)).toMatchObject({ok:false,code:'conflict'});
+ expect(wakes(f.app.db)).toHaveLength(1);
+ f.proof={...f.proof!,conversation:'cv-proof',member:'jonathan'};f.access.members.jonathan.agents=[];
+ expect(f.app.operations.call('direct',body,'clock.command',input,id)).toMatchObject({ok:false,code:'denied'});
+});

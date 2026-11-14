@@ -37,7 +37,7 @@ conversation, agent, member, project and credential service separately from capa
 and saved Viewer attribution. Bound private filings always carry the thread's
 member and project, including unknown or other-person steering; conflicting scope
 or another target agent is refused. The central policy permits only private filing
-by the proved own body, not a read or a household action. Tokens receive only
+by the proved own body, not a read or a household action. For these private filings, tokens receive only
 id/state/due (and the parked-on id), never words or provenance. The member's signed
 window remains the only ordinary private read path. Exports omit these rows and
 retry/event copies, as for private local wakes; this is not a restorable backup.
@@ -1052,6 +1052,7 @@ It retains member, project and credential service separately from principal.
 Private member scope survives even when the principal is unknown or names a
 different person. This is internal metadata: no public operation, record, Live
 feed or export is added. Consumers must preserve scope and still check central
-policy. Clock mutation/join, principal persistence/narrowing and self-rearm do
-not consume this new role yet and remain unfinished above. Local approval
+policy. Ordinary one-off filing now consumes this role and persists original
+evidence as described above. Clock mutation/join, schedule principal persistence/
+narrowing and self-rearm still do not consume it and remain unfinished. Local approval
 semantics and actual private delivery are unchanged.
