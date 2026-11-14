@@ -102,6 +102,8 @@ it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account re
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'household.setPreferences',{look},`account-look-${look}-${width}`).ok).toBe(true);
       await b.setViewportSize({width,height:1000});await b.reload();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(1);await expect.poll(()=>b.locator('html').getAttribute('data-look')).toBe(look);
+      await expect.poll(()=>b.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain('Accepted by the push service. Device delivery is not confirmed.');
+      await expect.poll(()=>remote.getByRole('button',{name:'Send test notification',exact:true}).isEnabled()).toBe(true);
       await b.getByRole('region',{name:'Notifications',exact:true}).scrollIntoViewIfNeeded();expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${look}-${width}.png`),fullPage:false,animations:'disabled'});
     }
     await remote.getByRole('button',{name:'Remove notification device',exact:true}).click();expect(s.sessions.read().push?.subs?.['https://fcm.googleapis.com/account-browser-proof']).toBeDefined();
