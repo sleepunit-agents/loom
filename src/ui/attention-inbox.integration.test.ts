@@ -166,7 +166,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.getByRole('button',{name:'Acknowledge',exact:true}).click();
     await expect.poll(()=>loom.operations.call('direct',owner,'attention.get',{id:noticeId})).toMatchObject({ok:true,value:{state:'answered',answer:{kind:'done'}}});
     expect(loom.operations.call('direct',owner,'clock.list',{})).toEqual(beforeAck);
-    await b.getByRole('button',{name:'Open Clock',exact:true}).click();
+    await b.locator('.loom-split').getByRole('button',{name:'Open Clock',exact:true}).click();
     await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/clock-preview');
     await b.goto(`${loom.url}/p/inbox-preview`);
     // One actual central approval, with the owning page's action and two-window withdrawal.
