@@ -17,7 +17,7 @@ import {provenanceStore} from '../pieces/runtime/provenance-store.js';
 import {runtimeStore} from '../pieces/runtime/store.js';
 import {runClockWorker} from './clock-worker-entry.js';
 import {startClockWorker,type ClockWorkerConfig} from './clock-worker.js';
-import type {SpawnClaude} from './session.js';
+import {ClaudeWorkerSession,type SpawnClaude} from './session.js';
 import * as preparation from './clock-input.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
@@ -713,8 +713,10 @@ it.each(['withdraw','credential','claim','model','policy'] as const)('idle probe
 });
 it('a stalled idle probe expires without resuming from a late reply',async()=>{
  const f=await setup(),worker=f.start({...f.config,idleMs:30_000});await f.ready;await finishToIdle(f);
- const held=holdResponse('idleClockExecution');
- try{f.clock.advance(1000);await held.ready;f.clock.advance(5000);
+ const held=holdResponse('idleClockExecution'),fetches=vi.spyOn(globalThis,'fetch');
+ try{f.clock.advance(1000);await held.ready;f.clock.advance(3000);await settle();
+  expect(fetches.mock.calls.filter(([url])=>String(url).endsWith('/api/runtime/idleClockExecution'))).toHaveLength(1);
+  expect(held.count).toBe(1);f.clock.advance(2000);
   expect(await worker.completed).toBe(false);held.release();await settle();expect(f.calls).toHaveLength(1);
  }finally{held.release();}
 });
@@ -809,4 +811,37 @@ it.each(['expire','signal'] as const)('executable owns a real referenced idle ha
  if(ending==='signal')signals.emit('SIGTERM');else f.clock.advance(3000);
  expect(await completed).toBe(ending==='signal'?1:0);
  expect(clear).toHaveBeenCalledWith(handle);expect(f.calls).toHaveLength(1);
+});
+
+// A conservative lower advertised lifetime makes the worker's boundary fast
+// without advancing 30 minutes of live watchdog requests. Actual server proof
+// clipping at 30 minutes is separately exercised by the protocol fixture.
+function lowerExecutionLifetime(){
+ const original=globalThis.fetch;
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+  const response=await original(...args);
+  if(String(args[0]).endsWith('/api/runtime/beginClockExecution')){
+   const body=await response.clone().json();
+   if(body.ok)return new Response(JSON.stringify({...body,value:{...body.value,lifetime:1500}}),{status:response.status,headers:response.headers});
+  }
+  return response;
+ });
+}
+it('worker discards idle history at the admission lifetime before the first normal probe tick',async()=>{
+ const f=await setup();lowerExecutionLifetime();const worker=f.start({...f.config,idleMs:30_000});await f.ready;
+ f.clock.advance(1000);const at=vi.spyOn(f.clock,'at'),intervals=vi.spyOn(globalThis,'setInterval'),close=vi.spyOn(ClaudeWorkerSession.prototype,'close');f.finish();
+ await vi.waitFor(()=>expect(intervals).toHaveBeenCalledWith(expect.any(Function),30_000));
+ expect(at).toHaveBeenCalledWith(f.clock.now()+500,expect.any(Function));at.mockRestore();
+ f.clock.advance(500);await settle();expect(close).toHaveBeenCalled();
+ expect(await worker.completed).toBe(true);expect(f.calls).toHaveLength(1);
+ const joined=await f.joinInput();expect(await f.attempt()).toBe(true);
+ expect(f.calls).toHaveLength(2);expect(f.calls[1].args).not.toContain('--resume');
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:expect.any(Number)});
+});
+it('the admission lifetime fences native history while a completion response is stalled',async()=>{
+ const f=await setup();lowerExecutionLifetime();const worker=f.start({...f.config,idleMs:30_000});await f.ready;
+ f.clock.advance(1000);const held=holdResponse('completeClockExecution'),close=vi.spyOn(ClaudeWorkerSession.prototype,'close');
+ try{f.finish();await held.ready;f.clock.advance(500);await settle();expect(close).toHaveBeenCalled();
+  expect(await worker.completed).toBe(false);held.release();await settle();expect(f.calls).toHaveLength(1);
+ }finally{held.release();}
 });

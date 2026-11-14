@@ -78,7 +78,8 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
         historyKey??=input.historyKey;if(input.historyKey!==historyKey)throw fail();
         // This deadline starts BEFORE the request. A delayed successful response
         // cannot mint a fresh local execution window from old authority.
-        deadline=started+input.ttl;
+        const executionUntil=started+input.lifetime;
+        deadline=Math.min(started+input.ttl,executionUntil);
         const message=prepareClockInput(input.batch,config.binding.conversation,config.checkout);
         if(!message||!local())throw fail();
         const refresh=async()=>{
@@ -87,7 +88,7 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
           if(generationId!==generation)return;
           if(!local()||clock.now()>=started+value.ttl)throw fail();
           // Out-of-order successful reads cannot shorten/restore a fenced lease.
-          deadline=Math.max(deadline,started+value.ttl);
+          deadline=Math.min(executionUntil,Math.max(deadline,started+value.ttl));
           cancelExpiry?.();cancelExpiry=clock.at(deadline,fence);
         };
         // Independent owning read after preparation, before the actual spawn.
@@ -108,7 +109,7 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
         // BEFORE sending it, but keep the existing bounded local expiry.
         ++generation;cancelWatch?.();
         const idleMs=turn<99&&'text' in input.batch.messages[0]?(config.idleMs??0):0;
-        const idleUntil=clock.now()+idleMs;
+        const idleUntil=Math.min(clock.now()+idleMs,executionUntil);
         const receipt=clockExecutionCompletion.parse(await call('completeClockExecution',{execution:input.execution,...(idleMs?{idleMs}:{})}));
         if(!local()||!receipt.acknowledged)throw fail();
         cancelExpiry?.();

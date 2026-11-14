@@ -92,8 +92,8 @@ execution authority. Each source still needs its own durable native effect,
 preparation, new current read, watchdog, post-output read and completion. Only the
 oldest pending source executes; no retry follows an uncertain attempt or ACK.
 For resume, admission also receives the previous successful Runtime execution id
-(not a native session id). Runtime retains that completed input only when more
-work is queued, requires the original current credential and completed source,
+(not a native session id). Runtime retains that completed input when more
+work is queued or the owner requested the bounded idle window below, requires the original current credential and completed source,
 and spends its predecessor link when issuing a successor. The in-memory chain is
 bounded to 100 turns, counts every retained source against the global 1024-source
 bound, and disappears at daemon close/expiry. Every current check also revalidates
@@ -102,7 +102,8 @@ of all earlier inputs whose native history the worker retains. A late watchdog
 request for a completed phase cannot delete its pending successor proof.
 Native admission selects the oldest pending source independently of the generic
 100-row conversation-history window, so a larger persisted backlog can drain.
-The worker stops on an empty queue, any failure, or after 100 turns. The bounded
+By default the worker stops on an empty queue; an owner can opt into the bounded
+idle wait below. Any failure or 100 turns still ends the startup. The bounded
 turn limit reports failure if more remain; a later startup must seek fresh source
 authority, and starts with fresh native history.
 
@@ -137,7 +138,11 @@ per second, serially, using the original credential and completed execution id.
 The probe rechecks the exact completed source, all retained sources, original
 binding/claim/house, effective steering and current policy. It returns only
 `current`, `more` and a bounded TTL; it releases no words or native handle, and
-never extends the completed proof's deadline.
+never extends the completed proof's deadline. Admission also supplies a bounded
+execution lifetime (at most 30 minutes). The worker measures it from BEFORE the
+admission request and caps active authority, completion waiting and idle timers
+by that original local deadline, including when less than a polling interval
+remains. A delayed completion cannot create extra idle history lifetime.
 
 An arriving prompt still needs a new `beginClockExecution` with the previous
 Runtime id, its own durable source effect, preparation, new pre-spawn authority,

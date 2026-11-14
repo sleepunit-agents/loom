@@ -63,7 +63,7 @@ export function installClockExecution(app:Foundation,effects:OutsideEffects,
       if(request.previous)executions.delete(request.previous);
       executions.set(execution,{input,history,completed:false,expires:ctx.now+30*60_000});
       return {execution,historyKey:input.historyKey,job:input.job,assignment:input.assignment,binding:input.binding,
-        batch:{conversation:input.binding.conversation,messages:[input.message]},ttl:5000 as const};
+        batch:{conversation:input.binding.conversation,messages:[input.message]},ttl:5000 as const,lifetime:30*60_000};
     },
   }));
   operations.register(operation({name:'runtime.currentClockExecution',doors:['http','direct'],
