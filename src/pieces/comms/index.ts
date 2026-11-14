@@ -418,7 +418,8 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    return {thread:i.thread,seq:i.seq};
   },after:(i,r)=>sendAfter(i,r),
  }));
- operations.register(operation({name:'comms.answer',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),input:target.extend({ref:id,verdict:z.enum(['yes','no']),words:z.string().max(4000).optional()}),output:ack,may:(v,i)=>writable(v,i),
+ operations.register(operation({name:'comms.answer',doors:['socket'],windowOnly:true,write:true,inputHash:(value,{actor,input})=>decisions.sealed(actor,input.ref)?decisions.fingerprint(actor,input,value):key.hash(`comms-operation\0${value}`),input:target.extend({ref:id,verdict:z.enum(['yes','no']),words:z.string().max(4000).optional()}),output:ack,may:(v,i)=>writable(v,i)&&(!decisions.sealed(v,i.ref)||decisions.allowed(v,i)),
+  validateReplay:(v,i,raw)=>decisions.validateReplay(v,i,raw),
   prepare:async (i,ctx)=>{
    if(decisions.sealed(ctx.viewer,i.ref))return {decision:await decisions.prepare(i,ctx.viewer)};
    const original=thread(db,i.thread);

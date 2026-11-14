@@ -23,7 +23,7 @@ async function setup(hold:Hold=async f=>f()){
  }});
  cleanup.push(async()=>{await comms.close();await app.close();rmSync(home,{recursive:true,force:true});});
  const viewer={kind:'member',id:'jonathan'} as const;
- let n=0;const call=(name:string,input:unknown,v=viewer)=>app.operations.callAsync('socket',v,name,input,`test-${++n}`,true);
+ let n=0;const call=(name:string,input:unknown,v=viewer,id=`test-${++n}`)=>app.operations.callAsync('socket',v,name,input,id,true);
  const r=await call('comms.open',{agent:'art',id:'aaaaaaaaaaaaaaaa',text:'Hello'});if(!r.ok)throw Error(r.message);
  const place=(r.value as {thread:string}).thread;
  const attention=attentionRole(app.operations);
@@ -203,4 +203,31 @@ it('keeps imported comms-prefixed asks on their legacy source protocol',async()=
  const seq=(r.value as {seq:number}).seq;await f.comms.deliver('art',f.place,seq);
  expect(f.app.db.prepare('SELECT kind FROM comms_messages WHERE thread=? AND seq=?').get(f.place,seq)).toEqual({kind:'answer'});
  expect(f.deliveries.filter(d=>d.seq===seq)).toEqual([]);
+});
+for(const drift of ['archive','expired','ciphertext'] as const)it(`refuses cached decision receipt after ${drift}`,async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}}),input={thread:f.place,ref:r.ref,verdict:'yes'};
+ expect(await f.call('comms.answer',input,f.viewer,'same-operation')).toMatchObject({ok:true});
+ if(drift==='archive')await f.call('comms.change',{thread:f.place,action:'archive'});
+ else if(drift==='expired')f.clock.advance(14*86400_000);
+ else f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=?').run(await f.key.seal(JSON.stringify({...question,answers:'yes-no',ask:'Replacement'})),f.place,r.seq);
+ expect(await f.call('comms.answer',input,f.viewer,'same-operation')).toMatchObject({ok:false});
+});
+it('refuses a competing cached receipt when the prepared question changed during crypto',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}}),input={thread:f.place,ref:r.ref,verdict:'yes'},seal=f.key.seal;
+ let release!:()=>void,entered!:()=>void;const gate=new Promise<void>(r=>release=r),began=new Promise<void>(r=>entered=r);let first=true;
+ vi.spyOn(f.key,'seal').mockImplementation(async words=>{if(first){first=false;entered();await gate;}return seal(words);});
+ const pending=f.call('comms.answer',input,f.viewer,'same-operation');await began;
+ f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=?').run(await seal(JSON.stringify({...question,answers:'yes-no',ask:'Replacement'})),f.place,r.seq);
+ expect(await f.call('comms.answer',input,f.viewer,'same-operation')).toMatchObject({ok:true});
+ release();expect(await pending).toMatchObject({ok:false,code:'denied'});
+});
+it('coalesces concurrent identical decisions across operation ids and on cached replay after crypto',async()=>{
+ for(const sameId of [false,true]){
+  const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}}),input={thread:f.place,ref:r.ref,verdict:'yes'},seal=f.key.seal;
+  let release!:()=>void,entered!:()=>void,count=0;const gate=new Promise<void>(r=>release=r),began=new Promise<void>(r=>entered=r);
+  vi.spyOn(f.key,'seal').mockImplementation(async words=>{if(++count===2)entered();await gate;return seal(words);});
+  const a=f.call('comms.answer',input,f.viewer,'one'),b=f.call('comms.answer',input,f.viewer,sameId?'one':'two');
+  await began;release();const results=await Promise.all([a,b]);expect(results[0]).toMatchObject({ok:true});expect(results[1]).toEqual(results[0]);
+  expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').all(`answer:${r.ref}`)).toHaveLength(1);
+ }
 });

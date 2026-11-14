@@ -25,6 +25,7 @@ export function privateDecisions(o:Options & {closed():boolean}) {
   const stored=thread(o.db,t.id);if(!stored)return deny();
   return {a,t:stored,row};
  };
+ const route=(t:ReturnType<typeof lookup>['t'])=>[t.id,t.member,t.agent,t.conversation,t.project,t.archived];
  const existing=(i:Input)=>o.db.prepare('SELECT * FROM comms_messages WHERE thread=? AND id=?').get(i.thread,`answer:${i.ref}`) as MessageRow|undefined;
  const hash=(i:Input)=>o.key.hash(JSON.stringify(i));
  const receipt=(s:ReturnType<typeof lookup>,i:Input)=>{
@@ -38,6 +39,18 @@ export function privateDecisions(o:Options & {closed():boolean}) {
    const got=o.attention.get?.(viewer,{id:ref});
    return !!got?.ok&&typeof got.value==='object'&&got.value!==null&&'privateQuestion' in got.value;
   },
+  allowed(viewer:Viewer,i:Input){try{lookup(viewer,i);return true;}catch{return false;}},
+  fingerprint(viewer:Viewer,i:Input,canonical:string){
+   const {a,t,row}=lookup(viewer,i);
+   return o.key.hash(JSON.stringify([canonical,[t.id,t.member,t.agent,t.conversation,t.project],
+    a.id,a.agent,a.member,a.source,a.privateQuestion,a.answers,row]));
+  },
+  validateReplay(viewer:Viewer,i:Input,raw?:unknown){
+   const p=(raw as {decision?:{before:ReturnType<typeof lookup>}}|undefined)?.decision;
+   if(!p)return;
+   const current=lookup(viewer,i);
+   if(JSON.stringify(route(current.t))!==JSON.stringify(route(p.before.t))||JSON.stringify(current.row)!==JSON.stringify(p.before.row))return deny();
+  },
   async prepare(i:Input,viewer:Viewer){
    const before=lookup(viewer,i),old=receipt(before,i);
    const q=question.parse(JSON.parse(await o.key.open(before.row.words!)));
@@ -48,7 +61,7 @@ export function privateDecisions(o:Options & {closed():boolean}) {
   run(ctx:Context,i:Input,p:{before:ReturnType<typeof lookup>;old:MessageRow|undefined;words:Buffer|undefined}){
    const current=lookup(ctx.viewer,i);
    // Route and ciphertext are immutable across decryption/encryption, even on replay.
-   if(JSON.stringify(current.t)!==JSON.stringify(p.before.t)||JSON.stringify(current.row)!==JSON.stringify(p.before.row))return deny();
+   if(JSON.stringify(route(current.t))!==JSON.stringify(route(p.before.t))||JSON.stringify(current.row)!==JSON.stringify(p.before.row))return deny();
    const old=receipt(current,i);
    if(old){
     const stable=(r:MessageRow)=>[r.thread,r.seq,r.id,r.kind,r.at,r.sender,r.hash];

@@ -1176,3 +1176,11 @@ of Attention and operation receipts. Typed words are refused on this path;
 Legacy/imported asks keep the existing boolean owning-source protocol and do
 not gain an extra Runtime message. Approval and Task decisions keep their own
 source operations. Inline question UI and Inbox routing remain separate work.
+
+Sealed boolean operation fingerprints also bind the immutable encrypted question
+and original route. Current eligibility is checked before cached receipt replay.
+Core's optional synchronous `validateReplay` hook checks a prepared snapshot when
+a competing invocation commits the same operation id during crypto. This prevents
+a new valid receipt from acknowledging an older, replaced question. Legacy
+operations keep their existing replay semantics; no private plaintext is added
+to the core receipt.

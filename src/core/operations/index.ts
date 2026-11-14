@@ -44,6 +44,9 @@ export interface Operation<I = unknown> {
    * A piece must guard this reservation in its global recovery hook and retain it
    * on preparation/authentication/final-transaction failure. */
   admit?(ctx: Context, input: I): void;
+  /** Validate a matching cached receipt inside the transaction, including any
+   * prepared source snapshot. Must not mutate; throw OperationError to refuse. */
+  validateReplay?(viewer: Viewer, input: I, prepared?: unknown): void;
   after?(input: I, result: Result): void;
   run(ctx: Context, input: I, prepared?: unknown): unknown;
   /** Read an already-committed external receipt by the shared viewer/id key.
@@ -184,7 +187,11 @@ export class Operations {
         if (op.write) {
           this.db.prepare('DELETE FROM core_operations WHERE expires <= ?').run(now);
           const old = this.db.prepare('SELECT * FROM core_operations WHERE viewer = ? AND id = ?').get(who, id) as { name: string; input_hash: string; result: string } | undefined;
-          if (old) return old.name === name && old.input_hash === body ? JSON.parse(old.result) as Result : failure('conflict', 'Operation id already used for different input');
+          if (old) {
+            if (old.name !== name || old.input_hash !== body) return failure('conflict', 'Operation id already used for different input');
+            op.validateReplay?.(viewer, parsed.data, prepared);
+            return JSON.parse(old.result) as Result;
+          }
         }
         const ctx: Context = { db: this.db, viewer, now, window, ...(op.write ? { receipt: { viewer: who, id: id!, name, inputHash: body, expires: now + 30 * 86400_000 } } : {}), changed: (type, id) => { changes.push({ type, id }); } };
         let recovered: RecoveredWrite | undefined;
