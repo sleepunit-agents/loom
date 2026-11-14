@@ -160,11 +160,12 @@ it('rolls back a decision and its receipt when the encrypted reply cannot be app
  f.app.db.exec('DROP TRIGGER fail_decision');
  expect(await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'no'})).toMatchObject({ok:true});
 });
-for(const drift of ['member','conversation','project','archive','delete','access','expired','answered'] as const)it(`refuses a sealed decision after ${drift} changes during crypto`,async()=>{
+for(const drift of ['member','conversation','project','archive','delete','access','expired','answered','ciphertext'] as const)it(`refuses a sealed decision after ${drift} changes during crypto`,async()=>{
  const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}}),seal=f.key.seal;
  vi.spyOn(f.key,'seal').mockImplementation(async words=>{
   const sealed=await seal(words);
   if(drift==='access')f.sharing.members.jonathan.agents=[];
+  else if(drift==='ciphertext')f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=?').run(await seal(JSON.stringify({...question,answers:'yes-no',ask:'REPLACED QUESTION'})),f.place,r.seq);
   else if(drift==='expired')f.clock.advance(14*86400_000);
   else if(drift==='answered')expect(f.attention.answer(f.viewer,{id:r.ref,answer:{kind:'no'}},'competing-answer')).toMatchObject({ok:true});
   else if(drift==='archive'||drift==='delete')expect(await f.call('comms.change',{thread:f.place,action:drift})).toMatchObject({ok:true});
@@ -192,4 +193,14 @@ it('recovers held boolean delivery with the selected no outcome, once',async()=>
  const ack=answer.value as {seq:number};await f.comms.deliver('art',f.place,ack.seq);expect(f.deliveries).toEqual([]);
  released=true;await f.comms.reconcileDeliveries();await f.comms.reconcileDeliveries();
  expect(f.deliveries.filter(d=>d.seq===ack.seq)).toEqual([expect.objectContaining({text:`No, to: ${question.ask}\n\nPRIVATE NO OUTCOME`})]);
+});
+it('keeps imported comms-prefixed asks on their legacy source protocol',async()=>{
+ const f=await setup(),ref=`comms:${'a'.repeat(64)}`;
+ // Build the old-format imported projection: prefix alone is not provenance.
+ f.app.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run(ref,JSON.stringify({id:ref,member:f.viewer.id,agent:'art',source:{kind:'conversation',id:JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(f.place) as {record:string}).record).conversation},ask:'Imported legacy ask',answers:'yes-no',state:'open',createdAt:f.clock.now(),changedAt:f.clock.now()}));
+ await f.comms.post('art',f.place,{id:'legacy',ref,kind:'ask',text:'Legacy retained question'});
+ const r=await f.call('comms.answer',{thread:f.place,ref,verdict:'yes'});expect(r).toMatchObject({ok:true});if(!r.ok)throw Error('answer failed');
+ const seq=(r.value as {seq:number}).seq;await f.comms.deliver('art',f.place,seq);
+ expect(f.app.db.prepare('SELECT kind FROM comms_messages WHERE thread=? AND seq=?').get(f.place,seq)).toEqual({kind:'answer'});
+ expect(f.deliveries.filter(d=>d.seq===seq)).toEqual([]);
 });

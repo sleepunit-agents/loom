@@ -420,7 +420,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  }));
  operations.register(operation({name:'comms.answer',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),input:target.extend({ref:id,verdict:z.enum(['yes','no']),words:z.string().max(4000).optional()}),output:ack,may:(v,i)=>writable(v,i),
   prepare:async (i,ctx)=>{
-   if(i.ref.startsWith('comms:'))return {decision:await decisions.prepare(i,ctx.viewer)};
+   if(decisions.sealed(ctx.viewer,i.ref))return {decision:await decisions.prepare(i,ctx.viewer)};
    const original=thread(db,i.thread);
    const ask=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND kind='ask' AND (id=? OR json_extract(record,'$.ref')=?) AND words IS NOT NULL AND at > ?").get(i.thread,i.ref,i.ref,clock.now()-days*day) as MessageRow|undefined;
    if(closed||!original||!see(ctx.viewer,original)||!ask)return fail('denied','Ask unavailable');
@@ -428,7 +428,8 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    return {original,ask,words};
   },
   run(ctx,i,raw) {
-   if(i.ref.startsWith('comms:'))return decisions.run(ctx,i,(raw as {decision:Awaited<ReturnType<typeof decisions.prepare>>}).decision);
+   if(raw&&typeof raw==='object'&&'decision' in raw)return decisions.run(ctx,i,(raw as {decision:Awaited<ReturnType<typeof decisions.prepare>>}).decision);
+   if(decisions.sealed(ctx.viewer,i.ref))return fail('denied','Ask source changed');
    const {original,ask,words}=raw as {original:Thread;ask:MessageRow;words:Buffer};
    const t=thread(db,i.thread)!;
    const current=db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(i.thread,ask.seq);

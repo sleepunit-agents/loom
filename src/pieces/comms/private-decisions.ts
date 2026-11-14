@@ -34,6 +34,10 @@ export function privateDecisions(o:Options & {closed():boolean}) {
   throw new OperationError('conflict','Question is no longer open');
  };
  return {
+  sealed(viewer:Viewer,ref:string){
+   const got=o.attention.get?.(viewer,{id:ref});
+   return !!got?.ok&&typeof got.value==='object'&&got.value!==null&&'privateQuestion' in got.value;
+  },
   async prepare(i:Input,viewer:Viewer){
    const before=lookup(viewer,i),old=receipt(before,i);
    const q=question.parse(JSON.parse(await o.key.open(before.row.words!)));
