@@ -6,7 +6,7 @@ import { operation, OperationError } from '../operations/index.js';
 import { SharingDatabase } from '../household/sharing.js';
 import { mayAct, maySee, type Viewer } from '../../policy.js';
 import type { SessionFile } from '../../ui/sessions.js';
-import { hash, signin } from './index.js';
+import { hash, signin, type Signin } from './index.js';
 
 type Device = NonNullable<NonNullable<SessionFile['push']>['subs']>[string];
 const ref = z.string().regex(/^[0-9a-f]{64}$/);
@@ -18,7 +18,7 @@ export const subscription = z.object({
   keys:z.object({p256dh:z.string().regex(/^[A-Za-z0-9_-]{20,200}$/),auth:z.string().regex(/^[A-Za-z0-9_-]{8,64}$/)}).strict(),
   expirationTime:z.number().nullable().optional(),
 }).strict().transform(({endpoint,keys})=>({endpoint,keys}));
-const deviceRef=(endpoint:string)=>hash(`notification-device:${endpoint}`);
+export const deviceRef=(endpoint:string)=>hash(`notification-device:${endpoint}`);
 const sessionRef=(id:string)=>hash(`account-session:${id}`);
 const info=z.object({ref,session:ref,at:z.number(),seenAt:z.number().optional(),device:z.string().optional()}).strict();
 
@@ -30,23 +30,24 @@ export function retainNotificationTokens(file:SessionFile) {
   }
 }
 
+// No first-owner fallback for orphaned imports. Resolve the original retained
+// token group, including revoked records; membership edits pin unbound tokens.
+export function notificationMember(s:Signin,d:Device,f:SessionFile):string|undefined {
+  if(d.member)return d.member;
+  const token=d.token ?? f.sessions[d.session]?.secret;
+  const rows=token?s.tokens.records(token):[];
+  if(!rows.length || rows.some(t=>t.role!=='owner'))return;
+  const owners=new Set(rows.map(t=>t.member ?? s.household()?.members.find(m=>m.agents==='*')?.person));
+  return owners.size===1 ? [...owners][0] : undefined;
+}
+
 export function installNotifications(app:Foundation) {
   const s=signin(app),sharing=new SharingDatabase(app.db,'');
   const allowed=(v:Viewer)=>mayAct(v,{member:v.id},sharing.sharing());
   const browser=(v:Viewer)=>{if(!allowed(v))return false;try{s.notificationBrowser(v);return true;}catch{return false;}};
-  // No first-owner fallback for orphaned imports. Resolve the original retained
-  // token group, including revoked records; membership edits pin unbound tokens.
-  function member(d:Device,f:SessionFile):string|undefined {
-    if(d.member)return d.member;
-    const token=d.token ?? f.sessions[d.session]?.secret;
-    const rows=token?s.tokens.records(token):[];
-    if(!rows.length || rows.some(t=>t.role!=='owner'))return;
-    const owners=new Set(rows.map(t=>t.member ?? s.household()?.members.find(m=>m.agents==='*')?.person));
-    return owners.size===1 ? [...owners][0] : undefined;
-  }
   function read(id:string) {
     const f=s.sessions.read();
-    return {member:id,devices:Object.entries(f.push?.subs??{}).filter(([,d])=>member(d,f)===id).map(([ep,d])=>({ref:deviceRef(ep),session:sessionRef(d.session),at:d.at,...(d.seenAt!==undefined?{seenAt:d.seenAt}:{}),...(d.device?{device:d.device}:{})})).sort((a,b)=>(b.seenAt??b.at)-(a.seenAt??a.at))};
+    return {member:id,devices:Object.entries(f.push?.subs??{}).filter(([,d])=>notificationMember(s,d,f)===id).map(([ep,d])=>({ref:deviceRef(ep),session:sessionRef(d.session),at:d.at,...(d.seenAt!==undefined?{seenAt:d.seenAt}:{}),...(d.device?{device:d.device}:{})})).sort((a,b)=>(b.seenAt??b.at)-(a.seenAt??a.at))};
   }
   // Reassignment and the household cap can affect another member's devices.
   const changed=(ctx:{changed(type:string,id:string):void})=>{for(const id of Object.keys(sharing.sharing().members))ctx.changed('notifications.devices',id);};
@@ -62,23 +63,23 @@ export function installNotifications(app:Foundation) {
         if(i.again)return 'removed' as const;
         f.push.removed=f.push.removed.filter(h=>h!==gone);
       }
-      const subs=f.push.subs??={},was=subs[i.sub.endpoint],same=was&&member(was,f)===ctx.viewer.id;
+      const subs=f.push.subs??={},was=subs[i.sub.endpoint],same=was&&notificationMember(s,was,f)===ctx.viewer.id;
       // Quiet registration cannot take another member's device (shared tablet).
       if(was&&!same&&i.again)throw new OperationError('denied','Turn notifications on explicitly for this member');
       subs[i.sub.endpoint]={sub:i.sub,session:proof.session,token:proof.token,member:ctx.viewer.id,at:same?was.at:s.now(),...(same&&i.again?{seenAt:s.now()}:{}),...(proof.device?{device:proof.device}:{})};
       f.push.subs=subs;
       // Unresolved imports remain evidence, not active device capacity.
-      const all=Object.entries(subs).filter(([,d])=>member(d,f)!==undefined).sort((a,b)=>(b[1].seenAt??b[1].at)-(a[1].seenAt??a[1].at));
+      const all=Object.entries(subs).filter(([,d])=>notificationMember(s,d,f)!==undefined).sort((a,b)=>(b[1].seenAt??b[1].at)-(a[1].seenAt??a[1].at));
       for(const [ep]of all.slice(20))delete subs[ep];
       return 'added' as const;
     });changed(ctx);return {status};
   }}));
   app.operations.register(operation({name:'notifications.unsubscribe',write:true,windowOnly:true,doors:['socket'],input:z.object({sub:subscription}).strict(),output:z.object({removed:z.boolean()}).strict(),may:browser,run:(ctx,i)=>{
-    const removed=s.sessions.change(f=>{const d=f.push?.subs?.[i.sub.endpoint];if(!d||member(d,f)!==ctx.viewer.id)return false;delete f.push!.subs![i.sub.endpoint];return true;});changed(ctx);return {removed};
+    const removed=s.sessions.change(f=>{const d=f.push?.subs?.[i.sub.endpoint];if(!d||notificationMember(s,d,f)!==ctx.viewer.id)return false;delete f.push!.subs![i.sub.endpoint];return true;});changed(ctx);return {removed};
   }}));
   app.operations.register(operation({name:'notifications.remove',write:true,input:z.object({ref}).strict(),output:z.object({removed:z.literal(true)}).strict(),may:allowed,run:(ctx,i)=>{
     s.sessions.change(f=>{
-      const hit=Object.entries(f.push?.subs??{}).find(([ep,d])=>deviceRef(ep)===i.ref&&member(d,f)===ctx.viewer.id);
+      const hit=Object.entries(f.push?.subs??{}).find(([ep,d])=>deviceRef(ep)===i.ref&&notificationMember(s,d,f)===ctx.viewer.id);
       if(!hit)throw new OperationError('not-found','No matching notification device');
       delete f.push!.subs![hit[0]];const gone=hash(hit[0]);f.push!.removed=[...(f.push!.removed??[]).filter(h=>h!==gone),gone].slice(-100);
     });changed(ctx);return {removed:true as const};

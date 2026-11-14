@@ -790,7 +790,7 @@ No schema, importer or old-side change is needed.
 | `/push/subscribe` | `notifications.subscribe`, trusted cookie proof, explicit/quiet registration |
 | `/push/unsubscribe` | `notifications.unsubscribe`, own-member removal only |
 | Profile's notification device list / `push-remove` | `notifications.read`, `notifications.devices`, `notifications.remove`; Account live device list and confirmed removal |
-| `push-test` | Pending staged send operation; this unit sends nothing |
+| `push-test` | `notifications.test` queues a staged own-device test; Account button pending |
 | legacy push watch | Pending daemon job; never call SessionStore/watch from next |
 
 These are page operations; no previous notification CLI needs replacing. The
@@ -830,3 +830,34 @@ Replaying the screen effect cannot create another reconciliation request.
 Entering while another mutation is uncertain waits for that same request to settle.
 The browser adapter rechecks activation after its worker lookup and immediately
 before calling the browser's subscribe API.
+
+### Staged test notification sender
+
+`notifications.test({ref})` is a stable-id write on a real, signed-in cookie
+window. It queues one own device's opaque reference and returns `{id,state:
+'queued'}`. The member-private `notifications.test` Live record reports queued,
+sent, gone, failed, uncertain or cancelled; queued is an acknowledgement, not a
+delivery claim. The request and retry receipt commit together. A new
+`notifications_tests` table contains only member/device references, a binding
+fingerprint, time and status, never subscription bytes or VAPID secrets.
+
+The daemon uses the same member resolver and subscription validator as device
+registration. Each request binds the exact device and imported VAPID pair at
+submission and resolves them again before sending. Every attempt claims its
+stable `notifications:test:<id>` effect outside the operation transaction.
+Staging holds it for `core.releaseEffect`; startup resumes held/queued work,
+but interrupted attempts become uncertain and are never automatically resent.
+Shutdown stops admission and waits for in-flight IO (transport timeout 15 seconds).
+A fresh explicit request is needed after failure or uncertainty. At most twenty
+requests per member may remain queued at once.
+
+Payloads have fixed `loom` title, empty body and `/p/account-preview` destination.
+Sent means the push service accepted the request, not that the device displayed
+it. A 404/410 removes only the exact unchanged subscription; a late reply cannot
+remove a re-enabled or reassigned device. Other service responses are failed;
+transport errors are uncertain. Errors and stored results contain no external
+diagnostics. The next device is resolved afresh after every awaited send.
+
+This replaces the backend of Profile's `push-test` action. Its Account button
+and Live status UI remain pending, as does routine announcement dispatch. There
+is no new notification CLI, no old SessionStore/watch call and no secret migration.
