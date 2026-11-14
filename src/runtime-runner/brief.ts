@@ -112,3 +112,21 @@ export function prepareRunnerBrief(raw:unknown,repo?:string):PreparedRunnerBrief
     if(root!==undefined)closeSync(root);
   }
 }
+
+/** Same descriptor-pinned file reader as required policy sections. Scheduled
+ * words are input, never a policy compiler key or a native resume capability. */
+export function prepareScheduledFile(file:string,checkout:string):string {
+  const parsed=path.safeParse(file);
+  if(!parsed.success)throw new RunnerBriefError('Invalid scheduled file path');
+  let root:number|undefined;
+  try {
+    if(process.platform!=='linux')throw new RunnerBriefError('Scheduled files need a Linux worker checkout');
+    root=openCheckout(checkout);
+    const text=requiredFile(root,parsed.data);
+    if(text.includes('<!-- house: local -->'))throw new RunnerBriefError('Scheduled local work requires its own execution boundary');
+    return text;
+  } catch(error) {
+    if(error instanceof RunnerBriefError)throw error;
+    throw new RunnerBriefError('Worker checkout is unavailable or unsafe');
+  } finally {if(root!==undefined)closeSync(root);}
+}

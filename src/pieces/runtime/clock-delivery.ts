@@ -20,7 +20,7 @@ export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,40);
 const id=z.string().min(1).max(200);
 interface Turn {seq:number;id:string;conversation:string;job:string;record:string;released:number|null;consumed:number|null}
-const sourceRecord=(wake:Wake,attempt:string)=>JSON.stringify({text:wake.prompt,member:wake.member,project:wake.project,agent:wake.agent,service:wake.authorship?.service,authorship:wake.authorship,by:wake.by,attempt});
+const sourceRecord=(wake:Wake,attempt:string)=>JSON.stringify({text:wake.prompt,...(wake.file?{file:wake.file}:{}),member:wake.member,project:wake.project,agent:wake.agent,service:wake.authorship?.service,authorship:wake.authorship,by:wake.by,attempt});
 interface Proof {agent:string;job?:string;service?:string;valid():boolean}
 export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:OutsideEffects,proof:(v:Viewer)=>Proof|undefined) {
   const {db,operations}=app,store=runtimeStore(db),destination=clockDestination(app,sharing);
@@ -55,7 +55,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     return w;
   };
   operations.register(operation({name:'runtime.acceptClock',doors:['direct'],write:true,recheckPolicy:true,
-    input:z.object({wake:id,attempt:id}).strict(),output:z.object({job:id,source:id,joined:z.boolean()}),
+    input:z.object({wake:id,attempt:id}).strict(),output:z.object({job:id,source:id,joined:z.boolean(),acknowledge:z.boolean()}),
     may:(v,i)=>v.kind==='service'&&v.id==='clock'&&!!source(i.wake,i.attempt)
       &&mayAct(v,{type:'runtime.job'},sharing(),'act','runtime.acceptClock'),
     run(ctx,i){
@@ -63,7 +63,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       const key=`clock:${w.id}`,old=db.prepare('SELECT * FROM runtime_clock_turns WHERE id=?').get(key) as Turn|undefined;
       if(old){
         if(old.record!==sourceRecord(w,i.attempt))throw new OperationError('conflict','Wake source changed');
-        return {job:old.job,source:key,joined:old.conversation!==`clock-${hash(w.id)}`};
+        return {job:old.job,source:key,joined:old.conversation!==`clock-${hash(w.id)}`,acknowledge:!!w.file||old.conversation!==`clock-${hash(w.id)}`};
       }
       const route=clockRoute(w,destination);
       let job:string,conversation:string;
@@ -91,7 +91,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       provenance.note(conversation,w.agent,{key,sender:{kind:'schedule',for:principal?.for},at:w.createdAt},owners());
       for(const person of principal?.people??[])provenance.note(conversation,w.agent,{key:`${key}:person:${person}`,sender:{kind:'person',person},at:w.createdAt},owners());
       ctx.changed('runtime.binding',conversation);
-      return {job,source:key,joined:route.kind==='join'};
+      return {job,source:key,joined:route.kind==='join',acknowledge:!!w.file||route.kind==='join'};
     },
   }));
   const read=(v:Viewer,before?:number)=>{
@@ -109,7 +109,11 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     })();
     if(rows.some(r=>r.released===null))effects.finish(`runtime:clock-read:${job.id}:${rows[0]?.seq}`);
     app.live.changed([{type:'runtime.job',id:job.id}]);
-    const value={conversation:job.conversation,messages:[...rows].reverse().map(r=>({seq:r.seq,id:r.id,kind:'wake',text:(JSON.parse(r.record) as {text:string}).text}))};
+    const value={conversation:job.conversation,messages:[...rows].reverse().map(r=>{
+      const source=JSON.parse(r.record) as {text?:string;file?:string};
+      return {seq:r.seq,id:r.id,kind:'wake',...(r.consumed!==null?{acknowledged:true}:{}),
+        ...(source.file?{file:source.file}:{text:source.text})};
+    })};
     reads.set(value,{job:job.id,rows});
     return value;
   };
