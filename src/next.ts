@@ -72,7 +72,7 @@ import { listenHolderAuthority, type AuthorityServerConfig } from './pieces/secr
 import { installHouseSecrets } from './pieces/secrets/house.js';
 import { installSecrets } from './pieces/secrets/index.js';
 import { secretGrantAttention } from './pieces/secrets/attention.js';
-import { installSecretServices, installedSecretUse, secretUseRole, type SecretValueSource } from './pieces/secrets/service.js';
+import { installedSecretUse, type SecretValueSource } from './pieces/secrets/service.js';
 import { githubSecrets } from './pieces/changes/secrets.js';
 import { changesApprovals } from './pieces/changes/approvals.js';
 import { installChangesDaemon, householdAttribution } from './pieces/changes/daemon.js';
@@ -274,8 +274,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   let historyRead: HistoryAccess['read'] = async () => ({value:'wait',current:()=>false});
   installDiscordHistory(app, {permit:(viewer,place)=>runtimeDiscordHistoryPermit(app,viewer,place),read:(...args)=>historyRead(...args)});
   if (options.bridges && !bridgeDaemons.has(app)) {
-    if (!app.operations.has('secrets.grantService')) installSecretServices(app.db, app.operations, sharing);
-    const secrets=secretUseRole(app.db,options.bridges.source,sharing,{kind:'service',id:'bridges'},()=>app.operations.clock.now(),app.live);
+    const secrets=installedSecretUse(app.operations,options.bridges.source,app.live,'bridges');
     const credentials=bridgeCredentials(options.bridges.source,app.operations.clock);
     const lifetime={credentialEpoch:credentials.current,observeCredentials:credentials.observe};
     let closed=false,serial=0;
