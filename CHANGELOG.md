@@ -1197,6 +1197,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add Account and Setup device sign-in links that inherit the source browser’s original sign-in time.
 
+- Let the next-side service worker show content-free push notifications and open their signed-in destinations.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

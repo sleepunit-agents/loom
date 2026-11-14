@@ -726,3 +726,24 @@ controls with no URL displayed. GET shows a confirmation form without consuming 
 reflecting the code; POST consumes it once. The existing row-backed importer,
 passkey freshness check and link spend route stay in use; no migration, job or
 generated command is added for a capability that specifically requires a browser.
+
+
+### Next notification worker
+
+The new-side service worker can display push notifications and handle taps. It
+shows a fixed `loom` title and an empty body, even if a payload contains a thread
+title or message words. This deliberately uses less lock-screen detail than the
+old worker: current Comms candidate bodies include a private thread title. The signed-in
+page shows the detail after a tap. Tags retain notification replacement behavior.
+
+A tap opens the payload's same-origin URL, including next Comms thread routes or
+Inbox keys. Invalid, external and credential-bearing URLs fall back to Home. An
+existing loom window is navigated and focused; if it closed, another window or a
+new one is used. No private response or push payload is added to a cache.
+
+This is the display/tap part of the old worker contract only. Imported push rows
+do not yet trigger new-side delivery: row-backed device operations, Account
+controls, VAPID use, daemon dispatch, per-member eligibility revalidation,
+deduplication, rate limits and staging are still pending. The old SessionStore
+and push watcher are never called. No migration or live rollout is needed for
+this worker change; finish those remaining operations before the final move.
