@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Import local bridge setup from household snapshots without inventing off-machine connections or Slack credentials; retain incomplete Slack and unprojectable audiences as private evidence.
+
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 
 - Keep ordinary one-off Clock work filed by authenticated private bodies member-private, with original steering evidence and acknowledgements that omit words.

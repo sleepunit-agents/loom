@@ -95,9 +95,9 @@ it('checks private adapter tables for emptiness and comparison',()=>{
  }finally{close();}
 });
 
-it('requires every accepted bot mapping and preserves each agent own filters',()=>{
+it('requires local bot mappings, permits explicit remote mappings and preserves each agent own filters',()=>{
  const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',extra:{only:['300']}}],['channels','mark',{bot:'200',extra:{only:['400']}}]]);
- expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+ expect(readBridgeImport(f.sources,f.options,h,f.open).expected.venues.map(v=>v.agent)).toEqual(['art']);
  f.options.connections.push({agent:'mark',platform:'discord',workspace:'789',bot:'200',tokenSecret:'mark-discord'});
  const venues=readBridgeImport(f.sources,f.options,h,f.open).expected.venues;
  expect(venues.find(v=>v.agent==='art')?.only).toEqual(['300']);expect(venues.find(v=>v.agent==='mark')?.only).toEqual(['400']);
@@ -138,4 +138,14 @@ it('refuses noncanonical selected store numbers without treating envelope timest
 it('store-only noncanonical bot numbers cannot disappear through a falsy marker',()=>{
  const f=fixture();f.sources.files=[];f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:1.5}]]);
  expect(()=>readBridgeImport(f.sources,{instances:[],connections:[]},h,f.open)).toThrow();
+});
+
+it('permits only explicitly incomplete Slack setup from the named source workspace without invented secret names',()=>{
+ const f=fixture();writeFileSync(f.sources.files[0].path,JSON.stringify({agent:{slug:'art'},slack:{secrets_env:'slack-onterris.env',workspaces:{TWORK:'Work'}}}));writeFileSync(f.sources.files[2].path,'{}');
+ const incomplete={agent:'art',platform:'slack',workspace:'TWORK',setupIncomplete:true};
+ const options={...f.options,connections:[incomplete]};
+ const source=readBridgeImport(f.sources,options,h,f.open);
+ expect(source.expected.venues).toEqual([]);
+ expect(JSON.parse(source.evidence).incomplete).toEqual([expect.objectContaining({workspace:'TWORK',bundle:'slack-onterris.env'})]);
+ for(const patch of [{platform:'discord'},{workspace:'TOTHER'},{bot:'U1'},{tokenSecret:'invented'},{appSecret:'invented'},{setupIncomplete:undefined}])expect(()=>readBridgeImport(f.sources,{...options,connections:[{...incomplete,...patch}]},h,f.open)).toThrow();
 });

@@ -68,3 +68,42 @@ it('both verifiers derive every setup row from source rather than a receipt',asy
   const clean=new Database(join(f.home,'loom.db'));clean.prepare(`UPDATE ${table} SET record=? WHERE id=?`).run(row.record,row.id);clean.close();
  }
 });
+
+it('rehearses the household shape: one local root, three bots, a work Slack bundle and no split names',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'bridges-household-'));roots.push(root);
+ const old=join(root,'old'),instance=join(root,'instance'),snapshot=join(root,'snapshot'),home=join(root,'new');
+ const put=(path:string,value:unknown)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,JSON.stringify(value));};
+ put(join(old,'household.json'),{v:1,agents:['art','mark'],default:'art',owner:'jonathan'});
+ put(join(old,'pieces/discord/settings.json'),{DISCORD_BOTS:JSON.stringify({art:'discord-token',mark:'mark-discord-token'})});
+ put(join(old,'pieces/slack/settings.json'),{SLACK_BOTS:JSON.stringify({art:'slack-onterris.env'})});
+ put(join(instance,'shuttle.json'),{_comment:'fixture',agent:{slug:'art',name:'Art',tag:'Art'},owner:{name:'Jonathan'},workdir:'/never/work',state_root:'/never/state',inbox_dir:'/never/inbox',now_dir:'/never/now',secret_cmd:'never run',commands:{claude:'never',loom:'never',alert:'never',model:'never',send:{discord:'never',slack:'never'}},preferred_model:'fixture',always_deny:['never'],runner:{kind:'claude',host:{discord:'discord-bodies'}},upgrade_ignore:['never'],guest_deny:['never'],channel_notes:{onterris_channels:'discord-onterris'},briefs:'briefs',ext:'ext/art.py',discord:{token_file:'discord-token',guest_cap_note:'fixture',packages:{routes_key:'fixture',package_watch:'never',python:'never'}},slack:{secrets_env:'slack-onterris.env',flag_to:{via:'discord',chan_from_routes:'notify.general'},projects:{file:'projects.json',pond_field:'fixture'},workspaces:{TWORK:'Work'}}});
+ put(join(instance,'people.json'),{_comment:'fixture',_updated:'today',agents:{art:{discord:['100']},mark:{discord:['200']},fez:{discord:['250']}},people:{jonathan:{discord:['123'],slack:{TWORK:['UOWNER']}},guest:{discord:['456']}}});
+ put(join(instance,'routes.json'),{_comment:'fixture',_updated:'today',guild:'789',bots:{art:'100',mark:'200',fez:'250'},_bot_roles_note:'fixture',bot_roles:{art:['101'],mark:['201'],fez:['251']},webhook_peers:{_comment:'fixture',one:'800',two:'801',three:'802'},peer_turns_each:null,_peer_turns_note:'fixture',_ids_note:'fixture',ignore:{'900':true},channels:{'300':{primary:'art'},'301':{primary:'mark'},'302':{primary:'fez'},'303':{primary:'art',readers:['guest']}},threads:{'304':{primary:'art',parent:'303'}}});
+ writeFileSync(join(instance,'slack-onterris.env'),'NEVER_OPEN_BUNDLE');
+ const store=(kind:string,docs:[string,string,unknown][])=>{const path=join(old,`commons/stores/${kind}.db`);mkdirSync(dirname(path),{recursive:true});const d=new Database(path);d.exec('CREATE TABLE docs(collection TEXT,key TEXT,doc TEXT,rev INTEGER,updated TEXT,by TEXT);CREATE TABLE revisions(id INTEGER,collection TEXT,key TEXT,doc TEXT,rev INTEGER,op TEXT,at TEXT,by TEXT)');for(const[c,k,v]of docs)d.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run(c,k,JSON.stringify(v),'today','owner');d.close();};
+ store('shuttle',[]);store('runtime',[]);
+ const state=join(root,'runtime'),data=join(root,'runtime-data');mkdirSync(state);mkdirSync(data);
+ await createSnapshot(old,snapshot,undefined,{bridges:[instance],runtime:state,'runtime-data':data});
+ const plan=prepareMigrationPlan(snapshot).plan;
+ expect(plan.importers.bridges.options).toMatchObject({instances:[{shuttle:'bridges/0/shuttle.json'}],connections:[]});
+ plan.importers.bridges.options={...(plan.importers.bridges.options as object),connections:[{agent:'art',platform:'discord',workspace:'789',bot:'100',tokenSecret:'discord-token'},{agent:'art',platform:'slack',workspace:'TWORK',setupIncomplete:true}]};
+ expect(existsSync(join(snapshot,'bridges/0/slack-onterris.env'))).toBe(false);
+ expect((await runMigrationAll(snapshot,home,plan)).status).toBe('complete');
+ expect((await verifyMigration(snapshot,home,plan)).status).toBe('verified');
+ expect((await verifyBridgesMigration(snapshot,home,plan.importers.bridges.options)).status).toBe('verified');
+ const d=new Database(join(home,'loom.db'));
+ try{
+  const venues=d.prepare('SELECT record FROM bridges_venues').all() as{record:string}[];
+  expect(venues.map(v=>JSON.parse(v.record))).toEqual([expect.objectContaining({agent:'art',platform:'discord',enabled:false,tokenSecret:'discord-token'})]);
+  const routes=d.prepare('SELECT record FROM bridges_routes').all() as{record:string}[];
+  expect(routes.map(r=>JSON.parse(r.record).channel).sort()).toEqual(['300','301']);
+  expect((d.prepare('SELECT record FROM bridges_links').all() as{record:string}[]).map(r=>JSON.parse(r.record).person)).toEqual(['jonathan','jonathan']);
+  const evidence=JSON.parse((d.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as{value:string}).value);
+  expect(evidence.incomplete).toEqual([expect.objectContaining({agent:'art',platform:'slack',workspace:'TWORK',bundle:'slack-onterris.env'})]);
+  expect(evidence.retained).toEqual(expect.arrayContaining([expect.objectContaining({kind:'person',owner:'guest'}),expect.objectContaining({kind:'agent',owner:'fez'}),expect.objectContaining({kind:'route',channel:'302'}),expect.objectContaining({kind:'route',channel:'303'}),expect.objectContaining({kind:'route',channel:'304'})]));
+  // Independent verification also covers incomplete/retained evidence, not just live setup.
+  d.prepare("UPDATE bridges_meta SET value='{}' WHERE key='legacy-evidence'").run();
+ }finally{d.close();}
+ expect((await verifyMigration(snapshot,home,plan)).status).toBe('different');
+ expect((await verifyBridgesMigration(snapshot,home,plan.importers.bridges.options)).status).toBe('different');
+});
