@@ -21,6 +21,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes 
     await a.addInitScript(()=>{
       let sub:unknown=null;
       const manager={getSubscription:async()=>sub,subscribe:async()=>{sub={toJSON:()=>({endpoint:'https://fcm.googleapis.com/account-browser-proof',expirationTime:null,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}}),unsubscribe:async()=>{sub=null;return true;}};return sub;}};
+      void manager.subscribe(); // Browser already holds a subscription when Account first opens.
       Object.defineProperty(navigator.serviceWorker,'getRegistration',{value:async()=>({pushManager:manager})});
       Object.defineProperty(window,'PushManager',{value:function(){}});
       Object.defineProperty(window,'Notification',{value:{permission:'granted',requestPermission:async()=> 'granted'}});
@@ -43,6 +44,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes 
     await end.getByRole('checkbox').check();await end.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:`Sign out session ${ref}`,exact:true}).count()).toBe(0);expect(s.session(temporary)).toBeUndefined();
     const notifications=a.getByRole('region',{name:'Notifications',exact:true});
     await expect.poll(()=>notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).isEnabled()).toBe(true);
+    await expect.poll(()=>notifications.textContent()).toContain('This browser: Enabled');
     await notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
     const deviceRead=()=>loom.operations.call('direct',{kind:'member',id:'jonathan'},'notifications.read',{});
     await expect.poll(()=>{const r=deviceRead();return r.ok?(r.value as {devices:unknown[]}).devices.length:0;}).toBe(1);

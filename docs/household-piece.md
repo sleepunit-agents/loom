@@ -813,7 +813,7 @@ subscription. Standard browser `expirationTime` is accepted by the operation.
 The window-lifetime browser flow retains each original mutation handle across
 navigation and unavailable replies. Retry sends the original id/input and resumes
 that flow; a late key or browser reply after leaving the active connected screen
-cannot start another registration step. Inactive/offline/denied views cannot write.
+cannot start another registration step or automatically restart quiet reconciliation. Return and explicitly Enable to finish an invalidated flow. Inactive/offline/denied views cannot write.
 No subscription endpoints or keys appear in the device list. Account shares its
 mutation lock with passkey/session changes. CI extends the single two-window
 Account acceptance using a fake browser Push API with real cookie/socket operations,

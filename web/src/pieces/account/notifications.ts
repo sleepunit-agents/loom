@@ -30,7 +30,7 @@ export function notificationController(device:NotificationBrowser=notificationBr
   let enabled=false,checked=false,local:BrowserSubscription|null=null;
   const listeners=new Set<()=>void>();
   const update=(value:Partial<typeof state>)=>{state={...state,...value};listeners.forEach(fn=>fn());};
-  const allowed=()=>enabled&&!frozen(changes.getSnapshot().request?.getSnapshot()??idle);
+  const readyToWrite=()=>enabled&&!frozen(changes.getSnapshot().request?.getSnapshot()??idle);
   async function identify(sub:BrowserSubscription){const endpoint=sub.toJSON().endpoint;if(!endpoint)throw Error();const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(`notification-device:${endpoint}`));update({ref:Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('')});}
   const check=()=>{if(!enabled||generation!==runningGeneration)throw Error('Open Account with a live connection to finish turning notifications on.');};
   // result is intentionally observed through subscribe: retry replaces Call.result.
@@ -46,23 +46,21 @@ export function notificationController(device:NotificationBrowser=notificationBr
     });
   }
   async function run(work:()=>Promise<void>){
-    if(!allowed()||state.busy||!device.supported())return;
+    if(!readyToWrite()||state.busy||!device.supported())return;
     runningGeneration=generation;
     update({busy:true,message:''});
     try{await work();}catch{update({message:'Notifications could not be changed. Check browser settings and the connection, then try again.'});}
     finally{update({busy:false,permission:device.supported()?device.permission():'default'});}
   }
   function reconcile(){
-    if(!enabled||checked||state.busy||!device.supported()||!allowed())return;
+    if(!enabled||checked||state.busy||!device.supported()||!readyToWrite())return;
     checked=true;
     void run(async()=>{
-      try{
-        local=await device.current();update({on:!!local});check();
-        if(!local)return;await identify(local);check();
-        const answer=await write<{status:string}>('notifications.subscribe',{sub:local.toJSON(),again:true});
-        if(answer.status==='removed'){await local.unsubscribe();local=null;update({on:false});}
-      }catch(error){if(generation!==runningGeneration)checked=false;throw error;}
-    }).then(()=>{if(!checked&&enabled)reconcile();});
+      local=await device.current();update({on:!!local});check();
+      if(!local)return;await identify(local);check();
+      const answer=await write<{status:string}>('notifications.subscribe',{sub:local.toJSON(),again:true});
+      if(answer.status==='removed'){await local.unsubscribe();local=null;update({on:false});}
+    });
   }
   // A locked entry waits for the existing Account request instead of losing its
   // once-per-window reconciliation. This controller owns no React lifecycle.

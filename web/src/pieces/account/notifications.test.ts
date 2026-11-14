@@ -64,7 +64,7 @@ it('waits for an existing Account request before quiet reconciliation, then perm
 it('checks generation inside the actual browser adapter after a delayed worker lookup',async()=>{
   const f=fixture();await f.ready();
   let resolve!:(value:unknown)=>void;const lookup=new Promise(r=>{resolve=r;});
-  const subscribe=vi.fn(async()=>f.sub);
+  const subscribe=vi.fn(async()=>{throw Error('unexpected subscribe');});
   vi.stubGlobal('navigator',{serviceWorker:{getRegistration:()=>lookup}});
   f.browser.create=notificationBrowser.create;
   const work=f.controller.enable();await vi.waitFor(()=>expect(f.requests).toHaveLength(1));
@@ -72,4 +72,14 @@ it('checks generation inside the actual browser adapter after a delayed worker l
   await vi.waitFor(()=>expect(f.browser.current).toHaveBeenCalledTimes(2));
   f.controller.setEnabled(false);f.controller.setEnabled(true);resolve({pushManager:{subscribe}});await work;
   expect(subscribe).not.toHaveBeenCalled();expect(f.requests).toHaveLength(1);
+});
+
+it('does not restart a quiet reconciliation after its late browser lookup is invalidated',async()=>{
+  const f=fixture();let resolve!:(sub:typeof f.sub)=>void;
+  vi.mocked(f.browser.current).mockReturnValue(new Promise(r=>{resolve=r;}));
+  f.controller.setEnabled(true);expect(f.controller.getSnapshot().busy).toBe(true);
+  f.controller.setEnabled(false);f.controller.setEnabled(true);resolve(f.sub);
+  await vi.waitFor(()=>expect(f.controller.getSnapshot().busy).toBe(false));
+  expect(f.browser.current).toHaveBeenCalledOnce();expect(f.requests).toHaveLength(0);
+  f.controller.setEnabled(false);f.controller.setEnabled(true);expect(f.requests).toHaveLength(0);
 });
