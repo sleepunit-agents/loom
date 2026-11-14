@@ -21,11 +21,30 @@ title or fetching outside the shared client.
 task; the other actions pass the selected row. Submit through the authenticated
 Tasks operation adapter, which supplies the actor and checks current access. A
 click is not an authorization or an operation receipt. No write is performed by
-this view. The adapter/form must report its own errors and pending state.
+this view.
+
+`shared-form.tsx` exports `SharedTaskForm` and `TaskCommand`. Mount the form for
+the selected action and row, using the same snapshot status. Supply authorized
+people, projects and task choices, the current conversation ID if creating from
+a thread, and `submit(command): Promise<void>`, `done()` and `cancel()`. There is
+no actor field: the authenticated adapter supplies it. Commands map to the
+trusted TaskService methods (`edit` also handles Priority and Project); link
+commands retain the explicit relationship type and direction. Changing a parent
+uses removal followed by adding the new relation, respecting the service's
+single-parent constraint. Creation defaults to household ownership and P2.
+
+The form locks duplicate submissions, displays operation errors without losing
+the draft, and calls `done` only after successful completion while still mounted.
+Cancel closes the form; it does not cancel a write already accepted by the root.
+Snapshot loss discards the draft, and late completion never calls a stale form's
+`done`. Changing the task, action or source conversation starts a fresh draft.
+Root must recheck current access and validate every command at the outside door;
+form choices and hidden controls confer no authority. Writes still require the
+existing operation/retry mechanism; these forms add no transport or registration.
 
 On connection/access loss set status to loading, unavailable or denied, even if
 the client still holds cached arrays. The view then hides all tasks, detail,
 comments, project folders and write actions, and disables Create. Do not combine
 rows from different authorization snapshots. The view intentionally remains
-unmounted until root composition supplies the generated reads and write forms;
+unmounted until root composition supplies the generated reads and write adapter;
 the existing registration remains in place until that replacement is complete.
