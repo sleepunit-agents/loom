@@ -2,7 +2,7 @@ import {routedHolderAuthority} from './holder-routing.js';
 import {listenHolderHandoff,localHolderHandoff} from './holder-handoff.js';
 import {Writable} from 'node:stream';
 import {workerSecretInputs} from '../../runtime-runner/secret-input.js';
-import {startSecretCommand} from '../../runtime-runner/secret-command.js';
+import {ticketAuthorityFixture} from './ticket-authority.fixture.js';
 import {listenWorkerSecretInput,workerSecretTransport} from '../../runtime-runner/secret-transport.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,mkdirSync,existsSync,rmSync,chmodSync,readFileSync,writeFileSync} from 'node:fs';
@@ -25,43 +25,7 @@ import {connect as tlsConnect} from 'node:tls';
 import {listenTicketAuthority,remoteTicketAuthority,remoteWorkerTicketProof} from './ticket-authority.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.useRealTimers();for(const close of closes.splice(0).reverse())await close();vi.restoreAllMocks();});
-async function setup(service?:string) {
- const home=mkdtempSync(join(tmpdir(),'runtime-secret-destination-'));closes.push(()=>rmSync(home,{recursive:true,force:true}));fixture(home);
- const clock=new FakeClock(),app=await startLoom({home,next:true,staging:true,clock,stdout(){}});closes.push(app.close);
- const auth=signin(app),store=runtimeStore(app.db),id=randomUUID(),house={repo:'/synthetic/art',houseFile:'house/house.json'};
- app.db.transaction(()=>{
-  auth.tokens.replace({v:1,tokens:[]},{});
-  for(const box of ['worker','other'])store.put('box',{id:box,name:box,owner:'jonathan',local:false,mayHost:'*',lentTo:[],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:clock.now()},clock.now());
-  store.put('settings',{id:'art',agent:'art',boxes:['worker'],house},clock.now());
-  store.put('job',{id,agent:'art',box:'worker',runner:'worker',title:'fixture',state:'running',createdAt:clock.now(),claimedAt:clock.now(),made:house,...(service?{service}:{})},clock.now());
- })();
- const token=service?'synthetic-service-body':app.db.transaction(()=>auth.issueBody('art',id))();
- if(service)auth.tokens.change(tokens=>tokens.push({role:`agent:art/${service}@${id}`,sha256:hash(token),label:'synthetic',created:new Date(clock.now()).toISOString()}));
- const viewer=auth.token(hash(token))!.viewer,sharing=()=>new SharingDatabase(app.db,home).sharing();
- const job=(set:Partial<RuntimeRecords['job']>)=>app.db.transaction(()=>{const {changedAt:_,...before}=store.read('job',id)!;store.put('job',{...before,...set},clock.now());})();
- const box=(set:Partial<RuntimeRecords['box']>)=>app.db.transaction(()=>{const {changedAt:_,...before}=store.read('box','worker')!;store.put('box',{...before,...set},clock.now());})();
- const owner:Viewer={kind:'member',id:'jonathan'}; let seq=0;
- const call=(op:string,input:unknown)=>{const result=app.operations.call('direct',owner,op,input,`ticket-test-${++seq}`);expect(result.ok,JSON.stringify(result)).toBe(true);return result;};
- call('secrets.describe',{name:'API',description:''});
- const scope={house:id,...(service?{service}:{})};
- const grant={agent:'art',kind:'secret',target:'API',scope,expiresAt:clock.now()+60_000};
- call('secrets.grant',grant);
- const tickets=secretTickets(app,sharing,app.effects!);
- const admit=()=>tickets.admit(viewer,'API');
- const release=(ticket:string)=>call('core.releaseEffect',{id:`secrets:handoff:${ticket}`});
- const claim=()=>{const ticket=admit();expect(tickets.claim(ticket.id)).toBeNull();release(ticket.id);const c=tickets.claim(ticket.id);expect(c).not.toBeNull();return {ticket,c:c!};};
- const fixtures=fileURLToPath(new URL('./fixtures/lifecycle-tls/',import.meta.url));
- for(const name of ['ca.pem','holder.pem','holder.key','daemon.pem','daemon.key','stranger.pem','stranger.key'])writeFileSync(join(home,name),readFileSync(join(fixtures,name)),{mode:0o600});
- const common={socket:join(home,'tickets.sock'),ca:join(home,'ca.pem')};
- const server={...common,cert:join(home,'daemon.pem'),key:join(home,'daemon.key')};
- const config={...common,cert:join(home,'holder.pem'),key:join(home,'holder.key'),servername:'daemon.test'};
- const fingerprint=(name:string)=>new X509Certificate(readFileSync(join(home,`${name}.pem`))).fingerprint256;
- const authority=await listenTicketAuthority(server,fingerprint('holder'),tickets);closes.push(authority.close);
- const remote=remoteTicketAuthority(config,fingerprint('daemon'));closes.push(remote.close);
- const admitted=()=>{const ticket=admit();expect(tickets.claim(ticket.id)).toBeNull();release(ticket.id);return ticket;};
- const state=(ticket:string)=>app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(ticket);
- return {home,app,clock,id,viewer,job,call,tickets,admit,release,grant,server,config,fingerprint,authority,remote,admitted,state};
-}
+const setup=(service?:string)=>ticketAuthorityFixture(closes,service);
 async function fakeAuthority(f:Awaited<ReturnType<typeof setup>>,handler:(req:IncomingMessage,res:ServerResponse)=>void) {
  await f.authority.close();
  const server=https.createServer({ca:readFileSync(f.server.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),
@@ -474,95 +438,3 @@ async function routedChannels(outcome:RoutedOutcome,daemon=false) {
 }
 it.each(['release','source','local','lost-worker-ack'] as const)('routes the original bound claim through real holder and worker channels: %s',outcome=>routedChannels(outcome));
 it.each(['release','source','local','lost-worker-ack','lost-holder-ack','cancel'] as const)('daemon completes the original claim across real holder and worker channels: %s',outcome=>routedChannels(outcome,true));
-
-async function commandChannels() {
- const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()};
- await f.authority.close();
- const central=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(central.close);
- const marker=join(f.home,'consumer-status');
- // Real consumer reads ONLY fd3, requires EOF and records only a boolean result.
- // It holds alive after consumption so delivery can acknowledge before exit.
- const script="const fs=require('node:fs');const chunks=[];fs.createReadStream(null,{fd:3}).on('data',b=>chunks.push(b)).on('end',()=>{const ok=Buffer.concat(chunks).toString()==='synthetic-command-value';fs.writeFileSync(process.argv[1],ok?'accepted':'wrong');setTimeout(()=>process.exit(ok?0:1),200);});";
- let local=true;
- const config={command:process.execPath,args:['-e',script,marker],cwd:f.home,env:{},
-  input:{...f.server,socket:join(f.home,'command-input.sock')},holderFingerprint:f.fingerprint('holder'),
-  authority:{...f.config,cert:f.server.cert,key:f.server.key},daemonFingerprint:f.fingerprint('daemon')};
- const request={binding,current:()=>local,expiresAt:Date.now()+20_000};
- const command=await startSecretCommand(config,request);closes.push(command.close);
- const socket=join(f.home,'command-holder.sock');
- const client=localHolderHandoff({...f.server,socket,servername:'holder.test'},f.fingerprint('holder'));closes.push(client.close);
- const completion=f.tickets.admitHandoff(f.viewer,'API',command.pending,client);
- expect(f.tickets.claim(completion.id)).toBeNull();
- const transport=workerSecretTransport({...f.config,socket:config.input.socket},f.fingerprint('daemon'));closes.push(transport.close);
- const source={read:async()=>Buffer.from('synthetic-command-value')};
- const holder=await listenHolderHandoff({...f.config,socket},source,f.fingerprint('daemon'),routedHolderAuthority(f.remote,[{binding,transport}]));closes.push(holder.close);
- return {...f,binding,config,request,command,completion,transport,marker,revoke(){local=false;}};
-}
-it('starts an actual command with its original fd3 request and completes daemon delivery through real pinned channels',async()=>{
- const f=await commandChannels();
- f.command.bindTicket(f.completion.id);f.release(f.completion.id);
- await f.completion.dispatch();
- expect(f.state(f.completion.id)).toEqual({state:'released'});
- expect(await f.command.completed).toBe(true);expect(readFileSync(f.marker,'utf8')).toBe('accepted');
- await f.command.close();
- await expect(f.transport.deliver(f.command.pending.id,f.binding,Buffer.from('synthetic-command-value'))).rejects.toThrow();
- await expect(f.completion.dispatch()).rejects.toThrow();
-});
-it.each(['unbound','cancel','local','grant','job'] as const)('real command startup refuses %s credentials and never writes its fd3',async outcome=>{
- const f=await commandChannels();
- f.release(f.completion.id);
- if(outcome!=='unbound')f.command.bindTicket(f.completion.id);
- if(outcome==='cancel')f.command.pending.cancel();
- if(outcome==='local')f.revoke();
- if(outcome==='grant'){const {expiresAt:_,...grant}=f.grant;f.call('secrets.revoke',grant);}
- if(outcome==='job')f.job({claimedAt:f.clock.now()+1});
- await expect(f.completion.dispatch()).rejects.toThrow();
- await f.command.close();expect(await f.command.completed).toBe(false);expect(existsSync(f.marker)).toBe(false);
- expect(f.state(f.completion.id)).toEqual({state:outcome==='grant'?'revoked':'uncertain'});
-});
-it('retains one ticket proof and refuses rebind without replacing the original command request',async()=>{
- const f=await commandChannels();f.command.bindTicket(f.completion.id);
- expect(()=>f.command.bindTicket(randomUUID())).toThrow();
- f.release(f.completion.id);await f.completion.dispatch();
- expect(await f.command.completed).toBe(true);expect(readFileSync(f.marker,'utf8')).toBe('accepted');
-});
-it('burns a startup after invalid ticket binding, with no reconstructed proof or command write',async()=>{
- const f=await commandChannels();expect(()=>f.command.bindTicket('invalid')).toThrow();
- expect(()=>f.command.bindTicket(f.completion.id)).toThrow();await f.command.close();
- expect(await f.command.completed).toBe(false);expect(existsSync(f.marker)).toBe(false);
-});
-it('cancels the actual command while original central current acknowledgement is delayed',async()=>{
- const f=await commandChannels();f.command.bindTicket(f.completion.id);f.release(f.completion.id);
- let entered!:()=>void,resume!:()=>void;
- const ready=new Promise<void>(r=>{entered=r;}),wait=new Promise<void>(r=>{resume=r;});
- const end=ServerResponse.prototype.end;
- const spy=vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
-  if(this.req.url?.endsWith('/worker-current')){entered();void wait.then(()=>end.apply(this,args));return this;}
-  return end.apply(this,args);
- });
- try {
-  const rejected=expect(f.completion.dispatch()).rejects.toThrow();await ready;
-  f.command.pending.cancel();resume();await rejected;await f.command.close();
-  expect(await f.command.completed).toBe(false);expect(existsSync(f.marker)).toBe(false);
-  expect(f.state(f.completion.id)).toEqual({state:'uncertain'});
-  await expect(f.transport.deliver(f.command.pending.id,f.binding,Buffer.from('synthetic-command-value'))).rejects.toThrow();
- }finally{resume();spy.mockRestore();}
-});
-it.each(['launch','expired','revoked'] as const)('real startup cleans up %s failure and exposes no pending request',async outcome=>{
- const f=await commandChannels();await f.command.close();
- const config={...f.config,input:{...f.config.input,socket:join(f.home,'failed-command.sock')},
-  ...(outcome==='launch'?{command:'/synthetic/missing-command'}:{})};
- await expect(startSecretCommand(config,{...f.request,expiresAt:outcome==='expired'?Date.now()-1:Date.now()+20_000,
-  current:()=>outcome!=='revoked'})).rejects.toThrow();
- expect(existsSync(f.marker)).toBe(false);
-});
-it.each(['exit','expiry'] as const)('retires the actual original command on %s before credential delivery',async outcome=>{
- const f=await commandChannels();await f.command.close();
- const command=await startSecretCommand({...f.config,
-  args:outcome==='exit'?['-e','process.exit(0)']:f.config.args,
-  input:{...f.config.input,socket:join(f.home,'retired-command.sock')}},
-  {...f.request,expiresAt:Date.now()+300});closes.push(command.close);
- expect(await command.completed).toBe(false);await command.close();
- expect(()=>command.bindTicket(randomUUID())).toThrow();
- expect(existsSync(f.marker)).toBe(false);
-});

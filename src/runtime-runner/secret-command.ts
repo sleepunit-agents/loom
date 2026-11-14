@@ -31,13 +31,16 @@ export interface SecretCommandRequest {
  * This is not the admission transport or complete standalone composition.
  */
 export async function startSecretCommand(config:SecretCommandConfig,request:SecretCommandRequest) {
-  const binding=Object.freeze(secretInputBindingSchema.parse(request.binding));
+  let binding:SecretInputBinding;
+  try {binding=Object.freeze(secretInputBindingSchema.parse(request.binding));}catch {throw failed();}
   const originalCurrent=request.current,expiresAt=request.expiresAt;
   const authority=Object.freeze({...config.authority}),daemonFingerprint=config.daemonFingerprint;
   const command=config.command,args=[...config.args],cwd=config.cwd,env={...config.env};
-  let closed=false;
+  let closed=false,invalid=false;
   const current=()=>{
-    try {return !closed&&Date.now()<expiresAt&&originalCurrent()===true;}catch {return false;}
+    if(closed||invalid)return false;
+    try {if(Date.now()<expiresAt&&originalCurrent()===true)return true;}catch { /* sticky revocation */ }
+    invalid=true;return false;
   };
   if(!isAbsolute(command)||!isAbsolute(cwd)||!current()||!Number.isFinite(expiresAt)
     ||expiresAt>Date.now()+30_000||typeof originalCurrent!=='function')throw failed();
@@ -64,7 +67,7 @@ export async function startSecretCommand(config:SecretCommandConfig,request:Secr
     const process=child;
     exited=new Promise<void>(resolve=>process.once('close',()=>resolve()));
     process.once('error',()=>{void close().catch(()=>{});});
-    process.once('close',code=>{
+    process.once('exit',code=>{
       settle(code===0&&consumed&&current());void close().catch(()=>{});
     });
     const pipe=process.stdio[3];
@@ -76,9 +79,13 @@ export async function startSecretCommand(config:SecretCommandConfig,request:Secr
       write(bytes,_encoding,done) {
         let settled=false;
         finishWrite=error=>{if(settled)return;settled=true;finishWrite=undefined;consumed=!error;done(error);};
-        try {pipe.end(bytes,()=>finishWrite?.());}catch {finishWrite(failed());}
+        try {pipe.end(bytes,(error?:Error|null)=>finishWrite?.(error?failed():undefined));}catch {finishWrite(failed());}
       },
-      destroy(_error,done) {pipe.destroy();finishWrite?.(failed());done();},
+      destroy(_error,done) {
+        const drained=()=>{finishWrite?.(failed());done();};
+        if(pipe.closed){drained();return;}
+        pipe.once('close',drained);pipe.destroy();
+      },
     });
     input.on('error',()=>{void close().catch(()=>{});});
     pipe.on('error',()=>{finishWrite?.(failed());void close().catch(()=>{});});
