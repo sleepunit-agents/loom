@@ -2,7 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { useRecords, type LiveRecord } from '../../data';
 import { Button, Loading, Error as ErrorView } from '../../kit';
 import { frozen, idle } from '../../data/mutation';
-import { mutation, submitAccountChange } from './model';
+import { mutation, submitAccountChange, accountChange } from './model';
 import { notificationController } from './notifications';
 export const notifications=notificationController();
 interface Test extends LiveRecord { member:string; ref:string; at:number; state:'queued'|'sent'|'gone'|'failed'|'uncertain'|'cancelled' }
@@ -14,7 +14,7 @@ export default function Notifications({enabled}:{enabled:boolean}){
   const held=useSyncExternalStore(mutation.subscribe,mutation.getSnapshot);
   const request=useSyncExternalStore(held.request?.subscribe??(()=>()=>{}),held.request?.getSnapshot??(()=>idle));
   const connected=enabled&&feed.status==='live'&&!!record;
-  const testRef=held.label?.startsWith('notifications.test:')?held.label.slice('notifications.test:'.length):undefined;
+  const testRef=accountChange(held.request)?.notificationTest.ref;
   const receipt=request.result?.ok&&testRef?request.result.value as {id:string;state:'queued'}:undefined;
   const currentTest=tests.status==='denied'?undefined:tests.records.find(t=>t.id===receipt?.id&&t.ref===testRef&&t.member===record?.member);
   const retryConnected=connected&&(!testRef||tests.status==='live');
@@ -37,7 +37,7 @@ export default function Notifications({enabled}:{enabled:boolean}){
       {!record.devices.length&&<p>No notification devices yet.</p>}
       {record.devices.map(d=><form key={d.ref} aria-label={`Remove notification device ${d.ref}`} className="grid min-w-0 gap-2 rounded-xl border p-4" onSubmit={event=>{event.preventDefault();if(!can||notifications.getSnapshot().busy)return;submitAccountChange('notifications.remove',{ref:d.ref},()=>event.currentTarget.reset());}}>
         <h3 className="font-semibold">{d.device??'Browser'}</h3><p className="break-all">Device reference: {d.ref}</p><p className="break-all">Browser reference: {d.session}</p><p>Enabled {new Date(d.at*1000).toLocaleString()}{d.seenAt!==undefined?` · Last seen ${new Date(d.seenAt*1000).toLocaleString()}`:''}</p>
-        <Button type="button" disabled={!can||tests.status!=='live'} onClick={()=>{if(!can||tests.status!=='live'||notifications.getSnapshot().busy)return;submitAccountChange('notifications.test',{ref:d.ref},()=>{},`notifications.test:${d.ref}`);}}>Send test notification</Button>
+        <Button type="button" disabled={!can||tests.status!=='live'} onClick={()=>{if(!can||tests.status!=='live'||notifications.getSnapshot().busy)return;submitAccountChange('notifications.test',{ref:d.ref},()=>{},{notificationTest:{ref:d.ref}});}}>Send test notification</Button>
         <fieldset disabled={!can} className="grid gap-2"><label><input type="checkbox" required/> I confirm removing this notification device</label><Button type="submit" variant="outline">Remove notification device</Button></fieldset>
       </form>)}
     </>}

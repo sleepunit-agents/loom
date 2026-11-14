@@ -112,6 +112,7 @@ it('queues the exact device once, retains an uncertain test through navigation a
   await act(async()=>{f.tests={status:'offline',records:[]};tree.update(h(Account,{active:true}));});
   expect(retry().props.disabled).toBe(true);await act(async()=>retry().props.onClick());expect(r.handle.retry).not.toHaveBeenCalled();
   await act(async()=>{f.tests={status:'live',records:[]};tree.update(h(Account));});
+  await act(async()=>tree.root.findByProps({'aria-label':'Remove passkey Phone'}).props.onSubmit({preventDefault:vi.fn(),currentTarget:{reset:vi.fn()}}));expect(f.call).toHaveBeenCalledOnce();expect(mutation.getSnapshot().request).toBe(r.handle);
   await act(async()=>retry().props.onClick());expect(r.handle.retry).toHaveBeenCalledOnce();expect(mutation.getSnapshot().request).toBe(r.handle);expect(f.call).toHaveBeenCalledOnce();
   await r.finish({ok:true,value:{id:'test-receipt',state:'queued'}});
   expect(JSON.stringify(tree.toJSON())).toContain('Queued for a test attempt. Waiting for live status');

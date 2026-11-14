@@ -75,15 +75,15 @@ it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account re
     const extra=b.getByRole('form',{name:`Remove notification device ${deviceRef(extraEndpoint)}`,exact:true});await expect.poll(()=>extra.count()).toBe(1);
     const remote=b.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true});await expect.poll(()=>remote.count()).toBe(1);
     expect(await remote.textContent()).toContain(device.session);
-    await remote.getByRole('button',{name:'Send test notification',exact:true}).click();
+    await extra.getByRole('button',{name:'Send test notification',exact:true}).click();
     const attempts=()=>loom.db.prepare('SELECT id,ref,state FROM notifications_tests').all() as Array<{id:string;ref:string;state:string}>;
-    await expect.poll(()=>attempts().length).toBe(1);const attempt=attempts()[0];expect(attempt.ref).toBe(device.ref);
+    await expect.poll(()=>attempts().length).toBe(1);const attempt=attempts()[0];expect(attempt.ref).toBe(deviceRef(extraEndpoint));
     await expect.poll(()=>b.getByRole('button',{name:'Retry this change',exact:true}).count()).toBe(1);
-    expect(testCalls).toHaveLength(1);expect(testCalls[0].input).toEqual({ref:device.ref});
+    expect(testCalls).toHaveLength(1);expect(testCalls[0].input).toEqual({ref:deviceRef(extraEndpoint)});
     expect(await remote.getByRole('button',{name:'Send test notification',exact:true}).isDisabled()).toBe(true);
     expect(await extra.getByRole('button',{name:'Send test notification',exact:true}).isDisabled()).toBe(true);
     // A disabled competing click cannot replace the original request.
-    await extra.getByRole('button',{name:'Send test notification',exact:true}).evaluate(button=>(button as HTMLButtonElement).click());
+    await remote.getByRole('button',{name:'Send test notification',exact:true}).evaluate(button=>(button as HTMLButtonElement).click());
     expect(testCalls).toHaveLength(1);expect(attempts()).toHaveLength(1);
     await b.getByRole('button',{name:'Home',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(0);await b.goBack();
     await expect.poll(()=>b.getByRole('button',{name:'Retry this change',exact:true}).isEnabled()).toBe(true);
@@ -94,7 +94,7 @@ it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account re
     expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:`notifications:test:${attempt.id}`},'account-release-test').ok).toBe(true);
     clock.advance(0);await expect.poll(()=>attempts()[0].state).toBe('sent');expect(send).toHaveBeenCalledOnce();
     for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain('Accepted by the push service. Device delivery is not confirmed.');
-    const payload=JSON.parse(send.mock.calls[0][1]);expect(payload).toMatchObject({title:'loom',body:'',url:'/p/account-preview'});
+    const payload=JSON.parse(send.mock.calls[0][1]);expect(payload).toEqual({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'});expect(send.mock.calls[0][0]).toEqual({endpoint:extraEndpoint,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}});
     await extra.getByRole('checkbox').check();await extra.getByRole('button',{name:'Remove notification device',exact:true}).click();await expect.poll(()=>extra.count()).toBe(0);
     const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
