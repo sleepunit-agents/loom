@@ -27,7 +27,7 @@ codes are in [household-piece.md](household-piece.md#generated-household-api-cli
 | `loom household icons use SET\|none` | **Pending** active-set selection |
 | `loom household icons list` | **Pending** installed-set projection/client |
 | `loom backup set/off/status` | `loom-household setBackup/backupOff/backup` reconcile configuration only; `status` run history and Setup controls remain **pending** |
-| `loom backup run/tick` | Database-only filtered reconstruction and native-age encrypted image/drill helpers exist (`exportDatabaseImage`, `encryptDatabaseImage`); **pending** full encrypted household exporter/drill and daemon runner; old detached programs are never called |
+| `loom backup run/tick` | Database-only filtered reconstruction and native-age encrypted image/drill helpers exist (`exportDatabaseImage`, `encryptDatabaseImage`), plus explicit portable-document/referenced-attachment capture (`capturePortableFiles`); **pending** full encrypted household exporter/drill and daemon runner; old detached programs are never called |
 | `loom token create` (agent/service/house, owner, peer, piece, runtime roles) | `token.create` / `loom-token create`; explicit member/agent/active runner/service only; retired legacy roles are disposed in household-piece.md |
 | `loom token list` | `token.list` / `loom-token list`, safe metadata only |
 | `loom token revoke LABEL [--with-passkeys] [--with-devices]` | `token.revoke` / `loom-token revoke`, atomic optional descendant-passkey and device cascades; old internal `signin.revokeToken` remains |

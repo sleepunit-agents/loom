@@ -1015,3 +1015,40 @@ artwork files, independent Secrets holder values/identities/historical keys,
 and the full household bundle/recovery boundary remain pending. This encrypted
 database drill alone is not complete backup or retirement evidence. Existing
 configuration still reports `awaiting-runner`, with no scheduled backup.
+
+
+### Portable file capture prerequisite
+
+`src/core/household/backup-files.ts` provides `capturePortableFiles` as a
+plaintext input layer for the future household bundle worker. The caller supplies
+registered agents and attachment hashes from its owning notes snapshot. The
+allowlist is each selected agent's `IDENTITY.md` (required), optional
+`preferences.md` and `self-model.md`, direct named Markdown sections in `roles/`
+and `projects/`, and only the supplied content-addressed `note-files/HH/HASH`
+attachments. Section names contain letters, digits, underscores or dashes, start
+with a letter or digit and have at most 100 characters before `.md`; nested and
+hidden sections are not included. Attachment content must match its supplied
+SHA-256. Missing referenced attachments refuse the capture. Selection does not
+come from old household JSON or directory discovery. Imported artwork is already
+covered by filtered app database rows; this helper discovers no old artwork files.
+
+This helper currently requires Linux with procfs: descriptor-relative opens pin
+all directory ancestors, use `O_NOFOLLOW`, and reject symlinks, hard-linked files,
+non-regular files and changed/truncated reads. Unsupported platforms refuse;
+there is no weaker pathname fallback. The home must be absolute with no dot or
+parent components or symlink aliases. Per-file, total-byte and file-count limits
+are 10 MiB, 64 MiB and 4096. Results own sensitive plaintext buffers; a future
+worker must clear them after encryption. Failed captures clear all owned buffers
+and close their descriptors. Successful captures preserve optional absence and
+return relative paths, bytes and hashes without publishing any file.
+
+No recursive context glob is allowed. Unknown files, telemetry, legacy memory
+sidecars, Comms files, audit/review/drill keys and machine-local backup state are
+excluded. Continuity databases (`memories.db`, `notes.db`, commons knowledge and
+People), cookie/sign-in key continuity, atomic pairing with the owning notes
+snapshot and the independent Secrets holder/identities/historical fingerprint
+and receipt keys still need explicit bundle inputs and recovery handling.
+This helper alone neither captures a complete household nor provides an atomic
+cross-file snapshot, encryption, a restore drill, execution or retirement evidence.
+The full bundle worker must account for all those boundaries before claiming
+coverage; current saved configuration still schedules nothing.
