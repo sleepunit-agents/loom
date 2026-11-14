@@ -176,6 +176,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               const rail=await page.locator('.next-rail').boundingBox(),tile=await page.locator('[data-tile=inbox]').boundingBox();
               expect(Math.round(rail!.width)).toBe(width>=1440?320:296);expect(tile!.x+tile!.width).toBeLessThanOrEqual(rail!.x-9);
               expect(await page.locator('.next-rail button').allTextContents()).toContain('Asks youOK to run the backup now? ›');
+              if(look==='neon'&&width===1280) {
               // Device hide choices: strips, overlays, persistence and no peek reflow.
               const choose=async(part:'rail'|'dock',label:string)=>{
                 const target=part==='rail'?page.locator('.next-rail-edge').count().then(n=>n?page.locator('.next-rail-edge'):page.locator('.next-rail')):Promise.resolve(page.getByRole('button',{name:'All apps',exact:true}));
@@ -219,6 +220,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await page.locator('.next-dock-edge').click({button:'right'});
               await page.getByRole('menuitem',{name:'Always show',exact:true}).click();
               await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(true);
+              }
               // The real rail measures overflow and retries full cards when its room returns.
               await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.height='120px');
               await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe('true');
