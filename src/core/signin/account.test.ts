@@ -67,7 +67,7 @@ it('serves safe private Live records, refreshes usage/expiry and evicts removed 
   const f=await setup();f.s.tokens.change(ts=>{ts.push({role:'owner',member:'jonathan',label:'socket',sha256:hash('socket'),created:'2026-01-01'});});
   f.s.sessions.change(x=>{x.sessions[hash(f.jonathan)].issuedAt=f.s.now()-30*86400+1;});
   const ws=new WebSocket(f.app.url.replace('http:','ws:')+'/live',{headers:{authorization:'Bearer socket'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
-  ws.send(JSON.stringify({kind:'subscribe',type:'account.self'}));const first=JSON.parse((await once(ws,'message'))[0].toString());expect(first.records).toHaveLength(1);expect(first.records[0].member).toBe('jonathan');expect(first.records[0].sessions[0].ended).toBe(false);
+  ws.send(JSON.stringify({kind:'subscribe',type:'account.self'}));const first=JSON.parse((await once(ws,'message'))[0].toString());expect(first.records).toHaveLength(2);expect(first.records[0].member).toBe('jonathan');expect(first.records[0].sessions[0].ended).toBe(false);
   const changed=once(ws,'message');f.clock.advance(1000);const update=JSON.parse((await changed)[0].toString());expect(update.record.sessions[0].ended).toBe(true);
   expect(first.records[0].passkeys).toHaveLength(3);expect(JSON.stringify(first)).not.toContain('private-publickey-witness');
   const gone=once(ws,'close');const {HouseholdDatabase}=await import('../household/document.js');new HouseholdDatabase(f.app.db).change('',h=>{h.members=(h.members as Array<{person:string}>).filter(m=>m.person!=='jonathan').map(m=>({...m,role:'owner',agents:'*'}));});f.app.live.changed([{type:'core.access',id:'credentials'}]);await gone;

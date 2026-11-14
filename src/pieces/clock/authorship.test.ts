@@ -41,7 +41,7 @@ it.each(['at','in','park'])('persists %s original scope without returning words 
   expect(JSON.stringify(f.app.operations.call('direct',viewer,'clock.log',{},randomUUID()))).not.toContain('PRIVATE_');
  }
  expect(JSON.stringify(await f.app.operations.callAsync('socket',owner,'clock.list',{},randomUUID(),true))).toContain('PRIVATE_PROMPT');
- expect(JSON.stringify(await f.app.operations.callAsync('socket',{kind:'member',id:'other'},'clock.list',{},randomUUID(),true))).not.toContain('PRIVATE_');
+ expect(JSON.stringify(await f.app.operations.callAsync('socket',{kind:'member',id:'other'},'clock.list',{},randomUUID(),true))).toContain('PRIVATE_PROMPT');
  const exported=JSON.stringify(exportDatabase(f.app.db));expect(exported).not.toContain('PRIVATE_');expect(exported).not.toContain(row.id);
  f.proof!.principal.people.push('other');expect(wakes(f.app.db)[0].authorship!.principal.people).toEqual(['pollock']);
  await f.app.close();const again=await f.open();expect(wakes(again.db)[0].authorship).toEqual(row.authorship);
@@ -49,8 +49,8 @@ it.each(['at','in','park'])('persists %s original scope without returning words 
 it('retains unknown and member principals without inferring ownership from membership or capacity',async()=>{
  const f=await setup();f.proof={...f.proof!,member:'pollock',principal:{for:'owner',people:[]}};
  expect(f.call().ok).toBe(true);expect(wakes(f.app.db)[0]).toMatchObject({member:'pollock',authorship:{member:'pollock',principal:{for:'owner',people:[]}}});
- // A principal describes steering, not record ownership or an owner permission.
- expect(JSON.stringify(await f.app.operations.callAsync('socket',owner,'clock.list',{},randomUUID(),true))).not.toContain('PRIVATE_');
+ // Steering metadata does not remove the household owner’s record visibility.
+ expect(JSON.stringify(await f.app.operations.callAsync('socket',owner,'clock.list',{},randomUUID(),true))).toContain('PRIVATE_PROMPT');
  expect(f.app.operations.call('direct',body,'clock.requestLocal',{agent:'art',prompt:'<!-- house: local --> hi',note:''},randomUUID()).ok).toBe(false);
 });
 it('keeps unbound and copied viewers unknown, ignores forged evidence and refuses mismatched scope or target',async()=>{

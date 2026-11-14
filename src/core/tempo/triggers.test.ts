@@ -1,0 +1,97 @@
+import { afterEach, expect, it } from 'vitest';
+import Database from 'better-sqlite3';
+import { eq } from 'drizzle-orm';
+import { createDataSchema } from '../data/database.js';
+import { agents, household, inbox, members, triggerLog, triggers } from '../data/schema.js';
+import { FakeClock } from '../clock.js';
+import { TriggerEngine, type NewTrigger, type TriggerEffects } from './triggers.js';
+import { nextTime } from './calendar.js';
+const stops: (() => void)[] = [];
+afterEach(() => { for (const stop of stops.splice(0).reverse()) stop(); });
+function fixture(override: Partial<TriggerEffects> = {}) {
+  const client = new Database(':memory:'); stops.push(() => client.close());
+  const clock = new FakeClock(Date.parse('2026-11-14T18:00:00Z')), db = createDataSchema(client);
+  db.insert(household).values({ timezone: 'America/Chicago' }).run();
+  db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: new Date(clock.now()).toISOString() }).run();
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  const operations: string[] = [];
+  const effects: TriggerEffects = {
+    inbox(t, deliveryId, words) {
+      const at = new Date(clock.now()).toISOString();
+      db.insert(inbox).values({ id: deliveryId, toKind: t.toKind!, to: t.to!, source: 'trigger', sourceId: deliveryId, fromKind: 'schedule', words, at, changedAt: at, state: 'waiting' }).onConflictDoNothing().run();
+    },
+    operation: name => { operations.push(name); }, instructions: file => `Read ${file}`, ...override,
+  };
+  const engine = new TriggerEngine(db, clock, effects); stops.push(() => engine.close());
+  const base: NewTrigger = { ownerKind: 'agent', owner: 'art', sourceKind: 'time', times: '2026-11-14T18:00:10Z', lifespan: 'once', targetKind: 'inbox', toKind: 'agent', to: 'art', instructions: 'Do the work', note: 'Test' };
+  return { db, clock, effects, engine, base, operations, items: () => db.select().from(inbox).all(), row: (id: string) => db.select().from(triggers).where(eq(triggers.id, id)).get()! };
+}
+it('fires a one-off time to an inbox without starting a body, once across restart', () => {
+  const { db, clock, engine, effects, base, items, row } = fixture();
+  const t = engine.set(base);
+  clock.advance(9_999); expect(items()).toEqual([]);
+  clock.advance(1); expect(items()).toMatchObject([{ source: 'trigger', state: 'waiting', words: 'Do the work', to: 'art' }]);
+  expect(row(t.id)).toMatchObject({ enabled: false, state: 'fired', nextDueAt: null });
+  engine.close(); const reopened = new TriggerEngine(db, clock, effects); stops.push(() => reopened.close());
+  reopened.tick(); clock.advance(60_000); expect(items()).toHaveLength(1);
+});
+it('holds a due trigger while paused and fires once on resume', () => {
+  const { engine, clock, base, items, row } = fixture();
+  const t = engine.set(base); engine.pause('art');
+  clock.advance(30_000); expect(items()).toEqual([]); expect(row(t.id).state).toBe('held');
+  engine.resume('art'); expect(items()).toHaveLength(1); expect(row(t.id).state).toBe('fired');
+});
+it('retains an answer received while paused and deduplicates source events after reopening', () => {
+  const { db, engine, clock, effects, base, items } = fixture();
+  const t = engine.set({ ...base, sourceKind: 'answer', times: null, watches: 'approval:a-1' });
+  engine.pause('art'); engine.event('answer', 'approval:a-1', 'answer-1');
+  expect(items()).toEqual([]); engine.close();
+  const reopened = new TriggerEngine(db, clock, effects); stops.push(() => reopened.close());
+  reopened.resume('art'); expect(items()).toHaveLength(1);
+  reopened.event('answer', 'approval:a-1', 'answer-1'); expect(items()).toHaveLength(1);
+  expect(db.select().from(triggerLog).where(andTrigger(t.id)).all().filter(l => l.event === 'fired')).toHaveLength(1);
+});
+function andTrigger(id: string) { return eq(triggerLog.trigger, id); }
+it('runs a named operation without an inbox, repeats standing PR/job events only when new', () => {
+  const { engine, base, items, operations } = fixture();
+  for (const kind of ['pull-request', 'job'] as const) {
+    engine.set({ ...base, sourceKind: kind, watches: kind + ':1', lifespan: 'until-stopped', targetKind: 'operation', target: 'tasks.reconcile' });
+    engine.event(kind, kind + ':1', 'v1'); engine.event(kind, kind + ':1', 'v1'); engine.event(kind, kind + ':1', 'v2');
+  }
+  expect(items()).toEqual([]); expect(operations).toEqual(Array(4).fill('tasks.reconcile'));
+});
+it('repeats a lane in household time and stops a today trigger when today ends', () => {
+  const { engine, clock, base, row, items } = fixture();
+  const lane = engine.set({ ...base, lifespan: 'until-stopped', times: '12:01', days: 'daily', instructions: null, file: 'routines/check.md' });
+  const today = engine.set({ ...base, sourceKind: 'answer', watches: 'question:1', times: null, lifespan: 'today' });
+  clock.advance(60_000); expect(items()[0].words).toBe('Read routines/check.md');
+  expect(row(lane.id).nextDueAt).toBe('2026-11-15T18:01:00.000Z');
+  clock.advance(12 * 3_600_000); expect(row(today.id)).toMatchObject({ enabled: false, state: 'stopped' });
+});
+it('rolls back a failed target write and records failure without retrying it', () => {
+  const f = fixture();
+  f.effects.inbox = (t, id, words) => {
+    f.db.insert(inbox).values({ id, toKind: 'agent', to: 'art', source: 'trigger', words, fromKind: 'schedule', state: 'waiting', at: new Date(f.clock.now()).toISOString(), changedAt: new Date(f.clock.now()).toISOString() }).run();
+    throw new Error('target failed');
+  };
+  const t = f.engine.set(f.base); f.clock.advance(10_000);
+  expect(f.items()).toEqual([]); expect(f.row(t.id)).toMatchObject({ state: 'failed', enabled: false });
+  f.engine.tick(); expect(f.items()).toEqual([]);
+});
+it('cancels future work and validates time, owner and file inputs before recording a trigger', () => {
+  const { engine, clock, base, items, db } = fixture();
+  const t = engine.set(base); engine.stop(t.id); clock.advance(20_000); expect(items()).toEqual([]);
+  for (const patch of [{ owner: null }, { times: '25:00' }, { file: '../private', instructions: null }, { to: null }]) expect(() => engine.set({ ...base, ...patch })).toThrow();
+  expect(db.select().from(triggers).all()).toHaveLength(1);
+});
+it('skips missing DST wall times and runs a repeated time at its first instant only', () => {
+  expect(new Date(nextTime('02:30', null, Date.parse('2026-03-08T00:00:00Z'), 'America/Chicago')).toISOString()).toBe('2026-03-09T07:30:00.000Z');
+  expect(new Date(nextTime('01:30', null, Date.parse('2026-11-01T06:31:00Z'), 'America/Chicago')).toISOString()).toBe('2026-11-02T07:30:00.000Z');
+});
+it('holds an agent-owned operation with no inbox recipient and coalesces missed calendar occurrences', () => {
+  const { engine, clock, base, operations, row } = fixture();
+  const t = engine.set({ ...base, targetKind: 'operation', target: 'tasks.reconcile', toKind: null, to: null, times: '12:01', lifespan: 'until-stopped' });
+  engine.pause('art'); clock.advance(2 * 86_400_000); expect(operations).toEqual([]);
+  engine.resume('art'); expect(operations).toEqual(['tasks.reconcile']);
+  expect(row(t.id).nextDueAt).toBe('2026-11-16T18:01:00.000Z');
+});
