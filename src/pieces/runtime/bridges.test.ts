@@ -1,4 +1,4 @@
-import { runtimeDiscordHistoryPermit, runtimeHouseDestination } from './role.js';
+import { runtimeSlackDescribePermit, runtimeDiscordHistoryPermit, runtimeHouseDestination } from './role.js';
 import * as conversationModule from './conversations.js';
 import {provenanceStore} from './provenance-store.js';
 import {afterEach,expect,it,vi} from 'vitest';
@@ -331,4 +331,5 @@ it('refuses an otherwise current authenticated owner-steered bridge source as ve
  expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true});
  expect(runtimeHouseDestination(f.app,()=>new SharingDatabase(f.app.db,f.home).sharing(),viewer)?.current()).toBe(true);
  expect(runtimeDiscordHistoryPermit(f.app,viewer,{workspace:'300',channel:'400',kind:'channel'})).toBeUndefined();
+ expect(runtimeSlackDescribePermit(f.app,viewer,{venue:'slack',workspace:'TWORK',kind:'dm',place:'UHUMAN'})).toBeUndefined();
 });

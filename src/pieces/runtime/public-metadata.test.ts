@@ -1,4 +1,4 @@
-import { runtimeDiscordHistoryPermit, runtimeHouseDestination } from './role.js';
+import { runtimeSlackDescribePermit, runtimeDiscordHistoryPermit, runtimeHouseDestination } from './role.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import * as policy from '../../core/index.js';
 import * as effectModule from '../../core/effects.js';
@@ -288,4 +288,5 @@ it.each([false,true])('refuses an otherwise current owner Clock source (private=
  expect(await f.post(f.body,'readConversation',{})).toMatchObject({ok:true});
  expect(runtimeHouseDestination(f.app,()=>f.sharing,viewer)?.current()).toBe(true);
  expect(runtimeDiscordHistoryPermit(f.app,viewer,{workspace:'300',channel:'400',kind:'channel'})).toBeUndefined();
+ expect(runtimeSlackDescribePermit(f.app,viewer,{venue:'slack',workspace:'TWORK',kind:'dm',place:'UHUMAN'})).toBeUndefined();
 });

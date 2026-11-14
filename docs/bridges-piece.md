@@ -1242,8 +1242,9 @@ the eventual composition after save; returned read buffers belong to that caller
 `slack-describe.ts` is an unregistered service transport for the platform part of
 legacy `send --describe` (`loom-slack` pinned at `4acf0562`,
 `test/test_describe.py`). An explicit trusted exact agent/venue/workspace/place
-permit authorizes fresh reads; there is no installed Runtime issuer or public
-operation. DM places are human user ids; group places are existing MPIM ids.
+permit authorizes fresh reads. Runtime now provides the internal
+`runtimeSlackDescribePermit` issuer for an authenticated running owner-steered
+private Comms body; there is no public operation. DM places are human user ids; group places are existing MPIM ids.
 Nothing opens a DM, posts, starts a body or writes a receipt.
 
 A DM checks the exact user's same-workspace human eligibility. A group checks
@@ -1260,8 +1261,10 @@ Only sorted platform human ids and exact place/kind leave the transport, without
 profile words or policy fields. Runtime still must map these ids to current
 people and determine tiers, restrictions, lowest group tier, owner-present and
 project/field/group briefs before wiring a public operation or generated client.
-Tests use an explicitly fake owning permit; actual Secrets service-grant and
-buffer-erasure fixtures do not claim actual Runtime authority. The old fresh
+Transport tests use an explicitly fake owning permit; Runtime venue-history
+fixtures additionally consume its actual authenticated issuer for DM and group
+inspection. Actual Secrets service-grant and buffer-erasure fixtures alone do
+not claim Runtime authority. The old fresh
 membership-cache optimization becomes fresh platform reads here; the same
 all-human requirement is retained. Describe support is still incomplete.
 

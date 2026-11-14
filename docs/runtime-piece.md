@@ -1722,3 +1722,32 @@ receiver reconciliation remain separate work. No importer behavior changes.
 | Old behavior | Owning replacement in this unit | Remaining |
 |---|---|---|
 | Runtime-authorized Discord channel/thread history | Exact current owner-body permit consumed by the merged Bridges history transport | Public operation/client, sender policy and broader supported sources |
+
+## Owning Slack describe permit
+
+`runtimeSlackDescribePermit(app, viewer, {venue, workspace, kind, place})` is an
+internal role issuer for the merged Bridges Slack describe transport. Like
+`runtimeDiscordHistoryPermit`, it requires the exact Signin viewer of a currently
+running, claimed, owner-steered private Comms body, current household policy, and
+owner-only retained sender history. Copied viewers and supplied principal labels
+confer no authority. Its immutable current predicate pins the original route and
+claim and rechecks authentication, source and execution on every use. Both issuers
+share this owning check.
+
+This smallest issuer authorizes explicit exact-place inspection for the owner
+body: a Slack human id for DM, or an existing MPIM id for group. Bridges verifies
+the actual venue, workspace, fresh platform membership and human eligibility,
+Secrets and staging before returning platform ids. Venue labels alone cannot
+create a permit. No operation exposes or serializes it. The authenticated positive
+fixture is `venue-history.test.ts`, “consumes an actual owning Slack describe
+permit for exact authenticated platform reads”. Existing revocation fixtures also
+exercise Slack issuance and retained permits.
+
+| Old behavior | New owning seam |
+| --- | --- |
+| Slack send --describe platform inspection | Runtime exact-place permit consumed by Bridges slackDescribe |
+| Describe people, tiers, restrictions and selected briefs | Still required; no public describe operation or generated command yet |
+
+No importer change, new schema, real platform call or old-store access. This does
+not authorize posting, opening a DM, waking, or treating returned ids as sender
+authority. Bridge and Clock source bodies remain outside this first boundary.
