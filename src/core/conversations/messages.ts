@@ -3,8 +3,8 @@
 import { and, eq, inArray, isNotNull, lte, max, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, deletedThreads, household, inbox, inboxRefs, messages, threadRefs, threads } from '../data/schema.js';
-import type { WordsKey } from '../../pieces/comms/crypto.js';
-import { refsIn } from '../../pieces/comms/refs.js';
+import type { WordsKey } from './words.js';
+import { refsIn } from './refs.js';
 import { Threads } from './threads.js';
 
 type Message = typeof messages.$inferSelect;
