@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,7 +14,7 @@ import { TokenResolver } from '../../household.js';
 import { setupLocal, caller, prompt } from '../../__fixtures__/clock-local.js';
 
 const close: (() => void | Promise<void>)[] = [];
-afterEach(async () => { for (const stop of close.splice(0).reverse()) await stop(); });
+afterEach(async () => { vi.restoreAllMocks(); for (const stop of close.splice(0).reverse()) await stop(); });
 function database() { const db = new Database(':memory:'); close.push(() => db.close()); return db; }
 it('rebuilds filtered rows into fresh pages and preserves blobs, constraints, indexes, triggers and sequence high water', () => {
   const db = database();
@@ -91,4 +91,29 @@ it('honors installed Clock and Approvals private exclusions in a real restored i
   expect(image.bytes.includes(Buffer.from('PRIVATE_APPROVAL_SENTINEL'))).toBe(false);
   const restored = new Database(image.bytes); close.push(() => restored.close());
   expect(restored.prepare('SELECT * FROM approvals_approvals').all()).toEqual([]);
+});
+it.each([
+  ['missing row', 'DELETE FROM data', 'rows differ'],
+  ['changed row', "UPDATE data SET label='changed'", 'rows differ'],
+  ['extra schema', 'CREATE TABLE extra(value TEXT)', 'schema differs'],
+  ['changed sequence', "UPDATE sqlite_sequence SET seq=900 WHERE name='data'", 'sequences differ'],
+])('rejects an independently reopened image with %s', (_name, damage, error) => {
+  const db = database();
+  db.exec("CREATE TABLE data(id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT); INSERT INTO data(label) VALUES ('original')");
+  const serialize = Database.prototype.serialize;
+  // Damage only the reconstructed database immediately before its image is
+  // reopened. The expected rows/schema/sequence were already captured.
+  vi.spyOn(Database.prototype, 'serialize').mockImplementation(function (this: Database.Database) {
+    this.exec(damage); return serialize.call(this);
+  });
+  expect(() => exportDatabaseImage(db)).toThrow(error);
+  expect(db.prepare('SELECT label FROM data').get()).toEqual({ label: 'original' });
+});
+it('rejects a failed integrity check even when the image rows still match', () => {
+  const db = database(); db.exec('CREATE TABLE data(value TEXT)');
+  const pragma = Database.prototype.pragma;
+  vi.spyOn(Database.prototype, 'pragma').mockImplementation(function (this: Database.Database, source: string, options?: Database.PragmaOptions) {
+    return source === 'integrity_check' ? 'fixture integrity failure' : pragma.call(this, source, options);
+  });
+  expect(() => exportDatabaseImage(db)).toThrow('restore integrity failed');
 });
