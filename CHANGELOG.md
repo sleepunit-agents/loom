@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Classify already owned Runtime spawn threads in Comms through original member metadata, preserving independent transport and execution holds.
 
 
-- New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
+- New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search. Keep passkeys and sign-out in Your account, removing the provisional corner toolbar that overlapped apps.
 - New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail; counted pixel talking beats follow through completion, with crisp whole-scale compact portraits.
 - Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
 
