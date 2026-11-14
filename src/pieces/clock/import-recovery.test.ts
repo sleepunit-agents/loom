@@ -57,19 +57,19 @@ it('keeps ordinary replacement unknown, rather than silently adopting archived s
  expect(schedules(s.app.db)[0].authorship?.principal.for).toBe('?');
  expect(s.call('scheduleRecover',input)).toMatchObject({ok:false,code:'invalid'});
 });
-it('refuses an uncertain linked import and cancels only definitely unstarted linked work on recovery',async()=>{
+it.each([{state:'held',hold:'uncertain'},{state:'firing',hold:undefined},{state:'held',hold:'provenance',attempt:'old-attempt'}])('refuses unsafe linked import %j and cancels only definitely unstarted work',async unsafe=>{
  const s=await setup(),id='w-111111';
- const row={id,agent:'art',note:'archived occurrence',prompt:'ARCHIVED_WORDS',schedule:input.id,due:s.clock.now(),createdAt:s.clock.now(),changedAt:s.clock.now(),by:{kind:'runner',id:'clock-import:unverified'},failures:0,state:'held',hold:'uncertain',attempt:'old-attempt'};
+ const row={id,agent:'art',note:'archived occurrence',prompt:'ARCHIVED_WORDS',schedule:input.id,due:s.clock.now(),createdAt:s.clock.now(),changedAt:s.clock.now(),by:{kind:'runner',id:'clock-import:unverified'},failures:0,...unsafe};
  s.app.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(id,JSON.stringify(row),s.clock.now());
  const before=schedules(s.app.db);expect(s.call('scheduleRecover',input)).toMatchObject({ok:false,code:'invalid'});
- expect(schedules(s.app.db)).toEqual(before);expect(wakes(s.app.db)).toEqual([row]);
+ expect(schedules(s.app.db)).toEqual(before);expect(wakes(s.app.db)).toEqual([JSON.parse(JSON.stringify(row))]);
  const {attempt:_attempt,...unstarted}=row;
- s.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify({...unstarted,hold:'provenance'}),id);
+ s.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify({...unstarted,state:'held',hold:'provenance'}),id);
  expect(s.call('scheduleRecover',input).ok).toBe(true);
  expect(wakes(s.app.db).find(w=>w.id===id)).toMatchObject({state:'cancelled'});
  expect(wakes(s.app.db).filter(w=>w.state==='pending')).toHaveLength(1);
 });
-it.each([{for:'person:pollock'},{for_why:'steered'},{for_why:'unverified'},{for_why:'other-agent'},{authorship:{principal:{for:'pollock'}}},{principal:{for:'pollock'}},{conversation:'old'},{service:'old'},{member:'jonathan'},{project:'pond'},{for_people:['pollock']},{lane:'daily'},
+it.each([{prompt:undefined,prompt_file:'routines/night.md'},{origin:'person:pollock'},{origin:'agent:other'},{for:'person:pollock'},{for_why:'steered'},{for_why:'unverified'},{for_why:'other-agent'},{authorship:{principal:{for:'pollock'}}},{principal:{for:'pollock'}},{conversation:'old'},{service:'old'},{member:'jonathan'},{project:'pond'},{for_people:['pollock']},{lane:'daily'},
  {model:'saved'},{slot:'saved'},{continuation:'saved'},{approval:'saved'},{place:'saved'},{standing:true},
  {prompt:'<!-- house: local -->\nlocal words'},{_firing:true}])('does not recover archived capability or private/person hints: %j',async raw=>{
  const s=await setup(raw),before=schedules(s.app.db);
@@ -77,6 +77,12 @@ it.each([{for:'person:pollock'},{for_why:'steered'},{for_why:'unverified'},{for_
 });
 it('refuses an active import even if its plain eligibility marker remains',async()=>{
  const s=await setup(),saved={...schedules(s.app.db)[0],enabled:true};
+ s.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(saved),saved.id);
+ expect(s.call('scheduleRecover',input)).toMatchObject({ok:false,code:'invalid'});
+ expect(schedules(s.app.db)).toEqual([saved]);expect(wakes(s.app.db)).toEqual([]);
+});
+it('refuses a file import even if it has a stale plain eligibility marker',async()=>{
+ const s=await setup({prompt:undefined,prompt_file:'routines/night.md'}),saved={...schedules(s.app.db)[0],importRecovery:'plain' as const};
  s.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(saved),saved.id);
  expect(s.call('scheduleRecover',input)).toMatchObject({ok:false,code:'invalid'});
  expect(schedules(s.app.db)).toEqual([saved]);expect(wakes(s.app.db)).toEqual([]);

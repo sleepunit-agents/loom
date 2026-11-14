@@ -429,7 +429,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     (ctx,input) => {
       const old=schedule(db,input.id)!;
       if(old.by.kind!=='runner' || old.by.id!=='clock-import:unverified' || old.enabled || old.importRecovery!=='plain'
-        || old.agent!==input.agent || old.member!==undefined || old.project!==undefined || old.lane || old.laneDetails
+        || old.agent!==input.agent || !old.prompt || old.file || old.member!==undefined || old.project!==undefined || old.lane || old.laneDetails
         || old.model || old.slot || old.continuation || old.approval || old.place)
         invalid('Only a plain disabled imported schedule can be recovered; refile other work through its owning flow');
       if(input.prompt.includes('<!-- house: local -->')) invalid('Local work needs its owning approval flow');
