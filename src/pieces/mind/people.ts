@@ -84,13 +84,22 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
         kind:card.how?.kind === 'agent' ? 'agent' as const : 'person' as const,evidence,newer,fields,...(slug !== asked ? {mergedFrom:asked} : {}) };
     })();
   };
-  function ids(scope?: string) {
-    if (scope !== undefined) return scope ? [scope] : [];
-    return [...sources].flatMap(([source,db]) => has(db,'people') ? (db.prepare('SELECT slug FROM people WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).map(r => `${source}:${r.slug}`) : []);
+  function sourceIds(source:string,db:Database) {
+    return has(db,'people')?(db.prepare('SELECT slug FROM people WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).map(r=>`${source}:${r.slug}`):[];
+  }
+  function ids(scope?:string) {
+    if(scope!==undefined)return scope?[scope]:[];
+    // The retiring Live transport asks for candidates without a viewer. A bad
+    // source must not fail every subscriber; scoped reads still report errors.
+    return [...sources].flatMap(([source,db])=>{try{return sourceIds(source,db);}catch{return [];}});
   }
   return {
     read, ids, sources, allowed,
-    list(viewer:Viewer) { for(const source of failed)if(allowed(viewer,source==='commons'?undefined:source))available(source);return [...sources].filter(([source])=>allowed(viewer,source==='commons'?undefined:source)).flatMap(([source,db])=>has(db,'people')?(db.prepare('SELECT slug FROM people WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).flatMap(({slug})=>{const row=read(`${source}:${slug}`,viewer);return row?[row]:[];}):[]); },
+    list(viewer:Viewer) {
+      for(const source of failed)if(allowed(viewer,source==='commons'?undefined:source))available(source);
+      return [...sources].filter(([source])=>allowed(viewer,source==='commons'?undefined:source))
+        .flatMap(([source,db])=>sourceIds(source,db).flatMap(id=>{const row=read(id,viewer);return row?[row]:[];}));
+    },
     history(id:string,viewer:Viewer) {
       const person=read(id,viewer);if(!person)return [];
       const db=sources.get(person.agent??'commons');if(!db||!has(db,'person_revisions'))return [];
@@ -103,7 +112,7 @@ export function installMindPeople(operations:Operations,live:Live,options:Omit<P
   const reader=peopleReader({...options,now:()=>operations.clock.now()});
   const {read,ids,sources,allowed}=reader;
   operations.register(operation({ name:'mind.peopleList',input:z.object({}).strict(),output:z.unknown(),may:() => true,
-    run:ctx => ids().flatMap(id => {const r=read(id,ctx.viewer);return r ? [r] : [];}) }));
+    run:ctx => reader.list(ctx.viewer) }));
   operations.register(operation({ name:'mind.personRead',input:z.object({id:z.string().min(3).max(200)}).strict(),output:z.unknown(),
     may:(v,input) => { const source=input.id.slice(0,input.id.indexOf(':'));return allowed(v,source==='commons' ? undefined : source); },
     run:(ctx,input) => read(input.id,ctx.viewer) ?? {ok:false,code:'not-found',message:'Person card not found'} }));
