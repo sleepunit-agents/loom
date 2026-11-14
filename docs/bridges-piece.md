@@ -1318,3 +1318,11 @@ must supply the existing bounded Slack transport with service/staging fences and
 an actual Runtime permit. This unit installs no daemon intake, public operation
 or client and reads no old-side data. Runtime issuance, production intake wiring
 and generated command parity remain required.
+
+## Legacy behavior dispositions
+
+[The source disposition ledger](bridges-dispositions.md) separates required
+webhook/notification/budget/note behavior from retired old process mechanisms
+and still-required cleanup of obsolete next-side raw receiving identities.
+It includes source fidelity gaps and move acceptance evidence; none of the
+remaining semantic behavior is completed by retaining importer metadata.
