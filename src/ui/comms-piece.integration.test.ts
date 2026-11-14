@@ -30,8 +30,10 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
  if(!first.ok)throw new Error('fixture failed');const place=(first.value as {thread:string}).thread;await comms.deliver('art',place,1);
  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
  try{
+  console.info('Comms browser: next-mode proof');
   await proveNextComms(browser,root);
-  const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await context.grantPermissions(['local-network-access'],{origin:loom.url});
+  console.info('Comms browser: fixture reader proof');
+  const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});context.setDefaultTimeout(10_000);context.setDefaultNavigationTimeout(10_000);await context.grantPermissions(['local-network-access'],{origin:loom.url});
   await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.pathname==='/live'||url.pathname.startsWith('/api/'))return route.continue();const path=url.pathname.startsWith('/app/')?resolve(root,url.pathname.slice(5)):join(root,'index.html');if(!path.startsWith(root+'/')||!existsSync(path))return route.fulfill({status:404,body:''});await route.fulfill({body:readFileSync(path),contentType:({'.js':'text/javascript','.css':'text/css','.html':'text/html','.woff2':'font/woff2'} as Record<string,string>)[extname(path)]??'application/octet-stream'});});
   const a=await context.newPage(),b=await context.newPage();await b.addInitScript(()=>{const sockets:WebSocket[]=[];Reflect.set(window,'__fixtureSockets',sockets);const Native=window.WebSocket;window.WebSocket=class extends Native{constructor(url:string|URL,protocols?:string|string[]){super(url,protocols);sockets.push(this);}};});await b.clock.install({time:clock.now()});await Promise.all([a.goto(`${loom.url}/p/comms-preview`),b.goto(`${loom.url}/p/comms-preview`)]);
   const row=(page:typeof a)=>page.locator('[data-split-row]').filter({hasText:'New thread with art'});
@@ -123,7 +125,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>loom.db.prepare("SELECT count(*) AS n FROM comms_messages WHERE thread=? AND id=? AND kind='answer'").get(place,`answer:${legacyRef}`)).toEqual({n:1});
   for(const page of [a,b])expect(await page.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(0);
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
-  const capture=async(prefix:string,split=false)=>{for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');if(prefix==='comms-menu'||prefix==='comms-hold'){await b.getByRole('button',{name:'Actions for New thread with art',exact:true}).click();await expect.poll(()=>b.getByRole('menuitem',{name:prefix==='comms-hold'?'Unpin':'Pin',exact:true}).count()).toBe(1);}if(prefix==='comms-list'||prefix==='comms-menu'){expect(await row(b).locator('.comms-agent-letter').textContent()).toBe('A');expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});if(prefix==='comms-menu'||prefix==='comms-hold')await b.keyboard.press('Escape');}};
+  const capture=async(prefix:string,split=false)=>{console.info('Comms browser: capture',prefix);for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');if(prefix==='comms-menu'||prefix==='comms-hold'){await b.getByRole('button',{name:'Actions for New thread with art',exact:true}).click();await expect.poll(()=>b.getByRole('menuitem',{name:prefix==='comms-hold'?'Unpin':'Pin',exact:true}).count()).toBe(1);}if(prefix==='comms-list'||prefix==='comms-menu'){expect(await row(b).locator('.comms-agent-letter').textContent()).toBe('A');expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});if(prefix==='comms-menu'||prefix==='comms-hold')await b.keyboard.press('Escape');}};
   await capture('comms',true);
   await b.setViewportSize({width:390,height:900});
   await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe('one');
@@ -461,6 +463,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await comms.activityCards('art',jobPlace,{run:'watch-fixture',cards:[{id:'watch-step',tool:'Shell',summary:'Live watched work',state:'running'}]});
   await expect.poll(()=>b.getByText('Live watched work',{exact:true}).count()).toBe(1);
   await capture('comms-watching');
+  console.info('Comms browser: join watched job');
   await b.getByRole('button',{name:'Join in',exact:true}).click();
   await expect.poll(()=>b.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
   expect(await b.getByRole('button',{name:'Stop',exact:true}).count()).toBe(1);
@@ -471,6 +474,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByLabel('Watching job').count()).toBe(1);
   expect(starts.length).toBe(startsBeforeJoin);expect(ends.length).toBe(endsBeforeWatch);
   await b.getByRole('navigation',{name:'Comms folders'}).getByRole('button',{name:'Background work',exact:true}).click();
+  console.info('Comms browser: join watched job');
   await b.getByRole('button',{name:'Join in',exact:true}).click();
   await b.getByRole('textbox',{name:'Message',exact:true}).fill('A member follow-up');await b.getByRole('button',{name:'Send',exact:true}).click();
   await expect.poll(()=>starts.length).toBe(startsBeforeJoin+1);
@@ -483,7 +487,8 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
   expect(await b.getByLabel('Watching job').count()).toBe(0);expect(ends.length).toBe(endsBeforeWatch);
 
- }finally{await browser.close();await comms.close();await loom.close();rmSync(home,{recursive:true,force:true});}
+  console.info('Comms browser: fixture actions complete');
+ }finally{console.info('Comms browser: close browser');await browser.close();console.info('Comms browser: close Comms');await comms.close();console.info('Comms browser: close fixture home');await loom.close();rmSync(home,{recursive:true,force:true});console.info('Comms browser: closed');}
 },180000);
 
 /** Real next-mode checkpoint; no delivery/authentication/Attention fake. */
@@ -491,7 +496,7 @@ const value=<T>(r:Result):T=>{expect(r.ok).toBe(true);return (r as {ok:true;valu
 async function proveNextComms(browser:Browser,webRoot:string) {
  const home=mkdtempSync(join(tmpdir(),'comms-next-browser-'));fixture(home);
  const clock=new FakeClock(),app=await startLoom({home,clock,next:true,webRoot,stdout:()=>{}});
- const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
+ const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});context.setDefaultTimeout(10_000);context.setDefaultNavigationTimeout(10_000);
  try {
   const auth=signin(app);app.db.transaction(()=>auth.tokens.replace({v:1,tokens:[]},{}))();
   const token=(role:string)=>{const secret=randomBytes(32).toString('hex');auth.tokens.change(ts=>ts.push({role,sha256:hash(secret),label:'Comms browser fixture',created:new Date(clock.now()).toISOString()}));return secret;};
@@ -520,6 +525,7 @@ async function proveNextComms(browser:Browser,webRoot:string) {
   }),{name,input,id:`next-browser-${++n}`});
   let earlier:{thread:string;conversation:string}|undefined;
   for(const kind of ['ordinary','filed','attached'] as const) {
+   console.info('Comms browser: next-mode case',kind);
    const inbound=`PRIVATE ${kind} browser inbound`,outbound=`PRIVATE ${kind} body reply`;
    await a.goto(`${app.url}/p/comms-preview/new`);
    await expect.poll(()=>a.getByRole('textbox',{name:'Message',exact:true}).count()).toBe(1);
@@ -682,5 +688,5 @@ async function proveNextComms(browser:Browser,webRoot:string) {
     expect(saved).not.toContain(inbound);expect(saved).not.toContain(outbound);expect(saved).not.toContain(input.credential);
    }
   }
- } finally {await context.close();await app.close();rmSync(home,{recursive:true,force:true});}
+ } finally {console.info('Comms browser: close next context');await context.close();console.info('Comms browser: close next home');await app.close();rmSync(home,{recursive:true,force:true});console.info('Comms browser: next closed');}
 }
