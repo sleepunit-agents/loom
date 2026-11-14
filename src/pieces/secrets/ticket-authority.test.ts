@@ -14,7 +14,7 @@ import {secretTickets} from './tickets.js';
 import {fileURLToPath} from 'node:url';
 import https from 'node:https';
 import {ServerResponse} from 'node:http';
-import {Socket} from 'node:net';
+import {Socket,connect as netConnect} from 'node:net';
 import {connect as tlsConnect} from 'node:tls';
 import {listenTicketAuthority,remoteTicketAuthority} from './ticket-authority.js';
 const closes:Array<()=>unknown>=[];
@@ -200,4 +200,65 @@ it('refuses a request completed at its original connection deadline even if sock
    expect(f.state(t.id)).toEqual({state:'admitted'});
   }finally {destroy.mockRestore();}
  }finally {peer.destroy();vi.useRealTimers();}
+});
+it.each(['tls','headers'])('disconnects silent %s peers at the accepted deadline and drains shutdown',async phase=>{
+ const f=await setup();let closed=false;
+ vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
+ const peer=phase==='tls'?netConnect(f.config.socket):tlsConnect({path:f.config.socket,servername:f.config.servername,
+  ca:readFileSync(f.config.ca),cert:readFileSync(f.config.cert),key:readFileSync(f.config.key),rejectUnauthorized:true});
+ peer.on('error',()=>{});peer.once('close',()=>{closed=true;});
+ try {
+  await new Promise<void>(resolve=>peer.once(phase==='tls'?'connect':'secureConnect',resolve));
+  if(phase==='headers')peer.write('POST /v1/tickets/');
+  await vi.advanceTimersByTimeAsync(5000);await vi.waitFor(()=>expect(closed).toBe(true));
+  await f.authority.close();
+ }finally {peer.destroy();vi.useRealTimers();}
+});
+it('does not revive a retained claim after a failed current response and subsequent recovery',async()=>{
+ const f=await setup(),t=f.admitted(),c=(await f.remote.claim(t.id))!;
+ const writeHead=ServerResponse.prototype.writeHead;
+ const drop=vi.spyOn(ServerResponse.prototype,'writeHead').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['writeHead']>){
+  const result=writeHead.apply(this,args);
+  if(this.req.url?.endsWith('/current'))this.socket?.destroy();
+  return result;
+ });
+ try {expect(await c.current()).toBe(false);}finally {drop.mockRestore();}
+ // The central proof remains valid; only the retained client was invalidated.
+ expect(f.state(t.id)).toEqual({state:'claimed'});
+ expect(await c.current()).toBe(false);await c.finish(true);
+ expect(f.state(t.id)).toEqual({state:'uncertain'});
+});
+it('admits only one winner when authenticated holders overlap claims',async()=>{
+ const f=await setup(),t=f.admitted(),spy=vi.spyOn(f.tickets,'claim');
+ const other=remoteTicketAuthority(f.config,f.fingerprint('daemon'));closes.push(other.close);
+ const results=await Promise.all([f.remote.claim(t.id),other.claim(t.id)]);
+ const winners=results.filter(c=>c!==null);expect(winners).toHaveLength(1);expect(spy).toHaveBeenCalledTimes(1);
+ await winners[0]!.finish(true);expect(f.state(t.id)).toEqual({state:'released'});
+});
+it.each(['settle','close'])('fences a delayed successful current response overlapping %s',async phase=>{
+ const f=await setup(),t=f.admitted(),c=(await f.remote.claim(t.id))!;
+ let entered!:()=>void,release!:()=>void;
+ const ready=new Promise<void>(resolve=>{entered=resolve;});
+ const end=ServerResponse.prototype.end;
+ const hold=vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
+  if(this.req.url?.endsWith('/current')){release=()=>{end.apply(this,args);};entered();return this;}
+  return end.apply(this,args);
+ });
+ try {
+  const pending=c.current();await ready;
+  if(phase==='settle')await c.finish(true);else await f.remote.close();
+  release();expect(await pending).toBe(false);
+ }finally {hold.mockRestore();release?.();}
+ expect(f.state(t.id)).toEqual({state:phase==='settle'?'released':'claimed'});
+});
+it('rejects an unknown action without settling a retained claim',async()=>{
+ const f=await setup(),t=f.admitted(),c=(await f.remote.claim(t.id))!;
+ const status=await new Promise<number|undefined>((resolve,reject)=>{
+  const req=https.request({socketPath:f.config.socket,servername:f.config.servername,ca:readFileSync(f.config.ca),
+   cert:readFileSync(f.config.cert),key:readFileSync(f.config.key),method:'POST',path:`/v1/tickets/${t.id}/retry`,
+   headers:{'content-length':0}},res=>{res.resume();res.once('end',()=>resolve(res.statusCode));});
+  req.on('error',reject);req.end();
+ });
+ expect(status).toBe(503);expect(f.state(t.id)).toEqual({state:'claimed'});
+ expect(await c.current()).toBe(true);await c.finish(true);expect(f.state(t.id)).toEqual({state:'released'});
 });
