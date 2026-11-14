@@ -112,11 +112,28 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     expect(await b.locator('.desk-agent-rail').locator(':scope > *').first().getAttribute('data-agent')).toBe('art');
     await b.getByRole('button',{name:'Open Inbox',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(1);
+    // Observe real FLIP requests while exercising full and reduced motion, without racing260ms.
+    set({motion:'off'},'companion-full-motion');
+    await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('full');
+    await b.evaluate(()=>{
+      const state=window as Window & {deskMoves?:{agent:string;duration:number;from:string}[];deskAnimate?:HTMLElement['animate']};
+      state.deskMoves=[];state.deskAnimate=HTMLElement.prototype.animate;
+      HTMLElement.prototype.animate=function(frames,options){
+        if(this.dataset.agent&&this.closest('.desk-agent-rail')&&Array.isArray(frames))state.deskMoves!.push({agent:this.dataset.agent,duration:typeof options==='object'?Number(options?.duration):Number(options),from:String(frames[0]?.transform)});
+        return state.deskAnimate!.call(this,frames,options);
+      };
+    });
     await b.getByRole('button',{name:'Minimize Comms',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(0);
+    expect(await b.evaluate(()=>(window as Window & {deskMoves:{agent:string;duration:number;from:string}[]}).deskMoves.some(m=>m.agent==='art'&&m.duration===260&&m.from!=='translateY(0px)'))).toBe(true);
+    set({motion:'on'},'companion-reduced-motion');
+    await expect.poll(()=>b.locator('html').getAttribute('data-motion')).toBe('reduce');
+    await b.evaluate(()=>{(window as Window & {deskMoves:unknown[]}).deskMoves=[];});
     await b.getByRole('button',{name:'Open Comms',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-rail-card[data-companion]').count()).toBe(1);
 
+    expect(await b.evaluate(()=>(window as Window & {deskMoves:unknown[]}).deskMoves.length)).toBe(0);
+    await b.evaluate(()=>{const state=window as Window & {deskAnimate:HTMLElement['animate']};HTMLElement.prototype.animate=state.deskAnimate;});
     await b.getByRole('button',{name:'Home',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-home-card').getByRole('button',{name:/Recent conversation/}).count()).toBe(1);
     await expect.poll(()=>b.locator('.desk-home-compose').first().getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
