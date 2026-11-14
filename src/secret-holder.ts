@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
 import { listenLocalHolder } from './pieces/secrets/local-holder.js';
-import { startPersistentHolder } from './pieces/secrets/holder-lifecycle.js';
+import { startPersistentHolder } from './secret-holder-startup.js';
 import { ageSecretSource } from './pieces/secrets/age-source.js';
 export async function run(argv: string[], stderr: (text:string)=>void): Promise<number> {
   // A signal can arrive after bind but before the listen promise resumes.

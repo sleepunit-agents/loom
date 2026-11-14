@@ -1178,7 +1178,9 @@ release check. No public get, typed granted-get or holder activation ships here.
 
 ### Persistent holder handoff startup
 
-The private `loom-secret-holder --config` composition now accepts an optional
+The private `loom-secret-holder --config` composition in
+`src/secret-holder-startup.ts` (outside the piece boundary, alongside daemon
+worker startup) now accepts an optional
 `handoff` object alongside its existing read/mutation configuration. This is
 owner-provided process configuration, never an operation argument or endpoint
 discovery. `handoff.listen` is a holder TLS listener; `handoff.authority` is a

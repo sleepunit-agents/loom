@@ -2,15 +2,15 @@
 import { z } from 'zod';
 import { isAbsolute, dirname, resolve } from 'node:path';
 import { realpathSync, lstatSync } from 'node:fs';
-import { privateBytes, listenLocalHolder, tlsMaterial, assertPrivateDirectory, privateSocket } from './local-holder.js';
-import { openHolderStore, type HolderStore } from './holder-store.js';
-import { listenHolderMutations } from './holder-mutations.js';
-import { holderTls, certificateFingerprint, remoteHolderAuthority } from './holder-authority.js';
-import { listenHolderHandoff } from './holder-handoff.js';
-import { managedHolderAuthority } from './holder-routing.js';
-import { remoteTicketAuthority } from './ticket-authority.js';
-import { secretInputBindingSchema } from './worker-binding.js';
-import { workerSecretTransport } from '../../runtime-runner/secret-transport.js';
+import { privateBytes, listenLocalHolder, tlsMaterial, assertPrivateDirectory, privateSocket } from './pieces/secrets/local-holder.js';
+import { openHolderStore, type HolderStore } from './pieces/secrets/holder-store.js';
+import { listenHolderMutations } from './pieces/secrets/holder-mutations.js';
+import { holderTls, certificateFingerprint, remoteHolderAuthority } from './pieces/secrets/holder-authority.js';
+import { listenHolderHandoff } from './pieces/secrets/holder-handoff.js';
+import { managedHolderAuthority } from './pieces/secrets/holder-routing.js';
+import { remoteTicketAuthority } from './pieces/secrets/ticket-authority.js';
+import { secretInputBindingSchema } from './pieces/secrets/worker-binding.js';
+import { workerSecretTransport } from './runtime-runner/secret-transport.js';
 const clientTls=holderTls.extend({servername:z.hostname()});
 const handoffSchema=z.object({listen:holderTls,authority:clientTls,
   workers:z.array(z.object({binding:secretInputBindingSchema,config:clientTls,fingerprint:certificateFingerprint}).strict()).max(1024)}).strict();

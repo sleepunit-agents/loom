@@ -15,7 +15,7 @@ import {startLoom} from '../../foundation.js';
 import {signin} from '../../core/signin/index.js';
 import {SharingDatabase} from '../../core/household/sharing.js';
 import {runtimeHouseDestination} from '../runtime/role.js';
-import {startPersistentHolder} from './holder-lifecycle.js';
+import {startPersistentHolder} from '../../secret-holder-startup.js';
 import {localHolderMutations} from './holder-mutations.js';
 import {localHolderHandoff} from './holder-handoff.js';
 import * as storage from './holder-store.js';
