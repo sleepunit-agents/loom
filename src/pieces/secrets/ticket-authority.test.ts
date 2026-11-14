@@ -2,7 +2,7 @@ import {routedHolderAuthority} from './holder-routing.js';
 import {listenHolderHandoff,localHolderHandoff} from './holder-handoff.js';
 import {Writable} from 'node:stream';
 import {workerSecretInputs} from '../../runtime-runner/secret-input.js';
-import {ticketAuthorityFixture} from './ticket-authority.fixture.js';
+import {ticketAuthorityFixture} from '../../runtime-runner/ticket-authority.fixture.js';
 import {listenWorkerSecretInput,workerSecretTransport} from '../../runtime-runner/secret-transport.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,mkdirSync,existsSync,rmSync,chmodSync,readFileSync,writeFileSync} from 'node:fs';

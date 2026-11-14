@@ -4,7 +4,7 @@ import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {ServerResponse} from 'node:http';
 import {Duplex} from 'node:stream';
-import {ticketAuthorityFixture} from '../pieces/secrets/ticket-authority.fixture.js';
+import {ticketAuthorityFixture} from './ticket-authority.fixture.js';
 import {startSecretCommand} from './secret-command.js';
 import {workerSecretTransport} from './secret-transport.js';
 import {listenTicketAuthority} from '../pieces/secrets/ticket-authority.js';
