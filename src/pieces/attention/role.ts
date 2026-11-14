@@ -113,7 +113,10 @@ export interface TaskAskFiling {
   pending(ctx: Context, asks: Array<Omit<RaiseAsk, 'source'> & {active:boolean}>): boolean;
 }
 export const approvalAskId = (id: string) => `approval:${createHash('sha256').update(id, 'utf16le').digest('hex')}`;
+export interface ApprovalNotice { id: string; agent: string; at: number; kind: string }
 export interface ApprovalAskFiling {
+  syncNotices(ctx: Context, notices: ApprovalNotice[]): void;
+  pendingNotices(ctx: Context, notices: ApprovalNotice[]): boolean;
   sync(ctx: Context, asks: Array<Omit<RaiseAsk, 'source'> & {active:boolean}>): void;
   pending(ctx: Context, asks: Array<Omit<RaiseAsk, 'source'> & {active:boolean}>): boolean;
 }

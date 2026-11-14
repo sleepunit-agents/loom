@@ -1,4 +1,5 @@
 import { registerExportFilter, privateExportCopy, type Db } from '../../core/index.js';
+import { noticeEntries } from './notices.js';
 import { empty, type State, type Approval, type Rule, type Standing } from './model.js';
 export const ruleId = (r: Rule | Standing) => 'id' in r ? r.id : `${r.person ? `grant:${r.person}:` : 'rule:'}${r.kind}:${r.scope}`;
 export function load(db: Db): State {
@@ -10,6 +11,12 @@ export function load(db: Db): State {
 /** Registry and offline importer own the transaction. Receipt history is never trimmed. */
 export function persist(db: Db, s: State, now: number): {type:string;id:string}[] {
   const changes: {type:string;id:string}[] = [];
+  const oldNotices=new Map(noticeEntries(load(db)).map(({id,notice})=>[id,JSON.stringify(notice)]));
+  for(const {id,notice} of noticeEntries(s)) {
+    if(oldNotices.get(id)!==JSON.stringify(notice))changes.push({type:'approval.notice',id});
+    oldNotices.delete(id);
+  }
+  for(const id of oldNotices.keys())changes.push({type:'approval.notice',id});
   for(const a of [...s.approvals,...s.standing])if(a.member)db.prepare("INSERT OR IGNORE INTO approvals_meta(key,value) VALUES (?,?)").run('private-id:'+a.id,JSON.stringify({member:a.member}));
   const sync = (table: string, records: {id:string;record: unknown}[], type: string) => {
     const old = new Map((db.prepare(`SELECT id,record FROM approvals_${table}`).all() as {id:string;record:string}[]).map(r => [r.id,r.record]));

@@ -15,7 +15,7 @@ export interface Standing extends Principal {
   id: string; kind: string; agent: string; member?: string; project?: string; target: string; digest: string; who: Who; from: string;
   what: string; details?: string; at: string; by?: string; uses: number; used?: string; off?: { at: string; by?: string };
 }
-export interface Notice { at: string; agent: string; kind: string; target: string; what: string; for?: string }
+export interface Notice { id?: string; member?: string; at: string; agent: string; kind: string; target: string; what: string; for?: string }
 export interface State { approvals: Approval[]; rules: Rule[]; grants: Rule[]; standing: Standing[]; notices: Notice[]; audit: Record<string, unknown>[] }
 export const retiredAgentGrantReason = 'no longer applies: agent access follows record scope';
 export const empty = (): State => ({ approvals: [], rules: [], grants: [], standing: [], notices: [], audit: [] });

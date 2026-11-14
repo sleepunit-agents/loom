@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { OperationError, type Db, type Context } from '../../core/index.js';
+import { approvalNoticeFiling } from './approval-notices.js';
 import { approvalAskId, type ApprovalAskFiling, type Ask } from './role.js';
 /** Owning snapshots are capabilities, never a public operation or an answer hook. */
 export function approvalFiling(db: Db): ApprovalAskFiling {
@@ -43,5 +44,5 @@ export function approvalFiling(db: Db): ApprovalAskFiling {
     }
     return dirty;
   };
-  return {sync:(ctx,inputs)=>{project(ctx,inputs,true);},pending:(ctx,inputs)=>project(ctx,inputs,false)};
+  return {...approvalNoticeFiling(db),sync:(ctx,inputs)=>{project(ctx,inputs,true);},pending:(ctx,inputs)=>project(ctx,inputs,false)};
 }

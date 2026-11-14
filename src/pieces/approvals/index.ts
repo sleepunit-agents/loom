@@ -1,3 +1,4 @@
+import { noticeEntries, noticeSnapshot, currentNotice } from './notices.js';
 import type { Ask, ApprovalAskFiling } from '../attention/role.js';
 import type { Context } from '../../core/index.js';
 import { localOwner, sameLocalCaller } from './local-authority.js';
@@ -49,14 +50,19 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   const visible = (viewer: Viewer, a: Approval) => maySee(viewer,scope(a),sharing());
   const owner = (v: Viewer, name: string) => mayAct(v,{type:'approval-rule'},sharing(),'household',name);
   let filing: ApprovalAskFiling | undefined;
-  const file = (ctx: Context, s: State, check = false) => filing?.[check ? 'pending':'sync'](ctx,s.approvals.map(a=>{
+  const file = (ctx: Context, s: State, check = false) => {
+    const notices = filing?.[check ? 'pendingNotices':'syncNotices'](ctx,noticeSnapshot(s));
+    const asks = filing?.[check ? 'pending':'sync'](ctx,s.approvals.map(a=>{
     const words = cardWords(a), {type: _type,...audience} = scope(a);
     return {id:a.id,active:stateOf(a,ctx.now)==='pending',...audience,ask:words.title,
       ...(a.why?{why:a.why}:{}),...(words.if_yes??a.if_yes?{if_yes:words.if_yes??a.if_yes}:{}),...(words.if_no??a.if_no?{if_no:words.if_no??a.if_no}:{}),answers:'yes-no' as const};
   }));
+    return check ? !!(notices || asks) : undefined;
+  };
   attentionConnections.set(operations, source=>{
     if (filing) return;
     filing = source(ask=>{
+      if (ask.source.kind === 'piece') return currentNotice(load(db),ask);
       const a=readApproval(db,ask.source.id);if(!a)return false;
       const audience=scope(a);
       if (!(['agent','project','member'] as const).every(k=>ask[k]===audience[k])) return false;
@@ -175,7 +181,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   register('standing-off',true,(s,i,c,v)=>{ const j=s.standing.find(j=>j.id===i.id); if(!j) throw new OperationError('not-found','no such standing job'); j.off ??= {at:iso(c.now),by:v.id}; return j; },{owner:true});
   register('grant',true,(s,i,c,v)=>{const principal=typeof i.person==='string'?i.person:'owner'; if(i.person==='owner'||!person.test(principal)) invalid('--person is the slug of whom it is for; leave it out for owner');return grant(s,String(i.kind),String(i.target),String(i.for),v.id,!!i.deny,principal,c.now);},{owner:true});
   register('tell',true,recordNotice);
-  register('notices',false,(s,i,c,v)=>({notices:s.notices.filter(n=>maySee(v,{type:'approval',agent:n.agent},sharing()))}));
+  register('notices',false,(s,i,c,v)=>({notices:s.notices.filter(n=>!n.member&&maySee(v,{type:'approval',agent:n.agent},sharing()))}));
   register('state',false,(s,i,c,v)=>({approvals:Object.fromEntries(s.approvals.filter(a=>Array.isArray(i.ids)&&i.ids.includes(a.id)&&c.canRead?.(a)).map(a=>[a.id,{state:stateOf(a,c.now),agent:a.who.agent,kind:a.kind,conversation:a.conversation??null,...(ownerAnswered.has(a.kind)?{target:a.target}:{})}]))}));
   // Services share the same registration, validation and scope checks as body operations.
   register('piece-request',true,(s,i,c)=>{
@@ -208,6 +214,11 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
     const j=standingMatch(s,String(i.kind),String(i.target),String(i.digest),c);if(!j)throw new OperationError('not-found',`no standing job for ${i.kind} ${i.target}: it asks`);return j;
   },{piece:true});
   operations.register(operation({name:'approvals.command',write:true,input:z.object({argv:z.array(z.string()).max(100)}),output:z.object({exit:z.number(),stdout:z.string(),stderr:z.string()}),may:v=>v.kind==='agent'||v.kind==='member',run:(ctx,input)=>command(operations,ctx.viewer,input.argv)}));
+  live.register({name:'approval.notice',ids:()=>noticeEntries(load(db)).map(n=>n.id),read(id,v){
+    const entry=noticeEntries(load(db)).find(n=>n.id===id);
+    if(!entry || !['member','agent'].includes(v.kind) || !maySee(v,{type:'approval',agent:entry.notice.agent},sharing()))return;
+    return {...entry.notice,id} as unknown as LiveRecord;
+  },inScope:()=>true});
   live.register({name:'approval',privateWindowOnly:true,ids:()=>load(db).approvals.map(a=>a.id),read(id,viewer){const a=readApproval(db,id);if(!a||!visible(viewer,a))return;const row=db.prepare('SELECT changed_at FROM approvals_approvals WHERE id=?').get(id) as {changed_at:number};return {...a,...cardWords(a),state:stateOf(a,operations.clock.now()),changedAt:row.changed_at} as unknown as LiveRecord;},inScope:(r,parent,now)=>parent===undefined&&(r.state==='pending'||Number(r.changedAt)+week>now),expires:r=>r.state==='pending'?undefined:r.state==='allowed'&&typeof r.expires==='string'?Math.min(Date.parse(r.expires),Number(r.changedAt)+week):Number(r.changedAt)+week});
   live.register({name:'approval-rule',privateWindowOnly:true,ids:()=>[...load(db).rules,...load(db).grants,...load(db).standing].map(ruleId),read(id,v){if(!owner(v,'approvals.rules'))return;const row=db.prepare('SELECT record FROM approvals_rules WHERE id=?').get(id) as {record:string}|undefined;if(!row)return;const record=JSON.parse(row.record);return maySee(v,{type:'approval-rule',agent:record.agent,member:record.member,project:record.project},sharing())?{...record,id}:undefined;},inScope:()=>true});
 }

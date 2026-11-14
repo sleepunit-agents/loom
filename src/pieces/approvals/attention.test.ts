@@ -187,3 +187,49 @@ it('holds source conflicts at startup without replacing the unrelated record or 
   const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
   try{const s=await setup(first.home);expect(warn.mock.calls).toEqual([['Approval filing failed (conflict)']]);expect(s.ask()).toMatchObject({ok:true,value:{source:{kind:'conversation',id:'unrelated'},ask:'Original unrelated ask'}});expect(s.call('approvals.open',{id:'a-12345678'})).toMatchObject({ok:true,value:{open:true,mayAnswer:true}});}finally{warn.mockRestore();}
 });
+
+it('files each tell event atomically as fixed scoped FYI, with permanent per-member read facts',async()=>{
+  const s=await setup(), agent:Viewer={kind:'agent',id:'art'};
+  expect(s.call('approvals.set-rule',{kind:'merge',scope:'github:acme/*',tier:'tell'}).ok).toBe(true);
+  const input={kind:'merge',target:card().target,what:'Do not copy these source words'};
+  const first=s.call('approvals.tell',input,agent,'tell-first');expect(first.ok).toBe(true);
+  const entries=()=>s.app.db.prepare("SELECT record FROM attention_asks WHERE id LIKE 'approval-notice:%'").all().map((r:any)=>JSON.parse(r.record));
+  const original=entries()[0];expect(original).toMatchObject({agent:'art',state:'resolved',ask:'Merge reported in Approvals',source:{kind:'piece',id:'approvals-notices'}});
+  expect(JSON.stringify(original)).not.toContain(input.what);expect(JSON.stringify(original)).not.toContain(input.target);
+  expect(s.call('attention.get',{id:original.id},pollock).ok).toBe(false);
+  expect(s.call('attention.markRead',{id:original.id}).ok).toBe(true);
+  expect(s.call('approvals.tell',input,agent,'tell-first')).toEqual(first);expect(entries()).toHaveLength(1);
+  expect(s.call('approvals.tell',input,agent,'tell-second').ok).toBe(true);expect(entries()).toHaveLength(2);
+  expect(entries().find((n:any)=>n.id===original.id)).toEqual(original);
+  expect(s.call('attention.answer',{id:original.id,answer:{kind:'yes'}}).ok).toBe(false);
+  expect(s.call('attention.resolve',{id:original.id,reason:'replace'}).ok).toBe(false);
+  expect(s.call('attention.raise',{id:'approval-notice:future',agent:'art',ask:'fake',source:{kind:'piece',id:'approvals-notices'}},agent).ok).toBe(false);
+  const marks=s.types.get('attention.readMark')!;expect(marks.ids()).toHaveLength(1);
+  expect(s.types.get('approval.notice')!.ids()).toHaveLength(2);
+  expect(s.startupChanges.length).toBeGreaterThan(0);
+});
+
+it('reconciles offline legacy notices at startup without positional identities or source wording',async()=>{
+  const s=await setup();
+  const n={at:'2026-11-13T00:00:00Z',agent:'art',kind:'merge',target:card().target,what:'Legacy source words'};
+  const state=load(s.app.db);state.notices=[n,{...n}];s.app.db.transaction(()=>persist(s.app.db,state,s.app.operations.clock.now()))();
+  const home=s.home;await s.app.close();
+  const restarted=await setup(home);
+  const ids=restarted.types.get('attention.ask')!.ids().filter(id=>id.startsWith('approval-notice:'));expect(ids).toHaveLength(2);expect(new Set(ids).size).toBe(2);
+  expect(restarted.call('approvals.attentionPending',{}, {kind:'service',id:'approvals'})).toMatchObject({ok:true,value:false});
+  const before=ids.map(id=>restarted.call('attention.get',{id}));
+  const newer={...n,id:'notice-new',at:'2026-11-14T00:00:00Z'};
+  const next=load(restarted.app.db);next.notices.unshift(newer);restarted.app.db.transaction(()=>persist(restarted.app.db,next,restarted.app.operations.clock.now()))();
+  expect(restarted.reconcile().ok).toBe(true);expect(ids.map(id=>restarted.call('attention.get',{id}))).toEqual(before);
+});
+
+it('rolls back the owning tell when its permanent projection conflicts',async()=>{
+  const s=await setup();expect(s.call('approvals.set-rule',{kind:'merge',scope:'github:acme/*',tier:'tell'}).ok).toBe(true);
+  const state=load(s.app.db);state.notices=[{id:'collision',at:'2026-11-13T00:00:00Z',agent:'art',kind:'merge',target:card().target,what:'Source'}];
+  s.app.db.transaction(()=>persist(s.app.db,state,s.app.operations.clock.now()))();
+  const {approvalNoticeId}=await import('../attention/approval-notices.js');
+  const id=approvalNoticeId('collision');s.app.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run(id,JSON.stringify({id,source:{kind:'conversation',id:'other'},state:'open',ask:'Unrelated'}));
+  const prior=load(s.app.db).notices;
+  expect(s.call('approvals.tell',{kind:'merge',target:card().target,what:'Will roll back'},{kind:'agent',id:'art'})).toMatchObject({ok:false,code:'conflict'});
+  expect(load(s.app.db).notices).toEqual(prior);
+});
