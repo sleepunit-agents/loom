@@ -1297,7 +1297,8 @@ client remain required; retention alone does not enable file support.
 
 `file-once.ts` is unregistered and has no production Runtime issuer. It composes
 an exact delivered-message permit, a bounded transport callback and private
-storage. Independent callers serialize by database and exact agent/venue/
+storage. Within the owning daemon process, independent connections serialize by physical
+database file identity and exact agent/venue/
 workspace/channel scope. Each caller captures and rechecks its own immutable
 permit before and after waiting; one caller's authority never admits another.
 Still-live stored file IDs are reused across deliveries and restarts, missing
@@ -1309,7 +1310,10 @@ and refusal. Reuse never refreshes the original file age.
 A failed fetch or save leaves no success marker and the next caller can retry.
 A process stopped after GET but before commit may repeat that GET after restart;
 this promises fetch dedup after durable save, not network exactly-once delivery.
-Concurrent scopes can proceed independently. The future production composition
+Concurrent scopes can proceed independently. Simultaneous daemon processes on
+one home are not coordinated by this internal queue: future production wiring
+must retain a single owning daemon or introduce durable claims before supporting
+multiple owners. The future production composition
 must supply the existing bounded Slack transport with service/staging fences and
 an actual Runtime permit. This unit installs no daemon intake, public operation
 or client and reads no old-side data. Runtime issuance, production intake wiring

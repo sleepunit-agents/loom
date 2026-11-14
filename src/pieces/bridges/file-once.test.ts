@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { startLoom } from '../../foundation.js';
 import { FakeClock } from '../../core/index.js';
 import { fixture as seedHome } from '../../fixture.js';
@@ -137,4 +138,12 @@ it('preserves the original file age on successful later-delivery reuse',async()=
  expect(f.calls()).toBe(0);expect(f.app.db.prepare('SELECT created FROM bridges_files').get()).toEqual({created:1000});
  expect(f.read(p).bytes.toString()).toBe('data');await f.close();
  const g=await fixture(f.home,1000+BRIDGE_FILE_RETENTION);expect(()=>g.read(p)).toThrow();
+});
+
+it('shares the fetch queue across independent connections to the same fixture database',async()=>{
+ const f=await fixture(),other=new Database(f.app.db.name);other.pragma('foreign_keys = ON');
+ try {
+  await Promise.all([f.run(),bridgeFilesOnce(other,()=>f.clock.now(),{...f.permit,delivery:'two'},f.fetch)]);
+  expect(f.calls()).toBe(1);expect(f.read({...f.permit,delivery:'two'}).bytes.toString()).toBe('data');
+ }finally{other.close();}
 });
