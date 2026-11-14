@@ -57,7 +57,7 @@ describe('authenticated Slack message normalisation', () => {
   it('uses channel-scoped message ids and deduplicates user mentions', () => {
     const result = normalizeSlack(slack, sl());
     expect(result).toMatchObject({ id: '["C1","1794672000.123456"]', connection: 'sl', channel: 'C1',
-      user: 'U1', postedAt: '2026-11-14T16:00:00.123Z', mentions: ['U2', 'U3'], isDm: false, bot: false });
+      user: 'U1', text: sl().event.text, postedAt: '2026-11-14T16:00:00.123Z', mentions: ['U2', 'U3'], isDm: false, bot: false });
     expect(normalizeSlack(slack, sl({ channel: 'C2' }))?.id).not.toEqual(result?.id);
   });
   it('retains thread roots without conflating independent channel messages', () => {
@@ -83,6 +83,20 @@ describe('authenticated Slack message normalisation', () => {
   it('accepts empty attachment messages and broadcast copies with stable ids', () => {
     expect(normalizeSlack(slack, sl({ subtype: 'file_share', text: '' }))?.text).toBe('');
     expect(normalizeSlack(slack, sl({ subtype: 'thread_broadcast' }))?.id).toBe(normalizeSlack(slack, sl())?.id);
+  });
+  it('preserves user-authored /me action messages', () => {
+    expect(normalizeSlack(slack, sl({ subtype: 'me_message', channel_type: undefined, text: 'waves to <@U2>' }), { id: 'C1', kind: 'channel' }))
+      .toMatchObject({ user: 'U1', text: 'waves to <@U2>', mentions: ['U2'], bot: false });
+  });
+  it('requires matching resolved metadata when Slack omits its channel type', () => {
+    expect(() => normalizeSlack(slack, sl({ channel_type: undefined }))).toThrow();
+    expect(normalizeSlack(slack, sl({ channel_type: undefined }), { id: 'C1', kind: 'im' })?.isDm).toBe(true);
+    expect(() => normalizeSlack(slack, sl(), { id: 'C2', kind: 'channel' })).toThrow();
+    expect(() => normalizeSlack(slack, sl(), { id: 'C1', kind: 'im' })).toThrow();
+  });
+  it('deduplicates app-mention and message subscriptions by the same platform identity', () => {
+    expect(normalizeSlack(slack, sl({ type: 'app_mention', channel_type: undefined }), { id: 'C1', kind: 'channel' }))
+      .toEqual(normalizeSlack(slack, sl()));
   });
   it('rejects wrong workspaces and malformed timestamp/channel fields', () => {
     expect(() => normalizeSlack(slack, { ...sl(), team_id: 'other' })).toThrow();
