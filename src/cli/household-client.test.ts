@@ -33,7 +33,7 @@ async function setup() {
   return { app, home, tokenFile, run };
 }
 const inputs: Record<string, unknown> = {
-  backup: {}, setBackup: { target: 'path:/mnt/backups', recipients: ['age1' + 'a'.repeat(40)], at: '03:17', tz: 'America/Chicago', keep: 7, required: ['tasks'] }, backupOff: {},
+  backup: {}, setBackup: { target: 'path:/mnt/backups', recipients: ['age1lq8a7xcvnkxrp8ym2278tfv70yk73r6uxluqdgdfak38ftatcu7qz6vcmh'], at: '03:17', tz: 'America/Chicago', keep: 7, required: ['tasks'] }, backupOff: {},
   profile: { agent: 'art' }, setProfile: { agent: 'art', text: 'Owner description.' }, requestProfile: { agent: 'art' }, describeSelf: { text: 'I help the household.' },
   bootstrapAgent: { agent: 'gabe', name: 'Gabe', purpose: 'Help with the garden.', voice: 'Warm and direct.', rules: 'Keep private things private.', ask: 'Before spending money.' },
   show: {}, setMember: { person: 'guest', agents: ['art'] }, removeMember: { person: 'guest' },

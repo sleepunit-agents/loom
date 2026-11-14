@@ -935,19 +935,22 @@ generated bindings are `loom-household backup '{}'`, `setBackup '<JSON>'` and
 `backupOff '{}'`. The `household.backup` Live record is household-owner-only.
 The JSON settings are `target`, `recipients`, `at` (default `03:00`), `tz`
 (default `UTC`), `keep` (default 7), and `required` (default empty). Recipients
-and required pieces are deduplicated. Retention is 1–90 nights, as before.
+and required pieces are deduplicated. Native age recipients must have a valid
+encoding/checksum; SSH recipients must have a complete public-key envelope.
+This is stricter than the old prefix-only check: malformed imported keys
+produce an invalid status instead of being treated as ready. Retention is 1–90 nights, as before.
 
 These operations reconcile **configuration only**: a configured next household
 reports `awaiting-runner` and explicitly says no backup is scheduled. There is
 no next-mode run, tick, last-good claim or drill key generation in this unit.
 `off` removes configuration without deleting any key or bundle. Imported
-configuration is projected only after validation; invalid settings return a
+configuration is projected only after schema and current local boundary validation; invalid settings return a
 generic status without echoing unknown fields or credentials. Old backup
 `state.json` is never read. Saving uses UTC unless the caller supplies a zone;
 it does not infer the daemon machine's local zone. Path targets may contain
 spaces; git URLs may not contain whitespace, credentials, query parameters
 or fragments. Existing ancestor symlinks are resolved when checking that a
-local target is outside the household home. Execution must recheck that
+local target is outside the household home; unresolved symlinks are refused. Execution must recheck that
 boundary before using a target; configuration validation is not an execution
 permit.
 
