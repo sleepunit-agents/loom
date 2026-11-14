@@ -1569,3 +1569,38 @@ it. Opaque in-process preparation markers preserve the original Comms consumer
 through Runtime's final dispatch. Private questions use the same route check.
 This compares current routing facts; it does not establish physical worker
 ownership or durable native history, and does not enable external bound work.
+
+### Public Clock body metadata
+
+A currently authenticated public Clock body in `running` state can call
+`runtime.recordTurn({kind,outcome,model?,harness?})` and
+`runtime.writeDigest({digest})`. Record an own turn before its first digest.
+Runtime derives agent, project, sender, timestamp and run from the current
+owning binding and job; callers cannot select a different conversation or
+supply message words. Attention still owns validation, record scope, live
+publication and digest project-reference policy.
+
+Attention's canonical conversation is derived from agent, venue
+`runtime-clock`, and the Runtime conversation id as place. Runtime's existing
+`clock-*` transport id and reusable lane label remain unchanged. A new Runtime
+conversation therefore cannot inherit a previous lane conversation's metadata.
+The returned `cv-*` is metadata identity only, never a body or source capability.
+Waiting bodies must return to running before writing. Private Comms, private
+Clock and service bodies cannot use these operations;
+their words and questions remain with their owning consumers.
+
+Retry fingerprints include the original job, claim, house, route and scope; a
+replacement body cannot replay another body's receipt under a shared agent id.
+The writer rechecks current credential, job, source, binding, scope, box and
+policy authority, and refuses a withdrawn root source. It never launches or
+releases work. Actionable `needs_owner` is explicitly unavailable until public
+answer delivery has its own owning consumer; omitted/null `needs_owner` writes
+an ordinary summary. This preparatory adapter does not claim to deliver Inbox
+answers, record incoming Clock words, grade outcomes, enable external bound
+execution, or replace the unfinished public metadata paths for Bridges/spawns.
+The importer remains unchanged.
+
+| Old body operation | New operation | Remaining |
+| --- | --- | --- |
+| public Clock own conversation turn | `runtime.recordTurn` derives current owning route, run and sender; Attention stores metadata | incoming source metadata and Bridges/spawn adapters |
+| public Clock conversation digest | `runtime.writeDigest` maps the Runtime binding to Attention's canonical conversation | actionable questions and owning public answer delivery; grading |
