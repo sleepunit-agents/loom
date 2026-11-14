@@ -125,3 +125,15 @@ it('expires conflicting stored receipts before trusted recovery and keeps instal
   s.operations.close();
   expect(internal.call('example.private', {}, 'same')).toMatchObject({ code: 'denied' });
 });
+
+it('keeps committed effects and receipts successful when publication throws, without repeating the effect', () => {
+  const s = setup();
+  s.committed.mockImplementation(() => { throw Error('subscriber unavailable'); });
+  const result = s.operations.call('http', owner, 'example.save', { name: 'pond' }, 'retry');
+  expect(result).toEqual({ ok: true, value: { saved: 'pond' } });
+  expect(s.client.prepare('SELECT * FROM projects').all()).toEqual([{ id: 'pond', name: 'pond' }]);
+  expect(s.client.prepare('SELECT count(*) AS n FROM operation_results').get()).toEqual({ n: 1 });
+  expect(s.operations.call('socket', owner, 'example.save', { name: 'pond' }, 'retry')).toEqual(result);
+  expect(s.run).toHaveBeenCalledTimes(1);
+  expect(s.committed).toHaveBeenCalledTimes(1);
+});
