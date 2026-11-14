@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { statusSchema } from '../pieces/bridges/model.js';
 import { bridgeCommands } from '../pieces/bridges/commands.js';
 import type { IOStreams } from './io.js';
 import type { ClientRuntime } from './api-client.js';
@@ -39,7 +40,7 @@ export async function runBridgesClient(argv: string[], io: IOStreams, runtime: C
       const answer: unknown = await response.json();
       // Closed envelopes expose only the status summary or requested write id.
       const valueSchema = command.name === 'status'
-        ? z.object({ mode: z.enum(['live', 'staging']), agents: z.array(z.string()), held: z.number().int().nonnegative() }).strict()
+        ? statusSchema
         : z.object({ id: z.string() }).strict();
       const result = z.object({ ok: z.literal(true), value: valueSchema }).strict().safeParse(answer);
       if (!result.success || (command.write && (!('id' in result.data.value) || result.data.value.id !== (input as Record<string, unknown>).id))) return fail('Invalid daemon response');

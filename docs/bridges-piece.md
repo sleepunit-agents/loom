@@ -1127,6 +1127,8 @@ The old human text line and `--json` switch are replaced by the generated client
 always-JSON output. JSON is pretty printed like the other generated setup commands.
 Success exits 0; daemon refusal/unavailability exits 1 with sanitized stderr;
 local malformed usage exits 2. Synthetic fixtures retain both pinned old JSON
-examples, compare the retained fields and exact new output, and exercise the real
+examples, compare the retained fields and exact new output, force reverse agent
+order through record IDs, and cover connection reassignment. The operation and
+client share a closed status response schema. Fixtures exercise the real
 HTTP operation, empty setup, staging composition, permission denials and closed
 response shapes. No old files or programs are read on the next runtime path.

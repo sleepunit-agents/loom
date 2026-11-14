@@ -146,21 +146,22 @@ it('dismisses a held send through HTTP with a stable retry after its acknowledge
 // {mode, agents: sorted(configured bots), shadow_lines, held}, exit 0.
 // Shadow mode and its line count retire; staging is the replacement mode.
 const legacyStatus = {
-  discord: { mode: 'live', agents: ['art', 'mark'], shadow_lines: 17, held: 2 },
+  discord: { mode: 'live', agents: ['art', 'mark'], shadow_lines: 17, held: 3 },
   slack: { mode: 'live', agents: ['art'], shadow_lines: 9, held: 1 },
 };
 async function statusFixture(app: Awaited<ReturnType<typeof setup>>) {
   for (const [id, platform, agent, enabled] of [
     ['discord-art', 'discord', 'art', true], ['discord-art-second', 'discord', 'art', true],
-    ['discord-mark', 'discord', 'mark', false], ['slack-art', 'slack', 'art', true],
+    ['a-discord-mark', 'discord', 'mark', false], ['slack-art', 'slack', 'art', true], ['reassigned', 'discord', 'art', true],
   ] as const) expect(await app.run(['putVenues', JSON.stringify({ ...venue, id, platform, agent, enabled })])).toMatchObject({code: 0});
   const insert = app.db.prepare('INSERT INTO bridges_inbox (id,venue,identity,message,state,reason,received) VALUES (?,?,?,?,?,?,?)');
   for (const [id, platform, state, venueId] of [
     ['d1', 'discord', 'held', 'discord-art'], ['d2', 'discord', 'held', 'removed-venue'],
     ['d3', 'discord', 'pending', 'discord-art'], ['d4', 'discord', 'delivered', 'discord-art'],
-    ['d5', 'discord', 'dropped', 'discord-art'], ['s1', 'slack', 'held', 'slack-art'],
+    ['d5', 'discord', 'dropped', 'discord-art'], ['d6', 'discord', 'held', 'reassigned'], ['s1', 'slack', 'held', 'slack-art'],
     ['s2', 'slack', 'pending', 'slack-art'],
   ]) insert.run(id, venueId, JSON.stringify([platform, 'private-workspace', 'art', 'private-bot']), '{"text":"private message"}', state, 'private reason', 0);
+  expect(await app.run(['putVenues', JSON.stringify({...venue, id: 'reassigned', platform: 'slack'})])).toMatchObject({code: 0});
   app.db.prepare("INSERT INTO bridges_outbox VALUES ('out','d1','discord-art','identity','{}','private text','held',NULL,0)").run();
 }
 it('retains legacy JSON status fields and success exit for both platforms without shadow log state', async () => {
@@ -174,7 +175,7 @@ it('retains legacy JSON status fields and success exit for both platforms withou
     expect(result.stdout).not.toMatch(/shadow|private|TOKEN|APP/);
   }
   expect(app.db.prepare('SELECT count(*) AS n FROM core_operations').get()).toEqual(receiptsBefore);
-  expect(app.db.prepare("SELECT count(*) AS n FROM bridges_inbox WHERE state='held'").get()).toEqual({n: 3});
+  expect(app.db.prepare("SELECT count(*) AS n FROM bridges_inbox WHERE state='held'").get()).toEqual({n: 4});
 });
 it('reports empty configured agents and staging without creating an effect or starting platform IO', async () => {
   const app = await setup(true);

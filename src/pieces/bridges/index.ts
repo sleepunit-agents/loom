@@ -7,7 +7,7 @@ import { schema as foundationSchema } from './schema/001.js';
 import { schema as retrySchema } from './schema/002.js';
 import { schema as slackInboxSchema } from './schema/003.js';
 import { schema as discordInboxSchema } from './schema/004.js';
-import { venueSchema, routeSchema, linkSchema } from './model.js';
+import { venueSchema, routeSchema, linkSchema, statusSchema } from './model.js';
 import { all, put, bumpSetup } from './store.js';
 export function installBridges(app: Foundation, sharing: () => Sharing, options: { staging?: boolean } = {}) {
   registerBuiltinService(app.operations, 'bridges', ['bridges.venue', 'bridges.route', 'bridges.link', 'bridges.send']);
@@ -63,7 +63,7 @@ export function installBridges(app: Foundation, sharing: () => Sharing, options:
   }));
   operations.register(operation({ name: 'bridges.status',
     input: z.object({ platform: z.enum(['discord', 'slack']) }).strict(),
-    output: z.object({ mode: z.enum(['live', 'staging']), agents: z.array(z.string()), held: z.number().int().nonnegative() }).strict(),
+    output: statusSchema,
     may: v => mayAct(v, { type: 'bridges.venue' }, sharing(), 'household'),
     run(_ctx, { platform }) {
       // Include disabled setup, as the old status included every configured bot.
