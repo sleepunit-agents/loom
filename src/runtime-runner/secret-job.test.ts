@@ -18,7 +18,7 @@ import {runRuntimeSecretJob} from './secret-job.js';
 import type {WorkerControlRuntime} from './control.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
-async function setup(staging=false) {
+async function setup(staging=false,commandExit=0) {
  const f=await ticketAuthorityFixture(closes);await f.authority.close();await f.app.close();
  const app=await startLoom({home:f.home,next:true,staging,clock:f.clock,stdout(){}});closes.push(app.close);
  const sharing=()=>new SharingDatabase(app.db,f.home).sharing();
@@ -49,7 +49,7 @@ async function setup(staging=false) {
  const script="const fs=require('node:fs');process.on('SIGUSR2',()=>process.exit(0));let b=[];fs.createReadStream(null,{fd:3}).on('data',v=>b.push(v)).on('end',()=>{if(Buffer.concat(b).toString()!=='synthetic-owner-value')process.exit(1);fs.writeFileSync(process.argv[1],'accepted');setInterval(()=>{},10000);});";
  const config={job:f.id,agent:'art',tokenDigest:f.tokenDigest,fingerprint:f.fingerprint('daemon'),policy:['API'],name:'API',
   expiresAt:Date.now()+20_000,grantExpiresAt:Date.now()+20_000,
-  command:{command:process.execPath,args:['-e',script,marker],cwd:f.home,env:{},input:{...f.server,socket:input},holderFingerprint:f.fingerprint('holder'),
+  command:{command:process.execPath,args:['-e',script.replace('process.exit(0)','process.exit('+commandExit+')'),marker],cwd:f.home,env:{},input:{...f.server,socket:input},holderFingerprint:f.fingerprint('holder'),
    authority:{...f.server,servername:'daemon.test'},daemonFingerprint:f.fingerprint('daemon'),admission:{...f.server,socket:socket('admission'),servername:'daemon.test'}},
   holder:{config:{...f.config,socket:input},fingerprint:f.fingerprint('daemon')}};
  const source=secretJobAssignment(app,sharing,config,{daemon,holder});closes.push(source.close);
@@ -98,12 +98,18 @@ it('a failed original source credential cannot be replaced after the claim',asyn
  await expect(f.start()).rejects.toThrow();expect(existsSync(f.marker)).toBe(false);
  expect(f.calls.some(c=>c.name==='reportJob'||c.name==='finishJob')).toBe(false);
 });
-it.each(['claimJob','reportJob','finishJob'] as const)('never retries an uncertain %s acknowledgement',async name=>{
+it.each(['claimJob','takeInput','reportJob','finishJob'] as const)('never retries an uncertain %s acknowledgement',async name=>{
  const f=await setup(),request=f.runtime.request;
  f.runtime.request=async(...args)=>{const response=await request(...args);if(String(args[0]).endsWith('/'+name))throw Error('private diagnostic');return response;};
  await expect(f.start()).rejects.toThrow(/^Secret job stopped; reconcile the job before retrying$/);
  expect(f.calls.filter(call=>call.name===name)).toHaveLength(1);
- expect(inspectWorkerReceipts(f.receipts)).toMatchObject([{phase:name==='claimJob'?'claim-attempt':name==='reportJob'?'running-attempt':'finish-attempt'}]);
+ if(name==='takeInput') {
+  expect(existsSync(f.marker)).toBe(false);
+  expect(f.app.effects!.status('runtime:input:'+f.id)).toBe('done');
+  await expect(f.start()).rejects.toThrow();
+  expect(f.calls.filter(call=>call.name===name)).toHaveLength(1);
+ }
+ expect(inspectWorkerReceipts(f.receipts)).toMatchObject([{phase:name==='claimJob'?'claim-attempt':name==='takeInput'?'input-attempt':name==='reportJob'?'running-attempt':'finish-attempt'}]);
 });
 it('snapshots command and endpoint selection before claim IO',async()=>{
  const f=await setup();f.config.command.command='/missing';f.config.command.input.socket='/missing';f.config.holder.config.socket='/missing';f.config.policy.length=0;
@@ -167,4 +173,22 @@ it('captures runtime callbacks and their receiver before initial control IO',asy
   return response;
  };
  await f.start();expect(deadline).toHaveBeenCalled();
+});
+it('retains original expiry through the outer post-completion authority read',async()=>{
+ const f=await setup(),request=f.runtime.request;let reads=0;
+ f.runtime.request=async(...args)=>{
+  const response=await request(...args);
+  if(String(args[0]).endsWith('/jobControl')&&++reads===4)vi.spyOn(Date,'now').mockReturnValue(f.config.expiresAt);
+  return response;
+ };
+ await expect(f.start()).rejects.toThrow();expect(f.calls.some(c=>c.name==='finishJob')).toBe(false);
+ expect(inspectWorkerReceipts(f.receipts)).toMatchObject([{phase:'output-returned'}]);
+});
+
+it('does not finish a delivered command that exits unsuccessfully',async()=>{
+ const f=await setup(false,1);
+ await expect(f.start()).rejects.toThrow();expect(readFileSync(f.marker,'utf8')).toBe('accepted');
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets').get()).toEqual({state:'released'});
+ expect(f.calls.some(c=>c.name==='reportJob')).toBe(true);expect(f.calls.some(c=>c.name==='finishJob')).toBe(false);
+ expect(inspectWorkerReceipts(f.receipts)).toMatchObject([{phase:'running'}]);
 });

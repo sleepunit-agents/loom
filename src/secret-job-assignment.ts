@@ -45,7 +45,7 @@ export function secretJobAssignment(app:Foundation,sharing:()=>Sharing,
     let retired=false,closing:Promise<void>|undefined;
     const current=()=>{
       if(retired||stop.signal.aborted)return false;
-      try {if(destination.current())return true;}catch {}
+      try {if(Date.now()<config.expiresAt&&Date.now()<config.grantExpiresAt&&destination.current())return true;}catch {}
       retired=true;stop.abort();return false;
     };
     const close=()=>{
