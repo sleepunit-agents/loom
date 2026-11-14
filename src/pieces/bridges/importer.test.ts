@@ -463,3 +463,28 @@ it.each(['','x'.repeat(201)])('resolves literal configured keys and brief names 
  const options={...f.options,documents:[{path:'bridges-documents/0.md',agent:'art',key,brief}]};
  expect(JSON.parse(readBridgeImport(f.sources,options,h,f.open).evidence).configuredBriefs[0].briefs).toEqual([{key,brief,path:'bridges-documents/0.md',sha256:expect.any(String),channels:[]}]);
 });
+
+it('captures a complete selected template family privately without a route-note membership or runtime setup',async()=>{
+ const {default:families}=await import('./__fixtures__/template-families.json',{with:{type:'json'}});
+ const f=fixture(),briefs:Record<string,string>={};
+ f.sources.documents=Object.entries(families.discord).map(([brief,content],i)=>{
+  const path=join(f.root,`${i}.md`),name=`bridges-documents/${i}.md`;writeFileSync(path,content);briefs[brief]=name;return {name,path};
+ });
+ const family={shuttle:'instance/shuttle.json',platform:'discord' as const,briefs},options={...f.options,templateFamilies:[family]};
+ const result=readBridgeImport(f.sources,options,h,f.open),evidence=JSON.parse(result.evidence);
+ expect(evidence.templateFamilies).toEqual([{source:family.shuttle,agent:'art',platform:'discord',briefs:Object.entries(families.discord).map(([brief,content])=>({brief,path:briefs[brief],sha256:expect.stringMatching(/^[a-f0-9]{64}$/),bytes:Buffer.byteLength(content),content,references:expect.any(Array)}))}]);
+ expect(result.expected.routes[0].notes).toEqual([]);expect(result.expected.venues[0].enabled).toBe(false);
+ expect(evidence.selectedDocuments).toBeUndefined();
+ for(const templateFamilies of [[{...family,shuttle:'unknown'}],[family,family],[{...family,platform:'slack'}],[{...family,briefs:{...briefs,unknown:briefs.discord}}],[{...family,briefs:{...briefs,'discord-pair':briefs.discord}}]])expect(()=>readBridgeImport(f.sources,{...options,templateFamilies},h,f.open)).toThrow('Invalid offline');
+ const {['discord-guest']:_,...missing}=briefs;
+ expect(()=>readBridgeImport(f.sources,{...options,templateFamilies:[{...family,briefs:missing}]},h,f.open)).toThrow('Invalid offline');
+ writeFileSync(f.sources.documents[0].path,'$notes $unknown');expect(()=>readBridgeImport(f.sources,options,h,f.open)).toThrow('Invalid offline');
+ writeFileSync(f.sources.documents[0].path,families.discord.discord);
+ const {db,close}=openDb(join(f.root,'new'));try{
+  expect(()=>importBridges(db,f.sources,options,h,f.open,{interrupt:()=>{throw Error('interrupted');}})).toThrow('interrupted');
+  expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(true);expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(false);
+  const saved=JSON.parse((db.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as {value:string}).value);
+  saved.templateFamilies[0].briefs[0].content='tampered';db.prepare("UPDATE bridges_meta SET value=? WHERE key='legacy-evidence'").run(JSON.stringify(saved));
+  expect(()=>importBridges(db,f.sources,options,h,f.open)).toThrow('content differ');
+ }finally{close();}
+});

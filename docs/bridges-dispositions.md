@@ -53,3 +53,5 @@ all required semantics and obsolete-state cleanup. Keep imported venues disabled
 until that reconciliation and the owning service/effect checks are complete.
 Neither this page nor an importer success is approval to enable one. No runtime
 fallback to old stores, source files, briefs or programs is permitted.
+
+Offline shuttle template-family selection and startup slot validation are now implemented (see [piece overview](bridges-piece.md#offline-shuttle-template-families)). This is private move evidence only; actual Runtime composition, guest floors, restrictions, notify/escalation and positive venue fixtures remain required.

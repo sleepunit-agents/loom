@@ -1414,3 +1414,52 @@ slots, guest floor, restrictions and peer/pair context, with positive channel an
 thread fixtures. Other required guest/peer/base/Slack brief families, escalation
 and final move inventory remain in the disposition ledger. No legacy path may
 be followed at runtime; no activation or real import is authorized by this unit.
+
+### Offline shuttle template families
+
+A move plan may additionally select complete, explicitly captured template
+families with `templateFamilies`. Capture each file with the existing repeated
+`--bridges-document` snapshot option, then map its resulting snapshot identity:
+
+```json
+{"templateFamilies":[{"shuttle":"bridges/0/shuttle.json","platform":"discord","briefs":{"discord":"bridges-documents/0.md","discord-owner":"bridges-documents/1.md","discord-no-owner":"bridges-documents/2.md","discord-guest":"bridges-documents/3.md","discord-peer":"bridges-documents/4.md","discord-peer-bot":"bridges-documents/5.md","discord-peer-webhook":"bridges-documents/6.md","discord-pair":"bridges-documents/7.md"}}]}
+```
+
+The `shuttle` must be an explicitly selected instance belonging to a household
+agent with a mapped connection for that platform (disabled or incomplete setup
+is permitted). Omitting `templateFamilies` preserves existing snapshot behavior;
+it supplies no family-completion evidence. Once selected, a family must include
+exactly all eight Discord or eleven Slack names checked by the pinned shuttle
+startup. A family cannot be selected twice for one instance/platform. Each
+selected snapshot path belongs to exactly one template or channel-note document
+mapping. Copy the same bytes separately when explicitly selecting them twice.
+Unknown names, missing/extra files, reused paths, wrong instances/platforms,
+invalid Python `string.Template` dollar syntax, unknown/case-mismatched slots,
+and missing required context uses refuse the entire offline mapping.
+
+`import-templates.ts` records the exact slot vocabularies from pinned shuttle
+`adapters/discord.py` and `adapters/slack.py` (`BRIEF_SLOTS`, `BRIEF_USES`). It
+recognizes ASCII `$name`, `${name}` and `$$` escapes without substituting any
+values. Escaped text such as `$$cards` does not carry the required card slot.
+Discord requires `notes` and guest `cards`; Slack requires the DM tier/card
+notes, card/grant/restriction values, group note/restrictions/cards and each
+group restriction. All other provided slots may be unused, as on the old side.
+
+Private `templateFamilies` evidence binds the selected instance, agent and
+platform to each template's snapshot path, exact UTF-8 content, byte count,
+SHA-256 and ordered unique slot references. The existing combined document
+limits apply across channel documents and templates: 128 files, 1 MiB per file,
+8 MiB total. BOM/CRLF and dollar text remain exact. Both source-derived
+verifiers and repeat import compare this evidence, including slot references;
+interrupted all-import resumes without making the templates public records.
+No legacy configured brief directory or command is read or executed.
+
+This completes offline family selection and slot validation only. Runtime must
+still compose templates once with actual authenticated scope/tiers, owner and
+reader cards, peer/pair attribution, selected channel notes, notify destinations
+and restrictions; reject empty guest context and enforce the guest tool floor.
+Slack `flag_to`, Discord `notify`, extension-specific text and the owning
+escalation outcome still require their own disposition/composition fixtures.
+A captured `$send` is text, never permission or an executable command. There is
+no live route-note installation, body brief rendering, describe output, policy
+change, activation or source deletion in this offline step.
