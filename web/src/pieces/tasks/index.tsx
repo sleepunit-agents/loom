@@ -41,7 +41,7 @@ export default function TasksApp({ path: shellPath, go }: { path?: string; go?: 
   const base = path.split('/task/')[0];
   const selected = taskId(path);
   const navigate = (id?: string) => {
-    const next = id ? `${base}/task/${taskSegment(id)}` : base;
+    const next = id !== undefined ? `${base}/task/${taskSegment(id)}` : base;
     if (go) go(next);
     else { if (typeof history !== 'undefined') history.pushState(null,'',next); setLocalPath(next); }
   };
@@ -74,7 +74,7 @@ export default function TasksApp({ path: shellPath, go }: { path?: string; go?: 
   // Bind every response to this exact Live snapshot; access loss/replacement
   // hides it before any asynchronous detail can render.
   useEffect(() => {
-    if(status !== 'live' || !selected || records.some(t => t.id === selected)) { setOlderTask(undefined); setOlderAt(undefined); return; }
+    if(status !== 'live' || selected === undefined || records.some(t => t.id === selected)) { setOlderTask(undefined); setOlderAt(undefined); return; }
     setOlderAt(records); setOlderTask(call<TaskAnswer>('tasks.show',{id:selected}));
   },[records,status,selected]);
   const open = (id: string) => { navigate(id); setAction(undefined); };

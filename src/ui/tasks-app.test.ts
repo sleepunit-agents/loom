@@ -78,13 +78,13 @@ it('opens imported task ids from encoded links and refuses malformed escapes',as
 });
 
 import { taskId, taskSegment } from '../../web/src/pieces/tasks/route';
-it.each(['.','..','legacy/task %','~id','t-1'])('opens imported %s after browser URL normalization',async id=>{
+it.each(['.','..','legacy/task %','~id','t-1','','\ud800','\ud801'])('opens imported %s after browser URL normalization',async id=>{
  const path=new URL(`/p/tasks-preview/task/${taskSegment(id)}`,'https://fixture.invalid').pathname;
  expect(taskId(path)).toBe(id);if(id==='t-1')expect(path).toBe('/p/tasks-preview/task/t-1');f.snapshot={records:[task(id,{description:'Exact imported reader'})],status:'live'};
  await draw(h(TasksApp,{path}));expect(text()).toContain('Exact imported reader');await act(async()=>tree.unmount());
 });
-it('fetches an aged-out task selected by URL and hides details after the live snapshot changes',async()=>{
- const id='..',loaded=task(id,{status:'closed',description:'Older private detail'});
+it.each(['..','','\ud800'])('fetches an aged-out task %j selected by URL and hides details after the live snapshot changes',async id=>{
+ const loaded=task(id,{status:'closed',description:'Older private detail'});
  f.snapshot={records:[],status:'live'};
  const state:CallState<TaskAnswer>={pending:false,status:'done',result:{ok:true,value:{result:{ok:true,task:loaded}}}};
  f.call.mockReturnValue({subscribe:()=>()=>{},getSnapshot:()=>state});
@@ -94,3 +94,5 @@ it('fetches an aged-out task selected by URL and hides details after the live sn
  await act(async()=>{f.snapshot={records:[],status:'denied'};f.listeners.forEach(fn=>fn());});
  expect(text()).not.toContain('Older private detail');await act(async()=>tree.unmount());
 });
+
+it('navigates an empty legacy task row using the explicit canonical marker',async()=>{const go=vi.fn();f.snapshot={records:[task('',{title:'Empty legacy id'})],status:'live'};await draw(h(TasksApp,{path:'/p/tasks-preview',go}));await act(async()=>tree.root.findAllByProps({'data-split-row':''})[0].props.onClick());expect(go).toHaveBeenCalledWith('/p/tasks-preview/task/~:');await act(async()=>tree.unmount());});

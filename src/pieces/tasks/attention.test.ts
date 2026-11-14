@@ -5,8 +5,9 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { startLoom } from '../../foundation.js';
 import { fixture } from '../../fixture.js';
+import { z } from 'zod';
 import { createFoundation } from '../../core/app.js';
-import { FakeClock, type RecordType, type Viewer } from '../../core/index.js';
+import { FakeClock, operation, type RecordType, type Viewer } from '../../core/index.js';
 import { taskAskId } from '../attention/role.js';
 import { installTasks } from './index.js';
 import { PeopleStore } from '../../backends/people.js';
@@ -34,7 +35,7 @@ async function setup(home?:string, old=false) {
 }
 it('files current owner tasks with exact scope and owning navigation; central writes never decide them',async()=>{
   const s=await setup(), id=s.create({project:'pond',agent:'art'});
-  expect(s.ask(id)).toMatchObject({ok:true,value:{id:taskAskId(id),source:{kind:'task',id},sourceManaged:true,state:'open',ask:'Ship the plan?',why:'It is ready',if_yes:'I ship it',if_no:'I hold it',project:'pond',agent:'art',href:`/p/tasks-preview/task/${id}`}});
+  expect(s.ask(id)).toMatchObject({ok:true,value:{id:taskAskId(id),source:{kind:'task',id},sourceManaged:true,state:'open',ask:'Ship the plan?',why:'It is ready',if_yes:'I ship it',if_no:'I hold it',project:'pond',agent:'art'}});
   expect(s.ask(id,member).ok).toBe(true);
   for(const [verb,input] of [['answer',{answer:{kind:'yes'}}],['resolve',{reason:'Bypass'}],['raise',{ask:'Bypass',source:{kind:'task',id}}]] as const)
     expect(s.call(`attention.${verb}`,{id:taskAskId(id),...input})).toMatchObject({ok:false,code:'denied'});
@@ -145,4 +146,22 @@ it('keeps an in-progress task assigned to an owner in the central open source pr
   expect(s.call('tasks.claim',{id,actor:'jonathan',at:'2026-11-13T00:01:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
   expect(s.call('tasks.show',{id})).toMatchObject({ok:true,value:{result:{task:{status:'in_progress',assignee:'jonathan'}}}});
   expect(s.ask(id)).toMatchObject({ok:true,value:{state:'open',ask:'Ship the plan?'}});
+});
+
+it('preserves an existing conflicting source and rolls the enclosing task write back',async()=>{
+  const s=await setup(),id=s.create({assignee:'art'}),key=taskAskId(id);
+  s.app.operations.register(operation({name:'fixture.seedCollision',write:true,input:z.object({}),output:z.null(),may:()=>true,run(ctx){
+    ctx.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run(key,JSON.stringify({id:key,agent:'art',ask:'Original unrelated source',source:{kind:'conversation',id:'original'},state:'open',createdAt:ctx.now,changedAt:ctx.now}));return null;
+  }}));
+  expect(s.call('fixture.seedCollision',{}).ok).toBe(true);
+  const before=s.ask(id);
+  expect(s.call('tasks.update',{id,set:{assignee:'jonathan'},actor:'art',at:'2026-11-13T00:01:00Z'})).toMatchObject({ok:false,code:'conflict'});
+  expect(s.ask(id)).toEqual(before);
+  expect(s.call('tasks.show',{id})).toMatchObject({ok:true,value:{result:{task:{assignee:'art'}}}});
+});
+it('preserves distinct valid malformed UTF-16 ids without URI errors or lossy hash collisions',async()=>{
+  const s=await setup(),ids=['\ud800','\ud801','\ufffd'];
+  expect(new Set(ids.map(taskAskId)).size).toBe(3);
+  expect(s.call('tasks.import',{actor:'art',at:'2026-11-13T00:00:00Z',tasks:ids.map(id=>({id,title:'Legacy task',type:'task',status:'open',priority:1,assignee:'jonathan',createdAt:'2026-11-13T00:00:00Z',createdBy:'art',comments:[]}))})).toMatchObject({ok:true,value:{result:{ok:true}}});
+  for(const id of ids)expect(s.ask(id)).toMatchObject({ok:true,value:{source:{kind:'task',id},state:'open'}});
 });

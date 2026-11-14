@@ -69,7 +69,7 @@ export function installTasks(db: Db, operations: Operations, live: Live, sharing
   const file = (ctx: import('../../core/index.js').Context, state: StoreState) => filing?.sync(ctx, (state.tasks as ScopedTask[])
     .map(t => ({id:t.id, active:t.status !== 'closed' && !!t.assignee && Object.hasOwn(sharing().members,t.assignee) && sharing().members[t.assignee].owner, ask:t.ask || t.title || 'Task needs you', ...(t.why ? {why:t.why}:{}), ...(t.ifYes ? {if_yes:t.ifYes}:{}), ...(t.ifNo ? {if_no:t.ifNo}:{}),
       ...(t.answers ? {answers:t.answers}:{}), ...(t.agent !== undefined ? {agent:t.agent}:{}), ...(t.project !== undefined ? {project:t.project}:{}),
-      refs:[t.id], href:`/p/tasks-preview/task/${encodeURIComponent(t.id)}`})));
+      refs:[t.id]})));
   attentionConnections.set(operations, source => {
     if (filing) return;
     filing = source();

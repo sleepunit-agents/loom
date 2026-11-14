@@ -138,6 +138,9 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   const role: AttentionSources = { tasks() {
     if (tasksRegistered) throw new Error('Duplicate task filing');
     tasksRegistered = true;
+    const withdrawn = (old: Ask, audience: Pick<Ask,'project'|'agent'> = old): Ask => ({id:old.id,source:old.source,sourceManaged:true,
+      ...(audience.agent !== undefined ? {agent:audience.agent}:{}), ...(audience.project !== undefined ? {project:audience.project}:{}),
+      ask:'Task no longer needs you',state:'resolved',resolution:'Continue in Tasks',createdAt:old.createdAt,changedAt:old.changedAt});
     return { sync(ctx, inputs) {
       if (ctx.db !== db || !db.inTransaction) throw new OperationError('unavailable', 'Task filing needs its enclosing database transaction');
       const seen = new Set<string>();
@@ -154,9 +157,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
         if (!active && !old) continue;
         const record: Ask = active
           ? { ...parsed, sourceManaged: true, state: 'open', createdAt: old?.createdAt ?? ctx.now, changedAt: old?.changedAt ?? ctx.now }
-          : { id:key, source:parsed.source, sourceManaged:true,
-            ...(parsed.agent !== undefined ? {agent:parsed.agent}:{}), ...(parsed.project !== undefined ? {project:parsed.project}:{}),
-            ask:'Task no longer needs you', state:'resolved', resolution:'Continue in Tasks', createdAt:old!.createdAt, changedAt:old!.changedAt };
+          : withdrawn(old!,parsed);
         if (JSON.stringify(record) === JSON.stringify(old)) continue;
         record.changedAt = ctx.now;
         saveAsk(record); ctx.changed('attention.ask', key);
@@ -166,9 +167,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       for (const row of db.prepare('SELECT record FROM attention_asks').all() as {record:string}[]) {
         const old = JSON.parse(row.record) as Ask;
         if (!managed(old) || old.source.kind !== 'task' || seen.has(old.id) || old.state === 'resolved') continue;
-        const record: Ask = { id: old.id, source: old.source, sourceManaged: true,
-          ...(old.agent !== undefined ? {agent:old.agent}:{}), ...(old.project !== undefined ? {project:old.project}:{}),
-          ask: 'Task no longer needs you', state: 'resolved', resolution: 'Continue in Tasks', createdAt: old.createdAt, changedAt: ctx.now };
+        const record = withdrawn(old); record.changedAt = ctx.now;
         saveAsk(record); ctx.changed('attention.ask', record.id);
       }
     } };

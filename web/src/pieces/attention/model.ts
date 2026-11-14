@@ -1,3 +1,4 @@
+import { taskSegment } from '../tasks/route';
 import type { LiveRecord } from '../../data';
 export interface Ask extends LiveRecord {
   agent?: string; project?: string; member?: string;
@@ -22,7 +23,7 @@ export function decisionLink(ask: Ask): { path: string; label: string } | undefi
   const approval = ask.waits_on && 'approval' in ask.waits_on ? ask.waits_on.approval : ask.source.kind === 'approval' ? ask.source.id : undefined;
   if (approval) return { path: `/p/approvals-preview/approval/${encodeURIComponent(approval)}`, label: 'Open approval' };
   const task = ask.waits_on && 'task' in ask.waits_on ? ask.waits_on.task : ask.source.kind === 'task' ? ask.source.id : undefined;
-  if (task) return { path: `/p/tasks-preview/task/${encodeURIComponent(task)}`, label: 'Open task' };
+  if (task !== undefined) return { path: `/p/tasks-preview/task/${taskSegment(task)}`, label: 'Open task' };
 }
 export function safeHref(href?: string) {
   if (!href) return undefined;

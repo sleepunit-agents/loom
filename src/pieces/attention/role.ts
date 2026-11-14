@@ -74,7 +74,7 @@ export interface HouseholdAskSource {
   raise(ctx: Context, input: Omit<Question, 'waits_on'> & { id: string }): void;
   resolve(ctx: Context, id: string, reason: string): void;
 }
-export const taskAskId = (id: string) => `task:${createHash('sha256').update(id).digest('hex')}`;
+export const taskAskId = (id: string) => `task:${createHash('sha256').update(id, 'utf16le').digest('hex')}`;
 export interface TaskAskFiling {
   /** Complete owning snapshot; the source controls wording, state and exact audience. */
   sync(ctx: Context, asks: Array<Omit<RaiseAsk, 'source'> & {active:boolean}>): void;
