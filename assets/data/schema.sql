@@ -1218,6 +1218,7 @@ CREATE TABLE `operation_results` (
 	`caller` text NOT NULL,
 	`id` text NOT NULL,
 	`operation` text NOT NULL,
+	`input_hash` text NOT NULL,
 	`result` blob NOT NULL,
 	`expires_at` text NOT NULL,
 	PRIMARY KEY(`caller`, `id`),
