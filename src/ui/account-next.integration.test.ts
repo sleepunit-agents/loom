@@ -7,17 +7,20 @@ import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { fixture } from '../fixture.js';
 import { FakeClock } from '../core/clock.js';
+import type { PushTransport } from '../core/signin/push-transport.js';
+import { deviceRef } from '../core/signin/notifications.js';
 import { signin } from '../core/signin/index.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
 it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account registers/removes a passkey, signs out a browser and fits both looks across windows',async()=>{
   const home=mkdtempSync(join(tmpdir(),'account-browser-'));fixture(home);
   const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
-  const loom=await startLoom({home,next:true,staging:true,clock,webRoot:root});
+  const send=vi.fn<PushTransport>(async()=>{});
+  const loom=await startLoom({home,next:true,staging:true,clock,webRoot:root,notifications:{send}});
   const base=loom.url.replace('127.0.0.1','localhost');vi.stubEnv('LOOM_PUBLIC_URL',base);
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
-    const context=await browser.newContext({userAgent:'Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36',viewport:{width:1280,height:1000},serviceWorkers:'block'}),otherContext=await browser.newContext({viewport:{width:1280,height:1000},serviceWorkers:'block'}),a=await context.newPage(),b=await otherContext.newPage();
+    const context=await browser.newContext({userAgent:'Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36',viewport:{width:1280,height:1000},serviceWorkers:'block'}),otherContext=await browser.newContext({userAgent:'Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36',viewport:{width:1280,height:1000},serviceWorkers:'block'}),a=await context.newPage(),b=await otherContext.newPage();
     await a.addInitScript(()=>{
       let sub:unknown=null;
       const manager={getSubscription:async()=>sub,subscribe:async()=>{sub={toJSON:()=>({endpoint:'https://fcm.googleapis.com/account-browser-proof',expirationTime:null,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}}),unsubscribe:async()=>{sub=null;return true;}};return sub;}};
@@ -25,6 +28,18 @@ it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account re
       Object.defineProperty(navigator.serviceWorker,'getRegistration',{value:async()=>({pushManager:manager})});
       Object.defineProperty(window,'PushManager',{value:function(){}});
       Object.defineProperty(window,'Notification',{value:{permission:'granted',requestPermission:async()=> 'granted'}});
+    });
+    // Model one lost operation reply, preserving the actual cookie-authenticated
+    // backend connection, operation identity, Live publications and queued write.
+    const testCalls:Array<{id:string;request:string;input:{ref:string}}>=[];let lostReply=false;
+    await b.routeWebSocket('**/live',socket=>{
+      const server=socket.connectToServer();
+      socket.onMessage(raw=>{const message=JSON.parse(String(raw));if(message.kind==='call'&&message.name==='notifications.test')testCalls.push(message);server.send(raw);});
+      server.onMessage(raw=>{const message=JSON.parse(String(raw));
+        if(!lostReply&&message.kind==='result'&&testCalls.some(c=>c.request===message.request)){
+          lostReply=true;socket.send(JSON.stringify({...message,result:{ok:false,code:'unavailable',message:'Test reply was lost'}}));
+        }else socket.send(raw);
+      });
     });
     const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));b.on('pageerror',e=>errors.push(e.message));
     const cdp=await context.newCDPSession(a);await cdp.send('WebAuthn.enable');await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
@@ -54,16 +69,47 @@ it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account re
     await notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
     await expect.poll(()=>notifications.textContent()).toContain('This browser: Enabled');
     const devices=deviceRead();if(!devices.ok)throw Error();const device=(devices.value as {devices:Array<{ref:string;session:string}>}).devices[0];
+    const extraEndpoint='https://fcm.googleapis.com/other-account-device';
+    s.sessions.change(f=>{const existing=f.push!.subs!['https://fcm.googleapis.com/account-browser-proof'];f.push!.subs![extraEndpoint]={...existing,sub:{...existing.sub,endpoint:extraEndpoint}};});
+    loom.live.changed([{type:'notifications.devices',id:'jonathan'}]);
+    const extra=b.getByRole('form',{name:`Remove notification device ${deviceRef(extraEndpoint)}`,exact:true});await expect.poll(()=>extra.count()).toBe(1);
     const remote=b.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true});await expect.poll(()=>remote.count()).toBe(1);
     expect(await remote.textContent()).toContain(device.session);
+    await extra.getByRole('button',{name:'Send test notification',exact:true}).click();
+    const attempts=()=>loom.db.prepare('SELECT id,ref,state FROM notifications_tests').all() as Array<{id:string;ref:string;state:string}>;
+    await expect.poll(()=>attempts().length).toBe(1);const attempt=attempts()[0];expect(attempt.ref).toBe(deviceRef(extraEndpoint));
+    await expect.poll(()=>b.getByRole('button',{name:'Retry this change',exact:true}).count()).toBe(1);
+    expect(testCalls).toHaveLength(1);expect(testCalls[0].input).toEqual({ref:deviceRef(extraEndpoint)});
+    expect(await remote.getByRole('button',{name:'Send test notification',exact:true}).isDisabled()).toBe(true);
+    expect(await extra.getByRole('button',{name:'Send test notification',exact:true}).isDisabled()).toBe(true);
+    // A disabled competing click cannot replace the original request.
+    await remote.getByRole('button',{name:'Send test notification',exact:true}).evaluate(button=>(button as HTMLButtonElement).click());
+    expect(testCalls).toHaveLength(1);expect(attempts()).toHaveLength(1);
+    await b.getByRole('button',{name:'Home',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(0);await b.goBack();
+    await expect.poll(()=>b.getByRole('button',{name:'Retry this change',exact:true}).isEnabled()).toBe(true);
+    await b.getByRole('button',{name:'Retry this change',exact:true}).click();await expect.poll(()=>testCalls.length).toBe(2);
+    expect(testCalls[1]).toEqual(testCalls[0]);expect(attempts()).toHaveLength(1);
+    await expect.poll(()=>notifications.textContent()).toContain('Queued for a test attempt');
+    expect(send).not.toHaveBeenCalled();clock.advance(0);
+    expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:`notifications:test:${attempt.id}`},'account-release-test').ok).toBe(true);
+    // Release may arrive while the staged pass is settling its promise. Pump
+    // newly scheduled due work as well as the release callback, without time sleeps.
+    await expect.poll(()=>{clock.advance(0);return attempts()[0].state;}).toBe('sent');expect(send).toHaveBeenCalledOnce();
+    for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain('Accepted by the push service. Device delivery is not confirmed.');
+    const expectedTestTime=await b.evaluate(time=>new Date(time).toLocaleString(),clock.now());
+    await expect.poll(()=>b.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain(`Test ${expectedTestTime}:`);
+    const payload=JSON.parse(send.mock.calls[0][1]);expect(payload).toEqual({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'});expect(send.mock.calls[0][0]).toEqual({endpoint:extraEndpoint,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}});
+    await extra.getByRole('checkbox').check();await extra.getByRole('button',{name:'Remove notification device',exact:true}).click();await expect.poll(()=>extra.count()).toBe(0);
     const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'household.setPreferences',{look},`account-look-${look}-${width}`).ok).toBe(true);
       await b.setViewportSize({width,height:1000});await b.reload();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(1);await expect.poll(()=>b.locator('html').getAttribute('data-look')).toBe(look);
+      await expect.poll(()=>b.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain('Accepted by the push service. Device delivery is not confirmed.');
+      await expect.poll(()=>remote.getByRole('button',{name:'Send test notification',exact:true}).isEnabled()).toBe(true);
       await b.getByRole('region',{name:'Notifications',exact:true}).scrollIntoViewIfNeeded();expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${look}-${width}.png`),fullPage:false,animations:'disabled'});
     }
-    await remote.getByRole('button').click();expect(s.sessions.read().push?.subs?.['https://fcm.googleapis.com/account-browser-proof']).toBeDefined();
-    await remote.getByRole('checkbox').check();await remote.getByRole('button').click();await expect.poll(()=>a.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true}).count()).toBe(0);
+    await remote.getByRole('button',{name:'Remove notification device',exact:true}).click();expect(s.sessions.read().push?.subs?.['https://fcm.googleapis.com/account-browser-proof']).toBeDefined();
+    await remote.getByRole('checkbox').check();await remote.getByRole('button',{name:'Remove notification device',exact:true}).click();await expect.poll(()=>a.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true}).count()).toBe(0);
     await expect.poll(()=>notifications.textContent()).toContain('This browser: Off');
     const remove=a.getByRole('form',{name:'Remove passkey Browser passkey',exact:true});await remove.getByRole('button').click();expect(Object.keys(s.sessions.read().passkeys??{})).toHaveLength(1);
     await remove.getByRole('checkbox').check();await remove.getByRole('button').click();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(0);expect(s.sessions.read().passkeys??{}).toEqual({});

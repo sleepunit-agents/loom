@@ -3,15 +3,15 @@ import { createElement as h } from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
 import { act, create } from 'react-test-renderer';
 import type { CallState, Result, Snapshot } from '../../data';
-const f=vi.hoisted(()=>({snapshot:{status:'live',records:[]} as Snapshot,call:vi.fn(),once:vi.fn()}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>type==='notifications.devices'?{status:f.snapshot.status,records:f.snapshot.records.length?[{id:'jonathan',member:'jonathan',devices:[{ref:'c'.repeat(64),session:'b'.repeat(64),device:'Kitchen tablet',at:1760000000,seenAt:1760009000,endpoint:'PRIVATE_ENDPOINT',keys:{auth:'PRIVATE_AUTH',p256dh:'PRIVATE_KEY'},token:'PRIVATE_TOKEN',vapid:{privateKey:'PRIVATE_VAPID'}}]}]:[]}:f.snapshot,call:f.call,callOnce:f.once}));
+const f=vi.hoisted(()=>({snapshot:{status:'live',records:[]} as Snapshot,call:vi.fn(),once:vi.fn(),tests:{status:'live',records:[]} as Snapshot}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>type==='notifications.test'?f.tests:type==='notifications.devices'?{status:f.snapshot.status,records:f.snapshot.records.length?[{id:'jonathan',member:'jonathan',devices:[{ref:'c'.repeat(64),session:'b'.repeat(64),device:'Kitchen tablet',at:1760000000,seenAt:1760009000,endpoint:'PRIVATE_ENDPOINT',keys:{auth:'PRIVATE_AUTH',p256dh:'PRIVATE_KEY'},token:'PRIVATE_TOKEN',vapid:{privateKey:'PRIVATE_VAPID'}}]}]:[]}:f.snapshot,call:f.call,callOnce:f.once}));
 vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':'div',props)])));
 import Account from './index';
 import { mutation } from './model';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 function request(){let state:CallState={pending:true,status:'pending'};const listeners=new Set<()=>void>();const retry=vi.fn();const handle={id:'stable',result:new Promise<Result>(()=>{}),retry,getSnapshot:()=>state,subscribe:(fn:()=>void)=>{listeners.add(fn);return()=>{listeners.delete(fn);};}};return{handle,finish:async(result:Result)=>act(async()=>{state={pending:false,status:'done',result};listeners.forEach(fn=>fn());})};}
-beforeEach(async()=>{vi.clearAllMocks();f.snapshot={status:'live',records:[{id:'jonathan',member:'jonathan',passkeys:[{ref:'a'.repeat(64),label:'Phone',created:0,ended:false,made:1}],sessions:[{ref:'b'.repeat(64),device:'Browser',issuedAt:0,ended:false}]}]};const r=request();await r.finish({ok:true,value:{}});mutation.set(r.handle,'previous');});
+beforeEach(async()=>{vi.clearAllMocks();f.tests={status:'live',records:[]};f.snapshot={status:'live',records:[{id:'jonathan',member:'jonathan',passkeys:[{ref:'a'.repeat(64),label:'Phone',created:0,ended:false,made:1}],sessions:[{ref:'b'.repeat(64),device:'Browser',issuedAt:0,ended:false}]}]};const r=request();await r.finish({ok:true,value:{}});mutation.set(r.handle,'previous');});
 afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();});
 it('hides retained private data on denial/empty snapshot and disables offline and inactive changes',async()=>{
   f.snapshot={...f.snapshot,status:'denied'};await act(async()=>{tree=create(h(Account));});expect(tree.root.findAllByType('form')).toHaveLength(0);
@@ -95,4 +95,47 @@ it('keeps a browser flow request from being overwritten by a competing Account c
   expect(f.call).toHaveBeenCalledOnce();expect(mutation.getSnapshot().request).toBe(r.handle);
   await act(async()=>tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Retry this change').props.onClick());
   expect(r.handle.retry).toHaveBeenCalledOnce();await r.finish({ok:false,code:'denied',message:'No'});
+});
+
+it('queues the exact device once, retains an uncertain test through navigation and joins only its private receipt',async()=>{
+  const r=request();f.call.mockReturnValue(r.handle);
+  await act(async()=>{tree=create(h(Account));});
+  const send=()=>tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Send test notification');
+  await act(async()=>send().props.onClick());
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('notifications.test',{ref:'c'.repeat(64)});
+  await act(async()=>send().props.onClick());expect(f.call).toHaveBeenCalledOnce();
+  await r.finish({ok:false,code:'unavailable',message:'Uncertain'});
+  await act(async()=>tree.unmount());await act(async()=>{tree=create(h(Account,{active:false}));});
+  const retry=()=>tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Retry this change');
+  expect(retry().props.disabled).toBe(true);await act(async()=>retry().props.onClick());expect(r.handle.retry).not.toHaveBeenCalled();
+  await act(async()=>tree.root.findByProps({'aria-label':'Remove passkey Phone'}).props.onSubmit({preventDefault:vi.fn(),currentTarget:{reset:vi.fn()}}));expect(f.call).toHaveBeenCalledOnce();expect(mutation.getSnapshot().request).toBe(r.handle);
+  await act(async()=>{f.tests={status:'offline',records:[]};tree.update(h(Account,{active:true}));});
+  expect(retry().props.disabled).toBe(true);await act(async()=>retry().props.onClick());expect(r.handle.retry).not.toHaveBeenCalled();
+  await act(async()=>{f.tests={status:'live',records:[]};tree.update(h(Account));});
+  await act(async()=>tree.root.findByProps({'aria-label':'Remove passkey Phone'}).props.onSubmit({preventDefault:vi.fn(),currentTarget:{reset:vi.fn()}}));expect(f.call).toHaveBeenCalledOnce();expect(mutation.getSnapshot().request).toBe(r.handle);
+  await act(async()=>retry().props.onClick());expect(r.handle.retry).toHaveBeenCalledOnce();expect(mutation.getSnapshot().request).toBe(r.handle);expect(f.call).toHaveBeenCalledOnce();
+  await r.finish({ok:true,value:{id:'test-receipt',state:'queued'}});
+  expect(JSON.stringify(tree.toJSON())).toContain('Queued for a test attempt. Waiting for live status');
+  await act(async()=>{f.tests={status:'live',records:[{id:'different-id',member:'jonathan',ref:'c'.repeat(64),at:1760000000000,state:'sent'},{id:'test-receipt',member:'jonathan',ref:'wrong-ref',at:1760000000000,state:'sent'}]};tree.update(h(Account));});
+  expect(JSON.stringify(tree.toJSON())).toContain('Waiting for live status');
+  await act(async()=>{f.tests={status:'live',records:[{id:'test-receipt',member:'jonathan',ref:'c'.repeat(64),at:1760000000000,state:'sent',endpoint:'PRIVATE_ENDPOINT',keys:{auth:'PRIVATE_AUTH'}}]};tree.update(h(Account));});
+  const rendered=JSON.stringify(tree.toJSON());expect(rendered).toContain('Current test: Accepted by the push service. Device delivery is not confirmed.');expect(rendered).not.toContain('Waiting for live status');expect(rendered).not.toContain('PRIVATE_ENDPOINT');expect(rendered).not.toContain('PRIVATE_AUTH');
+  await act(async()=>{f.tests={...f.tests,status:'denied'};tree.update(h(Account));});
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Accepted by the push service');expect(JSON.stringify(tree.toJSON())).not.toContain('Test request saved');expect(send().props.disabled).toBe(true);
+});
+it('disables test actions offline or inactive and retains final outcomes after a device disappears',async()=>{
+  await act(async()=>{tree=create(h(Account));});
+  const send=()=>tree.root.findAllByType('button').find((x:{props:{children?:unknown}})=>x.props.children==='Send test notification');
+  for(const [status,active] of [['offline',true],['live',false]] as const){
+    await act(async()=>{f.tests={status,records:[]};tree.update(h(Account,{active}));});
+    expect(send().props.disabled).toBe(true);await act(async()=>send().props.onClick());expect(f.call).not.toHaveBeenCalled();
+  }
+  for(const state of ['queued','sent','gone','failed','uncertain','cancelled']){
+    await act(async()=>{f.tests={status:'live',records:[{id:state,member:'jonathan',ref:'removed-device',at:1760000000000,state}]};tree.update(h(Account));});
+    const rendered=JSON.stringify(tree.toJSON());expect(rendered).toContain('removed-device');
+    const history=tree.root.findByProps({'aria-label':'Test notification attempts'}).findAllByProps({role:'status'}).map((node:{children:unknown[]})=>node.children.join('')).join(' ');
+    expect(history).toContain(new Date(1760000000000).toLocaleString());
+    const meanings:Record<string,string>={queued:'Queued for a test attempt',sent:'Accepted by the push service. Device delivery is not confirmed.',gone:'Device is no longer available.',failed:'The push service refused this attempt.',uncertain:'The outcome is unknown. This attempt will not be sent again automatically.',cancelled:'Cancelled because the device or access changed.'};
+    expect(rendered).toContain(meanings[state]);
+  }
 });
