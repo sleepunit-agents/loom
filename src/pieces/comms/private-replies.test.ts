@@ -206,3 +206,10 @@ it('allows delivery-only movement but rejects replacement words while a retry pr
   expect(await pending).toMatchObject({ok:changed==='delivery'});expect(f.messages()).toHaveLength(1);vi.restoreAllMocks();
  }
 });
+it('rejects words passed to the internal capability in an otherwise authorized transaction',async()=>{
+ const f=await setup(),changes:unknown[]=[];
+ const ctx={db:f.app.db,viewer:owner,now:f.clock.now(),changed:(...change:unknown[])=>changes.push(change)} as Context;
+ const input={id:f.ref,conversation:f.t.conversation,agent:'art',member:owner.id,thread:f.t.id,seq:2,text:'Words must never enter this capability'};
+ expect(f.app.db.transaction(()=>f.attention.privateReply(ctx,input))()).toMatchObject({ok:false,code:'invalid'});
+ expect(f.getAsk()).toMatchObject({state:'open'});expect(f.messages()).toEqual([]);expect(changes).toEqual([]);
+});
