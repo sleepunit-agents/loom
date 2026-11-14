@@ -142,4 +142,13 @@ it('composes private loom parent metadata without opening ordinary conversation 
  expect(f.store.read('job','child')).toEqual(before);
  expect(f.app.db.prepare('SELECT * FROM runtime_inputs').all()).toEqual([]);
  expect(f.app.db.prepare('SELECT * FROM runtime_deliveries').all()).toEqual([]);
+ const original=f.store.read('binding','cv-child')!;
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=original;f.store.put('binding',{...b,place:'th:other'},f.clock.now());})();
+ expect(composed!('cv-child')).toBeUndefined();
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=original;f.store.put('binding',b,f.clock.now());saveThread(f.app.db,{...thread(f.app.db,'th:owner')!,id:'th:duplicate'});})();
+ expect(composed!('cv-child')).toBeUndefined();
+ f.app.db.prepare('DELETE FROM comms_threads WHERE id=?').run('th:duplicate');
+ expect(composed!('cv-child')).toMatchObject({member:'jonathan',venue:'loom'});
+ f.setSharing({members:{someone:{agents:['art']}},projects:{}});
+ expect(composed!('cv-child')).toBeUndefined();
 });
