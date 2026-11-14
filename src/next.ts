@@ -80,7 +80,7 @@ import { migrateHouseholdTables } from './core/household/schema.js';
 import { HouseholdDatabase } from './core/household/document.js';
 import { SharingDatabase } from './core/household/sharing.js';
 import { installEffects } from './core/effects.js';
-import { signin, installSignin, sameOrigin } from './core/signin/index.js';
+import { signin, installSignin, sameOrigin, relyingParty } from './core/signin/index.js';
 import { signinRoutes } from './core/signin/routes.js';
 import { mindSources } from './pieces/mind/sources.js';
 import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
@@ -360,7 +360,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   // The generated door uses the SAME connection and fresh shared credentials.
   // Existing homes are deliberately not bootstrapped or migrated here.
   const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
-  const data = dataHttp(sharedData, dataAuthentication(sharedData, () => app.operations.clock.now()));
+  const data = dataHttp(sharedData, dataAuthentication(sharedData, () => app.operations.clock.now()), relyingParty(process.env)?.origin);
   routes.all('/graphql', c => data.fetch(c.req.raw));
   routes.route('/', signinRoutes(app));
   routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));

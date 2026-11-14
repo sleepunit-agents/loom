@@ -54,7 +54,9 @@ it('lets household owners see member-private rows and responds to demotion', asy
   const { db, read } = fixture();
   const query = '{ tasks(where:{id:{eq:"private"}}) { id } }';
   expect(await (await read(query, 'owner')).json()).toEqual({ data: { tasks: [{ id: 'private' }] } });
+  expect(await (await read('{ projects { id } agents { id } }', 'owner')).json()).toEqual({ data: { projects: [{ id: 'pond' }], agents: [{ id: 'bot' }] } });
   db.update(members).set({ role: 'member' }).where(eq(members.id, 'owner')).run();
+  expect(await (await read('{ projects { id } agents { id } }', 'owner')).json()).toEqual({ data: { projects: [], agents: [] } });
   expect(await (await read(query, 'owner')).json()).toEqual({ data: { tasks: [] } });
 });
 it('fails closed on missing/ended auth, cross-origin, unsafe content and sensitive fields', async () => {
@@ -62,6 +64,7 @@ it('fails closed on missing/ended auth, cross-origin, unsafe content and sensiti
   expect((await read('{ tasks { id } }', 'nobody')).status).toBe(401);
   expect((await app.request('http://loom/graphql', { method: 'POST', headers: { origin: 'http://evil' } })).status).toBe(403);
   expect((await app.request('http://loom/graphql')).status).toBe(405);
+  expect((await app.request('http://loom/graphql', { method: 'POST', headers: { accept: 'text/event-stream', 'content-type': 'application/json' } })).status).toBe(406);
   expect((await app.request('http://loom/graphql', { method: 'POST' })).status).toBe(415);
   for (const query of ['{ tokens { fingerprint } }', '{ agents { tokensByAgent { fingerprint } } }', 'mutation { deleteFromTasks { id } }']) {
     const body = await (await read(query)).json();
@@ -119,4 +122,31 @@ it('requires both link endpoints and project precedence for member-owned tasks',
   expect(await (await read('{ tasks(where:{id:{eq:"mine"}}) { id } }')).json()).toEqual({ data: { tasks: [] } });
   const app = dataHttp(db, () => ({ viewer: { kind: 'agent', id: 'bot' }, valid: () => true }));
   expect(await (await app.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ tasks(where:{id:{eq:"project"}}) { id } }' }) })).json()).toEqual({ data: { tasks: [] } });
+});
+it('allows owned-agent metadata and agent-self projectless tasks without project grants', async () => {
+  const { db, read } = fixture();
+  expect(await (await read('{ agents { id } }')).json()).toEqual({ data: { agents: [{ id: 'bot' }] } });
+  const app = dataHttp(db, () => ({ viewer: { kind: 'agent', id: 'bot' }, valid: () => true }));
+  const response = await app.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ agents { id } tasks { id } }' }) });
+  expect(await response.json()).toEqual({ data: { agents: [{ id: 'bot' }], tasks: [{ id: 'agent' }] } });
+});
+
+it('accepts a configured public HTTPS origin behind a same-host HTTP proxy and rejects other origins', async () => {
+  const { db } = fixture();
+  const app = dataHttp(db, () => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => true }), 'https://loom');
+  const read = (origin: string, host = 'loom') => app.request('http://' + host + '/graphql', { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ tasks { id } }' }) });
+  expect((await read('https://loom')).status).toBe(200);
+  expect((await read('https://evil')).status).toBe(403);
+  expect((await read('https://loom', 'different')).status).toBe(403);
+});
+
+it('member project grants expose unowned agent metadata and removal hides it', async () => {
+  const { db, read } = fixture();
+  const { projectAgents } = await import('./schema.js');
+  db.delete(memberAgents).run();
+  db.insert(projectAgents).values({ project: 'pond', agent: 'bot' }).run();
+  db.insert(projectMembers).values({ project: 'pond', member: 'sam' }).run();
+  expect(await (await read('{ agents { id } }')).json()).toEqual({ data: { agents: [{ id: 'bot' }] } });
+  db.delete(projectMembers).run();
+  expect(await (await read('{ agents { id } }')).json()).toEqual({ data: { agents: [] } });
 });

@@ -107,10 +107,11 @@ permissive rewrite at both root and connected tables.
 
 `dataHttp(db, authenticate?)` is the Hono `/graphql` route, mounted by
 `listenNext` on its existing connection. It uses pinned GraphQL Yoga 6.1.0
-([Fetch/Hono integration](https://the-guild.dev/graphql/yoga-server/docs/integrations/integration-with-hono)).
-It accepts POST JSON only, refuses cross-origin browser requests, disables CORS,
+([Fetch server documentation](https://the-guild.dev/graphql/yoga-server/docs)).
+It accepts POST JSON only, refuses cross-origin browser requests (using the configured
+public origin behind a same-host TLS proxy), disables CORS,
 GraphiQL and batching, and sends `Cache-Control: no-store`. The generated schema
-has no mutations or subscriptions yet, so Yoga's SSE transport is not exposed.
+has no mutations or subscriptions yet; SSE negotiation is explicitly refused.
 Subscriptions will use graphql-ws on the one websocket as consumers move.
 
 The first outside projection exposes Tasks, comments, links, projects and agent

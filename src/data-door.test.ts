@@ -35,6 +35,12 @@ it('mounts /graphql on the actual HTTP server and reads trusted Tasks writes fro
     expect(await (await read()).json()).toEqual({ data: { tasks: [{ id: task.id, title: 'Shared task' }] } });
     tasks.edit(task.id, { title: 'Updated directly' });
     expect(await (await read()).json()).toEqual({ data: { tasks: [{ id: task.id, title: 'Updated directly' }] } });
+    db.update(tokens).set({ expiresAt: new Date(clock.now() + 1000).toISOString() }).where(eq(tokens.fingerprint, fingerprint)).run();
+    expect((await read()).status).toBe(200);
+    clock.advance(1000);
+    expect((await read()).status).toBe(401);
+    db.update(tokens).set({ expiresAt: null }).where(eq(tokens.fingerprint, fingerprint)).run();
+    expect((await read()).status).toBe(200);
     db.update(tokens).set({ revokedAt: now() }).where(eq(tokens.fingerprint, fingerprint)).run();
     expect((await read()).status).toBe(401);
   } finally { await server.close(); stops.reverse().forEach(stop => stop()); live.close(); operations.close(); client.close(); }

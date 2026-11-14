@@ -11,7 +11,7 @@ import type { DataDatabase } from './database.js';
  * supplied by the composition's session/token resolver, never a request viewer.
  * No credential, session, plumbing or service-only table enters this schema.
  */
-export function dataHttp(db: DataDatabase, authenticate: (request: Request) => Authentication | undefined = dataAuthentication(db)) {
+export function dataHttp(db: DataDatabase, authenticate: (request: Request) => Authentication | undefined = dataAuthentication(db), publicOrigin?: string) {
   const app = new Hono();
   app.use('*', bodyLimit({ maxSize: 1024 * 1024 }));
   app.use('*', async (c, next) => { await next(); c.header('cache-control', 'no-store'); });
@@ -20,7 +20,11 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     // No CORS: cookies must remain same-origin. Fetch Metadata also covers
     // browser requests without Origin. Bearers may be used by outside clients.
     const origin = c.req.header('origin');
-    if (c.req.header('sec-fetch-site') === 'cross-site' || (origin && origin !== new URL(c.req.url).origin)) return c.json({ errors: [{ message: 'Cross-origin request refused' }] }, 403);
+    const url = new URL(c.req.url);
+    const originAllowed = !origin || origin === url.origin || (origin === publicOrigin && new URL(publicOrigin).host === url.host);
+    if (c.req.header('sec-fetch-site') === 'cross-site' || !originAllowed) return c.json({ errors: [{ message: 'Cross-origin request refused' }] }, 403);
+    // The only live transport will be graphql-ws; do not negotiate Yoga SSE.
+    if ((c.req.header('accept') ?? '').toLowerCase().includes('text/event-stream')) return c.json({ errors: [{ message: 'SSE is not supported' }] }, 406);
     if (c.req.method !== 'POST') return c.json({ errors: [{ message: 'Use POST' }] }, 405);
     if (!/^application\/json(?:\s*;|$)/i.test(c.req.header('content-type') ?? '')) return c.json({ errors: [{ message: 'Use application/json' }] }, 415);
     let auth: Authentication | undefined;

@@ -35,7 +35,9 @@ it('revalidates session deletion, token revocation/expiry and identity rebinding
   const session = authenticate(request({ cookie: 'loom_ui=' + cookie }))!;
   const bearer = authenticate(request({ authorization: 'Bearer ' + raw }))!;
   expect(session.valid()).toBe(true);
-  tick(6 * 3600000);
+  tick(6 * 3600000 - 1);
+  expect(session.valid()).toBe(true);
+  tick(1);
   expect(session.valid()).toBe(false);
   expect(bearer.valid()).toBe(true);
   db.update(tokens).set({ expiresAt: '2026-11-14T06:00:00.000Z' }).run();
@@ -73,4 +75,11 @@ it('ordinary browsers last thirty days, with an exact expiry boundary', () => {
   expect(session.valid()).toBe(true);
   tick(1);
   expect(session.valid()).toBe(false);
+});
+it('valid bearer takes precedence over a different valid cookie identity', () => {
+  const { db, authenticate, request } = fixture();
+  const otherRaw = 'c'.repeat(64);
+  db.insert(members).values({ id: 'other', role: 'member', joinedAt: at }).run();
+  db.insert(tokens).values({ fingerprint: hash(otherRaw), label: 'other', kind: 'owner', member: 'other', createdAt: at }).run();
+  expect(authenticate(request({ cookie: 'loom_ui=' + cookie, authorization: 'Bearer ' + otherRaw }))?.viewer).toEqual({ kind: 'member', id: 'other' });
 });
