@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
-import { call, useRecords, type Call } from '../../data';
+import { call, newId, useRecords, type Call } from '../../data';
 import { settingsWrites } from './writes';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, Textarea } from '../../kit';
 import { revokeInput, warnings, type SettingsAccess, type SecretName, type Grant, type Request, type Policy, type Use, type Change, grantLabel, missingNames, automaticRequest, grantScopeLabel } from './model';
@@ -19,7 +19,7 @@ export function ValueForm({name,enabled,replace=false}:{name?:string;enabled:boo
   function submit(event:FormEvent<HTMLFormElement>) {
     event.preventDefault();if(!enabled||write.blocked)return;
     const target=event.currentTarget,data=new FormData(target);
-    const input={name:name??String(data.get('name')),value:String(data.get('value')),mode:replace?'replace':'add',writeId:crypto.randomUUID()};
+    const input={name:name??String(data.get('name')),value:String(data.get('value')),mode:replace?'replace':'add',writeId:newId()};
     target.reset();write.send('secrets.set',input);
   }
   return <form ref={form} aria-label={replace?'Replace secret':'Add secret'} onSubmit={submit} className="grid gap-3">
@@ -85,7 +85,7 @@ function SecretReader({name,policy,agents,grants,uses,changes,enabled,values,now
     <section><h2>Recorded use</h2>{usage.length?usage.slice().sort((a,b)=>b.at-a.at).slice(0,30).map(u=><p key={u.id}>{date(u.at)} · {u.by.id} · {u.state==='released'?'Delivered':u.state==='failed'?'Failed':'Delivery unconfirmed'}</p>):<p>No recorded use.</p>}</section>
     <section><h2>Changes</h2>{changes.filter(c=>c.name===name.id).slice().sort((a,b)=>b.at-a.at).map(c=><p key={c.id}>{date(c.at)} · {c.action} · {c.by}</p>)}</section>
     <ValueForm key={name.id} name={name.id} enabled={enabled&&values} replace/>
-    <section><h2>Remove secret</h2>{removing?<div><p>Remove {name.id} and revoke its future access?</p><Button disabled={!enabled||!values||write.blocked} onClick={()=>write.send('secrets.remove',{name:name.id,writeId:crypto.randomUUID()})}>Confirm removal</Button><Button onClick={()=>setRemoving(false)}>Cancel removal</Button></div>:<Button disabled={!enabled||!values||write.blocked} onClick={()=>setRemoving(true)}>Remove {name.id}</Button>}</section>{write.feedback}
+    <section><h2>Remove secret</h2>{removing?<div><p>Remove {name.id} and revoke its future access?</p><Button disabled={!enabled||!values||write.blocked} onClick={()=>write.send('secrets.remove',{name:name.id,writeId:newId()})}>Confirm removal</Button><Button onClick={()=>setRemoving(false)}>Cancel removal</Button></div>:<Button disabled={!enabled||!values||write.blocked} onClick={()=>setRemoving(true)}>Remove {name.id}</Button>}</section>{write.feedback}
   </article>;
 }
 const pieces=[['Sharing','/p/sharing-preview','Project membership'],['Approvals','/p/approvals-preview','Standing approval rules'],['Clock','/p/clock-preview','Schedules and wakes'],['Bridges','/p/bridges-preview','Venues, routes and identities']];

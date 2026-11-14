@@ -1,7 +1,7 @@
 /** Unlinked reference screen. The example piece is installed only in fixture homes. */
 import { useState, useSyncExternalStore } from 'react';
 import { AppFrame, List, Row, Empty, Loading, Error } from './kit/app';
-import { call, useRecords, type Call, type LiveRecord } from './data';
+import { call, newId, useRecords, type Call, type LiveRecord } from './data';
 interface Example extends LiveRecord { title: string }
 function Answer({ call: request }: { call: Call }) {
   const state = useSyncExternalStore(request.subscribe, request.getSnapshot);
@@ -14,7 +14,7 @@ export default function DataDemo() {
   const [request, setRequest] = useState<Call>();
   return <AppFrame title="Live example" where="Live example" go={href => { location.href = href; }}>
     <p role="status">{status}</p>
-    <form onSubmit={event => { event.preventDefault(); setRequest(call('example.put', { id: crypto.randomUUID(), title })); }}>
+    <form onSubmit={event => { event.preventDefault(); setRequest(call('example.put', { id: newId(), title })); }}>
       <label>Title <input value={title} onChange={event => setTitle(event.target.value)} /></label>
       <button type="submit" disabled={status !== 'live'}>Add record</button>
     </form>

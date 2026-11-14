@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { useRecords, call, type Call } from '../../data';
+import { useRecords, call, newId, type Call } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button } from '../../kit';
 import { bridgeEffects, sendStatus, type VenueRecord, type RouteRecord, type SendRecord, type EffectRecord } from './model';
 
@@ -138,7 +138,7 @@ export default function BridgesApp({ path: shellPath, go }: { path?: string; go?
       { id: 'effects', label: 'Staged effects', count: ready ? held.length : undefined },
     ]}
     listTitle={view === 'links' ? 'Person links' : view === 'venues' ? 'Connections' : view === 'routes' ? 'Routes' : view === 'sends' ? 'Pending sends' : 'Staged effects'} listMeta={rows.length}
-    listTop={ready && view === 'links' ? <div className="p-3"><Button onClick={() => navigate('new-link', crypto.randomUUID())}>New person link</Button></div> : ready && view === 'routes' ? <div className="p-3"><Button onClick={() => navigate('new-route', crypto.randomUUID())}>New route</Button></div> : ready && view === 'venues' ? <div className="p-3"><Button onClick={() => navigate('new-venue', crypto.randomUUID())}>New connection</Button></div> : undefined}
+    listTop={ready && view === 'links' ? <div className="p-3"><Button onClick={() => navigate('new-link', newId())}>New person link</Button></div> : ready && view === 'routes' ? <div className="p-3"><Button onClick={() => navigate('new-route', newId())}>New route</Button></div> : ready && view === 'venues' ? <div className="p-3"><Button onClick={() => navigate('new-venue', newId())}>New connection</Button></div> : undefined}
     list={!ready ? status === 'loading' ? <Loading label="Opening bridges…" /> : <Error text={status === 'denied' ? 'Sign in with access to bridges.' : 'Waiting for connection.'} />
       : rows.length ? <List label="Bridge items">{rows.map(r => <Row key={r.id} title={r.title} meta={r.meta} status={r.status} selected={r.id === selected?.id} onClick={() => open(r.id)} />)}</List>
       : <Empty title="No items here" text="Configured connections, routes and held sends appear here as they become available." />}
