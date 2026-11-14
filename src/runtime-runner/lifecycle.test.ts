@@ -9,6 +9,7 @@ import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/index.js';
 import { fixture } from '../fixture.js';
 import { signin, hash } from '../core/signin/index.js';
+import { jobResults } from '../pieces/runtime/results.js';
 import { runtimeStore } from '../pieces/runtime/store.js';
 import { connectClaudeWorker, type WorkerControlRuntime } from './lifecycle.js';
 import { runClaudeJob } from './once.js';
@@ -80,7 +81,7 @@ it('the external startup claims, takes one gated input, runs and finishes throug
  const f=await setup(),p=runClaudeJob(f.config,f.selected,f.runtime);
  await f.waitSpawn(1);
  expect(f.calls[0].input).toBe('OWNER FLOOR\nPRIVATE WORK');f.finish();await p;
- expect(f.store.read('job','j')?.state).toBe('done');
+ expect(f.store.read('job','j')?.state).toBe('done');expect(jobResults(f.app.db).read('j')).toEqual({exit:0,log:'PRIVATE RESULT'});
  await expect(runClaudeJob(f.config,f.selected,f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(1);
 });
 it('does not launch an input with a conversation that lacks owning policy delivery',async()=>{

@@ -1422,7 +1422,8 @@ process, live installation or host rollout has been exercised.
 `loom-claude-worker <owner-config.json>` is a separate executable, never started
 by `loom serve`. It connects to next-mode Runtime using an existing assigned
 runner token, claims one unbound job, takes its one-time staging-gated input,
-reports running, invokes the worker-owned Claude session and reports done.
+reports running on process spawn, invokes the worker-owned Claude session and
+reports done with its exit status and the existing bounded result-log tail.
 It never retries an uncertain claim, input release, process or report. A failure
 requires owning reconciliation; it deliberately leaves the job's uncertain
 state visible instead of asserting that a process never started.

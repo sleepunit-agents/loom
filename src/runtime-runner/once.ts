@@ -50,10 +50,10 @@ export async function runClaudeJob(config:WorkerControlConfig,
     if(input.job!==job||input.agent!==binding.agent||input.conversation!==undefined||input.credential!==undefined||input.model!==undefined||input.account!==undefined
       ||JSON.stringify(input.house)!==JSON.stringify(house))throw failed();
     await worker.refresh();
-    await Promise.all([worker.turn({binding,rules,checkout,message:input.brief,current:()=>true}),
+    const [result]=await Promise.all([worker.turn({binding,rules,checkout,message:input.brief,current:()=>true}),
       started.then(async()=>{z.object({job:z.literal(job),state:z.literal('running')}).strict().parse(await call('reportJob',{job,state:'running'},true));})]);
     await worker.refresh();
-    z.object({job:z.literal(job),state:z.literal('done')}).strict().parse(await call('finishJob',{job,state:'done'},true));
+    z.object({job:z.literal(job),state:z.literal('done')}).strict().parse(await call('finishJob',{job,state:'done',exit:0,log:result.text.slice(-4000)},true));
   }catch {throw failed();}
   finally {worker.close();}
 }
