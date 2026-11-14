@@ -589,3 +589,13 @@ it('keeps Deny suppression on project work across restart and later scope change
   expect(s.call('clock.askVouch',{target:`art:${ids[0]}`}).ok).toBe(false);
   expect(cards(s)).toHaveLength(1);
 });
+
+it('replaces stale authorship with the deciding owner without restoring archived execution hints',async()=>{
+ const s=await setup(),id=ids[0],before=wake(s.app.db,id)!;
+ const legacy={...before.legacy,authorship:{principal:{for:'amelia',people:['amelia']},conversation:'archived-conversation',service:'archived-service'}};
+ s.change(id,{authorship:{origin:'old-agent',conversation:'old-conversation',service:'old-service',principal:{for:'?',people:['amelia']}},legacy});
+ s.value('clock.vouch',{target:`art:${id}`});
+ const adopted=wake(s.app.db,id)!;
+ expect(adopted.authorship).toEqual({principal:{for:'owner',people:['jonathan']}});
+ expect(adopted.legacy).toEqual(legacy);
+});
