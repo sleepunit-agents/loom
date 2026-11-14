@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tasks · loom</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js"></script>
+</head>
+<body>
+<header class="top"><div class="top__in">
+  <a class="brand" href="index.html"><b>LO<i>O</i>M</b><span>how it works</span></a>
+  <nav class="path" aria-label="Guided path">
+    <ol class="path__dots"><li><a href="index.html" title="Start here"><span class="sr">Start here</span></a></li><li><a href="conversations.html" title="1. Conversations"><span class="sr">1. Conversations</span></a></li><li><a href="desk.html" title="2. The desk"><span class="sr">2. The desk</span></a></li><li><a href="tasks.html" title="3. Tasks" aria-current="page"><span class="sr">3. Tasks</span></a></li><li><a href="approvals.html" title="4. Approvals"><span class="sr">4. Approvals</span></a></li><li><a href="tempo.html" title="5. Tempo"><span class="sr">5. Tempo</span></a></li><li><a href="changes.html" title="6. Changes"><span class="sr">6. Changes</span></a></li><li><a href="inbox.html" title="7. Inbox"><span class="sr">7. Inbox</span></a></li><li><a href="memory.html" title="8. Memory"><span class="sr">8. Memory</span></a></li><li><a href="machines.html" title="9. Machines and jobs"><span class="sr">9. Machines and jobs</span></a></li><li><a href="models.html" title="10. Models and accounts"><span class="sr">10. Models and accounts</span></a></li><li><a href="bridges.html" title="11. Discord and Slack"><span class="sr">11. Discord and Slack</span></a></li><li><a href="secrets.html" title="12. Secrets"><span class="sr">12. Secrets</span></a></li><li><a href="people.html" title="13. People and projects"><span class="sr">13. People and projects</span></a></li><li><a href="signing-in.html" title="14. Signing in"><span class="sr">14. Signing in</span></a></li><li><a href="outside.html" title="15. Outside programs"><span class="sr">15. Outside programs</span></a></li><li><a href="data.html" title="16. How a tile gets its data"><span class="sr">16. How a tile gets its data</span></a></li><li><a href="measuring.html" title="17. Measuring"><span class="sr">17. Measuring</span></a></li><li><a href="decided.html" title="18. What we decided"><span class="sr">18. What we decided</span></a></li></ol>
+    <span class="path__where"><b>3</b> of 18 · Tasks</span>
+    <span class="path__go"><a href="desk.html" rel="prev">‹ <span class="pl">The desk</span></a><a class="next" href="approvals.html" rel="next"><span class="pl">Approvals</span> ›</a></span>
+  </nav>
+  <button class="theme" id="theme" type="button" aria-label="Switch between light and dark">Theme</button>
+</div></header>
+<main class="wrap">
+
+
+<section class="hero2">
+  <div class="hero2__text t-violet">
+    <div><p class="eyebrow">Page 3 of 18 · an app</p><h1>Tasks</h1><p class="lead"><b>The household's work queue.</b> A task is one piece of work with a plain title, a goal and a reason.</p></div>
+    <ul class="does"><li>Shows what is ready to pick up, most urgent first.</li><li>Lets a person or an agent claim work, comment on it and close it.</li><li>Groups work under a parent and holds back what is blocked.</li><li>Carries a question to a person when the work needs a decision.</li></ul>
+  </div>
+  <figure class="hero__fig">
+    <div class="two" aria-hidden="true">
+      <div class="two__a"><span class="lbl">In the Tasks tile</span><div class="shadowed"><div class="tile t-violet "><div class="tile__bar"><span class="tile__key"><svg viewBox="0 0 24 24"><path d="M3 7l2 2 4-4M3 17l2 2 4-4M13 7h8M13 17h8"/></svg></span><b>Tasks</b><span class="tile__acts"><i></i><i></i><i></i></span></div><div class="tile__body sp">
+      <div class="sp__nav">
+        <div class="sp__search">Search tasks</div>
+        <div class="sp__f" data-on><span>Ready</span><em>4</em></div><div class="sp__f"><span>In progress</span><em>2</em></div><div class="sp__f"><span>Needs Jonathan</span><em>1</em></div><div class="sp__f"><span>All open</span><em>9</em></div><div class="sp__f"><span>Recently closed</span><em>3</em></div>
+        <span class="lbl">Projects</span><div class="sp__f"><span>loom</span><em>3</em></div><div class="sp__f"><span>pond</span><em>6</em></div>
+        <span class="lbl">Epics</span><div class="sp__f"><span>Get the pond working again</span><em>5</em></div>
+      </div>
+      <div class="sp__list">
+        <div class="sp__top"><b>Tasks</b><em>4</em><span class="mbtn">Create task</span></div>
+        <div class="sp__chips"><span data-on>Ready 4</span><span>In progress 2</span><span>Needs Jonathan 1</span><span>All open 9</span></div>
+        <div class="row" data-on><b>Pick a replacement pond pump</b><span>One pump chosen that fits the existing hose.</span><em>t-2188 · P1 · open</em></div>
+        <div class="row"><b>Order the pump</b><span>The pump is on its way.</span><em>t-2190 · P1 · open</em></div>
+        <div class="row"><b>Book the electrician for the outdoor socket</b><span>The socket by the pond is safe to use.</span><em>t-2175 · P2 · open</em></div>
+        <div class="row"><b>Write the winter pond checklist</b><span>Nothing gets forgotten when it freezes.</span><em>t-2193 · P3 · open</em></div>
+      </div>
+      <div class="sp__read">
+        <span class="meta">t-2188 · task</span>
+        <h4>Pick a replacement pond pump</h4>
+        <span class="meta">open · P1 · pond</span>
+        <div class="sp__acts"><span class="mbtn">Claim</span><span class="mbtn">Close</span><span class="mbtn">Comment</span><span class="mbtn">Edit</span><span class="mbtn">Priority</span><span class="mbtn">Project</span></div>
+        <dl class="kv">
+          <dt>Goal</dt><dd>One pump chosen that fits the existing hose.</dd>
+          <dt>Why</dt><dd>The old pump failed and the water is turning green.</dd>
+          <dt>Done when</dt><dd>The choice and its price are in a comment.</dd>
+          <dt>Parent</dt><dd>Get the pond working again <span class="chip">t-2101</span></dd>
+          <dt>Blocked by</dt><dd>None</dd>
+        </dl>
+        <div class="cmt"><span class="lbl">Comments</span><p><b>art</b> <em>11/12/2026, 9:14:00 AM CT</em><br>Compared three models. The middle one fits the hose and is in stock.</p></div>
+      </div>
+    </div></div></div></div>
+      <div class="two__b"><span class="lbl">In a chat</span><div class="shadowed"><div class="tile t-pink "><div class="tile__bar"><span class="tile__key"><svg viewBox="0 0 24 24"><path d="M21 12a8.5 8.5 0 0 1-12.6 7.4L3 21l1.6-5.4A8.5 8.5 0 1 1 21 12z"/></svg></span><b>Comms</b><span class="tile__acts"><i></i><i></i><i></i></span></div><div class="tile__body"><div class="cm__thread"><div class="cm__head"><b>Pond pump</b><span>with Art</span><span class="chip">pond</span></div><div class="cm__msgs cm__msgs--plain"><div class="msg msg--me t-pink"><div class="msg__b">Can you find a pump that fits the old hose?</div></div><div class="msg"><div class="msg__b">Three fit. I filed <span class="chip">t-2188</span> to pick one.</div></div><div class="refc"><span class="lbl">Task</span><b>Pick a replacement pond pump</b><span>open</span><span class="yn"><span class="mbtn">Open</span></span></div><div class="wk"><span class="lbl">Work in this thread</span><p>Pick a replacement pond pump<em>open · t-2188 · Made here</em></p></div></div><div class="cm__compose"><span>Message Art</span><span class="mbtn mbtn--on">Send</span></div></div></div></div></div></div>
+    </div>
+    <figcaption class="cap">One task shown two ways, with example content. In a chat a task is a reference: its card shows the title and state and opens the tile, where it is claimed and closed. The thread also lists the work made in it.</figcaption>
+  </figure>
+</section>
+
+<section class="band" aria-labelledby="con-h">
+  <div class="band__head"><span class="tag">Connections</span><h2 id="con-h">How a task connects to other parts</h2>
+    <p>One task, with a thread from each field that reaches outside the Tasks app. The number on each part is its page on the path.</p></div>
+  <div class="anat"><div class="anat__row"><div class="anat__side anat__l"></div><div class="anat__f"><code>t-2190 · task</code><b>Order the pump</b></div><div class="anat__side anat__r"></div></div><div class="anat__row"><div class="anat__side anat__l "></div><div class="anat__f"><code>status, priority</code><span>open · P1 <small>0 to 4, lower is more urgent</small></span></div><div class="anat__side anat__r "></div></div><div class="anat__row t-amber"><div class="anat__side anat__l t-amber"><span class="key t-amber" aria-hidden="true">13</span><div class="node__body"><b><a href="people.html">People and projects</a></b><span>Every task has an owner. Its project, or else its owner, decides who sees it.</span></div><i class="wire"></i></div><div class="anat__f"><code>owner, project</code><span>agent art · pond</span></div><div class="anat__side anat__r t-amber"></div></div><div class="anat__row t-pink"><div class="anat__side anat__l t-pink"></div><div class="anat__f"><code>source</code><span>conversation cv-1a2b3c4d5e6f</span></div><div class="anat__side anat__r t-pink"><i class="wire"></i><span class="key t-pink" aria-hidden="true">1</span><div class="node__body"><b><a href="conversations.html">Conversations</a></b><span>A task names the conversation it came from.</span></div></div></div><div class="anat__row"><div class="anat__side anat__l "></div><div class="anat__f"><code>assignee</code><span>member jonathan <small>who holds it right now</small></span></div><div class="anat__side anat__r "></div></div><div class="anat__row"><div class="anat__side anat__l "></div><div class="anat__f"><code>goal, why, done_when</code><span>The pump is on its way. <small>the plain summary</small></span></div><div class="anat__side anat__r "></div></div><div class="anat__row t-cyan"><div class="anat__side anat__l t-cyan"><span class="key t-cyan" aria-hidden="true">7</span><div class="node__body"><b><a href="inbox.html">Inbox</a></b><span>The question also appears in that person's Inbox.</span></div><i class="wire"></i></div><div class="anat__f"><code>ask, if_yes, if_no</code><span>Spend up to $180 on the pump Art picked?</span></div><div class="anat__side anat__r t-cyan"></div></div><div class="anat__row t-violet"><div class="anat__side anat__l t-violet"></div><div class="anat__f"><code>task_links</code><span>child of t-2101 · blocks t-2195</span></div><div class="anat__side anat__r t-violet"><i class="wire"></i><span class="key t-violet" aria-hidden="true">3</span><div class="node__body"><b>Tasks</b><span>Other tasks. One parent at most, any number of blockers.</span></div></div></div><div class="anat__row"><div class="anat__side anat__l "></div><div class="anat__f"><code>task_comments</code><span>2 comments, oldest first</span></div><div class="anat__side anat__r "></div></div><div class="anat__row t-pink"><div class="anat__side anat__l t-pink"><span class="key t-pink" aria-hidden="true">6</span><div class="node__body"><b><a href="changes.html">Changes</a></b><span>A pull request that mentions the task is linked to it.</span></div><i class="wire"></i></div><div class="anat__f"><code>change_tasks</code><span>named by github:owner/repo#12</span></div><div class="anat__side anat__r t-pink"></div></div></div>
+</section>
+
+<section class="band" aria-labelledby="how-h">
+  <div class="band__head"><span class="tag">How it works</span><h2 id="how-h">Ready, blocked, comments and questions</h2>
+    <p>Four behaviours cover what the app does.</p></div>
+  <div class="how">
+    <div class="how__p t-violet">
+      <h3>Ready</h3>
+      <div class="how__pic" aria-hidden="true">
+        <ul class="gate"><li>It is open</li><li>It is not an epic</li><li>No open task blocks it</li></ul>
+        <span class="stamp">READY</span>
+        <div class="flow"><span>open</span><i class="wire"><em>claim</em></i><span>in progress</span><i class="wire"><em>close</em></i><span>closed</span></div>
+      </div>
+      <p>A task is ready when it is open, is not an epic and nothing blocks it. Claiming it moves it to in progress. Closing it takes a reason, and the reason cancelled marks it cancelled.</p>
+    </div>
+    <div class="how__p t-amber">
+      <h3>Parents and blockers</h3>
+      <div class="how__pic"><svg class="tree" viewBox="0 0 300 186" role="img" aria-label="An epic with three child tasks. One child blocks another.">
+      <path class="pc" d="M150 40 C150 74,50 74,50 108"/><path class="pc" d="M150 40 V108"/><path class="pc" d="M150 40 C150 74,250 74,250 108"/>
+      <g class="n epic"><rect x="62" y="8" width="176" height="32"/><text x="150" y="23">Get the pond working</text><text class="s" x="150" y="35" style="fill:currentColor;opacity:.85">epic · never ready</text></g>
+      <g class="n"><rect x="6" y="108" width="88" height="36"/><text x="50" y="124">Order pump</text><text class="s rd" x="50" y="137">ready</text></g>
+      <g class="n blocked"><rect x="106" y="108" width="88" height="36"/><text x="150" y="124">Install pump</text><text class="s blt" x="150" y="137">blocked</text></g>
+      <g class="n"><rect x="206" y="108" width="88" height="36"/><text x="250" y="124">Checklist</text><text class="s rd" x="250" y="137">ready</text></g>
+      <path class="bl" d="M50 144 C50 172,150 172,150 151"/><path class="blh" d="M150 145 l-5 8 h10z"/>
+      <text class="s blt" x="100" y="181">blocks</text>
+    </svg></div>
+      <p>A task sits under one parent at most. An epic groups other tasks and is never ready itself. A blocked task waits until the task blocking it closes.</p>
+    </div>
+    <div class="how__p t-cyan">
+      <h3>Comments</h3>
+      <div class="how__pic" aria-hidden="true">
+        <div class="cmt" style="border:0;padding:0"><p><b>art</b> <em>9:14 AM</em><br>Compared three models. The middle one fits the hose.</p></div>
+        <div class="cmt"><p><b>jonathan</b> <em>9:40 AM</em><br>Go with that one.</p></div>
+      </div>
+      <p>People and agents leave comments as work moves. Loom keeps them in order, oldest first, each with who wrote it and when.</p>
+    </div>
+    <div class="how__p t-pink">
+      <h3>A question for a person</h3>
+      <div class="how__pic" aria-hidden="true">
+        <div class="card t-cyan" style="flex:none"><span class="lbl">Question for Jonathan</span><b>Spend up to $180 on the pump Art picked?</b>
+          <span class="muted">If yes, Art orders it today. If no, Art looks for a cheaper one.</span></div>
+        <div class="node t-cyan"><i class="wire" style="flex:0 0 40px"></i><span class="key key--sm t-cyan" aria-hidden="true">7</span><div class="node__body"><span>Also in Jonathan's Inbox</span></div></div>
+      </div>
+      <p>A task can carry one question, with what happens on yes and on no. The person answers yes or no, or in words. The question also appears in that person's Inbox.</p>
+    </div>
+  </div>
+</section>
+
+<div class="ref">
+  <section class="ref__col" aria-labelledby="see-h">
+    <h2 id="see-h">Who can see this</h2>
+    <div class="labels"><span class="t-violet">project</span><span class="t-cyan">owner</span></div>
+    <ul class="see">
+      <li><span class="key key--sm t-ink" aria-hidden="true">a</span><span><b>Every task has an owner.</b> A member, an agent or the household. There is no task without one.</span></li>
+      <li><span class="key key--sm t-ink" aria-hidden="true">b</span><span><b>Who sees it.</b> Its project's people when it has a project. Otherwise its owner, and for an agent's task, that agent's owners. Household owners always.</span></li>
+      <li><span class="key key--sm t-ink" aria-hidden="true">c</span><span><b>Checked at the door.</b> Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read tasks without asking.</span></li>
+    </ul>
+  </section>
+  <section class="ref__col" aria-labelledby="data-h">
+    <h2 id="data-h">Data model</h2>
+    <p class="muted">Three tables. Open one to see its columns, what each means and what it points to.</p>
+    <div class="tgroup"><div class="tgrid"><details class="tbl t-violet" id="t-tasks"><summary><code>tasks</code><em>32 columns</em><span>One row per task.</span></summary><div class="cols"><div class="col"><div><code>id</code><small>id</small></div><p>Such as t-2190. Numbers are never reused.</p><span></span></div><div class="col"><div><code>title</code><small>text</small></div><p>The plain title.</p><span></span></div><div class="col"><div><code>type</code><small>choice(task, bug, feature, epic)</small></div><p>What kind of work. An epic groups other tasks and is never itself ready.</p><span></span></div><div class="col"><div><code>status</code><small>choice(open, in_progress, closed)</small></div><p>Where it stands.</p><span></span></div><div class="col"><div><code>priority</code><small>number</small></div><p>0 to 4. Lower is more urgent. Default 2.</p><span></span></div><div class="col"><div><code>owner_kind</code><small>choice(member, agent, household)</small></div><p>What kind of owner the task has. Required.</p><span></span></div><div class="col"><div><code>owner</code><small>id</small></div><p>Who owns it: the member or the agent. Empty only when the household owns it.</p><span class="to">points to <a href="people.html#t-members">members</a>, <a href="people.html#t-agents">agents</a></span></div><div class="col"><div><code>project</code><small>id</small></div><p>The project it belongs to, if any.</p><span class="to">points to <a href="people.html#t-projects">projects</a></span></div><div class="col"><div><code>assignee_kind, assignee</code><small>choice(member, agent) + id</small></div><p>Who holds it right now, if anyone.</p><span class="to">points to <a href="people.html#t-members">members</a>, <a href="people.html#t-agents">agents</a></span></div><div class="col"><div><code>goal, why, done_when</code><small>text</small></div><p>The plain summary: what it achieves, why it matters, and how to tell it is finished.</p><span></span></div><div class="col"><div><code>description</code><small>text</small></div><p>Longer detail.</p><span></span></div><div class="col"><div><code>ask, if_yes, if_no</code><small>text</small></div><p>A question for a person, and what happens on each answer.</p><span></span></div><div class="col"><div><code>answers</code><small>choice(yes-no, words)</small></div><p>How the question is answered.</p><span></span></div><div class="col"><div><code>asked_by_kind, asked_by</code><small>choice(member, agent) + id</small></div><p>Who set the question.</p><span class="to">points to <a href="people.html#t-members">members</a>, <a href="people.html#t-agents">agents</a></span></div><div class="col"><div><code>source_kind, source_id</code><small>text</small></div><p>Where the work came from, such as conversation and its id.</p><span class="to">points to <a href="conversations.html#t-conversations">conversations</a></span></div><div class="col"><div><code>spec_item, criterion</code><small>text</small></div><p>The line of a spec this task implements. One task per line.</p><span></span></div><div class="col"><div><code>close_reason</code><small>text</small></div><p>Why it was closed. The word cancelled marks it cancelled, not done.</p><span></span></div><div class="col"><div><code>created_by_kind, created_by</code><small>choice(member, agent) + id</small></div><p>Who filed it.</p><span class="to">points to <a href="people.html#t-members">members</a>, <a href="people.html#t-agents">agents</a></span></div><div class="col"><div><code>created_at, started_at, closed_at, changed_at</code><small>time</small></div><p>Filed, claimed, closed, and last touched.</p><span></span></div><div class="col"><div><code>position</code><small>number</small></div><p>Its place in the household&#x27;s hand-kept order, used to break ties.</p><span></span></div></div></details><details class="tbl t-violet" id="t-task_links"><summary><code>task_links</code><em>3 columns</em><span>How tasks depend on each other.</span></summary><div class="cols"><div class="col"><div><code>task</code><small>id</small></div><p>The task that depends.</p><span class="to">points to <a href="#t-tasks">tasks</a></span></div><div class="col"><div><code>depends_on</code><small>id</small></div><p>The task it depends on: its parent, or the task blocking it.</p><span class="to">points to <a href="#t-tasks">tasks</a></span></div><div class="col"><div><code>type</code><small>choice(parent-child, blocks)</small></div><p>Which kind of dependence.</p><span></span></div></div></details><details class="tbl t-violet" id="t-task_comments"><summary><code>task_comments</code><em>6 columns</em><span>Notes left on a task, oldest first.</span></summary><div class="cols"><div class="col"><div><code>task</code><small>id</small></div><p>The task.</p><span class="to">points to <a href="#t-tasks">tasks</a></span></div><div class="col"><div><code>seq</code><small>number</small></div><p>Its position among the task&#x27;s comments.</p><span></span></div><div class="col"><div><code>actor_kind, actor</code><small>choice(member, agent) + id</small></div><p>Who wrote it.</p><span class="to">points to <a href="people.html#t-members">members</a>, <a href="people.html#t-agents">agents</a></span></div><div class="col"><div><code>at</code><small>time</small></div><p>When.</p><span></span></div><div class="col"><div><code>text</code><small>text</small></div><p>What they wrote.</p><span></span></div></div></details></div></div>
+    <p class="note">Status, priority, project, owner and assignee are columns, so the ready queue, a project's task list and a person's assignments are each one query.</p>
+  </section>
+</div>
+<footer class="foot"><p>Next on the path: <b>Approvals</b>. Permission from a person for an agent to do one specific thing.</p><a class="btn" href="approvals.html">Approvals <span aria-hidden="true">›</span></a></footer>
+
+</main>
+</body>
+</html>

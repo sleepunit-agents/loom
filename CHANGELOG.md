@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Docs: `docs/how-it-works/` is the approved description of the finished product and the goal of the web rebuild; `docs/specs/web-foundation.md` is superseded where it differs.
+
 - Comms preview resolves private conversation references to current thread cards for their original member, with live state and fixed reader links.
 
 - Next Comms renders authorized reference chips in retained sealed questions, with live privacy fences and owning app navigation.
