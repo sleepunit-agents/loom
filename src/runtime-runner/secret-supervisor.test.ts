@@ -13,6 +13,7 @@ import {startLoom} from '../foundation.js';
 import {SharingDatabase} from '../core/household/sharing.js';
 import {signin,hash} from '../core/signin/index.js';
 import {runtimeStore} from '../pieces/runtime/store.js';
+import * as holderStorage from '../pieces/secrets/holder-store.js';
 import {openHolderStore} from '../pieces/secrets/holder-store.js';
 import {startPersistentHolder} from '../secret-holder-startup.js';
 import {inspectWorkerReceipts} from './receipts.js';
@@ -122,4 +123,31 @@ it('counts acknowledged delivery even when the original command subsequently fai
  expect(f.calls.some(c=>c.name==='finishJob')).toBe(false);
  expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.usage',{name:'API'})).toMatchObject({ok:true,value:{count:1,events:[{state:'released'}]}});
  expect(f.channels.closed.seen).toBe(true);
+});
+
+it('refuses the real holder read and delivery when usage admission fails',async()=>{
+ const read=vi.fn(),open=holderStorage.openHolderStore;
+ vi.spyOn(holderStorage,'openHolderStore').mockImplementation(async(...args)=>{
+  const store=await open(...args),original=store.read.bind(store);
+  store.read=(name)=>{read(name);return original(name);};return store;
+ });
+ const f=await setup();
+ f.app.db.exec("CREATE TRIGGER deny_use BEFORE INSERT ON secrets_uses BEGIN SELECT RAISE(ABORT,'synthetic-private-error'); END");
+ const spawn=vi.spyOn(ChildProcess.prototype,'spawn');
+ await expect(f.owner.run()).rejects.toThrow('Secret job supervisor unavailable');
+ expect(read).not.toHaveBeenCalled();expect(existsSync(f.marker)).toBe(false);
+ expect(f.app.db.prepare('SELECT * FROM secrets_uses').all()).toEqual([]);
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets').all()).toEqual([{state:'uncertain'}]);
+ expect(f.app.db.prepare("SELECT state FROM core_effects WHERE kind='secret-read'").all()).toEqual([{state:'uncertain'}]);
+ spawn.mockClear();f.app.db.exec('DROP TRIGGER deny_use');await expect(f.owner.run()).rejects.toThrow();
+ expect(spawn).not.toHaveBeenCalled();expect(f.channels.closed.seen).toBe(true);
+});
+it('leaves real delivery unconfirmed and cannot retry when final audit persistence fails',async()=>{
+ const f=await setup();
+ f.app.db.exec("CREATE TRIGGER deny_use_finish BEFORE UPDATE ON secrets_uses BEGIN SELECT RAISE(ABORT,'synthetic-private-error'); END");
+ await expect(f.owner.run()).rejects.toThrow('Secret job supervisor unavailable');
+ expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.usage',{name:'API'})).toMatchObject({ok:true,value:{count:0,events:[{state:'started'}]}});
+ const spawn=vi.spyOn(ChildProcess.prototype,'spawn');
+ f.app.db.exec('DROP TRIGGER deny_use_finish');await expect(f.owner.run()).rejects.toThrow();expect(spawn).not.toHaveBeenCalled();
+ expect(f.calls.some(c=>c.name==='finishJob')).toBe(false);expect(f.channels.closed.seen).toBe(true);
 });

@@ -1479,7 +1479,10 @@ failed final audit persistence leaves an unconfirmed started entry and cannot be
 retried through that consumed proof. An acknowledged delivery counts even if the
 consumer command later fails: Runtime command completion remains independent.
 
-The supervisor fixture covers both outcomes through the existing actual Runtime
+The supervisor fixture also injects audit admission and final-settlement storage
+failures through the real holder path: admission failure prevents holder read and credential delivery;
+failed final persistence remains unconfirmed and the original owner cannot retry.
+It covers both delivery/command outcomes through the existing actual Runtime
 HTTP, persistent encrypted holder and dedicated consumer. Its staging case stops
 at held Runtime input, creates neither ticket nor usage, and cannot restart the
 same one-shot owner after release. Ticket fixtures separately release the secret

@@ -479,7 +479,7 @@ it.each([undefined,'slack'])('accounts the original claim only after staging rel
  expect(f.tickets.claim(ticket.id)).toBeNull();
  expect(usage()).toMatchObject({value:{count:0,events:[]}});
  f.release(ticket.id);const original=f.tickets.claim(ticket.id)!;
- expect(usage()).toMatchObject({value:{count:0,events:[{state:'started',action:'issue',by:{kind:'agent',id:'art'},house:f.id,...(service?{service}:{})}]}});
+ expect(usage()).toEqual({ok:true,value:{count:0,lastUsedAt:null,events:[{id:expect.stringMatching(/^use-/),name:'API',at:f.clock.now(),state:'started',action:'issue',by:{kind:'agent',id:'art'},house:f.id,...(service?{service}:{})}]}});
  original.finish(true);original.finish(true);
  expect(usage()).toMatchObject({value:{count:1,events:[{state:'released'}]}});
  expect(f.tickets.claim(ticket.id)).toBeNull();
