@@ -131,3 +131,19 @@ it('stops queued work and records who reset it without accepting a later claim',
   expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
   expect(f.db.select().from(jobs).where(eq(jobs.id, job.id)).get()?.endedAt).toBe(f.now());
 });
+
+it('excludes muted mail from admission, snapshots and retry attribution', () => {
+  const f = fixture(), muted = f.send();
+  f.db.update(inbox).set({ volume: 'mute', words: 'Muted words' }).where(eq(inbox.id, muted.id)).run();
+  expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+  f.send();
+  const job = f.runtime.admit(f.conversation.id)!;
+  expect(job.brief).toBe('Hello');
+  expect(f.db.select().from(inbox).where(eq(inbox.id, muted.id)).get()).toMatchObject({ state: 'waiting', job: null });
+  f.runtime.claim(job.id, 'worker');
+  const retry = f.runtime.finish(job.id, 'worker', 1).retry!;
+  expect(retry.brief).toBe('Hello');
+  expect(f.db.select().from(inbox).where(eq(inbox.id, muted.id)).get()).toMatchObject({ state: 'waiting', job: null });
+  f.runtime.stop(retry.id, 'owner', 'reset');
+  expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
+});
