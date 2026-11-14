@@ -86,8 +86,9 @@ it('denies unbound, runner and forged body principals and every private Clock bo
   expect(f.app.db.prepare('SELECT * FROM attention_conversations').all()).toEqual([]);
  }
 });
-it.each(['withdrawn','credential','job','binding','box','policy','service','private','project'] as const)('rechecks current owning %s before metadata and digest writes',async drift=>{
+it.each(['source','withdrawn','credential','job','binding','box','policy','service','private','project'] as const)('rechecks current owning %s before metadata and digest writes',async drift=>{
  const f=await setup();expect(await f.post(f.body,'recordTurn',turn)).toMatchObject({ok:true});
+ if(drift==='source')f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.prompt','Changed source only') WHERE id=?").run(f.wake);
  if(drift==='withdrawn')f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.withdrawn',json('true')) WHERE id=?").run(f.wake);
  if(drift==='credential')signin(f.app).tokens.change(tokens=>{for(const t of tokens)if(t.sha256===hash(f.body))t.revoked=new Date(f.clock.now()).toISOString();});
  if(drift==='job')f.put('job',{...f.store.read('job',f.job)!,state:'stopped',endedAt:f.clock.now()});
