@@ -12,7 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Inbox: group Clock operational alerts, acknowledge them without changing scheduled work, and open Clock through its internal route.
 - Add next-mode Bridges status JSON for Discord and Slack with configured agents, intake holds and explicit staging mode.
 
 - Tests: give each test 20 s on CI instead of 5 s, after unrelated tests timed out on loaded shared runners and left main without a deployable build.
@@ -42,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add member-private Inbox read facts without answering asks or copying draft words.
 - Inbox now separates self-cleared asks into searchable FYI history, keeping human answers in Answered.
+- Inbox: group Clock operational alerts, acknowledge them without changing scheduled work, and open Clock through its internal route.
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 - File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.
