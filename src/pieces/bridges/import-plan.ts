@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
-import { readBridgeInventory, projectBridgeDocument, type BridgeSourceFile, type LegacyBridgeInventory } from './import-source.js';
+import { readBridgeInventory, projectBridgeDocument, bridgeSourceValue, BridgeSourceError, type BridgeSourceFile, type LegacyBridgeInventory } from './import-source.js';
 import { readBridgeStoreInventory, type BridgeStoreFile } from './import-stores.js';
 import { venueSchema, routeSchema, linkSchema, type Venue, type Route, type PersonLink } from './model.js';
 const name=z.string().min(1).max(200);
@@ -16,9 +16,9 @@ const canonical=(value:unknown):string=>Array.isArray(value)?`[${value.map(canon
 const hash=(v:string)=>createHash('sha256').update(v).digest('hex');
 const object=z.record(z.string(),z.unknown());
 // Assembly must not round a stored platform ID before the shared projection sees it.
-const parse=(raw:string):Record<string,unknown>=>object.parse(JSON.parse(raw,(_k:string,v:unknown,c?:{source?:string})=>{
+const parse=(raw:string):Record<string,unknown>=>object.parse(bridgeSourceValue(JSON.parse(raw,(_k:string,v:unknown,c?:{source?:string})=>{
   if(typeof v==='number'&&(!c?.source||!/^(0|[1-9]\d*)$/.test(c.source)||!Number.isSafeInteger(v)))return NaN;return v;
-}));
+})));
 const empty=():LegacyBridgeInventory=>({checksum:'',sources:[],instances:[],settings:[],accounts:[],routes:[]});
 /** Resolve the pinned shuttle routes_for/assemble contract, refusing lossy conflicts. */
 function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|undefined,parts:Map<string,string>):string|undefined {
@@ -203,5 +203,5 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     const expected={venues:unique(venues),routes:unique(routes.filter(r=>!blockedRoutes.has(r.id))),links:unique(links)};
     const evidence=JSON.stringify({inventory,stores,incomplete,retained}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping]));
     return {expected,evidence,mapping,checksum};
-  }catch{throw Error('Invalid offline Bridges import mapping or sources');}
+  }catch(error){if(error instanceof BridgeSourceError)throw error;throw Error('Invalid offline Bridges import mapping or sources');}
 }

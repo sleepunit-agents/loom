@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Bridges migration skips underscore annotation keys in every legacy source map before validation/assembly and reports safe file/field diagnostics; household rehearsal includes real note shapes.
+
 - Add an unregistered pinned metadata ticket authority channel for the separate Secrets holder; worker delivery and public get remain unavailable.
 
 - Add unregistered one-use Secrets handoff tickets with durable claims, exact grant/Runtime fences and staging holds; real worker delivery remains disabled.

@@ -4,6 +4,21 @@ import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { z } from 'zod';
 
+/** Annotation keys never participate in projection, including inside accepted store maps. */
+export function bridgeSourceValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(bridgeSourceValue);
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !key.startsWith('_')).map(([key, child]) => [key, bridgeSourceValue(child)]));
+  return value;
+}
+/** Only constructed from a known file kind and schema field paths; never exception text or values. */
+export class BridgeSourceError extends Error {
+  constructor(kind: BridgeSourceKind, path: PropertyKey[]) {
+    const file = kind.endsWith('-settings') ? `${kind.split('-')[0]}/settings.json` : `${kind}.json`;
+    super(`Invalid offline Bridges configuration inventory: ${file} at $${path.map(key => `[${JSON.stringify(String(key))}]`).join('')}`);
+  }
+}
+
 const id = z.string().min(1).max(200);
 const slug = z.string().regex(/^[a-z][a-z0-9-]{0,79}$/);
 const map = <T extends z.ZodType>(value: T) => z.record(z.string().min(1).max(200), value);
@@ -76,7 +91,8 @@ export function readBridgeInventory(files: readonly BridgeSourceFile[]): LegacyB
     }
     result.checksum = hash(JSON.stringify(result.sources));
     return result;
-  } catch {
+  } catch (error) {
+    if (error instanceof BridgeSourceError) throw error;
     // JSON, schema and filesystem exceptions can contain source words or paths.
     throw Error('Invalid offline Bridges configuration inventory');
   }
@@ -87,10 +103,11 @@ export function projectBridgeDocument(result: LegacyBridgeInventory, name: strin
       // The reviver's source is essential: JSON.parse can round a fractional or
       // unsafe numeric lexeme into a safe integer before schema validation.
       // Unknown metadata remains ignored; selected numeric fields reject NaN.
-      const raw: unknown = JSON.parse(source,
+      try {
+      const raw: unknown = bridgeSourceValue(JSON.parse(source,
         (_key: string, value: unknown, context?: { source?: string }) =>
           typeof value !== 'number' ? value : context?.source !== undefined
-            && /^(0|[1-9]\d*)$/.test(context.source) && Number.isSafeInteger(value) ? value : NaN);
+            && /^(0|[1-9]\d*)$/.test(context.source) && Number.isSafeInteger(value) ? value : NaN));
       if (kind === 'shuttle') {
         const v = shuttle.parse(raw);
         result.instances.push({source:name,agent:v.agent.slug,
@@ -100,8 +117,7 @@ export function projectBridgeDocument(result: LegacyBridgeInventory, name: strin
         const v = people.parse(raw);
         for (const [section,kind] of [['people','person'],['agents','agent']] as const) {
           for (const [owner,a] of Object.entries(v[section] ?? {})) {
-            if (owner.startsWith('_')) continue;
-            slug.parse(owner);
+            if (!slug.safeParse(owner).success) throw new BridgeSourceError('people', [section, owner]);
             for (const user of a.discord === undefined ? [] : list(a.discord)) result.accounts.push({source:name,owner,kind,platform:'discord',user});
             for (const [workspace,users] of Object.entries(a.slack ?? {})) for (const user of list(users)) result.accounts.push({source:name,owner,kind,platform:'slack',workspace,user});
           }
@@ -120,7 +136,12 @@ export function projectBridgeDocument(result: LegacyBridgeInventory, name: strin
         const document = z.record(z.string(),z.unknown()).parse(raw);
         const value = document[platform === 'discord' ? 'DISCORD_BOTS' : 'SLACK_BOTS'];
         // The old piece accepts settings as text and parses the JSON map itself.
-        const bots = z.record(slug,id).parse(value === undefined || value === '' ? {} : typeof value === 'string' ? JSON.parse(value) : value);
+        const bots = z.record(slug,id).parse(value === undefined || value === '' ? {} : bridgeSourceValue(typeof value === 'string' ? JSON.parse(value) : value));
         result.settings.push({source:name,platform,bots});
+      }
+      } catch (error) {
+        if (error instanceof BridgeSourceError) throw error;
+        if (error instanceof z.ZodError) throw new BridgeSourceError(kind, error.issues[0]?.path ?? []);
+        throw new BridgeSourceError(kind, []);
       }
 }

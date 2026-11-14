@@ -186,3 +186,18 @@ it('checks unknown-agent claims against all selected route bot identities before
  writeFileSync(f.sources.files[1].path,'{}');writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100',fez:'100'}}));
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
 });
+
+it('preserves safe source file and field diagnostics through the owning import projection',()=>{
+ const f=fixture();writeFileSync(f.sources.files[1].path,JSON.stringify({agents:{art:'PRIVATE_ACCOUNT_VALUE'}}));
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(/^Invalid offline Bridges configuration inventory: people.json at \$\["agents"\]\["art"\]$/);
+});
+it('skips annotations in accepted store assembly without changing exact private evidence',()=>{
+ const f=fixture();const note='PRIVATE_STORE_ANNOTATION';
+ f.store('shuttle',[['routes','household',{_note:note,guild:'789',channel_names:{_note:note,'300':'work'},webhook_peers:{_comment:'x'.repeat(395)}}],['channels','art',{_note:note,bot:'100',answers:{_note:note,'300':'work'},flags:{_note:note},threads:{_note:note},extra:{_note:note,ignore:{_note:note,'500':true}}}],['route-offers','art',{doc:{bots:{_note:note,art:'100'},channels:{_note:note,'300':{primary:'art'}}}}]]);
+ const s=readBridgeImport(f.sources,f.options,h,f.open);
+ expect(s.expected.routes.map(r=>r.channel)).toEqual(['300']);
+ expect(s.expected.venues[0].ignore).toEqual(['500']);
+ expect(JSON.stringify(s.expected)).not.toContain(note);
+ const evidence=JSON.parse(s.evidence).stores.stores[0].documents as {doc:string}[];
+ expect(evidence.some(d=>d.doc.includes(note))).toBe(true);
+});
