@@ -283,5 +283,5 @@ it('shows each owned agent’s latest three Activity entries with exact reader n
 });
 
 it('opens an owned agent’s dedicated window from its Home face',async()=>{
- const go=await draw();await act(async()=>tree!.root.findByProps({'aria-label':'Open Art agent window'}).props.onClick());expect(go).toHaveBeenLastCalledWith('/p/agents-preview/agent/art');
+ const go=await draw(),link=tree!.root.findByProps({'aria-label':'Open Art agent window'});expect(link.props.href).toBe('/p/agents-preview/agent/art');const preventDefault=vi.fn();await act(async()=>link.props.onClick({button:0,preventDefault}));expect(preventDefault).toHaveBeenCalled();expect(go).toHaveBeenLastCalledWith('/p/agents-preview/agent/art');go.mockClear();await act(async()=>link.props.onClick({button:0,ctrlKey:true,preventDefault}));expect(go).not.toHaveBeenCalled();
 });
