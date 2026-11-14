@@ -1,7 +1,7 @@
 /** Trusted job lifecycle. The worker executes; this service only changes records.
  * External machine identity is checked at the API door before calling it. */
 import { randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentModels, agentRunSettings, conversations, inbox, jobNeeds, jobs } from '../core/data/schema.js';
 
@@ -26,20 +26,24 @@ export class Jobs {
       if (existing) return existing;
       const mail = this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'))).orderBy(asc(inbox.seq)).all();
       if (!mail.length) return;
-      const last = this.db.select().from(jobs).where(eq(jobs.conversation, conversationId)).orderBy(desc(jobs.queuedAt), desc(jobs.id)).get();
-      if (last && last.state !== 'done' && !mail.some(item => item.at > (last.endedAt ?? last.queuedAt))) return;
+      // A waiting row's job is its last admission attempt, even before take().
+      // New mail has no job: no timestamp comparison can lose same-tick mail.
+      if (!mail.some(item => item.job === null)) return;
       const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, conversation.agent)).get();
       const model = this.db.select().from(agentModels).where(eq(agentModels.agent, conversation.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).get();
       if (!settings || !model) return;
-      const first = mail[0], at = this.now();
+      const at = this.now();
       const job = this.db.insert(jobs).values({
         id: `job-${randomUUID()}`, agent: conversation.agent, conversation: conversationId,
         project: conversation.project, member: conversation.member, title: conversation.label,
         state: 'queued', brief: mail.map(item => item.words ?? '').join('\n\n'), model: model.model,
-        startedByKind: first.fromKind, startedBy: first.fromId ?? first.to,
+        // Inbox admission is automatic work started by the receiving agent.
+        // The actual sender and source remain on each inbox item.
+        startedByKind: 'agent', startedBy: conversation.agent,
         houseRepository: settings.houseRepository, houseFile: settings.houseFile, houseBranch: settings.houseBranch, queuedAt: at,
       }).returning().get();
       if (settings.gpu) this.db.insert(jobNeeds).values({ job: job.id, need: 'gpu' }).run();
+      this.db.update(inbox).set({ job: job.id, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'))).run();
       this.db.update(conversations).set({ job: job.id }).where(eq(conversations.id, conversationId)).run();
       return job;
     }, { behavior: 'immediate' });
@@ -69,9 +73,9 @@ export class Jobs {
     });
   }
 
-  heartbeat(id: string, box: string, state: 'running' | 'waiting'): Job {
+  heartbeat(id: string, box: string, state: 'starting' | 'running' | 'waiting'): Job {
     return this.db.transaction(() => {
-      this.assigned(id, box, ['running', 'waiting']);
+      this.assigned(id, box, state === 'starting' ? ['starting'] : ['running', 'waiting']);
       return this.db.update(jobs).set({ state, heardAt: this.now() }).where(eq(jobs.id, id)).returning().get()!;
     });
   }
@@ -97,6 +101,7 @@ export class Jobs {
         claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, logTail: null,
       }).returning().get();
       for (const need of this.db.select().from(jobNeeds).where(eq(jobNeeds.job, id)).all()) this.db.insert(jobNeeds).values({ job: retry.id, need: need.need }).run();
+      this.db.update(inbox).set({ job: retry.id, changedAt: at }).where(and(eq(inbox.job, id), eq(inbox.state, 'waiting'))).run();
       if (before.conversation) this.db.update(conversations).set({ job: retry.id }).where(eq(conversations.id, before.conversation)).run();
       return { job, retry };
     }, { behavior: 'immediate' });
@@ -124,8 +129,9 @@ export class Jobs {
   private end(job: Job, state: Job['state'], values: Partial<Job>): Job {
     const ended = this.db.update(jobs).set({ ...values, state }).where(eq(jobs.id, job.id)).returning().get()!;
     // Unconfirmed mail survives a dead body, with no receipt fabricated for it.
-    this.db.update(inbox).set({ state: 'waiting', job: null, takenAt: null, changedAt: this.now() })
+    this.db.update(inbox).set({ state: 'waiting', takenAt: null, changedAt: this.now() })
       .where(and(eq(inbox.job, job.id), eq(inbox.state, 'taken'))).run();
+    if (state === 'done') this.db.update(inbox).set({ job: null }).where(and(eq(inbox.job, job.id), eq(inbox.state, 'waiting'))).run();
     if (job.conversation) this.db.update(conversations).set({ job: null })
       .where(and(eq(conversations.id, job.conversation), eq(conversations.job, job.id))).run();
     return ended;
