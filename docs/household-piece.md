@@ -1099,7 +1099,7 @@ configuration continues to report `awaiting-runner`.
 
 `encryptHouseholdBundle` in `src/core/household/backup-bundle.ts` composes the
 filtered fresh app image, explicit continuity snapshots and paired attachments,
-allowlisted documents, an exact borrowed 32-byte cookie key and an **owning opaque
+allowlisted documents, an exact optional borrowed 32-byte imported cookie-key file and an **owning opaque
 Secrets recovery part**. Its temporary required `HouseholdSecretsRecovery` role
 exports owner-encrypted recovery covering holder values, identities and historical
 fingerprint/receipt keys, then verifies restoration of the part read from the
@@ -1112,7 +1112,10 @@ file payloads, inside native age encryption. This replaces the old gzipped tar
 as an internal technical choice: it needs no process, plaintext directory, tar
 extraction or base64 expansion. No public restore command consumes it yet. The
 manifest records relative file paths, exact lengths/hashes and deliberate absent
-continuity stores; it never carries a drill identity or machine arming state.
+continuity stores and explicitly absent cookie-key file; it never carries a drill identity or machine arming state.
+Fresh next homes have no cookie-key file: next sign-in keeps its CSRF key in
+`household_settings`, already covered by the filtered app image. An explicit
+`null` records file absence; no old-side file is discovered or new key minted.
 Each independent owner recipient and the separate machine-local drill identity
 can decrypt the envelope. SSH recipient execution still refuses.
 

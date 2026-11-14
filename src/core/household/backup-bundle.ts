@@ -27,8 +27,9 @@ export interface HouseholdBundleInput {
   db: Db;
   home: string;
   continuity: ContinuitySources;
-  /** Trusted exact sign-in key from the selected home. Borrowed, never wiped. */
-  cookieKey: Buffer;
+  /** Exact optional imported cookie-key file. null records deliberate absence.
+   * Next sign-in CSRF key is already in the filtered app rows. Borrowed. */
+  cookieKey: Buffer | null;
   secrets: HouseholdSecretsRecovery;
   recipients: readonly string[];
   /** Dedicated machine-local identity; never part of the archive. */
@@ -59,10 +60,10 @@ export async function encryptHouseholdBundle(input: HouseholdBundleInput, budget
       if (!Number.isSafeInteger(budget[key]) || budget[key] <= 0 || budget[key] > limits[key]) throw Error();
     const recipients = [...input.recipients];
     if (!recipients.length || recipients.length > 100 || recipients.some(key => !/^age1[0-9a-z]+$/.test(key) || !validBackupRecipient(key))) throw Error();
-    if (!Buffer.isBuffer(input.cookieKey) || input.cookieKey.length !== 32
+    if ((input.cookieKey !== null && (!Buffer.isBuffer(input.cookieKey) || input.cookieKey.length !== 32))
       || typeof input.secrets?.export !== 'function' || typeof input.secrets.verifyRestore !== 'function') throw Error();
     // Pin the borrowed key and role before the first asynchronous boundary.
-    const cookieKey = own(Buffer.from(input.cookieKey)), secrets = input.secrets;
+    const cookieKey = input.cookieKey === null ? null : own(Buffer.from(input.cookieKey)), secrets = input.secrets;
     const identity = input.drillIdentity;
     const drillRecipient = await identityToRecipient(identity);
     if (recipients.includes(drillRecipient)) throw Error();
@@ -73,7 +74,7 @@ export async function encryptHouseholdBundle(input: HouseholdBundleInput, budget
     const continuity = captureHouseholdContinuity(input.home, input.continuity);
     for (const file of [...continuity.databases, ...continuity.files]) own(file.bytes);
     const file = (path: string, bytes: Buffer): PortableFile => ({ path, bytes, sha256: sha256(bytes) });
-    const files = [file('loom.db', app.bytes), ...continuity.databases, ...continuity.files, file('ui-cookie.key', cookieKey)];
+    const files = [file('loom.db', app.bytes), ...continuity.databases, ...continuity.files, ...(cookieKey ? [file('ui-cookie.key', cookieKey)] : [])];
     let total = files.reduce((sum, item) => sum + item.bytes.length, 0);
     if (total > budget.bundleBytes) throw Error();
     const recovery = own(await secrets.export(Object.freeze([...recipients])));
@@ -82,7 +83,7 @@ export async function encryptHouseholdBundle(input: HouseholdBundleInput, budget
     // Stable length-prefixed binary envelope: no tar extraction, recursion,
     // base64 expansion, path execution, or plaintext staging directory.
     const manifest: Manifest = { format: 'loom-next-household', version: 1,
-      files: files.map(item => ({ path: item.path, bytes: item.bytes.length, sha256: item.sha256 })), absent: continuity.absent };
+      files: files.map(item => ({ path: item.path, bytes: item.bytes.length, sha256: item.sha256 })), absent: [...continuity.absent, ...(cookieKey === null ? ['ui-cookie.key'] : [])] };
     const header = own(Buffer.from(JSON.stringify(manifest)));
     const length = Buffer.alloc(4); length.writeUInt32BE(header.length);
     total += magic.length + length.length + header.length;
@@ -117,7 +118,7 @@ export async function encryptHouseholdBundle(input: HouseholdBundleInput, budget
     if (offset !== restored.length) throw Error();
     return { bytes: ciphertext, coverage: 'explicit-household-inputs' as const,
       drill: { app: true, continuity: true, files: true, cookieKey: true, secrets: true } as const,
-      files: files.length, absent: continuity.absent.length };
+      files: files.length, absent: manifest.absent.length };
   } catch {
     throw new Error('Encrypted household bundle or restore drill failed');
   } finally {

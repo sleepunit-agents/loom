@@ -5,11 +5,16 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { Decrypter, Encrypter, generateX25519Identity, identityToRecipient } from 'age-encryption';
+import * as imageModule from '../db/export-image.js';
+import * as continuityModule from './backup-continuity.js';
+import { startLoom } from '../../foundation.js';
+import { fixture as fixtureHome, installFixture } from '../../fixture.js';
+import { FakeClock } from '../clock.js';
 import { registerExportFilter } from '../db/export.js';
 import { encryptHouseholdBundle, type HouseholdBundleInput } from './backup-bundle.js';
 
-const closers: (() => void)[] = [];
-afterEach(() => { vi.restoreAllMocks(); for (const close of closers.splice(0).reverse()) close(); });
+const closers: (() => void | Promise<void>)[] = [];
+afterEach(async () => { vi.restoreAllMocks(); for (const close of closers.splice(0).reverse()) await close(); });
 const failure = /^Encrypted household bundle or restore drill failed$/;
 async function fixture() {
   const home = mkdtempSync(join(tmpdir(), 'loom-bundle-')); closers.push(() => rmSync(home, { recursive: true, force: true }));
@@ -31,6 +36,13 @@ async function fixture() {
     cookieKey: Buffer.alloc(32, 73), secrets: { export: vi.fn(async () => recovery), verifyRestore },
     recipients: [await identityToRecipient(owner), await identityToRecipient(secondOwner)], drillIdentity };
   return { input, owner, secondOwner, recovery, verifyRestore, notes };
+}
+function observeCrypto() {
+  const seen: { plain?: Uint8Array; opened?: Uint8Array } = {};
+  const encrypt = Encrypter.prototype.encrypt, decrypt = Decrypter.prototype.decrypt;
+  vi.spyOn(Encrypter.prototype, 'encrypt').mockImplementation(async function(this: Encrypter, bytes) { seen.plain = bytes as Uint8Array; return encrypt.call(this, bytes); });
+  vi.spyOn(Decrypter.prototype, 'decrypt').mockImplementation(async function(this: Decrypter, bytes) { seen.opened = await decrypt.call(this, bytes); return seen.opened; });
+  return seen;
 }
 function unpack(bytes: Buffer) {
   const start = Buffer.from('loom-next-household\0\x01').length + 4;
@@ -88,13 +100,10 @@ it.each(['export', 'verifyRestore'] as const)('refuses a failed Secrets %s witho
   if (method === 'verifyRestore') expect(f.recovery.every(byte => byte === 0)).toBe(true);
 });
 it('wipes plaintext and decrypted buffers on success; verifier gets bytes from the decrypted envelope', async () => {
-  const f = await fixture(); let plain: Uint8Array | undefined, opened: Uint8Array | undefined, verified: Buffer | undefined;
-  const encrypt = Encrypter.prototype.encrypt, decrypt = Decrypter.prototype.decrypt;
-  vi.spyOn(Encrypter.prototype, 'encrypt').mockImplementation(async function(this: Encrypter, bytes) { plain = bytes as Uint8Array; return encrypt.call(this, bytes); });
-  vi.spyOn(Decrypter.prototype, 'decrypt').mockImplementation(async function(this: Decrypter, bytes) { opened = await decrypt.call(this, bytes); return opened; });
-  f.input.secrets.verifyRestore = vi.fn(async bytes => { verified = bytes; expect(opened).toBeDefined(); expect(bytes).not.toBe(f.recovery); });
+  const f = await fixture(), seen = observeCrypto(); let verified: Buffer | undefined;
+  f.input.secrets.verifyRestore = vi.fn(async bytes => { verified = bytes; expect(seen.opened).toBeDefined(); expect(bytes).not.toBe(f.recovery); });
   const result = await encryptHouseholdBundle(f.input);
-  for (const bytes of [plain, opened, verified, f.recovery]) { expect(bytes?.length).toBeGreaterThan(0); expect(bytes?.every(byte => byte === 0)).toBe(true); }
+  for (const bytes of [seen.plain, seen.opened, verified, f.recovery]) { expect(bytes?.length).toBeGreaterThan(0); expect(bytes?.every(byte => byte === 0)).toBe(true); }
   expect(result.bytes.some(byte => byte !== 0)).toBe(true);
 });
 it.each(['encrypt', 'decrypt', 'changed', 'verify-mutates'] as const)('fails closed and clears allocations after %s failure', async mode => {
@@ -123,19 +132,75 @@ it.each([
   ['app', 'integrity_check'], ['app', 'foreign_key_check'],
   ['continuity', 'integrity_check'], ['continuity', 'foreign_key_check'],
 ] as const)('rejects and wipes a %s %s failure only after bundle decryption', async (kind, check) => {
-  const f = await fixture(); let plain: Uint8Array | undefined, opened: Uint8Array | undefined;
-  const encrypt = Encrypter.prototype.encrypt, decrypt = Decrypter.prototype.decrypt, pragma = Database.prototype.pragma;
-  vi.spyOn(Encrypter.prototype, 'encrypt').mockImplementation(async function(this: Encrypter, bytes) { plain = bytes as Uint8Array; return encrypt.call(this, bytes); });
-  vi.spyOn(Decrypter.prototype, 'decrypt').mockImplementation(async function(this: Decrypter, bytes) { opened = await decrypt.call(this, bytes); return opened; });
+  const f = await fixture(), seen = observeCrypto(); const pragma = Database.prototype.pragma;
   let injected = false;
   vi.spyOn(Database.prototype, 'pragma').mockImplementation(function(this: Database.Database, sql: string, options?: Database.PragmaOptions) {
-    if (opened && sql === check && this.prepare("SELECT 1 FROM sqlite_master WHERE name=?").get(kind === 'app' ? 'records' : 'note_files')) {
+    if (seen.opened && sql === check && this.prepare("SELECT 1 FROM sqlite_master WHERE name=?").get(kind === 'app' ? 'records' : 'note_files')) {
       injected = true; return check === 'integrity_check' ? 'damaged' : [{ table: 'broken' }];
     }
     return pragma.call(this, sql, options);
   });
   await expect(encryptHouseholdBundle(f.input)).rejects.toThrow(failure);
   expect(injected).toBe(true); expect(f.verifyRestore).not.toHaveBeenCalled();
-  for (const bytes of [plain, opened, f.recovery]) { expect(bytes?.length).toBeGreaterThan(0); expect(bytes?.every(byte => byte === 0)).toBe(true); }
+  for (const bytes of [seen.plain, seen.opened, f.recovery]) { expect(bytes?.length).toBeGreaterThan(0); expect(bytes?.every(byte => byte === 0)).toBe(true); }
   expect(f.input.cookieKey).toEqual(Buffer.alloc(32, 73));
+});
+
+it.each(['success', 'app-limit', 'export-failure', 'envelope-limit', 'verify-failure'] as const)('clears every owned input allocation after %s', async mode => {
+  const f = await fixture(); let ceiling: number | undefined;
+  if (mode === 'envelope-limit') {
+    const app = imageModule.exportDatabaseImage(f.input.db), continuity = continuityModule.captureHouseholdContinuity(f.input.home, f.input.continuity);
+    const payloads = [app.bytes, ...[...continuity.databases, ...continuity.files].map(f => f.bytes)];
+    ceiling = payloads.reduce((n, bytes) => n + bytes.length, 0) + 32 + f.recovery.length;
+    for (const bytes of payloads) bytes.fill(0);
+  }
+  const seen = observeCrypto(), allocated: Buffer[] = [];
+  const image = imageModule.exportDatabaseImage, capture = continuityModule.captureHouseholdContinuity, from = Buffer.from;
+  vi.spyOn(imageModule, 'exportDatabaseImage').mockImplementation(db => { const out = image(db); allocated.push(out.bytes); return out; });
+  vi.spyOn(continuityModule, 'captureHouseholdContinuity').mockImplementation((...args) => {
+    const out = capture(...args); allocated.push(...[...out.databases, ...out.files].map(file => file.bytes)); return out;
+  });
+  const named = new Map<string, Buffer>();
+  vi.spyOn(Buffer, 'from').mockImplementation((...args: unknown[]) => {
+    const out = Reflect.apply(from, Buffer, args) as Buffer;
+    if (args[0] === f.input.cookieKey) named.set('key', out);
+    if (typeof args[0] === 'string' && args[0].startsWith('{"format":"loom-next-household"')) named.set('manifest', out);
+    return out;
+  });
+  if (mode === 'export-failure') f.input.secrets.export = async () => { throw Error('PRIVATE'); };
+  if (mode === 'verify-failure') f.input.secrets.verifyRestore = async () => { throw Error('PRIVATE'); };
+  const budget = { appBytes: mode === 'app-limit' ? 1 : 256 * 1024 * 1024, secretsBytes: 256 * 1024 * 1024,
+    bundleBytes: ceiling ?? 896 * 1024 * 1024 };
+  const result = encryptHouseholdBundle(f.input, budget);
+  if (mode === 'success') await result; else await expect(result).rejects.toThrow(failure);
+  expect(named.has('key')).toBe(true);
+  expect(allocated.length).toBe(mode === 'app-limit' ? 1 : 4);
+  if (['success', 'envelope-limit', 'verify-failure'].includes(mode)) expect(named.has('manifest')).toBe(true);
+  for (const bytes of [...allocated, ...named.values(), ...[seen.plain, seen.opened].filter((b): b is Uint8Array => !!b)])
+    expect(bytes.every(byte => byte === 0)).toBe(true);
+  expect(f.input.cookieKey).toEqual(Buffer.alloc(32, 73));
+});
+it('composes and independently opens the real next-mode fixture app with its owning export filters', async () => {
+  const f = await fixture(), home = mkdtempSync(join(tmpdir(), 'loom-bundle-next-'));
+  closers.push(() => rmSync(home, { recursive: true, force: true })); fixtureHome(home);
+  const app = await startLoom({ home, next: true, clock: new FakeClock(), install: installFixture, stdout: () => {} });
+  closers.push(() => app.close());
+  const agents = ['art', 'mark', 'pond-bot'];
+  for (const agent of agents) { mkdirSync(join(home, 'agents', agent), { recursive: true }); writeFileSync(join(home, 'agents', agent, 'IDENTITY.md'), `CREED_${agent}`); }
+  const result = await encryptHouseholdBundle({ ...f.input, db: app.db, home, cookieKey: null,
+    continuity: { agents: agents.map(agent => ({ agent, memories: null, notes: null })), knowledge: null, people: null } });
+  const decrypt = new Decrypter(); decrypt.addIdentity(f.owner); const plain = await decrypt.decrypt(result.bytes);
+  try {
+    const { files, manifest } = unpack(Buffer.from(plain.buffer, plain.byteOffset, plain.byteLength));
+    expect(manifest.absent).toContain('ui-cookie.key');
+    const restored = new Database(files.get('loom.db')!);
+    try {
+      expect(restored.pragma('integrity_check', { simple: true })).toBe('ok');
+      expect(restored.prepare('SELECT count(*) AS n FROM tasks_tasks').get()).toEqual({ n: 4 });
+      expect(restored.prepare("SELECT body FROM household_settings WHERE id='signin-csrf-key'").get()).toEqual(app.db.prepare("SELECT body FROM household_settings WHERE id='signin-csrf-key'").get());
+      expect(files.has('ui-cookie.key')).toBe(false);
+      expect(restored.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'comms_%'").all()).toEqual([]);
+      for (const agent of agents) expect(files.get(`agents/${agent}/IDENTITY.md`)?.toString()).toBe(`CREED_${agent}`);
+    } finally { restored.close(); }
+  } finally { plain.fill(0); }
 });
