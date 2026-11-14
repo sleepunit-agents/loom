@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Next Comms renders authorized reference chips in retained sealed questions, with live privacy fences and owning app navigation.
+
 - Reconcile Clock documentation with merged prompt/file execution, provenance, control and recovery work; retain explicit gaps before cutover.
 
 - Clock owner vouch records fresh owner authorship so eligible imported prompts can reach the native worker after current authority checks.
