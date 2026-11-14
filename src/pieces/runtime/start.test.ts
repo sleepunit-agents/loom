@@ -619,7 +619,7 @@ it.each([false,true].flatMap(staging=>['once','recurring','runNow'].map(mode=>({
  }
 });
 
-it.each(['place','claim','runner','house'] as const)('pins the original Clock %s across asynchronous read preparation',async changed=>{
+it.each(['place','claim','runner','box','house'] as const)('pins the original Clock %s across asynchronous read preparation',async changed=>{
  const f=await setup(),id=await f.schedule(),job=f.store.ids('job')[0];
  expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
  const payload=await f.post(f.runner,'takeInput',{job});
@@ -632,7 +632,8 @@ it.each(['place','claim','runner','house'] as const)('pins the original Clock %s
   if(changed==='place'){
    const {changedAt:__,...b}=binding;f.store.put('binding',{...b,place:'lane:replacement'},f.clock.now());
   }else if(changed==='claim')f.store.put('job',{...j,claimedAt:before.claimedAt!+1},f.clock.now());
-  else if(changed==='runner')f.store.put('job',{...j,runner:'b',box:'b'},f.clock.now());
+  else if(changed==='runner')f.store.put('job',{...j,runner:'b'},f.clock.now());
+  else if(changed==='box')f.store.put('job',{...j,box:'b'},f.clock.now());
   else {
    const settings=f.store.read('settings','art')!;
    const {changedAt:__,...s}=settings;
