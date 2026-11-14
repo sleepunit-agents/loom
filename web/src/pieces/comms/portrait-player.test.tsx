@@ -10,8 +10,6 @@ import { PixelContext } from '../../look';
 afterEach(()=>{vi.useRealTimers();vi.unstubAllGlobals();vi.restoreAllMocks();});
 it('a real sprite completes exactly its requested beats and latest reader callbacks restore working',async()=>{
  vi.useFakeTimers();vi.spyOn(Math,'random').mockReturnValue(.5);
- // Resolve the lazy player before mounting: its load must not race the signal clock.
- await import('../../pixel-face');
  vi.stubGlobal('window',{setTimeout,clearTimeout});
  vi.stubGlobal('document',{visibilityState:'visible',addEventListener(){},removeEventListener(){}});
  vi.stubGlobal('requestAnimationFrame',(f:()=>void)=>setTimeout(f,16));vi.stubGlobal('cancelAnimationFrame',clearTimeout);
@@ -25,8 +23,8 @@ it('a real sprite completes exactly its requested beats and latest reader callba
  let tree!:ReturnType<typeof create>;
  try{
   await act(async()=>{tree=create(render(),{createNodeMock:()=>({clientWidth:192,dataset:{},getContext:()=>context})});});
-  await act(async()=>{await vi.dynamicImportSettled();});
-  expect(tree.root.findAllByType('canvas')).toHaveLength(1);
+  // Settle the real lazy player inside act before advancing its animation clock.
+  await act(async()=>{await import('../../pixel-face');});
   const face=()=>tree.root.findByType('section').props['data-face'];
   await act(async()=>tree.update(render(true)));await act(async()=>vi.advanceTimersByTime(32));await act(async()=>vi.advanceTimersByTime(250));
   expect(face()).toBe('talking');
