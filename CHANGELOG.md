@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Add bounded, descriptor-pinned capture of allowlisted context documents and referenced note attachments for a future household bundle; full backup execution remains pending.
+- Expose private persistent-holder worker route replacement with complete selection preflight and retirement of original claims and clients.
 
 - Bind sealed typed Comms replies and retry receipts to the retained original encrypted question and owning route.
 - Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
