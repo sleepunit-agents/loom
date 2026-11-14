@@ -1,5 +1,5 @@
 /** Durable, deliberately requested test sends. Never IO inside an operation. */
-import webpush from 'web-push';
+import { pushTransport, type PushTransport } from './push-transport.js';
 import { z } from 'zod';
 import { isClosing, type Foundation } from '../app.js';
 import { migrate } from '../db/index.js';
@@ -12,7 +12,7 @@ import { deviceRef, notificationMember, notificationBrowserAllowed, subscription
 
 export interface NotificationSendOptions {
   /** Trusted composition/test seam only, never operation input. */
-  send?: typeof webpush.sendNotification;
+  send?: PushTransport;
 }
 type State = 'queued' | 'sent' | 'gone' | 'failed' | 'uncertain' | 'cancelled';
 interface Request { id:string; member:string; ref:string; binding:string; at:number; state:State }
@@ -22,7 +22,7 @@ export function installNotificationSending(app:Foundation,effects:OutsideEffects
     id TEXT PRIMARY KEY, member TEXT NOT NULL, ref TEXT NOT NULL, binding TEXT NOT NULL,
     at INTEGER NOT NULL, state TEXT NOT NULL
   )`}]);
-  const s=signin(app),sharing=new SharingDatabase(app.db,''),send=options.send??webpush.sendNotification.bind(webpush);
+  const s=signin(app),sharing=new SharingDatabase(app.db,''),send=options.send??pushTransport;
   const allowed=(v:Viewer)=>mayAct(v,{member:v.id},sharing.sharing());
   const rows=()=>app.db.prepare('SELECT * FROM notifications_tests ORDER BY at,id').all() as Request[];
   const publish=(id:string)=>app.live.changed([{type:'notifications.test',id}]);
@@ -54,14 +54,16 @@ export function installNotificationSending(app:Foundation,effects:OutsideEffects
       if(!t||t.binding!==r.binding){finish(r,'cancelled');continue;}
       if(!effects.beforeOutside({id:effectId(r.id),kind:'push',title:'Test notification'}))continue;
       let state:State='sent';
+      const abort=new AbortController(),deadline=app.operations.clock.at(app.operations.clock.now()+15_000,()=>abort.abort());
       try {
         await send(t.sub,JSON.stringify({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'}),{
           vapidDetails:{subject:'mailto:loom@localhost',...t.vapid},TTL:600,urgency:'high',timeout:15_000,
-        });
+        },abort.signal);
       } catch(error){
         const code=(error as {statusCode?:number}|null)?.statusCode;
         state=code===404||code===410?'gone':typeof code==='number'?'failed':'uncertain';
       }
+      finally{deadline();}
       // Never erase a re-enabled/reassigned subscription after a late 410.
       const current=target(r.member,r.ref);
       if(state==='gone'&&current?.binding===r.binding){
@@ -80,7 +82,7 @@ export function installNotificationSending(app:Foundation,effects:OutsideEffects
   }
   app.operations.register(operation({name:'notifications.test',write:true,windowOnly:true,doors:['socket'],recheckPolicy:true,
     input:z.object({ref:z.string().regex(/^[0-9a-f]{64}$/)}).strict(),output:z.object({id:z.string(),state:z.literal('queued')}).strict(),
-    may:v=>notificationBrowserAllowed(s,v,sharing.sharing()),
+    may:v=>active()&&notificationBrowserAllowed(s,v,sharing.sharing()),
     run:(ctx,i)=>{
       const t=target(ctx.viewer.id,i.ref);if(!t)throw new OperationError('not-found','No matching notification device');
       if(rows().filter(r=>r.member===ctx.viewer.id&&r.state==='queued').length>=20)throw new OperationError('conflict','Too many pending test notifications');

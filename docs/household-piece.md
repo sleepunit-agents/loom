@@ -794,9 +794,9 @@ No schema, importer or old-side change is needed.
 | legacy push watch | Pending daemon job; never call SessionStore/watch from next |
 
 These are page operations; no previous notification CLI needs replacing. The
-Account controls and browser subscription API are implemented below. Test notification
-delivery and daemon dispatch (eligibility, dedupe, rate limits, staging) remain
-part of t-2203 before the final move.
+Account controls and browser subscription API are implemented below. The staged
+test-send backend is implemented at the end of this page; its Account control
+and routine daemon dispatch remain part of t-2203 before the final move.
 
 
 ### Account notification controls
@@ -819,8 +819,8 @@ mutation lock with passkey/session changes. CI extends the single two-window
 Account acceptance using a fake browser Push API with real cookie/socket operations,
 Live updates and six notification-focused images. It does not contact a push host.
 
-Test sending and daemon dispatch remain pending; registering a device does not yet
-send notifications. The existing worker display/tap behavior is unchanged.
+The Account test-send control and routine dispatch remain pending. Registering
+a device alone does not send notifications. The existing worker display/tap behavior is unchanged.
 
 Quiet reconciliation intentionally runs automatically, rather than asking for a
 click to restore an already-enabled browser. This is a narrow exception to the
@@ -849,7 +849,10 @@ submission and resolves them again before sending. Every attempt claims its
 stable `notifications:test:<id>` effect outside the operation transaction.
 Staging holds it for `core.releaseEffect`; startup resumes held/queued work,
 but interrupted attempts become uncertain and are never automatically resent.
-Shutdown stops admission and waits for in-flight IO (transport timeout 15 seconds).
+Shutdown stops admission and waits for in-flight IO. An absolute 15-second
+daemon-clock deadline aborts the owned HTTPS request, even if the service keeps
+trickling response data. Web-push still encrypts and signs the request; the
+transport drains responses without retaining diagnostics.
 A fresh explicit request is needed after failure or uncertainty. At most twenty
 requests per member may remain queued at once.
 

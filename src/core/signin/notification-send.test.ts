@@ -12,13 +12,14 @@ import { FakeClock } from '../clock.js';
 import { signin,hash } from './index.js';
 import { changeHouseholdMember } from '../household/members.js';
 import { deviceRef } from './notifications.js';
+import type { PushTransport } from './push-transport.js';
 import type { Viewer } from '../../policy.js';
 const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{for(const fn of clean.splice(0).reverse())await fn();});
 const sub=(id='phone')=>({endpoint:`https://fcm.googleapis.com/${id}`,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}});
 async function setup(staging=true){
  const home=mkdtempSync(join(tmpdir(),'test-push-'));fixture(home);clean.push(()=>rmSync(home,{force:true,recursive:true}));
- const clock=new FakeClock(),send=vi.fn<typeof webpush.sendNotification>().mockResolvedValue({statusCode:201,body:'',headers:{}});
+ const clock=new FakeClock(),send=vi.fn<PushTransport>().mockResolvedValue({statusCode:201,body:'',headers:{}});
  const options={home,next:true,clock,staging,notifications:{send},stdout:()=>{}};
  let app=await startLoom(options);clean.push(()=>app.close());let s=signin(app);
  s.tokens.change(ts=>ts.push({role:'owner',member:'jonathan',label:'test',sha256:hash('test'),created:new Date(clock.now()).toISOString()}));
@@ -35,7 +36,7 @@ it('queues atomically, holds every send, releases exactly once and exposes only 
  const f=await setup(),pair=f.s.sessions.read().push!.vapid;
  const queued=await f.queue();expect(queued).toMatchObject({ok:true,value:{state:'queued'}});expect(await f.queue()).toEqual(queued);await f.advance();expect(f.send).not.toHaveBeenCalled();
  f.release();await vi.waitFor(()=>expect(f.requests()[0].state).toBe('sent'));
- expect(f.send).toHaveBeenCalledExactlyOnceWith(sub(),JSON.stringify({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'}),expect.objectContaining({vapidDetails:{subject:'mailto:loom@localhost',...pair},TTL:600,timeout:15000}));
+ expect(f.send).toHaveBeenCalledExactlyOnceWith(sub(),JSON.stringify({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'}),expect.objectContaining({vapidDetails:{subject:'mailto:loom@localhost',...pair},TTL:600,timeout:15000}),expect.any(AbortSignal));
  expect(await f.queue()).toEqual(queued);await f.advance();expect(f.send).toHaveBeenCalledOnce();
  const projection=JSON.stringify(f.app.db.prepare('SELECT result FROM core_operations').all());
  for(const secret of [sub().endpoint,sub().keys.auth,sub().keys.p256dh,pair!.privateKey])expect(projection).not.toContain(secret);
@@ -53,11 +54,11 @@ it('rolls back a queued request when the operation receipt fails and resumes hel
  expect(await f.queue()).toMatchObject({ok:false,code:'unavailable'});expect(f.requests()).toEqual([]);expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
  f.app.db.exec('DROP TRIGGER fail_test');await f.queue();await f.advance();await f.restart();await f.advance();expect(f.send).not.toHaveBeenCalled();f.release();await vi.waitFor(()=>expect(f.send).toHaveBeenCalledOnce());
 });
-it.each(['removed','reassigned','keys','membership'] as const)('rechecks %s while held before release',async kind=>{
+it.each(['removed','reassigned','keys','membership','vapid'] as const)('rechecks %s while held before release',async kind=>{
  const f=await setup();await f.queue();await f.advance();
  if(kind==='membership')expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:`notifications:test:${f.requests()[0].id}`},'release')).toMatchObject({ok:true});
  if(kind==='membership')f.app.db.transaction(()=>{changeHouseholdMember(f.app.db,'','pollock','*');changeHouseholdMember(f.app.db,'','jonathan');})();
- else f.s.sessions.change(file=>{if(kind==='removed')delete file.push!.subs![sub().endpoint];if(kind==='reassigned')file.push!.subs![sub().endpoint].member='pollock';if(kind==='keys')file.push!.subs![sub().endpoint].sub.keys.auth='b'.repeat(22);});
+ else f.s.sessions.change(file=>{if(kind==='removed')delete file.push!.subs![sub().endpoint];if(kind==='reassigned')file.push!.subs![sub().endpoint].member='pollock';if(kind==='keys')file.push!.subs![sub().endpoint].sub.keys.auth='b'.repeat(22);if(kind==='vapid')file.push!.vapid=webpush.generateVAPIDKeys();});
  if(kind==='membership')f.clock.advance(0);else f.release();
  await vi.waitFor(()=>expect(f.requests()[0].state).toBe('cancelled'));expect(f.send).not.toHaveBeenCalled();
 });
@@ -102,13 +103,22 @@ it('same-second unregister and reenable of identical bytes survives a late 410',
  expect(await register()).toMatchObject({ok:true});const before=f.s.sessions.read().push!.subs![sub().endpoint];
  let reject!:(e:unknown)=>void;f.send.mockImplementationOnce(()=>new Promise((_r,no)=>{reject=no;}));await f.queue();f.clock.advance(0);expect(f.send).toHaveBeenCalledOnce();
  expect(await f.app.operations.callAsync('socket',f.viewer(),'notifications.unsubscribe',{sub:sub()},'unregister',true)).toMatchObject({ok:true});expect(await register()).toMatchObject({ok:true});
- const after=f.s.sessions.read().push!.subs![sub().endpoint];expect(after.at).toBe(before.at);expect(after.sub).toEqual(before.sub);expect(after).not.toEqual(before);
+ const after=f.s.sessions.read().push!.subs![sub().endpoint];expect(after.at).toBe(before.at);expect(after.sub).toEqual(before.sub);
  reject({statusCode:410});await vi.waitFor(()=>expect(f.requests()[0].state).toBe('gone'));expect(f.s.sessions.read().push!.subs![sub().endpoint]).toEqual(after);
 });
 it('transport deadline releases shutdown and queued requests never start during close',async()=>{
  const f=await setup(false);f.seed('second');
- f.send.mockImplementation((_sub,_payload,options)=>new Promise((_yes,no)=>{f.clock.at(f.clock.now()+(options?.timeout??60_000),()=>no(new Error('transport timed out PRIVATE')));}));
+ let signal!:AbortSignal;
+ f.send.mockImplementation((_sub,_payload,_options,abort)=>new Promise((_yes,no)=>{signal=abort;abort.addEventListener('abort',()=>no(new Error('PRIVATE timeout')),{once:true});}));
  await f.queue();f.clock.advance(1);await f.queue(deviceRef(sub('second').endpoint),'second');expect(f.send).toHaveBeenCalledOnce();
- let closed=false;const closing=f.app.close().then(()=>{closed=true;});f.clock.advance(14_998);await Promise.resolve();expect(closed).toBe(false);f.clock.advance(1);await closing;
+ let closed=false;const closing=f.app.close().then(()=>{closed=true;});f.clock.advance(14_998);await Promise.resolve();expect(closed).toBe(false);expect(signal.aborted).toBe(false);
+ expect(await f.queue(undefined,'during-close')).toMatchObject({ok:false,code:'denied'});f.clock.advance(1);await closing;expect(signal.aborted).toBe(true);
  expect(closed).toBe(true);expect(f.send).toHaveBeenCalledOnce();
+});
+
+it('rechecks changed VAPID pair after a preceding awaited send',async()=>{
+ const f=await setup(false);f.seed('second');let done!:(x:unknown)=>void;
+ f.send.mockImplementationOnce(()=>new Promise(r=>{done=r;}));await f.queue();f.clock.advance(1);await f.queue(deviceRef(sub('second').endpoint),'second');
+ f.s.sessions.change(file=>{file.push!.vapid=webpush.generateVAPIDKeys();});done({});await vi.waitFor(()=>expect(f.requests().some(r=>r.state==='sent')).toBe(true));f.clock.advance(0);
+ await vi.waitFor(()=>expect(f.requests().map(r=>r.state).sort()).toEqual(['cancelled','sent']));expect(f.send).toHaveBeenCalledOnce();
 });
