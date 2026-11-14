@@ -1,7 +1,7 @@
 import type { Snapshot } from '../../data';
 import { List, Row, Loading } from '../../kit';
 import { address, type ActivityWindow } from '../activity/model';
-import { stamp } from './index';
+import { stamp } from './time';
 
 /** One shared recent Activity subscription on Home; no readers or separate retained tape. */
 export function HomeSteps({ agent, name, activity, go }: {

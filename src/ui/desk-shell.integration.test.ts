@@ -33,7 +33,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
   const app = await startLoom({home,next:true,staging:true,clock:new FakeClock(Date.parse('2026-11-13T18:41:00Z')),webRoot:root,install(app) {
     migrateHouseholdTables(app.db);
     app.db.transaction(() => {
-      new HouseholdDatabase(app.db).replace(home,{v:1,tz:'America/Chicago',agents:['art','birch','cedar','elm','fern'],default:'art',owner:'owner',members:[{person:'owner',role:'owner',agents:'*'}]});
+      new HouseholdDatabase(app.db).replace(home,{v:1,tz:'America/Chicago',agents:['art','birch','cedar','elm','fern'],default:'art',owner:'owner',about:{art:'Keeps the household moving.'},members:[{person:'owner',role:'owner',agents:'*'}]});
       new TokenDatabase(app.db).replace({v:1,tokens:[]},{});
       // Existing technical test sheet, never supplied artwork or screenshot evidence.
       const sample = sheet(), manifest = manifestFromPixelLab(JSON.parse(sample.json.toString()));
@@ -96,6 +96,39 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await a.getByRole('group',{name:'art recent steps',exact:true}).getByRole('button').first().click();
     await expect.poll(()=>a.getByRole('heading',{name:'Shipped the live desk look',exact:true}).count()).toBe(1);
     expect(new URL(a.url()).searchParams.get('e')).toBe('e~art~desk-step-0');
+    await a.goto(app.url);
+    // The optional agent window uses the real Household profile role; both windows replace outside edits.
+    for(const page of [a,b])await page.goto(app.url+'/p/agents-preview/agent/art');
+    for(const page of [a,b])await expect.poll(()=>page.getByText('Keeps the household moving.',{exact:true}).count()).toBe(1);
+    expect(app.operations.call('direct',{kind:'member',id:'owner'},'household.setProfile',{agent:'art',text:'Keeps the household moving and the desk readable.'},'desk-profile').ok).toBe(true);
+    for(const page of [a,b])await expect.poll(()=>page.getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
+    const longDescription='https://example.invalid/'+ 'x'.repeat(550);
+    expect(app.operations.call('direct',{kind:'member',id:'owner'},'household.setProfile',{agent:'art',text:longDescription},'desk-profile-long').ok).toBe(true);
+    await expect.poll(()=>b.getByText(longDescription,{exact:true}).count()).toBe(1);
+    await b.setViewportSize({width:390,height:900});
+    await expect.poll(()=>b.locator('.desk-home').evaluate(el=>el.scrollWidth-el.clientWidth)).toBeLessThanOrEqual(1);
+    expect(app.operations.call('direct',{kind:'member',id:'owner'},'household.setProfile',{agent:'art',text:'Keeps the household moving and the desk readable.'},'desk-profile-restore').ok).toBe(true);
+    await b.setViewportSize({width:1280,height:900});
+    await reference.goto(old.base+'/a/art?t=*art');
+    await reference.locator('.loom-agentwin').getByRole('button',{name:'Write one',exact:true}).click();
+    await reference.getByLabel("art's description",{exact:true}).fill('Keeps the household moving and the desk readable.');
+    await reference.locator('.loom-agentwin').getByRole('button',{name:'Save',exact:true}).click();
+    await expect.poll(()=>reference.locator('.loom-aghead__desc').getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
+    for(const page of [a,b])await page.goto(app.url);
+    await a.bringToFront();
+    await expect.poll(()=>a.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
+    await a.evaluate(()=>document.fonts.ready);
+    const faceLink=a.getByRole('link',{name:'Open art agent window',exact:true});
+    // A live face preference can replace the pressed canvas before release. Navigation must survive it.
+    set({pixel:true},'agent-link-pixel');
+    await expect.poll(()=>faceLink.locator('canvas').count()).toBe(1);
+    const hit=await faceLink.boundingBox();if(!hit)throw Error('Agent link is not visible');
+    await a.mouse.move(hit.x+hit.width/2,hit.y+hit.height/2);await a.mouse.down();
+    set({pixel:false},'agent-link-drawn');
+    await expect.poll(()=>faceLink.locator('[data-slot=agent-face]').count()).toBe(1);
+    await a.mouse.up();
+    await expect.poll(async()=>({path:new URL(a.url()).pathname,readers:await a.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]});
+    set({pixel:true},'agent-link-restore');
     await a.goto(app.url);
     // Exercise the real renderer through the database-backed display feed on both surfaces.
     const painted = async (page: typeof a, selector: string) => page.locator(selector).evaluateAll(nodes => nodes.some(node => {
@@ -232,7 +265,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         if(width<1024)expect(await page.locator('.desk-home-card').getAttribute('data-agent')).toBe('art');
         await reference.setViewportSize({width,height:900});
         await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
-        for (const surface of ['home','home-steps','work','companion','launcher']) {
+        for (const surface of ['home','home-steps','work','companion','launcher','agent']) {
           if(surface==='home') {
             await page.getByRole('button',{name:'Check again',exact:true}).click();
             await expect.poll(()=>page.getByRole('button',{name:'Yes',exact:true}).isEnabled()).toBe(true);
@@ -382,6 +415,22 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
             await page.getByRole('button',{name:'All apps',exact:true}).first().click();
             if(width<1024) { await reference.goto(old.base+'/setup'); await expect.poll(()=>reference.getByText('More',{exact:true}).count()).toBeGreaterThan(0); }
             else { await reference.keyboard.press('Control+Shift+Space'); await expect.poll(()=>reference.getByRole('textbox',{name:'Find an app',exact:true}).count()).toBe(1); }
+          }
+          if(surface==='agent') {
+            await page.bringToFront();
+            await page.keyboard.press('Escape');await page.goto(app.url);
+            // Roster may arrive before Needs you; wait for the band that sets the face's vertical position.
+            await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
+            await page.evaluate(()=>document.fonts.ready);
+            await page.getByRole('link',{name:'Open art agent window',exact:true}).click();
+            await expect.poll(async()=>({path:new URL(page.url()).pathname,readers:await page.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]}).catch(async error=>{console.error('Agent entry failed',look,width,page.url(),await page.locator('.next-notice').textContent());await page.screenshot({path:join(shots,'agent-failure.png')});throw error;});
+            await expect.poll(()=>page.getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
+            expect(await page.getByRole('button',{name:'Edit profile in Setup',exact:false}).count()).toBe(1);
+            expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+            await reference.goto(old.base+'/a/art'+(width<1024?'':'?t=*art'));
+            await expect.poll(()=>reference.locator('.loom-agentwin').count()).toBe(1);
+            await expect.poll(()=>reference.locator('.loom-agentwin').getByText('Shipped the desk look',{exact:true}).count()).toBe(1);
+            await expect.poll(()=>page.getByRole('group',{name:'art recent steps',exact:true}).getByRole('button').count()).toBe(3);
           }
           await page.evaluate(()=>document.fonts.ready);await reference.evaluate(()=>document.fonts.ready);
           if(surface==='home'&&width===390) {

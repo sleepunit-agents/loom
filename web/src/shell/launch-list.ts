@@ -1,7 +1,7 @@
 import type { RegisteredApp } from './index';
 const sections = ['Work','People & agents','Library','System','Look & feel','Pieces'] as const;
 type Section = typeof sections[number];
-const group:Readonly<Record<string,Section>> = {comms:'People & agents',people:'People & agents',knowledge:'Library',bridges:'System',clock:'System',setup:'System',settings:'System',account:'System',staging:'System'};
+const group:Readonly<Record<string,Section>> = {agents:'People & agents',comms:'People & agents',people:'People & agents',knowledge:'Library',bridges:'System',clock:'System',setup:'System',settings:'System',account:'System',staging:'System'};
 const keywords:Readonly<Record<string,readonly string[]>> = {account:['profile','account','passkey','passkeys','sign out','log out'],setup:['household','members','agents']};
 /** The registrations remain the only app inventory; unknown apps keep a place in Work. */
 export function launcherSections(apps:readonly RegisteredApp[],query:string) {

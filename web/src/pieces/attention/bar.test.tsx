@@ -26,7 +26,7 @@ afterEach(async()=>{await act(async()=>tree?.unmount());});
 it('uses owned-agent facts and open asks, and opens Inbox through the router',async()=>{
  const go=vi.fn();await act(async()=>{tree=create(h(Bar,{title:'Tasks',go,actions:h('button',null,'Appearance')}));});
  expect(tree.root.findByType('h1').children).toEqual(['Tasks']);
- expect(tree.root.findByType('ticker-test').props.parts.slice(0,2)).toEqual([{text:'1 agent',href:'/'},{text:'Art E Fish · Checking a pull request',href:'/p/home-preview'}]);
+ expect(tree.root.findByType('ticker-test').props.parts.slice(0,2)).toEqual([{text:'1 agent',href:'/'},{text:'Art E Fish · Checking a pull request',href:'/p/agents-preview/agent/art'}]);
  const needs=tree.root.findByProps({'aria-label':'1 needs you'});const preventDefault=vi.fn();
  await act(async()=>needs.props.onClick({preventDefault}));expect(go).toHaveBeenLastCalledWith('/p/inbox-preview');expect(preventDefault).toHaveBeenCalled();
  go.mockClear();needs.props.onClick({metaKey:true,preventDefault});expect(go).not.toHaveBeenCalled();
