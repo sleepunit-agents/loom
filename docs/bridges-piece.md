@@ -1132,3 +1132,37 @@ order through record IDs, and cover connection reassignment. The operation and
 client share a closed status response schema. Fixtures exercise the real
 HTTP operation, empty setup, staging composition, permission denials and closed
 response shapes. No old files or programs are read on the next runtime path.
+
+## Internal Slack file fetch
+
+`slack-files.ts` is an unregistered transport for the first five attachments of
+one delivered Slack message. An explicit fake `SlackFilesPermit` supplies exact
+agent, connection, workspace, channel, delivery and immutable file descriptors in
+fixtures. There is no installed Runtime issuer or public operation. Current
+setup, credential generation and delivered-message authority belong to that
+issuer; staging remains a separate composition gate. Checks repeat after holder
+acquisition, headers, every body read and before returning the batch.
+
+Each request acquires the Bridges service credential anew and sends it only to
+literal `https://files.slack.com/` URLs, with no credentials, port, fragment,
+backslash, whitespace or redirect. Literal/encoded dot path segments and nested
+path escapes refuse before URL normalization. HTML/XHTML response MIME types refuse. Declared
+and actual bodies are bounded to 25 MiB per file; a fifteen-second deadline covers
+both headers and streaming, cancels readers and never retries. Names retain the
+old safe eighty-character basename convention. Failures return fixed text,
+without platform words, paths or credentials. Failed batches erase their owned
+completed buffers and return no partial result.
+
+| Legacy Slack files behavior | Replacement / remaining work |
+| --- | --- |
+| `Files.fetch`, `test_at_most_five_a_message` | Internal first-five batch, service credential per file, exact Slack HTTPS origin and bounded download |
+| `test_never_sends_the_token_anywhere_but_slacks_file_host`, size/page/id/name cases | URL preflight, no redirects, MIME rejection, 25 MiB streaming cap, safe names and file-id validation |
+| `Files.take`, body `runtime file`, `send --file --out` | Pending Runtime delivery/body authorization and private storage/retrieval; transport returns bytes only to its trusted caller |
+| Fetch-once and fourteen-day prune | Pending durable storage, dedup and daemon retention job; no cache or storage is claimed by this unit |
+| Shadow fetches nothing | Separate current staging gate, rechecked around IO; no adapter is registered |
+
+This implements only the fetching half of the pinned `loom-slack` `files.py` and
+`test_files.py` contract. No files are fetched during intake yet. Secure private
+storage, delivery-scoped retrieval, fourteen-day retention, generated command
+parity and actual Runtime owner proof remain required before file support is
+complete. No caller-supplied output path is accepted here.
