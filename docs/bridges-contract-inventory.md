@@ -1,90 +1,101 @@
 # Bridge replacement inventory
 
-This is a coverage inventory for t-2210, not a claim that the adapters are ready.
-Read it with [the piece overview](bridges-piece.md) and the settled
+Coverage for t-2210, audited against main `9453ccd` after #1133, #1128 and #1129.
+Read with [the piece overview](bridges-piece.md) and the settled
 [new-side move](specs/web-foundation.md#moving-there). Runtime owns authority,
-conversation words, turns and bodies; bridges owns platform IO. An entry marked
-pending is required work, not an implemented operation or an agreed deletion.
+conversation words, turns and bodies; Bridges owns platform IO. Pending means
+required work, not an agreed retirement. This audit supersedes the original
+#907 inventory: adapters, importer, screen and setup client have since merged.
 
-The source checkouts inspected for this inventory are pinned here so later changes
-in the separate repositories cannot silently change the comparison:
+Pinned legacy contracts:
 
 - [loom-discord at 5d197bac](https://github.com/sleepunit-agents/loom-discord/tree/5d197bacbe80e82b5546656db538cee43c09c835)
 - [loom-slack at 4acf0562](https://github.com/sleepunit-agents/loom-slack/tree/4acf056239ae1c431d645068a3be8e71f2623837)
 - [shuttle at c4a188b6](https://github.com/sleepunit-agents/shuttle/tree/c4a188b6e3e362ff34903e0ad79b25c1bca77c62)
 
-Paths in the source column are relative to these repositories. Current coverage
-below describes loom main through #907. Pure normalizers and injected fake adapters
-do not establish production platform coverage.
+Paths in the source column below are relative to those repositories. No real
+workspace, source snapshot, installed home or external runner is used by these
+fixtures. Platform HTTP/sockets and key-holder IO are faked; the installed
+next-mode roles, SQLite, routing, normalizers and engine are real.
 
 ## Commands, API routes and jobs
 
-| Old entry point | Replacement / state | Source |
+| Old entry point | Current replacement / outstanding behavior | Legacy source |
 | --- | --- | --- |
-| `loom discord run`, `loom slack run`; shuttle `adapters/{discord,slack}.py` | Daemon-owned bridges connections. Injected `Bridges.sync/close` exists; production jobs, sockets, shutdown and setup-change wiring pending. No subprocess or systemd adapter. | Both `bin/loom-*`; shuttle adapters |
-| `loom discord status`, `loom slack status` | Connection, retry and held-send metadata for generated CLI and preview; pending. Legacy shadow-line count is retired with shadow mode. | Both command dispatchers and `status` |
-| Both `send --agent --place` with stdin text | Runtime-authorized reply queues `Bridges.reply`; injected outbox/staging exists. Real posting, first outbound sends, generated client and legacy output/exit fixture parity pending. | Both `test/test_send.py` |
-| Slack `send --place dm:U…` without previous intake | `conversations.open` then post as that agent's bot; pending. Cannot depend on an existing inbox/reply binding. Runtime resolves person-to-platform identity. | Slack `test/test_presence.py`, `test_a_message_to_one_person_is_one_dm` |
-| Both `send --describe` | Platform place/member metadata to runtime, which applies tiers, restrictions, cards, guest floors and named briefs. Pending authenticated role; route fields alone are not complete describe behavior. | Discord `test/test_presence.py`; Slack `test/test_describe.py` |
-| Both `send --status working --message …`, `--status done` | Runtime lifecycle notifications; staged eyes/reaction cleanup and Discord typing effects pending. Not ordinary outgoing replies. | Both `test/test_presence.py` |
-| Discord `read --agent --place [--after] [--limit]` | Authorized platform read, oldest first, limit 1–100; initial read latest one. Include ignored channels, validate place/agent, and return original time/from/person/may_wake/text. Pending; runtime owns may_wake. | Discord `test/test_read.py` |
-| Both `compare --start --adapter --bridge`; Slack `--check-gone` | Retired: whole-side staging replaces live/shadow comparison. No second Slack socket, shadow history poller or deletion probe. | Both `test/test_compare.py`; Slack `gone_checker/still_there` |
-| Shuttle `api` at `POST /api/shuttle/run`, `people`, `routes` | New registry roles; setup collections `bridges.venue/route/link` exist, with `bridges.putVenues/putRoutes/putLinks` and corresponding remove operations. Runtime gates are separate. Generated client pending. | Shuttle `tools/loom-shuttle`, `shuttle/gates.py` |
-| Shuttle `offer-people`, `offer-routes`, page accept/merge actions | Old file-offer protocol retired by offline import and direct owner setup on the new side. Collision checks and explicit ownership must survive import. No new-side fallback to old files. | Shuttle `tests/test_gates.py`, `tests/test_merge.py` |
-| Shuttle `propose-person`, allow/deny, optional then-relay | Pending runtime/Approvals-owned proposal composition. A proposal cannot grant itself authority or alter owner authority; bridge links are not gates. No equivalent exists in current bridge operations. | Shuttle `tests/test_propose.py` |
-| Shuttle `relay`, `relay-take --via slack` | Pending authenticated runtime relay and bridge transport integration. Preserve original actor, explicit non-recipient authority, quoted payload, one-time dequeue, loop rejection, and current person/workspace identity. Never synthesize a person's message from relay text. | Shuttle `tests/test_relay.py` |
-| Shuttle `api bodies …`, `body-host` | Runtime/runner responsibility: requests, claims, reports, follow-ups, stop, turn-over and unknown/stale reports. Not a bridges launcher or permission source. Integration pending. | Shuttle `shuttle/bodies.py`, `tests/test_bodies.py` |
-| Shuttle `routes --agent --json`, `gates export/moved` | Offline importer and runtime gates, not live compatibility commands. Old tombstones/export are transition machinery; new side reads only its own DB. | Shuttle `tools/loom-shuttle` |
-| Shuttle `cards-backfill --dry-run/--bodies` | People-owned identity/card work; importer links existing slugs and refuses ambiguity. Do not create authority from cards or run a legacy backfill from next mode. Full coordinated importer coverage pending. | Shuttle `tests/test_cards.py` |
-| Shuttle `ui`, `ui page`, `ui act` and agent Bridges tab | Kit preview at `/p/bridges-preview`, registry/live data only; pending. Bridge status/routes/counts/staging disposition live here; gates/house rules belong to runtime and owner approvals. | Shuttle `tests/test_loomui.py`, `tests/test_adapter_health.py` |
-| Poll cursors, lookback/thread scans, fairness, first-sight reads | Poll machinery retired for sockets; preserve no historical replay on first connection, original thread addresses and per-agent dedup. Durable Discord session/sequence resume and Slack receipt-before-ACK still pending. | Both `test/test_adapter.py` |
-| Retry/held queues, reconnect and sent logs | Injected durable inbox/outbox and reconnect backoff exist. Real gateway persistence, metadata-only Attention reporting and platform error mapping pending. | Both `test/test_deliver_contract.py`; shuttle `tests/test_core.py` |
-| Shuttle upgrade loops, file locks, ext hooks and runner-specific setup | New daemon/runtime and external runners replace the process machinery. Arbitrary Python hooks are not loaded by next mode. Instance-specific brief/scope behavior must be accounted for by runtime policy, not silently discarded as a bridge feature. | Shuttle `tests/test_upgrade.py`, `tests/test_instance.py`, adapter tests |
+| Discord/Slack `run`, shuttle venue adapters | Next daemon lifecycle with service credentials, durable Discord session/sequence and Slack ACK after raw receipt, normalizers and engine; #1096. No subprocess adapter. | Both `bin/loom-*`, shuttle adapters |
+| Discord/Slack `status` | Metadata live records and Bridges screen exist; retained command output/exit parity remains pending. Shadow-line count retires with shadow mode. | Both dispatchers/status |
+| Both `send --agent --place`, stdin text | Bound body `runtime.reply` queues a durable staged outbox; actual split posting/uncertainty proven for household DMs in #1104. Arbitrary place/proactive sends and retained command parity remain pending. | Both `test/test_send.py` |
+| Slack `send --place dm:U…` before intake | Pending Runtime recipient authorization and Bridges `conversations.open` transport. Existing reply requires a delivered incoming receipt. | Slack `test/test_presence.py` |
+| Both `send --describe` | Authenticated channel/member evidence exists internally, but no Runtime-authorized describe operation or legacy output parity. | Discord presence, Slack describe tests |
+| Both `send --status working/done` | Pending lifecycle presence effects, reactions/typing and cleanup; not an ordinary reply. Runtime terminal Comms updates in #1129 are not venue presence. | Both presence tests |
+| Discord `read --agent --place [--after] [--limit]` | Pending authorized platform history (oldest first, limit 1–100, initial latest one, original time/from/person/may_wake/text). `runtime.readConversation` reads a bound local transcript, not platform history. | Discord read tests |
+| `compare`, Slack `--check-gone` | Retired: whole-side staging replaces shadow comparisons. No second socket, shadow poller or deletion probe. | Both compare tests |
+| Shuttle API `people/routes`, setup | Owner-only `bridges.put/removeVenues/Routes/Links`, generated setup client and Bridges screen merged. Runtime gates remain separate. | Shuttle CLI/gates.py |
+| `offer-people/routes`, accept/merge | Retired file-offer protocol; completed-snapshot importer resolves accepted authority and retains offers as evidence. Owner setup changes the new DB. | Shuttle gates/merge tests |
+| `propose-person`, allow/deny/then-relay | Runtime/Approvals owning work remains; link setup cannot authorize it. Original proposals are retained, not executed by Bridges. | Shuttle propose tests |
+| `relay`, `relay-take --via slack` | Pending attributed Runtime relay, one-time dequeue and bridge DM transport; preserve actor, non-recipient authority, quoting, loop rejection and current workspace identity. | Shuttle relay tests |
+| Body API/host | Installed Runtime jobs/runner claim/input/read/reply used for household DMs; broader owning-policy runner and non-DM audience work remain on t-2209. | Shuttle bodies tests |
+| `routes --json`, gates export/moved | Offline importer + Runtime gates, not live compatibility commands. Old tombstones forbid inappropriate fallback during import. | Shuttle CLI |
+| `cards-backfill` | People-owned work. Importer maps existing household members or retains evidence; creates no authority or member. | Shuttle cards tests |
+| `ui` and agent Bridges tab | Kit screen, setup forms, live counts/routes, staged-send release and confirmed terminal dismissal merged; 30-PNG CI proof at six theme/width combinations. | Shuttle loomui/adapter_health tests |
+| Poll/lookback/thread scans/fairness | Poll machinery retired for sockets. Discord durable Resume, Slack receipt-before-ACK, per-agent dedup and bounded normalization retries implemented. | Both adapter tests |
+| Retry/held/reconnect/sent logs | Durable queues, one-hour transient intake expiry, restart-only runtime-hold repair, uncertain sends never replayed; metadata-only Attention integration still pending. | Both deliver_contract, shuttle core tests |
+| Upgrade loops/locks/ext hooks | New daemon and external runners replace process machinery. Arbitrary Python hooks retired; instance-specific briefs/restrictions must be accounted for by Runtime, not silently dropped. | Shuttle upgrade/instance tests |
 
-## Platform and delivery cases
+## Remaining behavior matrix, in delivery order
 
-| Contract cases | Existing evidence | Remaining production proof |
+`src/pieces/bridges/runtime-matrix.test.ts` exercises the first four forms through
+real raw receipts, platform metadata, normalizers, engine, Secrets service and
+installed Runtime. It observes Runtime admission by delegating to the unchanged
+implementation; there is no permissive runtime override. The runnable household
+DM control proves missing runner setup cannot conceal an admission regression.
+
+| Behavior | Actual current behavior | Remaining owner / proof |
 | --- | --- | --- |
-| Discord explicit+resolved user/managed-role summons; reply ping is not summons; mention beats primary; other-agent-only mention suppresses primary | `discord.test.ts`, `routing.ts` | Real channel/bot/managed-role metadata and gateway calls use these normalizers. |
-| Discord own/system messages, ignore/only, thread parent and safe label, guest/readers, bot peer and paired webhook | Intake/routing tests cover own/system/filter/parent/labels and known bot peer selection | Paired webhook identity is not implemented by `addressed`; runtime guest/reader/peer admission, cap and stop suppression still need composition and cases. |
-| Slack human message/file_share only; workspace-bound DM/MPIM; thread under human or bot remains same conversation | `slack.test.ts` normalizer and engine key tests | Real Socket Mode/Web API metadata, sender identity and durable ACK. Never infer workspace trust from a display name. |
-| Slack `users.info`: same team, not stranger/guest/restricted/bot/deleted; API failure waits | Injected inspection only | Actual users.info and fresh conversations.info/members, including pagination/full member set and receiving bot. No intake cache before a group post. |
-| Slack every group human linked distinctly and runtime admitted, sender included, at least two humans; receiving bot owns routing | `bridges.test.ts` checked-member tests, including non-D IDs and old queued work | Real platform checks and authenticated runtime admission. Temporary failures wait; denial erases intake or holds outgoing reply. |
-| Setup edits during asynchronous inspection/admission, even edit-and-restore | Engine revision/freshness matrices for intake/reply and link/route/venue | Preserve these guards when replacing fake roles; revalidate before every outside effect. |
-| Readable mentions/links before one escape decode; literal encoded mention stays literal; human-only whole-name labels | Slack pure helper tests; Discord safe parent label tests | Real People name lookup without copying tiers or restrictions into labels or links. |
-| Original event time in UTC milliseconds, truncate never round; invalid explicit time holds | `time.ts` and engine tests | Runtime `Deliver` field/source mapping and all legacy malformed-field fixtures, not only timestamps. |
-| Runtime delivery: taken/final refusal/transient/held | Injected typed delivery outcomes, stable retry ID and erasure tests | Map authenticated registry Result, not legacy HTTP status alone. Old HTTP 400/415 hold, 403/409/413 consume, 401/429/network/5xx retry explain the semantics; unknown results hold. |
-| Safe long replies, thread address, no replay after uncertain partial post | Engine holds thrown or interrupted attempts; thread address preserved | Real split/post limits (Discord 2000, legacy Slack under 3900), full-text preservation and partial-success failure tests. Entire uncertain attempt stays held. |
-| First outbound Slack DM; permanent versus temporary post refusals | Legacy send/presence fixtures only | Real conversations.open/post and structured errors; current reply-only engine is insufficient for proactive sends. Never downgrade an uncertain attempt to safe retry. |
-| Admitted stop/cancel; idle ordinary message; peer suppression until person speaks | Injected engine stop seam only | Runtime active-body/peer state, authorization, acknowledged stop, and staged acknowledgment. Existing seam does not prove all legacy stop cases. |
-| Eyes once, cleanup after reply/done/stale status, Discord typing while working | Legacy presence fixtures only | Runtime lifecycle plus staged platform effects and restart cleanup; no bypass through status effects. |
-| Slack files only after admission, max five, bounded bytes, files.slack.com HTTPS only, no redirects/HTML/traversal, agent+place+delivery/body scope, 14-day retention | Pure intake file descriptions only | Secure fetch, scoped runtime handoff/retrieval and retention cases. Shuttle's older 30-day local-path behavior is superseded by the later adapter's 14-day scoped contract. |
-| Grant checked before any credential access; no argv/log/feed/result/error token exposure | Foundation injected fake secret seam only | Bridges SERVICE and real `secrets.withValue(name,use)` per merged foundation ruling. Foundation `BridgeSecrets.get` is not production authority or a credential API to export. |
+| Peer | Known remote bot without a person link is discarded as unknown user before Runtime. A synthetic explicit peer link reaches Runtime and waits. Neither case is peer delivery. | Runtime needs authenticated agent identity distinct from person/member, turn budget/reset and no peer stop; Bridges must resolve that identity without impersonation. Import does not fabricate peer links. |
+| Pair | A human on a paired Discord route reaches actual Runtime and waits. Webhook peer identity is unsupported by current `addressed`. | Runtime shared/pair admission + Bridges authenticated pair transport; webhook evidence disposition still required. |
+| Channel/thread | Fresh Discord guild/type/parent checks and primary/mention routing run, then Runtime waits. Thread labels use parent name, never thread title. | Runtime audience/readers, original sender, continuity and source-bound read/reply/stop. No DM fallback. |
+| Group | Slack authenticated MPIM kind, complete members and every-human checks run before Runtime waits. No body/turn/outbox is created. | Runtime shared audience and all-human policy; existing engine must keep fresh checks on every reply chunk. |
+| Read | Bound body transcript read works for a household DM; platform history command absent. | Runtime authorizes agent/place/reader scope and may_wake; Bridges fetches bounded platform history. |
+| Describe | Internal authenticated place/member evidence works; no public describe contract. | Runtime derives tiers/restrictions/briefs/guest floors; People labels never authorize. |
+| Presence | No platform working/done/typing/reaction lifecycle implemented. | Runtime lifecycle role + Bridges staged effects and restart cleanup. |
+| First proactive DM | Reply-only engine requires prior delivered intake; no `conversations.open` path. | Runtime recipient authorization/attribution + Bridges open/post with durable uncertain-send semantics. |
+| Files | Intake includes textual file descriptions only. | Secure scoped fetch/retrieval: max five, bounded bytes, Slack HTTPS files origin, no redirects/HTML/traversal, agent/place/delivery/body scope, 14-day retention. Runtime owns access, Bridges owns platform fetch. |
+| Attributed relay | No new-side bridge relay operation/dequeue. | Runtime actor/recipient/current authority + bridge DM transport; no forged person's inbound message. |
 
-### Delivery differences to keep explicit
+Unsupported receives that reach Runtime remain pending with their original receipt
+and retry budget; the fixture proves retries repeat the owning `wait` and create
+no jobs or turns. This is a fence regression test, not positive support. Expiry
+still applies after more than one hour. Neither these tests nor the existing
+injected engine tests close a pending matrix row. t-2209 has the concrete role
+requirements; #1128's house destination and #1129's terminal Comms updates do not
+supply the missing venue contracts. Existing imported/configured owner policy
+continues to hold execution until the owning runner enforces it.
 
-Legacy `test/test_deliver_contract.py` on both platforms checks the body fields,
-UTF-16 limits, printable labels, from-person versus unknown attribution, UTC time,
-and metadata-only alerts, not just HTTP success. Slack's real six-fraction timestamp
-`1793828004.242749` becomes `2026-11-04T21:33:24.242Z`. Its group `from` is the
-actual sender, never a different admitted member or the owner.
+## Implemented platform and authority evidence
 
-The new runtime role uses venue `slack`/`discord` and a separate place. Foundation
-`ConversationKey.venue` is a composite internal key; it must not be copied into
-`Deliver.venue`. Runtime composition still has to reconcile Slack DM/group and
-Discord channel/thread places, stable IDs and authenticated Caller/Viewer roles.
+- `discord.test.ts` / `slack.test.ts`: explicit resolved summons, reply pings,
+  managed roles, readable markup, whole-name labels, original event time and
+  textual attachments. `routing.ts` keeps mention/primary and parent filters.
+- `discord-gateway/inbox/drain/daemon.test.ts` and Slack equivalents: authenticated
+  identity/lifetime, durable commit before Resume/ACK, bounded pages/backoff,
+  startup/release recovery and awaited shutdown. No first-connect history replay.
+- `slack-api.test.ts`: same-workspace human eligibility, paginated full members,
+  fresh MPIM checks; `adapters.test.ts`: current service grants and every chunk's
+  authorization, exact bound receipts and mention suppression.
+- `outbound.test.ts` / `bridges.test.ts`: lossless Unicode splitting at Discord
+  2000 / Slack 3900 UTF16 units, partial failure uncertain, no automatic resend,
+  stable IDs, edit-and-restore invalidation, stop seam and queue expiry/repair.
+- `runtime/bridges.test.ts`: actual household DM runner claim/input, scoped body
+  read/reply/stop, atomic transcript/outbox, relink/box/house/shutdown/policy fences.
+- `credentials.test.ts`, `composition.test.ts`, and Secrets tests: actual
+  persistent-holder generation/private mTLS evidence from #1091/#1096, current
+  service grants/expiry, lifetime invalidation and no value in loom.db. Engine
+  no longer receives tokens; there is no production `BridgeSecrets.may/get` seam.
 
-Legacy malformed intake remains held without TTL and retries after adapter restart.
-New-side runtime-delivery holds now requeue on engine restart, retaining the original
-receipt and id and repeating current setup, credentials and admission checks.
-Same-process holds and administrative/identity/invalid-time holds stay held.
-Uncertain outgoing attempts are a separate case: human
-disposition must never automatically resend them. The injected intake engine persists
-the first transient wait and drops/erases pending payloads after more than one hour,
-without renewing that budget for duplicates or restarts. Holds are exempt; a recovered
-hold that becomes transient gets a fresh hour. Existing foundation pending rows use
-receipt time at upgrade because their first wait time was not recorded. Real transport
-and authenticated runtime composition remain separate obligations.
+Household DM end-to-end proof uses actual Runtime/People/Secrets roles with fake
+platform and holder IO. Separate persistent-holder fixtures cover the real private
+holder transport. This does not claim a live workspace or external runner test.
 
 ## Shuttle responsibilities outside platform IO
 
@@ -104,23 +115,25 @@ it does not assert that another house has completed its replacement.
 | `test_instance`, `test_config`, `test_upgrade`, `test_no_instance` | Database configuration/import and daemon/external-runner lifecycle replace instance discovery, process locks and self-upgrade. No legacy loader on the next path. |
 | `test_cidsplit`, `test_similarity` | Legacy board-ID repair belongs to old-data maintenance, not the next connection path; runtime owns new conversation identity. The source similarity utility is development tooling, not a production bridge operation. |
 
-## Import and completion evidence still required
+## Import and completion evidence
 
-`loom migrate bridges --home <new> --from <old>` remains unimplemented. Read JSON
-people/routes/shuttle/settings references only; never token/env files, legacy
-programs or executable hooks. `SLACK_BOTS` names an env-bundle secret containing
-BOT_TOKEN/APP_TOKEN/TEAM_ID/BOT_USER_ID fields (with their `SLACK_` prefixes); importing
-its reference is not permission to read or persist its contents. The existing venue
-schema has separate token/app references and workspace/bot IDs, so bundle conversion
-needs explicit tested handling rather than fabricated split secret names.
+The completed-snapshot importer is merged in #1118/#1133, registered for plan,
+all, standalone Bridges and both independent source-derived verification paths.
+One owning transaction checks IDs/counts/content, checksum/no-op/different-source
+refusal and rollback. Source files/stores are confined by snapshotPath; no daemon
+reads old data. [The piece page](bridges-piece.md#completed-snapshot-importer)
+gives the exact household mapping procedure. Every venue is disabled; bundle-only
+Slack becomes explicit incomplete evidence with no invented bot or split names.
+Off-machine bots, unknown audiences, exact stored docs/revisions and proposals
+stay private evidence. Unprojectable channel/parent IDs also block default routing.
 
-Require one transaction, source checksum, repeat no-op, different-source refusal,
-interruption rollback and exact ids/counts/content comparison on synthetic old data.
-Ambiguous claims refuse; a person winning over an agent in an old lookup is not an
-import rule. Runtime gates and People records remain their owning pieces' work.
+Webhook-peer, notify, peer budgets and channel-note references are retained evidence
+pending explicit dispositions in this inventory; not active configuration. Obsolete
+raw identity/session disposition also remains required. Retained command output/exit
+fixtures and final move inventory are not complete. No owner decision, deployment,
+real import or workspace contact is implied by the code or this inventory.
 
-Before closing t-2210, reconcile every pending row with merged implementation and
-fake gateway/API tests; register real lifecycle/roles only on the new side; complete
-generated CLI output/exit fixtures, preview and fixture registration, CI screenshots
-at 390/1280/1920 in both themes, and docs choices/final move steps. Host rollout and
-real imports belong to the final coordinator move, not this inventory or this house.
+Before closing t-2210, replace every pending matrix/command row with merged positive
+proof or a named justified retirement, reconcile Runtime/People/Secrets/Attention/
+Approvals roles, retain generated command output/exit fixtures, and finish the move
+docs. Existing screen and CI evidence do not substitute for these behaviors.
