@@ -170,5 +170,16 @@ it('refuses copied or unbound Slack callers and malformed exact places',async()=
   expect(runtimeSlackDescribePermit(f.app,viewer,slackPlace)).toBeUndefined();
  for(const patch of [{workspace:'T/other'},{venue:''},{place:'USLACKBOT'},{kind:'group'},{kind:'channel'},{agent:'art'},{principal:'owner'}])
   expect(runtimeSlackDescribePermit(f.app,f.viewer,{...slackPlace,...patch} as typeof slackPlace)).toBeUndefined();
- expect(runtimeSlackDescribePermit(f.app,f.viewer,{...slackPlace,kind:'group',place:'GPRIVATE'})?.current()).toBe(true);
+ const group=runtimeSlackDescribePermit(f.app,f.viewer,{...slackPlace,kind:'group',place:'GPRIVATE'})!;
+ expect(group).toMatchObject({agent:'art',...slackPlace,kind:'group',place:'GPRIVATE'});expect(group.current()).toBe(true);
+ const venue=venueSchema.parse({id:'slack',platform:'slack',agent:'art',workspace:'TWORK',bot:'UBOT',tokenSecret:'slack'});
+ const use={withValue:async<T>(_name:string,read:(secret:string)=>Promise<T>)=>read('TEST-CREDENTIAL')};
+ const request=vi.fn<typeof fetch>(async(url,init)=>{
+  const fields=new URLSearchParams(String(init?.body));
+  if(String(url).endsWith('conversations.info'))return Response.json({ok:true,channel:{id:'GPRIVATE',is_mpim:true,is_im:false}});
+  if(String(url).endsWith('conversations.members'))return Response.json({ok:true,members:['UBOT','UHUMAN','UOTHER'],response_metadata:{next_cursor:''}});
+  return Response.json({ok:true,user:{id:fields.get('user'),team_id:'TWORK',deleted:false,is_bot:false,is_restricted:false,is_ultra_restricted:false}});
+ });
+ expect(await slackDescribe(venue,group,use,()=>true,request).describe()).toEqual({kind:'group',place:'GPRIVATE',humans:['UHUMAN','UOTHER']});
+ expect(request).toHaveBeenCalledTimes(4);
 });
