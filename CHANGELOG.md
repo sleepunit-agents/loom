@@ -12,8 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Inbox reads sealed private questions and their retained history through scoped Comms records, with guarded encrypted replies.
-
 - Bind sealed typed Comms replies and retry receipts to the retained original encrypted question and owning route.
 - Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
 
@@ -60,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Inbox now separates self-cleared asks into searchable FYI history, keeping human answers in Answered.
 - Inbox: group Clock operational alerts, acknowledge them without changing scheduled work, and open Clock through its internal route.
 - Inbox: reply privately to conversation asks through encrypted Comms, keep private drafts in the window only, and link sealed questions and reply receipts to their owning thread.
+- Inbox reads sealed private questions and their retained history through scoped Comms records, with guarded encrypted replies.
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 - File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.
