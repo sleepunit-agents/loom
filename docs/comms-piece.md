@@ -1159,3 +1159,36 @@ It handles newly Comms-created projections; imported legacy cards and managed
 Approval/Task protocols retain their own source behavior and still need the final
 acceptance audit. No agent command, runtime producer or execution authority is
 added by this window-only read.
+
+## Sealed boolean decision delivery
+
+For a sealed `comms:` question with `answers: yes-no`, window-only
+`comms.answer({thread, ref, verdict})` now appends an encrypted member message
+and atomically records Attention's yes/no decision. The message says
+`Yes, to: <question>` or `No, to: <question>` followed by the selected outcome
+when supplied. Runtime receives it through ordinary staged, receipt-fenced
+message delivery; retries preserve the first sequence and verdict. The question
+must still be retained, unarchived, owned by the original member and routed to
+the exact original conversation after every crypto await. Plaintext stays out
+of Attention and operation receipts. Typed words are refused on this path;
+`comms.replyToAsk` remains the typed reply operation.
+
+Legacy/imported asks keep the existing boolean owning-source protocol and do
+not gain an extra Runtime message. Approval and Task decisions keep their own
+source operations. Inline question UI and Inbox routing remain separate work.
+
+Sealed boolean operation fingerprints also bind the immutable encrypted question
+and original route. Current eligibility is checked before cached receipt replay.
+Core's optional synchronous `validateReplay` hook checks a prepared snapshot when
+a competing invocation commits the same operation id during crypto. This prevents
+a new valid receipt from acknowledging an older, replaced question. Legacy
+operations keep their existing replay semantics; no private plaintext is added
+to the core receipt.
+
+The sealed verdict uses Attention's in-process `privateDecision` capability,
+which requires the same database's active window transaction, original member,
+exact conversation/thread/question sequence, yes/no mode and an unmanaged,
+unanswered source. Generic `attention.answer` refuses every sealed question on
+all doors, so it cannot strand a verdict without the encrypted Comms message.
+Imported historical done/dismiss states remain readable; legacy unsealed asks
+continue through their existing public/source protocols.

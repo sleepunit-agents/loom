@@ -55,7 +55,7 @@ for(const drift of ['member','conversation','project','delete','closed','answer'
   else if(drift==='delete')expect(await f.call('comms.change',{thread:f.place,action:'delete'})).toMatchObject({ok:true});
   else if(drift==='ownership')f.sharing.members.jonathan.agents=[];
   else if(drift==='expiry')f.clock.advance(14*86400_000);
-  else if(drift==='answer')expect(f.attention.answer(f.viewer,{id:r.ref,answer:{kind:'dismiss'}},'dismiss')).toMatchObject({ok:true});
+  else if(drift==='answer')expect(await f.call('comms.replyToAsk',{ref:r.ref,text:'Competing private reply'})).toMatchObject({ok:true});
   else if(drift==='row')f.app.db.prepare('UPDATE comms_messages SET id=? WHERE thread=? AND seq=?').run('replacement',f.place,r.seq);
   else {
    const row=f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(f.place) as {record:string},t=JSON.parse(row.record);
@@ -68,7 +68,9 @@ for(const drift of ['member','conversation','project','delete','closed','answer'
 });
 it('retains wordless question history at the exact expiry deadline',async()=>{
  const f=await setup(),r=await f.comms.ask('art',f.place,{id:'question',question});
- expect(f.attention.answer(f.viewer,{id:r.ref,answer:{kind:'dismiss'}},'dismiss')).toMatchObject({ok:true});
+ // Imported history may contain a legacy wordless dismissal; public answers can no longer create one for a sealed question.
+ const record=JSON.parse((f.app.db.prepare('SELECT record FROM attention_asks WHERE id=?').get(r.ref) as {record:string}).record);
+ record.state='answered';record.answer={kind:'dismiss',by:f.viewer,at:f.clock.now()};f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify(record),r.ref);
  f.clock.advance(14*86400_000);
  expect(await f.call('comms.question',{ref:r.ref})).toMatchObject({ok:true,value:{question:null,state:'answered',answer:{kind:'dismiss'}}});
 });
@@ -79,7 +81,7 @@ it('updates a scoped question subscription on source answers and strips words on
  ws.send(JSON.stringify({kind:'subscribe',type:'comms.question',scope:r.ref}));
  const latest=()=>{const set=frames.filter(x=>x.kind==='set'&&x.type==='comms.question').at(-1);return (set?.records as Array<Record<string,unknown>>|undefined)?.[0];};
  await expect.poll(()=>latest()?.question).toEqual(question);
- expect(f.attention.answer(f.viewer,{id:r.ref,answer:{kind:'done'}},'done')).toMatchObject({ok:true});
+ expect(await f.call('comms.replyToAsk',{ref:r.ref,text:'Scoped private answer'})).toMatchObject({ok:true});
  await expect.poll(()=>latest()?.state).toBe('answered');
  f.clock.advance(14*86400_000);await expect.poll(()=>latest()?.question).toBeNull();
  f.sharing.members.jonathan.agents=[];f.app.live.refreshAccess();
