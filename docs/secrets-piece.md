@@ -1150,3 +1150,27 @@ The authenticated holder-to-worker sink, its final release check, the public
 metadata-only get command, usage accounting and complete runner composition
 remain required before connecting this role to the holder channel. Neither a
 caller-selected endpoint nor daemon-local plaintext is an acceptable substitute.
+
+### Private ticket authority channel (not activated)
+
+`listenTicketAuthority` and `remoteTicketAuthority` connect the separate holder
+to the original `secretTickets` role through a dedicated private mutual-TLS Unix
+socket. Both peers pin dedicated certificates before sending ticket metadata.
+Only the pinned holder can claim an opaque ticket, check the retained claim, or
+finish it after worker acknowledgement. Replies contain the exact secret name
+and original agent/job/service/runner/box/claim metadata, or an empty acknowledgement.
+No value, endpoint, caller-supplied destination or provider diagnostic crosses
+this channel. Responses and requests are bounded; a silent peer times out.
+
+Claiming consumes the durable ticket before replying. Lost replies, failed
+checks and shutdown cannot recreate it. The server retains original proof
+closures only; restarting the server cannot reconstruct claims from stored rows.
+It prunes stale claims and marks outstanding claims uncertain when closed.
+The client never retries a failed call; a failed current check stays invalid.
+Final acknowledgement rechecks original authority in the ticket role.
+
+This channel is not installed in daemon or holder startup. The authenticated
+worker pending sink and its final release fence remain required. A remote
+`current()` response alone does not authorize value release; the holder-to-worker
+transport must authenticate the exact original destination and perform the final
+release check. No public get, typed granted-get or holder activation ships here.
