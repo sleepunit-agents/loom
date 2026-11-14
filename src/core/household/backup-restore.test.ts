@@ -93,9 +93,10 @@ it.each(['present', 'absent'] as const)('joins original owning recovery and keep
     return session;
   }) };
   const result = stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, role).finally(() => { settled = true; });
-  await entered.promise;
-  // Replacing role/session properties cannot replace captured restore or cleanup.
+  // Decryption has yielded; later mutation cannot substitute the owning role.
   role.restore = vi.fn(async () => { throw Error('wrong restore'); });
+  await entered.promise;
+  // The original cleanup was captured before acceptance yielded.
   session.close = vi.fn(async () => { throw Error('wrong close'); });
   await new Promise<void>(resolve => setImmediate(resolve));
   expect(settled).toBe(false);
@@ -112,7 +113,7 @@ it.each(['present', 'absent'] as const)('joins original owning recovery and keep
   expect(() => openDb(renamed)).toThrow('Household restore is incomplete');
   expect(() => readContinuityHousehold(renamed)).toThrow('Household restore is incomplete');
 });
-it.each(['restore', 'accept', 'close', 'accept-and-close', 'mutate-restore', 'mutate-accept', 'mutate-close', 'malformed-accept'] as const)(
+it.each(['restore', 'accept', 'close', 'accept-and-close', 'mutate-restore', 'mutate-accept', 'mutate-close', 'malformed-accept', 'accept-getter'] as const)(
   'owning recovery failure %s is generic, wiped, blocked, and joins original cleanup', async kind => {
     const f = await fixture(), out = destination(); let borrowed!: Buffer;
     const close = vi.fn(async () => {
@@ -127,11 +128,12 @@ it.each(['restore', 'accept', 'close', 'accept-and-close', 'mutate-restore', 'mu
       borrowed = bytes;
       if (kind === 'restore') throw Error('PRIVATE_RESTORE_DETAIL');
       if (kind === 'mutate-restore') bytes[0] ^= 1;
+      if (kind === 'accept-getter') return { close, get accept(): typeof accept { throw Error('PRIVATE_GETTER_DETAIL'); } };
       return { close, accept: kind === 'malformed-accept' ? undefined as unknown as typeof accept : accept };
     } };
     await expect(stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, role)).rejects.toThrow(/^Household owning recovery failed$/);
     expect(close).toHaveBeenCalledTimes(kind === 'restore' ? 0 : 1);
-    expect(accept).toHaveBeenCalledTimes(['restore', 'mutate-restore', 'malformed-accept'].includes(kind) ? 0 : 1);
+    expect(accept).toHaveBeenCalledTimes(['restore', 'mutate-restore', 'malformed-accept', 'accept-getter'].includes(kind) ? 0 : 1);
     expect(borrowed.every(byte => byte === 0)).toBe(true);
     expect(fs.readFileSync(join(out.home, 'secrets/recovery.age'))).toEqual(f.files.get('secrets/recovery.age'));
     expect(() => openDb(out.home)).toThrow('Household restore is incomplete');
@@ -140,6 +142,13 @@ it.each(['restore', 'accept', 'close', 'accept-and-close', 'mutate-restore', 'mu
     await expect(stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, retry)).rejects.toThrow(/^Household owning recovery failed$/);
     expect(retry.restore).not.toHaveBeenCalled();
   });
+it.each([undefined, {}, { accept: async () => {} }])('rejects malformed original session %j and wipes its input', async session => {
+  const f = await fixture(), out = destination(); let borrowed!: Buffer;
+  const role = { restore: async (bytes: Buffer) => { borrowed = bytes; return session; } } as HouseholdSecretsRestore;
+  await expect(stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, role)).rejects.toThrow(/^Household owning recovery failed$/);
+  expect(borrowed.every(byte => byte === 0)).toBe(true);
+  expect(() => openDb(out.home)).toThrow('Household restore is incomplete');
+});
 it('refuses missing owning role before filesystem IO and failed staging before owning IO', async () => {
   const f = await fixture(), out = destination(), role = { restore: vi.fn() };
   const open = vi.spyOn(fs, 'openSync');
