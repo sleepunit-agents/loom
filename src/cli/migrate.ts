@@ -27,6 +27,7 @@ Options:
 `;
 
 export async function run(argv: string[], io: IOStreams): Promise<number> {
+  if(argv[0]==='bridges'){const {migrateBridges}=await import('./migrate-bridges.js');return migrateBridges(argv.slice(1),io);}
   if (argv[0] === 'runtime') {
     const { migrateRuntime } = await import('./migrate-runtime.js');
     return migrateRuntime(argv.slice(1), io);

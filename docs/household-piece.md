@@ -36,6 +36,56 @@ reverting means restarting the old server on the untouched old home. Context and
 commons stores and other key files must be copied as part of the overall move;
 they are not app tables and are not imported here.
 
+## First run and the old in-place conversion
+
+Start a brand-new household with `loom serve --next --home NEW_HOME`.
+First sign-in initializes the household's OS owner, publishes the complete neutral
+`assistant` context and prints a short-lived sign-in link. It creates no agent
+bearer token. After signing in, Setup can create named agents with their own
+creed/rules, deliberately mint a first token, and show the explicit next-mode MCP
+configuration. An initialized or imported household is never re-scaffolded on
+restart; edited identity files and deliberately missing preference files survive.
+
+The commons needs no conversion for a fresh household. Knowledge and the People
+directory use `HOME/commons/knowledge.db` and `HOME/commons/people.db`;
+relationships use each agent's private `memories.db`. Empty stores are created by
+their normal writers. There is no old combined card or agent knowledge database
+to move or split, and no requirement to populate stores merely to sign in.
+
+The old `household init AGENT` moved `HOME/AGENT` into `HOME/agents/AGENT`,
+left a compatibility symlink, and moved existing knowledge. The old
+`household commons` moved knowledge and split combined person cards. Those
+**in-place conversion commands are retired on the new side**, rather than being
+run implicitly or routed through a remote API. They mutate portable continuity
+files and require a stopped source; a daemon API client cannot safely rearrange
+another machine's source directory. The temporary symlink was for the old harness
+path during the earlier phased rollout. Next stdio instead selects an explicit
+home/agent or standalone context, so that compatibility path is unnecessary.
+
+This disposition does not retire standalone operation:
+`loom mcp --next --context-dir CONTEXT` still uses that portable context without
+an app database. It also does not claim that the household importer promotes an
+unsplit standalone context into a shared household. That importer accepts the
+existing household file format; it neither moves contexts nor changes which
+person fields are shared. Existing households carry their already-split commons
+and agent contexts through the final coordinated move alongside the app import.
+An unsplit standalone source stays standalone; no automatic conversion or guessed
+merge of several knowledge stores is offered. The old executable retains its
+existing commands until the coordinated retirement of the old side.
+
+| Old first-run action | New-side choice |
+| --- | --- |
+| Initialize a new household | `serve --next` first sign-in, then Setup |
+| Move an existing standalone context and leave a symlink | Retired; explicit standalone stdio remains supported |
+| Implicitly move knowledge or split combined People cards | Retired; fresh stores already have the separate layout; no automatic standalone promotion |
+| Import an existing household's app records | Explicit `migrate household`; continuity files are separate move inputs |
+
+This is a command disposition, with no change to record scope, member authority,
+source data or migration behavior. Startup/retry and stopped-default-MCP witnesses
+are in `src/core/signin/operator.test.ts`; agent creation/configuration witnesses
+are in `src/core/household/bootstrap.test.ts`; standalone and multi-agent stdio
+acceptance is in `src/continuity/stdio.test.ts`.
+
 ## Old-to-new mapping
 
 | Old state | New rows |
@@ -612,3 +662,41 @@ logout keep their existing cryptographic/CSRF policy. No schema, job, legacy
 route adaptation or host installation is added. Account's single browser test
 uses two windows and actual virtual-authenticator WebAuthn registration; CI
 captures 390/1280/1920 Neon Noir and Daylight in `artifacts/household-account/`.
+
+### Agent profile descriptions
+
+`household.profile({agent})` and agent-scoped `household.profile` Live records
+project the imported `about` description and an unexpired `aboutAsk` timestamp,
+without returning the household envelope or reading an identity file. Only callers
+who can see that agent through central policy can read its profile.
+
+An agent’s owners use `household.setProfile({agent,text})` to set/clear a description
+(up to 600 normalized characters), or `household.requestProfile({agent})` to ask
+for one. Both have Setup controls, available to scoped owners for their agents even without household administration. Central policy’s agent-setup action supplies this authority. The authenticated agent answers with
+`household.describeSelf({text})`: no agent selector, at most 300 characters and
+two sentences, only once during the next 24 hours. Blank replies refuse without
+consuming the request. Owner edits close an open request. Future or expired imported
+timestamps grant no answer. Reads/expiry use the daemon clock, with Live expiry
+scheduled at the request deadline; no poller or external job is added.
+
+These operations mutate the existing household envelope, preserving unrelated
+metadata and other agents' descriptions. Mutation, request consumption, retry
+receipt and notification commit together. Retrying a committed answer returns
+its original result without overwriting later owner words. Setup keeps the
+original uncertain request handle and disables inactive/offline edits and retries.
+Neither an edit nor a request changes a creed. Explicit offline `describe_self`
+continues to refuse app writes; the daemon exposes `household.describeSelf` over
+its registry MCP endpoint. Generated `loom-household profile`, `setProfile`,
+`requestProfile` and `describeSelf` use the same schemas (JSON argument/output).
+
+| Old profile action | Next replacement |
+| --- | --- |
+| `about-set` (including Setup description) | `household.setProfile`; empty text clears and closes the request |
+| `about-ask` / Regenerate | `household.requestProfile`; server-timed 24-hour request |
+| Agent `describe_self` | Authenticated daemon `household.describeSelf`; same once-only request/length/sentence rules, no caller-selected agent |
+
+The existing single two-window Setup browser test edits, requests and observes an
+agent reply through Live, and captures the profile section at all three widths in
+Neon Noir and Daylight. CI supplies these screenshots; no local browser run is
+required or claimed. Device sign-in links, push devices/delivery and backup remain
+separate inventory gaps.

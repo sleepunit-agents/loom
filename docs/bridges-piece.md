@@ -878,3 +878,55 @@ the destination; explicitly map Slack bundle metadata and separate secret refere
 without opening the bundle; implement the owning import transaction, checksum,
 repeat/different-source guards, rollback, registry, plan discovery/options and both
 verification paths. Neither source inventory is registered with migrate-all yet.
+
+## Completed-snapshot importer
+
+`loom migrate snapshot --from <old-home> --bridges <instance-root> --bridges <another-instance-root> --to <snapshot>`
+collects each explicitly named external instance's shuttle.json, people.json and
+routes.json under bridges/0, bridges/1, etc. It does not open their configured
+paths or env bundles. Registered source rules also collect the home platform
+settings and completed backups of commons/stores/shuttle.db and runtime.db.
+Runtime's own snapshot root requirements still apply when its store is present.
+
+`loom migrate plan --snapshot <snapshot>` discovers Bridges and emits instance
+triples plus an empty connections mapping. Review that plan's Bridges options:
+
+```json
+{"instances":[{"shuttle":"bridges/0/shuttle.json","people":"bridges/0/people.json","routes":"bridges/0/routes.json"}],"connections":[{"agent":"art","platform":"discord","workspace":"789","bot":"100","tokenSecret":"art-discord"}]}
+```
+
+Every configured agent/platform requires one connection mapping. Discord bot and
+guild must match resolved source routes. Slack requires explicit workspace and bot
+metadata and separate tokenSecret/appSecret names; secrets_env/SLACK_BOTS is a
+whole bundle reference, never a source of invented split secret names. No bundle
+is opened. The importer installs every venue **disabled**, with no adapter started.
+The owner reviews setup before enabling it in the final move.
+
+`loom migrate all --snapshot <snapshot> --home <stopped-new-home> --plan <plan>`
+includes Bridges. For a separately imported matching household use
+`loom migrate bridges --from <snapshot> --home <stopped-new-home> --mapping <bridges-options.json>`.
+`loom migrate verify` supports both `--plan <plan>` and `--bridges-mapping <options>`.
+Both derive expected ids, counts and full row content from the snapshot, including
+private exact stored documents/revisions. They do not trust destination receipts
+as evidence of content. A single owning transaction compares all setup, empty
+traffic and private evidence rows; interruption rolls it back, a repeat is a no-op,
+and a different source or mapping refuses.
+
+People resolution follows the pinned old runtime's `gates` collection (its CLI
+verb is `people`), then shuttle `people`, then the explicit file. A shuttle moved
+tombstone without Runtime gates refuses. Routes use accepted routes/household and
+all agents' channels parts only when routes_for completeness permits it; otherwise
+they use the instance file. Offers affect completeness only; their flags never
+become accepted rules. Contradictory people, person/agent platform identities,
+channel primaries, threads, connection filters or per-agent channel flags refuse.
+People readers remain person slugs. Gates, proposals and restrictions remain
+Runtime-owned; private source evidence never grants or executes them.
+
+Channel-note file references, webhook-peer maps, notification settings, peer budgets,
+unknown store collections and proposals remain inventory/evidence, rather than
+being manufactured into unsupported setup fields. Runtime admission still holds
+unsupported peer/guest/group forms. Their remaining behavior matrix is tracked on
+t-2210; this importer does not claim that work complete. Source JSON inventory is
+whitelisted configuration plus byte digests; exact source files remain in the
+completed snapshot. Stored documents and revisions retain exact JSON strings,
+including numeric lexemes, privately in bridges_meta and never live records.

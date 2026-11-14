@@ -1,4 +1,6 @@
 import { saveLocalReceipt } from './local-receipt.js';
+import { filing } from './authorship.js';
+import type { ClockProvenanceReader } from '../runtime/role.js';
 import { installLocalWindow } from './local-window.js';
 import { installLocalPublic, localPublicPolicy } from './local-public.js';
 import { installPrivateExport } from './store.js';
@@ -6,11 +8,11 @@ import { localOwner, sameLocalCaller } from '../approvals/role.js';
 import { standingBinding, bindStandingWake, checkStandingWake } from './local-standing.js';
 import { filedLocal, localFilingWords, installLocalFiling } from './local-filing.js';
 import { clockCommands, clockOperationCommands } from './commands.js';
-import { command, localCommandInput } from './binding.js';
+import { command, localCommandInput, oneOffCommandInput } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
+import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, mayFilePrivateWork, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { wakes, schedules, wake, schedule, saveWake, saveSchedule, event, paused, active, type Wake, type Work, type Schedule } from './store.js';
 import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
@@ -59,6 +61,8 @@ function quotaDue(reset: unknown, now: number): number {
   return Math.min(Math.max(when + 60_000, now + 15 * 60_000), now + 8 * day);
 }
 export interface ClockOptions {
+  /** Original principal/scope proof, separate from capacity and local approval Caller. */
+  provenance?: ClockProvenanceReader;
   /** Runtime-owned current binding proof; capacity only, never authority. */
   capacityConversation?(viewer: Viewer): string | undefined;
   caller?(viewer: Viewer): import('../approvals/role.js').Caller | undefined;
@@ -83,18 +87,39 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   const readSee=(ctx:Context,w:Work,type='wake')=>(!w.member||ctx.window)&&see(ctx.viewer,w,type);
   const act = (v: Viewer, w: Work, household = false) => mayAct(v, scope(w), sharing(), household ? 'household' : 'act');
   const create = (v: Viewer, w: Work) => mayCreate(v, scope(w), sharing()) && (v.kind !== 'member' || mayAct(v, scope(w), sharing(), 'give-work'));
+  const prepareFiling = (v: Viewer, w: Work) => filing(v, w, sharing(), options.provenance);
+  const mayFile = (v: Viewer, w: Work) => {
+    const filed = prepareFiling(v, w);
+    return !!filed && (create(v, filed) || mayFilePrivateWork(v, { ...scope(filed),
+      privateControl: !!filed.authorship?.conversation }, sharing()));
+  };
+  const filedWork = <T extends Work>(v: Viewer, w: T): T => prepareFiling(v, w) as T | undefined
+    ?? (() => { throw new OperationError('denied', 'Work must retain its authenticated conversation scope'); })();
   const privateLocal=(w:Wake)=>w.member!==undefined && !!w.approval && !!filedLocal(db,w.approval);
   const get = (id: string) => wake(db, id) ?? (() => { throw new OperationError('not-found', 'Wake not found'); })();
   const disarm = () => { cancelTimer?.(); cancelTimer = undefined; };
   const queue = () => { if (!closed) { cancelTimer?.(); cancelTimer = clock.at(clock.now(), pump); } };
+  const publicWork = <T extends Work>(work: T): Omit<T,'authorship'> => { const {authorship: _internal, ...record} = work; return record; };
   const output = z.unknown();
+  const filingHash = (body: string, identity: { actor: Viewer }) => {
+    const proof = options.provenance?.(identity.actor);
+    return createHash('sha256').update(proof ? JSON.stringify([body,
+      [proof.agent,proof.conversation,proof.member,proof.project,proof.service]]) : body).digest('hex');
+  };
   function register<I>(name: string, input: z.ZodType<I>, write: boolean, may: (v: Viewer, i: I) => boolean, run: (ctx: Context, i: I) => unknown, internal = false) {
-    operations.register(operation({ name: `clock.${name}`, input, output, write, requiresWindow: internal ? undefined : (i)=>{const input=i as {id?:string;member?:string};return input.member!==undefined || !!(input.id && (wake(db,input.id)??schedule(db,input.id))?.member);}, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
+    const ordinaryFiling = ['at','in','park'].includes(name);
+    operations.register(operation({ name: `clock.${name}`, input, output, write, recheckPolicy: write && ordinaryFiling ? viewer => !!options.provenance?.(viewer) : false, inputHash: ordinaryFiling ? filingHash : undefined, requiresWindow: internal ? undefined : (i)=>{const input=i as {id?:string;member?:string};return input.member!==undefined || !!(input.id && (wake(db,input.id)??schedule(db,input.id))?.member);}, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
       run(ctx, i) {
         if (closed) throw new OperationError('unavailable', 'Clock stopped');
         const result = run(ctx, i);
         if (write) { for (const agent of deadmanAgents) ensureDeadman(ctx, agent); queue(); }
-        return result;
+        if (write && ctx.viewer.kind === 'agent' && result && typeof result === 'object' && 'member' in result && result.member) {
+          const row = result as Wake & Schedule;
+          return { id: row.id, state: row.state, due: row.due,
+            ...(row.wait ? { wait: { id: row.wait.id } } : {}),
+            private: true };
+        }
+        return result && typeof result === 'object' && 'authorship' in result ? publicWork(result as Work) : result;
       } }));
   }
   function capacityFor(origin: string, conversation?: string): NonNullable<Wake['apiCapacity']> {
@@ -200,7 +225,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   }));
   }
   const timed = workInput.extend({ when: text });
-  for (const name of ['at', 'in'] as const) register(name, timed, true, create, (ctx, i) => {
+  for (const name of ['at', 'in'] as const) register(name, timed, true, mayFile, (ctx, input) => {
+    const i = filedWork(ctx.viewer, input);
     newWork(i);
     const due = calendar(() => name === 'at' ? parseAt(i.when, ctx.now) : parseIn(i.when, ctx.now));
     if (due <= ctx.now) invalid('Wake must be in the future');
@@ -223,14 +249,15 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     oneOffRoom(ctx, i.agent);
     return make(ctx, i, due);
   });
-  register('park', workInput.extend({ on: text }), true, (v, i) => create(v, i) && !!options.approvals?.check(i.on, v), (ctx, i) => {
+  register('park', workInput.extend({ on: text }), true, (v, i) => mayFile(v, i) && !!options.approvals?.check(i.on, v), (ctx, input) => {
+    const i = filedWork(ctx.viewer, input);
     newWork(i);
     if (!/^[aq]-[\w-]+$/.test(i.on)) invalid('Park on an approval or question');
     oneOffRoom(ctx, i.agent);
     const a = options.approvals!.check(i.on, ctx.viewer)!;
     return make(ctx, i, ctx.now, { state: 'parked', wait: { id: i.on, until: ctx.now + day, kind: a.kind, target: a.target } });
   });
-  register('list', z.object({ agent: text.optional() }), false, () => true, (ctx, i) => wakes(db).filter(w => readSee(ctx, w) && (!i.agent || w.agent === i.agent) && (active(w) || w.changedAt + day > ctx.now)));
+  register('list', z.object({ agent: text.optional() }), false, () => true, (ctx, i) => wakes(db).filter(w => readSee(ctx, w) && (!i.agent || w.agent === i.agent) && (active(w) || w.changedAt + day > ctx.now)).map(publicWork));
   register('log', z.object({ since: z.number().optional(), grep: z.string().optional() }), false, () => true, (ctx, i) => {
     const ids = new Set(wakes(db).filter(w => readSee(ctx, w)).map(w => w.id));
     return (db.prepare('SELECT wake,record FROM clock_events ORDER BY seq').all() as { wake: string; record: string }[]).filter(r => ids.has(r.wake)).map(r => JSON.parse(r.record)).filter(r => (i.since === undefined || r.at >= i.since) && (!i.grep || JSON.stringify(r).includes(i.grep)));
@@ -391,12 +418,19 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('rearm', z.object({}), true, (v) => mayAct(v, {}, sharing(), 'household'), () => ({ rearmed: true }));
   register('deadman', agentInput, true, (v, i) => deadmanAgents.has(i.agent) && v.kind === 'agent' && v.id === i.agent
     && create(v, { agent: i.agent, note: '' }), (ctx, i) => ensureDeadman(ctx, i.agent), true);
-  operations.register(operation({ name: 'clock.command', write: true, recheckPolicy:true,
+  operations.register(operation({ name: 'clock.command', write: true, recheckPolicy:true, inputHash:(body, identity) => {
+      const input = identity.input;
+      return !localCommandInput(identity.actor,input) && oneOffCommandInput(identity.actor,input)
+        ? filingHash(body,identity) : createHash('sha256').update(body).digest('hex');
+    },
     input: z.object({ argv: z.array(z.string()).max(100), agent: text.optional(), laneFile: z.object({path:text,text:z.string().max(100_000)}).optional() }),
     output: z.object({ exit:z.number().int(), stdout:z.string(), stderr:z.string() }),
     may: (viewer,input) => {
       const local=localCommandInput(viewer,input);
-      return local ? localPublicPolicy(operations,sharing,options.caller,viewer,local) : viewer.kind === 'member' || viewer.kind === 'agent';
+      if (local) return localPublicPolicy(operations,sharing,options.caller,viewer,local);
+      const oneOff = oneOffCommandInput(viewer,input);
+      return oneOff && options.provenance?.(viewer) ? mayFile(viewer,oneOff) && (!oneOff.on || !!options.approvals?.check(oneOff.on,viewer))
+        : viewer.kind === 'member' || viewer.kind === 'agent';
     },
     run: (ctx,input) => {
       const result=command(operations,ctx.viewer,input);
@@ -535,7 +569,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         && create(v, w)) {
         try { newWork(w); canAskVouch = true; } catch (e) { if (!(e instanceof OperationError) || e.code !== 'invalid') throw e; }
       }
-      return { ...w, ...(type === 'wake' ? { canVouch, canAskVouch } : {}) };
+      return { ...publicWork(w), ...(type === 'wake' ? { canVouch, canAskVouch } : {}) };
     },
     inScope: (r, agent, now) => (!agent || r.agent === agent) && (type === 'schedule' || active(r as unknown as Wake) || Number(r.changedAt) + day > now),
     expires: r => type === 'wake' && !active(r as unknown as Wake) ? Number(r.changedAt) + day : undefined,

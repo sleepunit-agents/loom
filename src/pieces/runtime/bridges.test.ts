@@ -292,6 +292,8 @@ it('uses only the live bridge source binding for Clock conversation capacity',as
  const created=value<{id:string}>(await f.post(body,'clock.in',input));
  const row=JSON.parse((f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(created.id) as {record:string}).record);
  expect(row.apiCapacity).toMatchObject({origin:'art',bucket:expect.stringMatching(/^[a-f0-9]{64}$/)});
+ expect(row).toMatchObject({member:'jonathan',authorship:{origin:'art',member:'jonathan',principal:{for:'owner',people:[]}}});
+ expect(created).toEqual({id:row.id,due:row.due,state:'pending',private:true});
  await f.restart();
  const again=value<{id:string}>(await f.post(body,'clock.in',input));
  const persisted=JSON.parse((f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(again.id) as {record:string}).record);

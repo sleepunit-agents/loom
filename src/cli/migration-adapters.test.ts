@@ -1,3 +1,5 @@
+vi.mock('../pieces/bridges/importer.js',()=>({importBridges:vi.fn(()=>'bridges-result')}));
+import {importBridges} from '../pieces/bridges/importer.js';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -28,7 +30,7 @@ import { importChanges } from '../pieces/changes/importer.js';
 import { createMigrationRegistry, type MigrationContext } from './migration-registry.js';
 let root: string;
 afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }); vi.clearAllMocks(); vi.restoreAllMocks(); });
-it('forwards destination, resolved inputs, options and results to all nine import functions', async () => {
+it('forwards destination, resolved inputs, options and results to all ten import functions', async () => {
   root = mkdtempSync(join(tmpdir(), 'migration-adapters-'));
   mkdirSync(join(root, 'input')); mkdirSync(join(root, 'second'));
   // Sentinel database is never opened: mocks distinguish each direct function and its arguments.
@@ -41,7 +43,8 @@ it('forwards destination, resolved inputs, options and results to all nine impor
   const entries = createMigrationRegistry().order().importers;
   for (const entry of entries) {
     const paths = entry.name === 'comms' ? ['comms.db','household.db','comms.key','comms.salt'].map(name => `input/${name}`)
-      : entry.name === 'runtime' ? ['runtime'] : entry.name === 'attention' ? ['input', 'second'] : ['input'];
+      : entry.name === 'bridges' ? ['input/shuttle.json'] : entry.name === 'runtime' ? ['runtime'] : entry.name === 'attention' ? ['input', 'second'] : ['input'];
+    if (entry.name === 'bridges')writeFileSync(join(root,'input/shuttle.json'),'sentinel');
     if (entry.name === 'comms') for (const path of paths) writeFileSync(join(root,path),'sentinel');
     expect(await entry.run(context, { paths, options })).toBe(`${entry.name}-result`);
   }
@@ -56,5 +59,6 @@ it('forwards destination, resolved inputs, options and results to all nine impor
   expect(publishMigrationCommsKey).toHaveBeenCalledExactlyOnceWith(join(input,'comms.key'), context.home);
   expect(importComms).toHaveBeenCalledExactlyOnceWith(db, input, context.home, {}, openSnapshotSqlite);
   expect(importRuntime).toHaveBeenCalledExactlyOnceWith(db,{state:join(root,'runtime')},options,{agents:['art'],members:['jonathan'],projects:['pond']},123,openSnapshotSqlite);
-  for (const entry of entries.filter(e => e.name !== 'attention' && e.name !== 'comms' && e.name !== 'runtime')) expect(() => entry.run(context, { paths: [], options })).toThrow('exactly one');
+  expect(importBridges).toHaveBeenCalledExactlyOnceWith(db,{files:[{name:'input/shuttle.json',path:join(input,'shuttle.json'),kind:'shuttle'}],stores:[]},options,{agents:['art'],members:['jonathan']},openSnapshotSqlite);
+  for (const entry of entries.filter(e => e.name !== 'attention' && e.name !== 'comms' && e.name !== 'runtime' && e.name !== 'bridges')) expect(() => entry.run(context, { paths: [], options })).toThrow('exactly one');
 });
