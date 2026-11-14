@@ -24,8 +24,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
   await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'Set the clock tempo with params.'});
   await source.writePage({slug:'backup',title:'Nightly backup',domain:'ours/homelab',verified_at:'2026-11-10T12:00:00Z',body:'Backups run overnight.'});
   const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
-  // Fixed fixture authentication lets record aging run beyond the browser session TTL.
-  const app=await startLoom({home,next:true,clock,webRoot:root,sharing:()=>({members:{owner:{owner:true,agents:['art']}},projects:{},services:{}}),authenticate:()=>({viewer:{kind:'member',id:'owner'},valid:()=>true})});
+  const app=await startLoom({home,next:true,clock,webRoot:root,sharing:()=>({members:{owner:{owner:true,agents:['art']}},projects:{},services:{}})});
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
@@ -39,15 +38,18 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
       }));
     }
     try{
-    // Signin's shell gate uses the real disposable cookie even with a fixture
-    // live resolver. Preserve that composition when main adds authentication.
-    const link=app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});
-    if(!link.ok)throw new Error('Fixture sign-in link failed');
-    await a.goto(app.url+(link.value as {path:string}).path);
-    const signedIn=a.waitForResponse(response=>response.request().method()==='POST');
-    await a.getByRole('button',{name:'Sign in',exact:true}).click();
-    expect((await signedIn).status()).toBe(303);
-    await Promise.all([a.goto(`${app.url}/p/knowledge-preview`),b.goto(`${app.url}/p/knowledge-preview`)]);
+    // Exercise the real signed-in window resolver: a synthetic member cannot
+    // subscribe to browser-only shell records.
+    const signIn=async()=>{
+      const link=app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});
+      if(!link.ok)throw new Error('Fixture sign-in link failed');
+      await a.goto(app.url+(link.value as {path:string}).path);
+      const signedIn=a.waitForResponse(response=>response.request().method()==='POST');
+      await a.getByRole('button',{name:'Sign in',exact:true}).click();
+      expect((await signedIn).status()).toBe(303);
+      await Promise.all([a.goto(`${app.url}/p/knowledge-preview`),b.goto(`${app.url}/p/knowledge-preview`)]);
+    };
+    await signIn();
     const row=(p:typeof a,title:string)=>p.locator('[data-split-row]').filter({hasText:title});
     await expect.poll(()=>row(a,'Six voices').count()).toBe(1);
     await expect.poll(()=>row(b,'Six voices').count()).toBe(1);
@@ -89,6 +91,9 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await b.getByRole('button',{name:/Due a check/}).first().click();
     await expect.poll(()=>row(b,'Clock tempo').count()).toBe(0);
     clock.advance(31*86400_000);
+    // Aging the records also expires the real browser session. Sign in again
+    // before checking the aged projection; both windows share the new cookie.
+    await signIn();
     await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('');
     await b.getByRole('button',{name:/Due a check/}).first().click();
     await expect.poll(()=>row(b,'Clock tempo').count()).toBe(1);
