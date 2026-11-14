@@ -1,8 +1,8 @@
 /**
  * c-loom-strictness conformance — the write discipline across the wings.
  *
- * These tests are the loom-side verification of the to-be strictness contract
- * (felag: docs/archive/felag-specs/loom-strictness, archived, non-normative). Each `it` names the criterion it greens:
+ * Active regressions for memory writes. The criterion names below are historical
+ * identifiers; the retired ceremony fixtures remain in git history.
  *   ac-ls-lint-memory          — malformed remember refused pre-commit
  *   ac-ls-lint-rejection-typed — the rejection carries a reason, store unchanged
  *   ac-ls-single-writer-serialize — concurrent writes don't interleave
