@@ -6,7 +6,7 @@ import { runtimeRole } from './role.js';
 import { runtimeStore } from './store.js';
 import { configuredHouse } from './builds.js';
 import { startJobId } from './start.js';
-import { clockRoute, type ClockDestinationReader } from '../clock/destination.js';
+import { clockRoute, type ClockDestinationReader } from '../clock/role.js';
 export const START_CONFIRM_MS = 60_000;
 export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'status'>, destination?: ClockDestinationReader): Runtime {
   const store=runtimeStore(app.db), waiting=new Set<(result:StartResult)=>void>();

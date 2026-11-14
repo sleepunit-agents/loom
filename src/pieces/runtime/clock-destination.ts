@@ -2,7 +2,7 @@
  * a conversation or turns this witness into a body credential. */
 import { isClosing, type Foundation } from '../../core/app.js';
 import { mayFilePrivateWork, mayCreate, type Sharing } from '../../core/index.js';
-import type { ClockDestinationReader } from '../clock/destination.js';
+import type { ClockDestinationReader } from '../clock/role.js';
 import { runtimeStore } from './store.js';
 import { currentExecution } from './control.js';
 import { bodyPolicyExecutionHeld } from './policy-store.js';
