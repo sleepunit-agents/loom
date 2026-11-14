@@ -40,3 +40,5 @@ export function currentRuntimeJobs(records: readonly RuntimeJob[], agent: string
   return records.filter(job => job.agent === agent && rank[job.state] !== undefined)
     .sort((a,b) => rank[a.state]! - rank[b.state]! || a.createdAt - b.createdAt || a.id.localeCompare(b.id));
 }
+
+export const agentPath = (agent: string) => `/p/agents-preview/agent/${encodeURIComponent(agent)}`;

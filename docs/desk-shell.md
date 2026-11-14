@@ -15,7 +15,7 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | Rail accordion | Measures full cards before paint; on overflow keeps one open, working thread then ask then unread then first, while the rest become compact lines in alphabetical order. Comms selection priority comes with the companion slice |
 | Per-device dock/rail hide modes | Always show / Minimize to strip / Auto-hide; browser-local next-only keys, overlay reveals, live ask/unread dot, keyboard agent shortcuts. Below 1280 the rail is a 14px strip |
 | Selected Comms companion | Visible live thread selects its owned agent above Needs you; others stay alphabetical. Minimize, list navigation or source loss releases it; short move respects reduced motion |
-| Comms portrait portal | Next slice; the selected companion currently retains its card |
+| Comms portrait portal | Reader-owned portrait appears exactly once in the permanent selected-agent rail, otherwise in Comms |
 | Grouped launcher sections and account tile | Grouped registration inventory and Your account shortcut; no old Shell discovery or fabricated live stats |
 | Home Needs you band and full questions, clock, runtime jobs, reported work | Existing live Home content in desk-coloured cut cards; desktop cards scroll within the available height; phone cards grow |
 | Depth / Contours / Wash | Existing lazy ground components, selected by member `household.preferences`; Appearance offers all three |
@@ -77,8 +77,8 @@ Attention registers a bar alongside its Home and rail surfaces. It reads only
 owned roster, directory names, reported status and open asks from the existing
 live records; unavailable feeds immediately remove their words/count. The bar
 never retains conversation words. A count links to Inbox through the shell
-router. Agent ticker links open Home, where all owned cards are visible; a
-dedicated agent window remains follow-up. All apps stays reachable in the dock
+router. The roster count opens Home; individual
+agent names now open their dedicated registered Agents view. All apps stays reachable in the dock
 and by its existing keyboard shortcut. Appearance stays in the bar, a named
 gear on a phone.
 
@@ -250,3 +250,35 @@ says some activity is unavailable until the owning piece connects that role.
 The SAME five-agent evidence scenario now includes a dedicated Last steps board
 at every width/look and real fixture episode updates across both next windows.
 No real import or host step is part of this slice.
+
+### Dedicated agent view
+
+The lazy Agents app at `/p/agents-preview/agent/<agent>` presents an owned
+agent's face, directory name, live Household description, reported work,
+questions and last steps. The Home face and individual ticker entries open it.
+The root route lists owned agents; unavailable or unowned addresses never expand
+a profile. Lost sources withdraw their words and capabilities immediately.
+
+| Old agent window | New desk choice |
+| --- | --- |
+| Face/name/description header | Existing AgentFace and live `household.profile`, never a creed |
+| In-place description editing/regeneration | Edit profile in Setup opens the existing owner screen; no second write handler or agent request workflow |
+| Today/Mind/Clock/Bridges/Setup sections embedded inside each agent window | Current work/questions/last steps here; deeper screens remain the registered owning apps through named navigation |
+| Multiple per-agent tile identities | One registered Agents tile with an addressed agent and browser trail, preserving the approved router and tiling |
+| Home face and individual ticker name | Both open the exact owned agent; roster count still opens Home |
+
+This small view deliberately avoids reproducing every old embedded app. People,
+Activity and Comms open the selected agent's actual record/filter/unread-or-latest
+thread; Setup is offered only by the current profile `canEdit` capability. The
+Inbox reads and answers questions. No new operation, policy, importer, client,
+background job or data store is needed. The same five-agent browser scenario
+also compares the dedicated view at every width/look, with matching descriptions
+in both isolated fixtures and a real Household profile update across two windows.
+
+The app composition audit found every registered app already uses the shared kit
+and desk frame: Tasks, Approvals, Changes, Knowledge, Inbox, Bridges, Clock,
+Comms, People, Projects, Activity and Settings use Split; Home, Sharing, Setup and
+Your account use AppFrame. Comms retains its domain transcript and portrait
+inside Split. Account owns passkeys/session controls. No other provisional shell
+control or shell-owned piece data was found. Fixture evidence does not replace
+Jonathan's final visual acceptance.

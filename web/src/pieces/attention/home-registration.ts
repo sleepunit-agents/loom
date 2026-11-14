@@ -24,3 +24,5 @@ const Signals = lazy(() => import('./desk-signals'));
 export function SignalsSurface(props: {go:(path:string)=>void;onAttention:(value:boolean)=>void}) {
   return createElement(Suspense,{fallback:null},createElement(Signals,props));
 }
+
+export const agentApp = { id:'agents', title:'Agents', icon:'people', path:'/p/agents-preview', fit:{min:[360,320] as [number,number],ideal:960,max:null,big:true,why:'one owned agent’s profile and current work'}, Screen:lazy(()=>import('./agent')) };

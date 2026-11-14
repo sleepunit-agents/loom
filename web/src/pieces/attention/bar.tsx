@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useRecords } from '../../data';
 import { Ticker, type TickPart } from '../../ticker';
-import { latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus, type OwnedAgent } from './home-model';
+import { agentPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus, type OwnedAgent } from './home-model';
 import type { Ask } from './model';
 import './bar.css';
 import { BarClock, BarStatus } from './bar-system';
@@ -21,7 +21,7 @@ export default function AttentionBar({ title, go, actions }: BarProps) {
     {text:`${agents.length} agent${agents.length===1?'':'s'}`,href:'/'},
     ...agents.map(agent => {
       const status = statuses.status === 'live' ? latestStatus(statuses.records,agent.id) : undefined;
-      return {text:`${agent.name} · ${status ? status.work || (status.state === 'working' ? 'Working' : status.state === 'waiting' ? 'Waiting' : status.state === 'offline' ? 'Unavailable' : 'Nothing right now') : 'Status unavailable'}`,href:'/p/home-preview'};
+      return {text:`${agent.name} · ${status ? status.work || (status.state === 'working' ? 'Working' : status.state === 'waiting' ? 'Waiting' : status.state === 'offline' ? 'Unavailable' : 'Nothing right now') : 'Status unavailable'}`,href:agentPath(agent.id)};
     }),
   ];
   parts.push(...stats.parts);

@@ -281,3 +281,7 @@ it('shows each owned agent’s latest three Activity entries with exact reader n
  await publish('activity.window',live([{...window,entries:[]}]));expect(text()).toContain('No recent steps.');
  for(const status of ['offline','denied','loading'] as const){await publish('activity.window',{status,records:[window]});expect(text()).not.toContain('Step a');expect(text()).toContain(status==='loading'?'Opening activity':'Activity unavailable.');}
 });
+
+it('opens an owned agent’s dedicated window from its Home face',async()=>{
+ const go=await draw();await act(async()=>tree!.root.findByProps({'aria-label':'Open Art agent window'}).props.onClick());expect(go).toHaveBeenLastCalledWith('/p/agents-preview/agent/art');
+});
