@@ -1268,6 +1268,10 @@ title and activity writes retain only acknowledgements there, recheck body autho
 before replaying them, and publish through the registry after commit. Private words
 stay in Comms. Activity is movement, not a working heartbeat or a new turn.
 
+Runtime validates the public inputs; Comms also validates its other direct role
+callers. These small validation declarations remain local to each boundary, at
+the cost of keeping their title and activity limits aligned.
+
 These controls cover existing bound private loom conversations. Authoritative
 conversation lookup for imported/spawned threads, trusted spawn, ordinary
 conversation step writers, terminal notices and the standalone runner remain
