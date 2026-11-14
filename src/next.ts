@@ -1,3 +1,6 @@
+import { dataHttp } from './core/data/http.js';
+import { dataDatabase } from './core/data/database.js';
+import { dataAuthentication } from './core/data/authentication.js';
 import { installDiscordHistory, type HistoryAccess } from './pieces/bridges/history-operation.js';
 import { discordApi } from './pieces/bridges/discord-api.js';
 import { runtimeDiscordHistoryPermit } from './pieces/runtime/role.js';
@@ -354,6 +357,11 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   const api = httpDoor(app, auth);
   const root = resolve(options.webRoot ?? resolve(import.meta.dirname, '../dist/web'));
   const routes = new Hono<{ Bindings: { incoming: IncomingMessage } }>();
+  // The generated door uses the SAME connection and fresh shared credentials.
+  // Existing homes are deliberately not bootstrapped or migrated here.
+  const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
+  const data = dataHttp(sharedData, dataAuthentication(sharedData, () => app.operations.clock.now()));
+  routes.all('/graphql', c => data.fetch(c.req.raw));
   routes.route('/', signinRoutes(app));
   routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
   routes.all('/mcp', async c => {
