@@ -233,3 +233,18 @@ it('sweeps authorized conversations while leaving private and other-agent turns 
   expect(call('retain', {}, { kind: 'service', id: 'worker' })).toEqual({ ok: true, value: { days: 1, turns: 1 } });
   expect(call('turns', { conversation: privateId })).toMatchObject({ value: [{ seq: 1 }] });
 });
+it.each([10, 1000])('retains %i conversations with one operation call and preserves totals', async count => {
+  const { app, call } = await setup();
+  const putConversation = app.db.prepare('INSERT INTO attention_conversations VALUES (?,?)');
+  const putTurn = app.db.prepare('INSERT INTO attention_turns VALUES (?,?,?,?)');
+  app.db.transaction(() => {
+    for (let n = 0; n < count; n++) {
+      const id = `cv-${n.toString(16).padStart(12, '0')}`;
+      putConversation.run(id, JSON.stringify({ id, agent: 'art' }));
+      putTurn.run(`${id}:1`, id, 1, JSON.stringify({ id: `${id}:1`, conversation: id, seq: 1, at: base.at, kind: 'message' }));
+    }
+  })();
+  const calls = vi.spyOn(app.operations, 'call');
+  expect(call('retain', {})).toEqual({ ok: true, value: { days: count, turns: count } });
+  expect(calls).toHaveBeenCalledTimes(1);
+});

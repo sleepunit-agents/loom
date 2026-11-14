@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { fixture } from '../../fixture.js';
-import { FakeClock, type Viewer } from '../../core/index.js';
+import { FakeClock, failure, type Viewer } from '../../core/index.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
 import { installAttentionMaintenance } from './daemon.js';
 const cleanups: (() => Promise<void>)[] = [];
@@ -13,12 +13,12 @@ const owner: Viewer = { kind: 'member', id: 'jonathan' }, service: Viewer = { ki
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'unattended-waits-')); fixture(home);
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  const grants = { taskType: true, taskRead: true, approvalType: true, approvalRead: true, inventoryRead: true, askType: true };
+  const grants = { taskType: true, taskRead: true, approvalType: true, approvalRead: true, inventoryRead: true, askType: true, checkRead: true, resolveRead: true };
   let database: SharingDatabase;
   const app = await startLoom({ home, next: true, staging: true, clock, stdout: () => {}, install: app => { database = new SharingDatabase(app.db, home); }, sharing: () => {
     const snapshot = database.sharing();
     const attention = snapshot.services.attention;
-    if (attention) snapshot.services = { ...snapshot.services, attention: { types: attention.types.filter(type => (type !== 'attention.ask' || grants.askType) && (type !== 'task' || grants.taskType) && (type !== 'approval' || grants.approvalType)), operations: attention.operations.filter(op => (op !== 'attention.pendingWaits' || grants.inventoryRead) && (!['tasks.show', 'tasks.readMany'].includes(op) || grants.taskRead) && (op !== 'approvals.check' || grants.approvalRead)) } };
+    if (attention) snapshot.services = { ...snapshot.services, attention: { types: attention.types.filter(type => (type !== 'attention.ask' || grants.askType) && (type !== 'task' || grants.taskType) && (type !== 'approval' || grants.approvalType)), operations: attention.operations.filter(op => (op !== 'attention.pendingWaits' || grants.inventoryRead) && (op !== 'attention.checkWait' || grants.checkRead) && (op !== 'attention.resolve' || grants.resolveRead) && (!['tasks.show', 'tasks.readMany'].includes(op) || grants.taskRead) && (op !== 'approvals.check' || grants.approvalRead)) } };
     return snapshot;
   } });
   cleanups.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
@@ -158,4 +158,48 @@ it('keeps task batches under the original viewer and does not infer missing or h
   raise('hidden-batch', { task: 't-2' });
   expect(call('attention.sweepWaits', {}, { kind: 'member', id: 'pollock' })).toMatchObject({ code: 'denied' });
   expect(read('hidden-batch')).toMatchObject({ value: { state: 'open' } });
+});
+
+it.each(['checkRead', 'resolveRead'] as const)('holds sweep work when per-ask %s is revoked', async grant => {
+  const { grants, call, raise, read, close } = await setup();
+  raise('held-grant', { task: 't-1' }); close(); grants[grant] = false;
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 0 } });
+  expect(read('held-grant')).toMatchObject({ value: { state: 'open' } });
+  grants[grant] = true;
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 1 } });
+});
+it.each(['unavailable', 'throw'] as const)('holds every task wait on a %s batch read, then recovers on a new sweep', async mode => {
+  const { app, call, raise, read, close } = await setup();
+  raise('failed-batch', { task: 't-1' }); close();
+  const original = app.operations.call.bind(app.operations);
+  vi.spyOn(app.operations, 'call').mockImplementation((...args) => {
+    if (args[2] === 'tasks.readMany') {
+      if (mode === 'throw') throw new Error('unavailable fixture');
+      return failure('unavailable', 'unavailable fixture');
+    }
+    return original(...args);
+  });
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 0 } });
+  expect(read('failed-batch')).toMatchObject({ value: { state: 'open' } });
+  vi.restoreAllMocks();
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 1 } });
+});
+it('rolls back all sweep updates, receipts and publication on a later failure, then retries and replays once', async () => {
+  const { app, call, raise, close } = await setup();
+  raise('rollback-a', { task: 't-1' }); raise('rollback-b', { task: 't-1' }); close();
+  app.db.exec("CREATE TRIGGER fail_later_wait BEFORE UPDATE ON attention_asks WHEN NEW.id='rollback-b' BEGIN SELECT RAISE(ABORT, 'fixture later update'); END");
+  const changed = vi.spyOn(app.live, 'changed');
+  const before = app.db.prepare('SELECT * FROM core_operations').all();
+  const sweep = () => app.operations.call('direct', service, 'attention.sweepWaits', {}, 'rollback-sweep');
+  expect(sweep()).toMatchObject({ code: 'unavailable' });
+  expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
+  expect(app.db.prepare("SELECT id FROM attention_asks WHERE json_extract(record,'$.state')='open'").all()).toHaveLength(2);
+  expect(changed).not.toHaveBeenCalled();
+  app.db.exec('DROP TRIGGER fail_later_wait');
+  const answer = sweep(); expect(answer).toMatchObject({ value: { resolved: 2 } });
+  expect(changed).toHaveBeenCalledExactlyOnceWith([{ type: 'attention.ask', id: 'rollback-a' }, { type: 'attention.ask', id: 'rollback-b' }]);
+  const batch = vi.spyOn(app.operations, 'call');
+  expect(sweep()).toEqual(answer);
+  expect(batch.mock.calls.filter(args => args[2] === 'tasks.readMany')).toHaveLength(0);
+  expect(changed).toHaveBeenCalledTimes(1);
 });

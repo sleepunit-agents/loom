@@ -92,3 +92,15 @@ it('rolls back comment-driven resolution on nested refusal, then permits a fresh
   vi.restoreAllMocks();
   expect(call('attention.checkWait', { id: 'rollback' }, owner, 'retry')).toMatchObject({ value: { state: 'resolved' } });
 });
+it('batches attributed answers without retaining comment words and rechecks current owner on each sweep', async () => {
+  const { app, call, raise, add, household, home } = await setup();
+  raise('batched-answer'); add('t-1', comment(`Yes, to: ${ask}\nPRIVATE BATCH WORDS`));
+  household.change(home, raw => { delete raw.owner; });
+  const service: Viewer = { kind: 'service', id: 'attention' };
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 0 } });
+  household.change(home, raw => { raw.owner = 'jonathan'; });
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 1 } });
+  expect(call('attention.get', { id: 'batched-answer' })).toMatchObject({ value: { state: 'resolved', resolution: 'you answered it on t-1' } });
+  expect(JSON.stringify(app.db.prepare("SELECT * FROM core_operations WHERE name LIKE 'attention.%'").all())).not.toContain('PRIVATE BATCH WORDS');
+  expect(JSON.stringify(app.db.prepare('SELECT * FROM attention_asks').all())).not.toContain('PRIVATE BATCH WORDS');
+});
