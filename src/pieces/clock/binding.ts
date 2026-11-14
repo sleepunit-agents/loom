@@ -29,6 +29,7 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   if (name === 'vouch' || name === 'ask-vouch') input.target = `${agent}:${[...new Set(positional)].sort().join(',')}`;
   for (const key of ['note','model','slot','continuation','approval','place','on','days','at']) if (flags[key] !== undefined) input[key] = flags[key];
   if (timed) input.when = positional.join(name === 'in' ? '' : ' ');
+  if(name==='schedule recover' && flags.note===undefined)return fail('schedule recover needs an explicit --note (which may be empty)',2);
   if (['at','in','park','schedule set','schedule recover'].includes(name!)) {
     if (!(timed && flags.approval && !flags.prompt && !flags['prompt-file']) && !!flags.prompt === !!flags['prompt-file']) return fail('give exactly one of --prompt/-p or --prompt-file/-f');
     input.agent = agent; if (!timed || !flags.approval) input.note ??= '';

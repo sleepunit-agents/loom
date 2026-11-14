@@ -132,6 +132,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const saved=schedule(db,input.id);
     return mayFile(v,input) && (!saved || (saved.laneDetails ? act(v,saved,true) : mayControl(v,saved)));
   };
+  const mayRecoverSchedule = (v:Viewer,input:Work & {id:string}) => {
+    const saved=schedule(db,input.id);
+    return v.kind==='member' && mayAct(v,{},sharing(),'household') && mayFile(v,input)
+      && !!saved && see(v,saved,'schedule') && act(v,saved,true);
+  };
   const mayScheduleControl = (v:Viewer, name:string, saved:Schedule) =>
     saved.laneDetails || name==='scheduleRun' && v.kind!=='agent'
       ? act(v,saved,true) && create(v,saved) : mayControl(v,saved);
@@ -420,8 +425,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
 
   const scheduleInput = workInput.extend({ id: text, at: z.union([text, z.array(text)]), days: z.string().default(''), lane: text.optional() });
   register('scheduleRecover', scheduleInput.pick({id:true,agent:true,at:true,days:true,prompt:true,note:true}).extend({prompt:text}).strict(), true,
-    (v,i) => v.kind === 'member' && mayAct(v,{},sharing(),'household') && mayFile(v,i)
-      && !!schedule(db,i.id) && see(v,schedule(db,i.id)!,'schedule') && act(v,schedule(db,i.id)!,true),
+    mayRecoverSchedule,
     (ctx,input) => {
       const old=schedule(db,input.id)!;
       if(old.by.kind!=='runner' || old.by.id!=='clock-import:unverified' || old.enabled || old.importRecovery!=='plain'
@@ -532,8 +536,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         const saved=control.operation==='cancel'?wake(db,control.id):schedule(db,control.id);
         if(!saved?.member && db.prepare('SELECT 1 FROM clock_meta WHERE key=?').get('private-id:'+control.id))return false;
         if(control.operation==='scheduleSet')return maySetSchedule(viewer,{id:control.id,agent:control.agent,note:''});
-        if(control.operation==='scheduleRecover')return viewer.kind==='member' && mayAct(viewer,{},sharing(),'household')
-          && !!saved && see(viewer,saved,'schedule') && act(viewer,saved,true) && mayFile(viewer,{agent:control.agent,note:''});
+        if(control.operation==='scheduleRecover')return mayRecoverSchedule(viewer,{id:control.id,agent:control.agent,note:''});
         if(!saved)return viewer.kind==='member';
         return control.operation==='cancel' ? mayControl(viewer,saved) : mayScheduleControl(viewer,control.operation,saved as Schedule);
       }

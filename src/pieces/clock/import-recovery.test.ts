@@ -69,11 +69,17 @@ it('refuses an uncertain linked import and cancels only definitely unstarted lin
  expect(wakes(s.app.db).find(w=>w.id===id)).toMatchObject({state:'cancelled'});
  expect(wakes(s.app.db).filter(w=>w.state==='pending')).toHaveLength(1);
 });
-it.each([{for:'person:pollock'},{member:'jonathan'},{project:'pond'},{for_people:['pollock']},{lane:'daily'},
+it.each([{for:'person:pollock'},{for_why:'steered'},{for_why:'unverified'},{for_why:'other-agent'},{authorship:{principal:{for:'pollock'}}},{principal:{for:'pollock'}},{conversation:'old'},{service:'old'},{member:'jonathan'},{project:'pond'},{for_people:['pollock']},{lane:'daily'},
  {model:'saved'},{slot:'saved'},{continuation:'saved'},{approval:'saved'},{place:'saved'},{standing:true},
  {prompt:'<!-- house: local -->\nlocal words'},{_firing:true}])('does not recover archived capability or private/person hints: %j',async raw=>{
  const s=await setup(raw),before=schedules(s.app.db);
  expect(s.call('scheduleRecover',input)).toMatchObject({ok:false,code:'invalid'});expect(schedules(s.app.db)).toEqual(before);expect(wakes(s.app.db)).toEqual([]);
+});
+it('refuses an active import even if its plain eligibility marker remains',async()=>{
+ const s=await setup(),saved={...schedules(s.app.db)[0],enabled:true};
+ s.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(saved),saved.id);
+ expect(s.call('scheduleRecover',input)).toMatchObject({ok:false,code:'invalid'});
+ expect(schedules(s.app.db)).toEqual([saved]);expect(wakes(s.app.db)).toEqual([]);
 });
 it('refuses historical unmarked imports, scope changes and malformed or capability-bearing new submissions without changing records',async()=>{
  const s=await setup(),before=schedules(s.app.db);
@@ -87,9 +93,19 @@ it('refuses historical unmarked imports, scope changes and malformed or capabili
 });
 it('rolls back schedule and occurrence together and can retry the original receipt',async()=>{
  const s=await setup(),before=schedules(s.app.db),receipt=randomUUID();
- s.app.db.exec("CREATE TRIGGER fail_recovery BEFORE INSERT ON clock_wakes BEGIN SELECT RAISE(ABORT,'fixture'); END");
- expect(s.call('scheduleRecover',input,owner,receipt).ok).toBe(false);expect(schedules(s.app.db)).toEqual(before);expect(wakes(s.app.db)).toEqual([]);
- s.app.db.exec('DROP TRIGGER fail_recovery');expect(s.call('scheduleRecover',input,owner,receipt).ok).toBe(true);expect(wakes(s.app.db)).toHaveLength(1);
+ const id='w-111111',row={id,agent:'art',note:'archived occurrence',prompt:'ARCHIVED_WORDS',schedule:input.id,due:s.clock.now(),createdAt:s.clock.now(),changedAt:s.clock.now(),by:{kind:'runner',id:'clock-import:unverified'},failures:0,state:'held',hold:'provenance'};
+ s.app.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(id,JSON.stringify(row),s.clock.now());
+ const witnessed:string[]=[];s.app.db.function('recovery_witness',(state:string)=>{witnessed.push(state);return 1;});
+ s.app.db.exec("CREATE TRIGGER fail_recovery BEFORE INSERT ON clock_wakes WHEN NEW.id <> 'w-111111' BEGIN SELECT recovery_witness(json_extract((SELECT record FROM clock_wakes WHERE id='w-111111'),'$.state')); SELECT RAISE(ABORT,'fixture'); END");
+ expect(s.call('scheduleRecover',input,owner,receipt).ok).toBe(false);expect(witnessed).toEqual(['cancelled']);expect(schedules(s.app.db)).toEqual(before);expect(wakes(s.app.db)).toEqual([row]);
+ s.app.db.exec('DROP TRIGGER fail_recovery');expect(s.call('scheduleRecover',input,owner,receipt).ok).toBe(true);expect(wakes(s.app.db).filter(w=>w.state==='pending')).toHaveLength(1);
+});
+it('requires an explicit new note in the command and accepts an explicitly empty note',async()=>{
+ const s=await setup(),argv=['schedule','recover','daily','--at','13:17','-p','FRESH_WORDS'];
+ expect(s.call('command',{agent:'art',argv})).toMatchObject({ok:true,value:{exit:2}});
+ expect(schedules(s.app.db)[0].enabled).toBe(false);expect(wakes(s.app.db)).toEqual([]);
+ expect(s.call('command',{agent:'art',argv:[...argv,'--note','']})).toMatchObject({ok:true,value:{exit:0}});
+ expect(schedules(s.app.db)[0].note).toBe('');
 });
 it('uses the daemon command grammar, and rechecks owner authority on command receipt replay',async()=>{
  const s=await setup(),receipt=randomUUID(),request={agent:'art',argv:['schedule','recover','daily','--at','13:17','--days','mon-fri','-p','FRESH_WORDS','--note','Fresh owner schedule']};

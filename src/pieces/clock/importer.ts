@@ -16,7 +16,8 @@ const importedBy: Viewer = { kind: 'runner', id: 'clock-import:unverified' };
 /** Archived hints only exclude recovery; they never establish an owner. */
 function plainSchedule(r: Row): boolean {
   return [undefined, '-', 'owner'].includes(r.for as string | undefined)
-    && ['member','project','for_people','model','slot','lane','continuation','approval','place','local_approval','standing','standing_target','standing_digest','delivery','deliver_place','on','_firing'].every(k => r[k] === undefined)
+    && [undefined, 'none'].includes(r.for_why as string | undefined)
+    && ['member','project','for_people','authorship','principal','conversation','service','model','slot','lane','continuation','approval','place','local_approval','standing','standing_target','standing_digest','delivery','deliver_place','on','_firing'].every(k => r[k] === undefined)
     && !String(r.prompt ?? '').includes('<!-- house: local -->');
 }
 function work(r: Row, agent: string): Work {
