@@ -6,3 +6,9 @@ Round 1 TREE sha256:4c59bdbcaa035cd09f56b05295a619a58b14bc9cd5ff83d07cb76a0e91b9
 - MAJOR actionable missing-test: nonowner isolation did not prove another household owner cannot read the mark. Added Alice-owner reading Bob's mark and Bob promoted to owner reading Alice's mark assertions. Implementation unchanged.
 
 At most three rounds, no author ledger in frozen review trees.
+
+Round 2 TREE sha256:67735e2243f1c193b38ebc5f856a129fa053f069323aaf846d81ef590bff46c9, from signed6fc3a6d, BLOCKING.
+- MAJOR actionable test harness: upgrade/reopen used createFoundation. Converted all new server scenarios to startLoom(next:true), fixture home; upgrade seeds version5 in the install hook then exercises real next composition and reopen.
+- NIT actionable retry proof: assert stored receipt and committed replay after ask-access revocation while fresh-id write refuses.
+- NIT actionable publication proof: assert exact attention.readMark type and returned id, not only call count.
+All changes test-only; production remains08aafb5. Focused4 cases pass. Final round3 follows; no fourth.
