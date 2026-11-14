@@ -1,3 +1,5 @@
+import type { Ask, ApprovalAskFiling } from '../attention/role.js';
+import type { Context } from '../../core/index.js';
 import { localOwner, sameLocalCaller } from './local-authority.js';
 import { groupVouch } from './group-vouch.js';
 import { installLocalStanding } from './local-standing.js';
@@ -24,6 +26,13 @@ export interface ApprovalOptions {
   projects?(): Project[] | undefined;
   localAgent?: string | (()=>string);
 }
+const attentionConnections = new WeakMap<Operations, (source: (current: (ask: Ask) => boolean) => ApprovalAskFiling) => void>();
+/** Trusted composition, including already installed registry instances. */
+export function connectApprovalAttention(operations: Operations, source: (current: (ask: Ask) => boolean) => ApprovalAskFiling): void {
+  const connect = attentionConnections.get(operations);
+  if (!connect) throw new Error('Approvals is not installed');
+  connect(source);
+}
 export function installApprovals(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ApprovalOptions = {}) {
   registerBuiltinService(operations, 'approvals', ['approval', 'approval-rule']);
   migrate(db,'approvals',schema);
@@ -39,7 +48,33 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   };
   const visible = (viewer: Viewer, a: Approval) => maySee(viewer,scope(a),sharing());
   const owner = (v: Viewer, name: string) => mayAct(v,{type:'approval-rule'},sharing(),'household',name);
-  const flush = (s: State, ctx: {now:number;changed(type:string,id:string):void}) => { for (const change of persist(db,s,ctx.now)) ctx.changed(change.type,change.id); };
+  let filing: ApprovalAskFiling | undefined;
+  const file = (ctx: Context, s: State, check = false) => filing?.[check ? 'pending':'sync'](ctx,s.approvals.map(a=>{
+    const words = cardWords(a), {type: _type,...audience} = scope(a);
+    return {id:a.id,active:stateOf(a,ctx.now)==='pending',...audience,ask:words.title,
+      ...(a.why?{why:a.why}:{}),...(words.if_yes??a.if_yes?{if_yes:words.if_yes??a.if_yes}:{}),...(words.if_no??a.if_no?{if_no:words.if_no??a.if_no}:{}),answers:'yes-no' as const};
+  }));
+  attentionConnections.set(operations, source=>{
+    if (filing) return;
+    filing = source(ask=>{
+      const a=readApproval(db,ask.source.id);if(!a)return false;
+      const audience=scope(a);
+      if (!(['agent','project','member'] as const).every(k=>ask[k]===audience[k])) return false;
+      const pending=stateOf(a,operations.clock.now())==='pending';
+      if (ask.state!==(pending?'open':'resolved')) return false;
+      if (!pending) return ask.ask==='Approval no longer needs you';
+      if (a.member) return ask.ask==='Private approval needs you' && ['why','if_yes','if_no','href','refs','answers'].every(k=>ask[k as keyof Ask]===undefined);
+      const words=cardWords(a);
+      return ask.ask===words.title && ask.why===(a.why||undefined) && ask.if_yes===((words.if_yes??a.if_yes)||undefined) && ask.if_no===((words.if_no??a.if_no)||undefined);
+    });
+    for (const check of [true,false]) {
+      const name = check?'approvals.attentionPending':'approvals.reconcileAttention';
+      operations.register(operation({name,write:!check,doors:['direct'],input:z.object({}).strict(),output:z.unknown(),
+        may:v=>v.kind==='service' && v.id==='approvals' && mayAct(v,{type:'approval'},sharing(),'act',name),
+        run(ctx){return file(ctx,load(db),check) ?? false;}}));
+    }
+  });
+  const flush = (s: State, ctx: Context) => { for (const change of persist(db,s,ctx.now)) ctx.changed(change.type,change.id); file(ctx,s); };
   const register = (verb: string, write: boolean, run: (s:State,input:Record<string,unknown>,c:DomainContext,viewer:Viewer)=>unknown, config: { owner?:boolean; answer?:boolean; piece?:boolean; read?:boolean } = {}) => {
     const name = `approvals.${verb}`;
     const approvalId = ['check','use','use-local','withdraw','answer','open','always','every-time'].includes(verb.replace(/^piece-/,''));

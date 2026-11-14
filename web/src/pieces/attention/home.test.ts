@@ -259,3 +259,11 @@ it('folds only phone rosters over four, prioritizes fresh working threads then a
  await publish('attention.ownedAgent',live(agents.slice(0,4)));expect(cards()).toHaveLength(4);expect(rows()).toHaveLength(0);
  } finally {await act(async()=>tree?.unmount());tree=undefined;vi.unstubAllGlobals();}
 });
+
+it('shows and counts a represented source approval once through the actual Home path',async()=>{
+  const approval=ask('approval',{sourceManaged:true,source:{kind:'approval',id:'a-12345678'}});
+  const wait=ask('wait',{source:{kind:'conversation',id:'cv-one'},waits_on:{approval:'a-12345678'}});
+  f.snapshots['attention.ask']=live([approval,wait,{...wait,id:'another-wait',createdAt:2,ask:'Another copy of this approval'}]);await draw();
+  expect(text()).toContain('Question wait');expect(text()).not.toContain('Question approval');expect(text()).not.toContain('Another copy of this approval');
+  expect(tree!.root.findAllByType('h2').map(words)).toContain('Needs you · 1');
+});

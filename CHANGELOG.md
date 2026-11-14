@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add member-private Inbox read facts without answering asks or copying draft words.
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
+- File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.
 - Clear private Comms working state from committed terminal Runtime jobs and recover missed completion notifications at startup.
 
 - Put the visible Comms thread’s agent above Needs you in the new rail, with selected priority and a short move.

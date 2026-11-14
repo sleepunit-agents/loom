@@ -7,7 +7,8 @@ import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { fixture, fixtureSharing, installFixture } from '../fixture.js';
-import { taskAskId } from '../pieces/attention/role.js';
+import { approvalAskId, taskAskId } from '../pieces/attention/role.js';
+import { installApprovals } from '../pieces/approvals/index.js';
 import { TokenDatabase } from '../core/household/tokens.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
@@ -15,7 +16,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
   const home=mkdtempSync(join(tmpdir(),'loom-inbox-browser-')); fixture(home);
   const clock=new FakeClock(Date.parse('2026-11-13T06:00:00Z'));
   const owner={kind:'member' as const,id:'jonathan'};
-  const loom=await startLoom({home,clock,next:true,sharing:fixtureSharing,webRoot:root,install:app=>{installFixture(app);app.db.transaction(()=>new TokenDatabase(app.db).replace({v:1,tokens:[]},{}))();}});
+  const loom=await startLoom({home,clock,next:true,sharing:fixtureSharing,webRoot:root,install:app=>{installApprovals(app.db,app.operations,app.live,fixtureSharing,{caller:v=>({who:{agent:v.id,where:'h-browser'},for:'owner',project:'pond'})});installFixture(app);app.db.transaction(()=>new TokenDatabase(app.db).replace({v:1,tokens:[]},{}))();}});
   let serial=0;
   const raise=(input:object)=>{const result=loom.operations.call('direct',owner,'attention.raise',{agent:'art',answers:'yes-no',source:{kind:'piece',id:'fixture'},...input},`raise:${++serial}`);expect(result.ok).toBe(true);};
   raise({id:'public',ask:'Continue the Attention rebuild?',why:'The shared Inbox should show one current question in every window.',if_yes:'I build the remaining Home cards.',if_no:'I stop and keep this preview available.',refs:['t-2205','sleepunit-agents/loom#912']});
@@ -114,6 +115,33 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     }
     const fact=loom.operations.call('direct',owner,'attention.get',{id:'closed-task'});
     if(!fact.ok)throw Error('Missing wait');expect(fact.value).not.toHaveProperty('answer');
+    // One actual central approval, with the owning page's action and two-window withdrawal.
+    const requested=loom.operations.call('direct',{kind:'agent',id:'art'},'approvals.request',{kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,ask:'Merge the Inbox source fix?',why:'The source card keeps the exact decision and receipt.',if_yes:'I merge the fix.',if_no:'I hold it.'},'inbox-request-approval');
+    expect(requested.ok).toBe(true);if(!requested.ok)throw Error(requested.message);
+    const approvalId=(requested.value as {id:string}).id;
+    for(const page of [a,b]){
+      await page.goto(`${loom.url}/p/inbox-preview/ask/${approvalAskId(approvalId)}`);
+      await page.getByRole('button',{name:'Open approval',exact:true}).waitFor();
+      expect(await yes(page).count()).toBe(0);
+    }
+    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
+      await b.setViewportSize({width,height:900});
+      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await b.screenshot({path:join(shots,`inbox-approval-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    raise({id:'approval-wait',source:{kind:'conversation',id:'cv-approval-wait'},project:'pond',ask:'Please decide the Inbox fix?',waits_on:{approval:approvalId}});
+    raise({id:'approval-wait-2',source:{kind:'conversation',id:'cv-approval-wait-2'},project:'pond',ask:'Another conversation about the fix?',waits_on:{approval:approvalId}});
+    for(const page of [a,b]){
+      await expect.poll(()=>page.locator('[data-split-row]').filter({hasText:'Please decide the Inbox fix?'}).count()).toBe(1);
+      await expect.poll(()=>page.locator('[data-split-row]').filter({hasText:'Merge the Inbox source fix?'}).count()).toBe(0);
+      expect(await page.locator('[data-split-row]').filter({hasText:'Another conversation about the fix?'}).count()).toBe(0);
+    }
+    await a.getByRole('button',{name:'Open approval',exact:true}).click();
+    await expect.poll(()=>new URL(a.url()).pathname).toBe(`/p/approvals-preview/approval/${approvalId}`);
+    expect(loom.operations.call('direct',owner,'approvals.answer',{id:approvalId,action:'deny'},'inbox-deny-approval').ok).toBe(true);
+    await b.getByRole('heading',{name:'Approval no longer needs you',exact:true}).waitFor();
     await member.close();
   } finally {await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },90_000);
