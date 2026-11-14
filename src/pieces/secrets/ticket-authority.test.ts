@@ -438,3 +438,8 @@ async function routedChannels(outcome:RoutedOutcome,daemon=false) {
 }
 it.each(['release','source','local','lost-worker-ack'] as const)('routes the original bound claim through real holder and worker channels: %s',outcome=>routedChannels(outcome));
 it.each(['release','source','local','lost-worker-ack','lost-holder-ack','cancel'] as const)('daemon completes the original claim across real holder and worker channels: %s',outcome=>routedChannels(outcome,true));
+it('refuses sparse owner replacement before retiring a retained original claim',async()=>{
+ const f=await setup(),ticket=f.admitted(),claim=(await f.remote.claim(ticket.id))!;
+ expect(()=>f.authority.replaceWorkers(new Array(1))).toThrow(/^Secret ticket authority unavailable$/);
+ expect(await claim.current()).toBe(true);await claim.finish(false);
+});
