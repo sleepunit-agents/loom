@@ -2,10 +2,11 @@
    A tile supplies its own available height instead of the screen height. */
 .loom-comms { height: 100dvh; grid-template-rows: minmax(0, 1fr); }
 .loom-comms > .loom-split__list, .loom-comms > .loom-split__nav { min-height: 0; overflow-y: auto; }
-.loom-comms > .loom-split__reader { display: flex; flex-direction: column; min-height: 0; height: 100%; overflow: hidden; container: comms-reader / inline-size; }
-.loom-comms .comms-thread { flex: 1 1 0px; }
+.loom-comms > .loom-split__reader { display: flex; flex-direction: column; min-height: 0; container: comms-reader / inline-size; }
 .next-page:has(> .loom-comms) { container-type: size; overflow: hidden; scrollbar-gutter: auto; }
 .next-page > .loom-comms { height: 100cqh; }
+/* The next shell already keeps its dock outside the tile. */
+.next-page > .loom-comms[data-mode="one"]:not([data-comms-keyboard]) > .loom-split__reader { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
 .loom-comms .loom-split__back, .loom-comms article > header, .loom-comms article > form { flex-shrink: 0; }
 
 /* Visual keyboards can resize only the visual viewport (100dvh stays tall).
