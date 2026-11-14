@@ -134,3 +134,37 @@ it.each(['offline','denied'] as const)('clears rail details and shortcuts when g
  f.queryStatus='live';await publish('attention.ownedAgent','live',[{id:'mark',name:'Mark',position:0}]);
  expect(text()).toContain('Mark rail card');expect(text()).not.toContain('Art rail card');
 });
+
+it('shows the first waiting item and how many more, updates on answers, and clears disconnected counts',async()=>{
+ const first=f.snapshots['attention.ask'].records[0];
+ f.snapshots['attention.ask']=live([first,
+  {...first,id:'second',ask:'Order the pump?',createdAt:2},
+  {...first,id:'third',agent:'mark',ask:'Book the electrician?',createdAt:3},
+  {...first,id:'answered',ask:'Already answered',state:'answered',createdAt:0},
+ ]);
+ await act(async()=>{tree=create(h(Rail,{go:vi.fn()}));});
+ const needs=()=>tree.root.findByProps({className:'desk-rail-needs'});
+ const ask=()=>tree.root.findAllByProps({className:'desk-rail-ask'})[0];
+ expect(JSON.stringify(needs().children.map((n:any)=>typeof n==='string'?n:n.children))).toContain('2 more');
+ expect(JSON.stringify(ask().children.map((n:any)=>typeof n==='string'?n:n.children))).toContain('1 more');
+ expect(text()).not.toContain('Already answered');
+ await publish('attention.ask','live',[{...first,state:'answered'}]);
+ expect(text()).not.toContain(' more');expect(text()).toContain('All clear.');
+ await publish('attention.ask','offline');
+ expect(text()).not.toContain('All clear.');expect(text()).not.toContain(' more');expect(text()).toContain('Asks unavailable');
+});
+
+it('keeps the waiting count on a folded agent card and removes it when asks disconnect',async()=>{
+ vi.stubGlobal('document',{fonts:undefined});
+ vi.stubGlobal('ResizeObserver',class{observe(){}disconnect(){}});
+ const first=f.snapshots['attention.ask'].records[0];
+ f.snapshots['attention.ask']=live([first,{...first,id:'mark-one',agent:'mark'},{...first,id:'mark-two',agent:'mark'}]);
+ const element={clientWidth:296,clientHeight:120,scrollHeight:700};
+ await act(async()=>{tree=create(h(Rail,{go:vi.fn()}),{createNodeMock:(node:any)=>node.props.className==='desk-agent-rail'?element:null});});
+ const compact=tree.root.findByProps({className:'desk-rail-compact'});
+ expect(compact.props['data-agent']).toBe('mark');
+ expect(compact.findByProps({'aria-label':'2 waiting questions'}).children.join('')).toBe('ASK · 2');
+ await publish('attention.ask','offline');
+ expect(tree.root.findAllByProps({'aria-label':'2 waiting questions'})).toHaveLength(0);
+ expect(text()).not.toContain('ASK');
+});
