@@ -25,12 +25,18 @@ Runtime dispatch must also replace the existing ordinary-wake background use of
 That pre-existing path is not used for newly supported private local dispatch;
 private local wakes are explicitly held before intent and before Runtime.
 
-Independent work remains: exact local-approval filing/recovery,
-standing-job rechecks and app/client flow; and other imported provenance recovery
-or explicit deliberate drops. Runtime-dependent work remains: conversation-bound
-mutation/join, original schedule principal narrowing, agent-authored self-rearm eligibility, and
-continuation issuer/handle/deadline/place validation. These are gaps, not deliberate
-drops. Archived strings and caller-supplied handles cannot fill them.
+Local filing, exact recovery, standing rechecks, generated commands and the
+private-chat/Clock decision and recovery flow are merged through #1107. API-origin
+schedule capacity (#1112) and shared/API/conversation one-off capacity (#1116)
+are merged too. `next.ts` already wires Runtime's `capacityConversation` callback;
+that callback issues only a capacity bucket, never a principal or mutation right.
+
+Remaining work: conversation-bound mutation/join, original schedule principal
+narrowing, agent-authored self-rearm eligibility, continuation issuer/handle/
+deadline/place validation, real service-identity dispatch and private delivery,
+and other imported provenance recovery or explicit deliberate drops. These are
+gaps, not deliberate drops. Archived strings and caller-supplied handles cannot
+fill them.
 
 Merged evidence: foundation/importer #864; capacity/quota #878; exact unpark #887;
 owner-authored self-rearm #901; continuation failure #910; desk reads #917;
@@ -67,8 +73,8 @@ call. Restart holds any remaining firing intent; stopping the installer prevents
 late completion from writing. Cancellation before invocation suppresses the call;
 cancellation after invocation records that a body may have started. Uncertain
 work cannot be released with fire-now. Known-not-started work alone backs off.
-The default runtime is a staging hold. The Clock runtime dependency remains an
-uncomposed start-result contract.
+The installer default is a staging hold. Next mode composes the runner-confirming
+Runtime bridge described above; unsupported work stays held.
 The read-only approval dependency is composed with the owning Approvals and
 Secrets roles in next mode; it is not a receipt-spending interface.
 
@@ -76,8 +82,8 @@ The current tests exercise these transitions on `startLoom`/`FakeClock`, includi
 pause release order, a parked answer and timeout, changed dispatch permission,
 live-record aging, and the next occurrence across Chicago daylight saving.
 The opt-in client, Clock app, Home composition, parked answers, owner-vouch
-backend/client and explicit safety wake are merged. Ask-vouch, local-approval
-recovery and runtime-dependent parity remain incomplete. The foundation and
+backend/client, ask-vouch, local filing/recovery/standing and explicit safety wake
+are merged. Runtime-dependent parity remains incomplete. The foundation and
 importer migration reviews are complete.
 
 ## Old surface inventory and replacements
@@ -572,7 +578,7 @@ Deny, expiry and the unanswered deadline. A secret Allow tells the new body to
 request again; it never carries a house grant forward. Other resource questions
 report that their piece applied the access and ask the body to check it; they
 never give secret-house recovery instructions or spend an approval receipt. No answer read spends an
-approval or grants access, and dispatch uses the runtime bridge described under Remaining work and evidence. Local-wake filing/recovery/standing remains unfinished. Owner-vouch application
+approval or grants access, and dispatch uses the runtime bridge described under Remaining work and evidence. Local-wake filing/recovery/standing is merged; actual local delivery remains held. Owner-vouch application
 and explicit/automatic ask-vouch filing are composed separately as described below. This composition replaces the
 previously missing next-mode approval parking seam.
 
@@ -983,7 +989,7 @@ at capacity, matching the legacy new-creation check; an owner replacement has no
 API origin. Disabled origin-bearing schedules count until removed. Historical
 rows lacking this new metadata do not acquire origin from `by` or archive text.
 The shared fifty-one-off cap is unchanged. API forty / verified-conversation twenty
-one-off quotas and the conversation mutation boundary remain unfinished.
+one-off quotas are merged in #1116; the conversation mutation boundary remains unfinished.
 
 The in-process schedule-capacity fixtures cover the twenty-first refusal without
 partial rows/events, owner exemption, replacement/removal, disabled and historical
@@ -1013,3 +1019,23 @@ This metadata is capacity only: it supplies no principal, visibility, mutation,
 join or dispatch authority. Original schedule principal narrowing, authenticated
 mutation/join rules and agent-authored six-hour self-chain suppression remain
 unfinished, as does service-identity dispatch and actual private Runtime delivery.
+
+
+### Owning current conversation provenance
+
+Runtime exposes `clockProvenance(viewer)` as a trusted in-process role, separately
+from both capacity and local `approvalCaller`. It accepts the exact central Signin
+Viewer only while the body owns a current private Comms or bridge binding, with
+current source access, execution policy and a running/waiting job. A public job's
+conversation argument and a copied Viewer issue nothing. Missing or other-agent
+sender history also issues nothing.
+
+The role derives principal from Runtime's monotonic sender history using the
+current household owner list; consuming the input queue does not erase history.
+It retains member, project and credential service separately from principal.
+Private member scope survives even when the principal is unknown or names a
+different person. This is internal metadata: no public operation, record, Live
+feed or export is added. Consumers must preserve scope and still check central
+policy. Clock mutation/join, principal persistence/narrowing and self-rearm do
+not consume this new role yet and remain unfinished above. Local approval
+semantics and actual private delivery are unchanged.

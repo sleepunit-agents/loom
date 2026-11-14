@@ -26,7 +26,7 @@ const bytes=(root:string):unknown=>Object.fromEntries(readdirSync(root).sort().m
   try{return[name,readFileSync(join(root,name)).toString('base64')];}
   catch(e){if((e as NodeJS.ErrnoException).code!=='EISDIR')throw e;return[name,bytes(join(root,name))];}
 }));
-async function fixture(deleted=false) {
+async function fixture(deleted: boolean | 'household'=false) {
   const root=mkdtempSync(join(tmpdir(),'migration-runtime-'));roots.push(root);
   const old=join(root,'old'),state=join(root,'state'),data=join(root,'data'),snapshot=join(root,'snapshot'),home=join(root,'new');
   mkdirSync(join(old,'commons','stores'),{recursive:true});mkdirSync(state);mkdirSync(join(data,'delivery','conversations'),{recursive:true});mkdirSync(join(data,'runs'));
@@ -49,11 +49,30 @@ async function fixture(deleted=false) {
     db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?,?)').run('kehvhuwzdm','jonathan','art',1,null,'2026-11-13T00:00:00Z');db.close();
     writeFileSync(join(data,'delivery','conversations','cv-abcdef123456.json'),JSON.stringify({conversation:'cv-abcdef123456',agent:'art',venue:'loom',place:'th:kehvhuwzdm',msgs:[{text:'PRIVATE DELETED WORDS'}]}));
   }
+  const shaped: {conversation:string;venue:string;place:string;thread?:string}[]=[];
+  if(deleted==='household') {
+    shaped.push(
+      {conversation:'cv-abcdef123456',venue:'loom',place:'th:kehvhuwzdm'},
+      {conversation:'cv-000000000001',venue:'spawn',place:'job-h-1862',thread:'th:job-thread'},
+      {conversation:'cv-000000000002',venue:'spawn',place:'sp-0123456789abcdef01234567',thread:'th:spawn-thread'},
+      {conversation:'cv-000000000003',venue:'loom',place:'th:live-thread',thread:'th:live-thread'},
+      ...['wake:w-1','alert:service','lane:plan','local-lane:plan','review:code','diagnostic:runner','task:t-2209','free text wake label with spaces'].map((place,i)=>({conversation:`cv-${(i+4).toString(16).padStart(12,'0')}`,venue:'wake',place})),
+      {conversation:'cv-00000000000c',venue:'discord',place:'channel:123'},
+      {conversation:'cv-00000000000d',venue:'slack',place:'dm:456'},
+      {conversation:'cv-00000000000e',venue:'relay',place:'relay:art'},
+    );
+    const db=new Database(join(old,'household.db'));
+    for(const binding of shaped) {
+      writeFileSync(join(data,'delivery','conversations',`${binding.conversation}.json`),JSON.stringify({conversation:binding.conversation,venue:binding.venue,place:binding.place,agent:'art',msgs:[{text:'PRIVATE SHAPED WORDS'}]}));
+      if(binding.thread)db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(binding.thread,'art','jonathan',binding.conversation,null,null,null,0,null,'2026-11-13T00:00:00Z','2026-11-13T00:00:00Z',0,'first-id','first-hash',0,null);
+    }
+    db.close();
+  }
   // Snapshot must include WAL-only source records.
   await createSnapshot(old,snapshot,undefined,{runtime:state,'runtime-data':data});store.close();
   const plan=prepareMigrationPlan(snapshot).plan;
   const options={boxes:{r1:'jonathan'},jobs:{'h-1':{member:'jonathan'}},conversations:{'cv-abcdef123456':{member:'jonathan'}}};
-  return{root,old,state,data,snapshot,home,plan,options};
+  return{root,old,state,data,snapshot,home,plan,options,shaped};
 }
 it('discovers every runtime root, requires explicit maps and independently verifies all imported content',async()=>{
   const f=await fixture(),before=bytes(f.snapshot);
@@ -182,4 +201,25 @@ it('reports archive-only deleted bindings through standalone and all import, res
  expect(db.prepare('SELECT * FROM runtime_bindings').all()).toEqual([]);expect(db.prepare('SELECT * FROM runtime_provenance').all()).toEqual([]);
  db.prepare("UPDATE runtime_import_chunks SET bytes=? WHERE path='data/delivery/conversations/cv-abcdef123456.json'").run(Buffer.from('corrupt'));db.close();
  expect(await verifyRuntimeMigration(f.snapshot,home,f.options)).toMatchObject({status:'different'});
+});
+
+it('plans, imports all and independently verifies a household with the coordinator venue and place shapes',async()=>{
+ const f=await fixture('household'),before=bytes(f.snapshot);
+ const options={boxes:{r1:'jonathan'},jobs:{'h-1':{}},conversations:Object.fromEntries(f.shaped.map(b=>[b.conversation,b.thread?{member:'jonathan'}:{}]))};
+ expect(f.plan.importers.runtime.options).toEqual({boxes:{r1:null},jobs:{'h-1':null},conversations:Object.fromEntries(f.shaped.map(b=>[b.conversation,null]))});
+ f.plan.importers.runtime.options=options;
+ expect(prepareMigrationPlan(f.snapshot,f.plan).plan.importers.runtime.options).toEqual(options);
+ const skipped=[{piece:'runtime',id:'cv-abcdef123456',reason:'skipped: owning Comms thread deleted'}];
+ expect(await runMigrationAll(f.snapshot,f.home,f.plan)).toMatchObject({status:'complete',skipped});
+ expect(await runMigrationAll(f.snapshot,f.home,f.plan)).toMatchObject({status:'complete',skipped});
+ expect(await verifyMigration(f.snapshot,f.home,f.plan)).toMatchObject({status:'verified',missing:[],differences:[]});
+ const db=new Database(join(f.home,'loom.db'));
+ try {
+  const bindings=(db.prepare('SELECT record FROM runtime_bindings ORDER BY id').all() as {record:string}[]).map(r=>JSON.parse(r.record));
+  expect(bindings).toEqual(f.shaped.filter(b=>b.conversation!=='cv-abcdef123456').map(({conversation,venue,place,thread})=>({id:conversation,agent:'art',venue,place,...(thread?{member:'jonathan'}:{})})).sort((a,b)=>a.id.localeCompare(b.id)));
+  expect(db.prepare('SELECT count(*) AS n FROM runtime_provenance').get()).toEqual({n:bindings.length});
+  db.prepare("UPDATE runtime_bindings SET record=json_set(record,'$.place','changed') WHERE id='cv-000000000001'").run();
+ } finally {db.close();}
+ expect(await verifyMigration(f.snapshot,f.home,f.plan)).toMatchObject({status:'different',differences:[{piece:'runtime',table:'runtime_bindings'}]});
+ expect(bytes(f.snapshot)).toEqual(before);
 });

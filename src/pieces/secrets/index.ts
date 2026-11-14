@@ -14,7 +14,7 @@ import type { GrantContext, Grant, GrantRequest, Grants, Resource, SecretName } 
 
 import { readSecretPolicy, requestDecision, secretPolicy, withAlways } from './policy.js';
 import { secretName as name, secretAgent as agent, requestReason } from './input.js';
-const grantScope = z.object({ house: z.string().regex(/^h-[0-9]{1,9}$/), service: agent.optional() }).strict();
+const grantScope = z.object({ house: z.union([z.string().regex(/^h-[0-9]{1,9}$/), z.uuid()]), service: agent.optional() }).strict();
 const resource = { kind: z.enum(['secret', 'runner', 'piece', 'tailnet']), target: name };
 /** Trusted in-process attention seam. Implementations must raise a household ask and
  * deliver only its first household owner's yes/no. No caller can inject an answer. */
