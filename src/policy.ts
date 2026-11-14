@@ -50,6 +50,15 @@ export function mayCreate(v: Viewer, r: RecordScope, s: Sharing, operation?: str
 export function mayMove(v: Viewer, before: RecordScope, after: RecordScope, s: Sharing, operation?: string): boolean {
   return before.member === after.member && mayAct(v, before, s, 'act', operation) && mayCreate(v, after, s, operation);
 }
+/** Filing private words never grants a read or borrows the member's authority.
+ * privateControl comes only from Runtime's exact current body binding proof.
+ * Consumers preserve member and return acknowledgements without private words.
+ */
+export function mayFilePrivateWork(v: Viewer, r: RecordScope, s: Sharing): boolean {
+  return v.kind === 'agent' && r.type === 'wake' && r.privateControl === true && r.agent === v.id
+    && r.member !== undefined && !!entry(s.members, r.member)?.agents.includes(v.id)
+    && (r.project === undefined || maySee(v, { project: r.project }, s));
+}
 
 /** Private Comms membership is independent of project and household-owner access. */
 export function mayUseThread(v: Viewer, r: { member: string; agent: string }, s: Sharing): boolean {

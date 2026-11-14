@@ -60,7 +60,8 @@ it('replaces a default atomically with real work, keeps other clocks independent
   expect(real.deadman).toBeUndefined();
   expect(wake(app.db, safety.id)).toMatchObject({ state: 'cancelled', outcome: 'Replaced by real work' });
   expect(wake(app.db, other.id)).toEqual(other);
-  expect(wakes(app.db).filter(w => w.agent === 'art' && active(w))).toEqual([real]);
+  expect(real).not.toHaveProperty('authorship');
+  expect(wakes(app.db).filter(w => w.agent === 'art' && active(w))).toEqual([{...real,authorship:{principal:{for:'owner',people:['jonathan']}}}]);
   app.clock.advance(60_000);
   app.value('cancel', { id: real.id });
   const next = wakes(app.db).find(w => w.agent === 'art' && active(w))!;
