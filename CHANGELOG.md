@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Next Comms keeps a bounded word-free reference index with message writes and preserves expired references during fixture imports.
 - Next Inbox retains member-private action success/error FYI for Tasks and central answers, with read marks and an Errors folder.
 
+- Next Inbox retains fixed, member-private action receipts for the remaining registered app mutations; credential and private Comms actions remain excluded.
+
 - Add an explicit external dedicated secret-command worker with authenticated Runtime stop/history checks and drained shutdown, reusing the Claude worker control owner.
 
 - Read current sealed questions and send ephemeral private replies inline in next-mode Comms.

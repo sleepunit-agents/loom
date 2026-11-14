@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { z } from 'zod';
+import { HouseholdDatabase } from '../../core/household/document.js';
 import { fixture } from '../../fixture.js';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, operation, migrate, type RecordType, type Viewer } from '../../core/index.js';
@@ -15,13 +16,13 @@ import type { ActionOutcome } from './outcomes.js';
 const cleanup: (()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 const alice:Viewer={kind:'member',id:'alice'},bob:Viewer={kind:'member',id:'bob'};
-async function setup(upgrade=false) {
+async function setup(upgrade=false, householdMembers=false) {
   const home=mkdtempSync(join(tmpdir(),'attention-outcomes-'));fixture(home);
   const clock=new FakeClock(), types=new Map<string,RecordType>();
   const access={members:{alice:{owner:true,agents:['art']},bob:{owner:true,agents:['art']}},projects:{},services:{}};
   const app=await startLoom({home,next:true,host:'127.0.0.1',port:0,stdout:()=>{},clock,sharing:()=>access,
     authenticate:req=>({viewer:req.headers.authorization==='bob'?bob:alice,window:req.headers.authorization!=='api',valid:()=>true}),
-    install:app=>{const register=app.live.register.bind(app.live);app.live.register=t=>{types.set(t.name,t);register(t);};if(upgrade){migrate(app.db,'attention',attentionMigrations.filter(m=>m.number<=6));app.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run('old',JSON.stringify({id:'old',agent:'art',ask:'Existing question',source:{kind:'piece',id:'fixture'},state:'open',createdAt:1,changedAt:1}));}installAttention(app.db,app.operations,app.live,()=>access);installTasks(app.db,app.operations,app.live,()=>access);},
+    install:app=>{if(householdMembers)new HouseholdDatabase(app.db).change(home,raw=>{raw.members=[{person:'alice',role:'owner',agents:'*'},{person:'bob',role:'owner',agents:'*'}];delete raw.owner;});const register=app.live.register.bind(app.live);app.live.register=t=>{types.set(t.name,t);register(t);};if(upgrade){migrate(app.db,'attention',attentionMigrations.filter(m=>m.number<=6));app.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run('old',JSON.stringify({id:'old',agent:'art',ask:'Existing question',source:{kind:'piece',id:'fixture'},state:'open',createdAt:1,changedAt:1}));}installAttention(app.db,app.operations,app.live,()=>access);installTasks(app.db,app.operations,app.live,()=>access);},
   });
   cleanup.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
   const list=(viewer=alice)=>{const result=app.operations.call('direct',viewer,'attention.outcomes',{});expect(result.ok).toBe(true);return (result as {value:ActionOutcome[]}).value;};
@@ -197,4 +198,45 @@ it('expires unreceipted rejection deduplication at exactly thirty days',async()=
   await client.call('attention.answer',input,'rejection-expiry');const first=list()[0];
   clock.advance(30*86400_000-1);await client.call('attention.answer',input,'rejection-expiry');expect(list()).toEqual([first]);
   clock.advance(1);await client.call('attention.answer',input,'rejection-expiry');expect(list()).toHaveLength(2);expect(list()[1]).toEqual(first);
+});
+
+it('files other apps’ actual window mutations with fixed owning links, without authored result or error words',async()=>{
+  const {list,socket}=await setup(false,true),client=await socket();
+  const examples: [string,object,string,string][] = [
+    ['household.setProfile',{agent:'art',text:'Sensitive authored description'},'Household setup','/p/setup-preview'],
+    ['household.createProject',{slug:'receipt-fixture',name:'Private project title',repositories:[],members:['alice'],agents:['art']},'Sharing','/p/sharing-preview'],
+    ['clock.pause',{agent:'art'},'Clock','/p/clock-preview'],
+    ['clock.resume',{agent:'art'},'Clock','/p/clock-preview'],
+    ['changes.refresh',{},'Changes','/p/changes-preview'],
+  ];
+  for (const [name,input,sourceLabel,page] of examples) {
+    expect(await client.call(name,input,`actual-${name}`),name).toMatchObject({ok:true});
+    expect(list()[0]).toMatchObject({operation:name,ok:true,sourceLabel,page});
+    const count=list().length;
+    await client.call(name,input,`actual-${name}`);expect(list()).toHaveLength(count);
+  }
+  for (const [name,input,sourceLabel,page] of [
+    ['approvals.answer',{id:'a-12345678',action:'allow'},'Approvals','/p/approvals-preview'],
+    ['mind.knowledgeVerify',{slug:'absent-private-title'},'Knowledge','/p/knowledge-preview'],
+    ['mind.personAdd',{},'People','/p/people-preview'],
+    ['bridges.putRoutes',{},'Bridges','/p/bridges-preview'],
+    ['core.releaseEffect',{id:'absent-effect'},'Staging','/p/staging'],
+  ] as [string,object,string,string][]) {
+    expect(await client.call(name,input,`rejected-${name}`)).toMatchObject({ok:false});
+    expect(list()[0]).toMatchObject({operation:name,ok:false,sourceLabel,page});
+  }
+  expect(JSON.stringify(list())).not.toMatch(/Sensitive authored|Private project|absent-private|absent-effect|not found|Permission/);
+});
+it('keeps credentials, private messaging, refresh checks and unlisted commands out of lasting history',async()=>{
+  const {socket,list}=await setup(),client=await socket();
+  const excluded = [
+    'secrets.set','secrets.answer','secrets.grant','secrets.revoke','secrets.describe','secrets.startup','secrets.always','secrets.remove',
+    'token.create','token.revoke','session.revoke','account.removePasskey','account.revokeSession','household.bootstrapAgent',
+    'comms.open','comms.send','comms.answer','comms.replyToAsk','comms.change','comms.retryStart','comms.resend',
+    'approvals.open','approvals.rules','approvals.history','changes.confirm','attention.get','attention.markRead','attention.readOutcome',
+    'clock.status','clock.rearm','clock.dispatch','clock.outcome','clock.deadman','mind.knowledgeRead','mind.peopleList',
+    'tasks.command','clock.command','approvals.command','bridges.command','household.futureMutation',
+  ];
+  for (const name of excluded) await client.call(name,{},`excluded-${name}`);
+  expect(list()).toEqual([]);
 });

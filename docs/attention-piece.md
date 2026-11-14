@@ -297,3 +297,43 @@ The first explicit inventory covers Tasks create/claim/unclaim/close/reopen/upda
 This is the first bounded action inventory, **not blanket parity for every app's meaningful toast**. Source reconciliation must inventory remaining pieces' safe messages and exclusions before adding producers. Comms private words, Secrets, one-time credentials/links, sign-in/session actions, quiet duplicate answer history and empty/housekeeping results are excluded from automatic capture. No returned error wording or CLI output is ever copied. Existing old session Done arrays are not imported by the conversation importer; their deliberate retirement or an offline importer must be recorded in the final old-to-new reconciliation. Remaining app producers, owning notices (including backup failure/recovery), public Runtime delivery, Runtime metadata/digest/grading audit and final acceptance remain obligations of t-2205.
 
 An optional notice failure cannot alter the original action's committed result. The observer commits its own history transaction before sending the socket result. It is a local FYI receipt, not proof of outside delivery. No old-store read, real-data import, installed-piece change or deployment is involved.
+
+### Remaining app action inventory
+
+Window action history now also covers the following explicit operations. Each
+uses a fixed summary and constant owning route; no result message, input, CLI
+stdout, error wording or private source identifier is copied. “Saved” describes
+the operation receipt only: requesting a refresh, wake, local schedule or effect
+release never claims that its outside work completed. Nested Tasks domain
+failures remain the one transport-success envelope requiring special handling;
+the other listed operations throw a registry failure on refusal.
+
+| App / old meaningful toast | New action outcome operations | Owning route |
+| --- | --- | --- |
+| Changes decisions and refresh | `changes.answer`, `changes.refresh` | `/p/changes-preview` |
+| Approvals decisions and standing rules | `approvals.answer`, `every-time`, `always`, `set-rule`, `standing-off` | `/p/approvals-preview` |
+| Clock scheduling and controls | `clock.in`, `cancel`, `now`, `askVouch`, `vouch`, `pause`, `resume`, `scheduleSet`, `scheduleRemove`, `scheduleRun`, `laneSet`, `laneAssign`, `laneRemove`, `scheduleLocalFromWindow` | `/p/clock-preview` |
+| Household descriptions, accounts and membership | `household.setProfile`, `requestProfile`, `setAgentAccounts`, `addAgent`, `setMember`, `setMemberProjects`, `removeMember` | `/p/setup-preview` |
+| Sharing | `household.createProject`, `setProjectMembers`, `setProjectAgents` | `/p/sharing-preview` |
+| Knowledge and People | `mind.knowledgeAdd`, `knowledgeVerify`, `knowledgeRecheck`; `mind.personAdd` | `/p/knowledge-preview`, `/p/people-preview` |
+| Bridges setup and send dismissal | `bridges.putVenues`, `removeVenues`, `putRoutes`, `removeRoutes`, `putLinks`, `removeLinks`, `dismissSend` | `/p/bridges-preview` |
+| Staging release, including Bridges' held-send control | `core.releaseEffect` | `/p/staging` (registered only in staging) |
+
+The inventory is of registered apps on main, not every agent/API operation.
+Projects and Activity have no direct mutation controls; their owning mutations
+live in Sharing, Knowledge, People and Tasks. There is no registered Runtime
+settings app yet; runtime worker state writes are background work and excluded.
+Future app mutations require an explicit inventory entry, never a prefix match.
+
+| Old exclusion / state | New choice |
+| --- | --- |
+| Empty messages and quiet duplicate answer history | Reads, checks, read marks and housekeeping are not producers; the existing already-answered Inbox conflict remains quiet |
+| `keep` secret or one-time messages | All Secrets, token, session, account, device-link and bootstrap-agent operations are excluded, including failures; owning screens retain feedback |
+| Private conversation content and actions | All Comms operations remain excluded; the owning encrypted thread supplies history |
+| Commands wrapping arbitrary subcommands or stdout | No command wrapper is captured; actual app operations only |
+| Old per-reader session `Done` arrays | Deliberately retire on the final move. They carry old reader/source/page keys, not authenticated new member identities. Do not guess an audience or copy transient secret-adjacent toast wording. Old stores remain untouched for rollback; no new importer or runtime old-store reader is added |
+
+This completes the current app producer inventory, not all of t-2205. Owning
+notices (including backup failure/recovery), public Runtime answer delivery,
+Runtime-bound metadata/digest/grading reconciliation and final whole-piece
+acceptance still remain. It changes no permissions, schema or Home visuals.
