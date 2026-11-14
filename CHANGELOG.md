@@ -66,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Show live Inbox read indicators and retain member-scoped device reply drafts through navigation, reload and failed sends.
+- File owner-assigned Tasks in the shared Inbox with their original project/agent audience and source-owned decisions.
 
 - Clock links local-work requests to private chat; its browser proof now files through a real Runtime-bound body before owner review and scheduling.
 

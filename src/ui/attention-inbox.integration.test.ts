@@ -7,6 +7,7 @@ import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { fixture, fixtureSharing, installFixture } from '../fixture.js';
+import { taskAskId } from '../pieces/attention/role.js';
 import { TokenDatabase } from '../core/household/tokens.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
@@ -83,8 +84,27 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await expect.poll(()=>p.locator('[data-split-row]').filter({hasText:'Review the shared Pond plan?'}).count()).toBe(1);
     expect(await p.getByText('Private conversation needs you').count()).toBe(0);
     expect(await p.getByText('Continue the Attention rebuild?').count()).toBe(0);
+    // Source-owned owner tasks file centrally but decisions stay in Tasks.
+    expect(loom.operations.call('direct',owner,'tasks.update',{id:'t-1',set:{assignee:'jonathan',ask:'Approve the source task plan?'},actor:'art',at:'2026-11-13T06:00:00Z'},'inbox-file-task')).toMatchObject({ok:true,value:{result:{ok:true}}});
+    for(const page of [a,b]) {
+      await page.goto(`${loom.url}/p/inbox-preview/ask/${taskAskId('t-1')}`);
+      await page.getByRole('button',{name:'Open task',exact:true}).waitFor();
+      expect(await yes(page).count()).toBe(0);
+    }
+    for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
+      await b.setViewportSize({width,height:900});
+      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await b.screenshot({path:join(shots,`inbox-task-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    await a.getByRole('button',{name:'Open task',exact:true}).click();
+    await expect.poll(()=>new URL(a.url()).pathname).toBe('/p/tasks-preview/task/t-1');
+    await a.getByRole('heading',{name:'Pond work',exact:true}).waitFor();
     // Arriving live waits reconcile through the signed-in member, in both windows.
     expect(loom.operations.call('direct',owner,'tasks.close',{id:'t-1',actor:'jonathan',at:'2026-11-13T06:00:00Z'},'inbox-close-wait-task').ok).toBe(true);
+    await expect.poll(()=>loom.operations.call('direct',owner,'attention.get',{id:taskAskId('t-1')})).toMatchObject({ok:true,value:{state:'resolved'}});
+    await b.getByRole('heading',{name:'Task no longer needs you',exact:true}).waitFor();
     raise({id:'closed-task',ask:'Check the completed work?',waits_on:{task:'t-1'}});
     await expect.poll(()=>loom.operations.call('direct',owner,'attention.get',{id:'closed-task'})).toMatchObject({ok:true,value:{state:'resolved',resolution:'t-1 is closed'}});
     for(const page of [a,b]) {

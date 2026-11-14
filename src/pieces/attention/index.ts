@@ -3,7 +3,7 @@ import { operation } from './commands.js';
 import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
-import { registerPrivateReplies, type Ask, type AgentStatus, type AttentionSources } from './role.js';
+import { taskAskId, registerPrivateReplies, type Ask, type AgentStatus, type AttentionSources, type TaskAskFiling } from './role.js';
 import { installWaitChecks, type AttentionWaits } from './waits.js';
 import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
@@ -45,6 +45,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     return row && JSON.parse(row.record) as Ask;
   };
   const saveAsk = (record: Ask) => db.prepare('INSERT INTO attention_asks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, JSON.stringify(record));
+  let tasksRegistered = false;
   registerPrivateReplies(operations, (ctx, raw) => {
     if (ctx.db !== db || !db.inTransaction) return failure('unavailable', 'Private reply needs its enclosing transaction');
     const parsed = z.object({id, conversation: id, agent: id, member: id, thread: id, seq: z.number().int().positive()}).strict().safeParse(raw);
@@ -72,7 +73,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   operations.register(operation({ name: 'attention.raise', write: true, input: question, output: z.unknown(),
     may: (viewer, input) => {
       const old = readAsk(input.id);
-      if (old ? managed(old) : input.source.kind === 'piece' && sources.has(input.source.id)) return false;
+      if (input.id.startsWith('task:') || (old ? managed(old) : input.source.kind === 'task' && tasksRegistered || input.source.kind === 'piece' && sources.has(input.source.id))) return false;
       return old ? mayAct(viewer, scoped('attention.ask', old), sharing(), 'act', 'attention.raise') : mayCreate(viewer, scoped('attention.ask', input), sharing(), 'attention.raise');
     },
     run(ctx, input) {
@@ -99,7 +100,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   operations.register(operation({ name: 'attention.answer', write: true, input: z.object({ id, answer, requireOwnership: z.literal(true).optional() }), output: z.unknown(),
     may: (viewer, input) => {
       const r = readAsk(input.id), held = sharing();
-      return !!r && mayAct(viewer, scoped('attention.ask', r), held, managed(r) ? 'household' : 'answer-person', 'attention.answer')
+      return !!r && !(managed(r) && r.source.kind === 'task') && mayAct(viewer, scoped('attention.ask', r), held, managed(r) ? 'household' : 'answer-person', 'attention.answer')
         && (!input.requireOwnership || mayAct(viewer, { agent: r.agent }, held, 'give-work'));
     },
 
@@ -156,7 +157,48 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     },
     inScope: () => true,
   });
-  const role: AttentionSources = { register(name, answer) {
+  const role: AttentionSources = { tasks() {
+    if (tasksRegistered) throw new Error('Duplicate task filing');
+    tasksRegistered = true;
+    const withdrawn = (old: Ask, audience: Pick<Ask,'project'|'agent'> = old): Ask => ({id:old.id,source:old.source,sourceManaged:true,
+      ...(audience.agent !== undefined ? {agent:audience.agent}:{}), ...(audience.project !== undefined ? {project:audience.project}:{}),
+      ask:'Task no longer needs you',state:'resolved',resolution:'Continue in Tasks',createdAt:old.createdAt,changedAt:old.changedAt});
+    const project = (ctx: Context, inputs: Parameters<TaskAskFiling['sync']>[1], apply: boolean) => {
+      let dirty = false;
+      if (ctx.db !== db || !db.inTransaction) throw new OperationError('unavailable', 'Task filing needs its enclosing database transaction');
+      const seen = new Set<string>();
+      for (const input of inputs) {
+        const {active:rawActive,...fields} = input;
+        const active = z.boolean().parse(rawActive);
+        const parsed = question.extend({project:z.string().optional(),agent:z.string().optional(),source:z.object({kind:z.literal('task'),id:z.string()})}).parse({ ...fields, id:taskAskId(input.id), source: { kind: 'task', id: input.id } });
+        if (parsed.member !== undefined || parsed.waits_on !== undefined) throw new OperationError('invalid', 'Task filing accepts only task audiences');
+        const key = parsed.id;
+        if (seen.has(key)) throw new OperationError('invalid', 'Duplicate task filing');
+        seen.add(key);
+        const old = readAsk(key);
+        if (old && (!managed(old) || old.source.kind !== 'task' || old.source.id !== parsed.source.id)) throw new OperationError('conflict', 'Ask belongs to another source');
+        if (!active && !old) continue;
+        const record: Ask = active
+          ? { ...parsed, sourceManaged: true, state: 'open', createdAt: old?.createdAt ?? ctx.now, changedAt: old?.changedAt ?? ctx.now }
+          : withdrawn(old!,parsed);
+        if (JSON.stringify(record) === JSON.stringify(old)) continue;
+        record.changedAt = ctx.now;
+        dirty = true;
+        if (apply) { saveAsk(record); ctx.changed('attention.ask', key); }
+      }
+      // Withdrawing a source removes its words rather than preserving stale wording
+      // after reassignment/deletion. Read marks remain facts about this source id.
+      for (const row of db.prepare('SELECT record FROM attention_asks').all() as {record:string}[]) {
+        const old = JSON.parse(row.record) as Ask;
+        if (!managed(old) || old.source.kind !== 'task' || seen.has(old.id) || old.state === 'resolved') continue;
+        const record = withdrawn(old); record.changedAt = ctx.now;
+        dirty = true;
+        if (apply) { saveAsk(record); ctx.changed('attention.ask', record.id); }
+      }
+      return dirty;
+    };
+    return { sync(ctx, inputs) { project(ctx,inputs,true); }, pending: (ctx,inputs) => project(ctx,inputs,false) };
+  }, register(name, answer) {
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(name) || sources.has(name)) throw new Error('Invalid or duplicate attention source');
     sources.set(name, answer);
     const check = (ctx: Context) => {
