@@ -246,7 +246,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
 
   // The cited reply superseded the earlier pending start. Exercise failure and
   // retry against a fresh accepted member message, rather than that stale start.
-  const failedStart=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.send',{thread:place,id:'retryaftercitedaa',text:'A fresh queued start after the cited reply'},'fixture-after-citation',true);
+  const failedStart=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.send',{thread:place,id:'retryafterciteda',text:'A fresh queued start after the cited reply'},'fixture-after-citation',true);
   expect(failedStart.ok).toBe(true);if(!failedStart.ok)throw new Error('start fixture failed');
   const failedSeq=(failedStart.value as {seq:number}).seq;
   await comms.deliver('art',place,failedSeq);
