@@ -1,11 +1,11 @@
-import { useRecords, type Snapshot } from '../../data';
+import { useRecords, type LiveRecord, type Snapshot } from '../../data';
 import type { TickPart } from '../../ticker';
 import type { Task } from '../tasks/model';
 import type { Wake } from '../clock/model';
 import type { VenueRecord } from '../bridges/model';
 import type { ChangeRecord } from '../changes/model';
 
-export interface DeskBox { id: string; revokedAt?: number }
+export interface DeskBox extends LiveRecord { id: string; revokedAt?: number }
 const current = <T extends {id:string}>(s: Snapshot<T>): readonly T[] => s.status === 'live' ? s.records : [];
 /** Counts only the policy-filtered records in this window. No legacy tile programs or health guesses. */
 export function useDeskStats() {
