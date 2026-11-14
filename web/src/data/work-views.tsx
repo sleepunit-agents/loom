@@ -16,8 +16,34 @@ export function useChangeSnapshot(timezone = localTimezone()) {
 }
 /** Commands are injected by the authenticated composition. Never substitute
  * the replaced record feed's operation protocol or optimistically change rows. */
-export function ApprovalsApp({ timezone, actions }: { path?: string; timezone?: string; actions?: ApprovalActions }) {
-  return <Approvals snapshot={useApprovalSnapshot(timezone)} actions={actions} renderChange={renderMeasuringChange} />;
+export function ApprovalsApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ApprovalActions; go?(path: string): void } = {}) {
+  const base = '/p/approvals-preview';
+  const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
+  useEffect(() => {
+    if (go || typeof window === 'undefined') return;
+    const pop = () => setLocalPath(location.pathname);
+    window.addEventListener('popstate', pop);
+    return () => window.removeEventListener('popstate', pop);
+  }, [go]);
+  const currentPath = path ?? localPath;
+  let selected: string | undefined;
+  if (currentPath.startsWith(`${base}/approval/`)) {
+    try { selected = decodeURIComponent(currentPath.slice(`${base}/approval/`.length)) || undefined; }
+    catch { /* Malformed URLs leave the reader closed. */ }
+  }
+  const folder = ['history', 'rules', 'notices'].find(id => currentPath === `${base}/${id}`) ?? 'pending';
+  const visit = (next: string) => {
+    if (go) go(next);
+    else {
+      if (typeof history !== 'undefined') history.pushState(null, '', next);
+      setLocalPath(next);
+    }
+  };
+  return <Approvals snapshot={useApprovalSnapshot(timezone)} actions={actions} renderChange={renderMeasuringChange}
+    navigation={{ selected,
+      select: id => visit(id ? `${base}/approval/${encodeURIComponent(id)}` : base),
+      folder: folder,
+      openFolder: id => visit(id === 'pending' ? base : `${base}/${id}`) }} />;
 }
 export function ChangesApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ChangeActions; go?(path: string): void } = {}) {
   const base = '/p/changes-preview';

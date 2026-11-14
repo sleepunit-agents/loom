@@ -109,3 +109,56 @@ it('linked work opens the Tasks reader route and unavailability withdraws the de
     expect(words()).not.toContain('Linked task');
   }
 });
+
+
+it('opens approval and reported-step links from Attention and follows shell folder navigation', async () => {
+  fixture();
+  const id = 'a-one/encoded?';
+  feed.approvals.approvals[0] = { ...feed.approvals.approvals[0], id };
+  const go = vi.fn();
+  const route = `/p/approvals-preview/approval/${encodeURIComponent(id)}`;
+  await draw(h(ApprovalsApp, { path: route, go }));
+  expect(words()).toContain('Keep one day?');
+  await act(async () => tree.root.findByType('Split').props.onBack());
+  expect(go).toHaveBeenLastCalledWith('/p/approvals-preview');
+  await act(async () => tree.update(h(ApprovalsApp, { path: '/p/approvals-preview', go })));
+  expect(words()).not.toContain('Keep one day?');
+  await selectRow();
+  expect(go).toHaveBeenLastCalledWith(route);
+  await act(async () => tree.update(h(ApprovalsApp, { path: route, go })));
+  await act(async () => tree.root.findByType('Split').props.onFolder('notices'));
+  expect(go).toHaveBeenLastCalledWith('/p/approvals-preview/notices');
+  await act(async () => tree.update(h(ApprovalsApp, { path: '/p/approvals-preview/notices', go })));
+  expect(tree.root.findByType('Split').props.folder).toBe('notices');
+  expect(words()).toContain('Current reported step');
+  expect(words()).not.toContain('Keep one day?');
+  for (const folder of ['history', 'rules', 'pending']) {
+    await act(async () => tree.root.findByType('Split').props.onFolder(folder));
+    const path = folder === 'pending' ? '/p/approvals-preview' : `/p/approvals-preview/${folder}`;
+    expect(go).toHaveBeenLastCalledWith(path);
+    await act(async () => tree.update(h(ApprovalsApp, { path, go })));
+    expect(tree.root.findByType('Split').props.folder).toBe(folder);
+  }
+  for (const path of ['/p/approvals-preview/approval/%broken', '/p/approvals-preview/approval/missing', '/p/approvals-preview/approval/']) {
+    await act(async () => tree.update(h(ApprovalsApp, { path, go })));
+    expect(words()).not.toContain('Keep one day?');
+  }
+});
+
+it('approval deep links show the current answer and withdraw the reader when unavailable', async () => {
+  fixture();
+  const node = h(ApprovalsApp, { path: '/p/approvals-preview/approval/a-one', go: vi.fn() });
+  await draw(node);
+  expect(words()).toContain('Keep one day?');
+  feed.approvals.approvals[0] = { ...feed.approvals.approvals[0], state: 'denied', ask: 'Current question' };
+  await act(async () => tree.update(h(ApprovalsApp, { path: '/p/approvals-preview/approval/a-one', go: vi.fn() })));
+  expect(words()).toContain('Current question');
+  expect(words()).toContain('denied');
+  for (const status of ['offline', 'denied', 'loading']) {
+    feed.status = status;
+    await act(async () => tree.update(h(ApprovalsApp, { path: '/p/approvals-preview/approval/a-one', go: vi.fn() })));
+    expect(words()).not.toContain('Current question');
+    expect(words()).not.toContain('Measuring settings change');
+    expect(tree.root.findAllByType('Button')).toHaveLength(0);
+  }
+});
