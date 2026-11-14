@@ -12,3 +12,5 @@ Round 2 TREE sha256:67735e2243f1c193b38ebc5f856a129fa053f069323aaf846d81ef590bff
 - NIT actionable retry proof: assert stored receipt and committed replay after ask-access revocation while fresh-id write refuses.
 - NIT actionable publication proof: assert exact attention.readMark type and returned id, not only call count.
 All changes test-only; production remains08aafb5. Focused4 cases pass. Final round3 follows; no fourth.
+
+Round 3 TREE sha256:bd731390e474600c4bb8381444ef9042536351a331acbbff41b9988dfffa5d8c, from signed3abbaab, CLEAR, no findings. Review complete at three rounds. Production unchanged08aafb5 throughout. All actionable findings were test-only and folded. Final203 affected tests/20files plus12 architecture contract tests and root tsc/diff checks pass. No UI change or screenshot inspection claim. Merge requires final exact-head CI and approvals rule.
