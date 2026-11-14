@@ -292,7 +292,7 @@ it('uses only the live bridge source binding for Clock conversation capacity',as
  const created=value<{id:string}>(await f.post(body,'clock.in',input));
  const row=JSON.parse((f.app.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(created.id) as {record:string}).record);
  expect(row.apiCapacity).toMatchObject({origin:'art',bucket:expect.stringMatching(/^[a-f0-9]{64}$/)});
- expect(row).toMatchObject({member:'jonathan',authorship:{origin:'art',member:'jonathan',principal:{for:'owner',people:[]}}});
+ expect(row).toMatchObject({member:'jonathan',authorship:{origin:'art',member:'jonathan',principal:{for:'owner',people:['jonathan']}}});
  expect(created).toEqual({id:row.id,due:row.due,state:'pending',private:true});
  await f.restart();
  const again=value<{id:string}>(await f.post(body,'clock.in',input));
@@ -311,15 +311,15 @@ it('issues Clock provenance from current bridge history and loses it when the ve
  const f=await setup();await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);
  const {body}=await f.running(),viewer=signin(f.app).token(hash(body))!.viewer;
  const job=runtimeStore(f.app.db).read('job',runtimeStore(f.app.db).ids('job')[0])!,conversation=job.conversation!;
- expect(role!.clockProvenance(viewer)).toEqual({agent:'art',member:'jonathan',conversation,principal:{for:'owner',people:[]}});
+ expect(role!.clockProvenance(viewer)).toEqual({agent:'art',member:'jonathan',conversation,principal:{for:'owner',people:['jonathan']}});
  value(await f.post(f.runner,'runtime.reportJob',{job:job.id,state:'waiting'}));
- expect(role!.clockProvenance(viewer)).toEqual({agent:'art',member:'jonathan',conversation,principal:{for:'owner',people:[]}});
+ expect(role!.clockProvenance(viewer)).toEqual({agent:'art',member:'jonathan',conversation,principal:{for:'owner',people:['jonathan']}});
  expect(role!.clockProvenance({...viewer})).toBeUndefined();
  f.app.db.transaction(()=>provenanceStore(f.app.db).note(conversation,'art',{key:'other-person',sender:{kind:'person',person:'pollock'},at:f.clock.now()},['jonathan']))();
- expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',principal:{for:'pollock',people:['pollock']}});
+ expect(role!.clockProvenance(viewer)).toMatchObject({member:'jonathan',principal:{for:'pollock',people:['jonathan','pollock']}});
  await f.restart();
  const current=signin(f.app).token(hash(body))!.viewer;
- expect(role!.clockProvenance(current)).toMatchObject({member:'jonathan',principal:{for:'pollock',people:['pollock']}});
+ expect(role!.clockProvenance(current)).toMatchObject({member:'jonathan',principal:{for:'pollock',people:['jonathan','pollock']}});
  f.app.db.transaction(()=>put(f.app.db,'links',{id:'person',platform:'slack',workspace:'T123',user:'U200',person:'pollock'}))();
  expect(role!.clockProvenance(current)).toBeUndefined();
 });

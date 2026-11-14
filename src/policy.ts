@@ -91,3 +91,13 @@ export function mayReuseAuthoredWork(v:Viewer,r:RecordScope,s:Sharing,original:W
 export function mayUseThread(v: Viewer, r: { member: string; agent: string }, s: Sharing): boolean {
   return v.kind === 'member' && v.id === r.member && !!entry(s.members, v.id)?.agents.includes(r.agent);
 }
+
+/** Owning Clock/Runtime execution only. A committed source supplies scope;
+ * current membership and both project grants supply authority. This confers
+ * no registry visibility, member identity, or service private-read access. */
+export function mayRunPrivateWork(r: Scope & {agent:string}, s:Sharing):boolean {
+  const member=r.member===undefined?undefined:entry(s.members,r.member);
+  const project=r.project===undefined?undefined:entry(s.projects,r.project);
+  return !!member?.agents.includes(r.agent) && (r.project===undefined
+    || !!project?.agents.includes(r.agent) && (member.owner || project.members.includes(r.member!)));
+}
