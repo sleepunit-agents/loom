@@ -1,4 +1,5 @@
-import { runtimeDiscordHistoryPermit } from './role.js';
+import { slackDescribe } from '../bridges/slack-describe.js';
+import { runtimeSlackDescribePermit, runtimeDiscordHistoryPermit } from './role.js';
 import { discordApi } from '../bridges/discord-api.js';
 import { venueSchema } from '../bridges/model.js';
 import { HouseholdDatabase } from '../../core/household/document.js';
@@ -77,7 +78,7 @@ it('denies copied, unbound, wrong-job, service and non-body callers and malforme
  expect(runtimeDiscordHistoryPermit(f.app,f.viewer,{...place,kind:'thread'})?.current()).toBe(true);
 });
 it.each(['credential','job','binding','claim','box','policy','history','membership','archive','service','close'] as const)('revokes the issued permit on current owning %s drift',async drift=>{
- const f=await running(),store=runtimeStore(f.app.db),conversation=store.read('job',f.job)!.conversation!;
+ const f=await running(),slack=runtimeSlackDescribePermit(f.app,f.viewer,slackPlace)!,store=runtimeStore(f.app.db),conversation=store.read('job',f.job)!.conversation!;
  if(drift==='credential')signin(f.app).tokens.change(ts=>{for(const t of ts)if(t.sha256===hash(f.body))t.revoked=new Date(f.clock.now()).toISOString();});
  if(drift==='job')value(await f.post(f.runner,'runtime.finishJob',{job:f.job,state:'done'}));
  if(drift==='binding')f.app.db.prepare("UPDATE runtime_bindings SET record=json_set(record,'$.place','different') WHERE id=?").run(conversation);
@@ -89,6 +90,7 @@ it.each(['credential','job','binding','claim','box','policy','history','membersh
  if(drift==='archive')value(await f.socket('comms.change',{thread:f.thread,action:'archive'}));
  if(drift==='service')f.app.db.prepare("UPDATE runtime_jobs SET record=json_set(record,'$.service','discord') WHERE id=?").run(f.job);
  if(drift==='close')await f.app.close();
+ expect(slack.current()).toBe(false);if(drift!=='claim')expect(runtimeSlackDescribePermit(f.app,f.viewer,slackPlace)).toBeUndefined();
  expect(f.permit.current()).toBe(false);if(drift!=='claim')expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)).toBeUndefined();
 });
 it('does not turn an authenticated nonowner private body into venue-read authority',async()=>{
@@ -143,4 +145,30 @@ it('refuses owner-body issuance when retained sender history resolves to a named
  },['jonathan']))();
  expect(await f.post(f.body,'runtime.readConversation',{})).toMatchObject({ok:true});
  expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)).toBeUndefined();expect(f.permit.current()).toBe(false);
+});
+
+const slackPlace={venue:'slack',workspace:'TWORK',kind:'dm' as const,place:'UHUMAN'};
+it('consumes an actual owning Slack describe permit for exact authenticated platform reads',async()=>{
+ const f=await running(),permit=runtimeSlackDescribePermit(f.app,f.viewer,slackPlace)!;
+ expect(permit?.current()).toBe(true);expect(Object.isFrozen(permit)).toBe(true);
+ const use=vi.fn(async<T>(_name:string,read:(secret:string)=>Promise<T>)=>read('TEST-CREDENTIAL'));
+ const request=vi.fn<typeof fetch>(async()=>Response.json({ok:true,user:{id:'UHUMAN',team_id:'TWORK',deleted:false,is_bot:false,is_restricted:false,is_ultra_restricted:false}}));
+ const venue=venueSchema.parse({id:'slack',platform:'slack',agent:'art',workspace:'TWORK',bot:'UBOT',tokenSecret:'slack'});
+ expect(await slackDescribe(venue,permit,{withValue:use},()=>true,request).describe()).toEqual({kind:'dm',place:'UHUMAN',humans:['UHUMAN']});
+ for(const patch of [{id:'other'},{agent:'mark'},{workspace:'TOTHER'}])
+  await expect(slackDescribe({...venue,...patch},permit,{withValue:use},()=>true,request).describe()).rejects.toThrow('Bridge describe unavailable');
+ expect(request).toHaveBeenCalledOnce();
+ expect(JSON.stringify(permit)).not.toMatch(/PRIVATE|CREDENTIAL|jonathan|job/);
+ signin(f.app).tokens.change(ts=>{for(const t of ts)if(t.sha256===hash(f.body))t.revoked=new Date(f.clock.now()).toISOString();});
+ expect(permit.current()).toBe(false);expect(runtimeSlackDescribePermit(f.app,f.viewer,slackPlace)).toBeUndefined();
+ await expect(slackDescribe(venue,permit,{withValue:use},()=>true,request).describe()).rejects.toThrow('Bridge describe unavailable');
+ expect(request).toHaveBeenCalledOnce();
+});
+it('refuses copied or unbound Slack callers and malformed exact places',async()=>{
+ const f=await running();
+ for(const viewer of [{...f.viewer},signin(f.app).token(hash(f.unbound))!.viewer,{kind:'member',id:'jonathan'}] as const)
+  expect(runtimeSlackDescribePermit(f.app,viewer,slackPlace)).toBeUndefined();
+ for(const patch of [{workspace:'T/other'},{venue:''},{place:'USLACKBOT'},{kind:'group'},{kind:'channel'},{agent:'art'},{principal:'owner'}])
+  expect(runtimeSlackDescribePermit(f.app,f.viewer,{...slackPlace,...patch} as typeof slackPlace)).toBeUndefined();
+ expect(runtimeSlackDescribePermit(f.app,f.viewer,{...slackPlace,kind:'group',place:'GPRIVATE'})?.current()).toBe(true);
 });

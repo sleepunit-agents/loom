@@ -132,3 +132,5 @@ export function runtimeHouseDestination(app: Foundation, sharing: () => Sharing,
 }
 
 export { runtimeDiscordHistoryPermit, type DiscordHistoryPlace } from './venue-history.js';
+
+export { runtimeSlackDescribePermit, type SlackDescribePlace } from './venue-history.js';

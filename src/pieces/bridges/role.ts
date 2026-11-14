@@ -47,3 +47,5 @@ export interface BridgesRole {
 
 export type { DiscordHistoryPermit } from './discord-history.js';
 export { isDiscordId } from './discord-id.js';
+
+export type { SlackDescribePermit } from './slack-describe.js';
