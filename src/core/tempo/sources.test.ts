@@ -19,6 +19,12 @@ it('reports only durable answers and terminal jobs with repeatable namespaced id
     db.insert(jobs).values({ id: 'same', agent: 'art', title: 'test', state: 'running', brief: '', model: 'test', startedByKind: 'agent', startedBy: 'art', houseRepository: 'repo', houseFile: 'house', houseBranch: 'main', queuedAt: at }).run();
     sources.question('same'); sources.approval('same'); sources.secret('same'); sources.job('same'); sources.job('missing');
     expect(events).toEqual([]);
+    db.update(inbox).set({ answeredAt: at }).where(eq(inbox.id, 'same')).run();
+    db.update(approvals).set({ decidedAt: at }).where(eq(approvals.id, 'same')).run();
+    db.update(secretRequests).set({ answeredAt: at }).where(eq(secretRequests.id, 'same')).run();
+    db.update(jobs).set({ endedAt: at }).where(eq(jobs.id, 'same')).run();
+    sources.question('same'); sources.approval('same'); sources.secret('same'); sources.job('same');
+    expect(events).toEqual([]);
     db.update(inbox).set({ state: 'answered', answer: 'yes', answeredAt: at }).where(eq(inbox.id, 'same')).run();
     db.update(approvals).set({ state: 'allowed', decidedAt: at }).where(eq(approvals.id, 'same')).run();
     db.update(secretRequests).set({ state: 'allowed', answeredAt: at }).where(eq(secretRequests.id, 'same')).run();
@@ -34,6 +40,16 @@ it('reports only durable answers and terminal jobs with repeatable namespaced id
     db.update(secretRequests).set({ state: 'revoked' }).where(eq(secretRequests.id, 'same')).run();
     sources.question('same'); sources.approval('same'); sources.secret('same'); sources.job('same');
     expect(events.slice(4)).toEqual(first);
+    for (const state of ['failed', 'stopped', 'lost'] as const) {
+      db.update(jobs).set({ state }).where(eq(jobs.id, 'same')).run();
+      const before = events.length; sources.job('same');
+      expect(events.length).toBe(before + 1);
+      expect(events.at(-1)?.slice(0, 2)).toEqual(['job', 'job:same']);
+    }
+    db.update(approvals).set({ state: 'denied' }).where(eq(approvals.id, 'same')).run();
+    db.update(secretRequests).set({ state: 'denied' }).where(eq(secretRequests.id, 'same')).run();
+    const before = events.length; sources.approval('same'); sources.secret('same');
+    expect(events.length).toBe(before + 2);
   } finally { client.close(); }
 });
 
