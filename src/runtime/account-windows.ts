@@ -45,12 +45,19 @@ export function currentAccountCapacity(db: DataDatabase, account: string, now: s
   return { ...capacity, hasRoom: Boolean(row?.hasRoom) && capacity.hasRoom };
 }
 
+// Pending provider requests cannot outlive this database handle. A completion
+// token also detects successful refreshes whose persisted values did not change.
+const refreshCompletions = new WeakMap<DataDatabase, Map<string, object>>();
+
 export async function refreshAccountWindows(db: DataDatabase, account: string, provider: UsageProvider, now: () => string) {
   const row = db.select().from(modelAccounts).where(eq(modelAccounts.id, account)).get();
   if (!row) throw new Error('Unknown account');
   const identity = { account, owner: row.owner, provider: row.provider };
+  let completions = refreshCompletions.get(db);
+  if (!completions) { completions = new Map(); refreshCompletions.set(db, completions); }
+  const completion = completions.get(account);
   const snapshot = JSON.stringify({ row, windows: readAccountWindows(db, account) });
-  const unchanged = () => snapshot === JSON.stringify({
+  const unchanged = () => completions.get(account) === completion && snapshot === JSON.stringify({
     row: db.select().from(modelAccounts).where(eq(modelAccounts.id, account)).get(),
     windows: readAccountWindows(db, account),
   });
@@ -62,8 +69,11 @@ export async function refreshAccountWindows(db: DataDatabase, account: string, p
       throw new Error('Invalid provider response');
   }
   catch {
-    db.transaction(() => { if (unchanged()) accountUsageUnavailable(db, identity); });
+    const applied = db.transaction(() => unchanged() && accountUsageUnavailable(db, identity));
+    if (applied) completions.set(account, {});
     return { refreshed: false };
   }
-  return db.transaction(() => ({ refreshed: unchanged() && recordAccountWindows(db, identity, windows, now()) }), { behavior: 'immediate' });
+  const result = db.transaction(() => ({ refreshed: unchanged() && recordAccountWindows(db, identity, windows, now()) }), { behavior: 'immediate' });
+  if (result.refreshed) completions.set(account, {});
+  return result;
 }
