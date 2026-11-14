@@ -1503,6 +1503,12 @@ replace project scope or both the claimed house and its current configuration;
 the same authenticated job still passes unpinned control, while pinned control,
 running and finish each refuse. Removing only the respective digest field makes
 its regression fail, independently of the other lifecycle checks.
+Input-needs tests change the requirement while the same box satisfies both
+versions. Service ownership and an imported policy archive without any active
+policy configuration are tested as sole holds before input release and after
+the running acknowledgement. General input release and unbound-only assertion
+retain small independent needs checks; a broader shared validator is deferred
+to preserve their distinct bound-input and assertion failure semantics here.
 
 ### Durable external worker attempt receipts
 

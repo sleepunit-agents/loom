@@ -95,12 +95,17 @@ it('does not launch an input with a conversation that lacks owning policy delive
  const f=await setup();f.update({conversation:'cv-bridge'});
  await expect(runClaudeJob(f.config,f.selected,f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(0);
 });
-it.each(['conversation','model','account','claimedAt','brief'] as const)('refuses original input after same-job %s changes before launch',async field=>{
+it.each(['conversation','model','account','claimedAt','brief','needs'] as const)('refuses original input after same-job %s changes before launch',async field=>{
  const f=await setup();
+ if(field==='needs') {
+  f.app.db.prepare('UPDATE runtime_inputs SET needs=? WHERE job=?').run('["gpu"]','j');
+  f.app.db.transaction(()=>{const {changedAt:_,...box}=f.store.read('box','r')!;f.store.put('box',{...box,facts:['gpu','cpu']},f.clock.now());})();
+ }
  const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
   const response=await fetch(...args);
   if(String(args[0]).endsWith('/takeInput')) {
    if(field==='brief')f.app.db.prepare('UPDATE runtime_inputs SET brief=? WHERE job=?').run('REPLACEMENT WORK','j');
+   else if(field==='needs')f.app.db.prepare('UPDATE runtime_inputs SET needs=? WHERE job=?').run('["cpu"]','j');
    else f.update({[field]:field==='claimedAt'?f.clock.now()+1:'replacement'});
   }
   return response;
@@ -121,11 +126,15 @@ it.each(['reportJob','finishJob'] as const)('refuses a changed original source a
  await rejected;expect(changed).toBe(true);expect(f.store.read('job','j')?.state).toBe(boundary==='reportJob'?'starting':'running');
  expect(jobResults(f.app.db).read('j')).toBeNull();
 });
-it.each(['conversation','model','account','brief','policy','capabilities'] as const)('the pinned watchdog kills active unbound execution after %s changes',async field=>{
+it.each(['conversation','model','account','brief','needs','service','policy','imported-policy','capabilities'] as const)('the pinned watchdog kills active unbound execution after %s changes',async field=>{
  const f=await setup();
  if(field==='capabilities') {
   f.app.db.prepare('UPDATE runtime_inputs SET needs=? WHERE job=?').run('["gpu"]','j');
   f.app.db.transaction(()=>{const {changedAt:_,...box}=f.store.read('box','r')!;f.store.put('box',{...box,facts:['gpu']},f.clock.now());})();
+ }
+ if(field==='needs') {
+  f.app.db.prepare('UPDATE runtime_inputs SET needs=? WHERE job=?').run('["gpu"]','j');
+  f.app.db.transaction(()=>{const {changedAt:_,...box}=f.store.read('box','r')!;f.store.put('box',{...box,facts:['gpu','cpu']},f.clock.now());})();
  }
  let reported:()=>void=()=>{};const running=new Promise<void>(resolve=>{reported=resolve;});
  const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
@@ -133,16 +142,28 @@ it.each(['conversation','model','account','brief','policy','capabilities'] as co
  }};
  const p=runClaudeJob(f.config,f.selected,runtime),rejected=expect(p).rejects.toThrow();await f.waitSpawn(1);await running;
  if(field==='brief')f.app.db.prepare('UPDATE runtime_inputs SET brief=? WHERE job=?').run('REPLACEMENT WORK','j');
+ else if(field==='needs')f.app.db.prepare('UPDATE runtime_inputs SET needs=? WHERE job=?').run('["cpu"]','j');
+ else if(field==='imported-policy') {
+  f.app.db.prepare('INSERT INTO runtime_import_documents VALUES (?,?,?)').run('policy','art',JSON.stringify({collection:'policy',key:'art',doc:JSON.stringify({deny:['Bash']})}));
+  expect(f.app.db.prepare('SELECT * FROM runtime_body_policy').all()).toEqual([]);
+ }
  else if(field==='policy')expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'runtime.configureBodyPolicy',
   {agent:'art',revision:0,gates:{people:{}},policy:{}},'new-policy')).toMatchObject({ok:true});
  else if(field==='capabilities')f.app.db.transaction(()=>{const {changedAt:_,...box}=f.store.read('box','r')!;f.store.put('box',{...box,facts:[]},f.clock.now());})();
  else f.update({[field]:'replacement'});
  f.tick();await rejected;expect(f.calls[0].child.killed).toBe(true);expect(jobResults(f.app.db).read('j')).toBeNull();
 });
-it('holds configured body policy before unbound input release rather than using copied local rules',async()=>{
- const f=await setup();expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'runtime.configureBodyPolicy',
+it.each(['configured-policy','imported-policy','service'] as const)('holds %s as the sole disqualifier before unbound input release',async field=>{
+ const f=await setup();
+ if(field==='configured-policy')expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'runtime.configureBodyPolicy',
   {agent:'art',revision:0,gates:{people:{}},policy:{}},'policy')).toMatchObject({ok:true});
- await expect(runClaudeJob(f.config,f.selected,f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(0);
+ else if(field==='service')f.update({service:'service-owner'});
+ else {
+  f.app.db.prepare('INSERT INTO runtime_import_documents VALUES (?,?,?)').run('policy','art',JSON.stringify({collection:'policy',key:'art',doc:JSON.stringify({deny:['Bash']})}));
+  expect(f.app.db.prepare('SELECT * FROM runtime_body_policy').all()).toEqual([]);
+ }
+ const p=runClaudeJob(f.config,f.selected,f.runtime),rejected=expect(p).rejects.toThrow();
+ await Promise.race([p.catch(()=>{}),f.waitSpawn(1)]);if(f.calls.length)f.finish();await rejected;expect(f.calls).toHaveLength(0);
  expect(f.app.db.prepare('SELECT id FROM core_effects WHERE id=?').get('runtime:input:j')).toBeUndefined();
 });
 it('an old unpinned control response cannot activate the original input assertion',async()=>{
