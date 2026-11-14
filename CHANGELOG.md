@@ -14,7 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Bridges import accepts sparse per-agent channel flags, blocks unrepresentable differences with source field evidence, and identifies conflicting present entries.
 
+- New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
 - New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail.
+- Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
 
 - Check Clock lane reuse against current Runtime destination metadata; hold verified joins until conversation delivery can feed the existing body safely.
 - File spawned private Comms threads through unique owning metadata while preserving Runtime transport handles and execution holds.

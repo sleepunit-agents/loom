@@ -27,6 +27,9 @@ export interface HolderDestination {
   name: string;
   current(): Promise<boolean>;
   handTo(bytes: Uint8Array): Promise<void>;
+  /** Retire the original claim on EVERY failed path, including before handTo.
+   * Success remains claimed until the owning completion protocol settles it. */
+  abandon(): Promise<void>;
 }
 export type HolderHandoffAuthority = (id: string) => Promise<HolderDestination | null>;
 
@@ -95,6 +98,7 @@ export async function listenHolderHandoff(config: Omit<LocalHolderConfig, 'serve
       minVersion: 'TLSv1.3', maxHeaderSize: 8192}, (req, res) => {
       const work = (async () => {
         let bytes: Uint8Array | undefined, expired = false;
+        let destination: HolderDestination | null = null, delivered = false;
         const deadline = setTimeout(() => { expired = true; req.destroy(); res.destroy(); }, 5000);
         const peer = req.socket as TLSSocket;
         // Node's TLS socket wraps the accepted net.Socket. Carry the original
@@ -108,8 +112,8 @@ export async function listenHolderHandoff(config: Omit<LocalHolderConfig, 'serve
           if (!alive() || !peer.authorized || peer.getPeerCertificate().fingerprint256 !== daemonFingerprint
             || req.method !== 'POST' || !match || req.headers['content-length'] !== '0' || req.headers['transfer-encoding']) throw failed();
           const id = ticket.parse(match[1]);
-          const destination = await authority(id);
-          if (!alive() || !destination || !secretName.safeParse(destination.name).success
+          destination = await authority(id);
+          if (!alive() || !destination || typeof destination.abandon !== 'function' || !secretName.safeParse(destination.name).success
             || await destination.current() !== true || !alive()) throw failed();
           bytes = await source.read(destination.name);
           if (!alive() || !(bytes instanceof Uint8Array) || !bytes.length || bytes.length > 65536
@@ -118,10 +122,15 @@ export async function listenHolderHandoff(config: Omit<LocalHolderConfig, 'serve
           await destination.handTo(bytes);
           if (!alive()) throw failed();
           res.writeHead(204, {'content-length': 0, 'cache-control': 'no-store'}); res.end();
+          delivered = true;
         } catch {
           if (!res.headersSent && !res.destroyed) res.writeHead(503, {'content-length': 0, 'cache-control': 'no-store'});
           res.end();
-        } finally { clearTimeout(deadline); if (bytes instanceof Uint8Array) bytes.fill(0); }
+        } finally {
+          clearTimeout(deadline);
+          if (bytes instanceof Uint8Array) bytes.fill(0);
+          if (!delivered) try { await destination?.abandon(); } catch { /* uncertain; never retry */ }
+        }
       })();
       active.add(work); void work.catch(() => {}).finally(() => active.delete(work));
     });
