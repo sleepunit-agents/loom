@@ -134,3 +134,12 @@ it('a colliding public wake cannot waive a removed private schedule id window gu
  expect(f.call('scheduleSet',{...input,id})).toMatchObject({ok:false,code:'denied'});
  expect(f.snapshot()).toEqual(before);
 });
+
+it.each([true,false])('keeps body cancel commands on the selected clock and active entries (private=%s)',async privateWork=>{
+ const f=await setup(privateWork);expect(f.call('in',{agent:'art',when:'1h',prompt:'WORDS',note:''}).ok).toBe(true);
+ const id=wakes(f.app.db)[0].id,before=f.snapshot();
+ expect(f.call('command',{argv:['--agent','other','cancel',id]})).toMatchObject({ok:true,value:{exit:1,stderr:`wake: no spool entry ${id}\n`}});
+ expect(f.snapshot()).toEqual(before);
+ expect(f.call('command',{argv:['cancel',id]})).toMatchObject({ok:true,value:{exit:0,stdout:`cancelled ${id}\n`}});
+ expect(f.call('command',{argv:['cancel',id]})).toMatchObject({ok:true,value:{exit:1,stderr:`wake: no spool entry ${id}\n`}});
+});

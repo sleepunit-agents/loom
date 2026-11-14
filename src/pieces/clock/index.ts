@@ -479,7 +479,10 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         : viewer.kind === 'member' || viewer.kind === 'agent';
     },
     run: (ctx,input) => {
-      const result=command(operations,ctx.viewer,input);
+      const result=command(operations,ctx.viewer,input,id=>{
+        const w=wake(db,id);
+        return w && mayControl(ctx.viewer,w) ? {agent:w.agent,active:active(w)} : undefined;
+      });
       if(result.exit===0 && input.argv.includes('--standing'))saveLocalReceipt(ctx,result);
       return result;
     },

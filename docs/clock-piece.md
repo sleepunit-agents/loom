@@ -1122,7 +1122,8 @@ per-record window gate; existing input-only gates and signed-in windows retain
 their behavior. Private reads remain window-only. Deleted private ids retain their
 window gate, including receipt retries and collisions with public wake ids; removing a schedule does not make its
 previous results token-readable. Public command names and response text remain
-unchanged; private schedule confirmation uses its deadline acknowledgement rather
+unchanged, including the selected-clock and active-entry checks for body cancel
+commands (using authorized metadata, never private list reads); private schedule confirmation uses its deadline acknowledgement rather
 than reading a private list. A removed private id requires member-window recovery;
 a body cannot silently reuse it.
 
