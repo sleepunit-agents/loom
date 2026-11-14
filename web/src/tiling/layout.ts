@@ -1,4 +1,4 @@
-// The tiling rule (docs/specs/desk-tiling.md, "The rule"): where every app tile goes, as a pure function of the tiles in
+// The tiling rule (docs/how-it-works/site/desk.html): where every app tile goes, as a pure function of the tiles in
 // their order, what each declares (fit.ts) and the room. It has no state of its own: the same tiles in the same order
 // at the same size give the same screen. Which app goes where in the order, and which goes back to the dock when they
 // don't all fit, are pure functions here too (place, admit). The agents' rail beside the apps (docs/specs/agent-desk.md)
@@ -47,7 +47,7 @@ export function layout(apps: AppTile[], area: Rect, screen: number): Layout {
   out.appArea = A;
   const first = apps[0];
   out.why.push(apps.length === 1 ? `1 app: ${first.name} fills the app area.`
-    : `${apps.length} apps: ${first.name} has the big slot${first.pinned ? ' (you made it the big one)' : first.fit.big ? ` (it wants room: ${first.fit.why})` : ''}. Each newer one subdivides the newest.`);
+    : `${apps.length} apps: ${first.name} has the big slot${first.pinned ? ' (you made it the big one)' : ''}. Each newer one subdivides the newest.`);
   split(apps, A, out);
   return out;
 }
@@ -92,13 +92,10 @@ export function underMinimum(apps: AppTile[], area: Rect, screen: number): { app
   return undefined;
 }
 
-/** Where a new app goes in the order. Opened from another app's tile: right after it. From the agents' rail or Home:
- * last, next to the rail. Wanting the big slot, while the app there doesn't and the person didn't make it the big one: first. Else
- * last, so it subdivides the newest. */
+/** The first tile keeps the big slot. A new tile follows its source, or joins at the end. */
 export function place(apps: AppTile[], add: AppTile, from?: { tile?: string; rail?: boolean }): AppTile[] {
   const at = from?.tile ? apps.findIndex((a) => a.id === from.tile) : -1;
   if (at >= 0) return [...apps.slice(0, at + 1), add, ...apps.slice(at + 1)];
-  if (!from?.rail && add.fit.big && apps[0] && !apps[0].fit.big && !apps[0].pinned) return [add, ...apps];
   return [...apps, add];
 }
 
@@ -122,7 +119,7 @@ export type Docked = { app: AppTile; why: string };
 /**
  * Open `add` among `apps`: it goes where `place` says, then, while there are more than the screen's cap or the layout
  * would put any app under its minimum, the app used least recently (`usedAt`, by focus; never the one being opened,
- * never the one it was opened from, never a pinned one; a tie goes to the one earlier in the order) goes to the dock.
+ * a tie goes to the one earlier in the order) goes to the dock.
  * When no app may go, what's left stays, each at what the split gives it.
  */
 export function admit(apps: AppTile[], add: AppTile, area: Rect, screen: number,
@@ -134,7 +131,7 @@ export function admit(apps: AppTile[], add: AppTile, area: Rect, screen: number,
     const over = order.length > cap;
     const under = over ? undefined : underMinimum(order, area, screen);
     if (!over && !under) break;
-    const may = order.filter((a) => a.id !== add.id && a.id !== o.from?.tile && !a.pinned);
+    const may = order.filter((a) => a.id !== add.id);
     if (!may.length) break;
     const used = (a: AppTile) => o.usedAt?.[a.id] ?? 0;
     const go = may.reduce((x, y) => (used(y) < used(x) ? y : x));
