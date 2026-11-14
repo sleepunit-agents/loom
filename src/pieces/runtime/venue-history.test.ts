@@ -131,3 +131,8 @@ it('pins the transport place independently of an unchanged current principal and
  expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)?.current()).toBe(true);
  expect(f.permit.current()).toBe(false);
 });
+it('revokes an issued permit and refuses new issuance for an otherwise current waiting body',async()=>{
+ const f=await running();value(await f.post(f.runner,'runtime.reportJob',{job:f.job,state:'waiting'}));
+ expect(await f.post(f.body,'runtime.readConversation',{})).toMatchObject({ok:true});
+ expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)).toBeUndefined();expect(f.permit.current()).toBe(false);
+});

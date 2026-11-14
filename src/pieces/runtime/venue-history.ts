@@ -2,8 +2,7 @@
 import { z } from 'zod';
 import { isClosing, type Foundation } from '../../core/app.js';
 import { mayAct, type Sharing, type Viewer } from '../../core/index.js';
-import { isDiscordId } from '../bridges/discord-id.js';
-import type { DiscordHistoryPermit } from '../bridges/discord-history.js';
+import { isDiscordId, type DiscordHistoryPermit } from '../bridges/role.js';
 import type { ClockProvenanceReader } from './role.js';
 import { runtimeHouseDestination } from './role.js';
 import { runtimeStore } from './store.js';
