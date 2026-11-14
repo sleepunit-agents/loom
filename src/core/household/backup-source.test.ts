@@ -13,9 +13,17 @@ import { migrateHouseholdTables } from './schema.js';
 import { startLoom } from '../../foundation.js';
 import { fixture as fixtureHome, installFixture } from '../../fixture.js';
 import { FakeClock } from '../clock.js';
+const databaseGuard = vi.hoisted(() => ({ check: undefined as undefined | ((path: unknown) => void) }));
+vi.mock('better-sqlite3', async original => {
+  const actual = await original<typeof import('better-sqlite3')>();
+  return { ...actual, default: new Proxy(actual.default, {
+    construct(target, args) { databaseGuard.check?.(args[0]); return Reflect.construct(target, args); },
+    apply(target, self, args) { databaseGuard.check?.(args[0]); return Reflect.apply(target, self, args); },
+  }) };
+});
 vi.mock('node:fs', async original => ({ ...await original<typeof fs>() }));
 const cleanups: (() => void | Promise<void>)[] = [];
-afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanups.splice(0).reverse()) await close(); });
+afterEach(async () => { databaseGuard.check = undefined; vi.restoreAllMocks(); for (const close of cleanups.splice(0).reverse()) await close(); });
 function home() {
   const home = mkdtempSync(join(tmpdir(), 'loom-sources-'));
   cleanups.push(() => rmSync(home, { recursive: true, force: true })); return home;
@@ -119,4 +127,25 @@ it('refuses a missing owning Secrets role before imported key IO', async () => {
   const open = vi.spyOn(fs, 'openSync');
   await expect(encryptRegisteredHouseholdBundle(input)).rejects.toThrow(/^Registered household backup capture failed$/);
   expect(open).not.toHaveBeenCalled();
+});
+
+it('performs no cookie lookup for explicit absence and no old-source reads or pathname database opens', async () => {
+  const { input } = await fixture();
+  const lookedUp: string[] = [], databasePaths: unknown[] = [];
+  const forbidden = /ui-cookie\.key|household\.json|\.db(?:$|-)|\/programs\/|\/pieces\//;
+  const guard = (path: unknown) => { const value = String(path); lookedUp.push(value); if (forbidden.test(value)) throw Error('Forbidden source lookup'); };
+  // Cover content reads, metadata probes, directory discovery and file opens.
+  for (const method of ['readFileSync', 'readFile', 'openSync', 'open', 'statSync', 'lstatSync', 'accessSync', 'existsSync', 'realpathSync', 'readdirSync'] as const) {
+    const original = fs[method] as Function;
+    vi.spyOn(fs, method).mockImplementation(((...args: unknown[]) => { guard(args[0]); return Reflect.apply(original, fs, args); }) as never);
+  }
+  databaseGuard.check = path => {
+    databasePaths.push(path);
+    if (path !== ':memory:' && !Buffer.isBuffer(path)) throw Error('No source database opens');
+  };
+  await expect(encryptRegisteredHouseholdBundle(input)).resolves.toHaveProperty('bytes');
+  expect(lookedUp.length).toBeGreaterThan(0);
+  expect(lookedUp.filter(path => forbidden.test(path))).toEqual([]);
+  expect(databasePaths.length).toBeGreaterThan(0);
+  expect(databasePaths.every(path => path === ':memory:' || Buffer.isBuffer(path))).toBe(true);
 });
