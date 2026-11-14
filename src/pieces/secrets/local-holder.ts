@@ -123,11 +123,14 @@ export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servern
   if (!isAbsolute(config.socket)) throw failed();
   assertPrivateDirectory(dirname(config.socket));
   const {key, cert, ca} = tlsMaterial(config);
+  const active=new Set<Promise<void>>();let closed=false;
   const server = https.createServer({key, cert, ca, requestCert: true, rejectUnauthorized: true,
-    maxHeaderSize: 8192, minVersion: 'TLSv1.3'}, async (req, res) => {
+    maxHeaderSize: 8192, minVersion: 'TLSv1.3'}, (req, res) => {
+    const work=(async()=>{
     let bytes: Uint8Array | undefined;
     res.on('error', () => {});
     try {
+      if(closed)throw failed();
       const peer = req.socket as TLSSocket;
       if (daemonFingerprint && (!peer.authorized || peer.getPeerCertificate().fingerprint256 !== daemonFingerprint)) throw failed();
       const match = /^\/v1\/value\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$/.exec(req.url ?? '');
@@ -138,12 +141,14 @@ export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servern
         if (typeof marker !== 'string' || marker.length !== 36 || !generationPattern.test(marker)) throw failed();
         bytes = Buffer.from(marker);
       } else bytes = await source.read(match![1]);
-      if (res.destroyed || !bytes.length || bytes.length > LIMIT) throw failed();
+      if (closed || res.destroyed || !bytes.length || bytes.length > LIMIT) throw failed();
       res.writeHead(200, {'content-type':'application/octet-stream', 'cache-control':'no-store', 'content-length':bytes.length});
       // Keep ownership until Node has finished copying/flushing the supplied bytes.
       await new Promise<void>(done => { res.once('close', done); res.end(bytes, done); });
-    } catch { if (!res.headersSent) res.writeHead(503, {'content-length':0}); res.end(); }
+    } catch { if (!res.headersSent && !res.destroyed) res.writeHead(503, {'content-length':0}); res.end(); }
     finally { bytes?.fill(0); }
+    })();
+    active.add(work);void work.catch(()=>{}).finally(()=>active.delete(work));
   });
   // Bound accepted sockets before TLS/headers, rather than Node's coarse HTTP timer.
   server.on('connection', socket => {
@@ -155,5 +160,10 @@ export async function listenLocalHolder(config: Omit<LocalHolderConfig, 'servern
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(config.socket, resolve); });
     chmodSync(config.socket, 0o600);
   } catch { server.close(); throw failed(); }
-  return { async close() { server.closeAllConnections(); await new Promise<void>((resolve, reject) => server.close(e => e ? reject(failed()) : resolve())); } };
+  let closing:Promise<void>|undefined;
+  return { close() { return closing??=(async()=>{
+    closed=true;server.closeAllConnections();
+    try {await new Promise<void>((resolve,reject)=>server.close(e=>e?reject(failed()):resolve()));}
+    finally {await Promise.allSettled(active);}
+  })(); } };
 }

@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Add an explicit external Claude worker for unbound next-mode jobs, with authenticated stop/history polling and no automatic retry after uncertain execution.
+- Bind sealed typed Comms replies and retry receipts to the retained original encrypted question and owning route.
 - Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
 
 - Deliver sealed Comms yes/no decisions back to the owning private conversation through staged encrypted message delivery.
@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Let a current private body ask an encrypted Comms question through its original member binding, with authority rechecked after encryption and a wordless acknowledgement.
 - Add pure worker-checkout preparation for scheduled file inputs, using bounded descriptor-pinned reads; executable Clock file delivery stays held pending owning runner integration.
+- Refuse public Clock runner start input after withdrawal or a change to its original destination or claim during preparation.
 - Add owner-only next-mode backup configuration operations and Live status; saved configuration explicitly remains unscheduled pending the new runner.
 
 - Deliver private timed prompts through Runtime’s bound inbox, retaining member scope and current grants through runner confirmation, reads and acknowledgment.
@@ -1259,6 +1260,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add staged, durable own-device test notification sending in next mode; Account test controls and routine announcement dispatch remain pending.
 
 - Account can queue a test notification for an exact device and follow private Live outcomes, preserving uncertain retries across navigation. Push acceptance is shown separately from device delivery.
+
+- Add an explicit external Claude worker for unbound next-mode jobs, with authenticated stop/history polling and no automatic retry after uncertain execution.
 
 ## [0.16.1] - 2026-10-25
 

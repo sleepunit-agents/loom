@@ -307,7 +307,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   const announcements=installNotificationAnnouncements(app,effects,member=>[...attentionAnnouncements(app.operations,member),...replyAnnouncements(app.operations,member)],options.notifications);
   notificationClosers.set(app,async()=>{await announcements.close();await notifications.close();});
   if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects,
-    {valid:id=>conversations.validInput(id)||bridgeBodies.valid(id)||clockBodies.valid(id),issue:(agent,job)=>signin(app).issueBody(agent,job,runtimeStore(app.db).read('job',job)?.service)});
+    {valid:id=>conversations.validInput(id)||bridgeBodies.valid(id)||clockBodies.valid(id),inputCurrent:clockBodies.inputCurrent,issue:(agent,job)=>signin(app).issueBody(agent,job,runtimeStore(app.db).read('job',job)?.service)});
   if (options.secretAuthority && !secretAuthorities.has(app)) {
     const current = () => new SharingDatabase(app.db, options.home).sharing();
     secretAuthorities.set(app, await listenHolderAuthority(options.secretAuthority, member =>

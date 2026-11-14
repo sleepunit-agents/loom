@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {X509Certificate,randomBytes,randomUUID} from 'node:crypto';
 import {generateIdentity} from 'age-encryption';
-import {startPersistentHolder} from './holder-lifecycle.js';
+import {startPersistentHolder} from '../../secret-holder-startup.js';
 import {localHolderMutations} from './holder-mutations.js';
 import {localSecretSource} from './local-holder.js';
 import https from 'node:https';

@@ -9,7 +9,7 @@ import { configuredHouse, sameHouse } from './builds.js';
 import { meets } from './placement.js';
 import { buildIdentity } from './records.js';
 
-export function installRunnerInput(db: Db, operations: Operations, sharing: () => Sharing, effects: OutsideEffects, body?: { issue(agent: string, job: string): string; valid(job: string): boolean }) {
+export function installRunnerInput(db: Db, operations: Operations, sharing: () => Sharing, effects: OutsideEffects, body?: { issue(agent: string, job: string): string; valid(job: string): boolean; inputCurrent?(job: string): () => boolean }) {
   const store = runtimeStore(db);
   const assigned=(viewer:Viewer,id:string)=>{
     const job=store.read('job',id);
@@ -40,16 +40,21 @@ export function installRunnerInput(db: Db, operations: Operations, sharing: () =
     may: (viewer, input) => assigned(viewer, input.job),
     async prepare(input, { viewer }) {
       const value = snapshot(viewer, input.job);
+      const current = body?.inputCurrent?.(input.job) ?? (() => true);
+      if (!current()) throw new OperationError('denied', 'Owning input authority ended');
       if (!effects.beforeOutside({ id: `runtime:input:${input.job}`, kind: 'body-start', title: 'Release claimed runtime input' }))
         throw new OperationError('conflict', 'Input is held or already released; reconcile before another start');
       // This consumes the one release before any words can reach the runner.
       // A lost response is uncertain, never an automatic second execution.
       effects.finish(`runtime:input:${input.job}`);
-      return value;
+      if (!current()) throw new OperationError('denied', 'Owning input authority ended');
+      return {value,current};
     },
     run(ctx, input, prepared) {
+      const before=prepared as {value:ReturnType<typeof snapshot>;current:()=>boolean};
+      if (!before.current()) throw new OperationError('denied', 'Owning input authority ended');
       const current = snapshot(ctx.viewer, input.job);
-      if (JSON.stringify(current) !== JSON.stringify(prepared)) throw new OperationError('conflict', 'Input changed during release');
+      if (JSON.stringify(current) !== JSON.stringify(before.value)) throw new OperationError('conflict', 'Input changed during release');
       return {...current,...(body?.valid(input.job)?{conversation:store.read('job',input.job)!.conversation,credential:body.issue(current.agent,input.job)}:{})};
     },
   }));
