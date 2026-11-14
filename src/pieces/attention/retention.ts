@@ -3,7 +3,7 @@ import { operation } from './commands.js';
 /** Metadata retention and checked findings. No legacy store or message text is read. */
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord, type Viewer, type Clock, type Result } from '../../core/index.js';
+import { failure, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Scope, type LiveRecord, type Viewer, type Clock, type Result, type Context } from '../../core/index.js';
 import type { Conversation, Turn } from './conversations.js';
 const DAY_MS = 86_400_000;
 export const RETENTION_DAYS = 90;
@@ -46,39 +46,39 @@ export function installRetention(db: Db, operations: Operations, live: Live, sha
   const conversation = (id: string) => read<Conversation>('attention_conversations', id);
   const rows = <T>(table: string, id: string): T[] => (statement(db, `SELECT record FROM ${table} WHERE conversation=?`).all(id) as { record: string }[]).map(r => JSON.parse(r.record) as T);
   const canRead = (v: Viewer, id: string, type: string) => { const c = conversation(id); return !!c && maySee(v, { type, ...scopeOf(c) }, sharing()); };
+  const fold = (ctx: Context, c: Conversation) => {
+    const groups = new Map<string, Turn[]>();
+    for (const t of rows<Turn>('attention_turns', c.id)) { const day = t.at.slice(0, 10), ts = groups.get(day) ?? []; ts.push(t); groups.set(day, ts); }
+    const cutoff = new Date(ctx.now - RETENTION_DAYS * DAY_MS).toISOString();
+    let days = 0, turns = 0;
+    for (const [day, ts] of groups) {
+      if (ts.some(t => t.at >= cutoff) || statement(db, 'SELECT 1 FROM attention_days WHERE conversation=? AND day=?').get(c.id, day)) continue;
+      const counts: Record<string, number> = {}, outcomes: Record<string, Record<string, number>> = Object.create(null);
+      for (const t of ts) {
+        counts[t.kind] = (counts[t.kind] ?? 0) + 1;
+        if (t.outcome) { const m = (outcomes[t.model ?? 'unknown'] ??= Object.create(null)); m[t.outcome] = (m[t.outcome] ?? 0) + 1; }
+      }
+      const mid = median(ts.filter(t => t.kind === 'reply' && t.latency_ms !== undefined).map(t => t.latency_ms!));
+      const record: Day = { ...scopeOf(c), id: `${c.id}:${day}`, conversation: c.id, day, counts, median_latency_ms: mid === null ? null : Math.round(mid), outcomes };
+      statement(db, 'INSERT INTO attention_days VALUES (?,?,?,?)').run(record.id, c.id, day, JSON.stringify(record));
+      for (const t of ts) { statement(db, 'DELETE FROM attention_turns WHERE id=?').run(t.id); ctx.changed('attention.turn', t.id); }
+      ctx.changed('attention.day', record.id); days++; turns += ts.length;
+    }
+    return { days, turns };
+  };
   operations.register(operation({ name: 'attention.fold', write: true, input: z.object({ conversation: key }).strict(), output: z.unknown(),
     may(v, i) { const c = conversation(i.conversation); return !!c && mayAct(v, { type: 'attention.day', ...scopeOf(c) }, sharing(), 'act', 'attention.fold'); },
-    run(ctx, i) {
-      const c = conversation(i.conversation)!, groups = new Map<string, Turn[]>();
-      for (const t of rows<Turn>('attention_turns', c.id)) { const day = t.at.slice(0, 10), ts = groups.get(day) ?? []; ts.push(t); groups.set(day, ts); }
-      const cutoff = new Date(ctx.now - RETENTION_DAYS * DAY_MS).toISOString();
-      let days = 0, turns = 0;
-      for (const [day, ts] of groups) {
-        if (ts.some(t => t.at >= cutoff) || statement(db, 'SELECT 1 FROM attention_days WHERE conversation=? AND day=?').get(c.id, day)) continue;
-        const counts: Record<string, number> = {}, outcomes: Record<string, Record<string, number>> = Object.create(null);
-        for (const t of ts) {
-          counts[t.kind] = (counts[t.kind] ?? 0) + 1;
-          if (t.outcome) { const m = (outcomes[t.model ?? 'unknown'] ??= Object.create(null)); m[t.outcome] = (m[t.outcome] ?? 0) + 1; }
-        }
-        const mid = median(ts.filter(t => t.kind === 'reply' && t.latency_ms !== undefined).map(t => t.latency_ms!));
-        const record: Day = { ...scopeOf(c), id: `${c.id}:${day}`, conversation: c.id, day, counts, median_latency_ms: mid === null ? null : Math.round(mid), outcomes };
-        statement(db, 'INSERT INTO attention_days VALUES (?,?,?,?)').run(record.id, c.id, day, JSON.stringify(record));
-        for (const t of ts) { statement(db, 'DELETE FROM attention_turns WHERE id=?').run(t.id); ctx.changed('attention.turn', t.id); }
-        ctx.changed('attention.day', record.id); days++; turns += ts.length;
-      }
-      return { days, turns };
-    },
+    run(ctx, i) { return fold(ctx, conversation(i.conversation)!); }
   }));
   operations.register(operation({ name: 'attention.retain', write: true, input: z.object({}).strict(), output: z.unknown(),
     may: v => v.kind !== 'service' || mayAct(v, { type: 'attention.day' }, sharing(), 'act', 'attention.retain'),
     run(ctx) {
       let days = 0, turns = 0;
+      const held = sharing();
       for (const row of statement(db, 'SELECT record FROM attention_conversations ORDER BY id').all() as { record: string }[]) {
         const c = JSON.parse(row.record) as Conversation;
-        if (!mayAct(ctx.viewer, { type: 'attention.day', ...scopeOf(c) }, sharing(), 'act', 'attention.fold')) continue;
-        const result = operations.call('direct', ctx.viewer, 'attention.fold', { conversation: c.id }, `retention:${randomUUID()}`);
-        if (!result.ok) return result;
-        const count = result.value as { days: number; turns: number }; days += count.days; turns += count.turns;
+        if (!mayAct(ctx.viewer, { type: 'attention.day', ...scopeOf(c) }, held, 'act', 'attention.fold')) continue;
+        const count = fold(ctx, c); days += count.days; turns += count.turns;
       }
       return { days, turns };
     },

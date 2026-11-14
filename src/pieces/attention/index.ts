@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import { approvalFiling } from './approval-filing.js';
 import { deliverConversationAnswer, registerAttentionAnnouncements, taskAskId, registerPrivateQuestions, registerPrivateReplies, registerPrivateDecisions, type Ask, type AgentStatus, type AttentionSources, type TaskAskFiling } from './role.js';
-import { installWaitChecks, type AttentionWaits } from './waits.js';
+import { installWaitChecks, canResolveAsk, resolveAsk, type AttentionWaits } from './waits.js';
 import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
 import { installDigests } from './digests.js';
@@ -36,7 +36,7 @@ const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...r
 const installedSources = new WeakMap<Operations, AttentionSources>();
 export const attentionSources = (operations: Operations): AttentionSources | undefined => installedSources.get(operations);
 export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}, waits: AttentionWaits = {}) {
-  registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding', 'task', 'approval'], 'attention', ['tasks.show', 'approvals.check']);
+  registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding', 'task', 'approval'], 'attention', ['tasks.show', 'tasks.readMany', 'approvals.check']);
   migrate(db, 'attention', attentionMigrations);
   installHomeRoster(live, sharing);
   installMemberState(db, operations, live, sharing);
@@ -178,12 +178,10 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     },
   }));
   operations.register(operation({ name: 'attention.resolve', write: true, input: z.object({ id, reason: z.string().min(1) }), output: z.unknown(),
-    may: (viewer, input) => { const r = readAsk(input.id); return !!r && !r.privateQuestion && !managed(r) && mayAct(viewer, scoped('attention.ask', r), sharing(), 'act', 'attention.resolve'); },
+    may: (viewer, input) => { const r = readAsk(input.id); return !!r && canResolveAsk(r, viewer, sharing()); },
     run(ctx, input) {
       const record = readAsk(input.id)!;
-      if (record.state !== 'open') return record;
-      record.state = 'resolved'; record.changedAt = ctx.now; record.resolution = input.reason;
-      saveAsk(record); ctx.changed('attention.ask', record.id); return record;
+      return resolveAsk(ctx, record, input.reason, saveAsk);
     },
   }));
   operations.register(operation({ name: 'attention.reportStatus', write: true, input: status, output: z.unknown(),

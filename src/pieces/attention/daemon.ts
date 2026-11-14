@@ -16,15 +16,10 @@ export function installAttentionMaintenance(app: Foundation): void {
   const sweep = () => {
     if (stopped) return;
     cancel = undefined;
-    const pending = app.operations.call('direct', { kind: 'service', id: 'attention' }, 'attention.pendingWaits', {});
-    if (!pending.ok) console.warn(`Attention wait inventory failed (${pending.code})`);
-    else for (const id of pending.value as string[]) {
-      const result = app.operations.call('direct', { kind: 'service', id: 'attention' }, 'attention.checkWait', { id }, `attention-wait:${randomUUID()}`);
-      if (!result.ok) console.warn(`Attention wait check failed (${result.code})`);
-    }
-    // No recurring inventory work while empty. A new/changed ask wakes it below.
-    // Denied inventories keep retrying so restored grants recover without a page.
-    if (!stopped && !cancel && (!pending.ok || (pending.value as string[]).length)) cancel = app.operations.clock.at(app.operations.clock.now() + 60_000, sweep);
+    const result = app.operations.call('direct', { kind: 'service', id: 'attention' }, 'attention.sweepWaits', {}, `attention-waits:${randomUUID()}`);
+    if (!result.ok) console.warn(`Attention wait sweep failed (${result.code})`);
+    // Empty inventories stop until a live change wakes the daemon.
+    if (!stopped && !cancel && (!result.ok || (result.value as { pending: number }).pending)) cancel = app.operations.clock.at(app.operations.clock.now() + 60_000, sweep);
   };
   cancel = app.operations.clock.at(app.operations.clock.now(), sweep);
   const observe = app.live.observe(changes => {

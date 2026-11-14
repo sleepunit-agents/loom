@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { fixture } from '../../fixture.js';
-import { FakeClock, type Viewer } from '../../core/index.js';
+import { FakeClock, failure, type Viewer } from '../../core/index.js';
+import { HouseholdDatabase } from '../../core/household/document.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
 import { installAttentionMaintenance } from './daemon.js';
 const cleanups: (() => Promise<void>)[] = [];
@@ -13,12 +14,12 @@ const owner: Viewer = { kind: 'member', id: 'jonathan' }, service: Viewer = { ki
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'unattended-waits-')); fixture(home);
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  const grants = { taskType: true, taskRead: true, approvalType: true, approvalRead: true, inventoryRead: true, askType: true };
+  const grants = { taskType: true, taskRead: true, approvalType: true, approvalRead: true, inventoryRead: true, askType: true, checkRead: true, resolveRead: true };
   let database: SharingDatabase;
   const app = await startLoom({ home, next: true, staging: true, clock, stdout: () => {}, install: app => { database = new SharingDatabase(app.db, home); }, sharing: () => {
     const snapshot = database.sharing();
     const attention = snapshot.services.attention;
-    if (attention) snapshot.services = { ...snapshot.services, attention: { types: attention.types.filter(type => (type !== 'attention.ask' || grants.askType) && (type !== 'task' || grants.taskType) && (type !== 'approval' || grants.approvalType)), operations: attention.operations.filter(op => (op !== 'attention.pendingWaits' || grants.inventoryRead) && (op !== 'tasks.show' || grants.taskRead) && (op !== 'approvals.check' || grants.approvalRead)) } };
+    if (attention) snapshot.services = { ...snapshot.services, attention: { types: attention.types.filter(type => (type !== 'attention.ask' || grants.askType) && (type !== 'task' || grants.taskType) && (type !== 'approval' || grants.approvalType)), operations: attention.operations.filter(op => (op !== 'attention.pendingWaits' || grants.inventoryRead) && (op !== 'attention.checkWait' || grants.checkRead) && (op !== 'attention.resolve' || grants.resolveRead) && (!['tasks.show', 'tasks.readMany'].includes(op) || grants.taskRead) && (op !== 'approvals.check' || grants.approvalRead)) } };
     return snapshot;
   } });
   cleanups.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
@@ -29,7 +30,7 @@ async function setup() {
   };
   const read = (id: string) => call('attention.get', { id });
   const close = () => expect(call('tasks.close', { id: 't-1', actor: 'jonathan', at: '2026-11-13T12:00:00Z' })).toMatchObject({ value: { result: { ok: true } } });
-  return { app, clock, grants, call, raise, read, close };
+  return { app, clock, grants, call, raise, read, close, home };
 }
 it('resolves public task waits without a page, preserves answers and leaves private/missing waits open', async () => {
   const { app, clock, call, raise, read, close } = await setup();
@@ -43,9 +44,8 @@ it('resolves public task waits without a page, preserves answers and leaves priv
   expect(read('private')).toMatchObject({ value: { state: 'open' } });
   expect(read('missing')).toMatchObject({ value: { state: 'open' } });
   expect(read('answered')).toMatchObject({ value: { state: 'answered', answer: { kind: 'no' } } });
-  const checks = calls.mock.calls.filter(c => c[2] === 'attention.checkWait');
+  const checks = calls.mock.calls.filter(c => c[2] === 'attention.sweepWaits');
   expect(checks.every(c => JSON.stringify(c[1]) === JSON.stringify(service))).toBe(true);
-  expect(checks.some(c => (c[3] as { id: string }).id === 'private')).toBe(false);
   const ids = checks.map(c => c[4]); expect(new Set(ids).size).toBe(ids.length);
 });
 it.each(['taskType', 'taskRead'] as const)('requires %s on every sweep, with no task mutation grants', async grant => {
@@ -90,7 +90,7 @@ it('installs one sweep and cancels it before database shutdown', async () => {
   const calls = vi.spyOn(app.operations, 'call');
   installAttentionMaintenance(app); installAttentionMaintenance(app);
   clock.advance(0);
-  expect(calls.mock.calls.filter(c => c[2] === 'attention.checkWait')).toHaveLength(1);
+  expect(calls.mock.calls.filter(c => c[2] === 'attention.sweepWaits')).toHaveLength(1);
   const closeDb = app.db.close.bind(app.db);
   vi.spyOn(app.db, 'close').mockImplementation(() => {
     const count = calls.mock.calls.length; clock.advance(120_000); expect(calls).toHaveBeenCalledTimes(count); return closeDb();
@@ -114,13 +114,13 @@ it('stops inventory work while empty, resumes on a new ask and stops its observe
   const { app, clock, call, raise, close, read } = await setup();
   const calls = vi.spyOn(app.operations, 'call');
   clock.advance(5 * 60_000);
-  expect(calls.mock.calls.filter(c => c[2] === 'attention.pendingWaits')).toHaveLength(1);
+  expect(calls.mock.calls.filter(c => c[2] === 'attention.sweepWaits')).toHaveLength(1);
   raise('later', { task: 't-1' }); close(); clock.advance(0);
   expect(read('later')).toMatchObject({ value: { state: 'resolved' } });
   clock.advance(0);
-  const count = calls.mock.calls.filter(c => c[2] === 'attention.pendingWaits').length;
+  const count = calls.mock.calls.filter(c => c[2] === 'attention.sweepWaits').length;
   clock.advance(5 * 60_000);
-  expect(calls.mock.calls.filter(c => c[2] === 'attention.pendingWaits')).toHaveLength(count);
+  expect(calls.mock.calls.filter(c => c[2] === 'attention.sweepWaits')).toHaveLength(count);
   const closeDb = app.db.close.bind(app.db);
   vi.spyOn(app.db, 'close').mockImplementation(() => {
     app.live.changed([{ type: 'attention.ask', id: 'after-close' }]);
@@ -128,4 +128,95 @@ it('stops inventory work while empty, resumes on a new ask and stops its observe
     expect(calls).toHaveBeenCalledTimes(before); return closeDb();
   });
   await app.close();
+});
+
+it.each([10, 1000].flatMap(count => ['closed', 'open', 'answered'].map(state => [count, state] as const)))('checks %i %s task waits with a constant number of operation calls', async (count, state) => {
+  const { app, clock, home } = await setup();
+  new HouseholdDatabase(app.db).change(home, raw => { raw.owner = 'jonathan'; });
+  const putTask = app.db.prepare('INSERT INTO tasks_tasks (ord,id,record,changed_at) VALUES (?,?,?,?)');
+  const putAsk = app.db.prepare('INSERT INTO attention_asks VALUES (?,?)');
+  app.db.transaction(() => {
+    for (let n = 0; n < count; n++) {
+      const id = `t-batch-${n}`;
+      putTask.run(100 + n, id, JSON.stringify({ id, status: state === 'closed' ? 'closed' : 'open', comments: state === 'answered' ? [{ actor: 'jonathan', at: new Date(clock.now()).toISOString(), text: 'Yes, to: Check?' }] : [] }), clock.now());
+      putAsk.run(`batch-${n}`, JSON.stringify({ id: `batch-${n}`, agent: 'art', ask: 'Check?', source: { kind: 'conversation', id: 'cv-fixture' }, waits_on: { task: id }, state: 'open', createdAt: clock.now(), changedAt: clock.now() }));
+    }
+  })();
+  const calls = vi.spyOn(app.operations, 'call');
+  clock.advance(0);
+  const names = calls.mock.calls.map(c => c[2]);
+  expect(names.filter(name => name === 'tasks.readMany')).toHaveLength(1);
+  expect(calls.mock.calls.find(args => args[2] === 'tasks.readMany')?.[1]).toEqual(service);
+  expect(names).not.toContain('tasks.show');
+  // Retention, sweep, one Tasks batch, then the empty follow-up woken by live changes.
+  expect(names).toEqual(['attention.retain', 'attention.sweepWaits', 'tasks.readMany', ...(state === 'open' ? [] : ['attention.sweepWaits'])]);
+  expect((app.db.prepare("SELECT count(*) AS n FROM attention_asks WHERE json_extract(record, '$.state')='resolved'").get() as { n: number }).n).toBe(state === 'open' ? 0 : count);
+});
+
+it('keeps task batches under the original viewer and does not infer missing or hidden tasks are closed', async () => {
+  const { call, raise, read } = await setup();
+  // t-2 is pond-scoped in the fixture; pollock has no pond membership.
+  expect(call('tasks.readMany', { ids: ['t-1', 't-2', 't-missing'] }, { kind: 'member', id: 'pollock' })).toMatchObject({ value: [{ id: 't-1' }] });
+  expect(call('tasks.readMany', { ids: ['t-2'] }, { kind: 'agent', id: 'unknown' })).toMatchObject({ value: [] });
+  raise('hidden-batch', { task: 't-2' });
+  expect(call('attention.sweepWaits', {}, { kind: 'member', id: 'pollock' })).toMatchObject({ code: 'denied' });
+  expect(read('hidden-batch')).toMatchObject({ value: { state: 'open' } });
+});
+
+it.each(['checkRead', 'resolveRead'] as const)('holds sweep work when per-ask %s is revoked', async grant => {
+  const { grants, call, raise, read, close } = await setup();
+  raise('held-grant', { task: 't-1' }); close(); grants[grant] = false;
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 0 } });
+  expect(read('held-grant')).toMatchObject({ value: { state: 'open' } });
+  grants[grant] = true;
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 1 } });
+});
+it.each(['unavailable', 'throw'] as const)('holds every task wait on a %s batch read, then recovers on a new sweep', async mode => {
+  const { app, call, raise, read, close } = await setup();
+  raise('failed-batch', { task: 't-1' }); close();
+  const original = app.operations.call.bind(app.operations);
+  vi.spyOn(app.operations, 'call').mockImplementation((...args) => {
+    if (args[2] === 'tasks.readMany') {
+      if (mode === 'throw') throw new Error('unavailable fixture');
+      return failure('unavailable', 'unavailable fixture');
+    }
+    return original(...args);
+  });
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 0 } });
+  expect(read('failed-batch')).toMatchObject({ value: { state: 'open' } });
+  vi.restoreAllMocks();
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 1 } });
+});
+it('rolls back all sweep updates, receipts and publication on a later failure, then retries and replays once', async () => {
+  const { app, call, raise, close } = await setup();
+  raise('rollback-a', { task: 't-1' }); raise('rollback-b', { task: 't-1' }); close();
+  app.db.exec("CREATE TRIGGER fail_later_wait BEFORE UPDATE ON attention_asks WHEN NEW.id='rollback-b' BEGIN SELECT RAISE(ABORT, 'fixture later update'); END");
+  const changed = vi.spyOn(app.live, 'changed');
+  const before = app.db.prepare('SELECT * FROM core_operations').all();
+  const sweep = () => app.operations.call('direct', service, 'attention.sweepWaits', {}, 'rollback-sweep');
+  expect(sweep()).toMatchObject({ code: 'unavailable' });
+  expect(app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
+  expect(app.db.prepare("SELECT id FROM attention_asks WHERE json_extract(record,'$.state')='open'").all()).toHaveLength(2);
+  expect(changed).not.toHaveBeenCalled();
+  app.db.exec('DROP TRIGGER fail_later_wait');
+  const answer = sweep(); expect(answer).toMatchObject({ value: { resolved: 2 } });
+  expect(changed).toHaveBeenCalledExactlyOnceWith([{ type: 'attention.ask', id: 'rollback-a' }, { type: 'attention.ask', id: 'rollback-b' }]);
+  const batch = vi.spyOn(app.operations, 'call');
+  expect(sweep()).toEqual(answer);
+  expect(batch.mock.calls.filter(args => args[2] === 'tasks.readMany')).toHaveLength(0);
+  expect(changed).toHaveBeenCalledTimes(1);
+});
+
+it('excludes source-managed and private-question asks even with otherwise eligible public scopes and terminal tasks', async () => {
+  const { app, call, raise, read, close } = await setup();
+  raise('managed-exclusion', { task: 't-1' }); raise('private-exclusion', { task: 't-1' }); close();
+  const readRow = app.db.prepare('SELECT record FROM attention_asks WHERE id=?');
+  const put = app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?');
+  for (const [id, extra] of [['managed-exclusion', { sourceManaged: true }], ['private-exclusion', { privateQuestion: { thread: 'fixture', seq: 1 } }]] as const) {
+    const row = readRow.get(id) as { record: string };
+    put.run(JSON.stringify({ ...JSON.parse(row.record), ...extra }), id);
+  }
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 0 } });
+  expect(read('managed-exclusion')).toMatchObject({ value: { state: 'open' } });
+  expect(read('private-exclusion')).toMatchObject({ value: { state: 'open' } });
 });
