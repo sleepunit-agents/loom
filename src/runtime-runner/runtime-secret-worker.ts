@@ -31,10 +31,9 @@ export async function startRuntimeSecretWorker(config:WorkerControlConfig,select
     })();
     return Object.freeze({
       job:original.job,delivery:original.delivery,completed,refresh:control.refresh,close,
-      revokePolicy:()=>worker!.revokePolicy(original.job),
-      revokeGrant:()=>worker!.revokeGrant(original.job),
-      stopJob:()=>worker!.stopJob(original.job),
-      cancelRequest:()=>worker!.cancelRequest(original.job),
+      // This owner has one job: every local retirement also fences final
+      // acceptance while an authenticated post-completion read is awaiting.
+      revokePolicy:close,revokeGrant:close,stopJob:close,cancelRequest:close,
     });
   }catch {await close();throw failed();}
 }

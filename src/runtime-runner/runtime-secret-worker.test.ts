@@ -87,3 +87,53 @@ it('the executable reports only a generic failure for an invalid owner selection
  let output='';const io:IOStreams={stdin:new PassThrough(),stdinIsTTY:false,env:{},stdout:text=>{output+=text;},stderr:text=>{output+=text;}};
  expect(await runSecretWorker([file],io,f.runtime)).toBe(1);expect(output).toBe('Secret worker stopped; reconcile the job before retrying.\n');expect(f.source).not.toHaveBeenCalled();
 });
+
+it.each(['revokePolicy','revokeGrant','stopJob','cancelRequest'] as const)('rejects local %s during the asynchronous final completion check',async action=>{
+ const f=await setup();let release!:()=>void,observed!:()=>void,reads=0;
+ const ready=new Promise<void>(resolve=>{observed=resolve;}),wait=new Promise<void>(resolve=>{release=resolve;});
+ f.runtime.request=async(...args)=>{const response=await fetch(...args);if(++reads===2){observed();await wait;}return response;};
+ const worker=await f.start();await ready;
+ try {await worker[action]();release();expect(await worker.completed).toBe(false);}
+ finally {release();}
+});
+it('requires a new authority read after completion rather than a delayed watchdog retain response',async()=>{
+ const f=await setup();let release!:()=>void,observed!:()=>void,reads=0,second=false,exited!:()=>void;
+ const childClosed=new Promise<void>(resolve=>{exited=resolve;});
+ const emit=ChildProcess.prototype.emit;
+ vi.spyOn(ChildProcess.prototype,'emit').mockImplementation(function(this:ChildProcess,...args:Parameters<ChildProcess['emit']>){const result=Reflect.apply(emit,this,args);if(args[0]==='close')exited();return result;});
+ const ready=new Promise<void>(resolve=>{observed=resolve;}),wait=new Promise<void>(resolve=>{release=resolve;});
+ // Exit is owner-released through IPC-free file observation in the test: hold
+ // the completion check behind a watchdog that snapshots retain first.
+ f.runtime.request=async(...args)=>{const response=await fetch(...args);reads++;if(second){second=false;observed();await wait;}return response;};
+ const worker=await f.start();second=true;f.tick();await ready;
+ try {
+  // Wait for the actual child close, not a duration. At close, original local
+  // authority is still valid; only the next authenticated read sees retirement.
+  // The process is already created before delivery acknowledgement.
+  expect(await worker.delivery).toBe(true);
+  await expect.poll(()=>existsSync(f.marker)).toBe(true);
+  await childClosed;
+  f.job({state:'stopped'});release();expect(await worker.completed).toBe(false);expect(reads).toBeGreaterThanOrEqual(3);
+ }finally {release();}
+});
+it.each(['SIGINT','SIGTERM'] as const)('the executable drains active ownership on %s',async signal=>{
+ const f=await setup(),file=f.home+'/owner.json',tokenFile=f.home+'/control-token',held=holdAdmissionResponse('/worker-current'),kill=vi.spyOn(ChildProcess.prototype,'kill');
+ writeFileSync(tokenFile,f.controlConfig.token,{mode:0o600});writeFileSync(file,JSON.stringify({url:f.controlConfig.url,job:f.id,tokenFile,selection:f.selection}));
+ let output='';const io:IOStreams={stdin:new PassThrough(),stdinIsTTY:false,env:{},stdout:text=>{output+=text;},stderr:text=>{output+=text;}};
+ const pending=runSecretWorker([file],io,f.runtime);
+ try {
+  await held.ready;process.emit(signal);expect(await pending).toBe(1);
+  expect(kill).toHaveBeenCalledWith('SIGKILL');expect(existsSync(f.config.input.socket)).toBe(false);expect(existsSync(f.marker)).toBe(false);
+  expect(output).toBe('Secret worker stopped; reconcile the job before retrying.\n');
+ }finally {held.resume();}
+});
+it.each(['SIGINT','SIGTERM'] as const)('the executable fences a late startup after %s during initial control IO',async signal=>{
+ const f=await setup(),file=f.home+'/owner.json',tokenFile=f.home+'/control-token',spawn=vi.spyOn(ChildProcess.prototype,'spawn');
+ writeFileSync(tokenFile,f.controlConfig.token,{mode:0o600});writeFileSync(file,JSON.stringify({url:f.controlConfig.url,job:f.id,tokenFile,selection:f.selection}));
+ let release!:()=>void,observed!:()=>void;const ready=new Promise<void>(resolve=>{observed=resolve;}),wait=new Promise<void>(resolve=>{release=resolve;});
+ f.runtime.request=async(...args)=>{const response=await fetch(...args);observed();await wait;return response;};
+ const io:IOStreams={stdin:new PassThrough(),stdinIsTTY:false,env:{},stdout:()=>{},stderr:()=>{}};
+ const pending=runSecretWorker([file],io,f.runtime);
+ try {await ready;process.emit(signal);release();expect(await pending).toBe(1);expect(spawn).not.toHaveBeenCalled();expect(f.source).not.toHaveBeenCalled();expect(existsSync(f.config.input.socket)).toBe(false);}
+ finally {release();}
+});
