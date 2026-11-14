@@ -33,9 +33,13 @@ export async function listenTicketAuthority(config:Omit<LocalHolderConfig,'serve
   workers:ReadonlyArray<Readonly<{fingerprint:string;binding:SecretInputBinding}>>=[]) {
   try {
     certificateFingerprint.parse(holderFingerprint);
-    if(workers.length>1024)throw failed();
-    const peers=workers.map(w=>({fingerprint:certificateFingerprint.parse(w.fingerprint),binding:secretInputBindingSchema.parse(w.binding)}));
-    if(peers.some(w=>w.fingerprint===holderFingerprint))throw failed();
+    const snapshot=(workers:ReadonlyArray<Readonly<{fingerprint:string;binding:SecretInputBinding}>>)=>{
+      if(workers.length>1024)throw failed();
+      const peers=workers.map(w=>({fingerprint:certificateFingerprint.parse(w.fingerprint),binding:secretInputBindingSchema.parse(w.binding)}));
+      if(peers.some(w=>w.fingerprint===holderFingerprint))throw failed();
+      return peers;
+    };
+    let peers=snapshot(workers);
     if(!isAbsolute(config.socket))throw failed();
     assertPrivateDirectory(dirname(config.socket));
     const material=tlsMaterial(config),claims=new Map<string,Claim>();
@@ -112,7 +116,16 @@ export async function listenTicketAuthority(config:Omit<LocalHolderConfig,'serve
       chmodSync(config.socket,0o600);
     }catch {server.close();throw failed();}
     let closing:Promise<void>|undefined;
-    return {close() {
+    return {
+    /** Private owner capability. Every replacement burns retained claims, even
+     * when equal metadata is reinstalled. A worker cannot call this over TLS. */
+    replaceWorkers(workers:ReadonlyArray<Readonly<{fingerprint:string;binding:SecretInputBinding}>>) {
+      if(closed)throw failed();
+      const next=snapshot(workers);
+      peers=next;
+      for(const id of claims.keys())try {finish(id,false);}catch { /* fenced, never reconstructed */ }
+    },
+    close() {
       if(closing)return closing;
       closed=true;
       for(const id of claims.keys())try {finish(id,false);}catch {}

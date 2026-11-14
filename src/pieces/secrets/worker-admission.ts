@@ -30,12 +30,17 @@ export async function listenWorkerAdmission(config:Omit<LocalHolderConfig,'serve
     // ORIGINAL authenticated viewer: a copy loses Signin capability provenance.
     if(!isAbsolute(config.socket)||workers.length>1024)throw failed();
     assertPrivateDirectory(dirname(config.socket));
+    const snapshot=(workers:readonly AdmissionWorker[])=>{
+    if(workers.length>1024)throw failed();
     const peers=workers.map(w=>{
       authenticatedHolderDispatch(w.holder);
       return {fingerprint:certificateFingerprint.parse(w.fingerprint),binding:secretInputBindingSchema.parse(w.binding),
         viewer:w.viewer,holder:w.holder};
     });
     if(new Set(peers.map(w=>w.fingerprint)).size!==peers.length)throw failed();
+    return peers;
+    };
+    let peers=snapshot(workers);
     const material=tlsMaterial(config);
     type Admission=ReturnType<typeof tickets.admitHandoff>;
     const retained=new Map<string,{peer:typeof peers[number];admission:Admission;ready:boolean;timer:ReturnType<typeof setTimeout>}>();
@@ -51,8 +56,8 @@ export async function listenWorkerAdmission(config:Omit<LocalHolderConfig,'serve
         try {
           const socket=req.socket as TLSSocket;
           const connection=connections.get(socket)??connections.get((socket as TLSSocket&{_parent?:object})._parent??{});
-          const alive=()=>!closed&&!!connection&&!connection.expired&&Date.now()<connection.deadline&&!res.destroyed;
           const peer=peers.find(w=>w.fingerprint===socket.getPeerCertificate().fingerprint256);
+          const alive=()=>!closed&&!!peer&&peers.includes(peer)&&!!connection&&!connection.expired&&Date.now()<connection.deadline&&!res.destroyed;
           const match=/^\/v1\/admission\/([^/]+)\/(admit|dispatch|cancel)$/.exec(req.url??'');
           if(!alive()||!socket.authorized||!peer||!match||req.method!=='POST'
             ||req.headers['content-length']!=='0'||req.headers['transfer-encoding'])throw failed();
@@ -97,7 +102,16 @@ export async function listenWorkerAdmission(config:Omit<LocalHolderConfig,'serve
     try {await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(config.socket,resolve);});chmodSync(config.socket,0o600);}
     catch {server.close();throw failed();}
     let closing:Promise<void>|undefined;
-    return {close(){return closing??=(async()=>{
+    return {
+    /** Owner-only generation replacement. Retire originals before new requests
+     * can enter, and fence old dispatch continuations after their awaits. */
+    replaceWorkers(workers:readonly AdmissionWorker[]) {
+      if(closed)throw failed();
+      const next=snapshot(workers);
+      peers=next;
+      for(const pendingId of retained.keys())retire(pendingId);
+    },
+    close(){return closing??=(async()=>{
       closed=true;for(const pendingId of retained.keys())retire(pendingId);
       server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(e=>e?reject(failed()):resolve()));
       await Promise.all(active);

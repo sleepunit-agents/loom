@@ -1,0 +1,71 @@
+import {afterEach,expect,test} from 'vitest';
+import {randomUUID} from 'node:crypto';
+import {join} from 'node:path';
+import {ticketAuthorityFixture} from './runtime-runner/ticket-authority.fixture.js';
+import {SharingDatabase} from './core/household/sharing.js';
+import {signin,hash} from './core/signin/index.js';
+import {runtimeStore} from './pieces/runtime/store.js';
+import {startSecretWorkers} from './secret-worker-startup.js';
+import {workerAdmission} from './pieces/secrets/worker-admission.js';
+import {remoteWorkerTicketProof} from './pieces/secrets/ticket-authority.js';
+const closes:Array<()=>unknown>=[];
+afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();});
+async function setup() {
+ const f=await ticketAuthorityFixture(closes);await f.authority.close();
+ const config={authority:f.server,admission:{...f.server,socket:join(f.home,'refresh.sock')},
+  holder:{config:{...f.server,socket:join(f.home,'holder.sock'),servername:'holder.test'},fingerprint:f.fingerprint('holder')},
+  workers:[{tokenDigest:f.tokenDigest,fingerprint:f.fingerprint('daemon')}]};
+ const owner=await startSecretWorkers(f.app,()=>new SharingDatabase(f.app.db,f.home).sharing(),f.app.effects!,config);closes.push(owner.close);
+ const client=(pending=randomUUID())=>{const c=workerAdmission({...config.admission,servername:'daemon.test'},f.fingerprint('daemon'),pending);closes.push(c.close);return c;};
+ return {...f,config,owner,client};
+}
+test('peer replacement retires original pending and claimed tickets, including equal metadata',async()=>{
+ const f=await setup(),pending=randomUUID(),original=f.client(pending),id=await original.admit('API');
+ expect(await f.remote.claim(id)).toBeNull();f.release(id);const claim=(await f.remote.claim(id))!;expect(await claim.current()).toBe(true);
+ const proof=remoteWorkerTicketProof({...f.server,servername:'daemon.test'},f.fingerprint('daemon'),id,pending);closes.push(proof.close);
+ expect(await proof.current()).toBe(true);
+ f.owner.replaceWorkers(f.config.workers);
+ expect(f.state(id)).toEqual({state:'uncertain'});expect(await claim.current()).toBe(false);expect(await proof.current()).toBe(false);
+ await expect(original.dispatch()).rejects.toThrow();await expect(f.client(pending).admit('API')).rejects.toThrow();
+ const next=await f.client().admit('API');expect(f.state(next)).toEqual({state:'admitted'});
+ f.owner.replaceWorkers([]);expect(f.state(next)).toEqual({state:'uncertain'});
+ await expect(f.client().admit('API')).rejects.toThrow();
+ f.owner.replaceWorkers(f.config.workers);expect(await proof.current()).toBe(false);expect(await f.remote.claim(id)).toBeNull();
+});
+test('replacement resolves a new original authenticated job instead of retaining the startup assignment',async()=>{
+ const f=await setup(),old=f.client(),id=await old.admit('API'),store=runtimeStore(f.app.db),job=randomUUID();
+ const token=f.app.db.transaction(()=>{
+  const {changedAt:_,...before}=store.read('job',f.id)!;
+  store.put('job',{...before,id:job,claimedAt:f.clock.now()+1},f.clock.now());
+  return signin(f.app).issueBody('art',job);
+ })();
+ f.call('secrets.grant',{...f.grant,scope:{house:job}});
+ const selected=[{tokenDigest:hash(token),fingerprint:f.fingerprint('daemon')}];
+ f.owner.replaceWorkers(selected);selected[0].tokenDigest='0'.repeat(64);
+ expect(f.state(id)).toEqual({state:'uncertain'});await expect(old.dispatch()).rejects.toThrow();
+ const next=await f.client().admit('API');
+ const row=f.app.db.prepare('SELECT destination FROM secrets_tickets WHERE id=?').get(next) as {destination:string};
+ expect(JSON.parse(row.destination)).toMatchObject({job,claimedAt:f.clock.now()+1});
+});
+test.each(['unknown','malformed-pin','holder-pin','duplicate','overflow','revoked'] as const)('invalid %s replacement does not partially retire the current generation',async failure=>{
+ const f=await setup(),id=await f.client().admit('API');
+ let selected=f.config.workers;
+ if(failure==='unknown')selected=[{...selected[0],tokenDigest:'0'.repeat(64)}];
+ if(failure==='malformed-pin')selected=[{...selected[0],fingerprint:'invalid'}];
+ if(failure==='holder-pin')selected=[{...selected[0],fingerprint:f.fingerprint('holder')}];
+ if(failure==='duplicate')selected=[...selected,...selected];
+ if(failure==='overflow')selected=Array.from({length:1025},()=>selected[0]);
+ if(failure==='revoked')signin(f.app).tokens.change(tokens=>{tokens[0].revoked=new Date(f.clock.now()).toISOString();});
+ expect(()=>f.owner.replaceWorkers(selected)).toThrow('Secret worker startup unavailable');
+ expect(f.state(id)).toEqual({state:'admitted'});
+ if(failure!=='revoked')expect(await f.client().admit('API')).toMatch(/^[0-9a-f-]{36}$/);
+});
+test('shutdown permanently refuses peer refresh',async()=>{
+ const f=await setup();await f.owner.close();expect(()=>f.owner.replaceWorkers(f.config.workers)).toThrow('Secret worker startup unavailable');
+});
+
+test('replacement inside a database transaction cannot retire the generation',async()=>{
+ const f=await setup(),id=await f.client().admit('API');
+ f.app.db.transaction(()=>{expect(()=>f.owner.replaceWorkers([])).toThrow('Secret worker startup unavailable');})();
+ expect(f.state(id)).toEqual({state:'admitted'});expect(await f.client().admit('API')).toMatch(/^[0-9a-f-]{36}$/);
+});

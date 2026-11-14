@@ -8,6 +8,7 @@ import {runtimeHouseDestination} from './pieces/runtime/role.js';
 import {secretTickets} from './pieces/secrets/tickets.js';
 import {listenTicketAuthority} from './pieces/secrets/ticket-authority.js';
 import {listenWorkerAdmission} from './pieces/secrets/worker-admission.js';
+import {certificateFingerprint} from './pieces/secrets/holder-authority.js';
 import {localHolderHandoff} from './pieces/secrets/holder-handoff.js';
 import type {LocalHolderConfig} from './pieces/secrets/local-holder.js';
 
@@ -44,20 +45,38 @@ export async function startSecretWorkers(app:Foundation,sharing:()=>Sharing,effe
       ||!config.workers.length||config.workers.length>1024)throw failed();
     holder=localHolderHandoff(config.holder.config,config.holder.fingerprint);
     const originalHolder=holder;
-    const workers=config.workers.map(worker=>{
+    const resolve=(selected:SecretWorkersConfig['workers'])=>{
+    if(selected.length>1024)throw failed();
+    const workers=selected.map(worker=>{
+      const fingerprint=certificateFingerprint.parse(worker.fingerprint);
+      if(fingerprint===config.holder.fingerprint)throw failed();
       if(!/^[a-f0-9]{64}$/.test(worker.tokenDigest))throw failed();
       const viewer=signin(app).token(worker.tokenDigest)?.viewer;
       const destination=viewer&&runtimeHouseDestination(app,sharing,viewer);
       if(!viewer||!destination||!destination.current())throw failed();
       const {agent,job,runner,box,claimedAt,service}=destination;
-      return {fingerprint:worker.fingerprint,viewer,holder:originalHolder,
+      return {fingerprint,viewer,holder:originalHolder,
         binding:{agent,job,runner,box,claimedAt,...(service===undefined?{}:{service})}};
     });
     if(new Set(workers.map(w=>w.fingerprint)).size!==workers.length)throw failed();
+    return workers;
+    };
+    const workers=resolve(config.workers);
     // SAME ticket owner for worker admission and holder/worker authority.
     const tickets=secretTickets(app,sharing,effects);
     authority=await listenTicketAuthority(config.authority,config.holder.fingerprint,tickets,workers);
     admission=await listenWorkerAdmission(config.admission,tickets,workers);
-    return Object.freeze({close});
+    return Object.freeze({close,
+      /** Trusted source composition only: resolve fresh ORIGINAL Signin/Runtime
+       * capabilities, then replace both listeners without rediscovery or IO. */
+      replaceWorkers(selected:SecretWorkersConfig['workers']) {
+        try {
+          if(closing||app.db.inTransaction)throw failed();
+          const next=resolve(selected);
+          authority!.replaceWorkers(next);
+          admission!.replaceWorkers(next);
+        }catch {throw failed();}
+      },
+    });
   }catch {try {await close();}catch { /* preserve generic startup error */ }throw failed();}
 }

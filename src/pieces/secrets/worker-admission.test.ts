@@ -113,3 +113,15 @@ it('retires an admission created before the response acceptance deadline elapsed
  const client=workerAdmission(f.config.admission,f.fingerprint('daemon'),randomUUID());closes.push(client.close);
  await expect(client.admit('API')).rejects.toThrow();const id=await f.admitted();expect(f.state(id)).toEqual({state:'uncertain'});expect(f.source).not.toHaveBeenCalled();
 });
+it('peer replacement fences a real dispatch while the holder source is awaiting',async()=>{
+ const f=await setup();let entered!:()=>void,resume!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;}),wait=new Promise<void>(r=>{resume=r;});
+ f.source.mockImplementation(async()=>{entered();await wait;return Buffer.from('synthetic-admitted-value');});
+ const command=await f.start();
+ try {
+  await ready;const id=await f.admitted();
+  f.listener.replaceWorkers([f.peer]);expect(f.state(id)).toEqual({state:'uncertain'});
+  resume();expect(await command.delivery).toBe(false);await command.close();
+  expect(await command.completed).toBe(false);
+ }finally{resume();await command.close();}
+});
