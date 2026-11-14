@@ -9,15 +9,17 @@ import {createHash} from 'node:crypto';
 import {attentionRole} from '../attention/role.js';
 import {installComms} from './index.js';
 import {loadKey} from './crypto.js';
+import {stagingHold,type Delivery,type Hold} from './role.js';
 const cleanup:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();vi.restoreAllMocks();});
-async function setup(){
+async function setup(hold:Hold=async f=>f()){
+ const deliveries:Delivery[]=[];
  const home=mkdtempSync(join(tmpdir(),'private-question-')),clock=new FakeClock(),key=await loadKey(home);
  const sharing:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{}};
  let comms!:ReturnType<typeof installComms>;
  const app=await startLoom({home,clock,install:a=>{
   installAttention(a.db,a.operations,a.live,()=>sharing);
-  comms=installComms({...a,clock,key,sharing:()=>sharing,attention:attentionRole(a.operations),runtime:{deliver:async()=>{},end:async()=>{}},hold:async f=>f()});
+  comms=installComms({...a,clock,key,sharing:()=>sharing,attention:attentionRole(a.operations),runtime:{deliver:async d=>{deliveries.push(d);},end:async()=>{}},hold});
  }});
  cleanup.push(async()=>{await comms.close();await app.close();rmSync(home,{recursive:true,force:true});});
  const viewer={kind:'member',id:'jonathan'} as const;
@@ -25,7 +27,7 @@ async function setup(){
  const r=await call('comms.open',{agent:'art',id:'aaaaaaaaaaaaaaaa',text:'Hello'});if(!r.ok)throw Error(r.message);
  const place=(r.value as {thread:string}).thread;
  const attention=attentionRole(app.operations);
- return {app,clock,key,sharing,comms,call,place,attention,viewer};
+ return {app,clock,key,sharing,comms,call,place,attention,viewer,deliveries};
 }
 const question={ask:'PRIVATE QUESTION SENTINEL',why:'PRIVATE WHY SENTINEL',if_yes:'PRIVATE YES SENTINEL',href:'https://private.invalid',refs:['private-note'],answers:'words' as const};
 it('seals the whole question and atomically publishes only a metadata projection',async()=>{
@@ -128,4 +130,66 @@ it('rechecks independent project creation permission for an ordinary member',asy
  await expect(f.comms.ask('art',f.place,{id:'question',question})).rejects.toThrow();
  expect(f.app.db.prepare('SELECT * FROM attention_asks').all()).toEqual([]);
  expect(f.app.db.prepare("SELECT * FROM comms_messages WHERE kind='ask'").all()).toEqual([]);
+});
+
+it('delivers sealed yes/no outcomes as encrypted conversation messages with atomic Attention state',async()=>{
+ const f=await setup(),q={...question,answers:'yes-no' as const},r=await f.comms.ask('art',f.place,{id:'boolean',question:q});
+ const batches:unknown[]=[];const stop=f.app.live.observe(c=>batches.push(c));
+ const input={thread:f.place,ref:r.ref,verdict:'yes'},answer=await f.call('comms.answer',input);stop();
+ expect(answer).toMatchObject({ok:true});if(!answer.ok)throw Error('answer failed');const ack=answer.value as {thread:string;seq:number};
+ await f.comms.deliver('art',f.place,ack.seq);
+ const row=f.app.db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(f.place,ack.seq) as {kind:string;record:string;words:Buffer};
+ expect(row.kind).toBe('message');expect(JSON.parse(row.record).delivery).toBe('delivered');
+ expect(f.deliveries.filter(d=>d.seq===ack.seq)).toEqual([expect.objectContaining({thread:f.place,agent:'art',member:'jonathan',seq:ack.seq,text:`Yes, to: ${q.ask}\n\n${q.if_yes}`})]);
+ expect(JSON.parse(await f.key.open(row.words))).toEqual({text:`Yes, to: ${q.ask}\n\n${q.if_yes}`,ref:r.ref,verdict:'yes'});
+ expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{state:'answered',answer:{kind:'yes',by:f.viewer}}});
+ expect(batches).toContainEqual(expect.arrayContaining([{type:'message',id:`${f.place}/${ack.seq}`},{type:'attention.ask',id:r.ref}]));
+ expect(await f.call('comms.answer',input)).toEqual(answer);
+ await f.comms.deliver('art',f.place,ack.seq);expect(f.deliveries.filter(d=>d.seq===ack.seq)).toHaveLength(1);
+ expect(await f.call('comms.answer',{...input,verdict:'no'})).toMatchObject({ok:false,code:'conflict'});
+ for(const table of ['attention_asks','core_operations','comms_messages']){
+  const stored=JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all());
+  expect(stored).not.toContain(q.ask);expect(stored).not.toContain(q.if_yes);
+ }
+});
+it('rolls back a decision and its receipt when the encrypted reply cannot be appended',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}});
+ f.app.db.exec("CREATE TRIGGER fail_decision BEFORE INSERT ON comms_messages WHEN new.kind='message' BEGIN SELECT RAISE(ABORT,'interrupted'); END");
+ expect(await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'no'})).toMatchObject({ok:false});
+ expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{state:'open'}});
+ f.app.db.exec('DROP TRIGGER fail_decision');
+ expect(await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'no'})).toMatchObject({ok:true});
+});
+for(const drift of ['member','conversation','project','archive','delete','access','expired','answered'] as const)it(`refuses a sealed decision after ${drift} changes during crypto`,async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}}),seal=f.key.seal;
+ vi.spyOn(f.key,'seal').mockImplementation(async words=>{
+  const sealed=await seal(words);
+  if(drift==='access')f.sharing.members.jonathan.agents=[];
+  else if(drift==='expired')f.clock.advance(14*86400_000);
+  else if(drift==='answered')expect(f.attention.answer(f.viewer,{id:r.ref,answer:{kind:'no'}},'competing-answer')).toMatchObject({ok:true});
+  else if(drift==='archive'||drift==='delete')expect(await f.call('comms.change',{thread:f.place,action:drift})).toMatchObject({ok:true});
+  else {
+   const row=f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(f.place) as {record:string};const t=JSON.parse(row.record);
+   t[drift]=drift==='member'?'other':'changed';f.app.db.prepare('UPDATE comms_threads SET member=?,project=?,record=? WHERE id=?').run(t.member,t.project??null,JSON.stringify(t),f.place);
+  }
+  return sealed;
+ });
+ expect(await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'yes'})).toMatchObject({ok:false});
+ expect(f.app.db.prepare("SELECT * FROM comms_messages WHERE id=?").all(`answer:${r.ref}`)).toEqual([]);
+});
+it('refuses another owner, nonwindow and typed answers to sealed yes/no; words questions cannot be decided',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}}),i={thread:f.place,ref:r.ref,verdict:'yes'};
+ expect(await f.call('comms.answer',i,{kind:'member',id:'other'} as never)).toMatchObject({ok:false});
+ expect(await f.app.operations.callAsync('socket',f.viewer,'comms.answer',i,'nonwindow',false)).toMatchObject({ok:false});
+ expect(await f.call('comms.answer',{...i,words:'Private words'})).toMatchObject({ok:false});
+ const words=await f.comms.ask('art',f.place,{id:'words',question});
+ expect(await f.call('comms.answer',{...i,ref:words.ref})).toMatchObject({ok:false});
+});
+it('recovers held boolean delivery with the selected no outcome, once',async()=>{
+ let released=false;const f=await setup(stagingHold({beforeOutside:()=>released,finish:()=>{}}));
+ const r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no',if_no:'PRIVATE NO OUTCOME'}});
+ const answer=await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'no'});expect(answer.ok).toBe(true);if(!answer.ok)throw Error('answer failed');
+ const ack=answer.value as {seq:number};await f.comms.deliver('art',f.place,ack.seq);expect(f.deliveries).toEqual([]);
+ released=true;await f.comms.reconcileDeliveries();await f.comms.reconcileDeliveries();
+ expect(f.deliveries.filter(d=>d.seq===ack.seq)).toEqual([expect.objectContaining({text:`No, to: ${question.ask}\n\nPRIVATE NO OUTCOME`})]);
 });
