@@ -186,7 +186,8 @@ it('rolls back job, binding, acceptance and nested receipts if either final writ
 it('resumes a staging-held archive end without restarting and revokes its body credential',async()=>{
  const f=await setup(true),thread=await f.open();
  await f.post(f.runner,'runtime.claimableJobs',{});
- const delivery=(f.app.db.prepare("SELECT id FROM core_effects WHERE id LIKE 'comms-deliver:%'").get() as {id:string}).id;
+ const delivery=`comms-deliver:${thread}:1`;
+ await expect.poll(()=>f.app.db.prepare("SELECT id FROM core_effects WHERE id=? AND state='due'").get(delivery)).toEqual({id:delivery});
  await f.post(f.owner,'core.releaseEffect',{id:delivery});
  let jobs:string[]=[];for(let i=0;i<15&&!jobs.length;i++)jobs=value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs;
  const job=jobs[0];await f.post(f.runner,'runtime.claimJob',{job});await f.post(f.runner,'runtime.takeInput',{job});
@@ -490,8 +491,9 @@ it('keeps service restrictions without a job or after execution loses its bindin
 it('removes archived conversation authority while staging retains a live job and credential',async()=>{
  const f=await setup(true),thread=await f.open();
  await f.post(f.runner,'runtime.claimableJobs',{});
- const effect=(prefix:string)=>(f.app.db.prepare('SELECT id FROM core_effects WHERE id LIKE ?').get(prefix+'%') as {id:string}).id;
- expect(await f.post(f.owner,'core.releaseEffect',{id:effect('comms-deliver:')})).toMatchObject({ok:true});
+ const delivery=`comms-deliver:${thread}:1`;
+ await expect.poll(()=>f.app.db.prepare("SELECT id FROM core_effects WHERE id=? AND state='due'").get(delivery)).toEqual({id:delivery});
+ expect(await f.post(f.owner,'core.releaseEffect',{id:delivery})).toMatchObject({ok:true});
  const job=await f.queued();
  expect(await f.post(f.runner,'runtime.claimJob',{job})).toMatchObject({ok:true});
  expect(await f.post(f.runner,'runtime.takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
