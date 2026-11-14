@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Deliver scheduled files from the worker checkout through the authenticated Runtime inbox, with bounded safe reads and acknowledgement after the worker turn.
+- Add pure worker-checkout preparation for scheduled file inputs, using bounded descriptor-pinned reads; executable Clock file delivery stays held pending owning runner integration.
 
 - Deliver private timed prompts through Runtime’s bound inbox, retaining member scope and current grants through runner confirmation, reads and acknowledgment.
 

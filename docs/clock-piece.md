@@ -17,7 +17,7 @@ Clock with `src/pieces/runtime/clock.ts`. The bridge accepts plain prompt wakes
 only after agent house configuration and waits for runner-confirmed running or
 waiting state. Queue acceptance alone is never reported as started. Missing
 features (lane files, continuations, slots, approvals, local wakes) remain held;
-Standalone worker-checkout file delivery is implemented below; local, approval, slot and continuation delivery remain held. Private timed prompt delivery is implemented below. Public prompt conversation delivery is implemented below. Native transport
+Standalone file, local, approval, slot and continuation delivery remain held. Private timed prompt delivery is implemented below. Public prompt conversation delivery is implemented below. Native transport
 interrupt/resume and authenticated continuation resolution remain unfinished.
 
 Runtime now dispatches public prompt work as the Clock service, retaining
@@ -1261,7 +1261,7 @@ file-backed lane hold, not standalone file-path delivery or native resume.
 | Old surface | New delivery |
 | --- | --- |
 | Household lane with filed inline/file text, no local marker or slot | Existing Clock service acceptance, Runtime runner start, bound conversation read and ACK; stored text, no daemon file access |
-| Standalone `wake in --file` | Authenticated file descriptor → safe worker-checkout read → native turn → body ACK, as described below |
+| Standalone `wake in --file` | Still held: worker-checkout file delivery remains work |
 
 
 ## Private timed prompt delivery
@@ -1304,54 +1304,37 @@ private rearm fixtures exercise this transition. Anonymous owner markers are not
 backfilled with names from member scope or archived text.
 
 
-## Standalone worker-checkout file delivery
+## Worker-checkout file preparation
 
-Clock now admits standalone relative file inputs through the same owning source,
-Clock-service acceptance, scoped job and runner/body credential roles as stored
-prompts. No daemon file reader or new credential issuer is added. Source receipts
-bind the exact file path alongside independent member, project, service and
-steering evidence. Changing that path after acceptance denies reads and ACKs.
-Both new and joined file deliveries wait for the authenticated body's ACK;
-runner start confirmation alone cannot mark an unread file delivered.
+`src/runtime-runner/clock-input.ts` provides pure `prepareClockInput` for the
+future owning worker consumer. It accepts a conversation-bound ordered batch of
+prompt/file data, resolves every pending file before returning any words, and
+returns the combined exact text and last pending sequence. Already acknowledged
+history can be skipped, but that field is input data, never an owning receipt.
+Preparation authorizes no source read, execution, acknowledgement or native reuse.
 
-The bound inbox returns `{file}` separately from `{text}`. The worker's
-`runClockTurn` adapter consumes this inbox using its existing body client and
-`ClaudeWorkerSession`, current owning binding check, compiled policy and absolute
-checkout. It validates the original conversation and ordered sequence, resolves
-all required files before any launch, sends their exact bytes on stdin with the
-compiled brief and denies, then acknowledges only after a successful native turn.
-It never places words in argv. The existing Runtime operations own source/current
-policy checks and staging at both runner input and inbox release. The adapter
-rechecks its owning binding across awaits and closes uncertain native history on
-failure. It performs no automatic execution or ACK retry. Already acknowledged
-messages remain readable history, with `acknowledged: true`, and are skipped by
-the worker adapter. An ACK lost after execution stays uncertain; creating a fresh
-worker session is not an automatic recovery mechanism.
+File reads reuse the descriptor-pinned brief-file reader on Linux: no symlink at
+any checkout/relative component, no dot/empty/parent or absolute component, bounded
+regular UTF-8 file, stable metadata during the read, nonempty and no NUL. Paths use
+the existing brief-file ASCII component alphabet and 200-character limit. Each file
+has the existing 20,000-byte brief-file bound; the complete input is bounded at
+1 MiB. Local-work markers are refused in files and inline input. These are
+explicit safety bounds for the worker protocol, not legacy host-file compatibility.
 
-File reads reuse Runtime's descriptor-pinned brief-file reader on Linux: no
-symlink at any checkout or relative path component, no dot/empty/parent component,
-no absolute path, bounded regular UTF-8 file, stable metadata during the read,
-nonempty and no NUL. Paths use the existing brief-file ASCII component alphabet
-and 200-character limit. Each file has the existing 20,000-byte brief-file bound;
-the complete scheduled turn is bounded at 1 MiB. Missing, unsafe or larger files
-fail closed. File contents carrying `<!-- house: local -->` are refused on the
-worker; an ordinary file never grants local execution. Inline stored local work,
-slots, approvals and continuations retain their existing holds. These bounds are
-an explicit safety choice for the new worker protocol, not legacy host-file
-compatibility. No path is flattened into prompt words.
+Executable standalone file admission remains held in next mode. Before enabling
+it, the owning Runtime runner consumer must connect the authenticated input and
+credential roles to the actual worker adapter, independently validate every exact
+Clock source/withdrawal marker and original conversation across awaits and before
+launch, retain compiled policy/denies, pass staging, and acknowledge only after the
+appropriate delivery boundary. A generic job/box destination check is insufficient
+source authority. The current generic inbox brief must not invite ACK of an unread
+file descriptor. Neither an API flag nor a test's manual invocation of a helper
+proves this connection. Native joining/resume and local/approval/continuation
+capabilities remain separate work under t-2201. No daemon-host file reads, installed
+consumer, new schema/credential role or executable file-delivery claim is added.
 
-The in-process next-mode fixture covers one-off, recurring and run-now files ×
-staging/normal × public/private, through actual runner claim/input/report, body
-read, worker adapter/native spawn boundary and ACK. It verifies exact file bytes,
-source-path tamper denial, private grant revocation, one next occurrence and no
-file bytes in daemon stores or registry receipts. Worker fixtures cover missing,
-unsafe, local-marked and invalid files, all-files preflight, current binding
-revocation and uncertain execution/ACK. Native launch uses the injectable process
-boundary; no model behavior, installed worker, transport interrupt or terminal-body
-resumption is certified by these fixtures. No installed piece or live host changes.
-
-| Old surface | New standalone file behavior |
-| --- | --- |
-| `wake in/at --file`, file schedule and schedule run-now | Scoped Runtime inbox file descriptor, read only in the worker checkout, then native turn and authenticated ACK |
-| Daemon-host absolute path or unsafe checkout traversal | Deliberately unsupported; bounded relative worker-checkout files only |
-| File containing a local-work marker | Refused on worker; local/approval execution remains separate unfinished work |
+The worker preparation fixtures cover exact/current bytes, mixed ordered input,
+whole-batch failure, original-conversation mismatch, malformed/capability-shaped
+input, unsafe/missing/invalid/local-marked files, acknowledged history and combined
+UTF-8 byte bounds. Existing next-mode Clock fixtures still require standalone
+files to create no Runtime job. Actual end-to-end file delivery remains unproved.

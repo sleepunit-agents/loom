@@ -1,9 +1,8 @@
 import type { Wake } from '../clock/role.js';
-/** Syntax only. File bytes are resolved by the worker in its own checkout;
- * neither composition nor owning admission opens a daemon path. */
+/** Stored lane prompts use the same inbox as one-offs. A lane revision is
+ * supersession metadata, not a file or an execution capability. Both composition
+ * and owning admission retain the holds for unresolved paths and capabilities. */
 export function supportedClockPrompt(wake:Wake):boolean {
-  const content=!!wake.prompt&&!wake.file&&!wake.prompt.includes('<!-- house: local -->')
-    || !wake.prompt&&!!wake.file&&/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(wake.file)
-      &&wake.file.length<=200&&wake.file.split('/').every(p=>p!=='.'&&p!=='..');
-  return content&&!wake.continuation&&!wake.slot&&!wake.approval;
+  return !!wake.prompt&&!wake.file&&!wake.continuation&&!wake.slot&&!wake.approval
+    &&!wake.prompt.includes('<!-- house: local -->');
 }

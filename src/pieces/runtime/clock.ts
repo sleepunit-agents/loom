@@ -32,14 +32,14 @@ export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'stat
     if(!answer.ok) return existing()
       ? {state:'uncertain',reason:'This wake already has an accepted start intent; reconcile it before retrying'}
       : {state:answer.code==='denied'?'held':'not-started',reason:answer.message};
-    const {job,source,acknowledge}=answer.value as {job:string;source?:string;acknowledge:boolean};
+    const {job,source,joined}=answer.value as {job:string;source?:string;joined?:boolean};
     return new Promise<StartResult>(resolve=>{
       let settled=false;
       let unobserve=()=>{}, cancel=()=>{};
       const finish=(result:StartResult)=>{if(settled)return;settled=true;unobserve();cancel();waiting.delete(finish);resolve(result);};
       const check=()=>{
         const current=store.read('job',job);
-        if((current?.state==='running' || current?.state==='waiting') && (!acknowledge || !!source && delivery?.consumed(source))) finish({state:'started',body:job});
+        if((current?.state==='running' || current?.state==='waiting') && (!joined || !!source && delivery?.consumed(source))) finish({state:'started',body:job});
         // A terminal report may arrive before this waiter sees running. Without
         // persisted start confirmation it is unsafe to infer a definite failure.
         else if(!current || !['queued','starting','running','waiting'].includes(current.state)) finish({state:'uncertain',reason:'Runner ended without an observed start confirmation'});

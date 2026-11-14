@@ -1,6 +1,6 @@
 import { CLOCK_BRIEF } from './clock-delivery.js';
 import { builtinServices } from '../../core/services.js';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -141,10 +141,10 @@ it('keeps source-less operation identity after restart and receipt expiry',async
   expect(f.jobOf(f.call('runtime.startBody',input,owner,'source-less'))).toBe(job);
   expect(f.call('runtime.startBody',{...input,brief:'changed'},owner,'source-less')).toMatchObject({ok:false,code:'conflict'});
 });
-it.each(['unsafe-file','continuation','slot','approval','local','missing-house'])('holds %s work through the installed Clock without creating a job',async feature=>{
+it.each(['file','continuation','slot','approval','local','missing-house'])('holds %s work through the installed Clock without creating a job',async feature=>{
   const f=await setup();
   if(feature==='missing-house') f.app.db.prepare('DELETE FROM runtime_settings').run();
-  const extra=feature==='unsafe-file'?{file:'routines/./upkeep.md'}:feature==='local'?{prompt:'<!-- house: local -->\nWork'}:
+  const extra=feature==='file'?{file:'routines/upkeep.md'}:feature==='local'?{prompt:'<!-- house: local -->\nWork'}:
     feature==='missing-house'?{prompt:'work'}:{prompt:'work',[feature]:'fixture'};
   const result=f.call('clock.in',{agent:'art',note:'fixture',when:'1s',...extra});expect(result.ok).toBe(true);
   const {id}=(result as {ok:true;value:Wake}).value;f.clock.advance(1000);await settle();
@@ -615,73 +615,5 @@ it.each([false,true].flatMap(staging=>['once','recurring','runNow'].map(mode=>({
   const third=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${childInput.value.credential}`},body:JSON.stringify({id:'demoted-rearm',input:{agent:'art',prompt:'After owner demotion',note:'chain',when:'1s'}})})).json();
   expect(third).toMatchObject({ok:true});
   expect(wakes(f.app.db).find(w=>w.prompt==='After owner demotion')).toMatchObject({member:'jonathan',authorship:{principal:{for:'jonathan',people:['jonathan']}}});
- }
-});
-
-
-import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
-import { ClaudeWorkerSession, type SpawnClaude } from '../../runtime-runner/session.js';
-import { runClockTurn } from '../../runtime-runner/clock-turn.js';
-import { runtimeHouseDestination } from './role.js';
-it.each(['once','recurring','run-now'].flatMap(mode=>[false,true].flatMap(staging=>[false,true].map(privateScope=>({mode,staging,privateScope})))))(
- 'delivers an actual worker-checkout file ($mode, staging=$staging, private=$privateScope) before acknowledging it',async({mode,staging,privateScope})=>{
- const access=structuredClone(fixtureSharing()),f=await setup(staging,()=>access);access.services=builtinServices(f.app.db);
- const checkout=mkdtempSync(join(tmpdir(),'clock-worker-'));
- cleanups.push(()=>rmSync(checkout,{recursive:true,force:true}));
- mkdirSync(join(checkout,'routines'));const words='Exact worker instructions — never stored on the daemon.\nKeep this newline.\n';
- writeFileSync(join(checkout,'routines','upkeep.md'),words);
- const work={agent:'art',file:'routines/upkeep.md',note:'worker-file',...(privateScope?{member:'jonathan',project:'pond'}:{})};
- const fileCall=(op:string,input:unknown)=>f.app.operations.callAsync('socket',owner,`clock.${op}`,input,`file:${op}`,true);
- let id:string;
- if(mode==='once')id=(await fileCall('in',{...work,when:'1s'}) as {ok:true;value:{id:string}}).value.id;
- else {
-  const schedule=await fileCall('scheduleSet',{...work,id:'worker-file',at:'03:31'});expect(schedule.ok).toBe(true);
-  if(mode==='run-now')id=(await fileCall('scheduleRun',{id:'worker-file'}) as {ok:true;value:{id:string}}).value.id;
-  else id=wakes(f.app.db).find(w=>w.schedule==='worker-file')!.id;
- }
- f.clock.advance(Math.max(0,wake(f.app.db,id)!.due-f.clock.now()));await settle();
- const job=f.store.ids('job')[0];expect(job).toBeTruthy();
- await f.post(f.runner,'claimJob',{job});
- if(staging){expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false,code:'conflict'});expect(f.call('core.releaseEffect',{id:`runtime:input:${job}`}).ok).toBe(true);}
- const payload=await f.post(f.runner,'takeInput',{job});expect(payload.ok).toBe(true);
- expect(payload.value.brief).toBe(CLOCK_BRIEF);expect(JSON.stringify(payload)).not.toContain(words);
- const body=payload.value.credential,conversation=payload.value.conversation;
- await f.post(f.runner,'reportJob',{job,state:'running'});await settle();
- expect(wake(f.app.db,id)?.state).toBe('firing');
- for(const token of [f.runner,f.other,f.member,f.token('agent:art')])expect(await f.post(token,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
- const read=async()=>{const answer=await f.post(body,'readConversation',{});if(!answer.ok)throw Error(answer.code);return answer.value;};
- if(staging){await expect(read()).rejects.toThrow('conflict');expect(f.call('core.releaseEffect',{id:`runtime:clock-read:${job}:1`}).ok).toBe(true);}
- expect(await read()).toMatchObject({conversation,messages:[{id:`clock:${id}`,seq:1,file:work.file}]});
- const original=wake(f.app.db,id)!;
- f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify({...original,file:'routines/changed.md'}),id);
- await expect(read()).rejects.toThrow('denied');
- expect(await f.post(body,'acknowledgeClockInput',{through:1})).toMatchObject({ok:false,code:'denied'});
- f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(original),id);
- const inputs:string[]=[];
- const launch:SpawnClaude=(_command,args)=>{
-  const child=Object.assign(new EventEmitter(),{stdin:new PassThrough(),stdout:new PassThrough(),stderr:new PassThrough(),kill:()=>true});
-  let input='';child.stdin.on('data',b=>input+=b.toString());child.stdin.on('finish',()=>{
-   inputs.push(input);queueMicrotask(()=>{child.stdout.write(JSON.stringify({type:'result',is_error:false,session_id:args[args.indexOf('--session-id')+1],result:'File completed'}));child.emit('close',0);});
-  });return child as ReturnType<SpawnClaude>;
- };
- const session=new ClaudeWorkerSession('/worker/claude',{},launch);
- const destination=runtimeHouseDestination(f.app,()=>access,signin(f.app).token(hash(body))!.viewer)!;expect(destination).toBeTruthy();
- const turn={binding:{agent:'art',conversation,venue:'wake',place:f.store.read('binding',conversation)!.place},checkout,
-  rules:{key:'a'.repeat(64),deny:[],sections:[{text:'WORKER RULES'}]},current:destination.current};
- const inbox={read,async acknowledge(through:number){const answer=await f.post(body,'acknowledgeClockInput',{through});if(!answer.ok)throw Error(answer.code);}};
- expect(await runClockTurn(session,turn,inbox)).toMatchObject({text:'File completed',resumed:false});
- expect(inputs).toEqual([`WORKER RULES\n${words}`]);
- await settle();expect(wake(f.app.db,id)).toMatchObject({state:'fired',outcome:job});
- // The owning receipt makes a later inbox read history, never another execution.
- expect(await runClockTurn(session,turn,inbox)).toBeUndefined();expect(inputs).toHaveLength(1);
- expect(JSON.stringify(f.app.db.prepare('SELECT * FROM runtime_clock_turns').all())).not.toContain(words);
- expect(JSON.stringify(f.app.db.prepare('SELECT result FROM core_operations').all())).not.toContain(words);
- if(mode!=='once')expect(wakes(f.app.db).filter(w=>w.schedule==='worker-file'&&w.state==='pending')).toHaveLength(1);
- if(privateScope){
-  expect(f.store.read('job',job)).toMatchObject({member:'jonathan',project:'pond'});
-  access.projects.pond.agents=[];
-  await expect(read()).rejects.toThrow('denied');
-  expect(await f.post(body,'acknowledgeClockInput',{through:1})).toMatchObject({ok:false,code:'denied'});
  }
 });
