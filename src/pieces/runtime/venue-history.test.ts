@@ -99,6 +99,7 @@ it('does not turn an authenticated nonowner private body into venue-read authori
  value(await f.post(f.runner,'runtime.reportJob',{job,state:'running'}));
  expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true});
  expect(runtimeDiscordHistoryPermit(f.app,signin(f.app).token(hash(body))!.viewer,place)).toBeUndefined();
+ expect(runtimeSlackDescribePermit(f.app,signin(f.app).token(hash(body))!.viewer,slackPlace)).toBeUndefined();
 });
 it('withholds late history when the real owning credential is revoked between requests',async()=>{
  const f=await running(),use=vi.fn(async<T>(_name:string,read:(secret:string)=>Promise<T>)=>read('TEST-CREDENTIAL'));
@@ -112,6 +113,7 @@ it('refuses an otherwise current service body whose job and credential agree',as
  const body=f.token(`agent:art/discord@${f.job}`),viewer=signin(f.app).token(hash(body))!.viewer;
  expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true});
  expect(runtimeDiscordHistoryPermit(f.app,viewer,place)).toBeUndefined();
+ expect(runtimeSlackDescribePermit(f.app,viewer,slackPlace)).toBeUndefined();
 });
 it('pins the original route even when the replacement is independently valid',async()=>{
  const f=await running();
@@ -136,6 +138,7 @@ it('pins the transport place independently of an unchanged current principal and
 it('revokes an issued permit and refuses new issuance for an otherwise current waiting body',async()=>{
  const f=await running();value(await f.post(f.runner,'runtime.reportJob',{job:f.job,state:'waiting'}));
  expect(await f.post(f.body,'runtime.readConversation',{})).toMatchObject({ok:true});
+ expect(runtimeSlackDescribePermit(f.app,f.viewer,slackPlace)).toBeUndefined();
  expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)).toBeUndefined();expect(f.permit.current()).toBe(false);
 });
 it('refuses owner-body issuance when retained sender history resolves to a named nonowner',async()=>{
@@ -144,6 +147,7 @@ it('refuses owner-body issuance when retained sender history resolves to a named
   key:'retained-nonowner',sender:{kind:'person',person:'pollock'},at:f.clock.now(),
  },['jonathan']))();
  expect(await f.post(f.body,'runtime.readConversation',{})).toMatchObject({ok:true});
+ expect(runtimeSlackDescribePermit(f.app,f.viewer,slackPlace)).toBeUndefined();
  expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)).toBeUndefined();expect(f.permit.current()).toBe(false);
 });
 

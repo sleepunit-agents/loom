@@ -10,7 +10,7 @@ import { runtimeDestination } from './destination.js';
 const snowflake=z.string().refine(isDiscordId);
 const place=z.object({workspace:snowflake,channel:snowflake,kind:z.enum(['channel','thread'])}).strict();
 export type DiscordHistoryPlace=z.infer<typeof place>;
-const slackPlace=z.object({venue:z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/),workspace:z.string().regex(/^T[A-Z0-9]{1,199}$/),kind:z.enum(['dm','group']),place:z.string()}).strict().refine(p=>p.kind==='dm'?/^[UW][A-Z0-9]{1,199}$/.test(p.place)&&p.place!=='USLACKBOT':/^G[A-Z0-9]{1,199}$/.test(p.place));
+const slackPlace=z.object({venue:z.string().min(1).max(200),workspace:z.string().regex(/^T[A-Z0-9]{1,199}$/),kind:z.enum(['dm','group']),place:z.string()}).strict().refine(p=>p.kind==='dm'?/^[UW][A-Z0-9]{1,199}$/.test(p.place)&&p.place!=='USLACKBOT':/^G[A-Z0-9]{1,199}$/.test(p.place));
 export type SlackDescribePlace=z.infer<typeof slackPlace>;
 const slackIssuers=new WeakMap<Foundation['db'],(viewer:Viewer,request:SlackDescribePlace)=>SlackDescribePermit|undefined>();
 const issuers=new WeakMap<Foundation['db'],(viewer:Viewer,request:DiscordHistoryPlace)=>DiscordHistoryPermit|undefined>();
