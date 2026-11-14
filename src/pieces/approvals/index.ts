@@ -54,6 +54,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
         auditRefusedUse(db,input,context(viewer,input,now,!!config.piece).caller,now,!!config.piece);
       } } : {}),
       may(viewer,input) {
+        if (config.read && viewer.kind === 'service' && !mayAct(viewer, {type:'approval'}, sharing(), 'act', name)) return false;
         if (config.owner) {
           if (!owner(viewer,name)) return false;
           if (verb === 'standing-off') {

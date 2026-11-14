@@ -69,7 +69,8 @@ it('uses the registered service, reports no private refusal wording and retries 
   const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});
   write('old'); clock.advance(0);
   expect(turns()).toHaveLength(1);
-  expect(warning).toHaveBeenCalledExactlyOnceWith('Attention retention failed (denied)');
+  expect(warning.mock.calls.filter(([message]) => message === 'Attention retention failed (denied)')).toHaveLength(1);
+  expect(warning.mock.calls.every(([message]) => ['Attention retention failed (denied)', 'Attention wait inventory failed (denied)'].includes(message))).toBe(true);
   refuse = false; clock.advance(86_400_000);
   expect(turns()).toHaveLength(0);
   expect(callers).toEqual([{ kind: 'service', id: 'attention' }, { kind: 'service', id: 'attention' }]);
@@ -100,7 +101,8 @@ it('rechecks real central service grants on every sweep without impersonating a 
   clock.advance(0); write('old');
   denied.value = true; clock.advance(86_400_000);
   expect(turns()).toHaveLength(1);
-  expect(warning).toHaveBeenCalledExactlyOnceWith('Attention retention failed (denied)');
+  expect(warning.mock.calls.filter(([message]) => message === 'Attention retention failed (denied)')).toHaveLength(1);
+  expect(warning.mock.calls.every(([message]) => ['Attention retention failed (denied)', 'Attention wait inventory failed (denied)'].includes(message))).toBe(true);
   denied.value = false; clock.advance(86_400_000);
   expect(turns()).toHaveLength(0);
 });
