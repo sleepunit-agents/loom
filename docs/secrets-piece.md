@@ -1490,3 +1490,22 @@ read hold and verify original scope, one completion, admission persistence failu
 failed settlement and loss of authority. This does not activate the source root,
 implement upgrade/rollback enforcement or complete the remaining parity, Settings,
 recovery and final move duties above.
+
+### Presence transport usage accounting
+
+The existing real-service-grant presence fixture now checks Slack and Discord
+reaction acquisition accounting, plus Discord typing. It holds a fake composition
+staging gate before any source read, advances the fake clock between acquisitions,
+and asserts complete `secret.use` event objects and exact per-name read counts.
+An upstream HTTP exception still counts credential delivery. Revocation denies
+another acquisition without adding usage; audit INSERT failure prevents source
+access, and audit UPDATE failure prevents HTTP while retaining an unconfirmed
+started attempt with zero confirmed uses. Every returned source buffer is erased.
+Focused settlement, audit-admission and cached-time mutants fail these checks.
+
+This is the unregistered presence transport with a fake exact-place owner and fake
+HTTP/source bytes, not an installed owning Runtime lifecycle or holder OS-process
+witness. It adds accounting evidence only: whole-path inspection, replies and
+files, actual Live subscriber privacy, public/granted-get parity, Settings history,
+upgrade/rollback retirement enforcement, encrypted holder recovery and the final
+move remain open. It enables no presence service or holder configuration.
