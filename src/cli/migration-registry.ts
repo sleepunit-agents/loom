@@ -1,3 +1,5 @@
+import { importBridges } from '../pieces/bridges/importer.js';
+import { bridgeMigrationSources } from './migration-bridges.js';
 /** Offline migration extension point. Never imported by the daemon. */
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
@@ -139,6 +141,12 @@ export function createMigrationRegistry(): MigrationRegistry {
       if(!h)throw Error('Imported household required for runtime');
       return importRuntime(context.db,runtimeMigrationSources(input.paths.map(path=>snapshotPath(context,path))),input.options,
         {agents:h.agents,members:h.members.map(m=>m.person),projects:new SharingDatabase(context.db,context.home).projectIds()},context.now,openSnapshotSqlite);
+    }});
+  registry.register({name:'bridges',dependencies:['household'],reads:['explicit shuttle instances, platform settings and completed shuttle/runtime stores'],
+    sourceReads:['**/shuttle.json','**/people.json','**/routes.json','pieces/discord/settings.json','pieces/slack/settings.json','commons/stores/shuttle.db','commons/stores/runtime.db'],
+    run:(context,input)=>{
+      const h=new HouseholdDatabase(context.db).household(context.home);if(!h)throw Error('Imported household required for Bridges');
+      return importBridges(context.db,bridgeMigrationSources(input.paths.map(name=>({name,path:snapshotPath(context,name)}))),input.options,{agents:h.agents,members:h.members.map(m=>m.person)},openSnapshotSqlite);
     }});
   return registry;
 }
