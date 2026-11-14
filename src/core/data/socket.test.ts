@@ -159,7 +159,7 @@ it('sanitizes ordinary execution errors and observe failures without releasing p
   }})}));
   const ordinary = await read(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'broken-read',payload:{query:'{ words broken }'}})));
   expect(ordinary).toEqual({type:'next',id:'broken-read',payload:{errors:[{message:'Data query could not complete'}]}});
-  const messages: unknown[] = [];
+  const messages: {type:string;payload?:{errors?:unknown[]}}[] = [];
   const finished = new Promise<void>(resolve => ws.on('message',raw=>{
     const message = JSON.parse(String(raw));
     if(message.id==='broken-live'){messages.push(message);if(message.type==='error'||message.type==='complete')resolve();}
@@ -168,5 +168,5 @@ it('sanitizes ordinary execution errors and observe failures without releasing p
   await finished;
   expect(messages.length).toBeGreaterThan(0);
   expect(JSON.stringify(messages)).not.toContain('PRIVATE');
-  expect(messages.some((message:any)=>message.type==='error'||message.payload?.errors?.length)).toBe(true);
+  expect(messages.some(message=>message.type==='error'||message.payload?.errors?.length)).toBe(true);
 });

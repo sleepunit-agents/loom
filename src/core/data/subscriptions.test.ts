@@ -27,6 +27,13 @@ it('keeps Memory viewer context isolated across concurrent subscriptions and ref
   const backend = new SqliteKnowledgeBackend({dbPath:join(home,'knowledge.db')});
   const sharing = { members:{owner:{owner:true,agents:[]},peer:{owner:false,agents:[]}},projects:{},services:{} };
   const fields = knowledgeQueryFields({path:join(home,'knowledge.db'),sharing:()=>sharing,now:()=>Date.parse('2026-11-14T18:00:00Z')});
+  const peerReads: unknown[] = [];
+  const readPage = fields.fields.memoryKnowledgePage.resolve!;
+  fields.fields.memoryKnowledgePage.resolve = (source,args,context,info) => {
+    const result = readPage(source,args,context,info);
+    if (context.viewer.id === 'peer') peerReads.push(result);
+    return result;
+  };
   const live = new DataLive();
   const schema = dataSubscriptions(new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:fields.fields})}),live,()=>true);
   const document = parse('subscription($query:String!) { observe(query:$query) { revision patches { path removed value } } }');
@@ -42,14 +49,16 @@ it('keeps Memory viewer context isolated across concurrent subscriptions and ref
     const [a,b] = await Promise.all([owner.next(),peer.next()]);
     expect(a.value).toMatchObject({data:{observe:{revision:1,patches:[{path:[],value:{page:{title:'Fictional pump',body:'Fictional private words',history:[]}}}]}}});
     expect(b.value).toMatchObject({data:{observe:{revision:1,patches:[{path:[],value:{page:null}}]}}});
+    const peerPending = peer.next();
     await backend.writePage({slug:'pump',title:'Changed pump',domain:'pond',body:'Changed private words'});
     live.changed();
     expect((await owner.next()).value).toMatchObject({data:{observe:{revision:2,patches:expect.arrayContaining([{path:['page','body'],removed:false,value:'Changed private words'}])}}});
+    expect(peerReads).toEqual([null,null]);
     sharing.members.owner.owner=false; live.changed();
     expect((await owner.next()).value).toMatchObject({data:{observe:{revision:3,patches:[{path:['page'],removed:false,value:null}]}}});
-    // Peer did not inherit the owner's context during any concurrent rerun.
+    // The denied peer is already waiting through the owner's refreshes.
     sharing.members.peer.owner=true; live.changed();
-    expect((await peer.next()).value).toMatchObject({data:{observe:{revision:2,patches:[{path:['page'],value:{body:'Changed private words',history:[{body:'Fictional private words'}]}}]}}});
+    expect((await peerPending).value).toMatchObject({data:{observe:{revision:2,patches:[{path:['page'],value:{body:'Changed private words',history:[{body:'Fictional private words'}]}}]}}});
   } finally {
     for (const stream of streams) await stream.return?.();
     live.close(); fields.close(); backend.close(); rmSync(home,{recursive:true,force:true});
