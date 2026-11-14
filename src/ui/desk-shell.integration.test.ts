@@ -1,5 +1,6 @@
 /** One next-mode browser test; later desk slices extend this same scenario. */
 import { it, expect } from 'vitest';
+import BetterSqlite3 from 'better-sqlite3';
 import { existsSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
@@ -19,6 +20,16 @@ const root = resolve('dist/web');
 if (enabled && (!chrome || !existsSync(chrome) || !existsSync(join(root,'next.html')))) throw Error('Desk evidence needs Chrome and the built app');
 it.runIf(enabled)('desk applies member appearance live across fresh windows and serves PWA assets', async () => {
   const home = mkdtempSync(join(tmpdir(),'desk-shell-'));
+  // Activity uses the listed agent's real read-only episode source, never the old reference home.
+  const seedSteps = (base:string,now:number) => {
+    const path=join(base,'agents','art');mkdirSync(path,{recursive:true});
+    const db=new BetterSqlite3(join(path,'memories.db'));
+    db.exec('CREATE TABLE IF NOT EXISTS memories(ref TEXT PRIMARY KEY,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');
+    for(const [i,title] of ['Shipped the desk look','Checked the live activity','Kept the five agents together','Earlier desk work'].entries())
+      db.prepare('INSERT INTO memories VALUES(?,?,?,?,NULL,?,NULL,?,0)').run(`desk-step-${i}`,title,'The household desk has its look back.',new Date(now-i*60000).toISOString(),'{"where":"terminal"}','episode');
+    db.close();
+  };
+  seedSteps(home,Date.parse('2026-11-13T18:40:00Z'));
   const app = await startLoom({home,next:true,staging:true,clock:new FakeClock(Date.parse('2026-11-13T18:41:00Z')),webRoot:root,install(app) {
     migrateHouseholdTables(app.db);
     app.db.transaction(() => {
@@ -30,6 +41,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     })();
   }});
   const old = await deskHome({art:'art',birch:'birch',cedar:'cedar',elm:'elm',fern:'fern'},[{person:'owner',agents:'*'}]);
+  seedSteps(old.h.home,Date.now()-60000);
   old.ask('art','OK to run the backup now?');
   const oldThread=old.thread('owner','art','A Home conversation','A Home conversation');
   const raised=app.operations.call('direct',{kind:'member',id:'owner'},'attention.raise',{id:'desk-ask',agent:'art',ask:'OK to run the backup now?',why:'Because it matters.',if_yes:'I do it.',if_no:'I leave it.',source:{kind:'piece',id:'desk-fixture'}},'desk-ask');
@@ -72,6 +84,19 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         await expect.poll(() => page.locator('.loom-ground').count()).toBe(ground==='wash'?0:1);
       }
     }
+    // The SAME Home scenario proves real Activity IO, live replacement in both windows and reader navigation.
+    for(const page of [a,b]) {
+      await expect.poll(()=>page.getByRole('group',{name:'art recent steps',exact:true}).getByRole('button').count()).toBe(3);
+      expect(await page.getByText('Earlier desk work',{exact:true}).count()).toBe(0);
+    }
+    const activityDb=new BetterSqlite3(join(home,'agents','art','memories.db'));
+    activityDb.prepare('UPDATE memories SET title=? WHERE ref=?').run('Shipped the live desk look','desk-step-0');activityDb.close();
+    expect(app.operations.call('direct',{kind:'agent',id:'art'},'core.touched',{type:'memory',id:'art:desk-step-0'}).ok).toBe(true);
+    for(const page of [a,b])await expect.poll(()=>page.getByText('Shipped the live desk look',{exact:true}).count()).toBe(1);
+    await a.getByRole('group',{name:'art recent steps',exact:true}).getByRole('button').first().click();
+    await expect.poll(()=>a.getByRole('heading',{name:'Shipped the live desk look',exact:true}).count()).toBe(1);
+    expect(new URL(a.url()).searchParams.get('e')).toBe('e~art~desk-step-0');
+    await a.goto(app.url);
     // Exercise the real renderer through the database-backed display feed on both surfaces.
     const painted = async (page: typeof a, selector: string) => page.locator(selector).evaluateAll(nodes => nodes.some(node => {
       const cv = node as HTMLCanvasElement, data = cv.getContext('2d')?.getImageData(0,0,cv.width,cv.height).data;
@@ -207,13 +232,17 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         if(width<1024)expect(await page.locator('.desk-home-card').getAttribute('data-agent')).toBe('art');
         await reference.setViewportSize({width,height:900});
         await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
-        for (const surface of ['home','work','companion','launcher']) {
+        for (const surface of ['home','home-steps','work','companion','launcher']) {
           if(surface==='home') {
             await page.getByRole('button',{name:'Check again',exact:true}).click();
             await expect.poll(()=>page.getByRole('button',{name:'Yes',exact:true}).isEnabled()).toBe(true);
             // Checking may scroll its button into view; capture Home from its identity/header.
             await page.locator('.desk-home').evaluate(el=>{let node:HTMLElement|null=el as HTMLElement;while(node){node.scrollTop=0;node=node.parentElement;}});
             if(reference.url()!=='about:blank')await reference.evaluate(()=>localStorage.removeItem('loom-tiles')); await reference.goto(old.base+'/?t='); await expect.poll(()=>reference.locator(width<1024?'.loom-phome .loom-bigcard':'.loom-bigcard').count()).toBeGreaterThan(0);
+          }
+          if(surface==='home-steps') {
+            await page.getByRole('region',{name:'art desk details',exact:true}).getByRole('heading',{name:'Last steps',exact:true}).scrollIntoViewIfNeeded();
+            await reference.locator('.loom-bigcard').filter({has:reference.getByRole('heading',{name:'art',exact:true})}).getByRole('heading',{name:'Last steps',exact:true}).scrollIntoViewIfNeeded();
           }
           if(surface==='work') {
             await page.getByRole('button',{name:'Open Inbox',exact:true}).click();

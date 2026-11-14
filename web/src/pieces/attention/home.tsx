@@ -1,3 +1,5 @@
+import { HomeSteps } from './home-steps';
+import type { ActivityWindow } from '../activity/model';
 import { HomeConversations, HomeComposer, useHomeComms, threadPath } from './home-comms';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import './home.css';
@@ -26,6 +28,7 @@ function ReportedItems({ title, empty, items, go }: { title: string; empty: stri
 }
 export default function Home({ go = path => location.assign(path) }: { go?: (path:string)=>void } = {}) {
   const roster = useRecords<OwnedAgent>('attention.ownedAgent');
+  const activity = useRecords<ActivityWindow>('activity.window', 'recent');
   const displays = useAgentDisplays();
   const { reading:conversations, threads, status:threadStatus } = useHomeComms();
   const [phone,setPhone] = useState(()=>globalThis.window?.matchMedia?.('(max-width: 1023px)').matches ?? false);
@@ -103,6 +106,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
                 <ReportedItems title="Reported jobs" empty="No jobs reported." items={status.jobs} go={go} />
                 <ReportedItems title="Watching" empty="No watched items reported." items={status.watched} go={go} />
               </>}</>}</section>
+                  <HomeSteps agent={agent.id} name={agent.name} activity={activity} go={go} />
                   <HomeConversations agent={agent.id} name={agent.name} reading={conversations} go={go} />
                 </div>
                 <div className="grid min-w-0 content-start gap-4">
