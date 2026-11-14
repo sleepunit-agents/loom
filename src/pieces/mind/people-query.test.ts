@@ -10,6 +10,8 @@ import { dataQueries } from '../../core/data/queries.js';
 import { PeopleStore } from '../../backends/people.js';
 import type { Sharing,Viewer } from '../../policy.js';
 import { peopleQueryFields } from './people-query.js';
+import { peopleReader } from './people.js';
+import { ProjectsStore } from '../../backends/projects.js';
 const homes:string[]=[],closes:Array<()=>void>=[];
 afterEach(()=>{for(const close of closes.splice(0).reverse())close();for(const home of homes.splice(0))rmSync(home,{recursive:true,force:true});});
 function home(){const path=mkdtempSync(join(tmpdir(),'people-query-'));homes.push(path);return path;}
@@ -29,9 +31,9 @@ it('composes generated fields and complete typed cards including value kinds, pr
  for(let i=0;i<12;i++)s.write({slug:'friend',summary:`Version ${i}`});
  const f=fixture(path,[]);
  expect((await graphql({schema:f.generated,source:'{ memoryPeople { id } }'})).errors?.[0].message).toContain('Cannot query field "memoryPeople"');
- const result=await f.query('{ tasks { id } memoryPerson(id:"commons:friend") { name card { summary where { key value { strings text number boolean } label source verified_at stale_after_days } how { key value { text number boolean } } may { text source } } history { op actor card { summary } } } }');
+ const result=await f.query('{ tasks { id } memoryPerson(id:"commons:friend") { name card { summary where { key value { strings text number boolean } label source verified_at stale_after_days } how { key value { text number boolean } } may { text source } } history { op actor card { summary where { key } how { key } may { text } } } } }');
  expect(result.errors).toBeUndefined();
- expect(result.data).toMatchObject({tasks:[],memoryPerson:{name:'Fictional Friend',card:{summary:'Version 11',where:[{key:'channel',value:{strings:['one','two'],text:null,number:null,boolean:null},label:'Channels',source:'a conversation',verified_at:'2026-11-13T00:00:00Z',stale_after_days:30}],how:expect.arrayContaining([{key:'count',value:{text:null,number:3,boolean:null}},{key:'enabled',value:{text:null,number:null,boolean:true}},{key:'style',value:{text:'direct',number:null,boolean:null}}]),may:[{text:'A recorded statement',source:'fiction'}]},history:Array.from({length:10},(_,i)=>({op:'write',actor:'fiction',card:{summary:`Version ${10-i}`}}))}});
+ expect(result.data).toMatchObject({tasks:[],memoryPerson:{name:'Fictional Friend',card:{summary:'Version 11',where:[{key:'channel',value:{strings:['one','two'],text:null,number:null,boolean:null},label:'Channels',source:'a conversation',verified_at:'2026-11-13T00:00:00Z',stale_after_days:30}],how:expect.arrayContaining([{key:'count',value:{text:null,number:3,boolean:null}},{key:'enabled',value:{text:null,number:null,boolean:true}},{key:'style',value:{text:'direct',number:null,boolean:null}}]),may:[{text:'A recorded statement',source:'fiction'}]},history:Array.from({length:10},(_,i)=>({op:'write',actor:'fiction',card:{summary:`Version ${10-i}`,where:[{key:'channel'}],how:expect.arrayContaining([{key:'count'},{key:'enabled'},{key:'style'}]),may:[{text:'A recorded statement'}]}}))}});
 });
 it('keeps agent cards private despite project membership and applies current ownership on each query',async()=>{
  const h=home(),d=store(join(h,'directory.db')),a=store(join(h,'a.db')),b=store(join(h,'b.db'));
@@ -69,4 +71,23 @@ it('leaves missing files absent and returns generic source errors only to visibl
  expect(await bad.query(query,{kind:'member',id:'peer'})).toEqual({data:{memoryPeople:[],memoryPerson:null}});
  const result=await bad.query(query);expect(result.errors?.map(e=>e.message)).toEqual(['People are unavailable','People are unavailable']);
  expect(JSON.stringify(result)).not.toContain(broken);expect(JSON.stringify(result)).not.toContain('PRIVATE SOURCE');
+});
+
+it('isolates inaccessible source failures from healthy authorized cards',async()=>{
+ const h=home(),a=store(join(h,'a.db')),d=store(join(h,'directory.db'));a.write({slug:'friend',name:'Healthy'});d.write({slug:'friend',name:'Directory'});
+ const f=fixture(d.database.name,[{agent:'fiction',memories:a.database.name},{agent:'hidden',memories:h}]);
+ expect(await f.query('{ memoryPeople { name } memoryPerson(id:"fiction:friend") { name } }',{kind:'member',id:'member'})).toEqual({data:{memoryPeople:[{name:'Healthy'}],memoryPerson:{name:'Healthy'}}});
+ const owner=await f.query('{ memoryPerson(id:"hidden:friend") { name } }');expect(owner.errors?.[0].message).toBe('People are unavailable');
+ const broken=join(h,'broken-directory.db');writeFileSync(broken,'private source');
+ const g=fixture(broken,[{agent:'fiction',memories:a.database.name}]);
+ expect(await g.query('{ memoryPerson(id:"fiction:friend") { name } }',{kind:'member',id:'member'})).toEqual({data:{memoryPerson:{name:'Healthy'}}});
+});
+it('opens supplied stores readonly and returns typed project references',async()=>{
+ const h=home(),a=store(join(h,'a.db'));a.write({slug:'friend',name:'Friend',where:{pond:{value:'maintainer'}}});
+ const projects=new ProjectsStore({dbPath:a.database.name});closes.push(()=>projects.close());projects.write({slug:'pond',name:'Fictional pond'});
+ const sharing:Sharing={members:{owner:{owner:true,agents:[]}},projects:{},services:{}};
+ const reader=peopleReader({agents:[{agent:'fiction',memories:a.database.name}],sharing:()=>sharing,now:()=>0});closes.push(reader.close);
+ expect(()=>reader.sources.get('fiction')!.prepare("UPDATE people SET name='Changed'").run()).toThrow(/readonly/);
+ const f=fixture(join(h,'absent.db'),[{agent:'fiction',memories:a.database.name}]);
+ expect(await f.query('{ memoryPerson(id:"fiction:friend") { projects { agent slug name status } } }')).toMatchObject({data:{memoryPerson:{projects:[{agent:'fiction',slug:'pond',name:'Fictional pond',status:'active'}]}}});
 });

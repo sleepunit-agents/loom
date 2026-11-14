@@ -22,14 +22,15 @@ export interface PeopleReader {
  history(id:string,viewer:Viewer):Array<{id:number;op:string;replacedAt:string;actor:string|null;card:PersonCard}>;
  close():void;
 }
+export const mayReadPerson=(viewer:Viewer,agent:string|undefined,sharing:Sharing)=>maySee(viewer,{type:'person',...(agent?{agent}:{})},sharing);
 export function peopleReader(options:PeopleReaderOptions):PeopleReader {
-  const sources = new Map<string, Database>();
-  try {
-    for (const [id,path] of [['commons',options.directory], ...options.agents.map(a => [a.agent,a.memories])] as Array<[string,string | undefined]>) {
-      if (path && existsSync(path)) sources.set(id, new BetterSqlite3(path, { readonly: true, fileMustExist: true, timeout: 0 }));
-    }
-  } catch (e) { for (const db of sources.values()) db.close(); throw e; }
-  const allowed = (v: Viewer, agent?: string) => maySee(v, { type: 'person', ...(agent ? { agent } : {}) }, options.sharing());
+  const sources = new Map<string, Database>(), failed=new Set<string>();
+  for (const [id,path] of [['commons',options.directory], ...options.agents.map(a => [a.agent,a.memories])] as Array<[string,string | undefined]>) {
+    try {if(path&&existsSync(path))sources.set(id,new BetterSqlite3(path,{readonly:true,fileMustExist:true,timeout:0}));}
+    catch {failed.add(id);}
+  }
+  const allowed = (v:Viewer,agent?:string)=>mayReadPerson(v,agent,options.sharing());
+  const available=(source:string)=>{if(failed.has(source))throw Error('People source unavailable');};
   function resolve(db: Database, slug: string) {
     if (!has(db,'person_merges')) return slug;
     const seen = new Set<string>();
@@ -45,12 +46,17 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
     const colon = id.indexOf(':'); if (colon < 1) return;
     const source = id.slice(0,colon), asked = id.slice(colon+1), agent = source === 'commons' ? undefined : source;
     if (!allowed(viewer,agent)) return;
+    available(source);
     const db = sources.get(source); if (!db || !has(db,'people')) return;
     return db.transaction(() => {
       // Directory redirects also select the corresponding authorized relationship.
-      const directory = sources.get('commons');
-      const slug = directory ? resolve(directory,asked) : resolve(db,asked);
-      if(agent && directory && has(directory,'people')) {const shared=directory.prepare('SELECT archived_at FROM people WHERE slug=?').get(slug) as {archived_at:string|null}|undefined;if(shared?.archived_at) return;}
+      let slug=asked;
+      const directory=sources.get('commons');
+      try {
+        available('commons');
+        slug=directory?resolve(directory,asked):resolve(db,asked);
+        if(agent&&directory&&has(directory,'people')) {const shared=directory.prepare('SELECT archived_at FROM people WHERE slug=?').get(slug) as {archived_at:string|null}|undefined;if(shared?.archived_at)return;}
+      } catch(error) {if(allowed(viewer))throw error;slug=resolve(db,asked);}
       const row = db.prepare('SELECT slug,card_json,updated,synthesized_at,archived_at FROM people WHERE slug=? AND archived_at IS NULL').get(slug) as Row | undefined;
       if (!row) return;
       const card = JSON.parse(row.card_json) as PersonCard;
@@ -84,7 +90,7 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
   }
   return {
     read, ids, sources, allowed,
-    list(viewer:Viewer) { return [...sources].filter(([source])=>allowed(viewer,source==='commons'?undefined:source)).flatMap(([source,db])=>has(db,'people')?(db.prepare('SELECT slug FROM people WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).flatMap(({slug})=>{const row=read(`${source}:${slug}`,viewer);return row?[row]:[];}):[]); },
+    list(viewer:Viewer) { for(const source of failed)if(allowed(viewer,source==='commons'?undefined:source))available(source);return [...sources].filter(([source])=>allowed(viewer,source==='commons'?undefined:source)).flatMap(([source,db])=>has(db,'people')?(db.prepare('SELECT slug FROM people WHERE archived_at IS NULL ORDER BY slug').all() as {slug:string}[]).flatMap(({slug})=>{const row=read(`${source}:${slug}`,viewer);return row?[row]:[];}):[]); },
     history(id:string,viewer:Viewer) {
       const person=read(id,viewer);if(!person)return [];
       const db=sources.get(person.agent??'commons');if(!db||!has(db,'person_revisions'))return [];

@@ -1,7 +1,6 @@
 /** Person cards stay in their existing files; these fields join the one query schema. */
 import { GraphQLBoolean, GraphQLFloat, GraphQLError, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
-import { maySee } from '../../policy.js';
-import { peopleReader, type PeopleReaderOptions } from './people.js';
+import { peopleReader, mayReadPerson, type PeopleReaderOptions } from './people.js';
 import type { CardValue, PersonCard, PersonRecord } from './people-model.js';
 import type { MemoryQueryContext } from './knowledge-query.js';
 const text={type:GraphQLString}, requiredText={type:new GraphQLNonNull(GraphQLString)};
@@ -25,11 +24,10 @@ const evidence=new GraphQLObjectType({name:'MemoryPersonEvidence',fields:{create
 const ownership=new GraphQLObjectType({name:'MemoryPersonOwnership',fields:{owner:{type:GraphQLBoolean},agents:{type:new GraphQLList(new GraphQLNonNull(GraphQLString))}}});
 const revision=new GraphQLObjectType({name:'MemoryPersonRevision',fields:{id:{type:GraphQLInt},op:requiredText,replacedAt:requiredText,actor:text,card:{type:card}}});
 export function peopleQueryFields(options:PeopleReaderOptions): {fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;close():void} {
- let reader:ReturnType<typeof peopleReader>|undefined,failed=false;
- try{reader=peopleReader(options);}catch{failed=true;}
- const visible=(context:MemoryQueryContext,agent?:string)=>!!context?.viewer&&maySee(context.viewer,{type:'person',...(agent?{agent}:{})},options.sharing());
+ let reader:ReturnType<typeof peopleReader>|undefined=peopleReader(options);
+ const visible=(context:MemoryQueryContext,agent?:string)=>!!context?.viewer&&mayReadPerson(context.viewer,agent,options.sharing());
  const anyVisible=(context:MemoryQueryContext)=>visible(context)||options.agents.some(a=>visible(context,a.agent));
- const safe=<T>(read:()=>T):T=>{try{if(failed)throw Error();return read();}catch{throw new GraphQLError('People are unavailable');}};
+ const safe=<T>(read:()=>T):T=>{try{return read();}catch{throw new GraphQLError('People are unavailable');}};
  const person=new GraphQLObjectType<PersonRecord,MemoryQueryContext>({name:'MemoryPerson',fields:{
   id:requiredText,slug:requiredText,agent:text,name:requiredText,card:{type:new GraphQLNonNull(card)},updated:requiredText,synthesizedAt:text,kind:requiredText,
   evidence:{type:list(evidence)},newer:{type:GraphQLInt},fields:{type:list(field)},projects:{type:list(project)},ownership:{type:ownership},mergedFrom:text,
