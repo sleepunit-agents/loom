@@ -49,6 +49,39 @@ limits, staging dispatch, desk summaries, expired-word digest fallback and the
 remaining UI inventory below also remain required. No installed state, real
 import or rollout was exercised for this checkpoint.
 
+## Next-mode delivery acceptance
+
+The single Comms browser proof now includes an actual `startLoom({next:true})`
+home, central cookie sessions in two windows, assigned Runner claim/input/start
+operations and centrally authenticated bound-body reads/replies. No Comms runtime,
+Attention or authentication role is replaced in this checkpoint. The existing
+fake-role portion still tests presentation and lifecycle edge cases separately.
+
+The next checkpoint covers a new ordinary thread, a thread filed through the
+reader's Project control, and a thread opened with an attached item through the
+real page socket. The attachment sheet is still unfinished; the test does not
+claim to exercise it. Each case sends from one window, receives a real body reply
+in both windows, deduplicates a reply retry, sends a follow-up on the same body,
+and verifies credential revocation after completion. Runtime tables and generic
+operation receipts are checked for absence of inbound/reply words and credentials.
+Six additional captures show the real filed thread in both looks and all widths.
+These revealed and now guard two integration defects: the transcript must fit
+its tile height to keep Send visible, and Work must fold based on the reader
+width after Split takes its list/folders, rather than the whole app width.
+The next tile also omits Split's legacy phone dock clearance: the next shell
+already reserves that space outside its tiles. Narrow next tiles use a bounded scrolling header and a shorter composer so the
+transcript retains at least 100 pixels as well as keeping Send visible.
+The standalone preview keeps its viewport height.
+
+This does not prove an external model process or worker transport. Runtime's
+worker execution remains held pending its own acceptance. It also does not prove
+spawned/imported thread delivery: main still supplies no authoritative Comms
+conversation lookup or runtime call to `Comms.spawn`. The missing spawn metadata,
+creation/report and bound-tool seams are recorded on t-2209. Bridge DMs use their
+own private transcript and are covered by Runtime/Bridges, rather than this app's
+thread store. Private Attention, references and the remaining inventory below
+remain unfinished; this checkpoint alone does not close Comms.
+
 ## Current operations and records
 
 All `comms.*` operations require a socket authenticated as a real page session.
