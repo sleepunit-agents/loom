@@ -1,3 +1,4 @@
+import { bodyPolicyExecutionHeld } from './policy-store.js';
 import type { BridgeBodies } from './bridges.js';
 import { hearJob } from './heartbeat.js';
 import { provenanceStore } from './provenance-store.js';
@@ -57,6 +58,31 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    ||!available({thread:binding.place,agent:p.agent,member:job.member,conversation:binding.id,project:binding.project,seq:1}))return;
   return {job,binding,proof:p};
  };
+ // These private Comms controls never accept a thread, job or conversation id.
+ // Archived/imported execution is evidence, not a fresh body capability.
+ const commsBody=(viewer:Viewer)=>{
+  const b=bound(viewer);
+  if(!b||b.job.service!==b.proof.service||b.binding.venue!=='loom'||b.job.imported||b.job.principalReset||b.job.writtenOff
+   ||b.job.endedAt!==undefined||bodyPolicyExecutionHeld(db,b.job.agent))return;
+  return b;
+ };
+ operations.register(operation({name:'runtime.describeConversation',doors:['http','direct'],input:z.object({}).strict(),
+  output:z.object({brief:z.array(z.string()),readers:z.array(z.string())}),may:v=>!!commsBody(v),
+  run(ctx){const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');
+   return comms!.describe(b.job.agent,b.binding.place);},
+ }));
+ operations.register(operation({name:'runtime.titleConversation',doors:['http','direct'],write:true,
+  input:z.object({title:z.string().min(1).max(60).refine(s=>!!s.trim()&&!/[\r\n]/.test(s))}).strict(),
+  output:z.object({updated:z.literal(true)}),may:v=>!!commsBody(v),
+  run(ctx,i){const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');
+   comms!.title(b.job.agent,b.binding.place,i.title);return {updated:true as const};},
+ }));
+ operations.register(operation({name:'runtime.conversationActivity',doors:['http','direct'],write:true,
+  input:z.object({at:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),tokens:z.number().int().min(0).max(1e12).optional()}).strict(),
+  output:z.object({updated:z.literal(true)}),may:v=>!!commsBody(v),
+  run(ctx,i){const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');
+   comms!.activity(b.job.agent,b.binding.place,i);hearJob(db,b.job.id,ctx.now);return {updated:true as const};},
+ }));
  const refile=(ctx:Context,m:{thread:string;agent:string;member:string;conversation:string;project?:string})=>{
   const binding=store.read('binding',m.conversation);if(!binding)return;
   if(binding.agent!==m.agent||binding.member!==m.member||binding.place!==m.thread)throw new OperationError('conflict','Conversation binding changed');

@@ -889,3 +889,65 @@ it('cannot redirect terminal reconciliation onto another working private thread 
  f.app.live.changed([{type:'runtime.job',id:a}]);expect(working(first)).toBe(true);expect(working(second)).toBe(true);
  await f.restart();expect(working(first)).toBe(true);expect(working(second)).toBe(true);
 });
+
+async function commsBodyFixture(member='jonathan'){
+ const f=await setup(false,member),thread=await f.open(),job=await f.queued();
+ value(await f.post(f.runner,'runtime.claimJob',{job}));
+ const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
+ value(await f.post(f.runner,'runtime.reportJob',{job,state:'running'}));
+ const record=()=>JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record);
+ return {...f,thread,job,body,record};
+}
+it('derives private description, title and monotonic activity from the authenticated body only',async()=>{
+ const f=await commsBodyFixture();
+ const description=value<{brief:string[];readers:string[]}>(await f.post(f.body,'runtime.describeConversation',{}));
+ expect(description.readers).toEqual(['jonathan']);
+ expect(description.brief.join(' ')).toContain(runtimeStore(f.app.db).read('job',f.job)!.conversation);
+ expect(JSON.stringify(description)).not.toContain('PRIVATE inbound');
+ for(const secret of [f.owner,f.runner,f.unbound,f.token(`agent:mark@${f.job}`)]){
+  for(const [name,input] of [['describeConversation',{}],['titleConversation',{title:'Forbidden'}],['conversationActivity',{at:f.clock.now()}]] as const)
+   expect(await f.post(secret,`runtime.${name}`,input)).toMatchObject({ok:false});
+ }
+ for(const [name,input] of [['describeConversation',{thread:f.thread}],['titleConversation',{title:'PRIVATE title',conversation:'forged'}],['conversationActivity',{at:f.clock.now(),job:f.job}]] as const)
+  expect(await f.post(f.body,`runtime.${name}`,input)).toMatchObject({ok:false,code:'invalid'});
+ expect(await f.post(f.body,'runtime.titleConversation',{title:'PRIVATE title'})).toMatchObject({ok:true,value:{updated:true}});
+ expect(f.record()).toMatchObject({title:'PRIVATE title',titledBy:'agent'});
+ expect(await f.post(f.body,'runtime.conversationActivity',{at:f.clock.now(),tokens:25})).toMatchObject({ok:true});
+ expect(f.record()).toMatchObject({aliveAt:f.clock.now(),aliveTokens:25});
+ const working=f.record().workingBeat;
+ f.clock.advance(1);
+ await f.post(f.body,'runtime.conversationActivity',{at:f.clock.now()-1,tokens:99});
+ expect(f.record()).toMatchObject({aliveTokens:25,workingBeat:working});
+ await f.post(f.body,'runtime.conversationActivity',{at:f.clock.now(),tokens:30});
+ expect(f.record()).toMatchObject({aliveAt:f.clock.now(),aliveTokens:30,workingBeat:working});
+ value(await f.socket('comms.change',{thread:f.thread,action:'title',title:'Member title'}));
+ expect(await f.post(f.body,'runtime.titleConversation',{title:'Replace member title'})).toMatchObject({ok:false,code:'conflict'});
+ expect(f.record().title).toBe('Member title');
+ for(const table of ['runtime_inputs','core_operations'])expect(JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain('PRIVATE');
+});
+it.each(['imported','reset','writeoff','ended','binding','project','venue','archived','membership','policy','box','house','credential','terminal'] as const)('refuses bound Comms controls after %s changes',async drift=>{
+ const f=await commsBodyFixture(drift==='membership'?'pollock':'jonathan'),store=runtimeStore(f.app.db);
+ expect(await f.post(f.body,'runtime.describeConversation',{})).toMatchObject({ok:true});
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...job}=store.read('job',f.job)!;
+  if(drift==='imported')store.put('job',{...job,imported:{history:'discard'}},f.clock.now());
+  if(drift==='reset')store.put('job',{...job,principalReset:{approval:'a-reset',by:'jonathan',at:f.clock.now()}},f.clock.now());
+  if(drift==='writeoff')store.put('job',{...job,writtenOff:{approval:'a-writeoff',by:'jonathan',at:f.clock.now()}},f.clock.now());
+  if(drift==='ended')store.put('job',{...job,endedAt:f.clock.now()},f.clock.now());
+  if(drift==='terminal')store.put('job',{...job,state:'done'},f.clock.now());
+  if(['binding','project','venue'].includes(drift)){
+   const {changedAt:__,...binding}=store.read('binding',job.conversation!)!;
+   store.put('binding',{...binding,...(drift==='binding'?{job:'replacement'}:drift==='project'?{project:'pond'}:{venue:'spawn'})},f.clock.now());
+  }
+  if(drift==='archived'){const t=f.record();t.archived=f.clock.now();f.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(t),f.thread);}
+  if(drift==='membership')new HouseholdDatabase(f.app.db).change(f.home,raw=>{(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person==='pollock')!.agents=[];});
+  if(drift==='policy')f.app.db.prepare('INSERT INTO runtime_body_policy (agent,record) VALUES (?,?)').run('art','{}');
+  if(drift==='box'){const {changedAt:__,...box}=store.read('box','a')!;store.put('box',{...box,revokedAt:f.clock.now()},f.clock.now());}
+  if(drift==='house'){const {changedAt:__,...settings}=store.read('settings','art')!;store.put('settings',{...settings,house:{repo:'/changed',houseFile:'house.json'}},f.clock.now());}
+  if(drift==='credential')signin(f.app).tokens.change(ts=>ts.splice(ts.findIndex(t=>t.sha256===hash(f.body)),1));
+ })();
+ const before=f.record();
+ for(const [name,input] of [['describeConversation',{}],['titleConversation',{title:'Forbidden title'}],['conversationActivity',{at:f.clock.now(),tokens:99}]] as const)
+  expect(await f.post(f.body,`runtime.${name}`,input)).toMatchObject({ok:false});
+ expect(f.record()).toEqual(before);
+});
