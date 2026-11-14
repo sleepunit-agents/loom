@@ -1,6 +1,6 @@
 /** Owning Runtime admission for one native Clock input. No worker paths,
  * harness handles or credentials are accepted from a request. */
-import {clockExecutionAssignment,clockExecutionAdmission,clockExecutionCurrent,clockExecutionCompletion} from './clock-protocol.js';
+import {clockExecutionMessage,clockExecutionAssignment,clockExecutionAdmission,clockExecutionCurrent,clockExecutionCompletion} from './clock-protocol.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { operation, OperationError, type Context, type Viewer } from '../../core/index.js';
@@ -11,7 +11,7 @@ export interface ClockExecutionInput {
   assignment:z.infer<typeof clockExecutionAssignment>;
   job:string;
   binding:{agent:string;conversation:string;venue:'wake';place:string};
-  message:{seq:number;id:string;kind:'wake';text:string};
+  message:z.infer<typeof clockExecutionMessage>;
   current(viewer:Viewer):boolean;
   acknowledge(ctx:Context):void;
 }

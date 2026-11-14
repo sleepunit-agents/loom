@@ -1,4 +1,4 @@
-import { supportedClockPrompt } from './clock-input.js';
+import { supportedClockInput } from './clock-input.js';
 import type { ClockBodies } from './clock-delivery.js';
 /** Clock waits for the assigned runner's confirmation, outside any transaction. */
 import type { Foundation } from '../../core/app.js';
@@ -20,11 +20,12 @@ export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'stat
     // startBody path cannot feed an existing conversation; never silently turn a
     // verified join into a second body or forward arbitrary caller places.
     const route=clockRoute(wake,destination);
+    if(wake.file && route.kind==='join') return hold('File input requires a standalone native worker');
     if(!delivery && route.kind==='join') return hold('This wake needs conversation delivery; starting another body is unsafe');
     if(!configuredHouse(store.read('settings',wake.agent))) return hold('An owner must configure the agent house before dispatch');
     // These old runner features require their own trusted inputs; never pretend
     // a path is a prompt or confer approval/continuation authority from text.
-    if(!supportedClockPrompt(wake))
+    if(!supportedClockInput(wake))
       return hold('This wake requires a runtime feature that is not installed');
     if(!delivery)return hold('Clock delivery composition is unavailable');
     const answer=app.operations.call('direct',{kind:'service',id:'clock'},'runtime.acceptClock',

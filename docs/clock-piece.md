@@ -12,7 +12,7 @@ runtime. `loom wake` loads identity and is unrelated to scheduling.
 
 ## Remaining work and evidence
 
-A dedicated worker entry point now owns **one stored-prompt native turn**:
+A dedicated worker entry point now owns **one stored-prompt or standalone checkout-file native turn**:
 `loom-clock-worker` reads an owner-supplied configuration from bounded stdin,
 uses the existing job-bearing body credential, and calls the Runtime operations
 below before invoking `ClaudeWorkerSession`. This is an executable worker
@@ -50,22 +50,35 @@ owner identity inferred from a saved Viewer or archive, and it leaves the generi
 inbox behavior unchanged. Native unknown-principal execution needs the remaining
 compiled policy integration before it can be supported.
 
+Standalone file admission accepts a bounded ASCII relative path with no dot
+components. Runtime copies that exact source identity and sends a `{file}` message
+only through native admission; it never opens the path. The worker resolves it
+in the runner-owned checkout using the existing descriptor-pinned Linux reader
+(no symlinks, regular file at most 20,000 bytes, strict UTF-8, no local marker).
+After resolving the actual words it starts a fresh source authority check before
+spawn. The copied source pins the path, scope, authorship and dispatch attempt.
+Generic conversation reads and ACKs refuse file input; only current native
+completion can acknowledge it. Files cannot join another conversation, and a
+prompt cannot join a file-root conversation. Failed preparation consumes the
+native attempt without ACK; repairing a file never silently retries uncertain
+work. File bytes are not copied into daemon storage. These rules confer no
+local, approval, continuation, model override or imported policy authority.
+
 The native effect is separate from the existing input/read effects; all three
 honor staging. A denied/uncertain native attempt leaves source consumption null.
 Generic prompt consumers still use `runtime.readConversation` and
 `runtime.acknowledgeClockInput`; their brief requires accepting actual words
 before ACK and grants no file execution authority.
 
-This first consumer deliberately supports one stored prompt with no model or
+This consumer supports one stored prompt or standalone checkout file with no model or
 account override on the job, root or selected source (including later joined
-inputs), rechecked throughout execution and no configured/imported central body policy. Standalone
-files, native joining/resume, continuation handles, local/approval/slot execution,
+inputs), rechecked throughout execution and no configured/imported central body policy. Native joining/resume, continuation handles, local/approval/slot execution,
 central compiled policy integration and the full runner lifecycle remain work
 under t-2201. The worker is present as a package entry point but is not installed
 or selected on any host by this PR. In-process tests exercise actual next-mode
 HTTP/Signin/Clock/Runtime and the production worker startup with a fake child at
 the existing spawn seam; they do not claim a real Claude login, host deployment,
-browser proof or end-to-end standalone file delivery.
+browser proof or real-host delivery.
 
 
 The existing `runtime.takeInput` boundary now requires current owning Clock
@@ -76,14 +89,14 @@ body credential. Withdrawal before preparation leaves no input effect; a race
 after effect consumption stays consumed and cannot authorize another start.
 This proof ends when the start payload leaves Runtime. It does not authorize a
 later native launch. The dedicated native protocol above adds a separate owning
-consumer for stored prompts; standalone file delivery remains unfinished.
+consumer for stored prompts and standalone checkout files.
 
 At base `27a1e59`, runtime installs `runtime.startBody` and next mode composes
-Clock with `src/pieces/runtime/clock.ts`. The bridge accepts plain prompt wakes
+Clock with `src/pieces/runtime/clock.ts`. The bridge accepts prompt and standalone file wakes
 only after agent house configuration and waits for runner-confirmed running or
 waiting state. Queue acceptance alone is never reported as started. Missing
-features (lane files, continuations, slots, approvals, local wakes) remain held;
-Standalone file, local, approval, slot and continuation delivery remain held. Private timed prompt delivery is implemented below. Public prompt conversation delivery is implemented below. Native transport
+features (continuations, slots, approvals, local wakes) remain held.
+Local, approval, slot and continuation delivery remain held. Private timed prompt delivery is implemented below. Public prompt conversation delivery is implemented below. Native transport
 interrupt/resume and authenticated continuation resolution remain unfinished.
 
 Runtime now dispatches public prompt work as the Clock service, retaining
