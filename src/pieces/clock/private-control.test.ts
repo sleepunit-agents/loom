@@ -269,3 +269,16 @@ it.each(['disabled','stale-revision'])('does not substitute an agent schedule wi
  f.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(saved),saved.id);
  expect(f.call('in',request)).toMatchObject({ok:true,value:{state:'pending'}});
 });
+
+
+it('binds control-operation replay to current steering without widening the original principal',async()=>{
+ const f=await setup();expect(f.call('scheduleSet',input).ok).toBe(true);
+ const receipt=randomUUID(),request={id:input.id};
+ expect(f.call('scheduleRun',request,body,receipt).ok).toBe(true);
+ const before=wakes(f.app.db).length;
+ f.proof={...f.proof!,principal:{for:'owner',people:['jonathan']}};
+ expect(f.call('scheduleRun',request,body,receipt)).toMatchObject({ok:false,code:'conflict'});
+ expect(wakes(f.app.db)).toHaveLength(before);
+ expect(f.call('scheduleRun',request).ok).toBe(true);
+ expect(wakes(f.app.db).filter(w=>w.runNow).every(w=>w.authorship?.principal.for==='pollock')).toBe(true);
+});

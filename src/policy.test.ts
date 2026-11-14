@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { maySee, mayAct, mayCreate, mayMove, type Viewer, type RecordScope } from './policy.js';
+import { maySee, mayAct, mayCreate, mayMove, mayControlAuthoredWork, mayReuseAuthoredWork, consistentWorkAuthority, type WorkAuthority, type WorkAuthorship, type Viewer, type RecordScope } from './policy.js';
 import { fixtureSharing } from './fixture.js';
 const sharing = fixtureSharing();
 const viewers: Viewer[] = [
@@ -78,4 +78,61 @@ it('allows only an exact runner to report its own nonprivate box, without regist
     expect(mayAct(runner, record, sharing, 'report-box')).toBe(false);
   expect(maySee(runner, own, sharing)).toBe(false);
   expect(mayAct(runner, own, sharing)).toBe(false);
+});
+
+
+describe('authored work authority',()=>{
+  const access=structuredClone(sharing);
+  access.members.other={owner:true,agents:['art']};
+  const record={type:'wake',agent:'art',member:'jonathan',project:'pond'};
+  const original:WorkAuthorship={origin:'art',conversation:'cv-original',member:'jonathan',project:'pond',service:'restricted',principal:{for:'owner',people:['jonathan']}};
+  const current:WorkAuthority={agent:'art',conversation:'cv-original',member:'jonathan',project:'pond',service:'restricted',principal:{for:'owner',people:['jonathan']}};
+  it.each(['jonathan','other'])('never borrows either owner or another token kind for %s private work',member=>{
+    const r={...record,member},o={...original,member},p={...current,member};
+    for(const v of [...viewers,{kind:'member' as const,id:'other'}]){
+      expect(mayControlAuthoredWork(v,r,access,o,p)).toBe(v.kind==='agent'&&v.id==='art');
+      expect(mayReuseAuthoredWork(v,r,access,o,p)).toBe(v.kind==='agent'&&v.id==='art');
+    }
+    expect(maySee({kind:'agent',id:'art'},r,access)).toBe(false);
+    expect(maySee({kind:'member',id:member==='jonathan'?'other':'jonathan'},r,access)).toBe(false);
+  });
+  type Change={record?:Partial<typeof record>;original?:Partial<WorkAuthorship>;current?:Partial<WorkAuthority>};
+  it.each<[string,Change]>([
+    ['current agent',{current:{agent:'mark'}}],
+    ['record agent',{record:{agent:'mark'}}],
+    ['origin',{original:{origin:'mark'}}],
+    ['current member',{current:{member:'other'}}],
+    ['original member',{original:{member:'other'}}],
+    ['current project',{current:{project:'other'}}],
+    ['original project',{original:{project:'other'}}],
+    ['credential service',{current:{service:'other'}}],
+    ['principal',{current:{principal:{for:'pollock',people:['pollock']}}}],
+    ['empty agent',{record:{agent:''}}],
+    ['empty member',{record:{member:''},current:{member:''},original:{member:''}}],
+    ['empty project',{record:{project:''},current:{project:''},original:{project:''}}],
+  ])('refuses substitution with mismatched %s',(_name,c)=>{
+    expect(mayReuseAuthoredWork({kind:'agent',id:'art'},{...record,...c.record},access,{...original,...c.original},{...current,...c.current})).toBe(false);
+  });
+  it('requires current proof and original evidence, and keeps exact for rather than named-owner identity',()=>{
+    const v={kind:'agent' as const,id:'art'};
+    expect(mayControlAuthoredWork(v,record,access,original,undefined)).toBe(false);
+    expect(mayReuseAuthoredWork(v,record,access,undefined,current)).toBe(false);
+    expect(mayControlAuthoredWork(v,{...record,member:undefined},access,{...original,member:undefined},{...current,member:undefined,conversation:''})).toBe(false);
+    expect(mayReuseAuthoredWork(v,record,access,{...original,principal:undefined},current)).toBe(false);
+    expect(mayReuseAuthoredWork(v,record,access,original,{...current,conversation:'cv-other'})).toBe(true);
+    expect(mayReuseAuthoredWork(v,{...record,member:undefined},access,{...original,member:undefined},{...current,member:undefined,principal:{for:'owner',people:['other']}})).toBe(true);
+    const named={for:'pollock',people:['pollock']};
+    expect(mayControlAuthoredWork(v,record,access,{...original,principal:named},{...current,conversation:'cv-other',principal:named})).toBe(false);
+    expect(mayReuseAuthoredWork(v,record,access,{...original,principal:named},{...current,principal:named})).toBe(true);
+    const revoked=structuredClone(access);revoked.members.jonathan.agents=[];
+    expect(mayReuseAuthoredWork(v,record,revoked,original,current)).toBe(false);
+  });
+  it('checks the independent credential witness without inventing authority for unbound callers',()=>{
+    expect(consistentWorkAuthority(current,{service:'restricted'})).toBe(true);
+    expect(consistentWorkAuthority(current,{service:'other'})).toBe(false);
+    expect(consistentWorkAuthority(current,{service:undefined})).toBe(false);
+    expect(consistentWorkAuthority(current,undefined)).toBe(true);
+    expect(consistentWorkAuthority(undefined,{service:'restricted'})).toBe(true);
+    expect(mayControlAuthoredWork({kind:'agent',id:'art'},record,access,original,undefined)).toBe(false);
+  });
 });

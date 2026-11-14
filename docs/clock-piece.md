@@ -430,7 +430,9 @@ future occurrence of its current revision. Owner-authored schedules retain their
 existing owner/assignee and window rules. An agent-authored schedule additionally
 needs fresh owning Runtime proof: the original agent origin, current change
 control (same verified conversation or current owner steering), an exact match
-of the original and current principal `for`, and the same credential service.
+of the original and current principal `for`, and the same credential service. `owner` is the shared steering label for current
+household owners, as in the pinned legacy rule; named people still bind retry
+fingerprints, and independent member scope never crosses between owners.
 Owner steering cannot substitute a person's schedule for owner work, or unknown
 work for a known requester. Matching unknown steering in its original conversation
 is supported, as in the pinned legacy contract. Saved Viewer, API capacity and

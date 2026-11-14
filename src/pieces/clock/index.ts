@@ -13,7 +13,7 @@ import { command, controlCommandInput, localCommandInput, oneOffCommandInput } f
 import { registerBuiltinService } from '../../core/services.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, mayFilePrivateWork, mayControlAuthoredWork, mayReuseAuthoredWork, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
+import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, mayFilePrivateWork, mayControlAuthoredWork, mayReuseAuthoredWork, consistentWorkAuthority, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { wakes, schedules, wake, schedule, saveWake, saveSchedule, rememberPrivateId, event, paused, active, type Wake, type Work, type Schedule } from './store.js';
 import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
@@ -98,7 +98,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   },(id,attempt)=>{const w=wake(db,id);return !closed&&!!w&&w.attempt===attempt&&(!!w.withdrawn||w.state==='cancelled');});
   const provenance = (v:Viewer) => {
     const proof=options.provenance?.(v);
-    if(proof&&options.credentialService&&proof.service!==options.credentialService(v))
+    if(!consistentWorkAuthority(proof,options.credentialService?{service:options.credentialService(v)}:undefined))
       throw new OperationError('denied','Conversation and credential service evidence disagree');
     return proof;
   };

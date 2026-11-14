@@ -69,8 +69,13 @@ export interface WorkAuthority extends Scope {
 export interface WorkAuthorship extends Pick<Scope,'member'|'project'> {
   origin?:string; conversation?:string; service?:string; principal?:WorkPrincipal;
 }
+/** Independent credential metadata must agree with a bound authority witness.
+ * Missing conversation evidence remains unbound, never a principal grant. */
+export function consistentWorkAuthority(current:WorkAuthority|undefined,credential:Pick<WorkAuthority,'service'>|undefined):boolean {
+  return !current||!credential||current.service===credential.service;
+}
 export function mayControlAuthoredWork(v:Viewer,r:RecordScope,s:Sharing,original:WorkAuthorship|undefined,current:WorkAuthority|undefined):boolean {
-  return v.kind==='agent'&&!!current&&current.agent===v.id&&r.agent===v.id&&original?.origin===v.id
+  return v.kind==='agent'&&!!current&&!!current.conversation&&current.agent===v.id&&r.agent===v.id&&original?.origin===v.id
     &&(!!current.conversation&&current.conversation===original.conversation||current.principal.for==='owner')
     &&current.member===r.member&&current.project===r.project
     &&(mayCreate(v,r,s)||mayFilePrivateWork(v,{...r,privateControl:!!current.conversation},s));
