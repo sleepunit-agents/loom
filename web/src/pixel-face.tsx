@@ -240,15 +240,20 @@ function useSheet(sprite: Sprite): { sheet: Sheet | null; failed: boolean } {
   return got;
 }
 
-export default function PixelFace({ sprite, state = 'idle', size, label, fallback, talk, scale: fixed, onShown, onFrom }: { sprite: Sprite; state?: FaceState; size: number; label?: string; fallback: React.ReactNode;
+export default function PixelFace({ sprite, state = 'idle', size, label, fallback, talk, scale: fixed, onShown, onFrom, onReady }: { sprite: Sprite; state?: FaceState; size: number; label?: string; fallback: React.ReactNode;
   /** A reply landed: `n` talking beats; `key` changes for each reply (comms.md, "How talking plays"). */
   talk?: { n: number; key: number };
   /** A whole-number scale of its own (the comm screen's 2x or more), instead of the size's. */
   scale?: number;
   /** The state it shows, as it changes, and the manifest state each frame is drawn from (the comm screen's data-face, data-anim). */
-  onShown?: (st: FaceState) => void; onFrom?: (from: string) => void }) {
+  onShown?: (st: FaceState) => void; onFrom?: (from: string) => void;
+  /** Whether a sheet-backed player is available (otherwise the drawn fallback supplies the run). */
+  onReady?: (ready: boolean) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const { sheet, failed } = useSheet(sprite);
+  const callbacks = useRef({onShown,onFrom,onReady});
+  callbacks.current = {onShown,onFrom,onReady};
+  useEffect(() => { if (failed) callbacks.current.onReady?.(false); }, [failed]);
   const want = useRef(state);
   want.current = state;
   const player = useRef<ReturnType<typeof createPlayer> | null>(null);
@@ -262,7 +267,7 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
     let lastFrom = '';
     const draw = ({ v, frame, flip, from }: Frame) => {
       cv.dataset.anim = from;
-      if (from !== lastFrom) { lastFrom = from; onFrom?.(from); }
+      if (from !== lastFrom) { lastFrom = from; callbacks.current.onFrom?.(from); }
       g.clearRect(0, 0, cv.width, cv.height);
       if (!v) return;
       const img = sheet.imgs[fileOf(v)], [cw, ch] = sheet.m.cell, cols = Math.max(1, Math.floor(img.width / cw));
@@ -273,18 +278,18 @@ export default function PixelFace({ sprite, state = 'idle', size, label, fallbac
       g.drawImage(img, (f % cols) * cw, v.row * ch, cw, ch, Math.round((bw - cw) / 2), Math.round((bh - ch) / 2), cw, ch);
       g.restore();
     };
-    const p = createPlayer(sheet.m, want.current, draw, pageEnv, (st) => onShown?.(st));
+    const p = createPlayer(sheet.m, want.current, draw, pageEnv, (st) => callbacks.current.onShown?.(st));
     player.current = p;
     // Only on screen, in a visible page, with motion allowed.
     let seen = false;
     const go = () => p.live(seen && document.visibilityState === 'visible' && !reducedMotion());
-    const io = new IntersectionObserver(([e]) => { seen = e.isIntersecting; go(); }, { rootMargin: '40px' });
+    const io = new IntersectionObserver(([e]) => { seen = e.isIntersecting; go(); callbacks.current.onReady?.(true); }, { rootMargin: '40px' });
     io.observe(cv);
     document.addEventListener('visibilitychange', go);
     // Reduce motion turned on (or off) while it's showing: it stops on its rest frame (or comes alive) at once.
     const motion = motionQuery();
     motion.addEventListener('change', go);
-    return () => { p.dispose(); io.disconnect(); document.removeEventListener('visibilitychange', go); motion.removeEventListener('change', go); player.current = null; };
+    return () => { p.dispose(); io.disconnect(); document.removeEventListener('visibilitychange', go); motion.removeEventListener('change', go); player.current = null; callbacks.current.onReady?.(false); };
   }, [sheet]);
 
   useEffect(() => { player.current?.want(state); }, [state]);

@@ -212,3 +212,9 @@ The registered inventory is grouped in the old desk's order: Work, People & agen
 | Member name in launcher header | Generic Your account label; no new session or credential handling for a navigation shortcut |
 
 This is presentation/navigation only. No new operations, records, importer, client or data authority is needed; no old data is read and no tiling rule changes. The same five-agent36board evidence scenario checks grouping, aliases and keyboard activation and captures every size/look.
+
+### Counted Comms playback and compact pixels
+
+Retained new replies request one to four PixelFace beats (one per 150 characters, summing a batch). The player supplies TALKING, DONE and the return to the thread's state, including its real gaps and manifest animation source. A drawn or unavailable face uses 1530ms per beat, 800ms between beats and 900ms for DONE. Sprite loading waits for its player; a failed sheet falls back to drawn timing. The 250ms signal begins after a painted frame.
+
+An expired contributing reply, disconnected source, pending ask, error, reduced motion, changed display or portrait destination cancels playback. Initial live snapshots and reconnect history establish a baseline and never replay. The permanently shown selected-agent rail remains the only portal destination. The measured glass selects 1x for compact and 2x for full portraits; CSS never shrinks the sprite canvas. No new data source, backend operation, policy or session behavior is introduced.

@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 
 - New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
-- New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail.
+- New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail; counted pixel talking beats follow through completion, with crisp whole-scale compact portraits.
 - Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
 
 - Check Clock lane reuse against current Runtime destination metadata and deliver public prompts through owning conversations, with service dispatch, authenticated read acknowledgements and staging holds.

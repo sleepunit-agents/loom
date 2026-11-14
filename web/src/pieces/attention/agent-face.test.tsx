@@ -19,3 +19,15 @@ it('uses supplied sprite metadata, follows Pixel faces, and drops unavailable di
  expect(tree!.root.findAllByType('pixel-face')).toHaveLength(0);expect(tree!.root.findAllByType('drawn-face')).toHaveLength(0);
  await act(async()=>{tree!.unmount();});
 });
+
+it('forwards the comm screen player contract without changing drawn faces',async()=>{
+ const onShown=vi.fn(),onFrom=vi.fn(),onReady=vi.fn(),talk={n:3,key:7};
+ const display={id:'art',agent:'art',mark:{bg:'#B8A6FF',fg:'#fff'},face:{shape:'pebble' as const,eyes:'dot' as const},sprite:{facings:['south'],v:'saved',base:'/faces/art/'}};
+ let tree!:ReturnType<typeof create>;
+ await act(async()=>{tree=create(h(PixelContext.Provider,{value:true},h(AgentFace,{display,name:'Art',state:'working',size:96,scale:1,talk,onShown,onFrom,onReady})));});
+ const p=tree.root.findByType('pixel-face').props;
+ expect(p.scale).toBe(1);expect(p.talk).toEqual(talk);
+ p.onShown('complete');p.onFrom('done');p.onReady(true);
+ expect(onShown).toHaveBeenCalledWith('complete');expect(onFrom).toHaveBeenCalledWith('done');expect(onReady).toHaveBeenCalledWith(true);
+ await act(async()=>tree.unmount());
+});

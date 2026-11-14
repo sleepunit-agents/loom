@@ -9,7 +9,7 @@
 .desk-rail-screen{display:grid;place-items:center;min-height:236px}
 /* In a narrow reader the screen stays compact so the conversation and composer retain their room. */
 .next-comm-portrait{float:left;margin:0 12px 6px 0;justify-self:start}
-@container comms-reader (max-width:639px){.next-comm-portrait .next-comm-screen{width:112px}.next-comm-portrait .desk-agent-face{width:96px!important;height:96px!important}.next-comm-portrait .desk-agent-face>*{max-width:96px;max-height:96px}.next-comm-portrait .next-comm-glass{height:96px}.next-comm-portrait .next-comm-screen footer{font-size:8px}}
+@container comms-reader (max-width:639px){.next-comm-portrait .next-comm-screen{width:112px}.next-comm-portrait .next-comm-glass{height:96px}.next-comm-portrait .next-comm-screen footer{font-size:8px}}
 @media(prefers-reduced-motion:reduce){.next-comm-screen[data-signal] .next-comm-scan{background:none}}
 .comms-thread>header:has(.next-comm-portrait){grid-template-columns:auto minmax(0,1fr);align-content:start}
 .comms-thread>header>.next-comm-portrait{grid-column:1;grid-row:1 / span 8;margin:0 4px 0 0}
