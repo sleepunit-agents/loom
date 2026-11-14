@@ -13,7 +13,7 @@ const failed=()=>new Error('Runtime worker start unavailable; reconcile the job 
 // transport is created; this helper never replaces that admission.
 export function runtimeJobTransport(config:WorkerControlConfig,runtime?:WorkerControlRuntime) {
   const base=new URL(config.url),token=config.token;
-  const request=runtime?.request??fetch,deadline=runtime?.deadline??(ms=>AbortSignal.timeout(ms));
+  const request=runtime?.request??fetch,deadline=runtime?.deadline.bind(runtime)??(ms=>AbortSignal.timeout(ms));
   return async(name:'claimJob'|'takeInput'|'reportJob'|'finishJob',input:unknown):Promise<unknown>=>{
     try {
       const response=await request(new URL(`/api/runtime/${name}`,base),{method:'POST',redirect:'error',
