@@ -48,6 +48,14 @@ describe('shared-schema secret requests and grants', () => {
     const f = fixture(); f.service.request(f.input); f.service.answer(f.input.id, 'jonathan', true);
     f.advance(-1); expect(f.service.grantFor('github-token', 'art')).toBeUndefined();
   });
+  it('compares grant times as dates across accepted UTC spellings', () => {
+    const f = fixture(); f.service.request(f.input); f.service.answer(f.input.id, 'jonathan', true);
+    f.db.update(secretGrants).set({ grantedAt: '2026-11-14T12:00:00Z' }).run();
+    expect(f.service.grantFor('github-token', 'art')).toBeDefined();
+    f.db.update(secretGrants).set({ expiresAt: '2026-11-14T12:30:00Z' }).run();
+    f.advance(30 * 60000);
+    expect(f.service.grantFor('github-token', 'art')).toBeUndefined();
+  });
   it('denies without a grant and makes an always-deny standing rule', () => {
     const f = fixture(); f.service.request(f.input);
     expect(f.service.answer(f.input.id, 'jonathan', false, true)).toMatchObject({ state: 'denied', always: true });

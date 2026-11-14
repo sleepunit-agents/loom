@@ -1,7 +1,7 @@
 /** Trusted metadata service. External operations authenticate callers and check
  * Settings ownership before invoking answer/setRule/revoke. No value enters it. */
 import { randomUUID } from 'node:crypto';
-import { and, eq, gt, lte, isNull, or } from 'drizzle-orm';
+import { and, eq, sql, isNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
@@ -95,7 +95,8 @@ export class SecretRequests {
   }
 
   grantFor(secret: string, agent: string, job?: string): typeof secretGrants.$inferSelect | undefined {
-    return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent), gt(secretGrants.expiresAt, this.now()), lte(secretGrants.grantedAt, this.now()), or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
+    const at = this.now();
+    return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent), sql`julianday(${secretGrants.expiresAt}) > julianday(${at})`, sql`julianday(${secretGrants.grantedAt}) <= julianday(${at})`, or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
   }
 
   private read(id: string): Request {
