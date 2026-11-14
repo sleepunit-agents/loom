@@ -1380,7 +1380,11 @@ buffers. A bundle at or below 90 MiB stays at
 contiguous `.part-00`, `.part-01`, …, at most `.part-99`. Parts use independent
 copies, carry no plaintext and rejoin in lexical pathname order. Tests lower the
 part ceiling; callers cannot raise the production ceiling. The total ciphertext
-ceiling remains 897 MiB, matching the path publisher. Calendar stamps share the
+ceiling remains 897 MiB, matching the path publisher. Preparation and verification
+accept only lower test ceilings; regression tests reject one byte over that
+ceiling in both functions and reject attempts to raise the production limit.
+Filesystem, process and network API guards witness zero IO on success and
+refusal paths. Calendar stamps share the
 retention planner's strict validator. Invalid input produces a generic error.
 
 `verifyHouseholdGitPayload` checks exact paths, count, lengths, total size,

@@ -1,8 +1,42 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { prepareHouseholdGitPayload as prepare, verifyHouseholdGitPayload as verify } from './backup-git-parts.js';
 import type { encryptHouseholdBundle } from './backup-bundle.js';
 
 type Bundle = Awaited<ReturnType<typeof encryptHouseholdBundle>>;
+
+const { ioCall, guardModule } = vi.hoisted(() => {
+  const ioCall = vi.fn(() => { throw Error('Unexpected payload IO'); });
+  const guardModule = (original: Record<string, unknown>) => Object.fromEntries(
+    Object.entries(original).map(([key, value]) => [key, typeof value === 'function' ? ioCall : value]));
+  return { ioCall, guardModule };
+});
+vi.mock('node:fs', async original => {
+  const actual = await original<typeof import('node:fs')>();
+  const guarded = { ...guardModule(actual), promises: guardModule(actual.promises) };
+  return { ...guarded, default: guarded };
+});
+vi.mock('node:fs/promises', async original => {
+  const guarded = guardModule(await original<Record<string, unknown>>());
+  return { ...guarded, default: guarded };
+});
+vi.mock('node:child_process', async original => {
+  const guarded = guardModule(await original<Record<string, unknown>>());
+  return { ...guarded, default: guarded };
+});
+vi.mock('node:net', async original => {
+  const guarded = guardModule(await original<Record<string, unknown>>());
+  return { ...guarded, default: guarded };
+});
+vi.mock('node:http', async original => {
+  const guarded = guardModule(await original<Record<string, unknown>>());
+  return { ...guarded, default: guarded };
+});
+vi.mock('node:https', async original => {
+  const guarded = guardModule(await original<Record<string, unknown>>());
+  return { ...guarded, default: guarded };
+});
+
 const stamp = '20261114-0300';
 const header = Buffer.from('age-encryption.org/v1\n');
 const bundle = (size = 83): Bundle => ({ bytes: Buffer.concat([header, Buffer.from(Array.from({ length: size - header.length }, (_, i) => i % 256))]),
@@ -10,6 +44,29 @@ const bundle = (size = 83): Bundle => ({ bytes: Buffer.concat([header, Buffer.fr
 const fail = /^Household backup git payload failed$/;
 
 describe('household encrypted git parts', () => {
+  it('performs no filesystem, process or network IO on success or refusal', () => {
+    ioCall.mockClear();
+    const source = bundle(), payload = prepare(stamp, source, 32);
+    verify(payload, source.bytes);
+    expect(() => prepare('private-target', source, 32)).toThrow(fail);
+    expect(() => prepare(stamp, source, 32, 82)).toThrow(fail);
+    payload.parts[0].bytes[0] ^= 1;
+    expect(() => verify(payload, source.bytes)).toThrow(fail);
+    expect(ioCall).not.toHaveBeenCalled();
+  });
+
+  it('enforces lowered total ciphertext ceilings in both preparation and verification', () => {
+    const source = bundle(83), payload = prepare(stamp, source, 32, 83);
+    expect(() => verify(payload, source.bytes, 83)).not.toThrow();
+    expect(() => prepare(stamp, source, 32, 82)).toThrow(fail);
+    expect(() => verify(payload, source.bytes, 82)).toThrow(fail);
+  });
+
+  it.each([0, -1, 1.5, NaN, Infinity, 897 * 1024 * 1024 + 1])('refuses invalid or raised total ceiling %s', max => {
+    const source = bundle(), payload = prepare(stamp, source, 32);
+    expect(() => prepare(stamp, source, 32, max)).toThrow(fail);
+    expect(() => verify(payload, source.bytes, max)).toThrow(fail);
+  });
   it.each([22, 32, 33, 64, 65, 83])('rejoins all %i bytes in lexical restore order', size => {
     const source = bundle(size), payload = prepare(stamp, source, 32);
     expect(payload.parts.map(p => p.path)).toEqual(size <= 32 ? [`bundles/loom-household-${stamp}.bundle`]
@@ -18,7 +75,7 @@ describe('household encrypted git parts', () => {
     expect(payload.parts.every(p => p.bytes.length <= 32)).toBe(true);
     expect(Buffer.concat(payload.parts.map(p => p.bytes))).toEqual(source.bytes);
     expect(payload.bytes).toBe(size);
-    expect(payload.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(payload.sha256).toBe(createHash('sha256').update(source.bytes).digest('hex'));
     expect(() => verify(payload, source.bytes)).not.toThrow();
   });
 
