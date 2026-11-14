@@ -1490,3 +1490,40 @@ read hold and verify original scope, one completion, admission persistence failu
 failed settlement and loss of authority. This does not activate the source root,
 implement upgrade/rollback enforcement or complete the remaining parity, Settings,
 recovery and final move duties above.
+
+### Service-path accounting audit (source only)
+
+`changes-accounting.test.ts` drives the installed next-mode Changes job through
+`githubSecrets` and the real `secretUseRole`. Only the holder byte source and
+forge request are fixture seams; this is not an encrypted-holder or OS-process
+witness. Repeated staging refreshes acquire no bytes and create no usage.
+Outside staging, one acquisition counts once even when its forge callback
+fails (a successful refresh makes two forge queries with that one acquisition).
+Audit admission failure prevents the source read; audit settlement failure
+prevents the forge callback and leaves the durable attempt `started`, count 0.
+Revocation during acquisition prevents the callback and records `failed`.
+Every case checks all database tables, live change notifications and captured
+console diagnostics for the fixture credential and checks
+that every returned source buffer was erased.
+
+The audited source paths have distinct gates; installing a role alone does not
+make it a staging boundary:
+
+| Path | Gate before credential access | Accounting owner / evidence |
+| --- | --- | --- |
+| Dedicated original Runtime handoff | Runtime staging hold, then ticket `secret-read` effect | `tickets.ts`; supervisor integration and `tickets.test.ts` |
+| Changes forge reads | `startChangesJob` skips credential resolution/read entirely in staging | `secretUseRole`; composed `changes-accounting.test.ts` |
+| Bridges venue inspection/replies | `next.ts` inspection effect and adapter checks; reply effect in `engine.ts` | `secretUseRole`; role usage tests and bridge adapter/transport tests |
+| Bridges Slack/Discord connection | Per-lifetime effect before `withValue`, checked again after acquisition | `secretUseRole`; role usage tests and bridge daemon/transport tests |
+| Metadata-only holder generation checks | Separate public generation monitor; no credential read | No usage; `bridges/credentials.test.ts` |
+| Synchronous `handSecret` helper | No production caller in the audited source; trusted caller must supply any outside-effect gate | `values.ts`; `usage.test.ts` (not an activated get path) |
+| Holder mutation and receipt reconciliation | `heldSecretMutations`, including receipt lookup | Change history/write journal, not credential-use events; `next-writes.test.ts` |
+
+This table records source ownership and the named evidence, not proof that every
+consumer is composed safely end to end. Bridges still needs an equivalent
+next-mode credential-source/accounting composition audit; its component fixtures
+and the Changes composition do not establish that claim. Original/public/granted
+get parity, remaining Settings request-history presentation, the complete legacy
+command/route/job inventory, final move/leak/import ledger, and enforced upgrade
+and rollback retirement with owner-encrypted holder recovery remain open. No
+activation or installed-home change is part of this audit.
