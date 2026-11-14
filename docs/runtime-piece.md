@@ -1327,3 +1327,16 @@ through restart. Their access denials encounter multiple fences together; the
 bound-body drift matrix separately isolates reset, write-off and policy enforcement.
 This keeps the filing fixture faithful to held imported spawn metadata without
 using it to claim individual-fence enforcement or spawned execution readiness.
+
+### Existing spawned thread classification
+
+Next Comms receives an internal Runtime metadata reader only for `spawn` bindings
+whose referenced job agrees on conversation, agent, original member and project.
+It also requires the unique, nondeleted Comms owner with the same project. The
+reader preserves the independent Runtime transport place; Comms owns its thread
+id. Committed Runtime changes invalidate Comms classification in open windows.
+Imported, terminal and archived records remain classifiable metadata; this reader
+issues no execution or body capability and changes no hold. Missing owners do not
+fall back to the first agent owner or create a thread. Trusted spawn creation with
+original parentage and project scope, ordinary conversation metadata, private spawn
+body access and standalone execution remain required work on t-2209.
