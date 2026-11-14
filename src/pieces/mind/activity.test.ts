@@ -62,8 +62,8 @@ it('checks shared-service UUID conversation ids in episode metadata and text',as
  expect(read(app,'e~art~body',partial)).toMatchObject({code:'not-found'});
 });
 it('extracts task and PR references from shared digest item text',async()=>{
- const a=source(),app=await fixture(a.path,undefined,role([run('refs',{summary:'Checked the hose',asked:['Review t-43'],tasks:['Task t-42 with sleepunit-agents/loom#42']})]));
- expect(read(app,'d~art~refs')).toMatchObject({value:{tasks:[{label:'t-43',href:'/p/tasks-preview/task/t-43'},{label:'t-42',href:'/p/tasks-preview/task/t-42'}],prs:[{label:'loom#42'}]}});
+ const a=source(),app=await fixture(a.path,undefined,role([run('refs',{summary:'Checked the hose',asked:['Review t-43'],tasks:['Task t-42 with sleepunit-agents/loom#42'],references:['Pond: t-44 sleepunit-agents/loom#44']})]));
+ expect(read(app,'d~art~refs')).toMatchObject({value:{tasks:[{label:'t-43',href:'/p/tasks-preview/task/t-43'},{label:'t-42',href:'/p/tasks-preview/task/t-42'},{label:'t-44',href:'/p/tasks-preview/task/t-44'}],prs:[{label:'loom#42'},{label:'loom#44'}]}});
 });
 it('deduplicates moved conversations and covered episodes; readers preserve stories, refs, own needs and card-only steps',async()=>{
  const a=source();a.add('covered',{metadata:JSON.stringify({where:'terminal',conversation:'cv-111111111111'}),created:'2026-11-13T14:00:00Z'});a.add('near-duplicate',{created:'2026-11-13T17:15:00Z'});a.add('independent',{created:'2026-11-13T15:00:00Z',title:'Weekly check: all clear'});

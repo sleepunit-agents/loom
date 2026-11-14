@@ -46,6 +46,7 @@ export function sharedActivityConversations(db: DataDatabase, options: {
       asked: items.filter(i => i.kind === 'ask').map(i => i.text),
       decided: items.filter(i => i.kind === 'decision').map(i => i.text),
       tasks: items.filter(i => i.kind === 'task').map(i => i.text),
+      references: items.map(i => i.text),
       links: href ? [{ label: 'Conversation', href }] : [],
       ...(viewer.kind === 'member' && question?.toKind === 'person' && question.to === viewer.id && question.state === 'waiting' && question.words ? {
         needs: question.words, needsForMember: question.to,

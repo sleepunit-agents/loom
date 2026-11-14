@@ -5,6 +5,8 @@ export interface ActivityConversation {id:string;agent:string;venue:string;place
 export interface ActivityRun {
  kind:'digest'|'conversation';key:string;at:string;expires?:number;conversation:ActivityConversation;
  summary?:string;turns?:number;replies?:number;asked:string[];decided:string[];tasks:string[];
+ /** Text from every digest item kind, for task/PR reference extraction. */
+ references?:string[];
  links:Array<{label:string;href?:string}>;steps?:Array<{label:string;state:string;tool:string}>;
  needs?:string;needsHref?:string;needsForMember?:string;
  more:Array<{id:string;at:string;title:string}>;
