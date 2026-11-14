@@ -74,7 +74,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       await a.setViewportSize({width,height:900});
       await a.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      await a.getByText(/Saved does not mean read/).waitFor();
+      await a.getByText(/Saved does not mean read/).scrollIntoViewIfNeeded();
       expect(await a.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await a.screenshot({path:join(shots,`inbox-answer-acceptance-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }

@@ -1,7 +1,8 @@
+import {continuePublic} from './public-continuation.js';
 /** Public words stay in Runtime's owning inbox, outside live records/receipts. */
 import {createHash} from 'node:crypto';
 import {z} from 'zod';
-import {operation,OperationError,mayAct,type Context,type Sharing,type Viewer} from '../../core/index.js';
+import {operation,OperationError,mayAct,mayCreate,type Context,type Sharing,type Viewer} from '../../core/index.js';
 import type {Foundation} from '../../core/app.js';
 import type {OutsideEffects} from '../../core/effects.js';
 import {registerConversationAnswers,attentionConversationId,type Ask} from '../attention/role.js';
@@ -18,7 +19,7 @@ const questionShape=(ask:Ask)=>{
  return JSON.stringify(question);
 };
 export function installPublicInputs(app:Foundation,sharing:()=>Sharing,effects:OutsideEffects,
- bound:(v:Viewer)=>Job|undefined,current:(job:string)=>Job|undefined){
+ bound:(v:Viewer)=>Job|undefined,current:(job:string,terminal?:boolean)=>Job|undefined,brief:string){
  const {db,operations}=app;
  const destination=(job:Job)=>runtimeDestination(db,job);
  const canonical=(job:Job)=>attentionConversationId(job.agent,'runtime-clock',job.conversation!);
@@ -48,7 +49,7 @@ export function installPublicInputs(app:Foundation,sharing:()=>Sharing,effects:O
   checkTransaction(ctx);
   const q=db.prepare('SELECT * FROM runtime_public_questions WHERE id=?').get(ask.id) as Question|undefined;
   if(!q||q.conversation!==owner.conversation||q.job!==owner.job||q.question!==questionShape(ask))fail('Public question has no owning destination');
-  const job=current(q.job);
+  let job=current(q.job,true);
   if(!job||destination(job)!==q.destination||job.agent!==ask.agent||job.project!==ask.project)fail('Original public answer destination ended');
   if(ctx.viewer.kind!=='member'||ask.answer?.by.kind!=='member'||ask.answer.by.id!==ctx.viewer.id)fail('Public answer sender unavailable');
   const answer=ask.answer!;
@@ -60,11 +61,16 @@ export function installPublicInputs(app:Foundation,sharing:()=>Sharing,effects:O
   else if(answer.kind==='yes'||answer.kind==='no')text=`${answer.kind==='yes'?'Yes':'No'}, to: ${ask.ask}${(answer.kind==='yes'?ask.if_yes:ask.if_no)?`\n${answer.kind==='yes'?ask.if_yes:ask.if_no}`:''}`;
   else fail('Unsupported public answer');
   if(text!.length>40_000)throw new OperationError('invalid','Public answer exceeds 40000 characters');
+  if(job.endedAt!==undefined){
+   if(!mayCreate(ctx.viewer,{type:'runtime.job',agent:job.agent,project:job.project},sharing(),'runtime.queueBody'))fail('Public continuation creation denied');
+   job=continuePublic(ctx,sharing(),job,ask.id,brief);
+  }else if(!current(job.id))fail('Original public answer destination ended');
   const id=`public-answer:${ask.id}`;
   const record={id,kind:'message',text:text!,from:{kind:'person',slug:ctx.viewer.id},agent:job.agent,
-   ...(job.project?{project:job.project}:{}),at:new Date(ctx.now).toISOString(),question:ask.id};
-  db.prepare('INSERT INTO runtime_public_inputs(id,conversation,job,record,destination) VALUES (?,?,?,?,?)').run(id,q.conversation,q.job,JSON.stringify(record),q.destination);
-  provenanceStore(db).note(q.conversation,job.agent,{key:id,sender:{kind:'person',person:ctx.viewer.id},at:ctx.now},Object.entries(sharing().members).filter(([,m])=>m.owner).map(([id])=>id));
+   ...(job.project?{project:job.project}:{}),at:new Date(ctx.now).toISOString(),question:ask.id,
+   ...(job.id!==q.job?{origin:{job:q.job,conversation:q.conversation,question:JSON.parse(q.question)}}:{})};
+  db.prepare('INSERT INTO runtime_public_inputs(id,conversation,job,record,destination) VALUES (?,?,?,?,?)').run(id,job.conversation,job.id,JSON.stringify(record),destination(job));
+  provenanceStore(db).note(job.conversation!,job.agent,{key:id,sender:{kind:'person',person:ctx.viewer.id},at:ctx.now},Object.entries(sharing().members).filter(([,m])=>m.owner).map(([id])=>id));
   ctx.changed('runtime.job',job.id);return true;
  });
  const prepared=new WeakMap<object,{job:string;destination:string;rows:Input[]}>();

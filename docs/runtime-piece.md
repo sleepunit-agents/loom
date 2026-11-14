@@ -1602,9 +1602,9 @@ The importer remains unchanged.
 | Old body operation | New operation | Remaining |
 | --- | --- | --- |
 | public Clock own conversation turn | `runtime.recordTurn` derives current owning route, run and sender; Attention stores metadata | incoming source metadata and Bridges/spawn adapters |
-| public Clock conversation digest | `runtime.writeDigest` maps the Runtime binding to Attention's canonical conversation | terminal-body answer continuation; grading |
+| public Clock conversation digest | `runtime.writeDigest` maps the Runtime binding to Attention's canonical conversation | grading |
 
-### Public answers for an active original Clock body
+### Public Clock answers and terminal continuation
 
 `runtime.writeDigest` captures normalized public question identity and the exact
 asking job, claim, house, binding and scope in Runtime's own tables. Attention's
@@ -1620,7 +1620,7 @@ asking body; sender and timestamp come from the member's authenticated answer.
 Current central give-work policy is checked before enqueueing. Project members
 who can answer the ask may choose Done/dismiss without owning the agent, since
 those acknowledgements enqueue nothing. Text never
-executes an approval, grants access, launches a job or calls another piece.
+executes an approval or grants access. Only the owning answer consumer can create a continuation.
 
 The bound body reads `runtime.readPublicInputs({})` and accepts released inputs
 with `runtime.acknowledgePublicInputs({through:seq})`. Reads require actual
@@ -1630,13 +1630,31 @@ Reads retain pending inputs until acknowledgement; retry receipts contain only
 job/acknowledgement metadata. The new owning records and release effects follow
 Runtime's filtered-export correlation rules, including a job later made private.
 
-This unit supports running/waiting original destinations only. If the asking
-job ends or its original claim/house/route changes, answering fails and the ask
-stays open. Starting a continuation after a terminal body, public incoming
-metadata, bridge/spawn answer consumers and native bound execution remain on
-the Runtime rebuild task. No importer, old store or live home is changed.
+Running/waiting original destinations receive answers in place. For a confirmed
+`done` or `failed` original job, a work-bearing answer atomically creates one
+queued successor and a distinct binding. Done/dismiss still create no work.
+Stopped, lost, uncertain, imported, reset or written-off originals cannot resume.
+The original question, job/claim/house/binding and source stay immutable; Runtime
+stores a successor link rather than retargeting the old conversation. Central
+give-work and job creation policy apply. A changed original destination, withdrawn
+Clock source, revoked box, or held body policy leaves the ask open.
+
+Migration 14 adds `runtime_public_continuations`. At the owning queued-to-starting
+claim, Runtime pins the successor destination once; reads, ACKs and ACK retries
+retain that generation. The runner receives a fresh central body credential only
+through the existing staged `takeInput` path. Answer words remain behind their
+separate staging gate. The successor message carries the saved original question
+and conversation/job identity alongside the actual member words; retained sender
+history is copied without claiming that old queued inputs were newly delivered.
+No native process history is restored here. Chained continuations recheck all
+ancestors and their current original source, with a fail-closed 100-generation
+bound. Privacy taint follows links in both directions for filtered exports.
+
+Public incoming metadata, bridge/spawn answer consumers, native history and native
+bound execution remain on the Runtime rebuild task. No importer, old store or
+live home is changed.
 
 | Legacy public action | New owning path | Remaining |
 | --- | --- | --- |
-| Inbox reply to a public Clock question | Attention answer transaction → Runtime owning inbox → bound body read/ack | continuation after terminal job; bridge/spawn consumers |
+| Inbox reply to a public Clock question | Attention answer transaction → Runtime owning inbox → bound body read/ack | bridge/spawn consumers |
 | public answer staging hold | central body-start effect at the words boundary | native external bound execution |
