@@ -91,3 +91,46 @@ it('keeps recent action outcomes and agent mailbox reads addressed to the authen
   const agentReads = new InboxQueries(f.db, f.key, () => sql`true`);
   expect(agentReads.list({ kind: 'agent', id: 'art' }).map(i => i.id)).toEqual([agentMail.id]);
 });
+it('applies the current household keep duration and earlier stored deadline independently', async () => {
+  for (const expiry of ['household', 'deadline'] as const) {
+    const f = await fixture();
+    if (expiry === 'household') {
+      f.db.insert(household).values({ commsDays: 1 }).run();
+      f.time('2026-11-15T18:00:00.000Z');
+    } else f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00.000Z' }).run();
+    expect(await f.service.body(alice, f.ask.inboxItem!), expiry).toBeNull();
+    expect(f.opens()).toBe(0);
+  }
+});
+it('bounds and pages actual results and applies each mailbox filter independently', async () => {
+  const f = await fixture(), cvs = f.comms.threads.conversations;
+  f.db.insert(agents).values({ id: 'mark', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  const first = cvs.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', words: 'Art update', agent: 'art', member: 'alice' });
+  const second = cvs.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', words: 'Mark update', agent: 'mark', member: 'alice' });
+  f.db.update(inbox).set({ state: 'done' }).where(eq(inbox.id, second.id)).run();
+  const all = f.service.list(alice);
+  expect(all).toHaveLength(3);
+  expect(f.service.list(alice, { limit: 1 }).map(i => i.id)).toEqual([all[0].id]);
+  expect(f.service.list(alice, { limit: 1, offset: 1 }).map(i => i.id)).toEqual([all[1].id]);
+  expect(f.service.list(alice, { state: 'done' }).map(i => i.id)).toEqual([second.id]);
+  expect(f.service.list(alice, { state: 'waiting' }).map(i => i.id).sort()).toEqual([first.id, f.ask.inboxItem!].sort());
+  expect(f.service.list(alice, { agent: 'mark' }).map(i => i.id)).toEqual([second.id]);
+  expect(f.service.list(alice, { agent: 'art' }).map(i => i.id).sort()).toEqual([first.id, f.ask.inboxItem!].sort());
+  expect(f.service.list(alice, { source: 'thread' }).map(i => i.id)).toEqual([f.ask.inboxItem]);
+});
+it('caps returned action outcomes and denies nonmembers even when their IDs match a member', async () => {
+  const f = await fixture();
+  f.db.insert(actionResults).values([
+    { id: 'older', member: 'alice', at: '2026-11-14T18:00:00.000Z', ok: true, text: 'Saved', page: '/inbox' },
+    { id: 'newer', member: 'alice', at: '2026-11-14T18:01:00.000Z', ok: false, text: 'Not saved', page: '/inbox' },
+  ]).run();
+  expect(f.service.results(alice, 1).map(r => r.id)).toEqual(['newer']);
+  for (const kind of ['agent', 'service', 'runner'] as const) expect(f.service.results({ kind, id: 'alice' })).toEqual([]);
+});
+it('returns every named public question detail without decrypting', async () => {
+  const f = await fixture();
+  const details = { words: 'Proceed?', why: 'Ready now', ifYes: 'Proceed', ifNo: 'Wait', link: 'https://example.test/question' };
+  const question = f.comms.threads.conversations.send({ toKind: 'person', to: 'alice', source: 'task', fromKind: 'agent', member: 'alice', answers: 'yes-no', ...details });
+  expect(await f.service.body(alice, question.id)).toEqual(details);
+  expect(f.opens()).toBe(0);
+});
