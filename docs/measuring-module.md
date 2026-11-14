@@ -71,5 +71,15 @@ owners and agents reading daily rows through the one query endpoint; wiring
 the wrappers to its actual request, operation and job boundaries. Those
 integration points depend on the concrete model and endpoint work in t-2235.
 
+`src/core/measuring/visibility.ts` supplies the read policy for that endpoint:
+include `timingDays` and `measuringSettings` in its selected tables and merge
+`measuringVisibility(authenticatedViewer)` into its visibility map. Registered
+agents and current household owners can read daily rows; settings are visible
+only to current owners. The predicates check membership in SQL on every read,
+including for a retained generated schema. They snapshot the supplied identity;
+the outside door must still authenticate it and check token/session validity.
+This module creates no endpoint and grants no settings writes. Mounting it in
+the shared endpoint remains integration work for t-2235.
+
 OpenTelemetry references: [JavaScript instrumentation](https://opentelemetry.io/docs/languages/js/instrumentation/)
 and [exporters](https://opentelemetry.io/docs/languages/js/exporters/).
