@@ -52,6 +52,19 @@ exported. Turning off must replace the instance with the off instance; an
 unapproved request must never be allowed to call the internal factory with
 enabled settings.
 
+`measuringSettingsService(db)` reads the shared singleton without creating a
+row for an unconfigured household. `prepare(settings)` returns the setting
+request fields for the shared Approvals service: target `measuring`, operation
+`measuring.settings`, persisted before/after details and their exact displayed
+summary. It makes no changes. Register `service.apply` under that operation in
+Approvals' operation map. Allow then applies the validated change in the same
+database transaction as the answer and audit; stale proposals fail and require
+a fresh card. Pending proposals survive process restart without closures or a
+second payload store. The authenticated outside door restricts Allow to a
+household owner. Reload the Measuring instance only after that transaction
+commits; the handler performs no SDK, timer or outside work. The service is not
+yet mounted in the running program.
+
 Still required by the Measuring page: owner-only settings changes through the
 normal approval mechanism;
 owners and agents reading daily rows through the one query endpoint; wiring
