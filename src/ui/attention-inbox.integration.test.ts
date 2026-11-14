@@ -226,7 +226,8 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await p.getByText('This ask is no longer in view',{exact:true}).waitFor();expect(await p.getByText(sealedWords,{exact:true}).count()).toBe(0);
     clock.advance(14*86400_000);
     await b.getByText('Words no longer kept',{exact:true}).waitFor();expect(await b.getByText(sealedWords,{exact:true}).count()).toBe(0);
-    await b.getByRole('button',{name:'Open private reply',exact:true}).waitFor();
+    await b.getByRole('button',{name:'Open private reply',exact:true}).click();
+    await expect.poll(()=>new URL(b.url()).pathname).toBe(`/p/comms-preview/thread/${privateThread.replace(/^th:/,'')}`);
     await member.close();
   } finally {await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },90_000);

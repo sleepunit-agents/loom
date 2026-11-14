@@ -19,7 +19,7 @@ const words=(n:any):string=>typeof n==='string'?n:(n.children??[]).map(words).jo
 const buttons=(label:string)=>tree.root.findAllByType('button').filter((n:any)=>words(n)===label);
 const click=async(label:string)=>act(async()=>{buttons(label)[0].props.onClick();});
 const publish=async(s:Snapshot<SealedQuestion>)=>act(async()=>{f.snapshot=s;f.listeners.forEach(fn=>fn());});
-const draw=async(a:Ask=ask)=>act(async()=>{tree=create(h(SealedQuestionReader,{ask:a,guard:guard(),go:vi.fn()}));});
+const draw=async(a:Ask=ask,go=vi.fn())=>act(async()=>{tree=create(h(SealedQuestionReader,{ask:a,guard:guard(),go}));});
 function pending(){let resolve!:(r:unknown)=>void;return {result:new Promise(r=>resolve=r),finish:async(r:unknown)=>act(async()=>resolve(r))};}
 beforeEach(()=>{vi.useFakeTimers();f.call.mockReset();f.read.mockReset();f.listeners.clear();f.snapshot={records:[row()],status:'live'};});
 afterEach(async()=>{await act(async()=>tree?.unmount());vi.useRealTimers();});
@@ -59,8 +59,10 @@ it.each([{thread:'th:other'},{seq:99},{changedAt:99},{state:'answered' as const}
 });
 it('shows answered history and wordless receipt navigation after retention',async()=>{
  const answer={kind:'replied',by:{kind:'member',id:'jonathan'},at:2,reply:{thread:'th:one',seq:3}};
- f.snapshot={records:[{...row(),state:'answered',question:null,answer}],status:'live'};await draw({...ask,state:'answered'});
+ const go=vi.fn();f.snapshot={records:[{...row(),state:'answered',question:null,answer:{...answer,reply:{thread:'th:reply',seq:3}}}],status:'live'};await draw({...ask,state:'answered'},go);
  expect(text()).toContain('replied');expect(text()).toContain('Words no longer kept');expect(buttons('Open private reply')).toHaveLength(1);expect(buttons('Check private question')).toHaveLength(0);
+ await click('Open private conversation');expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/one');
+ await click('Open private reply');expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/reply');
 });
 
 it.each([{state:'answered' as const},{changedAt:2},{privateQuestion:{thread:'th:other',seq:2}}])('refuses stale Attention props while the scoped feed has not yet updated: %j',async(fields)=>{
@@ -70,4 +72,12 @@ it.each([{state:'answered' as const},{changedAt:2},{privateQuestion:{thread:'th:
  await act(async()=>tree.update(h(SealedQuestionReader,{ask:{...ask,...fields},guard:g,go})));
  await fresh.finish({ok:true,value:q});expect(f.call.mock.calls.filter((c:unknown[])=>c[0]==='comms.answer')).toHaveLength(0);
  expect(text()).not.toContain('Secret question?');expect(buttons('Open private conversation')).toHaveLength(0);
+});
+
+it.each(['offline','denied','loading','empty'] as const)('withdraws answered history and both navigation controls on %s',async(mode)=>{
+ const answer={kind:'replied',by:{kind:'member',id:'jonathan'},at:2,reply:{thread:'th:one',seq:3}};
+ const q={...row(),state:'answered' as const,answer};f.snapshot={records:[q],status:'live'};await draw({...ask,state:'answered'});
+ expect(text()).toContain('replied');expect(buttons('Open private reply')).toHaveLength(1);
+ await publish({records:mode==='empty'?[]:[q],status:mode==='empty'?'live':mode});
+ expect(text()).not.toContain('replied');expect(text()).not.toContain('jonathan');expect(buttons('Open private conversation')).toHaveLength(0);expect(buttons('Open private reply')).toHaveLength(0);
 });
