@@ -33,6 +33,17 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
     await expect.poll(() => accounts.getByRole('textbox').isEnabled()).toBe(true);
     await accounts.getByRole('textbox').fill('art-bot'); await accounts.getByRole('button').click();
     await expect.poll(() => otherAccounts.getByRole('textbox').inputValue()).toBe('art-bot');
+    const description = a.getByRole('form', { name: 'Save description for art', exact: true });
+    const otherDescription = b.getByRole('form', { name: 'Save description for art', exact: true });
+    await expect.poll(() => description.getByRole('textbox').isEnabled()).toBe(true);
+    await description.getByRole('textbox').fill('Art keeps the household running.'); await description.getByRole('button').click();
+    await expect.poll(() => otherDescription.getByRole('textbox').inputValue()).toBe('Art keeps the household running.');
+    await a.getByRole('form', { name: 'Ask art for a description', exact: true }).getByRole('button').click();
+    await expect.poll(() => b.getByText('A description has been requested.', { exact: false }).count()).toBe(1);
+    const reply = loom.operations.call('direct', { kind: 'agent', id: 'art' }, 'household.describeSelf', { text: 'I help Jonathan keep the household running.' }, 'browser-profile-reply');
+    expect(reply.ok).toBe(true);
+    await expect.poll(() => otherDescription.getByRole('textbox').inputValue()).toBe('I help Jonathan keep the household running.');
+    await expect.poll(() => b.getByText('A description has been requested.', { exact: false }).count()).toBe(0);
     const ownership = a.getByRole('form', { name: 'Save ownership for pollock', exact: true });
     await ownership.getByRole('checkbox', { name: 'mark', exact: true }).check();
     await ownership.getByRole('checkbox', { name: 'I confirm this ownership change', exact: true }).check();
@@ -94,7 +105,7 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
       await expect.poll(() => b.getByRole('form', { name: 'Save accounts for art', exact: true }).getByRole('textbox').inputValue()).toBe('art-bot');
       await expect.poll(() => b.locator('html').getAttribute('data-look')).toBe(look);
       expect(await b.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await b.getByRole('heading', { name: 'Create an agent', exact: true }).scrollIntoViewIfNeeded();
+      await b.getByRole('form', { name: 'Save description for art', exact: true }).scrollIntoViewIfNeeded();
       await b.screenshot({ path: join(shots, `setup-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
     }
     await revokeToken.getByRole('button').click();

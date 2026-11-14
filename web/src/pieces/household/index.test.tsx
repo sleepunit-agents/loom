@@ -3,8 +3,8 @@ import { createElement as h } from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
 import { act, create } from 'react-test-renderer';
 import type { CallState, Result, Snapshot } from '../../data';
-const f = vi.hoisted(() => ({ snapshot: { status: 'live', records: [] } as Snapshot, call: vi.fn() }));
-vi.mock('../../data', () => ({ useRecords: (type: string) => type === 'household.sharing' ? f.snapshot : { status: 'live', records: [] }, call: f.call }));
+const f = vi.hoisted(() => ({ snapshot: { status: 'live', records: [] } as Snapshot, call: vi.fn(), profiles: [] as Array<{ id: string; agent: string; description: string }> }));
+vi.mock('../../data', () => ({ useRecords: (type: string) => type === 'household.sharing' ? f.snapshot : { status: 'live', records: type === 'household.profile' ? f.profiles : [] }, call: f.call }));
 vi.mock('../../kit', () => Object.fromEntries(['AppFrame', 'Button', 'Input', 'Empty', 'Error', 'Loading'].map(name => [name, (props: object) => h(name === 'Button' ? 'button' : name === 'Input' ? 'input' : 'div', props)])));
 import Setup from './index';
 import { mutation } from './model';
@@ -17,7 +17,7 @@ function request() {
   return { handle, finish: async (result: Result) => act(async () => { state = { pending: false, status: 'done', result }; listeners.forEach(fn => fn()); }) };
 }
 beforeEach(async () => {
-  vi.clearAllMocks(); f.snapshot = { status: 'live', records: [{ id: 'household', members: ['jonathan'], membership: [{ person: 'jonathan', role: 'owner', agents: '*' }], agents: ['art'], defaultAgent: 'art', agentAccounts: { art: { github: [] } } }] };
+  vi.clearAllMocks(); f.profiles = [{ id: 'art', agent: 'art', description: 'Imported profile.' }]; f.snapshot = { status: 'live', records: [{ id: 'household', members: ['jonathan'], membership: [{ person: 'jonathan', role: 'owner', agents: '*' }], agents: ['art'], defaultAgent: 'art', agentAccounts: { art: { github: [] } } }] };
   const done = request(); await done.finish({ ok: true, value: {} }); mutation.set(done.handle, 'previous');
 });
 afterEach(async () => { await act(async () => tree?.unmount()); vi.unstubAllGlobals(); });
@@ -64,4 +64,20 @@ it('creates a context through the shared retry handle and shows next-mode config
   expect(tree.root.findByProps({ 'aria-label': 'Harness configuration' }).props.children).toContain('--next');
   await act(async () => tree.unmount()); await act(async () => { tree = create(h(Setup)); });
   expect(tree.root.findByProps({ 'aria-label': 'Harness configuration' }).props.children).toContain('gabe');
+});
+
+it('saves profile text through the common operation and refuses inactive forms and uncertain retries', async () => {
+  const r = request(); f.call.mockReturnValue(r.handle);
+  const Original = FormData;
+  vi.stubGlobal('FormData', class extends Original { constructor() { super(); this.set('text', 'Owner words.'); } });
+  await act(async () => { tree = create(h(Setup)); });
+  const event = { preventDefault: vi.fn(), currentTarget: { querySelectorAll: () => [] } };
+  await act(async () => tree.root.findByProps({ 'aria-label': 'Save description for art' }).props.onSubmit(event));
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('household.setProfile', { agent: 'art', text: 'Owner words.' });
+  await r.finish({ ok: false, code: 'unavailable', message: 'Lost connection' });
+  await act(async () => tree.update(h(Setup, { active: false })));
+  const retry = tree.root.findAllByType('button').find((node: { props: { children?: unknown } }) => node.props.children === 'Retry this change');
+  expect(retry.props.disabled).toBe(true); await act(async () => retry.props.onClick()); expect(r.handle.retry).not.toHaveBeenCalled();
+  await act(async () => tree.root.findByProps({ 'aria-label': 'Save description for art' }).props.onSubmit(event));
+  expect(f.call).toHaveBeenCalledOnce();
 });
