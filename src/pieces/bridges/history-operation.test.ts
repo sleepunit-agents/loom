@@ -1,7 +1,6 @@
 import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { runBridgesClient } from '../../cli/bridges-client.js';
-import { HouseholdDatabase } from '../../core/household/document.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -17,7 +16,7 @@ import { runtimeStore } from '../runtime/store.js';
 const value=<T>(r:Result):T=>{expect(r.ok).toBe(true);return (r as {ok:true;value:T}).value;};
 const cleanups:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{try{for(const f of cleanups.splice(0).reverse())await f();}finally{vi.restoreAllMocks();}});
-async function setup(staging=false,member='jonathan',adapter=true){
+async function setup(staging=false,adapter=true){
  const home=mkdtempSync(join(tmpdir(),'runtime-private-'));fixture(home);cleanups.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();const buffers:Buffer[]=[];
  const source={generation:async()=> '00000000-0000-4000-8000-000000000000',read:vi.fn(async()=>{const b=Buffer.from('HISTORY-CREDENTIAL');buffers.push(b);return b;})};
@@ -31,12 +30,11 @@ async function setup(staging=false,member='jonathan',adapter=true){
   const socket=new EventEmitter() as EventEmitter & {readyState:number;terminate():void};socket.readyState=1;socket.terminate=()=>{socket.readyState=3;socket.emit('close');};return socket as unknown as WebSocket;
  }}:undefined});cleanups.push(()=>app.close());
  const auth=signin(app);app.db.transaction(()=>auth.tokens.replace({v:1,tokens:[]},{}))();let n=0;
- if(member!=='jonathan')app.db.transaction(()=>new HouseholdDatabase(app.db).change(home,raw=>{const m=(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person===member)!;m.agents=['art'];}))();
- const token=(role:string,person?:string)=>{const secret=randomBytes(32).toString('hex');auth.tokens.change(ts=>ts.push({role,...(person?{member:person}:{}),sha256:hash(secret),label:role,created:new Date(clock.now()).toISOString()}));return secret;};
+ const token=(role:string)=>{const secret=randomBytes(32).toString('hex');auth.tokens.change(ts=>ts.push({role,sha256:hash(secret),label:role,created:new Date(clock.now()).toISOString()}));return secret;};
  const owner=token('owner'),runner=token('runner:a'),unbound=token('agent:art');
  app.operations.call('direct',{kind:'member',id:'jonathan'},'signin.setPrincipal',{kind:'runner',id:'a',active:true},'enable');
- app.db.transaction(()=>{const store=runtimeStore(app.db);store.put('settings',{id:'art',agent:'art',boxes:['a'],house:{repo:'/fixture/art',houseFile:'house/house.json'}},clock.now());store.put('box',{id:'a',name:'A',owner:'jonathan',local:true,mayHost:'*',lentTo:member==='jonathan'?[]:['art'],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:clock.now()},clock.now());})();
- const cookie=auth.createSession(hash(member==='jonathan'?owner:token('owner',member)));
+ app.db.transaction(()=>{const store=runtimeStore(app.db);store.put('settings',{id:'art',agent:'art',boxes:['a'],house:{repo:'/fixture/art',houseFile:'house/house.json'}},clock.now());store.put('box',{id:'a',name:'A',owner:'jonathan',local:true,mayHost:'*',lentTo:[],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:clock.now()},clock.now());})();
+ const cookie=auth.createSession(hash(owner));
  let ws=new WebSocket(app.url.replace('http:','ws:')+'/live',{headers:{cookie:`loom_ui=${cookie}`,origin:app.url}});await once(ws,'open');cleanups.push(()=>ws.terminate());
  const socket=(name:string,input:unknown)=>new Promise<Result>(resolve=>{const request=`socket-${++n}`;const receive=(raw:unknown)=>{const message=JSON.parse(String(raw));if(message.kind==='result'&&message.request===request){ws.off('message',receive);resolve(message.result);}};ws.on('message',receive);ws.send(JSON.stringify({kind:'call',name,input,id:request,request}));});
  const post=async(secret:string,name:string,input:unknown)=>{const [piece,op]=name.split('.');const r=await fetch(`${app.url}/api/${piece}/${op}`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({input,id:`http-${++n}`})});return r.json() as Promise<Result>;};
@@ -50,7 +48,7 @@ async function setup(staging=false,member='jonathan',adapter=true){
 }
 const query={venue:'discord',channel:'400',kind:'channel'};
 async function configured(staging=false,adapter=true) {
- const f=await setup(staging,'jonathan',adapter);const thread=await f.open();
+ const f=await setup(staging,adapter);const thread=await f.open();
  if(staging){
   const id=`comms-deliver:${thread}:1`;
   await expect.poll(()=>f.app.db.prepare("SELECT state FROM core_effects WHERE id=?").get(id)).toEqual({state:'due'});
