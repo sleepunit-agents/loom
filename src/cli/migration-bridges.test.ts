@@ -232,3 +232,35 @@ it('requires and independently verifies configured brief resolution through all-
  }finally{db.close();}
  for(const report of [await verifyMigration(snapshot,f.home,plan),await verifyBridgesMigration(snapshot,f.home,plan.importers.bridges.options)])expect(report.status).toBe('different');
 });
+
+it('captures complete Discord and Slack template families and verifies exact private evidence after resume',async()=>{
+ const {default:families}=await import('../pieces/bridges/__fixtures__/template-families.json',{with:{type:'json'}});
+ const f=await fixture(),snapshot=join(f.root,'template-snapshot');
+ writeFileSync(join(f.instance,'shuttle.json'),JSON.stringify({agent:{slug:'art'},discord:{token_file:'never-read'},slack:{secrets_env:'never-open',workspaces:{TWORK:'work'}}}));
+ const paths:string[]=[],templateFamilies=(['discord','slack'] as const).map(platform=>({shuttle:'bridges/0/shuttle.json',platform,briefs:Object.fromEntries(Object.entries(families[platform]).map(([brief,content])=>{
+  const index=paths.length,path=join(f.root,`${brief}.md`);writeFileSync(path,content);paths.push(path);return [brief,`bridges-documents/${index}.md`];
+ }))}));
+ await createSnapshot(f.old,snapshot,undefined,{bridges:[f.instance],'bridges-document':paths});
+ const plan=prepareMigrationPlan(snapshot).plan;
+ plan.importers.bridges.options={...(f.plan.importers.bridges.options as object),templateFamilies,connections:[{agent:'art',platform:'discord',workspace:'789',bot:'100',tokenSecret:'art-discord'},{agent:'art',platform:'slack',workspace:'TWORK',setupIncomplete:true}]};
+ const options=plan.importers.bridges.options;
+ await expect(runMigrationAll(snapshot,f.home,plan,{afterPiece:name=>{if(name==='bridges')throw Error('template interruption');}})).rejects.toThrow('template interruption');
+ expect((await runMigrationAll(snapshot,f.home,plan)).status).toBe('complete');
+ expect((await runMigrationAll(snapshot,f.home,plan)).status).toBe('complete');
+ for(const report of [await verifyMigration(snapshot,f.home,plan),await verifyBridgesMigration(snapshot,f.home,options)])expect(report.status).toBe('verified');
+ const db=new Database(join(f.home,'loom.db'));try{
+  const evidence=JSON.parse((db.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as {value:string}).value);
+  expect(evidence.templateFamilies.map((f:{agent:string;platform:string;briefs:unknown[]})=>[f.agent,f.platform,f.briefs.length])).toEqual([['art','discord',8],['art','slack',11]]);
+  for(const family of evidence.templateFamilies){
+   for(const brief of family.briefs){
+    expect(brief.content).toBe(families[family.platform as 'discord'|'slack'][brief.brief as never]);
+    expect(brief.bytes).toBe(Buffer.byteLength(brief.content));expect(brief.sha256).toMatch(/^[a-f0-9]{64}$/);
+   }
+  }
+  expect(evidence.templateFamilies[0].briefs[0].content).toContain('\uFEFF');
+  expect(evidence.templateFamilies[0].briefs[0].content).toContain('\r\n');
+  evidence.templateFamilies[1].briefs[0].references=[];
+  db.prepare("UPDATE bridges_meta SET value=? WHERE key='legacy-evidence'").run(JSON.stringify(evidence));
+ }finally{db.close();}
+ for(const report of [await verifyMigration(snapshot,f.home,plan),await verifyBridgesMigration(snapshot,f.home,options)])expect(report.status).toBe('different');
+});
