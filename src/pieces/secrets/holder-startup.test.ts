@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdirSync,writeFileSync,existsSync,readFileSync} from 'node:fs';
+import {mkdirSync,writeFileSync,existsSync,readFileSync,symlinkSync} from 'node:fs';
 import {join} from 'node:path';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {Writable} from 'node:stream';
@@ -73,10 +73,13 @@ it.each(['grant','job','token'] as const)('persistent handoff denies original %s
  }
  await expect(f.admission.dispatch()).rejects.toThrow();expect(f.received).toEqual([]);
 });
-it.each(['duplicate','overlap','tls','unknown','listener'] as const)('preflights %s failure without committing holder storage/key history',async kind=>{
+it.each(['duplicate','overlap','dot-alias','parent-alias','symlink-alias','tls','unknown','listener'] as const)('preflights %s failure without committing holder storage/key history',async kind=>{
  const f=await setup();
  if(kind==='duplicate')f.config.handoff.workers.push({...f.config.handoff.workers[0]});
  if(kind==='overlap')f.config.handoff.listen.socket=f.config.mutation.socket;
+ if(kind==='dot-alias')f.config.handoff.workers.push({...f.config.handoff.workers[0],binding:{...f.config.handoff.workers[0].binding,job:randomUUID()},config:{...f.config.handoff.workers[0].config,socket:f.home+'/./input.sock'}});
+ if(kind==='parent-alias'){mkdirSync(join(f.home,'child'),{mode:0o700});f.config.handoff.workers[0].config.socket=f.home+'/child/../input.sock';}
+ if(kind==='symlink-alias'){symlinkSync(f.home,join(f.home,'alias'));f.config.handoff.workers[0].config.socket=join(f.home,'alias','input.sock');}
  if(kind==='tls')f.config.handoff.workers[0].config.key=join(f.home,'missing-key');
  if(kind==='unknown')Object.assign(f.config.handoff,{extra:true});
  if(kind==='listener')writeFileSync(f.config.handoff.listen.socket,'occupied',{mode:0o600});
@@ -148,4 +151,27 @@ it.each(['read','mutation'] as const)('shutdown drains original %s handler befor
  try {await pending;expect(closed).not.toHaveBeenCalled();}
  finally {resume();await closing;}
  expect(closed).toHaveBeenCalledOnce();
+});
+
+it('failed startup drains an original authenticated mutation authority await before closing clients',async()=>{
+ const f=await setup();let entered!:()=>void,fail!:()=>void;
+ const opening=new Promise<void>(r=>{entered=r;}),failure=new Promise<void>(r=>{fail=r;});
+ vi.spyOn(storage,'openHolderStore').mockImplementation(async()=>{entered();await failure;throw Error('synthetic storage failure');});
+ const minted=vi.spyOn(authority,'remoteTicketAuthority');
+ let stopped=false;const starting=f.start().then(()=>{throw Error('unexpected success');},e=>{stopped=true;return e;});
+ await opening;
+ const clientClose=vi.spyOn(minted.mock.results[0].value as ReturnType<typeof authority.remoteTicketAuthority>,'close');
+ let reached!:()=>void,respond!:()=>void;const held=new Promise<void>(r=>{reached=r;});
+ const end=ServerResponse.prototype.end;
+ const reply=vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
+  if(this.req.url==='/v1/authority'){respond=()=>{end.apply(this,args);};reached();return this;}
+  return end.apply(this,args);
+ });
+ const mutation=f.put().catch(e=>e);await held;fail();
+ try {
+  await mutation;await new Promise<void>(r=>setImmediate(r));
+  expect(stopped).toBe(false);expect(clientClose).not.toHaveBeenCalled();
+  expect(existsSync(join(f.config.directory,'holder.db'))).toBe(false);
+ }finally {respond();reply.mockRestore();expect(await starting).toEqual(Error('Persistent secret holder could not start'));}
+ expect(clientClose).toHaveBeenCalledOnce();expect(stopped).toBe(true);
 });

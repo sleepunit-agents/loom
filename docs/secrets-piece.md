@@ -1187,7 +1187,7 @@ listener, pinned by the existing `daemonFingerprint`. Each `handoff.workers`
 entry contains an exact `binding` (agent, job, runner, box, claimedAt, optional
 service), a client TLS `config` for that worker's input socket, and its server
 certificate `fingerprint`. Empty workers deny all handoffs; duplicate bindings,
-unknown fields, overlapping socket selections and invalid TLS material fail
+unknown fields, overlapping or aliased socket selections and invalid TLS material fail
 startup before storage/key history commits.
 
 Startup composes the original remote ticket claim with managed holder routes
