@@ -3,11 +3,8 @@ import { Encrypter, Decrypter, generateX25519Identity, identityToRecipient } fro
 import { constants, closeSync, fstatSync, openSync, readFileSync, writeFileSync, fsyncSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHmac } from 'node:crypto';
-export interface WordsKey {
- seal(words: string): Promise<Buffer>;
- open(blob: Uint8Array): Promise<string>;
- hash(words: string): string;
-}
+import type { WordsKey } from '../../core/conversations/words.js';
+export type { WordsKey } from '../../core/conversations/words.js';
 export function readKey(path: string): string {
  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
  try {
