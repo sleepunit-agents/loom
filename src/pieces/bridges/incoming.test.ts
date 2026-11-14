@@ -62,6 +62,15 @@ describe('shared-schema bridge ingress', () => {
     expect(f.ingress.receive({ ...f.message, id: 'known', user: 'bot-mark', mentions: ['bot-art'] }).state).toBe('delivered');
     expect(f.db.select().from(inbox).get()).toMatchObject({ fromKind: 'agent', fromId: 'mark' });
   });
+  it('holds conflicting recipient assignments for the same bot', () => {
+    const f = fixture();
+    f.db.update(bridgeConnections).set({ botUser: 'bot-art' }).where(eq(bridgeConnections.id, 'peer')).run();
+    const message = { ...f.message, mentions: ['bot-art'] };
+    expect(f.ingress.receive(message)).toMatchObject({ state: 'held', reason: 'Ambiguous connection agent', conversation: null });
+    expect(f.ingress.receive({ ...message, connection: 'peer' })).toMatchObject({ state: 'held', reason: 'Ambiguous connection agent', conversation: null });
+    expect(f.db.select().from(inbox).all()).toHaveLength(0);
+    expect(f.db.select().from(turns).all()).toHaveLength(0);
+  });
   it('holds conflicting bot-to-agent assignments instead of guessing', () => {
     const f = fixture();
     f.db.insert(bridgeConnections).values({ id: 'conflict', platform: 'discord', agent: 'art', workspace: 'w', botUser: 'bot-mark', tokenSecret: 'bot', enabled: true, state: 'connected', stateAt: f.now() }).run();
