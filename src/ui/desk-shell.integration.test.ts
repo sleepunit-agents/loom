@@ -109,6 +109,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await expect.poll(()=>reference.locator('.loom-aghead__desc').getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
     for(const page of [a,b])await page.goto(app.url);
     await a.bringToFront();
+    await expect.poll(()=>a.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
     await a.evaluate(()=>document.fonts.ready);
     await a.getByRole('link',{name:'Open art agent window',exact:true}).click();
     await expect.poll(async()=>({path:new URL(a.url()).pathname,readers:await a.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]});
@@ -402,7 +403,8 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
           if(surface==='agent') {
             await page.bringToFront();
             await page.keyboard.press('Escape');await page.goto(app.url);
-            // A fresh Home can still be loading its web fonts; settle its geometry before pointer activation.
+            // Roster may arrive before Needs you; wait for the band that sets the face's vertical position.
+            await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
             await page.evaluate(()=>document.fonts.ready);
             await page.getByRole('link',{name:'Open art agent window',exact:true}).click();
             await expect.poll(async()=>({path:new URL(page.url()).pathname,readers:await page.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]}).catch(async error=>{console.error('Agent entry failed',look,width,page.url(),await page.locator('.next-notice').textContent());await page.screenshot({path:join(shots,'agent-failure.png')});throw error;});
