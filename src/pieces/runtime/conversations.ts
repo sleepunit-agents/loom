@@ -154,7 +154,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    if(bridges?.bound(viewer))return bridges.read(viewer,i.before);
    const b=commsBody(viewer)!;
    return comms!.reader({agent:b.job.agent,conversation:b.binding.id,valid:()=>commsBody(viewer)?.job.id===b.job.id}).read({thread:b.binding.place,...i});
-  },run(ctx,_i,prepared){const clockJob=clockBodies?.bound(ctx.viewer);if(clockJob){if(!clockBodies!.currentRead(ctx.viewer,prepared))throw new OperationError('denied','Clock delivery authority ended');hearJob(db,clockJob.id,ctx.now);return prepared;}const job=bridges?.bound(ctx.viewer);if(job){hearJob(db,job.id,ctx.now);return prepared;}const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
+  },run(ctx,_i,prepared){const clockJob=clockBodies?.bound(ctx.viewer);if(clockBodies?.preparedRead(prepared)||clockJob){if(!clockJob||!clockBodies!.currentRead(ctx.viewer,prepared))throw new OperationError('denied','Clock delivery authority ended');hearJob(db,clockJob.id,ctx.now);return prepared;}const job=bridges?.bound(ctx.viewer);if(job){hearJob(db,job.id,ctx.now);return prepared;}const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
  }));
  // Each transcript owns durable reply deduplication. This read-style async operation
  // returns only a sequence acknowledgement, never stores words or credentials.

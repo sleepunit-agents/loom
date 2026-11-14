@@ -10,6 +10,7 @@ import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
 import { fixture, fixtureSharing } from '../../fixture.js';
 import { signin, hash } from '../../core/signin/index.js';
 import { runtimeStore } from './store.js';
+import { jobHeard } from './heartbeat.js';
 import { wake, wakes } from '../clock/store.js';
 import { START_CONFIRM_MS, clockRuntime } from './clock.js';
 import type { Wake } from '../clock/store.js';
@@ -616,4 +617,91 @@ it.each([false,true].flatMap(staging=>['once','recurring','runNow'].map(mode=>({
   expect(third).toMatchObject({ok:true});
   expect(wakes(f.app.db).find(w=>w.prompt==='After owner demotion')).toMatchObject({member:'jonathan',authorship:{principal:{for:'jonathan',people:['jonathan']}}});
  }
+});
+
+it.each(['place','claim','runner','box','house'] as const)('pins the original Clock %s across asynchronous read preparation',async changed=>{
+ const f=await setup(),id=await f.schedule(),job=f.store.ids('job')[0];
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const payload=await f.post(f.runner,'takeInput',{job});
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+ const viewer=signin(f.app).token(hash(payload.value.credential))!.viewer;
+ const before=f.store.read('job',job)!,binding=f.store.read('binding',before.conversation!)!;
+ const pending=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...j}=before;
+  if(changed==='place'){
+   const {changedAt:__,...b}=binding;f.store.put('binding',{...b,place:'lane:replacement'},f.clock.now());
+  }else if(changed==='claim')f.store.put('job',{...j,claimedAt:before.claimedAt!+1},f.clock.now());
+  else if(changed==='runner')f.store.put('job',{...j,runner:'b'},f.clock.now());
+  else if(changed==='box')f.store.put('job',{...j,box:'b'},f.clock.now());
+  else {
+   const settings=f.store.read('settings','art')!;
+   const {changedAt:__,...s}=settings;
+   const house={repo:'/fixture/replacement',houseFile:'house/house.json'};
+   f.store.put('settings',{...s,house},f.clock.now());
+   f.store.put('job',{...j,made:house},f.clock.now());
+  }
+ })();
+ expect(await pending).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${id}`)).toEqual({consumed:null});
+ // A new read can independently authorize the replacement; the stale prepared
+ // words never acquire authority from it. Ordinary progress is not a rebind.
+ expect(await f.post(payload.value.credential,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'PRIVATE wake words'}]}});
+});
+
+it('allows Clock progress and heartbeat metadata to change during read preparation',async()=>{
+ const f=await setup();await f.schedule();const job=f.store.ids('job')[0];
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const payload=await f.post(f.runner,'takeInput',{job});
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+ const viewer=signin(f.app).token(hash(payload.value.credential))!.viewer;
+ const changedAt=f.store.read('job',job)!.changedAt,heardAt=jobHeard(f.app.db,job)!;
+ const pending=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
+ f.clock.advance(1);
+ expect(f.call('runtime.reportJob',{job,state:'waiting'},{kind:'runner',id:'a'})).toMatchObject({ok:true});
+ expect(f.store.read('job',job)!.changedAt).toBeGreaterThan(changedAt);
+ expect(jobHeard(f.app.db,job)).toBeGreaterThan(heardAt);
+ expect(await pending).toMatchObject({ok:true,value:{messages:[{text:'PRIVATE wake words'}]}});
+});
+
+it('refuses a destination replaced by the outside gate before marking Clock words released',async()=>{
+ const f=await setup(),id=await f.schedule(),job=f.store.ids('job')[0];
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const payload=await f.post(f.runner,'takeInput',{job});
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+ const viewer=signin(f.app).token(hash(payload.value.credential))!.viewer;
+ const original=f.app.effects!.beforeOutside.bind(f.app.effects!);
+ const gate=vi.spyOn(f.app.effects!,'beforeOutside').mockImplementation(action=>{
+  if(action.id.startsWith('runtime:clock-read:'))f.app.db.transaction(()=>{
+   const {changedAt:_,...binding}=f.store.read('binding',payload.value.conversation)!;
+   f.store.put('binding',{...binding,place:'lane:gate-replacement'},f.clock.now());
+  })();
+  return original(action);
+ });
+ try {
+  expect(await f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{})).toMatchObject({ok:false,code:'denied'});
+  expect(gate).toHaveBeenCalled();
+  expect(f.app.db.prepare('SELECT released,consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${id}`)).toEqual({released:null,consumed:null});
+ }finally {gate.mockRestore();}
+});
+
+it.each(['preparation','outside-gate'] as const)('refuses Clock policy revoked during %s',async boundary=>{
+ const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);access.services=builtinServices(f.app.db);
+ const id=await f.schedule(),job=f.store.ids('job')[0];
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const payload=await f.post(f.runner,'takeInput',{job});
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+ const viewer=signin(f.app).token(hash(payload.value.credential))!.viewer;
+ const original=f.app.effects!.beforeOutside.bind(f.app.effects!);
+ const gate=boundary==='outside-gate'?vi.spyOn(f.app.effects!,'beforeOutside').mockImplementation(action=>{
+  if(action.id.startsWith('runtime:clock-read:'))access.members.jonathan.agents=[];
+  return original(action);
+ }):undefined;
+ try {
+  const pending=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
+  if(boundary==='preparation')access.members.jonathan.agents=[];
+  expect(await pending).toMatchObject({ok:false,code:'denied'});
+  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${id}`)).toEqual({consumed:null});
+  if(boundary==='outside-gate')expect(f.app.db.prepare('SELECT released FROM runtime_clock_turns WHERE id=?').get(`clock:${id}`)).toEqual({released:null});
+ }finally {gate?.mockRestore();}
 });
