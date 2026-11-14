@@ -40,7 +40,7 @@ async function setup() {
   const result=app.operations.call('direct',{kind:'member',id:'other'},'tasks.import',{tasks:[record],links:[],actor:'other',at:'2026-11-01T00:00:00Z'},`task-${++seq}`);
   expect(result).toMatchObject({ok:true,value:{result:{ok:true}}});
  };
- return {app,clock,call,thread,conversation,task,sharing};
+ return {app,clock,call,thread,conversation,task,sharing,comms};
 }
 it('returns made-here visible tasks and live status without private words or retry receipts',async()=>{
  const s=await setup();s.task('t-1');s.task('t-2',s.conversation,'hidden');s.task('t-3','cv-000000000000');
@@ -171,4 +171,17 @@ it('deduplicates made-here refs in piece-name order without mixing fields',async
  const result=await s.call('work',{thread:s.thread});expect(result.ok).toBe(true);
  if(result.ok){const items=(result.value as {items:{ref:string;from:string;title:string;url:string}[]}).items;
  expect(items.filter(i=>i.ref==='github:acme/app#3')).toEqual([expect.objectContaining({from:'changes',title:'app#3 A change',url:'/p/changes-preview/change/github%3Aacme%2Fapp%233'})]);}
+});
+
+it('indexes actual open/send/post writes and keeps private pointers out of other viewers',async()=>{
+ const s=await setup();
+ const opened=await s.call('open',{agent:'art',id:'bbbbbbbbbbbbbbbb',text:'PLANTED t-88',about:{ref:'github:acme/app#4',label:'Related change'}});
+ expect(opened.ok).toBe(true);if(!opened.ok)return;const place=(opened.value as {thread:string}).thread;
+ const refs=()=>s.app.db.prepare('SELECT ref FROM comms_refs WHERE thread=? ORDER BY ref').all(place);
+ expect(refs()).toEqual([{ref:'github:acme/app#4'},{ref:'t-88'}]);
+ await s.call('send',{thread:place,id:'cccccccccccccccc',text:'note:pond/plan t-89'});
+ await s.comms.post('art',place,{id:'report',kind:'reply',text:'t-90'});
+ await s.comms.post('art',place,{id:'card',kind:'card',text:'t-91'});
+ expect(refs()).toEqual([{ref:'github:acme/app#4'},{ref:'note:pond/plan'},{ref:'t-88'},{ref:'t-89'},{ref:'t-90'}]);
+ expect(await s.call('work',{thread:place},{kind:'member',id:'other'})).toMatchObject({ok:false,code:'denied'});
 });

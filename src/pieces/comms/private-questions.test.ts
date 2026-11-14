@@ -374,3 +374,10 @@ it('does not mark an imported-format ask even with a comms ref and existing lega
  f.app.db.prepare("UPDATE comms_messages SET words=?,record=? WHERE thread=? AND id=?").run(words,JSON.stringify({encoding:'ask',ref}),f.place,ref);
  const result=await f.call('comms.messages',{thread:f.place});expect(result).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:expect.objectContaining({ask:'Legacy imported words'})})])});if(result.ok)expect((result.value as {sealedQuestion?:boolean}[]).some(m=>m.sealedQuestion)).toBe(false);
 });
+
+it('indexes only the appended boolean answer wording, never the sealed ask itself',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'indexed-boolean',question:{ask:'Proceed with t-656?',if_yes:'Check note:pond/plan',answers:'yes-no'}});
+ expect(f.app.db.prepare('SELECT ref FROM comms_refs WHERE thread=?').all(f.place)).toEqual([]);
+ expect(await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'yes'})).toMatchObject({ok:true});
+ expect(f.app.db.prepare('SELECT ref FROM comms_refs WHERE thread=? ORDER BY ref').all(f.place)).toEqual([{ref:'note:pond/plan'},{ref:'t-656'}]);
+});

@@ -42,3 +42,9 @@ it('keeps refs after retention but deletes with its thread and rolls back with t
  app.db.prepare('UPDATE comms_messages SET words=NULL').run();expect(refsOf(app.db,t.id)).toHaveLength(1);
  app.db.prepare('DELETE FROM comms_threads WHERE id=?').run(t.id);expect(refsOf(app.db,t.id)).toEqual([]);
 });
+
+it('keeps the first occurrence within a message, matching the original each-once grammar',()=>{
+ const {app,t,add}=fixture();add('many',`${Array.from({length:201},(_,n)=>`t-${n+1}`).join(' ')} t-1`);
+ expect(refsOf(app.db,t.id).map(r=>r.ref)).not.toContain('t-1');
+ expect(refsOf(app.db,t.id)[0].ref).toBe('t-201');
+});

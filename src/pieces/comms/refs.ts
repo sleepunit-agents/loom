@@ -21,5 +21,5 @@ export function indexRefs(db:Db,thread:string,seq:number,at:number,refs:readonly
  ON CONFLICT(thread,ref) DO UPDATE SET seq=excluded.seq,pos=excluded.pos,at=excluded.at WHERE excluded.seq>comms_refs.seq`);
  [...new Set(refs)].filter(ref=>ref.length<=200).forEach((ref,pos)=>up.run(thread,ref,seq,pos,at));
  db.prepare(`DELETE FROM comms_refs WHERE thread=? AND ref NOT IN
- (SELECT ref FROM comms_refs WHERE thread=? ORDER BY seq DESC,pos DESC LIMIT 200)`).run(thread,thread);
+ (SELECT ref FROM comms_refs WHERE thread=? ORDER BY seq DESC,pos DESC,ref ASC LIMIT 200)`).run(thread,thread);
 }

@@ -5,7 +5,7 @@ import { join, dirname, basename } from 'node:path';
 import { readFileSync, realpathSync, existsSync } from 'node:fs';
 import { migrate, type Db } from '../../core/index.js';
 import { readKey, wordsKey } from './crypto.js';
-import {indexRefs,refsIn,refsOf} from './refs.js';
+import {indexRefs,refsIn} from './refs.js';
 import { schema } from './schema/001.js';
 import { saveThread, type Thread, type MessageRow } from './store.js';
 type Row=Record<string,unknown>;
@@ -87,16 +87,24 @@ export async function importComms(db:Db,from:string,newHome:string,options:{inte
     ||refsIn(ref.ref.replace(/^github:/,''))[0]!==ref.ref||!Number.isSafeInteger(ref.seq)||Number(ref.seq)<1
     ||!Number.isSafeInteger(ref.pos)||Number(ref.pos)<0||!Number.isFinite(time(ref.at)))throw new Error('Invalid source reference');
   }
+  const expected=new Map<string,{thread:string;ref:string;seq:number;pos:number;at:number}>();
+  const put=(thread:string,ref:string,seq:number,pos:number,at:number,replaceEqual=false)=>{
+   const identity=JSON.stringify([thread,ref]),old=expected.get(identity);
+   if(!old||seq>old.seq||replaceEqual&&seq===old.seq)expected.set(identity,{thread,ref,seq,pos,at});
+  };
+  for(const mention of mentions)mention.refs.forEach((ref,pos)=>put(mention.thread,ref,mention.seq,pos,mention.at));
+  for(const ref of references)put(String(ref.thread),String(ref.ref),Number(ref.seq),Number(ref.pos),time(ref.at),true);
+  const expectedRefs=imported.flatMap(t=>[...expected.values()].filter(r=>r.thread===t.id).sort((a,b)=>b.seq-a.seq||b.pos-a.pos||(a.ref<b.ref?-1:a.ref>b.ref?1:0)).slice(0,200))
+   .sort((a,b)=>a.thread<b.thread?-1:a.thread>b.thread?1:a.ref<b.ref?-1:a.ref>b.ref?1:0);
   // Position must survive even if the old index no longer contains its siblings.
   const upRef=db.prepare(`INSERT INTO comms_refs VALUES (?,?,?,?,?) ON CONFLICT(thread,ref) DO UPDATE SET
    seq=excluded.seq,pos=excluded.pos,at=excluded.at WHERE excluded.seq>=comms_refs.seq`);
   for(const ref of references)upRef.run(ref.thread,ref.ref,ref.seq,ref.pos,time(ref.at));
   for(const t of imported)indexRefs(db,t.id,0,0,[]);
-  const expectedRefs=imported.map(t=>({thread:t.id,refs:refsOf(db,t.id)}));
   for(const step of stepRows)db.prepare('INSERT INTO comms_conversation_steps VALUES (?,?,?,?,?)').run(step.seq,step.conversation,step.at,step.words,step.record);
   for(const d of deleted)db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run(d.id,d.member,d.agent,d.conversation??'',time(d.at));
   options.interrupt?.();
-  if(canonical(imported.map(t=>({thread:t.id,refs:refsOf(db,t.id)})))!==canonical(expectedRefs))throw new Error('Comms reference comparison failed');
+  if(canonical(db.prepare('SELECT thread,ref,seq,pos,at FROM comms_refs ORDER BY thread,ref').all())!==canonical(expectedRefs))throw new Error('Comms reference comparison failed');
   const actualThreads=(db.prepare('SELECT record FROM comms_threads ORDER BY id').all() as {record:string}[]).map(r=>JSON.parse(r.record));
   if(canonical(actualThreads)!==canonical([...imported].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)) || canonical(db.prepare('SELECT * FROM comms_messages ORDER BY thread,seq').all())!==canonical([...rows].sort((a,b)=>(a.thread<b.thread?-1:a.thread>b.thread?1:0)||a.seq-b.seq)))throw new Error('Comms ids, counts or content comparison failed');
   if(canonical(db.prepare('SELECT * FROM comms_conversation_steps ORDER BY seq').all())!==canonical([...stepRows].sort((a,b)=>a.seq-b.seq)))throw new Error('Comms conversation step ids, counts or content comparison failed');

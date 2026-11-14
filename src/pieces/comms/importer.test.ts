@@ -244,3 +244,28 @@ for(const sameKey of [true,false])it(`preserves expired references, rebuilds ret
  hh.prepare("UPDATE comms_refs SET pos=8 WHERE ref='t-10'").run();
  await expect(importComms(app.db,s.from,to)).rejects.toThrow('different');
 });
+
+for(const bad of [
+ ['th:missing','t-1',1,0,'2026-11-12T01:00:00Z'],
+ ['th:old','PLANTED words',1,0,'2026-11-12T01:00:00Z'],
+ ['th:old','t-1',0,0,'2026-11-12T01:00:00Z'],
+ ['th:old','t-1',1.5,0,'2026-11-12T01:00:00Z'],
+ ['th:old','t-1',1,-1,'2026-11-12T01:00:00Z'],
+ ['th:old','t-1',1,0,'invalid'],
+])it(`rejects malformed source ref ${JSON.stringify(bad)} without writes`,async()=>{
+ const s=await source(),to=home();await loadKey(to);const hh=new Database(join(s.from,'household.db'));cleanup.push(()=>hh.close());
+ hh.exec('CREATE TABLE comms_refs(thread,ref,seq,pos,at)');hh.prepare('INSERT INTO comms_refs VALUES (?,?,?,?,?)').run(...bad);
+ const app=createFoundation({home:to});cleanup.push(()=>app.close());
+ await expect(importComms(app.db,s.from,to)).rejects.toThrow('Invalid source reference');
+ expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'comms_%'").all()).toEqual([]);
+});
+it('compares imported refs to an independent expectation even when a trigger mutates inserts',async()=>{
+ const s=await source(),to=home();await loadKey(to);
+ s.db.prepare('UPDATE comms_messages SET text=? WHERE seq=1').run(await s.key.seal('t-1'));
+ const app=createFoundation({home:to});cleanup.push(()=>app.close());
+ const {migrate}=await import('../../core/index.js'),{schema}=await import('./schema/001.js');migrate(app.db,'comms',schema);
+ app.db.exec('CREATE TRIGGER corrupt_refs AFTER INSERT ON comms_refs BEGIN UPDATE comms_refs SET pos=pos+1; END');
+ await expect(importComms(app.db,s.from,to)).rejects.toThrow('reference comparison');
+ expect(app.db.prepare('SELECT * FROM comms_threads').all()).toEqual([]);
+ expect(app.db.prepare('SELECT * FROM comms_refs').all()).toEqual([]);
+});

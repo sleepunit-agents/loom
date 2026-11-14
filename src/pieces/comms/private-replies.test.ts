@@ -36,9 +36,11 @@ async function setup(ref='private-ask'){
 it('seals a private answer and atomically acknowledges only its reference in Attention',async()=>{
  const f=await setup(),batches:Array<Array<{type:string;id:string}>>=[];
  const stop=f.app.live.observe(changes=>batches.push(changes));
- const words='PRIVATE typed answer sentinel';
+ const words='PRIVATE typed answer sentinel t-655';
+
  const answer=value<{thread:string;seq:number}>(await f.call('comms.replyToAsk',{ref:f.ref,text:words},owner,true,'keyed-reply'));stop();
  expect((f.app.db.prepare("SELECT input_hash FROM core_operations WHERE id='keyed-reply'").get() as {input_hash:string}).input_hash).toBe(f.key.hash(`comms-operation\0${JSON.stringify({ref:f.ref,text:words})}`));
+ expect(f.app.db.prepare('SELECT ref FROM comms_refs WHERE thread=?').all(f.t.id)).toEqual([{ref:'t-655'}]);
  expect(answer.thread).toBe(f.t.id);expect(f.messages()).toHaveLength(1);
  expect(f.getAsk()).toMatchObject({state:'answered',answer:{kind:'replied',reply:answer,by:owner}});
  expect(batches.some(batch=>batch.some(c=>c.type==='attention.ask'&&c.id===f.ref)&&batch.some(c=>c.type==='message'&&c.id===`${answer.thread}/${answer.seq}`))).toBe(true);
