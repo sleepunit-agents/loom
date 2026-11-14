@@ -78,6 +78,7 @@
     "drizzle-graphql": "0.8.5",
     "drizzle-orm": "0.45.4",
     "graphql": "16.15.0",
+    "graphql-yoga": "6.1.0",
     "hono": "^4.13.18",
     "markdown-it": "^14.3.3",
     "onnxruntime-node": "1.21.0",

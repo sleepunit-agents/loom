@@ -210,3 +210,20 @@ it('compares already current filing without writes or receipts during access ref
   expect(s.app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
   expect(s.app.db.prepare('SELECT * FROM attention_asks').all()).toEqual(asks);expect(changes).toEqual([]);
 });
+
+
+it('keeps active task question words and read marks behind the task project audience',async()=>{
+  const s=await setup(),id=s.create({project:'pond',agent:'pond-bot'});
+  expect(s.call('attention.markRead',{id:taskAskId(id)},member).ok).toBe(true);
+  const mark=s.app.db.prepare('SELECT id FROM attention_read_marks WHERE ask=?').get(taskAskId(id)) as {id:string};
+  expect(s.ask(id,member).ok).toBe(true);
+  expect(s.call('tasks.update',{id,set:{project:'other'},actor:'art',at:'2026-11-13T00:03:00Z'}).ok).toBe(true);
+  for(const viewer of [member,{kind:'agent' as const,id:'pond-bot'}]) {
+    expect(s.call('tasks.show',{id},viewer)).toMatchObject({ok:false,code:'denied'});
+    expect(s.ask(id,viewer)).toMatchObject({ok:false,code:'denied'});
+    expect(s.types.get('attention.ask')!.read(taskAskId(id),viewer)).toBeUndefined();
+  }
+  expect(s.call('attention.markRead',{id:taskAskId(id)},member)).toMatchObject({ok:false,code:'denied'});
+  expect(s.types.get('attention.readMark')!.read(mark.id,member)).toBeUndefined();
+  expect(s.ask(id)).toMatchObject({ok:true,value:{ask:'Ship the plan?',project:'other',agent:'pond-bot'}});
+});
