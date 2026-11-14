@@ -296,3 +296,31 @@ it('sparse import blocks supplied default and peer routes for enabled channels a
   expect(addressed(venue,{...message,user:'200',bot:true,mentions:['100']},route,[venue,peer])).toBe(false);
  }
 });
+
+it('keeps accepted zero budget evidence and checksum exact across interrupted and repeated import',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789',peer_turns_each:0}],['channels','art',{bot:'100'}]]);
+ const before=readBridgeImport(f.sources,f.options,h,f.open),{db,close}=openDb(join(f.root,'new'));
+ try{
+  expect(()=>importBridges(db,f.sources,f.options,h,f.open,{interrupt:()=>{throw Error('interrupted zero');}})).toThrow('interrupted zero');
+  expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridges_meta'").get()).toBeUndefined();
+  expect(importBridges(db,f.sources,f.options,h,f.open)).toMatchObject({imported:true,checksum:before.checksum});
+  expect(importBridges(db,f.sources,f.options,h,f.open)).toMatchObject({imported:false,checksum:before.checksum});
+  expect((db.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as {value:string}).value).toBe(before.evidence);
+  const source=new Database(f.sources.stores[0].path);
+  try{
+   const raw=(source.prepare("SELECT doc FROM docs WHERE collection='routes'").get() as {doc:string}).doc;
+   expect(raw).toBe('{"guild":"789","peer_turns_each":0}');
+   source.prepare("UPDATE docs SET doc=? WHERE collection='routes'").run('{"guild":"789","peer_turns_each":null}');
+  }finally{source.close();}
+  expect(readBridgeImport(f.sources,f.options,h,f.open).checksum).not.toBe(before.checksum);
+  expect(()=>importBridges(db,f.sources,f.options,h,f.open)).toThrow('different Bridges source');
+ }finally{close();}
+});
+it('refuses invalid accepted-store peer budgets at their original source path',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100'}]]);
+ for(const spelling of ['-1','-0','0.5','9007199254740993','9007199254740991.1','0.0','0e0','"0"','true']){
+  const d=new Database(f.sources.stores[0].path);
+  try{d.prepare("UPDATE docs SET doc=? WHERE collection='routes'").run(`{"guild":"789","peer_turns_each":${spelling}}`);}finally{d.close();}
+  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["routes"]["household"]["peer_turns_each"]');
+ }
+});
