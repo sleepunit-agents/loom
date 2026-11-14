@@ -849,3 +849,23 @@ it.each(['imported','agent','member','conversation','project','venue','archived'
  f.app.live.changed([{type:'runtime.job',id:job}]);expect(record().working).toBe(true);
  await f.restart();expect(record().working).toBe(true);
 });
+
+it('cannot redirect terminal reconciliation onto another working private thread of the same agent and member',async()=>{
+ const f=await setup(),first=await f.open(),a=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job:a});await f.post(f.runner,'runtime.takeInput',{job:a});await f.post(f.runner,'runtime.reportJob',{job:a,state:'running'});
+ const second=value<{thread:string}>(await f.socket('comms.open',{agent:'art',id:'ponmlkjihgfedcba',text:'Separate private conversation'})).thread,b=await f.queued();
+ await f.post(f.runner,'runtime.claimJob',{job:b});await f.post(f.runner,'runtime.takeInput',{job:b});await f.post(f.runner,'runtime.reportJob',{job:b,state:'running'});
+ const working=(thread:string)=>JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record).working;
+ expect(working(first)).toBe(true);expect(working(second)).toBe(true);
+ const store=runtimeStore(f.app.db);
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...job}=store.read('job',a)!;store.put('job',{...job,state:'done',endedAt:f.clock.now()},f.clock.now());
+  // Swap places through a temporary value to preserve the unique place index.
+  const {changedAt:__,...other}=store.read('binding',store.read('job',b)!.conversation!)!;
+  store.put('binding',{...other,place:'temporary-place'},f.clock.now());
+  const {changedAt:___,...binding}=store.read('binding',job.conversation!)!;store.put('binding',{...binding,place:second},f.clock.now());
+  store.put('binding',{...other,place:first},f.clock.now());
+ })();
+ f.app.live.changed([{type:'runtime.job',id:a}]);expect(working(first)).toBe(true);expect(working(second)).toBe(true);
+ await f.restart();expect(working(first)).toBe(true);expect(working(second)).toBe(true);
+});
