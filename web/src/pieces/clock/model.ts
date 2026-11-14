@@ -7,7 +7,7 @@ export interface Wake extends Work {
   canVouch?: boolean; canAskVouch?: boolean; hold?: string; outcome?: string; schedule?: string; failures: number; wait?: { id: string; until: number };
 }
 export interface Schedule extends Work {
-  at: string[]; days: string; enabled: boolean; lane?: string;
+  at: string[]; days: string; enabled: boolean; canRecover?: boolean; lane?: string;
   laneDetails?: { text: string; source?: string; local: boolean };
 }
 export interface Clock extends LiveRecord { paused: boolean }

@@ -24,7 +24,7 @@ reconciled here; they are not a sequence of pending assignments.
 | Schedule/lane authorship, private body controls, six-hour suppression | Current Runtime provenance and central policy; archive/saved Viewer never prove an original | `src/pieces/clock/schedule-authorship.test.ts`, `src/pieces/clock/private-control.test.ts`, `src/pieces/clock/jobs.test.ts` |
 | Local approvals and standing work | Filing, owner decisions, exact recovery and standing rechecks implemented; execution still held | `src/pieces/clock/local-recovery.test.ts`, `src/pieces/clock/local-standing.test.ts` |
 | Imported eligible unknown one-offs | Fresh owner direct vouch or owning Allow records new authorship; normal native checks still apply | `src/pieces/clock/vouch.test.ts`, `src/runtime-runner/clock-worker.test.ts` |
-| Plain disabled imported schedules | Fresh owner complete prompt/timing recovery through operation and client; no archived authority | `src/pieces/clock/import-recovery.test.ts` |
+| Plain disabled imported schedules | Fresh owner complete prompt/timing recovery through operation, client and Clock app; no archived authority | `src/pieces/clock/import-recovery.test.ts` |
 | Other imports | Known-person/owner/private one-offs and remaining disabled schedules still need fresh owning recovery or an explicit deliberate-drop decision; uncertain attempts never replay | `src/pieces/clock/importer.ts`, `src/pieces/clock/vouch.ts` |
 
 The remaining completion obligations are:
@@ -59,11 +59,13 @@ named-person, unresolved-steering, other-origin or capability hints as eligible;
 file/lane schedules are excluded. The supported archive shape contains only
 `at`, `days`, `prompt`, `note`, `for`, `for_why` and `origin`; unknown fields
 refuse eligibility, even when false. Recovery copies no archived words, Viewer,
-principal, conversation or capability. A linked firing or uncertain occurrence
-must be reconciled first; definitely unstarted linked occurrences are cancelled
+principal, conversation or capability. Active linked firing, uncertain or attempted work
+must be reconciled first. Terminal occurrences remain unchanged, including their
+attempt evidence; recovery submits different fresh work and never retries those
+occurrences. Definitely unstarted active linked occurrences are cancelled
 in the same transaction. Unmarked historical imports are refused rather than
 backfilled. Private/person imports, lanes and capability-bearing schedules still
-need their owning recovery. There is no Clock app recovery control yet. Tests in
+need their owning recovery. The Clock app offers eligible current owners a separate blank recovery form, review confirmation and explicit save. Saved prompt, note and timing are never prefilled. Disabled schedules have no ordinary Edit or Run once control; unsupported imports stay disabled. The live availability hint refreshes on linked wake and access changes; the operation independently rechecks current authority and eligibility. Tests in
 `src/pieces/clock/import-recovery.test.ts` cover real fixture import, generated
 command binding, current authority, rollback, receipt replay and dispatch after
 database reopen through a fake Runtime; they do not prove a native process or
