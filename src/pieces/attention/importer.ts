@@ -1,3 +1,4 @@
+import { statement } from '../../core/db/index.js';
 import { attentionMigrations } from './schema/index.js';
 /** Offline only. No operation or daemon path imports this module. */
 import Database from 'better-sqlite3';
@@ -46,20 +47,20 @@ export function importAttention(db: Db, from: string[], scopesInput: ImportScope
   const { expected, checksum, counts } = readAttentionImport(from, scopesInput, options, openSource);
   return db.transaction(() => {
     migrate(db,'attention',attentionMigrations);
-    const marker = db.prepare("SELECT checksum FROM attention_import WHERE id='source'").get() as { checksum: string } | undefined;
+    const marker = statement(db, "SELECT checksum FROM attention_import WHERE id='source'").get() as { checksum: string } | undefined;
     if (marker) { if (marker.checksum !== checksum) throw Error('A different attention source was already imported'); return { ok: true, imported: false, checksum, counts }; }
-    for (const t of [...destinations,'attention_statuses','attention_read_marks','attention_outcomes','attention_outcome_seen']) check(!(db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get()), 'destination must be empty');
+    for (const t of [...destinations,'attention_statuses','attention_read_marks','attention_outcomes','attention_outcome_seen']) check(!(statement(db, `SELECT 1 FROM ${t} LIMIT 1`).get()), 'destination must be empty');
     for (const table of destinations) for (const row of expected[table]) {
       const columns = Object.keys(row);
-      db.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...Object.values(row));
+      statement(db, `INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...Object.values(row));
     }
     options.interrupt?.();
     for (const table of destinations) {
-      const actual = (db.prepare(`SELECT * FROM ${table}`).all() as Row[]).sort((a,b) => String(a.id).localeCompare(String(b.id)));
+      const actual = (statement(db, `SELECT * FROM ${table}`).all() as Row[]).sort((a,b) => String(a.id).localeCompare(String(b.id)));
       const sorted = [...expected[table]].sort((a,b) => String(a.id).localeCompare(String(b.id)));
       check(canonical(actual) === canonical(sorted), `${table} comparison failed: ids, counts or content differ`);
     }
-    db.prepare("INSERT INTO attention_import VALUES ('source',?)").run(checksum);
+    statement(db, "INSERT INTO attention_import VALUES ('source',?)").run(checksum);
     return { ok: true, imported: true, checksum, counts };
   })();
 }

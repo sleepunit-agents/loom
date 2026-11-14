@@ -1,3 +1,4 @@
+import { statement } from '../../core/db/index.js';
 import { operation } from './commands.js';
 /** Metadata retention and checked findings. No legacy store or message text is read. */
 import { createHash, randomUUID } from 'node:crypto';
@@ -39,11 +40,11 @@ export function dueToProgressSeconds(turns: readonly Pick<Turn, 'seq' | 'at' | '
 const scopeOf = (c: Conversation): Scope => ({ agent: c.agent, ...(c.project ? { project: c.project } : {}), ...(c.member ? { member: c.member } : {}) });
 export function installRetention(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
   const read = <T>(table: string, id: string): T | undefined => {
-    const r = db.prepare(`SELECT record FROM ${table} WHERE id=?`).get(id) as { record: string } | undefined;
+    const r = statement(db, `SELECT record FROM ${table} WHERE id=?`).get(id) as { record: string } | undefined;
     return r && JSON.parse(r.record) as T;
   };
   const conversation = (id: string) => read<Conversation>('attention_conversations', id);
-  const rows = <T>(table: string, id: string): T[] => (db.prepare(`SELECT record FROM ${table} WHERE conversation=?`).all(id) as { record: string }[]).map(r => JSON.parse(r.record) as T);
+  const rows = <T>(table: string, id: string): T[] => (statement(db, `SELECT record FROM ${table} WHERE conversation=?`).all(id) as { record: string }[]).map(r => JSON.parse(r.record) as T);
   const canRead = (v: Viewer, id: string, type: string) => { const c = conversation(id); return !!c && maySee(v, { type, ...scopeOf(c) }, sharing()); };
   operations.register(operation({ name: 'attention.fold', write: true, input: z.object({ conversation: key }).strict(), output: z.unknown(),
     may(v, i) { const c = conversation(i.conversation); return !!c && mayAct(v, { type: 'attention.day', ...scopeOf(c) }, sharing(), 'act', 'attention.fold'); },
@@ -53,7 +54,7 @@ export function installRetention(db: Db, operations: Operations, live: Live, sha
       const cutoff = new Date(ctx.now - RETENTION_DAYS * DAY_MS).toISOString();
       let days = 0, turns = 0;
       for (const [day, ts] of groups) {
-        if (ts.some(t => t.at >= cutoff) || db.prepare('SELECT 1 FROM attention_days WHERE conversation=? AND day=?').get(c.id, day)) continue;
+        if (ts.some(t => t.at >= cutoff) || statement(db, 'SELECT 1 FROM attention_days WHERE conversation=? AND day=?').get(c.id, day)) continue;
         const counts: Record<string, number> = {}, outcomes: Record<string, Record<string, number>> = Object.create(null);
         for (const t of ts) {
           counts[t.kind] = (counts[t.kind] ?? 0) + 1;
@@ -61,8 +62,8 @@ export function installRetention(db: Db, operations: Operations, live: Live, sha
         }
         const mid = median(ts.filter(t => t.kind === 'reply' && t.latency_ms !== undefined).map(t => t.latency_ms!));
         const record: Day = { ...scopeOf(c), id: `${c.id}:${day}`, conversation: c.id, day, counts, median_latency_ms: mid === null ? null : Math.round(mid), outcomes };
-        db.prepare('INSERT INTO attention_days VALUES (?,?,?,?)').run(record.id, c.id, day, JSON.stringify(record));
-        for (const t of ts) { db.prepare('DELETE FROM attention_turns WHERE id=?').run(t.id); ctx.changed('attention.turn', t.id); }
+        statement(db, 'INSERT INTO attention_days VALUES (?,?,?,?)').run(record.id, c.id, day, JSON.stringify(record));
+        for (const t of ts) { statement(db, 'DELETE FROM attention_turns WHERE id=?').run(t.id); ctx.changed('attention.turn', t.id); }
         ctx.changed('attention.day', record.id); days++; turns += ts.length;
       }
       return { days, turns };
@@ -72,7 +73,7 @@ export function installRetention(db: Db, operations: Operations, live: Live, sha
     may: v => v.kind !== 'service' || mayAct(v, { type: 'attention.day' }, sharing(), 'act', 'attention.retain'),
     run(ctx) {
       let days = 0, turns = 0;
-      for (const row of db.prepare('SELECT record FROM attention_conversations ORDER BY id').all() as { record: string }[]) {
+      for (const row of statement(db, 'SELECT record FROM attention_conversations ORDER BY id').all() as { record: string }[]) {
         const c = JSON.parse(row.record) as Conversation;
         if (!mayAct(ctx.viewer, { type: 'attention.day', ...scopeOf(c) }, sharing(), 'act', 'attention.fold')) continue;
         const result = operations.call('direct', ctx.viewer, 'attention.fold', { conversation: c.id }, `retention:${randomUUID()}`);
@@ -109,22 +110,22 @@ export function installRetention(db: Db, operations: Operations, live: Live, sha
       // The old review route only accepted the agent's own turns.
       if (!['reply', 'action', 'note'].includes(t.kind)) return failure('conflict', "A finding is on the agent's own turn");
       const day = t.at.slice(0, 10);
-      if (db.prepare('SELECT 1 FROM attention_findings WHERE conversation=? AND day=?').get(i.conversation, day)) return failure('conflict', 'One finding per conversation per UTC day');
+      if (statement(db, 'SELECT 1 FROM attention_findings WHERE conversation=? AND day=?').get(i.conversation, day)) return failure('conflict', 'One finding per conversation per UTC day');
       const record: Finding = { ...scopeOf(conversation(i.conversation)!), ...i, text: i.text.trim(), id: findingId(i.conversation, day), day, at: new Date(ctx.now).toISOString() };
-      db.prepare('INSERT INTO attention_findings VALUES (?,?,?,?)').run(record.id, i.conversation, day, JSON.stringify(record));
+      statement(db, 'INSERT INTO attention_findings VALUES (?,?,?,?)').run(record.id, i.conversation, day, JSON.stringify(record));
       ctx.changed('attention.finding', record.id); return record;
     },
   }));
   operations.register(operation({ name: 'attention.findings', input: z.object({ conversation: key.optional(), agent: z.string().optional(), since: date.optional(), limit: z.number().int().min(1).max(500).default(500) }).strict(), output: z.unknown(),
     may: v => v.kind !== 'service' || mayAct(v, { type: 'attention.finding' }, sharing(), 'act', 'attention.findings'),
     run(ctx, i) {
-      return (db.prepare('SELECT record FROM attention_findings').all() as { record: string }[]).map(r => JSON.parse(r.record) as Finding)
+      return (statement(db, 'SELECT record FROM attention_findings').all() as { record: string }[]).map(r => JSON.parse(r.record) as Finding)
         .filter(f => maySee(ctx.viewer, { type: 'attention.finding', ...f }, sharing()) && (!i.conversation || f.conversation === i.conversation) && (!i.agent || f.agent === i.agent) && (!i.since || f.at > i.since))
         .sort((a, b) => b.at.localeCompare(a.at) || a.id.localeCompare(b.id)).slice(0, i.limit);
     },
   }));
   for (const [name, table] of [['attention.day', 'attention_days'], ['attention.finding', 'attention_findings']] as const) live.register({
-    name, ids: () => (db.prepare(`SELECT id FROM ${table} ORDER BY id`).all() as { id: string }[]).map(r => r.id),
+    name, ids: () => (statement(db, `SELECT id FROM ${table} ORDER BY id`).all() as { id: string }[]).map(r => r.id),
     read(id, viewer) { const r = read<Day | Finding>(table, id); return r && maySee(viewer, { type: name, ...r }, sharing()) ? r as unknown as LiveRecord : undefined; },
     inScope: (r, parent) => parent === undefined || r.conversation === parent,
   });

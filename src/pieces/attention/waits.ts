@@ -1,3 +1,4 @@
+import { statement } from '../../core/db/index.js';
 /** Wait facts come from owning read roles under the operation's original viewer. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -19,7 +20,7 @@ const approvalReasons: Readonly<Record<string, string>> = {
 };
 export function installWaitChecks(db: Db, operations: Operations, sharing: () => Sharing, waits: AttentionWaits) {
   const read = (id: string): Ask | undefined => {
-    const row = db.prepare('SELECT record FROM attention_asks WHERE id=?').get(id) as {record: string} | undefined;
+    const row = statement(db, 'SELECT record FROM attention_asks WHERE id=?').get(id) as {record: string} | undefined;
     return row && JSON.parse(row.record) as Ask;
   };
   operations.register(operation({ name: 'attention.checkWait', write: true,
