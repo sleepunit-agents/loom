@@ -135,16 +135,16 @@ it('run-now adds a newly participating owner without changing the saved schedule
 
 
 it('captures household lane authorship and retains it through edits, reassignment, run-now and restart',async()=>{
- const f=await setup();f.access.members.second={owner:true,agents:['art','other']};f.access.members.jonathan.agents.push('other');
+ const f=await setup();f.access.members.second={owner:true,agents:['art','other']};f.access.members.third={owner:true,agents:['art','other']};f.access.members.jonathan.agents.push('other');
  const lane={name:'night',agent:'art',at:'13:17',text:'LANE_WORDS',note:'LANE_NOTE'};
  const first=f.call('laneSet',lane);expect(first).toMatchObject({ok:true});
  const original={principal:{for:'owner',people:['jonathan']}};
  expect(schedules(f.app.db)[0].authorship).toEqual(original);expect(wakes(f.app.db)[0].authorship).toEqual(original);
  expect((first as {value:object}).value).not.toHaveProperty('authorship');
  expect(f.call('laneSet',{name:lane.name,text:'EDITED_WORDS'},{kind:'member',id:'second'}).ok).toBe(true);
- expect(f.call('laneAssign',{name:lane.name,agent:'other'}).ok).toBe(true);
+ expect(f.call('laneAssign',{name:lane.name,agent:'other'},{kind:'member',id:'third'}).ok).toBe(true);
  const saved=schedules(f.app.db)[0];expect(saved.agent).toBe('other');
- expect(saved.authorship).toEqual({principal:{for:'owner',people:['jonathan','second']}});
+ expect(saved.authorship).toEqual({principal:{for:'owner',people:['jonathan','second','third']}});
  expect(wakes(f.app.db).filter(w=>w.state==='pending')).toHaveLength(1);
  expect(wakes(f.app.db).find(w=>w.state==='pending')).toMatchObject({agent:'other',authorship:saved.authorship});
  const run=f.call('scheduleRun',{id:saved.id});expect(run.ok).toBe(true);expect((run as {value:object}).value).not.toHaveProperty('authorship');
@@ -199,4 +199,19 @@ it('does not promote a retained named lane original and still requires independe
  const before={schedules:schedules(f.app.db),wakes:wakes(f.app.db),events:f.app.db.prepare('SELECT * FROM clock_events').all()};
  expect(f.call('laneAssign',{name:'night',agent:'other'})).toMatchObject({ok:false,code:'denied'});
  expect({schedules:schedules(f.app.db),wakes:wakes(f.app.db),events:f.app.db.prepare('SELECT * FROM clock_events').all()}).toEqual(before);
+});
+
+it('redacts authored lane lists and cached lane mutation results independently of creation capture',async()=>{
+ const f=await setup(),lane={name:'night',agent:'art',at:'13:17',text:'LANE_WORDS'};
+ expect(f.call('laneSet',lane).ok).toBe(true);
+ const stored=schedules(f.app.db)[0];stored.authorship={principal:{for:'owner',people:['PRIVATE_INTERNAL_NAME']}};
+ f.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(stored),stored.id);
+ const listed=f.call('lanes',{});expect(listed).toMatchObject({ok:true,value:[{lane:'night'}]});
+ expect(JSON.stringify(listed)).not.toMatch(/authorship|PRIVATE_INTERNAL_NAME/);
+ for(const [op,data] of [['laneSet',{name:'night',text:'EDITED_WORDS'}],['laneAssign',{name:'night',agent:'art'}]] as const){
+  const receipt=randomUUID(),result=f.call(op,data,owner,receipt);expect(result.ok).toBe(true);
+  expect((result as {value:object}).value).not.toHaveProperty('authorship');
+  expect(f.call(op,data,owner,receipt)).toEqual(result);
+  expect(schedules(f.app.db)[0].authorship?.principal.people).toContain('PRIVATE_INTERNAL_NAME');
+ }
 });
