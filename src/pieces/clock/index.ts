@@ -402,6 +402,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const s: Schedule = { id: laneId(i.name), lane: i.name, agent: agent!, at: calendar(() => timesOf(at!)), days,
       prompt: (details.local ? '<!-- house: local -->\n' : '') + head + body, note: i.note ?? old?.note ?? '', model: i.model ?? old?.model, slot: i.slot ?? old?.slot,
       laneDetails: details, laneVersion: randomUUID(), by: ctx.viewer, enabled: true, changedAt: ctx.now };
+    const caller = filedWork(ctx.viewer, s).authorship!;
+    s.authorship = old ? replacementAuthorship(old.authorship, caller) : caller;
     cancelOccurrences(ctx, s.id);
     // A file-backed lane replaces a self-chained one-off only on its assignee's clock.
     if (details.source) for (const w of wakes(db).filter(w => w.agent === s.agent && w.by.kind === 'agent' && w.by.id === s.agent && !w.schedule && w.file === details.source && w.state === 'pending')) {
@@ -418,7 +420,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('laneRemove', laneInput, true, (v, i) => { const s = schedule(db, laneId(i.name)); return mayAct(v, {}, sharing(), 'household') && (!s || create(v, s)); }, (ctx, i) => {
     const s = getLane(i.name); removeSchedule(ctx, s); return { name: i.name };
   });
-  register('lanes', z.object({}), false, () => true, ctx => schedules(db).filter(s => s.laneDetails && readSee(ctx, s, 'schedule')));
+  register('lanes', z.object({}), false, () => true, ctx => schedules(db).filter(s => s.laneDetails && readSee(ctx, s, 'schedule')).map(publicWork));
   register('laneText', laneInput, false, (v, i) => { const s = schedule(db, laneId(i.name)); return !s || see(v, s, 'schedule'); }, (_ctx, i) => ({ text: getLane(i.name).laneDetails!.text }));
   register('rearm', z.object({}), true, (v) => mayAct(v, {}, sharing(), 'household'), () => ({ rearmed: true }));
   register('deadman', agentInput, true, (v, i) => deadmanAgents.has(i.agent) && v.kind === 'agent' && v.id === i.agent

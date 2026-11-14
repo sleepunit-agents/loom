@@ -1060,7 +1060,7 @@ different person. This is internal metadata: no public operation, record, Live
 feed or export is added. Consumers must preserve scope and still check central
 policy. Ordinary one-off filing now consumes this role and persists original
 evidence as described above. Ordinary schedules now save and narrow principal as described below. Clock
-mutation/join, private body schedule control, household lane authorship and
+mutation/join, private body schedule control and
 agent-authored self-rearm remain unfinished. Local approval
 semantics and actual private delivery are unchanged.
 
@@ -1080,8 +1080,25 @@ conversation only while its principal is unchanged. Occurrences inherit the
 resulting evidence, including across restart.
 
 This unit grants no new private body mutation, schedule-run, join or dispatch
-right. Household lanes still have their separate administration policy; original
-lane authorship and conversation-bound controls follow with the next unit.
+right. Household lanes keep their separate administration policy. Their original
+authorship is now captured as described below; conversation-bound controls remain
+unfinished.
 Authenticated private body `scheduleSet` is deliberately refused until that
 scope-preserving control path lands. Existing member-window schedule work remains
 private; schedule removal cannot turn its cached receipts into token responses.
+
+
+### Household lane authorship
+
+New household lanes capture the actual filing member and current central owner
+principal, using the same internal evidence format as ordinary schedules. Edits
+and reassignment meet the saved original with the current caller and retain all
+named people. Historical lanes without original evidence stay unknown; neither
+saved `by` nor archived principal text can fill that gap. Pending occurrences,
+subsequent recurrences and explicit run-now inherit the resulting evidence,
+including across restart. Lane set/assign results, lane lists and Live omit the
+internal evidence.
+
+Lane administration still requires current household authority and independent
+target-agent creation permission. This persistence unit adds no body mutation,
+join, private schedule control, six-hour eligibility or delivery authority.

@@ -8,20 +8,20 @@ import { afterEach, expect, it } from 'vitest';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, exportDatabase, type Viewer, type Sharing } from '../../core/index.js';
 import type { ClockProvenance } from '../runtime/role.js';
-import { installClock } from './index.js';
+import { installClock, type ClockOptions } from './index.js';
 import { schedules, wakes } from './store.js';
 import { narrowPrincipal, replacementAuthorship, runAuthorship } from './authorship.js';
 const clean: Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const owner:Viewer={kind:'member',id:'jonathan'}, person:Viewer={kind:'member',id:'pollock'}, body:Viewer={kind:'agent',id:'art'};
 const input={id:'daily',agent:'art',at:'13:17',prompt:'SAVED_WORDS',note:'SAVED_NOTE'};
-async function setup(){
+async function setup(options:ClockOptions={}){
  const home=mkdtempSync(join(tmpdir(),'clock-schedule-authorship-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));
  const clock=new FakeClock();
  const access:Sharing={members:{jonathan:{owner:true,agents:['art']},pollock:{owner:false,agents:['art']},other:{owner:false,agents:['art']}},projects:{},services:{}};
  let proof:ClockProvenance|undefined;
  const open=async()=>{
-  const app=await startLoom({home,clock,authenticate:()=>({viewer:owner,valid:()=>true}),install(app){const jobs=installClock(app.db,app.operations,app.live,()=>access,{provenance:v=>v===body?proof:undefined});app.onClose(jobs.close);}});
+  const app=await startLoom({home,clock,authenticate:()=>({viewer:owner,valid:()=>true}),install(app){const jobs=installClock(app.db,app.operations,app.live,()=>access,{...options,provenance:v=>v===body?proof:undefined});app.onClose(jobs.close);}});
   let closed=false;const close=app.close;app.close=async()=>{if(!closed){closed=true;await close();}};clean.push(app.close);return app;
  };
  const app=await open();
@@ -131,4 +131,72 @@ it('run-now adds a newly participating owner without changing the saved schedule
  expect(f.call('scheduleRun',{id:input.id}).ok).toBe(true);
  expect(wakes(f.app.db).find(w=>w.runNow)?.authorship!.principal).toEqual({for:'pollock',people:['jonathan','pollock']});
  expect(schedules(f.app.db)[0]).toEqual(saved);
+});
+
+
+it('captures household lane authorship and retains it through edits, reassignment, run-now and restart',async()=>{
+ const f=await setup();f.access.members.second={owner:true,agents:['art','other']};f.access.members.jonathan.agents.push('other');
+ const lane={name:'night',agent:'art',at:'13:17',text:'LANE_WORDS',note:'LANE_NOTE'};
+ const first=f.call('laneSet',lane);expect(first).toMatchObject({ok:true});
+ const original={principal:{for:'owner',people:['jonathan']}};
+ expect(schedules(f.app.db)[0].authorship).toEqual(original);expect(wakes(f.app.db)[0].authorship).toEqual(original);
+ expect((first as {value:object}).value).not.toHaveProperty('authorship');
+ expect(f.call('laneSet',{name:lane.name,text:'EDITED_WORDS'},{kind:'member',id:'second'}).ok).toBe(true);
+ expect(f.call('laneAssign',{name:lane.name,agent:'other'}).ok).toBe(true);
+ const saved=schedules(f.app.db)[0];expect(saved.agent).toBe('other');
+ expect(saved.authorship).toEqual({principal:{for:'owner',people:['jonathan','second']}});
+ expect(wakes(f.app.db).filter(w=>w.state==='pending')).toHaveLength(1);
+ expect(wakes(f.app.db).find(w=>w.state==='pending')).toMatchObject({agent:'other',authorship:saved.authorship});
+ const run=f.call('scheduleRun',{id:saved.id});expect(run.ok).toBe(true);expect((run as {value:object}).value).not.toHaveProperty('authorship');
+ expect(wakes(f.app.db).find(w=>w.runNow)?.authorship).toEqual(saved.authorship);
+ expect(JSON.stringify(f.call('lanes',{}))).not.toContain('authorship');
+ expect(JSON.stringify(f.call('command',{agent:'other',argv:['lane','list']}))).not.toContain('authorship');
+ await f.app.close();const again=await f.open();expect(schedules(again.db)[0].authorship).toEqual(saved.authorship);
+ expect(wakes(again.db).filter(w=>w.state==='pending').every(w=>JSON.stringify(w.authorship)===JSON.stringify(saved.authorship))).toBe(true);
+});
+it('keeps historical lane steering unknown on edit and reassignment, without relaxing household administration',async()=>{
+ const f=await setup();f.access.members.jonathan.agents.push('other');
+ expect(f.call('laneSet',{name:'night',agent:'art',at:'13:17',text:'LANE_WORDS'}).ok).toBe(true);
+ const lane=schedules(f.app.db)[0];delete lane.authorship;
+ f.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify({...lane,legacy:{for:'owner'},by:owner}),lane.id);
+ expect(f.call('laneSet',{name:'night',text:'EDITED_WORDS'}).ok).toBe(true);
+ expect(f.call('laneAssign',{name:'night',agent:'other'}).ok).toBe(true);
+ expect(schedules(f.app.db)[0].authorship).toEqual({principal:{for:'?',people:['jonathan']}});
+ const before=JSON.stringify(schedules(f.app.db)),events=f.app.db.prepare('SELECT * FROM clock_events').all();
+ f.proof={agent:'art',conversation:'cv-bound',member:'jonathan',principal:{for:'owner',people:['jonathan']}};
+ for(const viewer of [person,body,{kind:'service',id:'clock'} as Viewer]) {
+  expect(f.call('laneSet',{name:'night',text:'FORGED'},viewer).ok).toBe(false);
+  expect(f.call('laneAssign',{name:'night',agent:'art'},viewer).ok).toBe(false);
+  expect(f.call('laneRemove',{name:'night'},viewer).ok).toBe(false);
+ }
+ expect(JSON.stringify(schedules(f.app.db))).toBe(before);expect(f.app.db.prepare('SELECT * FROM clock_events').all()).toEqual(events);
+});
+
+it('retains lane original evidence in the recurrence created by actual dispatch and redacts Live',async()=>{
+ let starts=0;const f=await setup({runtime:{async startBody(){starts++;return {state:'started',body:'lane-body'};}}});
+ expect(f.call('laneSet',{name:'night',agent:'art',at:'13:17',text:'LANE_WORDS'}).ok).toBe(true);
+ const saved=schedules(f.app.db)[0],occurrence=wakes(f.app.db)[0];
+ expect(saved.authorship).toEqual({principal:{for:'owner',people:['jonathan']}});
+ const ws=new WebSocket(f.app.url.replace('http:','ws:')+'/live');await once(ws,'open');
+ try {
+  const frame=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'schedule'}));const [raw]=await frame;
+  const records=JSON.parse(raw.toString()).records;expect(records).toHaveLength(1);
+  expect(records[0].laneDetails.text).toBe('LANE_WORDS');expect(records[0]).not.toHaveProperty('authorship');
+ }finally{ws.close();await once(ws,'close');}
+ f.clock.advance(occurrence.due-f.clock.now());
+ for(let n=0;n<8;n++)await Promise.resolve();
+ expect(starts).toBe(1);expect(wakes(f.app.db).find(w=>w.id===occurrence.id)?.state).toBe('fired');
+ const next=wakes(f.app.db).find(w=>w.id!==occurrence.id)!;expect(next).toMatchObject({state:'pending',schedule:saved.id,authorship:saved.authorship});
+ expect(next.due).toBeGreaterThan(occurrence.due);
+});
+
+it('does not promote a retained named lane original and still requires independent target creation permission',async()=>{
+ const f=await setup();expect(f.call('laneSet',{name:'night',agent:'art',at:'13:17',text:'LANE_WORDS'}).ok).toBe(true);
+ const lane=schedules(f.app.db)[0];lane.authorship={origin:'art',conversation:'cv-original',principal:{for:'pollock',people:['pollock']}};
+ f.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(lane),lane.id);
+ expect(f.call('laneSet',{name:'night',text:'EDITED_WORDS'}).ok).toBe(true);
+ expect(schedules(f.app.db)[0].authorship).toEqual({principal:{for:'pollock',people:['jonathan','pollock']}});
+ const before={schedules:schedules(f.app.db),wakes:wakes(f.app.db),events:f.app.db.prepare('SELECT * FROM clock_events').all()};
+ expect(f.call('laneAssign',{name:'night',agent:'other'})).toMatchObject({ok:false,code:'denied'});
+ expect({schedules:schedules(f.app.db),wakes:wakes(f.app.db),events:f.app.db.prepare('SELECT * FROM clock_events').all()}).toEqual(before);
 });
