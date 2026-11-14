@@ -21,14 +21,35 @@ export function routedHolderAuthority(
   tickets: {claim(id: string): Promise<RemoteTicketClaim | null>},
   configured: readonly HolderWorkerRoute[],
 ): HolderHandoffAuthority {
+  return managedHolderAuthority(tickets, configured).authority;
+}
+
+/** Private owner controller. Replacement validates the entire selection before
+ * retiring the old generation, including equal routes. No discovery or public API. */
+export function managedHolderAuthority(
+  tickets: {claim(id: string): Promise<RemoteTicketClaim | null>},
+  configured: readonly HolderWorkerRoute[],
+) {
+  const snapshot = (configured: readonly HolderWorkerRoute[]) => {
   if (configured.length > 1024) throw failed();
   const routes = new Map<string, HolderWorkerRoute['transport']['deliver']>();
-  for (const route of configured) {
+  for (const route of Array.from(configured)) {
     const key = identity(route.binding);
     if (routes.has(key)) throw failed();
     routes.set(key, route.transport.deliver.bind(route.transport));
   }
-  return async id => {
+  return routes;
+  };
+  let routes = snapshot(configured), generation = 0, closed = false;
+  const retained = new Set<() => Promise<void>>();
+  const retire = async () => {
+    const abandoned = [...retained];
+    retained.clear();
+    await Promise.allSettled(abandoned.map(abandon => abandon()));
+  };
+  const authority: HolderHandoffAuthority = async id => {
+    if (closed) return null;
+    const original = generation;
     const claim = await tickets.claim(id);
     if (!claim) return null;
     let invalid = false, attempted = false, abandoned = false;
@@ -36,26 +57,34 @@ export function routedHolderAuthority(
       invalid = true;
       if (abandoned) return;
       abandoned = true; // Consume before IO, even when settlement loses its ack.
+      retained.delete(abandon);
       await claim.finish(false);
     };
     try {
+      if (closed || original !== generation) throw failed();
       const binding = Object.freeze(secretInputBindingSchema.parse(claim.destination));
       const deliver = routes.get(identity(binding));
       if (!claim.pendingId || !deliver) throw failed();
       const pendingId = claim.pendingId;
+      retained.add(abandon);
+      const live = () => !invalid && !closed && original === generation;
       return Object.freeze({name: claim.name, abandon,
         async current() {
-          if (invalid) return false;
+          if (!live()) return false;
           try { if (await claim.current() !== true) invalid = true; }
           catch { invalid = true; }
-          return !invalid;
+          return live();
         },
         async handTo(bytes: Uint8Array) {
-          if (invalid || attempted) throw failed();
+          if (!live() || attempted) throw failed();
           attempted = true;
           try {
-            if (await claim.current() !== true || invalid) throw failed();
+            if (await claim.current() !== true || !live()) throw failed();
             await deliver(pendingId, binding, bytes);
+            if (!live()) throw failed();
+            // The owning completion protocol now holds settlement. Do not
+            // retain completed deliveries for the lifetime of this controller.
+            retained.delete(abandon);
           } catch {
             try { await abandon(); } catch { /* original settlement already consumed */ }
             throw failed();
@@ -67,4 +96,17 @@ export function routedHolderAuthority(
       return null;
     }
   };
+  return Object.freeze({authority,
+    async replace(configured: readonly HolderWorkerRoute[]) {
+      if (closed) throw failed();
+      const next = snapshot(configured);
+      routes = next; generation++;
+      await retire();
+    },
+    async close() {
+      if (closed) return;
+      closed = true; generation++; routes.clear();
+      await retire();
+    },
+  });
 }

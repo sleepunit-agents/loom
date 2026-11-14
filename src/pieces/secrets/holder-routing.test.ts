@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { routedHolderAuthority } from './holder-routing.js';
+import { routedHolderAuthority, managedHolderAuthority } from './holder-routing.js';
 
 function setup() {
   const binding = {agent:'art',job:randomUUID(),runner:'worker',box:'box',claimedAt:123,service:'voice'};
@@ -55,4 +55,52 @@ it('selects each owning transport when two exact assignments are configured',asy
  const bytes=Buffer.from('synthetic');await first.handTo(bytes);await other.handTo(bytes);
  expect(f.transport.deliver).toHaveBeenCalledExactlyOnceWith(f.claim.pendingId,f.binding,bytes);
  expect(second.transport.deliver).toHaveBeenCalledExactlyOnceWith(second.claim.pendingId,second.binding,bytes);
+});
+
+it('replaces equal routes, burns retained claims once and fences old destinations',async()=>{
+ const f=setup();const c=managedHolderAuthority(f.tickets,f.configured);
+ const old=(await c.authority(randomUUID()))!;
+ await c.replace(f.configured);
+ expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
+ expect(await old.current()).toBe(false);
+ await expect(old.handTo(Buffer.from('synthetic'))).rejects.toThrow();
+ expect(f.transport.deliver).not.toHaveBeenCalled();
+ const fresh=(await c.authority(randomUUID()))!;
+ await fresh.handTo(Buffer.from('synthetic'));
+ expect(f.transport.deliver).toHaveBeenCalledOnce();
+ await c.close();await c.close();
+ expect(await fresh.current()).toBe(false);
+ expect(await c.authority(randomUUID())).toBeNull();
+ await expect(c.replace(f.configured)).rejects.toThrow();
+});
+it.each(['duplicate','sparse','invalid','mixed','over-capacity'] as const)('rejects %s replacement without retiring current routes',async kind=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
+ const old=(await c.authority(randomUUID()))!;
+ const bad=kind==='duplicate'?[...f.configured,...f.configured]:kind==='sparse'?Array(1):
+ kind==='over-capacity'?Array(1025):kind==='mixed'?[...f.configured,{binding:{},transport:f.transport}]:[{binding:{},transport:f.transport}];
+ await expect(c.replace(bad as typeof f.configured)).rejects.toThrow();
+ expect(await old.current()).toBe(true);expect(f.claim.finish).not.toHaveBeenCalled();
+ await old.handTo(Buffer.from('synthetic'));expect(f.transport.deliver).toHaveBeenCalledOnce();
+ await c.close();
+});
+it.each(['claim','current','delivery'] as const)('fences replacement across pending %s',async phase=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
+ let release!:()=>void;const wait=new Promise<void>(resolve=>{release=resolve;});
+ if(phase==='claim')f.tickets.claim.mockImplementationOnce(async()=>{await wait;return f.claim;});
+ const acquiring=c.authority(randomUUID());
+ if(phase==='claim'){
+  await c.replace([]);release();expect(await acquiring).toBeNull();
+ }else{
+  const d=(await acquiring)!;
+  if(phase==='current')f.claim.current.mockImplementationOnce(async()=>{await wait;return true;});
+  else f.transport.deliver.mockImplementationOnce(async()=>{await wait;});
+  const sending=d.handTo(Buffer.from('synthetic'));
+  // Drain the authority check so delivery is actually pending in that case.
+  await Promise.resolve();
+  await c.replace([]);release();await expect(sending).rejects.toThrow();
+  expect(await d.current()).toBe(false);
+ }
+ expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
+ if(phase!=='delivery')expect(f.transport.deliver).not.toHaveBeenCalled();
+ await c.close();
 });
