@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { call, useRecords, type Call, type CallState, type Snapshot, type LiveRecord } from '../../data';
+import { call, callOnce, useRecords, type Call, type CallState, type Snapshot, type LiveRecord } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, Textarea } from '../../kit';
-import { isNotice, listedAsks, decisionLink, inFolder, matches, safeHref, type Ask, type Answer } from './model';
+import { commsThreadPath, isNotice, listedAsks, decisionLink, inFolder, matches, safeHref, type Ask, type Answer } from './model';
 import { useWaitChecks } from './wait-checks';
 import { useMemberRetention } from './member-retention';
 import { useReplyDraft, type ReplyDraft } from './drafts';
@@ -26,7 +26,7 @@ export function AnswerReceipt({ ask }: { ask: Ask }) {
 }
 export function AskReader({ ask, snapshot, go, initialConfirmation, guard: sharedGuard, onOpened, requireOwnership = false, replyDraft }: { ask: Ask; snapshot: Snapshot<Ask>; go(path: string): void; initialConfirmation?: Confirmation; guard?: Guard; onOpened?():void; requireOwnership?: boolean; replyDraft?: ReplyDraft }) {
   const [confirmation,setConfirmation] = useState<Confirmation | undefined>(initialConfirmation);
-  const [request,setRequest] = useState<Call<Ask>>();
+  const [request,setRequest] = useState<Call<unknown>>();
   const [checking,setChecking] = useState(false), [localDraft,setLocalDraft] = useState('');
   const draft = replyDraft?.value.text ?? localDraft;
   const setDraft = replyDraft?.edit ?? setLocalDraft;
@@ -43,11 +43,12 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
   },[initialConfirmation]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; },[]);
   const link = decisionLink(ask), notice = isNotice(ask);
+  const privateReply = !!ask.member && ask.source.kind === 'conversation' && !ask.sourceManaged && !ask.waits_on && !ask.privateQuestion;
   // Opening a row or pressing Check again creates the read; effects never replay requests.
   const checked = useCall(confirmation?.request), saving = useCall(request);
   const confirmed = snapshot.status === 'live' && confirmation?.records === snapshot.records && checked.result?.ok && checked.result.value.id === ask.id && checked.result.value.state === 'open';
   async function answer(value: Answer) {
-    if (!confirmed || sending.current || busy || saving.pending) return;
+    if (!confirmed || sending.current || busy || saving.pending || (privateReply && (value.kind !== 'words' || !value.text.trim() || value.text.length > 4000))) return;
     sending.current = true; guard.setBusy(true); setChecking(true); setMessage('');
     const records = snapshot.records, sentDraft = replyDraft?.value;
     try {
@@ -57,10 +58,15 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
       if (latest.current.status !== 'live' || latest.current.records !== records || !fresh.ok || fresh.value.id !== ask.id || fresh.value.state !== 'open') {
         setConfirmation(undefined); setMessage('This ask changed or could not be checked. Nothing was recorded.'); return;
       }
-      const write = call<Ask>('attention.answer',{id:ask.id,answer:value,...(requireOwnership ? {requireOwnership:true} : {})});
+      const write = privateReply && value.kind === 'words'
+        ? callOnce('comms.replyToAsk',{ref:ask.id,text:value.text})
+        : call('attention.answer',{id:ask.id,answer:value,...(requireOwnership ? {requireOwnership:true} : {})});
       setRequest(write); setConfirmation(undefined);
       const result = await write.result;
-      if (result.ok && value.kind === 'words' && sentDraft) replyDraft?.acknowledged(sentDraft);
+      if (result.ok && value.kind === 'words') {
+        if (sentDraft) replyDraft?.acknowledged(sentDraft);
+        if (privateReply && mounted.current) setLocalDraft('');
+      }
     } finally { sending.current = false; guard.setBusy(false); if (mounted.current) setChecking(false); }
   }
   const href = safeHref(ask.href);
@@ -70,23 +76,24 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
     {ask.if_yes && <section><h3>If yes</h3><p className="whitespace-pre-wrap">{ask.if_yes}</p></section>}
     {ask.if_no && <section><h3>If no</h3><p className="whitespace-pre-wrap">{ask.if_no}</p></section>}
     {link && (ask.state === 'open' || notice) && <Button variant="outline" onClick={()=>go(link.path)}>{link.label}</Button>}
-    {ask.member && ask.state === 'open' && !link && <p>Answer this in its private conversation. Private replies stay there.</p>}
-    {ask.state === 'open' && (!link || notice) && !ask.member && <>
+    {ask.member && !privateReply && ask.state === 'open' && !link && <p>Answer this in its private conversation. Private replies stay there.</p>}
+    {ask.state === 'open' && (!link || notice) && (!ask.member || privateReply) && <>
       {!confirmed && <p role="status">{message || (checked.result?.ok === false ? `Couldn’t check this ask: ${checked.result.message}` : checked.result?.ok && checked.result.value.state !== 'open' ? 'This ask is no longer open.' : 'Checking whether this ask is still open…')}</p>}
       {!confirmed && !saving.pending && <Button variant="outline" disabled={snapshot.status !== 'live' || checking || busy} onClick={()=>{const request=startCheck(guard,ask.id);if(request){setMessage('');setConfirmation({records:snapshot.records,request});}}}>Check again</Button>}
       {confirmed && <fieldset disabled={checking || saving.pending || busy} className="grid min-w-0 gap-3">
-        <legend>{notice ? 'Acknowledge alert' : 'Record your answer'}</legend>
+        <legend>{notice ? 'Acknowledge alert' : privateReply ? 'Reply privately' : 'Record your answer'}</legend>
         {replyDraft && !replyDraft.persistent && <p role="status">Device storage is unavailable. Keep this window open to retain your draft.</p>}
-        {!notice && ask.answers !== 'words' && <div className="flex flex-wrap gap-2"><Button disabled={!!draft.trim()} onClick={()=>void answer({kind:'yes'})}>Yes</Button><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'no'})}>No</Button></div>}
-        {!notice && (!ask.sourceManaged || ask.answers === 'words') && <><label className="grid gap-1">{ask.answers === 'words' ? 'Your answer' : 'Or answer in your own words'}<Textarea value={draft} onChange={event=>setDraft(event.target.value)} rows={4} /></label><Button disabled={!draft.trim()} onClick={()=>void answer({kind:'words',text:draft})}>Record answer</Button></>}
-        <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'done'})}>{notice ? 'Acknowledge' : 'Mark done'}</Button>{!notice && <Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'dismiss'})}>Dismiss</Button>}</div>
+        {!notice && !privateReply && ask.answers !== 'words' && <div className="flex flex-wrap gap-2"><Button disabled={!!draft.trim()} onClick={()=>void answer({kind:'yes'})}>Yes</Button><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'no'})}>No</Button></div>}
+        {!notice && (!ask.sourceManaged || ask.answers === 'words') && <><label className="grid gap-1">{privateReply ? 'Your private reply' : ask.answers === 'words' ? 'Your answer' : 'Or answer in your own words'}<Textarea maxLength={privateReply ? 4000 : undefined} value={draft} onChange={event=>setDraft(event.target.value)} rows={4} /></label><Button disabled={!draft.trim() || privateReply && draft.length > 4000} onClick={()=>void answer({kind:'words',text:draft})}>{privateReply ? 'Send private reply' : 'Record answer'}</Button></>}
+        {!privateReply && <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'done'})}>{notice ? 'Acknowledge' : 'Mark done'}</Button>{!notice && <Button variant="outline" disabled={!!draft.trim()} onClick={()=>void answer({kind:'dismiss'})}>Dismiss</Button>}</div>}
       </fieldset>}
-      <p>{notice ? 'Acknowledging records that you saw this alert. It does not retry or cancel Clock work.' : 'Answers are recorded here. Delivery to the agent is not connected in this preview.'}</p>
+      <p>{privateReply ? 'Your reply stays encrypted in Comms. This draft stays in this window only.' : notice ? 'Acknowledging records that you saw this alert. It does not retry or cancel Clock work.' : 'Answers are recorded here. Delivery to the agent is not connected in this preview.'}</p>
     </>}
     {saving.pending && <Loading label={saving.status === 'offline' ? 'Waiting for connection…' : 'Recording answer…'} />}
     {saving.result?.ok === false && <Error title="Couldn’t record your answer" text={saving.result.message} />}
-    {saving.result?.ok && <p role="status">{notice ? 'Alert acknowledged' : 'Answer recorded'}</p>}
+    {saving.result?.ok && <p role="status">{notice ? 'Alert acknowledged' : privateReply ? 'Private reply saved in Comms' : 'Answer recorded'}</p>}
     <AnswerReceipt ask={ask} />
+    {ask.member && ask.answer?.reply && <Button variant="outline" onClick={()=>go(commsThreadPath(ask.answer!.reply!.thread))}>Open private reply</Button>}
     {ask.resolution && <section><h3>Resolved</h3><p>{ask.resolution}</p></section>}
     {(href || ask.refs?.length) && <section><h3>References</h3>{href && <a href={href} target="_blank" rel="noreferrer">Open reference</a>}{ask.refs?.length ? <ul>{ask.refs.map((ref,n)=><li key={n}>{ref}</li>)}</ul> : null}</section>}
   </article>;
@@ -119,7 +126,7 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   const guard: Guard = {lock,busy,setBusy};
   function navigate(id?: string) {
     const record = records.find(a=>a.id===id);
-    const request = record && status==='live' && record.state==='open' && !record.member && (!decisionLink(record) || isNotice(record)) ? startCheck(guard,record.id) : undefined;
+    const request = record && status==='live' && record.state==='open' && (!record.member || record.source.kind === 'conversation' && !record.sourceManaged && !record.waits_on) && (!decisionLink(record) || isNotice(record)) ? startCheck(guard,record.id) : undefined;
     setOpening(request && record ? {id:record.id,confirmation:{records,request}} : undefined);
     const next = id ? `${base}/ask/${encodeURIComponent(id)}` : base;
     if (go) go(next); else { if (typeof history !== 'undefined') history.pushState(null,'',next); setLocalPath(next); }

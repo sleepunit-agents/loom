@@ -4,10 +4,11 @@ export interface Ask extends LiveRecord {
   agent?: string; project?: string; member?: string;
   ask: string; why?: string; if_yes?: string; if_no?: string; href?: string; refs?: string[];
   answers?: 'yes-no' | 'words'; sourceManaged?: true;
+  privateQuestion?: {thread:string;seq:number};
   waits_on?: { approval: string } | { task: string };
   source: { kind: 'conversation' | 'approval' | 'task' | 'piece'; id: string };
   state: 'open' | 'answered' | 'resolved'; createdAt: number; changedAt: number;
-  answer?: { kind: string; text?: string; by: { kind: string; id: string }; at: number };
+  answer?: { kind: string; text?: string; reply?: {thread:string;seq:number}; by: { kind: string; id: string }; at: number };
   resolution?: string;
 }
 export type Answer = { kind: 'yes' | 'no' | 'done' | 'dismiss' } | { kind: 'words'; text: string };
@@ -29,6 +30,7 @@ export function decisionLink(ask: Ask): { path: string; label: string } | undefi
   if (approval) return { path: `/p/approvals-preview/approval/${encodeURIComponent(approval)}`, label: 'Open approval' };
   const task = ask.waits_on && 'task' in ask.waits_on ? ask.waits_on.task : ask.source.kind === 'task' ? ask.source.id : undefined;
   if (task !== undefined) return { path: `/p/tasks-preview/task/${taskSegment(task)}`, label: 'Open task' };
+  if (ask.member && ask.privateQuestion) return {path:commsThreadPath(ask.privateQuestion.thread),label:'Open private conversation'};
 }
 export function safeHref(href?: string) {
   if (!href) return undefined;
@@ -52,3 +54,5 @@ export function listedAsks(records: readonly Ask[]): Ask[] {
     return true;
   });
 }
+
+export const commsThreadPath = (thread:string) => `/p/comms-preview/thread/${encodeURIComponent(thread.replace(/^th:/,''))}`;

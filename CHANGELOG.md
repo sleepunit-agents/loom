@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add member-private Inbox read facts without answering asks or copying draft words.
 - Inbox now separates self-cleared asks into searchable FYI history, keeping human answers in Answered.
 - Inbox: group Clock operational alerts, acknowledge them without changing scheduled work, and open Clock through its internal route.
+- Inbox: reply privately to conversation asks through encrypted Comms, keep private drafts in the window only, and link sealed questions and reply receipts to their owning thread.
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 - File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.
