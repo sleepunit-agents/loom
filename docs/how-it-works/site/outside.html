@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Outside programs · loom</title>
+<link rel="stylesheet" href="site.css">
+<script src="site.js"></script>
+</head>
+<body>
+<header class="top"><div class="top__in">
+  <a class="brand" href="index.html"><b>LO<i>O</i>M</b><span>how it works</span></a>
+  <nav class="path" aria-label="Guided path">
+    <ol class="path__dots"><li><a href="index.html" title="Start here"><span class="sr">Start here</span></a></li><li><a href="conversations.html" title="1. Conversations"><span class="sr">1. Conversations</span></a></li><li><a href="desk.html" title="2. The desk"><span class="sr">2. The desk</span></a></li><li><a href="tasks.html" title="3. Tasks"><span class="sr">3. Tasks</span></a></li><li><a href="approvals.html" title="4. Approvals"><span class="sr">4. Approvals</span></a></li><li><a href="tempo.html" title="5. Tempo"><span class="sr">5. Tempo</span></a></li><li><a href="changes.html" title="6. Changes"><span class="sr">6. Changes</span></a></li><li><a href="inbox.html" title="7. Inbox"><span class="sr">7. Inbox</span></a></li><li><a href="memory.html" title="8. Memory"><span class="sr">8. Memory</span></a></li><li><a href="machines.html" title="9. Machines and jobs"><span class="sr">9. Machines and jobs</span></a></li><li><a href="models.html" title="10. Models and accounts"><span class="sr">10. Models and accounts</span></a></li><li><a href="bridges.html" title="11. Discord and Slack"><span class="sr">11. Discord and Slack</span></a></li><li><a href="secrets.html" title="12. Secrets"><span class="sr">12. Secrets</span></a></li><li><a href="people.html" title="13. People and projects"><span class="sr">13. People and projects</span></a></li><li><a href="signing-in.html" title="14. Signing in"><span class="sr">14. Signing in</span></a></li><li><a href="outside.html" title="15. Outside programs" aria-current="page"><span class="sr">15. Outside programs</span></a></li><li><a href="data.html" title="16. How a tile gets its data"><span class="sr">16. How a tile gets its data</span></a></li><li><a href="measuring.html" title="17. Measuring"><span class="sr">17. Measuring</span></a></li><li><a href="decided.html" title="18. What we decided"><span class="sr">18. What we decided</span></a></li></ol>
+    <span class="path__where"><b>15</b> of 18 · Outside programs</span>
+    <span class="path__go"><a href="signing-in.html" rel="prev">‹ <span class="pl">Signing in</span></a><a class="next" href="data.html" rel="next"><span class="pl">How a tile gets its data</span> ›</a></span>
+  </nav>
+  <button class="theme" id="theme" type="button" aria-label="Switch between light and dark">Theme</button>
+</div></header>
+<main class="wrap">
+
+
+<section class="hero hero--app">
+  <div class="hero__text t-amber">
+    <p class="eyebrow">Page 15 of 18 · the one door</p>
+    <h1>Outside programs</h1>
+    <p class="lead"><b>An outside program has one door: the API, with a token.</b> The command line, the web app, agents and anything outside loom call the same operations through the same permission check.</p>
+    <ul class="does"><li>One API for the command line, the web app and agents.</li><li>A token says who is calling and what it may reach.</li><li>Someone else's program sees only what a household owner granted it.</li><li>The phone and any other interface are callers like any other.</li></ul>
+  </div>
+  <figure class="hero__fig">
+    <div class="shadowed" aria-hidden="true"><div class="map map--door">
+      <div class="map__col"><h3>Who calls</h3><ul>
+        <li class="node t-pink"><span class="key key--sm" aria-hidden="true">cli</span><div class="node__body"><b>The command line</b><span>a client with a token</span></div><i class="wire"></i></li>
+        <li class="node t-violet"><span class="key key--sm" aria-hidden="true">web</span><div class="node__body"><b>The web app</b><span>a signed-in browser</span></div><i class="wire"></i></li>
+        <li class="node t-cyan"><span class="key key--sm" aria-hidden="true">a</span><div class="node__body"><b>An agent's body</b><span>a token that is one agent</span></div><i class="wire"></i></li>
+        <li class="node t-cyan"><span class="key key--sm" aria-hidden="true">r</span><div class="node__body"><b>A runner</b><span>a token for one machine</span></div><i class="wire"></i></li>
+        <li class="node t-amber"><span class="key key--sm" aria-hidden="true">p</span><div class="node__body"><b>Someone's own program</b><span>what an owner granted it</span></div><i class="wire"></i></li>
+        <li class="node t-amber"><span class="key key--sm" aria-hidden="true">ph</span><div class="node__body"><b>The phone</b><span>a caller like any other</span></div><i class="wire"></i></li>
+      </ul></div>
+      <div class="core"><span class="core__tag">The one door</span><h3>The API</h3>
+        <ol class="stages"><li><i>1</i><div><b>A token</b><span>Says who is calling.</span></div></li>
+        <li><i>2</i><div><b>One permission check</b><span>The same for every caller from outside.</span></div></li>
+        <li><i>3</i><div><b>The same operations</b><span>The page, the command line and agents call the same ones.</span></div></li></ol></div>
+    </div></div>
+    <figcaption class="cap">A picture of the one door: every caller presents a token to the same API.</figcaption>
+  </figure>
+</section>
+
+<section class="band" aria-labelledby="con-h">
+  <div class="band__head"><span class="tag">Connections</span><h2 id="con-h">How a call connects to other parts</h2><p>One call, with a thread from each part of it that reaches another page. The number on each part is its page on the path.</p></div>
+  <div class="anat"><div class="anat__row"><div class="anat__side anat__l"></div><div class="anat__f"><code>one call</code><b>Create a task, from the command line</b></div><div class="anat__side anat__r"></div></div><div class="anat__row t-violet"><div class="anat__side anat__l t-violet"><span class="key t-violet" aria-hidden="true">14</span><div class="node__body"><b><a href="signing-in.html">Signing in</a></b><span>A token belongs to one member, one agent or one machine.</span></div><i class="wire"></i></div><div class="anat__f"><code>token</code><span>says who is calling</span></div><div class="anat__side anat__r t-violet"></div></div><div class="anat__row t-violet"><div class="anat__side anat__l t-violet"></div><div class="anat__f"><code>operation</code><span>the same one the web app uses</span></div><div class="anat__side anat__r t-violet"><i class="wire"></i><span class="key t-violet" aria-hidden="true">3</span><div class="node__body"><b><a href="tasks.html">Tasks</a></b><span>Every part's operations are reached the same way.</span></div></div></div><div class="anat__row t-amber"><div class="anat__side anat__l t-amber"><span class="key t-amber" aria-hidden="true">13</span><div class="node__body"><b><a href="people.html">People and projects</a></b><span>The labels on each record decide what this caller may reach.</span></div><i class="wire"></i></div><div class="anat__f"><code>permission</code><span>checked here, for callers from outside</span></div><div class="anat__side anat__r t-amber"></div></div><div class="anat__row "><div class="anat__side anat__l "></div><div class="anat__f"><code>granted</code><span>the record types and operations an owner allowed</span></div><div class="anat__side anat__r "></div></div><div class="anat__row t-cyan"><div class="anat__side anat__l t-cyan"></div><div class="anat__f"><code>live data</code><span>one of the API's doors</span></div><div class="anat__side anat__r t-cyan"><i class="wire"></i><span class="key t-cyan" aria-hidden="true">16</span><div class="node__body"><b><a href="data.html">How a tile gets its data</a></b><span>The live connection is how a caller gets rows and then changes.</span></div></div></div><div class="anat__row t-cyan"><div class="anat__side anat__l t-cyan"><span class="key t-cyan" aria-hidden="true">9</span><div class="node__body"><b><a href="machines.html">Machines and jobs</a></b><span>A runner sees and reports only the jobs assigned to it.</span></div><i class="wire"></i></div><div class="anat__f"><code>a runner</code><span>sees only its own jobs</span></div><div class="anat__side anat__r t-cyan"></div></div></div>
+</section>
+
+<section class="band" aria-labelledby="how-h">
+  <div class="band__head"><span class="tag">How it works</span><h2 id="how-h">Tokens, one program, replaceable parts and the phone</h2><p></p></div>
+  <div class="how"><div class="how__p t-amber"><h3>Narrow tokens</h3><div class="how__pic" aria-hidden="true"><ul class="opts"><li><b>a member</b><span>what that person may see</span></li><li><b>an agent</b><span>a token that is one agent</span></li><li><b>a runner</b><span>only the jobs assigned to it</span></li><li><b>a program</b><span>only what an owner granted</span></li></ul></div><p>Anything outside loom calls the API with a token. Someone else's program is a caller with a token: it sees only the record types and operations a household owner granted it.</p></div><div class="how__p t-pink"><h3>One program, one data folder</h3><div class="how__pic" aria-hidden="true"><div class="card t-pink" style="flex:none"><span class="lbl">Install</span><b>npm install -g @jbarket/loomai</b><span class="muted">then loom serve</span></div></div><p>There is one loom per home: one program and one data folder. Beyond Node and npm nothing is required. A restart is an acceptable deploy.</p></div><div class="how__p t-violet"><h3>Parts can be replaced</h3><div class="how__pic" aria-hidden="true"><div class="flow"><span>tasks role</span><i class="wire"><em>filled by</em></i><span>one module</span></div></div><p>Each part is a module with a declared, typed interface. A role has one implementation at a time, so replacing the task store means writing another module that fills the tasks role. A bridge is replaced the same way.</p></div><div class="how__p t-cyan"><h3>The phone</h3><div class="how__pic" aria-hidden="true"><div class="card t-cyan" style="flex:none"><span class="lbl">After the desk</span><b>The phone</b><span class="muted">calls the same API</span></div></div><p>The phone does what the desk does, built after the desk is right. It is a caller like any other.</p></div></div>
+</section>
+
+<div class="ref">
+  <section class="ref__col" aria-labelledby="see-h">
+    <h2 id="see-h">Who can see this</h2>
+    <ul class="see"><li><span class="key key--sm t-ink" aria-hidden="true">a</span><span><b>Checked here.</b> Permission is checked where something outside calls the API, and nowhere else.</span></li><li><span class="key key--sm t-ink" aria-hidden="true">b</span><span><b>Installed means trusted.</b> Loom's own parts never ask each other for permission.</span></li><li><span class="key key--sm t-ink" aria-hidden="true">c</span><span><b>The rule.</b> A household owner sees everything, including what is private to another member. Anyone else sees what is in their projects, plus what belongs to agents they own. Private to a member means that member plus household owners.</span></li></ul>
+  </section>
+  <section class="ref__col" aria-labelledby="data-h">
+    <h2 id="data-h">Data model</h2>
+    <p class="muted">One table. Open one to see its columns, what each means and what it points to.</p><div class="tgroup"><div class="tgrid"><details class="tbl t-amber" id="t-tokens"><summary><code>tokens</code><em>12 columns</em><span>One row per credential. Loom stores only a fingerprint of each token, never the token.</span></summary><div class="cols"><div class="col"><div><code>fingerprint</code><small>id</small></div><p>A one-way fingerprint of the token.</p><span></span></div><div class="col"><div><code>label</code><small>text</small></div><p>A name a person can recognise it by. Unique among live tokens.</p><span></span></div><div class="col"><div><code>kind</code><small>choice(owner, agent, runner)</small></div><p>A person, an agent&#x27;s body, or a machine that runs bodies.</p><span></span></div><div class="col"><div><code>member</code><small>id</small></div><p>For a person&#x27;s token: whose it is.</p><span class="to">points to <a href="people.html#t-members">members</a></span></div><div class="col"><div><code>agent</code><small>id</small></div><p>For an agent&#x27;s token: which agent.</p><span class="to">points to <a href="people.html#t-agents">agents</a></span></div><div class="col"><div><code>job</code><small>id</small></div><p>For an agent&#x27;s token that belongs to one piece of work: which job.</p><span class="to">points to <a href="machines.html#t-jobs">jobs</a></span></div><div class="col"><div><code>box</code><small>id</small></div><p>For a machine&#x27;s token: which machine.</p><span class="to">points to <a href="machines.html#t-boxes">boxes</a></span></div><div class="col"><div><code>made_from</code><small>id</small></div><p>The token this one was made from, if any.</p><span class="to">points to <a href="#t-tokens">tokens</a></span></div><div class="col"><div><code>created_at, expires_at, revoked_at, last_used_at</code><small>time</small></div><p>Its life: made, when it stops working, when someone cancelled it, and when it was last presented.</p><span></span></div></div></details></div></div>
+    
+  </section>
+</div>
+<footer class="foot"><p>Next on the path: <b>How a tile gets its data</b>. One live connection. A tile says what it wants and then gets only changes.</p><a class="btn" href="data.html">How a tile gets its data <span aria-hidden="true">›</span></a></footer>
+
+</main>
+</body>
+</html>

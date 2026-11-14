@@ -1,5 +1,7 @@
 # The web foundation: one process, one database, one API, one live feed
 
+> **Superseded where it differs (2026-11-14).** The goal is now [`docs/how-it-works/`](../how-it-works/README.md): the pages Jonathan approved. This document records how the rebuild started. Nothing here is a requirement, including building beside the old side, the importers and the old-to-new tables.
+
 *2026-11-12. Status: **the working design**. Jonathan agreed the direction and the order of work in conversation on 2026-11-12 ("your order is perfect") and building began that day; he has not yet read this final text (three cold-review rounds folded, then an author's pass for plainness; the review stopped without a clear verdict, see t-2190). A design doc in the `docs/specs/` sense: it says what loom
 will build and what its tests must pin. It follows a review of the web side at main `73c0063` (the browser client,
 the page server, the piece boundary, and all 623 commits since 2026-10-24; loom note
