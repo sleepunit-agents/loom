@@ -92,7 +92,9 @@ it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account re
     await expect.poll(()=>notifications.textContent()).toContain('Queued for a test attempt');
     expect(send).not.toHaveBeenCalled();clock.advance(0);
     expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:`notifications:test:${attempt.id}`},'account-release-test').ok).toBe(true);
-    clock.advance(0);await expect.poll(()=>attempts()[0].state).toBe('sent');expect(send).toHaveBeenCalledOnce();
+    // Release may arrive while the staged pass is settling its promise. Pump
+    // newly scheduled due work as well as the release callback, without time sleeps.
+    await expect.poll(()=>{clock.advance(0);return attempts()[0].state;}).toBe('sent');expect(send).toHaveBeenCalledOnce();
     for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain('Accepted by the push service. Device delivery is not confirmed.');
     const payload=JSON.parse(send.mock.calls[0][1]);expect(payload).toEqual({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'});expect(send.mock.calls[0][0]).toEqual({endpoint:extraEndpoint,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}});
     await extra.getByRole('checkbox').check();await extra.getByRole('button',{name:'Remove notification device',exact:true}).click();await expect.poll(()=>extra.count()).toBe(0);
