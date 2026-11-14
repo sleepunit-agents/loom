@@ -29,7 +29,7 @@ it('admits nonempty inbox once and snapshots house, model, labels and needs', ()
   expect(f.runtime.admit(f.conversation.id)).toBeUndefined();
   f.send();
   const job = f.runtime.admit(f.conversation.id)!;
-  expect(job).toMatchObject({ agent: 'art', conversation: f.conversation.id, model: 'primary', state: 'queued', houseFile: 'Housefile', startedByKind: 'agent', startedBy: 'art', project: 'pond', member: 'owner', brief: 'Hello' });
+  expect(job).toMatchObject({ agent: 'art', conversation: f.conversation.id, title: 'Reply', model: 'primary', state: 'queued', houseFile: 'Housefile', startedByKind: 'agent', startedBy: 'art', project: 'pond', member: 'owner', brief: 'Hello' });
   expect(f.runtime.admit(f.conversation.id)?.id).toBe(job.id);
   expect(f.db.select().from(jobNeeds).all()).toEqual([{ job: job.id, need: 'gpu' }]);
   f.db.update(agentRunSettings).set({ houseFile: 'changed' }).run();
@@ -38,19 +38,20 @@ it('admits nonempty inbox once and snapshots house, model, labels and needs', ()
 });
 it('claims once, rejects other workers, takes mail only when running and preserves confirmed receipts', () => {
   const f = fixture(), mail = f.send(), job = f.runtime.admit(f.conversation.id)!;
-  expect(f.runtime.claim(job.id, 'worker')?.state).toBe('starting');
+  f.tick(100);
+  expect(f.runtime.claim(job.id, 'worker')).toMatchObject({ state: 'starting', claimedAt: f.now(), heardAt: f.now() });
   expect(f.runtime.claim(job.id, 'worker')).toBeUndefined();
   expect(() => f.comms.take(f.conversation.id, job.id)).toThrow();
   expect(() => f.runtime.started(job.id, 'foreign', 'image')).toThrow();
   expect(f.runtime.started(job.id, 'worker', 'image').build).toBe('image');
   expect(f.comms.take(f.conversation.id, job.id).map(row => row.id)).toEqual([mail.id]);
-  f.comms.confirm(mail.id, job.id);
+  const receipt = f.comms.confirm(mail.id, job.id);
   f.tick(100);
   expect(f.runtime.heartbeat(job.id, 'worker', 'waiting')).toMatchObject({ state: 'waiting', heardAt: f.now() });
   f.tick(100);
   expect(f.runtime.heartbeat(job.id, 'worker', 'running')).toMatchObject({ state: 'running', heardAt: f.now() });
   expect(f.runtime.finish(job.id, 'worker', 0, 'complete').job).toMatchObject({ state: 'done', exitCode: 0, logTail: 'complete', build: 'image' });
-  expect(f.db.select().from(inbox).get()?.state).toBe('done');
+  expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'done', job: job.id, doneAt: receipt.doneAt });
   expect(f.db.select().from(conversations).get()?.job).toBeNull();
   expect(() => f.runtime.heartbeat(job.id, 'worker', 'running')).toThrow();
 });
@@ -81,7 +82,7 @@ it('does not retry process failures after starting and returns unconfirmed mail 
   f.comms.take(f.conversation.id, job.id);
   const result = f.runtime.finish(job.id, 'worker', 2, 'x'.repeat(20_000));
   expect(result.retry).toBeUndefined();
-  expect(result.job).toMatchObject({ exitCode: 2, logTail: 'x'.repeat(16_384) });
+  expect(result.job).toMatchObject({ state: 'failed', exitCode: 2, logTail: 'x'.repeat(16_384) });
   expect(f.db.select().from(inbox).get()).toMatchObject({ state: 'waiting', job: null, takenAt: null });
   expect(f.runtime.admit(f.conversation.id)?.state).toBe('queued');
 });
