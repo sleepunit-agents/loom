@@ -891,9 +891,19 @@ it('cannot redirect terminal reconciliation onto another working private thread 
  await f.restart();expect(working(first)).toBe(true);expect(working(second)).toBe(true);
 });
 
-async function commsBodyFixture(member='jonathan'){
- const f=await setup(false,member),thread=await f.open(),job=await f.queued();
+async function commsBodyFixture(member='jonathan',staging=false){
+ const f=await setup(staging,member),thread=await f.open();
+ if(staging){
+  const effect=`comms-deliver:${thread}:1`;
+  await expect.poll(()=>f.app.db.prepare("SELECT id FROM core_effects WHERE id=? AND state='due'").get(effect)).toEqual({id:effect});
+  value(await f.post(f.owner,'core.releaseEffect',{id:effect}));
+ }
+ const job=await f.queued();
  value(await f.post(f.runner,'runtime.claimJob',{job}));
+ if(staging){
+  expect(await f.post(f.runner,'runtime.takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
+  value(await f.post(f.owner,'core.releaseEffect',{id:`runtime:input:${job}`}));
+ }
  const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
  value(await f.post(f.runner,'runtime.reportJob',{job,state:'running'}));
  const record=()=>JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record);
@@ -1360,4 +1370,86 @@ it('delivers a private restricted-service timer from a real member body and reta
  expect(await f.post(secondBody,'runtime.readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:chained.prompt}]}});
  expect(store.ids('job')).toHaveLength(3);
  expect(thread).toBeTruthy();
+});
+
+
+it.each([{verdict:'yes',staging:false},{verdict:'no',staging:false},{verdict:'yes',staging:true},{verdict:'no',staging:true}] as const)('delivers a sealed $verdict decision through the original member binding after its asking body finishes (staging=$staging)',async ({verdict,staging})=>{
+ const f=await commsBodyFixture('pollock',staging),conversation=runtimeStore(f.app.db).read('job',f.job)!.conversation!;
+ value(await f.socket('comms.change',{thread:f.thread,action:'project',project:'pond'}));
+ const question={ask:'PRIVATE DECISION QUESTION',if_yes:'PRIVATE SELECTED YES',if_no:'PRIVATE SELECTED NO',answers:'yes-no'};
+ const ask=value<{ref:string;seq:number}>(await f.post(f.body,'runtime.askQuestion',{id:'bound-decision',question}));
+ // The question belongs to the conversation even after its current body ends.
+ value(await f.post(f.runner,'runtime.finishJob',{job:f.job,state:'done'}));
+ expect(await f.post(f.body,'runtime.readConversation',{})).toMatchObject({ok:false});
+ const input={thread:f.thread,ref:ask.ref,verdict};
+ const result=await f.socket('comms.answer',input);expect(result).toMatchObject({ok:true});
+ const answer=value<{thread:string;seq:number}>(result);
+ expect(f.app.db.prepare('SELECT kind,sender FROM comms_messages WHERE thread=? AND seq=?').get(f.thread,answer.seq)).toEqual({kind:'message',sender:'pollock'});
+ const route=JSON.stringify(['art','pollock',f.thread,conversation,answer.seq,0]);
+ const receipt=()=>f.app.db.prepare('SELECT job FROM runtime_deliveries WHERE id=?').get(route) as {job:string}|undefined;
+ if(staging){
+  const effect=`comms-deliver:${f.thread}:${answer.seq}`;
+  await expect.poll(()=>f.app.db.prepare("SELECT id FROM core_effects WHERE id=? AND state='due'").get(effect)).toEqual({id:effect});
+  expect(receipt()).toBeUndefined();
+  expect(runtimeStore(f.app.db).ids('job')).toEqual([f.job]);
+  expect(await f.socket('attention.get',{id:ask.ref})).toMatchObject({ok:true,value:{state:'answered',answer:{kind:verdict}}});
+  await f.restart();
+  expect(receipt()).toBeUndefined();
+  value(await f.post(f.owner,'core.releaseEffect',{id:effect}));
+ }
+ await expect.poll(receipt).toEqual({job:expect.any(String)});
+ const replacement=receipt()!.job;
+ expect(replacement).not.toBe(f.job);
+ expect(runtimeStore(f.app.db).read('job',replacement)).toMatchObject({agent:'art',member:'pollock',project:'pond',conversation,state:'queued'});
+ expect(runtimeStore(f.app.db).read('binding',conversation)).toMatchObject({agent:'art',member:'pollock',project:'pond',place:f.thread,job:replacement});
+ expect(value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs).toEqual([replacement]);
+ value(await f.post(f.runner,'runtime.claimJob',{job:replacement}));
+ if(staging){
+  expect(await f.post(f.runner,'runtime.takeInput',{job:replacement})).toMatchObject({ok:false,code:'conflict'});
+  value(await f.post(f.owner,'core.releaseEffect',{id:`runtime:input:${replacement}`}));
+ }
+ const payload=value<{credential:string;brief:string}>(await f.post(f.runner,'runtime.takeInput',{job:replacement}));
+ expect(payload.brief).not.toContain('PRIVATE');
+ value(await f.post(f.runner,'runtime.reportJob',{job:replacement,state:'running'}));
+ const read=value<{messages:Array<{seq:number;text?:string}>}>(await f.post(payload.credential,'runtime.readConversation',{}));
+ const delivered=read.messages.find(m=>m.seq===answer.seq)!;
+ expect(delivered.text).toContain(question.ask);
+ expect(delivered.text).toContain(verdict==='yes'?question.if_yes:question.if_no);
+ expect(delivered.text).not.toContain(verdict==='yes'?question.if_no:question.if_yes);
+ expect(await f.socket('attention.get',{id:ask.ref})).toMatchObject({ok:true,value:{member:'pollock',state:'answered',answer:{kind:verdict}}});
+ const rows=f.app.db.prepare('SELECT * FROM runtime_deliveries').all();
+ expect(await f.socket('comms.answer',input)).toEqual({ok:true,value:answer});
+ await f.restart();
+ expect(await f.socket('comms.answer',input)).toEqual({ok:true,value:answer});
+ expect(f.app.db.prepare('SELECT * FROM runtime_deliveries').all()).toEqual(rows);
+ expect(runtimeStore(f.app.db).ids('job').sort()).toEqual([f.job,replacement].sort());
+ expect(await f.post(payload.credential,'runtime.readConversation',{})).toMatchObject({ok:true,value:{messages:expect.arrayContaining([expect.objectContaining({seq:answer.seq,text:delivered.text})])}});
+ expect(provenanceStore(f.app.db).read(conversation)?.history).toMatchObject({people:['pollock'],owners:[],owner:false,unknown:false});
+ for(const table of ['runtime_inputs','runtime_jobs','runtime_bindings','runtime_deliveries','runtime_provenance','core_operations','attention_asks','comms_messages'])
+  expect(JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain('PRIVATE');
+});
+
+it('does not return prepared Clock words through a separately valid replacement Comms binding',async()=>{
+ const f=await setup();await f.open();const commsJob=await f.queued(),store=runtimeStore(f.app.db);
+ const comms=store.read('job',commsJob)!,conversation=comms.conversation!;
+ value(await f.socket('clock.in',{agent:'art',prompt:'PRIVATE Clock words for original destination',note:'race',when:'1s'}));
+ f.clock.advance(1000);
+ let jobs:string[]=[];
+ for(let i=0;i<15&&!jobs.some(j=>j!==commsJob);i++)jobs=value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs;
+ const job=jobs.find(j=>j!==commsJob)!;expect(job).toBeTruthy();
+ value(await f.post(f.runner,'runtime.claimJob',{job}));
+ const payload=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job}));
+ value(await f.post(f.runner,'runtime.reportJob',{job,state:'running'}));
+ const viewer=signin(f.app).token(hash(payload.credential))!.viewer;
+ const pending=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...j}=store.read('job',job)!,{changedAt:__,...b}=store.read('binding',conversation)!;
+  store.put('job',{...j,conversation,member:comms.member,project:comms.project},f.clock.now());
+  store.put('binding',{...b,job},f.clock.now());
+ })();
+ expect(await pending).toMatchObject({ok:false,code:'denied'});
+ // Prove the alternate consumer really is authorized; a denied replacement
+ // cannot discriminate the branch-switch bypass.
+ expect(await f.post(payload.credential,'runtime.describeConversation',{})).toMatchObject({ok:true});
+ expect(await f.post(payload.credential,'runtime.readConversation',{})).toMatchObject({ok:true,value:{messages:[expect.objectContaining({text:'PRIVATE inbound sentinel'})]}});
 });

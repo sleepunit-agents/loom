@@ -6,3 +6,4 @@ export * from '../policy.js';
 export * from './touched/index.js';
 export * from './touched/group.js';
 export * from './db/export.js';
+export * from './db/export-image.js';

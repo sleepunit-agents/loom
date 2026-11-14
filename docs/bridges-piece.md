@@ -1224,9 +1224,9 @@ Reads refuse at the fourteen-day boundary even when cleanup has not run. The
 internal transactional `prune` removes expired data and associations, with
 cascading foreign keys; repeated receipt saves do not extend retention. This is
 logical deletion, not forensic erasure of SQLite pages/WAL or external copies.
-The unregistered storage seam does not fetch, schedule cleanup, register a client,
+The storage seam does not fetch, register a client,
 or put bytes into operation retry receipts. Fetch-once orchestration across
-concurrent intake/restarts, daemon cleanup, actual Runtime access issuance and
+concurrent intake/restarts, actual Runtime access issuance and
 command parity remain required. Caller-owned fetched buffers must be erased by
 the eventual composition after save; returned read buffers belong to that caller.
 
@@ -1234,5 +1234,61 @@ the eventual composition after save; returned read buffers belong to that caller
 | --- | --- |
 | `Files.fetch` private scoped storage and fetch dedup | Atomic scoped byte dedup; actual intake fetch-once orchestration pending |
 | `Files.take` scoped bytes, digest and safe name | Internal delivery/body-proof retrieval with no output path; actual Runtime issuer and generated file command pending |
-| `Files.prune` fourteen-day expiry | Exact expiry on every read plus transactional prune; daemon job pending |
+| `Files.prune` fourteen-day expiry | Exact expiry on every read plus transactional prune; next-mode startup/hourly job installed |
 | Private on-disk file copies | Private `loom.db` BLOBs, excluded from owning export/backup; no legacy file read |
+
+### Slack describe platform evidence (internal only)
+
+`slack-describe.ts` is an unregistered service transport for the platform part of
+legacy `send --describe` (`loom-slack` pinned at `4acf0562`,
+`test/test_describe.py`). An explicit trusted exact agent/venue/workspace/place
+permit authorizes fresh reads; there is no installed Runtime issuer or public
+operation. DM places are human user ids; group places are existing MPIM ids.
+Nothing opens a DM, posts, starts a body or writes a receipt.
+
+A DM checks the exact user's same-workspace human eligibility. A group checks
+fresh channel kind, complete bounded paginated members, this bot's membership
+and at least two other participants, then checks every participant independently.
+Any guest, bot, deleted/foreign/unknown human, incomplete/duplicate pagination,
+platform failure or changed proof refuses the whole result. Every HTTP request
+reacquires the service SecretUse and rechecks staging and the captured proof
+before/after credential acquisition and across streaming. Replies are bounded
+at 1 MiB per request and fifteen seconds including body consumption; pagination
+is bounded at fifty pages of at most 200 members. No retry or intake cache.
+
+Only sorted platform human ids and exact place/kind leave the transport, without
+profile words or policy fields. Runtime still must map these ids to current
+people and determine tiers, restrictions, lowest group tier, owner-present and
+project/field/group briefs before wiring a public operation or generated client.
+Tests use an explicitly fake owning permit; actual Secrets service-grant and
+buffer-erasure fixtures do not claim actual Runtime authority. The old fresh
+membership-cache optimization becomes fresh platform reads here; the same
+all-human requirement is retained. Describe support is still incomplete.
+
+Describe fixtures independently refuse initially mismatched agent, venue and
+workspace before acquiring credentials. They also revoke each owning fact,
+staging or a captured proof field after the credential callback completes but
+before SecretUse returns, proving no subsequent membership read is issued.
+
+## Attachment retention daemon
+
+Next mode installs `file-retention.ts` after Bridges migrations, independently
+of adapter configuration, service credentials or staging. It runs the existing
+private-store transactional prune on startup and hourly while the daemon runs.
+Expired bytes, delivery manifests and cascaded associations are removed; younger
+rows retain their original age. Read-time refusal remains exact at fourteen days;
+physical row cleanup can lag expiry by up to an hour while running. This remains
+logical deletion, not forensic erasure of SQLite pages/WAL or external copies.
+
+A failed sweep rolls back, logs only a fixed diagnostic and retries on the next
+hour; startup can continue. Missed ticks coalesce after suspension instead of
+replaying each elapsed hour. Shutdown cancels the timer and fences already queued
+work before touching SQLite. Installation is idempotent per database. The old
+runtime path installs no retention job. No import or venue call runs.
+
+`file-retention.test.ts` exercises actual next-mode startup/restart in live and
+staging modes without adapter credentials, running expiry with younger data,
+transaction rollback/recovery, fixed diagnostics and isolated long-clock-jump/
+shutdown behavior. Explicit fake save permits only seed private fixture bytes.
+Runtime issuance, fetch-once intake/restart orchestration and the generated file
+client remain required; retention alone does not enable file support.

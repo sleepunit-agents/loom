@@ -1392,3 +1392,27 @@ continues to exclude private loom conversations from ordinary conversation steps
 Public venue metadata remains absent until complete audience proof exists.
 Trusted spawn production/parentage, acceptance, private body access and standalone
 execution remain required on t-2209; all execution holds remain in place.
+
+
+### Private boolean decision delivery
+
+A bound body uses `runtime.askQuestion` with `answers: "yes-no"`. The original
+member answers through `comms.answer`; Comms atomically records the wordless
+Attention decision and encrypts an ordinary conversation message containing the
+question and the selected outcome. Runtime consumes the same receipt-fenced
+Comms delivery as a typed member message. If the asking body has finished, the
+answer queues one replacement job on the original conversation and member.
+The replacement reads the words through `runtime.readConversation`; neither its
+runner brief nor Runtime's routing records contain the private question or answer.
+
+The bound integration matrix in `conversations.test.ts` covers Yes and No for a
+non-owner member and an explicitly filed project, both normally and under staging. It verifies the actual socket
+answer, runner claim/input/report, authenticated body read, original-member
+provenance and unchanged delivery receipts after retry and restart. Under staging,
+the Attention decision commits while Comms delivery remains held across restart;
+releasing delivery queues the replacement, whose input has its own hold.
+
+This is an unmanaged conversation question. Managed Approvals and Tasks retain
+their owning decision protocols; conversational text does not authorize them.
+The proof uses the in-process runner API and does not claim an external worker
+process, live installation or host rollout has been exercised.
