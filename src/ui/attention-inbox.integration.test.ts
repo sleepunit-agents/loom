@@ -196,7 +196,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await expect.poll(()=>new URL(b.url()).pathname).toBe(`/p/comms-preview/thread/${privateThread.replace(/^th:/,'')}`);
     // Trusted owning Comms producer, using the same encrypted source capability as Runtime.
     const key=await loadKey(home);
-    const askPrivate=privateQuestionCreator({...loom,clock,key,sharing:()=>fixtureSharing,attention:attentionRole(loom.operations),runtime:{deliver:async()=>{},end:async()=>{}},hold:async f=>f(),closed:()=>false,changed:(t,seq,ref)=>loom.live.changed([{type:'thread',id:t.id},{type:'message',id:`${t.id}:${seq}`},{type:'attention.ask',id:ref}])});
+    const askPrivate=privateQuestionCreator({...loom,clock,key,sharing:fixtureSharing,attention:attentionRole(loom.operations),runtime:{deliver:async()=>{},end:async()=>{}},hold:async f=>f(),closed:()=>false,changed:(t,seq,ref)=>loom.live.changed([{type:'thread',id:t.id},{type:'message',id:`${t.id}:${seq}`},{type:'attention.ask',id:ref}])});
     const sealedWords='Keep the sealed Inbox plan private?';
     const sealed=await askPrivate('art',privateThread,{id:'inbox-sealed',question:{ask:sealedWords,why:'Only this member sees the full question.',if_yes:'Continue the private plan.',if_no:'Hold the private plan.',answers:'yes-no'}});
     for(const page of [a,b]){
