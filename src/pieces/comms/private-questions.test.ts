@@ -366,10 +366,11 @@ for(const drift of ['thread','seq','member','agent','source'])it(`does not mark 
  const result=await f.call('comms.messages',{thread:f.place});expect(result.ok).toBe(true);if(result.ok)expect((result.value as {sealedQuestion?:boolean}[]).some(m=>m.sealedQuestion)).toBe(false);
 });
 it('does not mark an imported-format ask even with a comms ref and existing legacy Attention',async()=>{
- const f=await setup(),ref='comms:'+ 'a'.repeat(64);
- expect(f.attention.raise(f.viewer,{id:ref,agent:'art',member:'jonathan',ask:'legacy',source:{kind:'conversation',id:'legacy'}},'legacy')).toMatchObject({ok:true});
- await f.comms.post('art',f.place,{id:ref,kind:'ask',ref,text:'legacy'});
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'legacy-fixture',question}),ref=r.ref;
+ const a=JSON.parse((f.app.db.prepare('SELECT record FROM attention_asks WHERE id=?').get(ref) as {record:string}).record);
+ delete a.privateQuestion;a.ask='Legacy imported words';
+ f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify(a),ref);
  const words=await f.key.seal(JSON.stringify({ask:'Legacy imported words',answers:'yes-no'}));
  f.app.db.prepare("UPDATE comms_messages SET words=?,record=? WHERE thread=? AND id=?").run(words,JSON.stringify({encoding:'ask',ref}),f.place,ref);
- const result=await f.call('comms.messages',{thread:f.place});expect(result).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:{ask:'Legacy imported words'}})])});if(result.ok)expect((result.value as {sealedQuestion?:boolean}[]).some(m=>m.sealedQuestion)).toBe(false);
+ const result=await f.call('comms.messages',{thread:f.place});expect(result).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:expect.objectContaining({ask:'Legacy imported words'})})])});if(result.ok)expect((result.value as {sealedQuestion?:boolean}[]).some(m=>m.sealedQuestion)).toBe(false);
 });
