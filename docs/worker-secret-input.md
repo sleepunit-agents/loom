@@ -190,3 +190,12 @@ completion callback remains held. These tests do not establish production
 staging/value-free accounting or installed startup ownership. No real consumer,
 Claude fd3 compatibility, public operation, production tombstone lifecycle,
 installed daemon wiring or host activation is claimed by this source-only unit.
+
+
+Admission transport entry saturation is not independently exercised; production
+central tombstone lifecycle/capacity remains a prerequisite. Connection fences
+stay local to each existing protocol to avoid changing unrelated transports in
+this unit. The small response-hold and timer-scaling test helpers remain local.
+The server readiness flag rejects duplicate requests before their cleanup can
+retire an already-running original dispatch; client flags cannot guard remote
+requests. Successful client close skips cancellation once dispatch is acknowledged.

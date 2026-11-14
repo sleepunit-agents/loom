@@ -15,8 +15,8 @@ import {secretInputBindingSchema,type SecretInputBinding} from './worker-binding
 import {secretName} from './input.js';
 import type {secretTickets} from './tickets.js';
 const failed=()=>new Error('Worker admission unavailable');
-const id=z.uuid();
-const reply=z.object({id,pendingId:id}).strict();
+const idSchema=z.uuid();
+const replySchema=z.object({id:idSchema,pendingId:idSchema}).strict();
 export interface AdmissionWorker {
   fingerprint:string; binding:SecretInputBinding; viewer:Viewer;
   holder:ReturnType<typeof localHolderHandoff>;
@@ -56,7 +56,7 @@ export async function listenWorkerAdmission(config:Omit<LocalHolderConfig,'serve
           const match=/^\/v1\/admission\/([^/]+)\/(admit|dispatch|cancel)$/.exec(req.url??'');
           if(!alive()||!socket.authorized||!peer||!match||req.method!=='POST'
             ||req.headers['content-length']!=='0'||req.headers['transfer-encoding'])throw failed();
-          const pendingId=id.parse(match[1]),action=match[2];
+          const pendingId=idSchema.parse(match[1]),action=match[2];
           let body='';
           if(action==='admit') {
             const name=secretName.parse(req.headers['x-loom-name']);
@@ -71,6 +71,7 @@ export async function listenWorkerAdmission(config:Omit<LocalHolderConfig,'serve
             if(!entry||entry.peer!==peer||req.headers['x-loom-ticket']!==entry.admission.id||req.headers['x-loom-name'])throw failed();
             if(action==='cancel')retire(pendingId);
             else {
+              // Reject a duplicate before its finally can retire the first dispatch.
               if(entry.ready)throw failed();entry.ready=true;
               res.once('close',()=>{if(!res.writableFinished)retire(pendingId);});
               try {await entry.admission.dispatch();if(!alive())throw failed();}
@@ -106,10 +107,10 @@ export async function listenWorkerAdmission(config:Omit<LocalHolderConfig,'serve
 /** One original pending identity per pinned client. No retries or re-admission. */
 export function workerAdmission(config:LocalHolderConfig,daemonFingerprint:string,pendingId:string) {
   try {
-    config={...config};id.parse(pendingId);certificateFingerprint.parse(daemonFingerprint);
+    config={...config};idSchema.parse(pendingId);certificateFingerprint.parse(daemonFingerprint);
     if(!isAbsolute(config.socket)||!config.servername)throw failed();
     const material=tlsMaterial(config),requests=new Set<ClientRequest>();
-    let closed=false,stopping=false,attempted=false,dispatched=false,ticketId:string|undefined;
+    let closed=false,stopping=false,attempted=false,dispatched=false,delivered=false,ticketId:string|undefined;
     let closing:Promise<void>|undefined;
     async function call(action:'admit'|'dispatch'|'cancel',name?:string) {
       try {
@@ -136,18 +137,18 @@ export function workerAdmission(config:LocalHolderConfig,daemonFingerprint:strin
     return Object.freeze({
       async admit(name:string) {
         if(attempted||closed||stopping)throw failed();attempted=true;
-        try {secretName.parse(name);const value=reply.parse(JSON.parse(await call('admit',name)));
+        try {secretName.parse(name);const value=replySchema.parse(JSON.parse(await call('admit',name)));
           if(value.pendingId!==pendingId)throw failed();ticketId=value.id;return ticketId;
         }catch {throw failed();}
       },
       async dispatch() {
-        if(!ticketId||dispatched||closed||stopping)throw failed();dispatched=true;await call('dispatch');
+        if(!ticketId||dispatched||closed||stopping)throw failed();dispatched=true;await call('dispatch');delivered=true;
       },
       close() {
         return closing??=(async()=>{
           stopping=true;
           await Promise.all([...requests].map(req=>new Promise<void>(resolve=>{req.once('close',resolve);req.destroy();})));
-          if(ticketId)try {await call('cancel');}catch { /* lost ack stays consumed */ }
+          if(ticketId&&!delivered)try {await call('cancel');}catch { /* lost ack stays consumed */ }
           closed=true;
         })();
       },
