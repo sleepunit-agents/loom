@@ -48,3 +48,8 @@ it('keeps the first occurrence within a message, matching the original each-once
  expect(refsOf(app.db,t.id).map(r=>r.ref)).not.toContain('t-1');
  expect(refsOf(app.db,t.id)[0].ref).toBe('t-201');
 });
+
+it('enforces numeric grammar boundaries for tasks and fully qualified changes',()=>{
+ expect(refsIn('t-123456789 acme/app#1234567890')).toEqual(['t-123456789','github:acme/app#1234567890']);
+ expect(refsIn('t-1234567890 acme/app#12345678901')).toEqual([]);
+});

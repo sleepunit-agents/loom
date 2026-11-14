@@ -269,3 +269,22 @@ it('compares imported refs to an independent expectation even when a trigger mut
  expect(app.db.prepare('SELECT * FROM comms_threads').all()).toEqual([]);
  expect(app.db.prepare('SELECT * FROM comms_refs').all()).toEqual([]);
 });
+
+it('rebuilds retained replies but excludes imported cards and errors',async()=>{
+ const s=await source(),to=home();await loadKey(to);
+ s.db.prepare('UPDATE comms_messages SET text=? WHERE kind=?').run(await s.key.seal('t-701'),'card');
+ const insert=s.db.prepare('INSERT INTO comms_messages VALUES (?,?,?,?,?,?,?,?,?,?,?,?)');
+ for(const [seq,kind,text] of [[3,'reply','t-702 note:reply/plan'],[4,'error','t-703']] as const)
+  insert.run('th:old',seq,'2026-11-12T01:03:00Z',kind,'art',kind,'hash',await s.key.seal(text),null,null,1,null);
+ const app=createFoundation({home:to});cleanup.push(()=>app.close());await importComms(app.db,s.from,to);
+ expect(app.db.prepare('SELECT ref FROM comms_refs ORDER BY ref').all()).toEqual([{ref:'note:reply/plan'},{ref:'t-702'}]);
+});
+it('merges retained and old refs before applying the capacity bound',async()=>{
+ const s=await source(),to=home();await loadKey(to);
+ s.db.prepare('UPDATE comms_messages SET text=? WHERE seq=1').run(await s.key.seal(Array.from({length:201},(_,n)=>`t-${n+1}`).join(' ')));
+ const hh=new Database(join(s.from,'household.db'));cleanup.push(()=>hh.close());hh.exec('CREATE TABLE comms_refs(thread,ref,seq,pos,at)');
+ hh.prepare('INSERT INTO comms_refs VALUES (?,?,?,?,?)').run('th:old','t-201',1,0,'2026-11-12T01:00:00Z');
+ const app=createFoundation({home:to});cleanup.push(()=>app.close());await importComms(app.db,s.from,to);
+ const refs=app.db.prepare('SELECT ref FROM comms_refs').all();expect(refs).toHaveLength(200);
+ expect(refs).toContainEqual({ref:'t-1'});expect(refs).not.toContainEqual({ref:'t-201'});
+});

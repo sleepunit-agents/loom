@@ -5,7 +5,7 @@ import { join, dirname, basename } from 'node:path';
 import { readFileSync, realpathSync, existsSync } from 'node:fs';
 import { migrate, type Db } from '../../core/index.js';
 import { readKey, wordsKey } from './crypto.js';
-import {indexRefs,refsIn} from './refs.js';
+import {refsIn} from './refs.js';
 import { schema } from './schema/001.js';
 import { saveThread, type Thread, type MessageRow } from './store.js';
 type Row=Record<string,unknown>;
@@ -80,7 +80,6 @@ export async function importComms(db:Db,from:string,newHome:string,options:{inte
   for(const r of rows)db.prepare('INSERT INTO comms_messages VALUES (?,?,?,?,?,?,?,?,?)').run(r.thread,r.seq,r.id,r.kind,r.at,r.sender,r.words,r.hash,r.record);
   // Rebuild retained words once during import, then overlay the old word-free
   // index, including mentions whose message words have already expired.
-  for(const mention of mentions.sort((a,b)=>a.seq-b.seq))indexRefs(db,mention.thread,mention.seq,mention.at,mention.refs);
   const keep=new Set(imported.map(t=>t.id));
   for(const ref of references){
    if(typeof ref.thread!=='string'||!keep.has(ref.thread)||typeof ref.ref!=='string'||refsIn(ref.ref.replace(/^github:/,'')).length!==1
@@ -96,11 +95,8 @@ export async function importComms(db:Db,from:string,newHome:string,options:{inte
   for(const ref of references)put(String(ref.thread),String(ref.ref),Number(ref.seq),Number(ref.pos),time(ref.at),true);
   const expectedRefs=imported.flatMap(t=>[...expected.values()].filter(r=>r.thread===t.id).sort((a,b)=>b.seq-a.seq||b.pos-a.pos||(a.ref<b.ref?-1:a.ref>b.ref?1:0)).slice(0,200))
    .sort((a,b)=>a.thread<b.thread?-1:a.thread>b.thread?1:a.ref<b.ref?-1:a.ref>b.ref?1:0);
-  // Position must survive even if the old index no longer contains its siblings.
-  const upRef=db.prepare(`INSERT INTO comms_refs VALUES (?,?,?,?,?) ON CONFLICT(thread,ref) DO UPDATE SET
-   seq=excluded.seq,pos=excluded.pos,at=excluded.at WHERE excluded.seq>=comms_refs.seq`);
-  for(const ref of references)upRef.run(ref.thread,ref.ref,ref.seq,ref.pos,time(ref.at));
-  for(const t of imported)indexRefs(db,t.id,0,0,[]);
+  const insertRef=db.prepare('INSERT INTO comms_refs(thread,ref,seq,pos,at) VALUES (?,?,?,?,?)');
+  for(const r of expectedRefs)insertRef.run(r.thread,r.ref,r.seq,r.pos,r.at);
   for(const step of stepRows)db.prepare('INSERT INTO comms_conversation_steps VALUES (?,?,?,?,?)').run(step.seq,step.conversation,step.at,step.words,step.record);
   for(const d of deleted)db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run(d.id,d.member,d.agent,d.conversation??'',time(d.at));
   options.interrupt?.();
