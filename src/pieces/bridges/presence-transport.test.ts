@@ -66,6 +66,7 @@ describe('unregistered service presence transport with fake owning place',()=>{
   });
   it('does not retain a previous callback token',async()=>{
     const f=fixture();
+    f.request.mockImplementation(async()=>new Response(null,{status:204}));
     f.use.mockImplementationOnce(async(_n,cb)=>cb('FIRST')).mockImplementationOnce(async(_n,cb)=>cb('SECOND'));
     await f.effects.reaction('101',true,f.facts);await f.effects.reaction('101',false,f.facts);
     expect(f.request.mock.calls.map(([,i])=>i?.headers)).toEqual([{Authorization:'Bot FIRST'},{Authorization:'Bot SECOND'}]);
