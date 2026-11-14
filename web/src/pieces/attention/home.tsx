@@ -106,7 +106,6 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
                 <ReportedItems title="Reported jobs" empty="No jobs reported." items={status.jobs} go={go} />
                 <ReportedItems title="Watching" empty="No watched items reported." items={status.watched} go={go} />
               </>}</>}</section>
-                  <HomeSteps agent={agent.id} name={agent.name} activity={activity} go={go} />
                   <HomeConversations agent={agent.id} name={agent.name} reading={conversations} go={go} />
                 </div>
                 <div className="grid min-w-0 content-start gap-4">
@@ -121,6 +120,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
                   })}</List>}
                 </>}
               </section>
+                  <HomeSteps agent={agent.id} name={agent.name} activity={activity} go={go} />
                 </div>
               </div>
               </div>
