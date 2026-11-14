@@ -260,7 +260,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(true);
               await page.keyboard.press('Escape');
               await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(false);
-              await page.locator('.next-dock-edge').click({button:'right'});
+              await page.locator('.next-dock-edge').click({button:'right',force:true});
               await page.getByRole('menuitem',{name:'Always show',exact:true}).click();
               await expect.poll(()=>page.locator('.next-dock-bar').isVisible()).toBe(true);
               }
