@@ -4,7 +4,7 @@ import { useReplyFollow } from '../comms/use-follow';
 import { threadRows, type CommsActions, type CommsDetail, type CommsSnapshot, type ThreadChange } from './model';
 export type { CommsActions, CommsDetail, CommsSnapshot } from './model';
 const time = (at: string) => `${new Date(at).toLocaleString('en-US', { timeZone: 'America/Chicago' })} CT`;
-type Cards = { question?(id: string): ReactNode; work?(refs: CommsDetail['refs']): ReactNode };
+type Cards = { question?(id: string): ReactNode; work?(refs: CommsDetail['refs'], conversation: string): ReactNode };
 function ThreadReader({ detail, actions, cards }: { detail: CommsDetail; actions?: CommsActions; cards?: Cards }) {
   const thread = detail.thread!;
   const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [failed, setFailed] = useState(false);
@@ -41,7 +41,7 @@ function ThreadReader({ detail, actions, cards }: { detail: CommsDetail; actions
       {message.kind === 'answer' && message.verdict && <p>Answered {message.verdict}</p>}
     </li>)}</ol>
     {follow.unread > 0 && <Button onClick={follow.down}>{follow.unread} new messages</Button>}
-    {cards?.work && detail.refs.length > 0 && <section aria-label="Work in this conversation"><h3>Work</h3>{cards.work(detail.refs)}</section>}
+    {cards?.work && <section aria-label="Work in this conversation"><h3>Work</h3>{cards.work(detail.refs, thread.conversation)}</section>}
     {actions && <div><label>Message {thread.agent}<Textarea aria-label={`Message ${thread.agent}`} value={draft} maxLength={100000} rows={3} disabled={busy} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); send(); } }} /></label><Button disabled={busy || !draft.trim()} onClick={send}>Send</Button></div>}
     {failed && <Error text="Could not save. Try again." />}
   </article>;

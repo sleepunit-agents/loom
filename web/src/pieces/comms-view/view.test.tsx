@@ -8,7 +8,7 @@ import { threadRows, type CommsActions, type CommsDetail, type CommsSnapshot } f
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
 afterEach(async () => { await act(async () => tree?.unmount()); });
-const thread = { id: 'th:pump', title: 'Private pump', agent: 'art', project: 'pond', member: 'alice', pinned: false, lastAt: '2026-11-14T20:00:00Z', readSeq: 0, working: true, stopRequested: false };
+const thread = { id: 'th:pump', conversation: 'cv-pump', title: 'Private pump', agent: 'art', project: 'pond', member: 'alice', pinned: false, lastAt: '2026-11-14T20:00:00Z', readSeq: 0, working: true, stopRequested: false };
 const snapshot: CommsSnapshot = { status: 'live', member: 'alice', threads: [thread], agents: [{ id: 'art', name: 'Art' }] };
 const detail: CommsDetail = { status: 'live', thread, refs: [{ ref: 't-12', messageSeq: 2 }], messages: [
   { thread: thread.id, seq: 1, kind: 'message', sender: 'alice', at: thread.lastAt, words: 'Find the pump', delivery: 'delivered' },
@@ -26,7 +26,7 @@ it('shows canonical messages/progress, shared question/work slots and marks the 
   for (const words of ['Private pump', 'Three pumps fit', 'Search', 'done', 'Question in-ask', 'Pump task']) expect(text).toContain(words);
   expect(text).not.toContain('PRIVATE ENVELOPE');
   expect(a.read).toHaveBeenCalledExactlyOnceWith(thread.id, 4);
-  expect(work).toHaveBeenCalledWith(detail.refs);
+  expect(work).toHaveBeenCalledWith(detail.refs, thread.conversation);
 });
 it('keeps the same message client id and draft for retries, and prevents repeated send taps', async () => {
   const a = actions(); let reject!: (error: Error) => void;
@@ -91,4 +91,11 @@ it('keeps a new thread id on retry and fences completed navigation after member 
   await act(async () => { tree.update(h(CommsView, { snapshot: { ...snapshot, member: 'bob' }, select, actions: a })); });
   await act(async () => { finish(); });
   expect(select).not.toHaveBeenCalled();
+});
+
+it('shows work filed from the conversation even when no task or pull request was mentioned', async () => {
+  const work = vi.fn(() => h('p', null, 'Task created here'));
+  await act(async () => { tree = create(h(CommsView, { snapshot, detail: { ...detail, refs: [] }, selected: thread.id, select: vi.fn(), cards: { work } })); });
+  expect(work).toHaveBeenCalledWith([], thread.conversation);
+  expect(JSON.stringify(tree.toJSON())).toContain('Task created here');
 });

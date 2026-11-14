@@ -1,7 +1,7 @@
 /** Canonical Comms rows supplied by shared queries, with conversation labels
  * joined to each thread. These types own no store or transport. */
 export interface CommsThread {
-  id: string; title: string; agent: string; project?: string | null; member: string;
+  id: string; conversation: string; title: string; agent: string; project?: string | null; member: string;
   pinned: boolean; archivedAt?: string | null; lastAt: string; readSeq: number;
   working: boolean; stopRequested: boolean;
 }
