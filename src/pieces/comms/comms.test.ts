@@ -187,6 +187,26 @@ for(const original of ['missing','other'])it(`does not fall back when original p
  await expect(s.comms.spawn('art',{conversation:'cv-unavailable',text:'Private child'})).rejects.toThrow('Spawn unavailable');
  expect(seals).toBe(0);expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:0});
 });
+it('refuses retries after original ownership is revoked or a conflicting parent is supplied',async()=>{
+ const s=await setup({conversation:id=>({agent:'art',venue:id==='cv-ordinary'?'terminal':'spawn',version:'one',member:id==='cv-ordinary'?'jonathan':id==='cv-bound'?'other':undefined})});
+ const parent=await s.open();await s.comms.deliver('art',parent,1);const cv=conversationOf(s.app.db,parent);
+ const created=await s.comms.spawn('art',{conversation:'cv-bound',text:'First brief'});
+ const before=s.app.db.prepare('SELECT * FROM comms_messages').all();
+ for(const parent of [cv,'cv-ordinary'])await expect(s.comms.spawn('art',{conversation:'cv-bound',text:'Retry',parent})).rejects.toThrow('Spawn unavailable');
+ s.getSharing().members.other.agents=[];
+ await expect(s.comms.spawn('art',{conversation:'cv-bound',text:'Revoked retry'})).rejects.toThrow('Spawn unavailable');
+ expect(s.app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(before);
+ expect(s.app.db.prepare('SELECT member FROM comms_threads WHERE id=?').get(created.thread)).toEqual({member:'other'});
+});
+it('snapshots shared ordinary parent metadata before encryption and refuses in-place member drift',async()=>{
+ let entered!:()=>void,release!:()=>void;const started=new Promise<void>(r=>entered=r),wait=new Promise<void>(r=>release=r);
+ const parent={agent:'art',venue:'terminal',version:'one',member:'other'};
+ const s=await setup({conversation:id=>id==='cv-parent'?parent:{agent:'art',venue:'spawn',version:'one',member:'other'},key:k=>({...k,seal:async words=>{entered();await wait;return k.seal(words);}})});
+ const pending=s.comms.spawn('art',{conversation:'cv-bound',text:'Private child',parent:'cv-parent'});await started;
+ parent.member='jonathan';release();await expect(pending).rejects.toThrow('Spawn unavailable');
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:0});
+ expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_messages').get()).toEqual({n:0});
+});
 for(const boundary of ['member','ownership'] as const)it(`refuses original member ${boundary} drift during spawn encryption`,async()=>{
  let original='other',entered!:()=>void,release!:()=>void;
  const started=new Promise<void>(r=>entered=r),wait=new Promise<void>(r=>release=r);
