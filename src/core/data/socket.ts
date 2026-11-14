@@ -2,7 +2,7 @@ import type { Server, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import { useServer } from 'graphql-ws/use/ws';
-import type { GraphQLSchema } from 'graphql/index.js';
+import { GraphQLError, type GraphQLSchema } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
@@ -37,6 +37,11 @@ export function dataSocket(options: {
       const auth = admitted.get(ctx.extra.socket);
       if (!auth?.valid()) throw new Error('Authentication ended');
       return { viewer: auth.viewer };
+    },
+    // Ordinary execution errors travel in next payloads, not onError. Drop
+    // partial data as well: it may contain words from the failed projection.
+    onNext(_ctx, _id, _payload, _args, result) {
+      if (result.errors?.length) return { errors: [new GraphQLError('Data query could not complete')] };
     },
     // Never include database/driver errors or query-generated values in errors.
     onError() { return [{ message: 'Data subscription could not complete' }]; },

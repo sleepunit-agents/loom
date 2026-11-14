@@ -138,10 +138,35 @@ it('supplies only the upgrade viewer to context fields for both reads and live r
   f.setSchema(() => new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{
     caller:{type:GraphQLString,resolve:(_source,_args,context)=>`${context.viewer.id}:${suffix}`},
   }})}));
-  const live = {...selection,id:'context',payload:{...selection.payload,variables:{query:'{ caller }',viewer:{kind:'member',id:'owner'}}}};
+  const live = {...selection,id:'context',payload:{
+    query:'subscription($query:String!,$vars:DataValue) { observe(query:$query,variables:$vars) { revision patches { path removed value } } }',
+    variables:{query:'{ caller }',vars:{viewer:{kind:'member',id:'owner'}}},
+  }};
   expect((await read(ws,()=>ws.send(JSON.stringify(live)))).payload.data.observe.patches[0].value).toEqual({caller:'sam:first'});
   suffix='second';
   expect((await read(ws,()=>f.live.changed())).payload.data.observe.patches).toEqual([{path:['caller'],removed:false,value:'sam:second'}]);
   const ordinary = {type:'subscribe',id:'read-context',payload:{query:'{ caller }',variables:{viewer:{kind:'member',id:'owner'}}}};
   expect((await read(ws,()=>ws.send(JSON.stringify(ordinary))))).toMatchObject({payload:{data:{caller:'sam:second'}}});
+});
+
+
+it('sanitizes ordinary execution errors and observe failures without releasing partial words', async () => {
+  const f = await setup(), ws = await f.open();
+  const { GraphQLString } = await import('graphql/index.js');
+  f.setSchema(() => new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{
+    words:{type:GraphQLString,resolve:()=> 'PRIVATE partial words'},
+    broken:{type:GraphQLString,resolve:()=>{throw Error('PRIVATE database path and viewer');}},
+  }})}));
+  const ordinary = await read(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'broken-read',payload:{query:'{ words broken }'}})));
+  expect(ordinary).toEqual({type:'next',id:'broken-read',payload:{errors:[{message:'Data query could not complete'}]}});
+  const messages: unknown[] = [];
+  const finished = new Promise<void>(resolve => ws.on('message',raw=>{
+    const message = JSON.parse(String(raw));
+    if(message.id==='broken-live'){messages.push(message);if(message.type==='error'||message.type==='complete')resolve();}
+  }));
+  ws.send(JSON.stringify({...selection,id:'broken-live',payload:{...selection.payload,variables:{query:'{ words broken }'}}}));
+  await finished;
+  expect(messages.length).toBeGreaterThan(0);
+  expect(JSON.stringify(messages)).not.toContain('PRIVATE');
+  expect(messages.some((message:any)=>message.type==='error'||message.payload?.errors?.length)).toBe(true);
 });
