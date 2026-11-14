@@ -1690,3 +1690,35 @@ No importer or native history behavior changes.
 | --- | --- | --- |
 | scheduled public wake metadata | released source → owning ACK/native completion → Attention wake | bridge/spawn sources |
 | public Inbox member-message metadata | released answer → owning ACK → Attention message with saved member | bridge/spawn answer consumers |
+
+### Exact Discord history permit (first owning issuer)
+
+Trusted in-process consumers use `runtimeDiscordHistoryPermit(app, viewer,
+{workspace, channel, kind})` from Runtime's role. The viewer must be the actual
+Signin-authenticated body object for a running, claimed private Comms job. Its
+current unarchived source and retained sender history must resolve to the owner,
+and central household policy must still authorize that original member. An
+unbound agent, copied viewer, service body, nonowner, unknown history, scheduled
+job or caller-written conversation label cannot issue this permit.
+
+The immutable permit names exactly the derived agent and requested canonical
+Discord workspace/channel IDs and channel/thread kind. Its `current()` rechecks
+credential, source, owner policy, execution and the original route/claim snapshot.
+Bridges' existing `discordApi.history` separately checks the exact permit, fresh
+platform guild/type evidence, credential access and staging around every await.
+The permit contains no private words, token, sender label or body identity and
+cannot be obtained through a public operation. It permits reading into the
+original body; it grants no venue delivery, body start, reply or sender attribution.
+
+This first issuer supports owner-steered private Comms bodies only. Bridges owns
+production history operation/client wiring and author/`may_wake` resolution.
+Fixtures exercise otherwise-current bridge and private/public Clock sources, a
+matching service job/credential, retained nonowner history in an owner body,
+an otherwise-current waiting body, a valid
+Comms project refile and an independently
+valid replacement thread place against an old permit. Other source types, broader caller authority, other venue permits and durable
+receiver reconciliation remain separate work. No importer behavior changes.
+
+| Old behavior | Owning replacement in this unit | Remaining |
+|---|---|---|
+| Runtime-authorized Discord channel/thread history | Exact current owner-body permit consumed by the merged Bridges history transport | Public operation/client, sender policy and broader supported sources |

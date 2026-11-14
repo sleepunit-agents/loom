@@ -1,3 +1,4 @@
+import { runtimeDiscordHistoryPermit, runtimeHouseDestination } from './role.js';
 import * as conversationModule from './conversations.js';
 import {provenanceStore} from './provenance-store.js';
 import {afterEach,expect,it,vi} from 'vitest';
@@ -322,4 +323,12 @@ it('issues Clock provenance from current bridge history and loses it when the ve
  expect(role!.clockProvenance(current)).toMatchObject({member:'jonathan',principal:{for:'pollock',people:['jonathan','pollock']}});
  f.app.db.transaction(()=>put(f.app.db,'links',{id:'person',platform:'slack',workspace:'T123',user:'U200',person:'pollock'}))();
  expect(role!.clockProvenance(current)).toBeUndefined();
+});
+
+it('refuses an otherwise current authenticated owner-steered bridge source as venue history authority',async()=>{
+ const f=await setup(false,'discord');await f.receive();await until(()=>runtimeStore(f.app.db).ids('job').length===1);
+ const {body}=await f.running(),viewer=signin(f.app).token(hash(body))!.viewer;
+ expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true});
+ expect(runtimeHouseDestination(f.app,()=>new SharingDatabase(f.app.db,f.home).sharing(),viewer)?.current()).toBe(true);
+ expect(runtimeDiscordHistoryPermit(f.app,viewer,{workspace:'300',channel:'400',kind:'channel'})).toBeUndefined();
 });
