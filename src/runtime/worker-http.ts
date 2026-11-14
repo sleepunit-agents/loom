@@ -21,13 +21,17 @@ export function httpWorkerControl(input: {
   const timeoutMs = input.timeoutMs ?? 30_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new Error('Invalid worker request timeout');
   async function call<T>(name: string, args: unknown, schema: z.ZodType<T>): Promise<T> {
-    const signal = AbortSignal.any([input.signal, AbortSignal.timeout(timeoutMs)]);
+    const deadline = new AbortController();
+    const timer = setTimeout(() => deadline.abort(), timeoutMs);
+    const signal = AbortSignal.any([input.signal, deadline.signal]);
     let response: Response | undefined;
     try {
+      const body = JSON.stringify({ id: randomUUID(), input: args });
+      if (Buffer.byteLength(body, 'utf8') > 1_048_576) throw new Error('Worker request exceeded limit');
       response = await (input.fetch ?? fetch)(new URL(`/api/runtime/${name}`, base), {
         method: 'POST', redirect: 'error', signal,
         headers: { authorization: `Bearer ${input.token}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ id: randomUUID(), input: args }),
+        body,
       });
       if (!response.ok || !response.body) throw new Error('Worker operation rejected');
       const reader = response.body.getReader();
@@ -48,6 +52,7 @@ export function httpWorkerControl(input: {
       // Never include upstream bodies, URLs, tokens or fetch diagnostics in logs.
       throw new Error(`Worker ${name} failed; outcome may be uncertain`);
     } finally {
+      clearTimeout(timer);
       if (response?.body && !response.body.locked) await response.body.cancel().catch(() => {});
     }
   }

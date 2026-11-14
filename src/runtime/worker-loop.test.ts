@@ -22,3 +22,13 @@ it('cancellation interrupts idle waiting and admits nothing more', async () => {
   await runWorker({ box: 'b', control, executor, signal: abort.signal, once, pause });
   expect(once).toHaveBeenCalledOnce();
 });
+it('default idle wait settles on cancellation before the idle deadline', async () => {
+  const abort = new AbortController(), once = vi.fn().mockResolvedValue('idle');
+  let entered!: () => void;
+  const report = new Promise<void>(yes => { entered = yes; });
+  const pending = runWorker({ box: 'b', control, executor, signal: abort.signal, once, idleMs: 60_000, report: entered });
+  await report;
+  abort.abort();
+  await pending;
+  expect(once).toHaveBeenCalledOnce();
+});

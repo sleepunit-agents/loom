@@ -55,3 +55,21 @@ describe('worker operation client', () => {
     expect(() => httpWorkerControl({ url: 'http://127.0.0.1:8787', token: 'token', signal: new AbortController().signal })).not.toThrow();
   });
 });
+it('refuses oversized UTF-8 requests without dispatch', async () => {
+  const fetcher = vi.fn<typeof fetch>();
+  await expect(client(fetcher).started('j1', 'é'.repeat(600_000))).rejects.toThrow('Worker started failed');
+  expect(fetcher).not.toHaveBeenCalled();
+});
+it('expires a stalled request on the configured deadline', async () => {
+  vi.useFakeTimers();
+  try {
+    const fetcher: typeof fetch = async (_url, init) => new Promise((_yes, no) => {
+      init!.signal!.addEventListener('abort', () => no(new Error('deadline')), { once: true });
+    });
+    const control = httpWorkerControl({ url: 'https://loom.example', token: 'secret', signal: new AbortController().signal, fetch: fetcher, timeoutMs: 100 });
+    const pending = expect(control.next()).rejects.toThrow('Worker next failed');
+    await vi.advanceTimersByTimeAsync(100);
+    await pending;
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
