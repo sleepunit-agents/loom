@@ -1376,14 +1376,12 @@ in the private import evidence and source checksum. Interrupted/repeated imports
 and both independent migration verifiers cover these bytes. They remain private
 source evidence, never a public record or executable template.
 
-This bounded capture step does not resolve configured `channel_notes` brief
-names to documents, require all configured briefs, or compose them. Those are
-still **required**: preserve shuttle configuration file order and direct-or-parent
-selection (distinct from Discord describe's parent-only selection), refuse any
-unresolved configured brief, and connect actual Runtime brief composition with
-restrictions and positive channel/thread fixtures. Live route `notes` remains
-empty. No daemon reads old paths and no activation or snapshot deletion is
-licensed by successful capture.
+Capture alone does not resolve configured names or compose briefs. The following
+offline resolution stage now requires every configured channel-note document and
+preserves source order and selection. Actual Runtime composition with restrictions
+and positive channel/thread fixtures remains **required**. Live route `notes`
+remains empty. No daemon reads old paths and no activation or snapshot deletion
+is licensed by successful capture or resolution.
 
 ## Offline configured channel briefs
 
