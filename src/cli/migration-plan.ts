@@ -1,3 +1,4 @@
+import {bridgeDocumentPath} from '../pieces/bridges/import-documents.js';
 import { bridgeImportOptions } from '../pieces/bridges/import-plan.js';
 import { bridgeSourcePath } from './migration-bridges.js';
 /** Offline preparation only: no destination, daemon, legacy programs or writable source opens. */
@@ -82,7 +83,7 @@ function assertInventory(root: string, manifest: SnapshotManifest, regular: stri
     const fd = openSync(join(root, file.path), 'r');
     const header = Buffer.alloc(16);
     try { readSync(fd, header, 0, 16, 0); } finally { closeSync(fd); }
-    const kind = header.toString() === 'SQLite format 3\0' ? 'sqlite' : 'file';
+    const kind = !bridgeDocumentPath(file.path)&&header.toString() === 'SQLite format 3\0' ? 'sqlite' : 'file';
     if (kind !== file.kind) throw Error('Snapshot kind disagrees with file contents');
   }
 }

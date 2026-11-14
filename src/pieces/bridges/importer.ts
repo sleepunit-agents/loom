@@ -11,15 +11,18 @@ export function importBridges(db:Db,sources:BridgeImportSources,options:unknown,
   const source=readBridgeImport(sources,options,household,open),expected=bridgeImportTables(source);
   return db.transaction(()=>{
     migrate(db,'bridges',[...schema,...retry,...slack,...discord]);
+    const compare=()=>{
+      for(const [table,rows]of Object.entries(expected)){
+        const order=(rs:unknown[])=>JSON.stringify(rs.map(r=>JSON.stringify(r)).sort());
+        if(order(db.prepare(`SELECT * FROM ${table}`).all())!==order(rows))throw Error('Bridges import comparison failed: ids, counts or content differ');
+      }
+    };
     const old=db.prepare("SELECT value FROM bridges_meta WHERE key='source-checksum'").get() as {value:string}|undefined;
-    if(old){if(old.value!==source.checksum)throw Error('A different Bridges source was already imported');return {ok:true,imported:false,checksum:source.checksum};}
+    if(old){if(old.value!==source.checksum)throw Error('A different Bridges source was already imported');compare();return {ok:true,imported:false,checksum:source.checksum};}
     for(const table of Object.keys(expected))if(db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get())throw Error('Bridges destination must be empty before import');
     for(const [table,rows]of Object.entries(expected))for(const row of rows){const columns=Object.keys(row);db.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(()=>'?').join(',')})`).run(...Object.values(row));}
     hooks.interrupt?.();
-    for(const [table,rows]of Object.entries(expected)){
-      const order=(rs:unknown[])=>JSON.stringify(rs.map(r=>JSON.stringify(r)).sort());
-      if(order(db.prepare(`SELECT * FROM ${table}`).all())!==order(rows))throw Error('Bridges import comparison failed: ids, counts or content differ');
-    }
+    compare();
     return {ok:true,imported:true,checksum:source.checksum};
   })();
 }

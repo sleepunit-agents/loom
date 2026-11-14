@@ -181,3 +181,30 @@ for(const origin of ['file','store'] as const)it(`verifies arbitrary note member
  expect((await verifyMigration(f.snapshot,f.home,f.plan)).status).toBe('different');
  expect((await verifyBridgesMigration(f.snapshot,f.home,f.plan.importers.bridges.options)).status).toBe('different');
 });
+
+it('captures only explicitly selected document bytes and verifies them after interruption and repeat',async()=>{
+ const f=await fixture('file',true),snapshot=join(f.root,'documents-snapshot'),document=join(f.root,'selected.md');
+ const content='SQLite format 3\0\uFEFFPRIVATE selected context\r\n$unchanged 🐟\n';writeFileSync(document,content);
+ writeFileSync(join(f.instance,'unselected.md'),'NEVER_COLLECT');
+ await createSnapshot(f.old,snapshot,undefined,{bridges:[f.instance],'bridges-document':[document]});
+ const plan=prepareMigrationPlan(snapshot).plan;
+ plan.importers.bridges.options={...(f.plan.importers.bridges.options as object),documents:[{path:'bridges-documents/0.md',agent:'art',key:'custom / note'}]};
+ expect(readFileSync(join(snapshot,'bridges-documents/0.md'),'utf8')).toBe(content);
+ expect(existsSync(join(snapshot,'bridges/0/unselected.md'))).toBe(false);
+ const options=plan.importers.bridges.options;
+ const missing={...plan,importers:{...plan.importers,bridges:{...plan.importers.bridges,options:{...(options as object),documents:[{path:'bridges-documents/1.md',agent:'art',key:'custom / note'}]}}}};
+ await expect(runMigrationAll(snapshot,join(f.root,'missing'),missing)).rejects.toThrow('Invalid offline');
+ await expect(runMigrationAll(snapshot,f.home,plan,{afterPiece:name=>{if(name==='bridges')throw Error('document interruption');}})).rejects.toThrow('document interruption');
+ expect((await runMigrationAll(snapshot,f.home,plan)).status).toBe('complete');
+ expect((await runMigrationAll(snapshot,f.home,plan)).status).toBe('complete');
+ for(const report of [await verifyMigration(snapshot,f.home,plan),await verifyBridgesMigration(snapshot,f.home,options)])expect(report.status).toBe('verified');
+ const db=new Database(join(f.home,'loom.db'));
+ try{
+  const row=db.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as{value:string};
+  const evidence=JSON.parse(row.value);
+  expect(evidence.selectedDocuments).toEqual([{path:'bridges-documents/0.md',agent:'art',key:'custom / note',name:'bridges-documents/0.md',bytes:Buffer.byteLength(content),sha256:expect.stringMatching(/^[a-f0-9]{64}$/),content}]);
+  evidence.selectedDocuments[0].content='tampered';
+  db.prepare("UPDATE bridges_meta SET value=? WHERE key='legacy-evidence'").run(JSON.stringify(evidence));
+ }finally{db.close();}
+ for(const report of [await verifyMigration(snapshot,f.home,plan),await verifyBridgesMigration(snapshot,f.home,options)]){expect(report.status).toBe('different');expect(report.differences).toContainEqual(expect.objectContaining({piece:'bridges',table:'bridges_meta'}));}
+});

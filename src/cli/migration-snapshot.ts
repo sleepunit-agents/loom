@@ -1,3 +1,4 @@
+import {bridgeDocumentLimits,bridgeDocumentPath,readBridgeDocuments} from '../pieces/bridges/import-documents.js';
 import { runtimeRepositoryCacheRule } from '../pieces/runtime/import-source.js';
 import { copyMigrationFile, fileDigest } from '../core/migration-files.js';
 import { randomUUID } from 'node:crypto';
@@ -74,7 +75,7 @@ export interface SnapshotInventory {
   followed: NonNullable<SnapshotManifest['followed']>;
 }
 /** Inventory only: no SQLite connection, destination creation or source writes. */
-export interface SnapshotRoots { clock?: string; wake?: string; approvals?: string; changes?: string; secrets?: string; runtime?: string; 'runtime-data'?: string; bridges?: string[] }
+export interface SnapshotRoots { clock?: string; wake?: string; approvals?: string; changes?: string; secrets?: string; runtime?: string; 'runtime-data'?: string; bridges?: string[]; 'bridges-document'?: string[] }
 export function inventorySnapshot(from: string, to: string, tasks?: string, roots: SnapshotRoots = {}): SnapshotInventory {
   let source = guarded('.', 'source home must exist', () => realpathSync(from));
   let prefix = 'home';
@@ -147,7 +148,8 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
   };
   visit(source);
   const clockFiles = legacyClockAgentFiles;
-  const expandedRoots=Object.entries(roots).flatMap(([name,value])=>name==='bridges'?(value as string[]|undefined??[]).map((path,index)=>[`bridges/${index}`,path] as const):[[name,value as string|undefined] as const]);
+  let documentBytes=0,documentCount=0;
+  const expandedRoots=Object.entries(roots).flatMap(([name,value])=>(name==='bridges'||name==='bridges-document')?(value as string[]|undefined??[]).map((path,index)=>[`${name}/${index}`,path] as const):[[name,value as string|undefined] as const]);
   for (const [name, supplied] of expandedRoots) {
     if (supplied === undefined) continue;
     if (!supplied) refusal(`<${name}>`, 'source root must not be empty');
@@ -155,6 +157,11 @@ export function inventorySnapshot(from: string, to: string, tasks?: string, root
     source = guarded(`<${name}>`, 'source root must exist', () => realpathSync(supplied));
     if (within(target, source) || within(source, target)) refusal(`<${name}>`, 'source and destination must be separate');
     const stat = guarded(`<${name}>`, 'cannot inspect source root', () => lstatSync(source));
+    if(name.startsWith('bridges-document/')){
+      documentBytes+=stat.size;documentCount++;
+      if(!stat.isFile()||stat.size>bridgeDocumentLimits.bytes||documentBytes>bridgeDocumentLimits.total||documentCount>bridgeDocumentLimits.count)refusal('<bridges-document>','selected documents require regular files, at most 1 MiB each, 8 MiB total and 128 files');
+      addCopy(`bridges-documents/${name.split('/')[1]}.md`,source,stat.size);continue;
+    }
     if (name === 'changes') {
       if (!stat.isFile()) refusal('<changes>', 'Changes snapshot must be a regular file');
       addCopy('changes/changes.json', source, stat.size);
@@ -199,6 +206,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
   const manifest: SnapshotManifest = { version: 1, consistency: 'per-database', files: [], skipped: inventory.skipped, followed: inventory.followed };
   const runtimeRoots = (['runtime','runtime-data'] as const).filter(name=>roots[name]!==undefined);
   if(runtimeRoots.length)manifest.runtimeRoots=runtimeRoots;
+  let capturedDocumentBytes=0;
   const copied = new Map<string, string>();
   try {
     destinationPath(join(target, 'home'));
@@ -216,10 +224,17 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
       guarded(path, 'cannot create private destination directory', () => mkdirSync(dirname(output), { recursive: true, mode: 0o700 }));
       destinationPath(output);
       if (existsSync(output)) refusal(path, 'destination entry already exists');
-      const sqlite = guarded(path, 'cannot read data header', () => isSqlite(file.source));
+      const selectedDocument=bridgeDocumentPath(file.path);
+      const sqlite = !selectedDocument&&guarded(path, 'cannot read data header', () => isSqlite(file.source));
       try {
         const previous = copied.get(file.source);
-        if (previous) copyMigrationFile(previous, output);
+        if(selectedDocument){
+          const document=readBridgeDocuments([{name:file.path,path:file.source}])[0];
+          capturedDocumentBytes+=document.bytes;
+          if(capturedDocumentBytes>bridgeDocumentLimits.total)throw Error();
+          writeFileSync(output,document.content,{encoding:'utf8',flag:'wx',mode:0o600});
+        }
+        else if (previous) copyMigrationFile(previous, output);
         else if (sqlite) {
           const db = new Database(file.source, { readonly: true, fileMustExist: true });
           // Linux descriptor-relative path keeps the backup in our reserved inode
@@ -237,7 +252,7 @@ export async function createSnapshot(from: string, to: string, tasks?: string, r
           try { fchmodSync(out, 0o600); } finally { closeSync(out); }
         } else copyMigrationFile(file.source, output);
         const digest = fileDigest(output);
-        copied.set(file.source, output);
+        if(!selectedDocument)copied.set(file.source, output);
         manifest.files.push({ path: file.path, ...digest, kind: sqlite ? 'sqlite' : 'file' });
       } catch { refusal(path, sqlite ? 'SQLite backup failed' : 'data copy failed'); }
     }
@@ -268,14 +283,14 @@ export function readSnapshot(dir: string): SnapshotManifest {
   }
   return manifest;
 }
-const usage = 'usage: loom migrate snapshot --from <old-home> [--tasks <store.db>] [--clock <WAKE_DATA>] [--wake <Art/.wake>] [--approvals <directory>] [--changes <snapshot.json>] [--secrets <directory>] [--bridges <instance-root> ...] [--runtime <LOOM_BOX_HOME>] [--runtime-data <LOOM_BOX_DATA>] --to <new-directory> [--dry-run]\n';
+const usage = 'usage: loom migrate snapshot --from <old-home> [--tasks <store.db>] [--clock <WAKE_DATA>] [--wake <Art/.wake>] [--approvals <directory>] [--changes <snapshot.json>] [--secrets <directory>] [--bridges <instance-root> ...] [--bridges-document <file> ...] [--runtime <LOOM_BOX_HOME>] [--runtime-data <LOOM_BOX_DATA>] --to <new-directory> [--dry-run]\n';
 export async function migrateSnapshot(argv: string[], io: IOStreams): Promise<number> {
   let values;
-  try { ({ values } = parseArgs({ args: argv, options: { from: { type: 'string' }, to: { type: 'string' }, tasks: { type: 'string' }, clock: { type: 'string' }, wake: { type: 'string' }, approvals: { type: 'string' }, changes: { type: 'string' }, secrets: { type: 'string' }, bridges: { type: 'string', multiple: true }, runtime: { type: 'string' }, 'runtime-data': { type: 'string' }, 'dry-run': { type: 'boolean' } }, strict: true, allowPositionals: false })); }
+  try { ({ values } = parseArgs({ args: argv, options: { from: { type: 'string' }, to: { type: 'string' }, tasks: { type: 'string' }, clock: { type: 'string' }, wake: { type: 'string' }, approvals: { type: 'string' }, changes: { type: 'string' }, secrets: { type: 'string' }, bridges: { type: 'string', multiple: true }, 'bridges-document': {type:'string',multiple:true}, runtime: { type: 'string' }, 'runtime-data': { type: 'string' }, 'dry-run': { type: 'boolean' } }, strict: true, allowPositionals: false })); }
   catch { io.stderr(usage); return 2; }
   if (!values.from || !values.to) { io.stderr(usage); return 2; }
   try {
-    const roots: SnapshotRoots = { clock: values.clock, wake: values.wake, approvals: values.approvals, changes: values.changes, secrets: values.secrets, bridges:values.bridges,runtime:values.runtime,'runtime-data':values['runtime-data'] };
+    const roots: SnapshotRoots = { clock: values.clock, wake: values.wake, approvals: values.approvals, changes: values.changes, secrets: values.secrets, bridges:values.bridges,'bridges-document':values['bridges-document'],runtime:values.runtime,'runtime-data':values['runtime-data'] };
     if (values['dry-run']) {
       const inventory = inventorySnapshot(values.from, values.to, values.tasks, roots);
       io.stdout(JSON.stringify({ status: 'dry-run', consistency: inventory.consistency, sizes: 'source main-file bytes; SQLite backup size may differ', copies: inventory.copies.map(({ path, bytes }) => ({ path, bytes })), skipped: inventory.skipped, followed: inventory.followed }, null, 2) + '\n');
