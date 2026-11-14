@@ -12,7 +12,7 @@ const loadKey=crypto.loadKey,owner:Viewer={kind:'member',id:'jonathan'};
 const cleanup:Array<()=>Promise<void>>=[];
 afterEach(async()=>{try{for(const close of cleanup.splice(0).reverse())await close();}finally{vi.restoreAllMocks();}});
 const value=<T>(r:Result):T=>{expect(r.ok).toBe(true);return (r as {ok:true;value:T}).value;};
-async function setup(){
+async function setup(ref='private-ask'){
  const home=mkdtempSync(join(tmpdir(),'comms-private-reply-'));fixture(home);
  const clock=new FakeClock(),key=await loadKey(home),held=fixtureSharing();held.members.other={owner:true,agents:['art']};
  vi.spyOn(crypto,'loadKey').mockResolvedValue(key);
@@ -22,7 +22,7 @@ async function setup(){
  const opened=value<{thread:string}>(await call('comms.open',{agent:'art',id:'aaaaaaaaaaaaaaaa',text:'Initial fixture message'}));
  const t=JSON.parse((app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(opened.thread) as {record:string}).record);
  await expect.poll(()=>JSON.parse((app.db.prepare('SELECT record FROM comms_messages WHERE thread=? AND seq=1').get(t.id) as {record:string}).record).delivery).toBe('held');
- let attention=attentionRole(app.operations);const ref='private-ask';
+ let attention=attentionRole(app.operations);
  expect(attention.raise(owner,{id:ref,member:owner.id,agent:'art',source:{kind:'conversation',id:t.conversation},ask:'Reply in your private conversation',answers:'words'},'ask')).toMatchObject({ok:true});
  const messages=()=>app.db.prepare("SELECT * FROM comms_messages WHERE thread=? AND id=?").all(t.id,`private-reply:${ref}`);
  const getAsk=()=>value<Record<string,unknown>>(attention.get(owner,{id:ref}));
@@ -212,4 +212,15 @@ it('rejects words passed to the internal capability in an otherwise authorized t
  const input={id:f.ref,conversation:f.t.conversation,agent:'art',member:owner.id,thread:f.t.id,seq:2,text:'Words must never enter this capability'};
  expect(f.app.db.transaction(()=>f.attention.privateReply(ctx,input))()).toMatchObject({ok:false,code:'invalid'});
  expect(f.getAsk()).toMatchObject({state:'open'});expect(f.messages()).toEqual([]);expect(changes).toEqual([]);
+});
+
+
+it('keeps imported comms-prefixed private replies and their expired acknowledgements on the legacy protocol',async()=>{
+ const f=await setup(`comms:${'b'.repeat(64)}`),input={ref:f.ref,text:'Legacy prefixed private words'};
+ const first=await f.call('comms.replyToAsk',input,owner,true,'prefixed-legacy');expect(first.ok).toBe(true);
+ await expect.poll(()=>JSON.parse((f.messages()[0] as {record:string}).record).delivery).toBe('held');
+ f.clock.advance(14*86400_000);const seal=vi.spyOn(f.key,'seal');
+ expect(await f.call('comms.replyToAsk',input,owner,true,'prefixed-legacy')).toEqual(first);
+ expect(await f.call('comms.replyToAsk',input,owner,true,'prefixed-fresh')).toEqual(first);
+ expect(seal).not.toHaveBeenCalled();expect(f.messages()).toHaveLength(1);expect((f.messages()[0] as {words:unknown}).words).toBeNull();
 });

@@ -307,3 +307,16 @@ for(const sameId of [true,false])it(`coalesces identical sealed typed replies wi
  const results=await Promise.all([a,b]);expect(results[0]).toMatchObject({ok:true});expect(results[1]).toEqual(results[0]);
  expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').all(`private-reply:${r.ref}`)).toHaveLength(1);
 });
+
+
+it('fails closed on pre-binding sealed reply receipts without changing their saved ciphertext or answer',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'typed',question}),input={ref:r.ref,text:'Pre-binding typed words'};
+ expect(await f.call('comms.replyToAsk',input,f.viewer,'pre-binding')).toMatchObject({ok:true});
+ // Reconstruct the pre-fence hashes; neither old receipt bound its source.
+ f.app.db.prepare('UPDATE comms_messages SET hash=? WHERE id=?').run(f.key.hash(JSON.stringify(input)),`private-reply:${r.ref}`);
+ f.app.db.prepare('UPDATE core_operations SET input_hash=? WHERE id=?').run(f.key.hash(`comms-operation\0${JSON.stringify(input)}`),'pre-binding');
+ const saved=f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').get(`private-reply:${r.ref}`),answer=f.attention.get(f.viewer,{id:r.ref});
+ for(const op of ['pre-binding','pre-binding-fresh'])expect(await f.call('comms.replyToAsk',input,f.viewer,op)).toMatchObject({ok:false,code:'conflict'});
+ expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').get(`private-reply:${r.ref}`)).toEqual(saved);
+ expect(f.attention.get(f.viewer,{id:r.ref})).toEqual(answer);
+});
