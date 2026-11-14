@@ -42,6 +42,13 @@ describe('authenticated Discord message normalisation', () => {
     expect(result).toMatchObject({ user: 'bot', bot: true, webhook: true });
     expect(result).not.toHaveProperty('member');
   });
+  it('preserves application command responses for downstream bot policy', () => {
+    for (const type of [20, 23]) {
+      expect(normalizeDiscord(discord, dc({ type, author: { id: 'app', bot: true }, content: 'response' }),
+        { id: 'channel', guild: 'guild', kind: 'channel' }))
+        .toMatchObject({ user: 'app', bot: true, text: 'response' });
+    }
+  });
   it('ignores other dispatches and system messages', () => {
     expect(normalizeDiscord(discord, { op: 0, t: 'TYPING_START', d: {} }, { id: 'x', kind: 'dm' })).toBeNull();
     expect(normalizeDiscord(discord, dc({ type: 7 }), { id: 'channel', guild: 'guild', kind: 'channel' })).toBeNull();
@@ -59,6 +66,11 @@ describe('authenticated Slack message normalisation', () => {
     expect(result).toMatchObject({ id: '["C1","1794672000.123456"]', connection: 'sl', channel: 'C1',
       user: 'U1', text: sl().event.text, postedAt: '2026-11-14T16:00:00.123Z', mentions: ['U2', 'U3'], isDm: false, bot: false });
     expect(normalizeSlack(slack, sl({ channel: 'C2' }))?.id).not.toEqual(result?.id);
+  });
+  it('excludes code examples from addressed routing while retaining surrounding mentions', () => {
+    const text = '<@U2> `<@U3>` ```\n<@U4>\n``` <@U5> `unfinished <@U6>';
+    expect(normalizeSlack(slack, sl({ text }))).toMatchObject({ text, mentions: ['U2', 'U5'] });
+    expect(normalizeSlack(slack, sl({ text: '```<@U7>' }))?.mentions).toEqual([]);
   });
   it('retains thread roots without conflating independent channel messages', () => {
     expect(normalizeSlack(slack, sl({ thread_ts: '1794671900.000001' }))?.thread).toBe('1794671900.000001');

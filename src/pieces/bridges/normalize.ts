@@ -40,7 +40,7 @@ export function normalizeDiscord(connection: PlatformConnection, payload: unknow
   const dispatch = discordDispatch.parse(payload);
   if (dispatch.t !== 'MESSAGE_CREATE') return null;
   const message = discordMessage.parse(dispatch.d);
-  if (message.type !== 0 && message.type !== 19) return null;
+  if (![0, 19, 20, 23].includes(message.type)) return null;
   if (message.channel_id !== channel.id || message.guild_id !== channel.guild
     || (channel.kind === 'dm' ? !!channel.guild : channel.guild !== connection.workspace)
     || (channel.kind === 'thread' && !channel.parent)) throw Error('Discord message does not match connection channel');
@@ -80,7 +80,7 @@ export function normalizeSlack(connection: PlatformConnection, payload: unknown,
     // Legacy integrations have only a bot id. Never confuse it with a user id.
     user: message.user ?? `bot:${message.bot_id}`, text: message.text,
     postedAt: new Date(millis).toISOString(),
-    mentions: [...new Set([...message.text.matchAll(/<@([A-Za-z0-9]+)(?:\|[^>]+)?>/g)].map(match => match[1]))],
+    mentions: [...new Set([...message.text.replace(/```[\s\S]*?(?:```|$)|`[^`\n]*(?:`|$)/g, '').matchAll(/<@([A-Za-z0-9]+)(?:\|[^>]+)?>/g)].map(match => match[1]))],
     bot: !!message.bot_id || message.subtype === 'bot_message',
   };
 }
