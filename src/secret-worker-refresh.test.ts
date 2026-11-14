@@ -1,7 +1,7 @@
 import {afterEach,expect,test} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {join} from 'node:path';
-import {readFileSync} from 'node:fs';
+import {readFileSync,writeFileSync} from 'node:fs';
 import {startSecretCommand} from './runtime-runner/secret-command.js';
 import {workerSecretTransport} from './runtime-runner/secret-transport.js';
 import {listenHolderHandoff} from './pieces/secrets/holder-handoff.js';
@@ -58,13 +58,16 @@ test('replacement resolves a new original authenticated job instead of retaining
  const holder=await listenHolderHandoff({...holderIdentity,socket:f.config.holder.config.socket},{read:async()=>Buffer.from('synthetic-refresh-value')},f.fingerprint('daemon'),routedHolderAuthority(f.remote,[{binding,transport}]));closes.push(holder.close);
  const viewer=signin(f.app).token(hash(token))!.viewer;
  const destination=runtimeHouseDestination(f.app,()=>new SharingDatabase(f.app.db,f.home).sharing(),viewer)!;
- const script="const fs=require('node:fs');let b=[];fs.createReadStream(null,{fd:3}).on('data',v=>b.push(v)).on('end',()=>{const ok=Buffer.concat(b).toString()==='synthetic-refresh-value';if(ok)fs.writeFileSync(process.argv[1],'accepted');setTimeout(()=>process.exit(ok?0:1),200);});";
- const command=await startSecretCommand({command:process.execPath,args:['-e',script,marker],cwd:f.home,env:{},
+ const exit=join(f.home,'new-job-exit');
+ // The owner releases process exit only after the original dispatch ack.
+ // No wall-clock delay can race a loaded CI runner's acknowledgement.
+ const script="const fs=require('node:fs');let b=[];fs.createReadStream(null,{fd:3}).on('data',v=>b.push(v)).on('end',()=>{if(Buffer.concat(b).toString()!=='synthetic-refresh-value'){process.exit(1);return;}const exit=process.argv[2];const watcher=fs.watch(require('node:path').dirname(exit),()=>{if(fs.existsSync(exit)){watcher.close();process.exit(0);}});fs.writeFileSync(process.argv[1],'accepted');if(fs.existsSync(exit)){watcher.close();process.exit(0);}});";
+ const command=await startSecretCommand({command:process.execPath,args:['-e',script,marker,exit],cwd:f.home,env:{},
   input:{...f.server,socket:input},holderFingerprint:f.fingerprint('holder'),authority:{...f.server,servername:'daemon.test'},daemonFingerprint:f.fingerprint('daemon')},
   {binding,current:()=>destination.current(),expiresAt:Date.now()+20_000});closes.push(command.close);
  const client=f.client(command.pending.id),ticket=await client.admit('API');command.bindTicket(ticket);
  expect(await f.remote.claim(ticket)).toBeNull();f.release(ticket);
- await client.dispatch();expect(await command.completed).toBe(true);expect(readFileSync(marker,'utf8')).toBe('accepted');
+ await client.dispatch();writeFileSync(exit,'exit');expect(await command.completed).toBe(true);expect(readFileSync(marker,'utf8')).toBe('accepted');
  expect(f.state(ticket)).toEqual({state:'released'});
 
 });
