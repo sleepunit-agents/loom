@@ -1431,3 +1431,29 @@ installed configuration, real home, host/service or default registration changes
 Durable tombstone capacity, complete staging/accounting and public/granted-get
 parity, remaining Settings, owner-encrypted recovery, final docs/move/leak/import
 ledger and owner-present activation remain duties of t-2208 and t-2203.
+
+
+### Durable pending denial and capacity (unactivated)
+
+Secrets migration 7 stores only the domain-separated SHA-256 digest of each
+canonical pending UUID in `secrets_pending_tombstones`. The unique denial marker
+and original ticket commit atomically. The marker cannot recover a stream,
+proof or release capability; failed persistence denies admission before IO.
+Independent role instances and database reopen cannot admit that UUID again,
+including a differently cased UUID, after lost acknowledgement or retirement.
+
+Live proof handles remain capped at 1024; permanent denial rows have no TTL,
+pruning door or lifetime count ceiling. Retirement frees live handles, so 1025
+sequential original admissions complete without resetting the daemon. Disk
+storage grows deliberately and storage failure fails closed. No records, logs or
+operation results expose pending ids or digests from this internal table.
+Preserve the table with core database recovery; restoring an older database
+requires fresh original workers and forbids reconnecting old pending streams.
+The prior unactivated role never persisted pending ids, so upgrade cannot
+backfill its lost markers: retire all previous workers and create fresh owners.
+No installed configuration, default registration, real home or host change.
+
+This completes durable central pending-denial capacity/lifecycle for the source
+composition. Whole-path staging/value-free accounting, public/granted-get parity,
+remaining Settings history, owner-encrypted holder recovery, and the final
+old-to-new/move/leak/import ledger remain open before activation.

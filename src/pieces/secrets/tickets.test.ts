@@ -1,3 +1,6 @@
+import Database from 'better-sqlite3';
+import {migrate} from '../../core/db/index.js';
+import {schema} from './schema/001.js';
 import {ticketAuthorityFixture} from '../../runtime-runner/ticket-authority.fixture.js';
 import {IncomingMessage} from 'node:http';
 import https from 'node:https';
@@ -332,4 +335,68 @@ it.each([false,true])('abandons the original daemon admission before/after claim
  expect(f.state(admission.id)).toEqual({state:'uncertain'});if(claim)expect(claim.current()).toBe(false);
  await expect(admission.dispatch()).rejects.toThrow();expect(f.tickets.claim(admission.id)).toBeNull();
  expect(()=>f.tickets.admitHandoff(f.viewer,'API',pending,holder)).toThrow();
+});
+
+
+it.each(['admitted','uncertain','released'] as const)('retains %s pending denial across independent roles and an actual database reopen',async state=>{
+ const f=await setup(),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ const ticket=f.tickets.admit(f.viewer,'API',request);
+ if(state!=='admitted') {expect(f.tickets.claim(ticket.id)).toBeNull();f.release(ticket.id);f.tickets.claim(ticket.id)!.finish(state==='released');}
+ const fresh=secretTickets(f.app,f.sharing,f.app.effects!);
+ expect(()=>fresh.admit(f.viewer,'API',request)).toThrow(/^Secret handoff unavailable$/);
+ expect(fresh.claim(ticket.id)).toBeNull();
+ await f.app.close();
+ const app=await startLoom({home:f.home,next:true,staging:true,clock:f.clock,stdout(){}});closes.push(app.close);
+ const viewer=signin(app).token(hash(f.token))!.viewer;
+ const sharing=()=>new SharingDatabase(app.db,f.home).sharing();
+ const reopened=secretTickets(app,sharing,app.effects!);
+ // Prove the real retained body/grant still permits a fresh request.
+ expect(reopened.admit(viewer,'API',{...request,id:randomUUID()})).toHaveProperty('id');
+ expect(()=>reopened.admit(viewer,'API',request)).toThrow(/^Secret handoff unavailable$/);
+ expect(reopened.claim(ticket.id)).toBeNull();
+ const rows=app.db.prepare('SELECT * FROM secrets_pending_tombstones').all();
+ expect(rows).toHaveLength(2);
+ for(const row of rows)expect(row).toEqual({digest:expect.stringMatching(/^[0-9a-f]{64}$/)});
+ expect(JSON.stringify(rows)).not.toContain(request.id);
+});
+it('canonicalizes UUID case for durable pending denial',async()=>{
+ const f=await setup(),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ f.tickets.admit(f.viewer,'API',request);
+ expect(()=>f.tickets.admit(f.viewer,'API',{...request,id:request.id.toUpperCase()})).toThrow(/^Secret handoff unavailable$/);
+ expect(f.app.db.prepare('SELECT count(*) AS n FROM secrets_pending_tombstones').get()).toEqual({n:1});
+});
+it('accepts more than 1024 lifetime admissions without forgetting retired pending ids',async()=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},first=randomUUID();
+ const holder=await testHolder(f,async()=>{});
+ for(let i=0;i<1025;i++) {
+  const t=f.tickets.admitHandoff(f.viewer,'API',{id:i===0?first:randomUUID(),binding},holder.client);t.abandon();
+ }
+ expect(holder.calls).not.toHaveBeenCalled();
+ expect(f.app.db.prepare('SELECT count(*) AS n FROM secrets_pending_tombstones').get()).toEqual({n:1025});
+ expect(()=>f.tickets.admit(f.viewer,'API',{id:first,binding})).toThrow(/^Secret handoff unavailable$/);
+});
+it('fails closed without a ticket or burned marker when durable denial cannot commit',async()=>{
+ const f=await setup(),request={id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}};
+ f.app.db.exec("CREATE TRIGGER fail_marker BEFORE INSERT ON secrets_pending_tombstones BEGIN SELECT RAISE(ABORT,'private-detail'); END");
+ expect(()=>f.tickets.admit(f.viewer,'API',request)).toThrow(/^Secret handoff unavailable$/);
+ expect(f.app.db.prepare('SELECT * FROM secrets_tickets').all()).toEqual([]);
+ expect(f.app.db.prepare('SELECT * FROM secrets_pending_tombstones').all()).toEqual([]);
+ f.app.db.exec('DROP TRIGGER fail_marker');
+ expect(f.tickets.admit(f.viewer,'API',request)).toHaveProperty('id');
+});
+
+
+it('adds durable denial storage to schema 6 without changing old ticket rows and is repeatable',()=>{
+ const db=new Database(':memory:');
+ try {
+  db.exec('CREATE TABLE core_migrations (piece TEXT, number INTEGER, sql TEXT, PRIMARY KEY(piece,number))');
+  migrate(db,'secrets',schema.filter(m=>m.number<=6));
+  const old=[randomUUID(),'API','grant','{}','policy','{}',123,'uncertain'];
+  db.prepare('INSERT INTO secrets_tickets VALUES (?,?,?,?,?,?,?,?)').run(...old);
+  const before=db.prepare('SELECT * FROM secrets_tickets').all();
+  migrate(db,'secrets',schema);migrate(db,'secrets',schema);
+  expect(db.prepare('SELECT * FROM secrets_tickets').all()).toEqual(before);
+  expect(db.prepare('SELECT * FROM secrets_pending_tombstones').all()).toEqual([]);
+  expect(db.prepare("SELECT count(*) AS n FROM core_migrations WHERE piece='secrets'").get()).toEqual({n:7});
+ }finally {db.close();}
 });
