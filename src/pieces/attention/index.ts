@@ -51,7 +51,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   operations.register(operation({ name: 'attention.raise', write: true, input: question, output: z.unknown(),
     may: (viewer, input) => {
       const old = readAsk(input.id);
-      if (old ? managed(old) : input.source.kind === 'task' && tasksRegistered || input.source.kind === 'piece' && sources.has(input.source.id)) return false;
+      if (input.id.startsWith('task:') || (old ? managed(old) : input.source.kind === 'task' && tasksRegistered || input.source.kind === 'piece' && sources.has(input.source.id))) return false;
       return old ? mayAct(viewer, scoped('attention.ask', old), sharing(), 'act', 'attention.raise') : mayCreate(viewer, scoped('attention.ask', input), sharing(), 'attention.raise');
     },
     run(ctx, input) {
@@ -142,14 +142,21 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       if (ctx.db !== db || !db.inTransaction) throw new OperationError('unavailable', 'Task filing needs its enclosing database transaction');
       const seen = new Set<string>();
       for (const input of inputs) {
-        const parsed = question.extend({source:z.object({kind:z.literal('task'),id:z.string().min(1)})}).parse({ ...input, id:taskAskId(input.id), source: { kind: 'task', id: input.id } });
+        const {active:rawActive,...fields} = input;
+        const active = z.boolean().parse(rawActive);
+        const parsed = question.extend({project:z.string().optional(),agent:z.string().optional(),source:z.object({kind:z.literal('task'),id:z.string()})}).parse({ ...fields, id:taskAskId(input.id), source: { kind: 'task', id: input.id } });
         if (parsed.member !== undefined || parsed.waits_on !== undefined) throw new OperationError('invalid', 'Task filing accepts only task audiences');
         const key = parsed.id;
         if (seen.has(key)) throw new OperationError('invalid', 'Duplicate task filing');
         seen.add(key);
         const old = readAsk(key);
         if (old && (!managed(old) || old.source.kind !== 'task' || old.source.id !== parsed.source.id)) throw new OperationError('conflict', 'Ask belongs to another source');
-        const record: Ask = { ...parsed, id: key, sourceManaged: true, state: 'open', createdAt: old?.createdAt ?? ctx.now, changedAt: old?.changedAt ?? ctx.now };
+        if (!active && !old) continue;
+        const record: Ask = active
+          ? { ...parsed, sourceManaged: true, state: 'open', createdAt: old?.createdAt ?? ctx.now, changedAt: old?.changedAt ?? ctx.now }
+          : { id:key, source:parsed.source, sourceManaged:true,
+            ...(parsed.agent !== undefined ? {agent:parsed.agent}:{}), ...(parsed.project !== undefined ? {project:parsed.project}:{}),
+            ask:'Task no longer needs you', state:'resolved', resolution:'Continue in Tasks', createdAt:old!.createdAt, changedAt:old!.changedAt };
         if (JSON.stringify(record) === JSON.stringify(old)) continue;
         record.changedAt = ctx.now;
         saveAsk(record); ctx.changed('attention.ask', key);

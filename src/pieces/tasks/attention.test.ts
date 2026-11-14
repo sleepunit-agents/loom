@@ -117,3 +117,32 @@ it('files valid long imported task identities without narrowing the Tasks import
 });
 
 it('connects an already installed owning Tasks registry before the first task write',async()=>{const s=await setup(undefined,true),id=s.create();expect(s.ask(id)).toMatchObject({ok:true,value:{state:'open'}});});
+
+it('keeps a withdrawn projection on the source current audience after later moves',async()=>{
+  const s=await setup(),id=s.create({project:'pond',agent:'art'});
+  expect(s.call('tasks.close',{id,actor:'art',at:'2026-11-13T00:01:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
+  expect(s.ask(id,member).ok).toBe(true);
+  expect(s.call('tasks.update',{id,set:{project:'other',agent:'pond-bot'},actor:'art',at:'2026-11-13T00:02:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
+  expect(s.ask(id,member)).toMatchObject({ok:false,code:'denied'});
+  expect(s.ask(id)).toMatchObject({ok:true,value:{state:'resolved',project:'other',agent:'pond-bot',ask:'Task no longer needs you'}});
+  expect(s.types.get('attention.ask')!.read(taskAskId(id),member)).toBeUndefined();
+});
+it('does not narrow valid empty or unrestricted legacy task fields through filing validation',async()=>{
+  const s=await setup(),project='p'.repeat(201),agent='a'.repeat(201);
+  expect(s.call('tasks.import',{actor:'art',at:'2026-11-13T00:00:00Z',tasks:[{id:'',title:'',type:'task',status:'open',priority:1,assignee:'jonathan',createdAt:'2026-11-13T00:00:00Z',createdBy:'art',comments:[],project,agent}]})).toMatchObject({ok:true,value:{result:{ok:true}}});
+  expect(s.ask('')).toMatchObject({ok:true,value:{source:{kind:'task',id:''},ask:'Task needs you',project,agent}});
+  expect(s.call('tasks.import',{actor:'art',at:'2026-11-13T00:00:00Z',tasks:[{id:'empty-scopes',title:'',type:'task',status:'open',priority:1,assignee:'jonathan',createdAt:'2026-11-13T00:00:00Z',createdBy:'art',comments:[],project:'',agent:''}]})).toMatchObject({ok:true,value:{result:{ok:true}}});
+  expect(s.ask('empty-scopes')).toMatchObject({ok:true,value:{project:'',agent:''}});
+});
+it('reserves task filing identities against every public source label before assignment',async()=>{
+  const s=await setup(),id=s.create({assignee:'art'});
+  for(const kind of ['conversation','piece','approval','task'])expect(s.call('attention.raise',{id:taskAskId(id),agent:'art',ask:'Occupy a future source',source:{kind,id:'spoof'}})).toMatchObject({ok:false,code:'denied'});
+  expect(s.call('tasks.update',{id,set:{assignee:'jonathan'},actor:'art',at:'2026-11-13T00:01:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
+  expect(s.ask(id)).toMatchObject({ok:true,value:{state:'open',ask:'Ship the plan?'}});
+});
+it('keeps an in-progress task assigned to an owner in the central open source projection',async()=>{
+  const s=await setup(),id=s.create();
+  expect(s.call('tasks.claim',{id,actor:'jonathan',at:'2026-11-13T00:01:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
+  expect(s.call('tasks.show',{id})).toMatchObject({ok:true,value:{result:{task:{status:'in_progress',assignee:'jonathan'}}}});
+  expect(s.ask(id)).toMatchObject({ok:true,value:{state:'open',ask:'Ship the plan?'}});
+});

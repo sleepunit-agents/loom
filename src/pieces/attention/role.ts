@@ -77,7 +77,7 @@ export interface HouseholdAskSource {
 export const taskAskId = (id: string) => `task:${createHash('sha256').update(id).digest('hex')}`;
 export interface TaskAskFiling {
   /** Complete owning snapshot; the source controls wording, state and exact audience. */
-  sync(ctx: Context, asks: Array<Omit<RaiseAsk, 'source'>>): void;
+  sync(ctx: Context, asks: Array<Omit<RaiseAsk, 'source'> & {active:boolean}>): void;
 }
 export interface AttentionSources {
   /** Task decisions remain in Tasks; this never creates an answer capability. */
