@@ -148,3 +148,21 @@ it('the executable configuration boundary uses the selected token file, command,
  expect(f.calls[0]).toMatchObject({command:'/worker/claude',input:'OWNER FLOOR\nPRIVATE WORK',options:{cwd:'/fixture/art',env:{ONLY:'owner'},shell:false}});
  expect(f.calls[0].args).toContain('mcp__secrets');f.finish();expect(await p).toBe(0);expect(diagnostic).toBe('');expect(f.store.read('job','j')?.state).toBe('done');
 });
+it.each(['claimJob','reportJob','finishJob'] as const)('does not retry or advance after an accepted %s response is lost',async lost=>{
+ const f=await setup(),operations:string[]=[];
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
+  const name=new URL(String(args[0])).pathname.split('/').at(-1)!;operations.push(name);
+  const response=await fetch(...args);if(name===lost)throw Error('lost response after commit');return response;
+ }};
+ const p=runClaudeJob(f.config,f.selected,runtime),rejected=expect(p).rejects.toThrow();
+ if(lost==='finishJob'){await f.waitSpawn(1);f.finish();}
+ await rejected;expect(operations.filter(name=>name===lost)).toHaveLength(1);
+ if(lost==='claimJob'){expect(operations).not.toContain('takeInput');expect(f.calls).toHaveLength(0);expect(f.store.read('job','j')?.state).toBe('starting');}
+ if(lost==='reportJob'){expect(operations).not.toContain('finishJob');expect(f.calls).toHaveLength(1);expect(f.calls[0].child.killed).toBe(true);expect(f.store.read('job','j')?.state).toBe('running');}
+ if(lost==='finishJob'){expect(f.calls).toHaveLength(1);expect(f.store.read('job','j')?.state).toBe('done');}
+});
+it('refuses remote plaintext HTTP before sending a runner credential or starting a scheduler',async()=>{
+ const f=await setup();let requests=0,schedules=0;
+ const runtime={...f.runtime,request:async()=>{requests++;throw Error();},every(){schedules++;return ()=>{};}};
+ await expect(connectClaudeWorker({...f.config,url:'http://remote.example'},f.selected,runtime)).rejects.toThrow();expect(requests).toBe(0);expect(schedules).toBe(0);expect(f.calls).toHaveLength(0);
+});
