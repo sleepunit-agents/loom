@@ -14,7 +14,7 @@ import type {Socket} from 'node:net';
 import {fixture} from '../../fixture.js';
 import {FakeClock} from '../../core/clock.js';
 import {configuredSecretWrites} from './holder-config.js';
-import {startPersistentHolder} from './holder-lifecycle.js';
+import {startPersistentHolder} from '../../secret-holder-startup.js';
 import {localSecretSource} from './local-holder.js';
 vi.mock('node:fs',async importOriginal=>{
   const real=await importOriginal<typeof import('node:fs')>();
