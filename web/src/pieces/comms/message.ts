@@ -16,6 +16,7 @@ export function messageView(message:Message){
  const retryStart=message.kind==='error'&&notice.error==='start-failed'&&Number.isSafeInteger(start.seq)&&Number(start.seq)>0&&Number.isSafeInteger(start.generation)&&Number(start.generation)>=0?{seq:Number(start.seq),generation:Number(start.generation)}:undefined;
  return {text:message.text,nextRetry,retryStart,tool:words(message.tool)??words(card.tool),state:words(message.state)??words(card.state),step:message.step??card.step,
   ask:message.kind==='ask'?{question:question??'Your answer is needed',why:words(ask.why),yes:words(ask.if_yes),no:words(ask.if_no),
+   refs:Array.isArray(ask.refs)?ask.refs.filter((r):r is string=>typeof r==='string'&&r.length>0&&r.length<=200).slice(0,60):[],
    answer:verdict,answered:Object.keys(answer).length>0,canAnswer:Object.keys(answer).length===0&&ask.answers!=='words'&&typeof message.ref==='string'}:undefined};
 }
 

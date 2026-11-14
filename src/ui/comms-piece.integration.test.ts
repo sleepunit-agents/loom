@@ -221,13 +221,57 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await workRegion.locator('code').textContent()).toBe('pond/plan');
   expect(await workRegion.getByRole('link',{name:'pond/plan'}).count()).toBe(0);
   await capture('comms-work',true);
+  // The same owning projections become inline chips, with keyboard cards and
+  // fixed destinations. Code/link labels stay ordinary markdown; null stays words.
+  await comms.post('art',place,{id:'chip-ui-fixture',kind:'reply',text:`Chip check **${task}**, acme/untracked#93, t-999999999, repo#3. Code: \`${task}\`. [${task}](https://example.com/task).`});
+  const taskChip=(page:Page)=>page.getByLabel('Thread messages').getByRole('button',{name:`Task ${task}: Work made in this thread, Open`,exact:true});
+  for(const page of [a,b])await expect.poll(()=>taskChip(page).count()).toBe(1);
+  expect(await b.locator(`[data-comms-ref="${task}"]`).count()).toBe(1);
+  expect(await b.locator('[data-comms-ref="t-999999999"][role="button"]').count()).toBe(0);
+  expect(await b.getByRole('link',{name:'repo#3',exact:true}).count()).toBe(0);
+  await taskChip(b).focus();await b.keyboard.press('Enter');
+  const taskCard=b.getByRole('dialog',{name:'Task: Work made in this thread',exact:true});
+  await expect.poll(()=>taskCard.count()).toBe(1);
+  expect(await taskCard.getByRole('link',{name:'Open',exact:true}).getAttribute('href')).toBe(`/p/tasks-preview/task/${task}`);
+  await expect.poll(()=>taskCard.getByRole('link',{name:'Open',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
+  await b.keyboard.press('Shift+Tab');
+  await expect.poll(()=>taskCard.getByRole('button',{name:'Close',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
+  await b.keyboard.press('Tab');
+  await expect.poll(()=>taskCard.getByRole('link',{name:'Open',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
+  await b.keyboard.press('Escape');
+  expect(await taskCard.count()).toBe(0);expect(await taskChip(b).evaluate(el=>el===document.activeElement)).toBe(true);
+  await b.keyboard.press('Space');await expect.poll(()=>taskCard.count()).toBe(1);
+  await taskCard.getByRole('button',{name:'Close',exact:true}).click();
+  for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
+   await b.setViewportSize({width,height:900});
+   await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+   // A viewport change can scroll the tiny phone transcript. Finish that
+   // movement before a pointer opens the card, just as a visible chip is clicked.
+   await taskChip(b).scrollIntoViewIfNeeded();
+   await b.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+   await taskChip(b).click();await expect.poll(()=>taskCard.isVisible()).toBe(true);
+   await expect.poll(()=>taskCard.getByRole('link',{name:'Open',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
+   expect(await taskCard.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;})).toBe(true);
+   expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+   await b.screenshot({path:join(shots,`comms-chips-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+   expect(await taskCard.isVisible()).toBe(true);
+   await b.keyboard.press('Escape');
+  }
+  const forgeChip=b.getByLabel('Thread messages').getByRole('button',{name:'Pull request acme/untracked#93: acme/untracked#93, Not tracked',exact:true}).last();
+  await forgeChip.click();
+  const forgeCard=b.getByRole('dialog',{name:'Pull request: acme/untracked#93',exact:true});
+  expect(await forgeCard.getByRole('link',{name:'Open on GitHub ↗',exact:true}).getAttribute('href')).toBe('https://github.com/acme/untracked/issues/93');
+  expect(await forgeCard.getByRole('link').getAttribute('rel')).toBe('noopener noreferrer');
+  await b.getByLabel('Thread messages').dispatchEvent('scroll');await expect.poll(()=>forgeCard.count()).toBe(0);
   // At desktop widths the region is visible beside the message column without a toggle.
   expect(await b.getByRole('button',{name:/^Work/}).count()).toBe(0);
   const workBox=await b.getByRole('region',{name:'Work in this thread'}).boundingBox(),messageBox=await b.getByLabel('Thread messages').boundingBox();
   expect(workBox!.x).toBeGreaterThanOrEqual(messageBox!.x+messageBox!.width);
+  await taskChip(b).click();await expect.poll(()=>taskCard.count()).toBe(1);
   const closed=loom.operations.call('direct',{kind:'member',id:'jonathan'},'tasks.close',{id:task,actor:'art',at:new Date(clock.now()).toISOString()},'fixture-work-close');
   expect(closed).toMatchObject({ok:true,value:{result:{ok:true}}});
   for(const page of [a,b])await expect.poll(()=>page.getByRole('region',{name:'Work in this thread'}).textContent()).toContain('Done');
+  await expect.poll(()=>taskCard.getByText('Done',{exact:true}).count()).toBe(1);await b.keyboard.press('Escape');
   const doneBadge=b.getByRole('region',{name:'Work in this thread'}).locator('[data-tone="ok"]');
   expect(await doneBadge.evaluate(el=>getComputedStyle(el).color!==getComputedStyle(el.parentElement!).color)).toBe(true);
   const importedId='..';
@@ -248,8 +292,10 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await from.click();
   await expect.poll(()=>a.getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
   await b.clock.pauseAt(await b.evaluate(()=>Date.now()+1000));
+  await b.getByLabel('Thread messages').getByRole('button',{name:`Task ${task}: Work made in this thread, Done`,exact:true}).click();await expect.poll(()=>taskCard.count()).toBe(1);
   await b.evaluate(()=>{for(const socket of Reflect.get(window,'__fixtureSockets') as WebSocket[])socket.close();});
   await expect.poll(()=>b.getByRole('link',{name:'Work made in this thread'}).count()).toBe(0);
+  expect(await taskCard.count()).toBe(0);expect(await b.locator('[data-comms-ref][role=button]').count()).toBe(0);
   await b.clock.fastForward(250);
   await expect.poll(()=>b.getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
   await b.clock.resume();
@@ -549,6 +595,16 @@ async function proveNextComms(browser:Browser,webRoot:string) {
     for(const page of [a,b]){await expect.poll(()=>page.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(0);await expect.poll(()=>page.getByText('An unsaved private answer',{exact:true}).count()).toBe(1);}
     expect(await socket(a,'attention.get',{id:sealed.ref})).toMatchObject({ok:true,value:{state:'answered'}});
     for(const table of ['attention_asks','core_operations']){const stored=JSON.stringify(app.db.prepare(`SELECT * FROM ${table}`).all());expect(stored).not.toContain('Which fixture should I check next?');expect(stored).not.toContain('An unsaved private answer');}
+   }
+   if(kind==='attached'){
+    const made=value<{result:{id:string}}>(await socket(a,'tasks.create',{title:'Chip opens in Tasks tile',agent:'art',source:`conversation:cv-chip-fixture`,actor:'art',at:new Date(clock.now()).toISOString()})).result.id;
+    expect(await post(input.credential,'runtime.reply',{id:'tile-chip-reply',text:`Open ${made} when ready.`})).toMatchObject({ok:true});
+    const chip=a.getByLabel('Thread messages').getByRole('button',{name:`Task ${made}: Chip opens in Tasks tile, Open`,exact:true});
+    await expect.poll(()=>chip.count()).toBe(1);await chip.click();
+    await a.getByRole('dialog',{name:'Task: Chip opens in Tasks tile',exact:true}).getByRole('link',{name:'Open',exact:true}).click();
+    await expect.poll(()=>new URL(a.url()).pathname).toBe(`/p/tasks-preview/task/${made}`);
+    await expect.poll(()=>a.getByRole('heading',{name:'Chip opens in Tasks tile',exact:true}).count()).toBe(1);
+    expect(JSON.parse(new URL(a.url()).searchParams.get('paths')??'{}').comms).toBe(`/p/comms-preview/thread/${thread.slice(3)}`);
    }
    expect(await post(runner,'runtime.finishJob',{job,state:'done'})).toMatchObject({ok:true});
    expect(await post(input.credential,'runtime.readConversation',{})).toMatchObject({ok:false});

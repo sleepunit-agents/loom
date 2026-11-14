@@ -28,10 +28,19 @@ supplied by either piece. Changes beyond its recent feed window remain readable
 through its owning `show`, as in the Changes reader. Updates follow task,
 change, thread, approval/rule and sharing/access notifications.
 
-This checkpoint is a backend building block. Browser chip presentation and the
-approval, conversation, note, knowledge, project, person and agent card kinds
-remain unfinished. Unsupported references answer null and remain plain words.
-The existing reference index and Work consumer are unchanged.
+The browser renders task/GitHub references as keyboard-accessible chips in reply
+prose, step text and legacy ask references. Code and Markdown link labels stay
+literal. Exact scoped Live batches (at most 60) refresh titles and states without
+remounting the reader; disconnect, missing rows and source changes remove private
+cards. Cards offer fixed owning reader destinations in their app tiles or the
+exact public GitHub issue URL in a new tab. Escape restores chip focus; outside
+click or transcript scrolling closes the card. No card data is separately cached.
+Bare repo#N has no default owner and stays text. The parser remains lazy with Comms.
+
+Approval, conversation, note, knowledge, project, person and agent card kinds
+remain unfinished, as does chip presentation within sealed questions. Unsupported
+references answer null and remain plain words. The existing reference index and
+Work consumer are unchanged.
 
 ## Runtime integration checkpoint
 

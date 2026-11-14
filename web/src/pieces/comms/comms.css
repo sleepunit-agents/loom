@@ -43,3 +43,9 @@
 
 /* Lists use a letter; the reader's portrait remains a separate surface. */
 .comms-agent-letter { display: inline-grid; place-items: center; width: 32px; height: 32px; flex: none; border: 1px solid var(--v-border); border-radius: 8px; background: var(--v-beige); color: var(--v-text); font-family: var(--loom-font-data, monospace); font-weight: 600; }
+
+/* Inline reference controls and their transcript-owned card use the current look. */
+.comms-chip { display: inline; padding: 1px 4px; border: 1px solid var(--v-border); border-radius: 4px; background: var(--v-beige); color: var(--v-text); font: inherit; cursor: pointer; overflow-wrap: anywhere; }
+.comms-chip:focus-visible { outline: 2px solid var(--v-text); outline-offset: 2px; }
+.comms-refcard { position: fixed; z-index: 1000; display: grid; gap: 8px; width: min(300px, calc(100vw - 32px)); max-height: calc(100dvh - 16px); overflow: auto; overflow-wrap: anywhere; padding: 16px; border: 1px solid var(--v-border); border-radius: 8px; color: var(--v-text); background: var(--v-beige); box-shadow: 0 8px 24px #0004; }
+.comms-refcard a { text-decoration: underline; }
