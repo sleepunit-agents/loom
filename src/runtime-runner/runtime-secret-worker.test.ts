@@ -1,6 +1,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import {existsSync,readFileSync,writeFileSync} from 'node:fs';
 import {PassThrough} from 'node:stream';
+import {createHash} from 'node:crypto';
 import {runSecretWorker} from '../cli/secret-worker.js';
 import type {IOStreams} from '../cli/io.js';
 import {ChildProcess} from 'node:child_process';
@@ -11,8 +12,25 @@ import {startRuntimeSecretWorker} from './runtime-secret-worker.js';
 import type {WorkerControlRuntime} from './control.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();vi.unstubAllEnvs();for(const close of closes.splice(0).reverse())await close();});
-async function setup(releaseStaging=true) {
+async function setup(releaseStaging=true,autoComplete=true) {
  const f=await admissionFixture(closes,releaseStaging);
+ // No credential literal in child argv, and no wall-clock completion delay.
+ const digest=createHash('sha256').update('synthetic-admitted-value').digest('hex');
+ f.config.args[1]=f.config.args[1].replace("const ok=Buffer.concat(b).toString()==='synthetic-admitted-value'",
+  "const credential=Buffer.concat(b).toString();const ok=credential.length>0&&!process.argv.some(v=>v.includes(credential))&&!Object.values(process.env).some(v=>v&&v.includes(credential))&&require('node:crypto').createHash('sha256').update(Buffer.concat(b)).digest('hex')==='"+digest+"'")
+  .replace('setTimeout(()=>process.exit(0),200)',"process.on('SIGUSR2',()=>process.exit(0));setInterval(()=>{},10000)");
+ let child!:ChildProcess,started!:()=>void,exited!:()=>void;
+ const closed=new Promise<void>(resolve=>{exited=resolve;});
+ const spawned=new Promise<void>(resolve=>{started=resolve;}),emit=ChildProcess.prototype.emit;
+ vi.spyOn(ChildProcess.prototype,'emit').mockImplementation(function(this:ChildProcess,...args:Parameters<ChildProcess['emit']>){
+  const result=Reflect.apply(emit,this,args);if(args[0]==='spawn'){child=this;started();}if(args[0]==='close')exited();return result;
+ });
+ let released=false;
+ const complete=async()=>{await spawned;if(!released){released=true;child.kill('SIGUSR2');}};
+ const completeAfterDelivery=async()=>{
+  await expect.poll(()=>f.app.db.prepare("SELECT state FROM secrets_tickets").get()).toEqual({state:'released'});
+  await expect.poll(()=>existsSync(f.marker)).toBe(true);await complete();
+ };
  f.call('signin.setPrincipal',{kind:'runner',id:'worker',active:true});
  const token='synthetic-control-token';
  signin(f.app).tokens.change(tokens=>tokens.push({role:'runner:worker',label:'control',sha256:hash(token),created:new Date(f.clock.now()).toISOString()}));
@@ -22,8 +40,8 @@ async function setup(releaseStaging=true) {
  let tick:(()=>void)|undefined,revoked!:()=>void;
  const stopped=new Promise<void>(resolve=>{revoked=resolve;});
  const runtime:WorkerControlRuntime={request:fetch,deadline:ms=>AbortSignal.timeout(ms),every(callback){tick=callback;return ()=>{tick=undefined;revoked();};}};
- const start=async()=>{const worker=await startRuntimeSecretWorker(config,selection,runtime);closes.push(worker.close);return worker;};
- return {...f,controlConfig:config,selection,runtime,start,tick:()=>tick?.(),stopped};
+ const start=async()=>{const worker=await startRuntimeSecretWorker(config,selection,runtime);closes.push(worker.close);if(autoComplete)void worker.delivery.then(async ok=>{if(ok)await completeAfterDelivery();});return worker;};
+ return {...f,complete,completeAfterDelivery,closed,controlConfig:config,selection,runtime,start,tick:()=>tick?.(),stopped};
 }
 it('composes actual Runtime control, original admission, remote proof and a real fd3 consumer',async()=>{
  const f=await setup(),worker=await f.start();
@@ -46,9 +64,8 @@ it.each(['stop','reset','lost','offline'] as const)('kills the owned command fro
  }finally{held.resume();}
 });
 it('kills the owned command after successful delivery even without another secret request',async()=>{
- const f=await setup(),kill=vi.spyOn(ChildProcess.prototype,'kill');
- // Keep the consumer running after its EOF, with no wall-clock wait in the test.
- f.config.args[1]=f.config.args[1].replace('setTimeout(()=>process.exit(0),200)','setInterval(()=>{},10000)');
+ const f=await setup(true,false),kill=vi.spyOn(ChildProcess.prototype,'kill');
+ // No completion signal: the owner must tear down this still-running child.
  const worker=await f.start();expect(await worker.delivery).toBe(true);
  f.job({state:'stopped'});f.tick();await f.stopped;
  expect(await worker.completed).toBe(false);expect(kill).toHaveBeenCalledWith('SIGKILL');
@@ -82,7 +99,7 @@ it('the executable entry owns the real command without outputting its credential
  writeFileSync(tokenFile,f.controlConfig.token,{mode:0o600});
  writeFileSync(file,JSON.stringify({url:f.controlConfig.url,job:f.id,tokenFile,selection:f.selection}));
  let output='';const io:IOStreams={stdin:new PassThrough(),stdinIsTTY:false,env:{DO_NOT_INHERIT:'private'},stdout:text=>{output+=text;},stderr:text=>{output+=text;}};
- expect(await runSecretWorker([file],io,f.runtime)).toBe(0);expect(output).toBe('');
+ const running=runSecretWorker([file],io,f.runtime);await f.completeAfterDelivery();expect(await running).toBe(0);expect(output).toBe('');
  expect(readFileSync(f.marker,'utf8')).toBe('accepted');expect(f.state(await f.admitted())).toEqual({state:'released'});
 });
 it('the executable reports only a generic failure for an invalid owner selection',async()=>{
@@ -100,13 +117,9 @@ it.each(['revokePolicy','revokeGrant','stopJob','cancelRequest'] as const)('reje
  finally {release();}
 });
 it('requires a new authority read after completion rather than a delayed watchdog retain response',async()=>{
- const f=await setup();let release!:()=>void,observed!:()=>void,reads=0,second=false,exited!:()=>void,child:ChildProcess|undefined;
- const childClosed=new Promise<void>(resolve=>{exited=resolve;});
- const emit=ChildProcess.prototype.emit;
- vi.spyOn(ChildProcess.prototype,'emit').mockImplementation(function(this:ChildProcess,...args:Parameters<ChildProcess['emit']>){const result=Reflect.apply(emit,this,args);if(args[0]==='spawn')child=this;if(args[0]==='close')exited();return result;});
+ const f=await setup(true,false);let release!:()=>void,observed!:()=>void,reads=0,second=false;
  const ready=new Promise<void>(resolve=>{observed=resolve;}),wait=new Promise<void>(resolve=>{release=resolve;});
- // The child exits only on a test-controlled signal after its real fd3 EOF.
- f.config.args[1]=f.config.args[1].replace('setTimeout(()=>process.exit(0),200)',"process.on('SIGUSR2',()=>process.exit(0));setInterval(()=>{},10000)");
+ // The child exits only on the test's explicit completion signal after fd3 EOF.
  f.runtime.request=async(...args)=>{const response=await fetch(...args);reads++;if(second){second=false;observed();await wait;}return response;};
  const worker=await f.start();second=true;f.tick();await ready;
  try {
@@ -115,7 +128,7 @@ it('requires a new authority read after completion rather than a delayed watchdo
   // The process is already created before delivery acknowledgement.
   expect(await worker.delivery).toBe(true);
   await expect.poll(()=>existsSync(f.marker)).toBe(true);
-  child!.kill('SIGUSR2');await childClosed;
+  await f.complete();await f.closed;
   f.job({state:'stopped'});release();expect(await worker.completed).toBe(false);expect(reads).toBeGreaterThanOrEqual(3);
  }finally {release();}
 });
@@ -146,7 +159,8 @@ it.each(['command','delivery'] as const)('the executable refuses unsuccessful %s
  if(failure==='command')f.config.args[1]=f.config.args[1].replace('process.exit(0)','process.exit(1)');
  writeFileSync(tokenFile,f.controlConfig.token,{mode:0o600});writeFileSync(file,JSON.stringify({url:f.controlConfig.url,job:f.id,tokenFile,selection:f.selection}));
  let output='';const io:IOStreams={stdin:new PassThrough(),stdinIsTTY:false,env:{},stdout:text=>{output+=text;},stderr:text=>{output+=text;}};
- expect(await runSecretWorker([file],io,f.runtime)).toBe(1);expect(output).toBe('Secret worker stopped; reconcile the job before retrying.\n');
+ const running=runSecretWorker([file],io,f.runtime);if(failure==='command')await f.completeAfterDelivery();
+ expect(await running).toBe(1);expect(output).toBe('Secret worker stopped; reconcile the job before retrying.\n');
  expect(f.state(await f.admitted())).toEqual({state:failure==='command'?'released':'uncertain'});
  expect(existsSync(f.config.input.socket)).toBe(false);
  if(failure==='delivery'){expect(f.source).not.toHaveBeenCalled();expect(existsSync(f.marker)).toBe(false);}
