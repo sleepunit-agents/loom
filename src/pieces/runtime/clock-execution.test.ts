@@ -69,3 +69,36 @@ it('idle retention is clipped to the original execution expiry, even after a lat
  expect(await call('beginClockExecution',{previous:execution})).toMatchObject({ok:false,code:'denied'});
  expect(prepared).toBe(1);
 });
+
+it('joined turns inherit the first admission deadline without inheriting the shorter idle expiry',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'clock-chain-deadline-'));cleanups.push(()=>rmSync(home,{recursive:true,force:true}));
+ const clock=new FakeClock(),app=createFoundation({home,clock});cleanups.push(app.close);
+ const effects=installEffects(app,fixtureSharing,false);let n=0,index=0;
+ const consumed=new Set<number>();
+ installClockExecution(app,effects,()=>{
+  const selected=index++;
+  return {historyKey:'c'.repeat(64),job:'chain-job',
+   assignment:{runner:'a',box:'a',claimedAt:0,house:{repo:'/fixture/art',houseFile:'house/house.json'}},
+   binding:{agent:'art',conversation:'chain',venue:'wake',place:'chain'},
+   message:{id:`clock:deadline-${selected}`,seq:selected+1,kind:'wake',text:'fixture'},
+   current:(_viewer,completed=false)=>consumed.has(selected)===completed,retainedCurrent:()=>consumed.has(selected),
+   acknowledge:()=>{consumed.add(selected);},more:()=>false};
+ });
+ const call=(name:string,input:unknown)=>app.operations.callAsync('direct',{kind:'agent',id:'art'},`runtime.${name}`,input,`chain-deadline-${++n}`);
+ const admit=async(previous?:string)=>{
+  const result=await call('beginClockExecution',previous?{previous}:{});expect(result).toMatchObject({ok:true});
+  if(!result.ok)throw new Error('chain admission failed');return clockExecutionAdmission.parse(result.value);
+ };
+ const first=await admit();expect(first.lifetime).toBe(1_800_000);
+ clock.advance(1000);
+ expect(await call('completeClockExecution',{execution:first.execution,idleMs:30_000})).toMatchObject({ok:true});
+ clock.advance(1000);const second=await admit(first.execution);expect(second.lifetime).toBe(1_798_000);
+ // The first idle window ended, but the admitted active successor remains valid.
+ clock.advance(30_000);expect(await call('currentClockExecution',{execution:second.execution})).toMatchObject({ok:true});
+ expect(await call('completeClockExecution',{execution:second.execution,idleMs:30_000})).toMatchObject({ok:true});
+ const third=await admit(second.execution);expect(third.lifetime).toBe(1_768_000);
+ clock.advance(1_767_999);expect(await call('currentClockExecution',{execution:third.execution})).toMatchObject({ok:true});
+ clock.advance(1);expect(await call('currentClockExecution',{execution:third.execution})).toMatchObject({ok:false,code:'denied'});
+ expect(await call('completeClockExecution',{execution:third.execution})).toMatchObject({ok:false,code:'denied'});
+ expect(consumed).toEqual(new Set([0,1]));
+});

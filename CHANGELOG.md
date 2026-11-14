@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Clock native resume chains retain their first admission deadline across joined turns; neither server nor worker renews retained history on resume.
+
 - Next Comms renders authorized reference chips in retained sealed questions, with live privacy fences and owning app navigation.
 - Clock owners can recover plain disabled imported schedules through a fresh complete prompt and timing submission; archived authority and uncertain occurrences stay inert.
 
