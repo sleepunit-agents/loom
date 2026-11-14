@@ -4,7 +4,7 @@ import { createElement as h, useMemo, useSyncExternalStore } from 'react';
 import { act, create } from 'react-test-renderer';
 import type { Snapshot } from '../../data';
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),queryStatus:"live" as "live"|"offline"|"denied"}));
-vi.mock('../../data/graphql',()=>({useDataQuery:()=>useMemo(()=>({status:f.queryStatus,data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.queryStatus])}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:f.queryStatus,data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent,f.queryStatus]);}}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])}));
 import Rail from './rail';
 import { RailContext } from '../../desk-rail';
@@ -17,7 +17,7 @@ async function publish(type:string,status:Snapshot['status'],records=f.snapshots
 let events:EventTarget;
 beforeEach(()=>{f.queryStatus='live';events=new EventTarget();vi.stubGlobal('addEventListener',events.addEventListener.bind(events));vi.stubGlobal('removeEventListener',events.removeEventListener.bind(events));f.listeners.clear();f.snapshots={
  'attention.ownedAgent':live([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),
- 'household.agentDisplay':live([]),'runtime.job':live([]),
+ 'household.agentDisplay':live([]),'generated.jobs':live([]),
  'person':live([]),'attention.ask':live([{id:'first',ask:'Proceed with backup?',agent:'art',state:'open',createdAt:1}]),
  'attention.agent':live([{id:'report',agent:'art',state:'working',work:'Checking the backup',changedAt:1}]),
  'thread':live([{id:'th:abc',agent:'art',title:'Unread conversation',unread:true,last:1,archived:null},{id:'th:recent',agent:'art',title:'Newest read thread',unread:false,last:2,archived:null}]),
@@ -97,18 +97,17 @@ it('puts the selected owned Comms companion above Needs you and returns it to sa
 });
 
 it('lists each agent current jobs and drops stale jobs when disconnected',async()=>{
- f.snapshots['runtime.job']=live([
-  {id:'j:running',agent:'art',title:'Compare pumps',state:'running',box:'workbench',createdAt:2},
-  {id:'j:queued',agent:'art',title:'Order hose',state:'queued',box:'workbench',createdAt:1},
-  {id:'j:done',agent:'art',title:'Finished job',state:'done',box:'workbench',createdAt:0},
-  {id:'j:other',agent:'other',title:'Other agent job',state:'running',box:'workbench',createdAt:0},
+ f.snapshots['generated.jobs']=live([
+  {id:'j:running',agent:'art',title:'Compare pumps',state:'running',box:'workbench',queuedAt:'2026-11-14T01:00:00Z'},
+  {id:'j:queued',agent:'art',title:'Order hose',state:'queued',box:'workbench',queuedAt:'2026-11-14T02:00:00Z'},
+  {id:'j:other',agent:'other',title:'Other agent job',state:'running',box:'workbench',queuedAt:'2026-11-14T03:00:00Z'},
  ]);
  const go=vi.fn();await act(async()=>{tree=create(h(Rail,{go}));});
  const jobs=()=>tree.root.findByProps({'aria-label':'Art current jobs'});
  expect(jobs().findAllByType('li').map((n:any)=>n.findByType('strong').children[0])).toEqual(['Compare pumps','Order hose']);
- expect(text()).not.toContain('Finished job');expect(text()).not.toContain('Other agent job');
- await publish('runtime.job','offline');expect(text()).not.toContain('Compare pumps');expect(text()).toContain('Jobs unavailable');
- await publish('runtime.job','live',[]);expect(text()).toContain('No current jobs.');
+ expect(text()).not.toContain('Other agent job');
+ await publish('generated.jobs','offline');expect(text()).not.toContain('Compare pumps');expect(text()).toContain('Jobs unavailable');
+ await publish('generated.jobs','live',[]);expect(text()).toContain('No current jobs.');
 });
 it('uses saved positions for rail cards and keyboard shortcuts after a live reorder',async()=>{
  const go=vi.fn();

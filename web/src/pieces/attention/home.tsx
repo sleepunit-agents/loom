@@ -2,6 +2,7 @@ import { useDeskRoster } from './roster';
 import { stamp } from './time';
 import { agentPath } from './home-model';
 import { HomeSteps } from './home-steps';
+import { CurrentJobs } from './current-jobs';
 import { LastAnswer } from './last-answer';
 import type { ActivityWindow } from '../activity/model';
 import { HomeConversations, HomeComposer, useHomeComms, threadPath } from './home-comms';
@@ -14,7 +15,7 @@ import { AskReader, type Guard } from './index';
 import { useWaitChecks } from './wait-checks';
 import { useMemberRetention } from './member-retention';
 import type { Ask } from './model';
-import { currentRuntimeJobs, type RuntimeJob, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, reportLink, type AgentPerson, type AgentStatus, type ReportedItem } from './home-model';
+import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, reportLink, type AgentPerson, type AgentStatus, type ReportedItem } from './home-model';
 import { deskJobs, agentNext } from '../../../../src/pieces/clock/desk';
 import { active, time, state, type Wake, type Clock } from '../clock/model';
 function Unavailable({ status, label }: { status: Snapshot['status']; label: string }) {
@@ -45,7 +46,6 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const wakes = useRecords<Wake>('wake');
   const clocks = useRecords<Clock>('clock');
   const statuses = useRecords<AgentStatus>('attention.agent');
-  const runtime = useRecords<RuntimeJob>('runtime.job');
   const lock = useRef(false), [busy,setBusy] = useState(false);
   const guard: Guard = {lock,busy,setBusy};
   const columns = roster.records.length <= 1 ? '' : roster.records.length === 2 || roster.records.length === 4 ? 'lg:grid-cols-2' : 'lg:grid-cols-3';
@@ -86,7 +86,6 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
             const work = clockStatus === 'live' ? wakes.records.filter(w => w.agent === agent.id && active(w)) : [];
             const next = agentNext(agent.id, work, paused);
             const jobs = deskJobs(work, paused);
-            const runtimeJobs = runtime.status === 'live' ? currentRuntimeJobs(runtime.records, agent.id) : [];
             return <section key={agent.id} aria-label={`${agent.name} card`} data-agent={agent.id} className="desk-home-card grid min-w-0 gap-3">
               <header className="desk-home-identity"><a className="inline-flex shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 [&>*]:pointer-events-none" aria-label={`Open ${agent.name} agent window`} href={agentPath(agent.id)} onClick={event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();go(agentPath(agent.id));}}><AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state, !!first)} size={96} /></a><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
               <div role="region" aria-label={`${agent.name} desk details`} tabIndex={0} className="grid min-w-0 gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 lg:max-h-[70dvh] lg:overflow-y-auto lg:pr-2">
@@ -95,15 +94,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
               <LastAnswer key={agent.id} agent={agent.id} name={agent.name} />
               <div className="desk-home-columns">
                 <div className="grid min-w-0 content-start gap-4">
-              <section aria-label={`${agent.name} runtime jobs`} className="grid min-w-0 gap-2">
-                {runtime.status !== 'live' ? <><h3>Runtime jobs</h3><Unavailable status={runtime.status} label="runtime jobs" /></> : <>
-                  <h3>Runtime jobs · {runtimeJobs.length}</h3>
-                  {!runtimeJobs.length ? <p>No current runtime jobs.</p> : <ul className="grid min-w-0 gap-3" aria-label={`${agent.name} current runtime jobs`}>{runtimeJobs.map(job => <li key={job.id} className="min-w-0 border-b pb-2">
-                    <h4>{job.title || job.id}</h4><p>{job.state} · Box {job.box}</p>
-                    <p>Queued <time dateTime={new Date(job.createdAt).toISOString()}>{stamp(job.createdAt)}</time></p>
-                  </li>)}</ul>}
-                </>}
-              </section>
+              <CurrentJobs agent={agent.id} name={agent.name} />
               <section aria-label={`${agent.name} reported work`} className="grid min-w-0 gap-3"><h3>Now</h3>{statuses.status !== 'live' ? <Unavailable status={statuses.status} label="agent status" /> : <><p className="whitespace-pre-wrap">{status?.work || 'Nothing right now'}</p>{status && <>
                 <p>Reported <time dateTime={new Date(status.changedAt).toISOString()}>{stamp(status.changedAt)}</time></p>
                 <ReportedItems title="Reported jobs" empty="No jobs reported." items={status.jobs} go={go} />

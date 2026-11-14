@@ -8,7 +8,7 @@ import type { Call, CallState, Result, Snapshot } from '../../data';
 // Renderer nodes carry arbitrary DOM callbacks; snapshots mix three record types for the hook fake.
 type Node={children:Array<Node|string>;props:Record<string,any>};
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),call:vi.fn(),once:vi.fn()}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>useMemo(()=>({status:'live',data:{recentConversations:(f.snapshots['conversation.summary']?.records??[]).filter((row:any)=>row.agent===variables?.agent),agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.snapshots['conversation.summary'],document,variables?.agent])}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:'live',data:{recentConversations:(f.snapshots['conversation.summary']?.records??[]).filter((row:any)=>row.agent===variables?.agent),agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent]);}}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]),call:f.call,callOnce:f.once}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import Home from './home';
@@ -30,7 +30,7 @@ function request<T>() {
   const call:Call<T>={id:'request',result:new Promise(r=>{resolve=r;}),getSnapshot:()=>state,subscribe:fn=>{listeners.add(fn);return()=>{listeners.delete(fn);};}};
   return {call,finish:async(result:Result<T>)=>act(async()=>{state={pending:false,status:'done',result};resolve(result);listeners.forEach(fn=>fn());})};
 }
-beforeEach(()=>{f.call.mockReset();f.once.mockReset();f.once.mockReturnValue({result:new Promise(()=>{})});f.listeners.clear();f.snapshots={'activity.window':live([]),'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'thread':live([]),'household.agentDisplay':live([]),'person':live([]),'runtime.job':live([]),'wake':live([]),'clock':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
+beforeEach(()=>{f.call.mockReset();f.once.mockReset();f.once.mockReturnValue({result:new Promise(()=>{})});f.listeners.clear();f.snapshots={'activity.window':live([]),'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'thread':live([]),'household.agentDisplay':live([]),'person':live([]),'generated.jobs':live([]),'wake':live([]),'clock':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
 it('keeps idle owned cards in saved position order with stable id ties, without deriving agents from asks or work',async()=>{
   f.snapshots['attention.ask']=live([ask('foreign',{agent:'other'})]);
@@ -190,28 +190,32 @@ it('checks the real member wait operation from Home without synthesizing a local
 });
 
 const runtimeJob=(id:string,fields:Partial<RuntimeJob>={}):RuntimeJob=>({id,agent:'art',title:`Runtime ${id}`,state:'queued',box:'worker',runner:'worker',createdAt:1,...fields});
-it('shows current real Runtime jobs independently of reports and retains concurrent matching titles',async()=>{
-  const rows=[runtimeJob('first',{title:'Same work',state:'running'}),runtimeJob('second',{title:'Same work',state:'waiting'}),runtimeJob('queued'),runtimeJob('starting',{state:'starting'}),runtimeJob('uncertain',{state:'uncertain'}),...(['done','failed','stopped','lost'] as const).map(state=>runtimeJob(state,{state})),runtimeJob('foreign',{agent:'other'})];
-  f.snapshots['runtime.job']=live(rows);
+it('shows generated current jobs independently of reports and preserves server order and concurrent titles',async()=>{
+  f.snapshots['generated.jobs']=live([
+    {id:'first',agent:'art',title:'Same work',state:'running',box:'worker',queuedAt:'2026-11-14T01:00:00Z'},
+    {id:'second',agent:'art',title:'Same work',state:'waiting',box:'worker',queuedAt:'2026-11-14T02:00:00Z'},
+    {id:'queued',agent:'art',title:'Runtime queued',state:'queued',box:null,queuedAt:'2026-11-14T03:00:00Z'},
+    {id:'starting',agent:'art',title:'Runtime starting',state:'starting',box:'worker',queuedAt:'2026-11-14T04:00:00Z'},
+  ]);
   await draw();
   const panel=tree!.root.findByProps({'aria-label':'Art runtime jobs'});
-  expect(words(panel)).toContain('Runtime jobs · 5');expect(panel.findAllByType('li')).toHaveLength(5);
-  expect(panel.findAllByType('h4').map(words)).toEqual(['Runtime uncertain','Same work','Runtime starting','Same work','Runtime queued']);
+  expect(words(panel)).toContain('Runtime jobs · 4');expect(panel.findAllByType('li')).toHaveLength(4);
+  expect(panel.findAllByType('h4').map(words)).toEqual(['Same work','Same work','Runtime queued','Runtime starting']);
   expect(words(panel)).toContain('running · Box worker');expect(words(panel)).toContain(' CT');
   expect(words(panel)).not.toContain('Runtime foreign');expect(words(panel)).not.toContain('Runtime failed');
   expect(f.call).not.toHaveBeenCalled();
-  await publish('runtime.job',live([runtimeJob('first',{state:'done'}),runtimeJob('new',{title:'New authoritative work'})]));
+  await publish('generated.jobs',live([{...runtimeJob('new',{title:'New authoritative work'}),queuedAt:new Date(1).toISOString()}]));
   expect(text()).not.toContain('Same work');expect(text()).toContain('New authoritative work');
-  await publish('runtime.job',live([]));expect(text()).not.toContain('New authoritative work');expect(text()).toContain('No current runtime jobs.');
+  await publish('generated.jobs',live([]));expect(text()).not.toContain('New authoritative work');expect(text()).toContain('No current runtime jobs.');
 });
 it.each(['loading','offline','denied'] as const)('clears Runtime words and avoids a false empty inventory while %s',async(status)=>{
-  f.snapshots['runtime.job']=live([runtimeJob('private',{title:'Visible private Runtime title'})]);await draw();
-  await publish('runtime.job',{records:f.snapshots['runtime.job'].records,status});
+  f.snapshots['generated.jobs']=live([{...runtimeJob('private',{title:'Visible private Runtime title'}),queuedAt:new Date(1).toISOString()}]);await draw();
+  await publish('generated.jobs',{records:f.snapshots['generated.jobs'].records,status});
   const panel=tree!.root.findByProps({'aria-label':'Art runtime jobs'});
   expect(words(panel)).not.toContain('Visible private Runtime title');expect(words(panel)).not.toContain('No current runtime jobs.');expect(words(panel)).not.toContain('Runtime jobs · 0');
   expect(words(panel)).toContain(status==='loading'?'Opening runtime jobs':'Couldn’t load runtime jobs');
   expect(text()).toContain('Art card');expect(text()).toContain('No clock jobs.');
-  await publish('runtime.job',live([runtimeJob('returned')]));expect(words(tree!.root.findByProps({'aria-label':'Art runtime jobs'}))).toContain('Runtime returned');
+  await publish('generated.jobs',live([{...runtimeJob('returned'),queuedAt:new Date(1).toISOString()}]));expect(words(tree!.root.findByProps({'aria-label':'Art runtime jobs'}))).toContain('Runtime returned');
   await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).not.toContain('Runtime returned');expect(text()).not.toContain('Art card');
 });
 it('orders Runtime work deterministically by state, queued time and identity without mutating the live snapshot or limiting rows',()=>{

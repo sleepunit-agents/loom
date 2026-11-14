@@ -1,9 +1,10 @@
+import { CurrentJobs } from './current-jobs';
 import { useDeskRoster } from './roster';
-import { useContext, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useLayoutEffect, useRef, useState } from 'react';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import { Row } from '../../kit';
 import { useRecords, type LiveRecord } from '../../data';
-import { currentRuntimeJobs, type RuntimeJob, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus } from './home-model';
+import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus } from './home-model';
 import type { Ask } from './model';
 import './rail.css';
 import { RailContext } from '../../desk-rail';
@@ -23,7 +24,6 @@ export default function AgentRail({ go }: { go(path: string): void }) {
   const statuses = useRecords<AgentStatus>('attention.agent');
   const asks = useRecords<Ask>('attention.ask');
   const threads = useRecords<Thread>('thread');
-  const runtime = useRecords<RuntimeJob>('runtime.job');
   const open = asks.status === 'live' ? openAsks(asks.records) : [];
   const agents = orderedAgents(namedAgents(roster.status === 'live' ? roster.records : [], people.status === 'live' ? people.records : []));
   const rail = useContext(RailContext);
@@ -31,8 +31,9 @@ export default function AgentRail({ go }: { go(path: string): void }) {
   const box = useRef<HTMLDivElement>(null);
   const [fold, setFold] = useState(false);
   const [room, setRoom] = useState('');
+  const jobsChanged = useCallback(() => setFold(false), []);
   // A changed height, width or authorized content tries the full cards before paint.
-  useLayoutEffect(()=>{setFold(false);},[room, roster.records, people.records, statuses.records, asks.records, threads.records, runtime.records, runtime.status, roster.status, people.status, statuses.status, asks.status, threads.status, companion?.id]);
+  useLayoutEffect(()=>{setFold(false);},[room, roster.records, people.records, statuses.records, asks.records, threads.records, roster.status, people.status, statuses.status, asks.status, threads.status, companion?.id]);
   useLayoutEffect(()=>{const el=box.current;if(el&&!fold&&el.scrollHeight>el.clientHeight+1)setFold(true);});
   useLayoutEffect(()=>{
     const el=box.current;if(!el)return;
@@ -58,7 +59,6 @@ export default function AgentRail({ go }: { go(path: string): void }) {
   const card=(agent:(typeof agents)[number])=>{
       const status = statuses.status==='live'?latestStatus(statuses.records,agent.id):undefined;
       const ownAsks = open.filter(a=>a.agent===agent.id), ask = ownAsks[0];
-      const jobs = runtime.status === 'live' ? currentRuntimeJobs(runtime.records, agent.id) : [];
       const recent = threads.status==='live'?threads.records.filter(t=>t.agent===agent.id&&t.archived===null).sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id)):[];
       const unread = recent.filter(t=>t.unread), thread = unread[0]??recent[0];
       const path = thread?`/p/comms-preview/thread/${encodeURIComponent(thread.id.replace(/^th:/,''))}`:'/p/comms-preview';
@@ -78,12 +78,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
           <span><strong>{agent.name}</strong><span className="desk-rail-state">{word}</span></span>
         </button>}
         <p className="desk-rail-work">{statuses.status==='live'?(status?.work||'Nothing right now'):'Agent status unavailable'}</p>
-        <div className="desk-rail-jobs" aria-label={`${agent.name} current jobs`}>
-          <span className="desk-rail-kicker">Current jobs{runtime.status === 'live' ? ` · ${jobs.length}` : ''}</span>
-          {runtime.status !== 'live' ? <p>Jobs unavailable</p> : !jobs.length ? <p>No current jobs.</p> : <ul>{jobs.map(job => <li key={job.id}>
-            <strong>{job.title || job.id}</strong><span>{job.state} · {job.box}</span>
-          </li>)}</ul>}
-        </div>
+        <CurrentJobs agent={agent.id} name={agent.name} compact onChange={jobsChanged} />
         {ask&&<button className="desk-rail-ask" onClick={()=>go(inboxPath(ask))}><span className="desk-rail-kicker">Asks you</span>{ask.ask}{ownAsks.length>1&&<span className="desk-rail-kicker">{`${ownAsks.length-1} more`}</span>}<span aria-hidden="true"> ›</span></button>}
         <button className="desk-rail-thread" onClick={()=>go(path)}>{threads.status!=='live'?'Conversations unavailable':unread.length?`${unread.length} unread ${unread.length===1?'thread':'threads'}`:thread?(thread.title||'Recent conversation'):'Start a conversation'}<span aria-hidden="true"> ↗</span></button>
       </section>;
