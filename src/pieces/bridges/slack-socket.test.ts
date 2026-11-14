@@ -39,6 +39,13 @@ function fixture(overrides: Partial<SlackSocketOptions> = {}) {
 const payload = {event_id:'Ev123',team_id:'T123',event:{type:'message',channel:'D123',user:'U123',ts:'1793828004.242749',text:'hello'}};
 const envelope = (id='env-1') => ({type:'events_api',envelope_id:id,payload});
 describe('Slack Socket Mode transport', () => {
+  it('passes the original socket envelope bytes to durable receive', async () => {
+    const f = fixture(); await settled(); const s = f.sockets[0]; s.hello();
+    const raw = Buffer.from(JSON.stringify(envelope(), null, 2));
+    s.emit('message', raw, false); await settled();
+    expect(f.receive).toHaveBeenCalledWith(payload, raw);
+    expect(s.send).toHaveBeenCalledOnce();
+  });
   it('uses app withValue and bounded fixed-origin POST before dialing the private ticket', async () => {
     const f = fixture(); await settled();
     expect(f.withValue.mock.calls[0][0]).toBe('slack-app');
@@ -207,7 +214,7 @@ describe('Slack Socket Mode transport', () => {
       s.send.mockImplementation((_text, callback) => { expect(app.db.inTransaction).toBe(false); expect(app.db.prepare('SELECT COUNT(*) AS n FROM socket_fixture').get()).toEqual({n:1}); callback(); });
       s.frame(envelope()); await settled();
       expect(s.send).not.toHaveBeenCalled(); expect(app.db.prepare('SELECT COUNT(*) AS n FROM socket_fixture').get()).toEqual({n:0});
-      commit(); await settled(); expect(receive).toHaveBeenCalledWith(payload); expect(s.send).toHaveBeenCalledOnce();
+      commit(); await settled(); expect(receive).toHaveBeenCalledWith(payload, Buffer.from(JSON.stringify(envelope()))); expect(s.send).toHaveBeenCalledOnce();
       f.transport.close(); await app.close(); app = await startLoom({home});
       const g = fixture({receive}); await settled(); g.sockets[0].hello(); g.sockets[0].frame(envelope('new-envelope-id')); await settled();
       expect(g.sockets[0].send).toHaveBeenCalledOnce(); expect(app.db.prepare('SELECT * FROM socket_fixture').all()).toEqual([{id:payload.event_id,content:JSON.stringify(payload)}]);

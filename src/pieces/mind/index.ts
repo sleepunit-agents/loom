@@ -5,6 +5,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { z } from 'zod';
 import { operation, maySee, mayAct, type Operations, type Live, type Sharing, type Viewer } from '../../core/index.js';
 import { knowledgeView, type KnowledgeOpen } from './knowledge.js';
+import { knowledgeSweep } from './knowledge-sweep.js';
 
 /** Composition supplies paths from household database metadata, never household.json. */
 export function installMindKnowledge(operations: Operations, live: Live, options: {
@@ -52,5 +53,5 @@ export function installMindKnowledge(operations: Operations, live: Live, options
       return deadlines.filter(t => Number.isFinite(t) && t > now).sort((a, b) => a - b)[0];
     },
   });
-  return { close() { db?.close(); } };
+  return { sweep: (agent: string) => knowledgeSweep(db, operations.clock, agent), close() { db?.close(); } };
 }

@@ -29,8 +29,9 @@ export class BridgeIncoming {
 
   /** Atomically records the event, turn, conversation and unified inbox item.
    * Duplicate events never append a second turn. Held events require explicit
-   * retry with the platform envelope (kept by the raw-event adapter). */
-  receive(message: IncomingMessage, retryHeld = false): typeof bridgeIncoming.$inferSelect {
+   * retry with the platform envelope (kept by the raw-event adapter). The trusted
+   * spool supplies its original receipt time when processing was delayed. */
+  receive(message: IncomingMessage, retryHeld = false, receivedAt?: string): typeof bridgeIncoming.$inferSelect {
     return this.db.transaction(() => {
       const id = `bi:${JSON.stringify([message.connection, message.id])}`;
       const existing = this.db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id, id)).get();
@@ -59,7 +60,7 @@ export class BridgeIncoming {
         if (peers.some(p => message.mentions.includes(p.botUser)) || route?.answers !== connection.agent) { state = 'dropped'; reason = 'Another agent or no channel answer'; }
       }
       const at = this.now();
-      const row = existing ?? this.db.insert(bridgeIncoming).values({ id, connection: connection.id, channel: message.channel, thread: message.thread, isDm: message.isDm, user: message.user, text: message.text, postedAt: message.postedAt, receivedAt: at, state: 'pending' }).returning().get();
+      const row = existing ?? this.db.insert(bridgeIncoming).values({ id, connection: connection.id, channel: message.channel, thread: message.thread, isDm: message.isDm, user: message.user, text: message.text, postedAt: message.postedAt, receivedAt: receivedAt ?? at, state: 'pending' }).returning().get();
       let conversation: string | null = null;
       if (state === 'delivered') {
         // Include workspace and the real channel even for DMs: outside user ids

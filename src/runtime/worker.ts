@@ -105,6 +105,9 @@ export async function workOnce(input: {
     // to the server. No second started() or finish() after that uncertainty.
     try { await control.started(assignment.id, build); }
     catch { abandon(); return 'abandoned'; }
+    // Shutdown can arrive while the acknowledgement is in flight. A successful
+    // reply does not restore this worker's authority to release the body.
+    if (abort.signal.aborted) return 'abandoned';
     state = 'running';
     reporting = false;
     let result: { exitCode: number; logTail: string };

@@ -7,7 +7,7 @@ import { fixture, fixtureSharing } from '../../fixture.js';
 import { FakeClock, type Viewer } from '../../core/index.js';
 import { grantsRole, installSecrets } from './index.js';
 import { installSecretValues } from './values.js';
-import { installSecretServices, secretUseRole } from './service.js';
+import { installSecretServices, secretUseRole, installedSecretUse } from './service.js';
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const h of homes.splice(0)) rmSync(h, {recursive:true, force:true}); vi.restoreAllMocks(); });
 async function setup() {
@@ -103,4 +103,54 @@ it.each(['registration', 'expiry', 'never', 'name'] as const)('rechecks %s after
   await expect(role().withValue('github',use)).rejects.toMatchObject({code:'unavailable',message:'Secret use failed'});
   expect(source.read).toHaveBeenCalledTimes(1); expect(use).not.toHaveBeenCalled();
   expect(buffers).toHaveLength(1); expect(buffers[0].every(v=>v===0)).toBe(true);
+});
+
+it('lets installed code use its explicit holder without service grants, without lending authority to same-name callers', async () => {
+  const {app, source, buffers, role, config, call} = await setup();
+  config.services = {} as typeof config.services;
+  const installed = installedSecretUse(app.operations, source, app.live, 'changes');
+  const read = source.read.getMockImplementation()!;
+  source.read.mockImplementationOnce(async () => {
+    const attempts = app.db.prepare('SELECT record FROM secrets_uses').all() as {record:string}[];
+    expect(attempts.map(row => JSON.parse(row.record))).toMatchObject([{name:'github',by:{kind:'service',id:'changes'},state:'started'}]);
+    return read();
+  });
+  expect(installed.mayUse('github')).toBe(true);
+  expect(call('policy', {secrets: {github: {grant: 'never'}}}).ok).toBe(true);
+  await expect(installed.withValue('github', async token => token.length)).resolves.toBe(19);
+  expect(buffers[0].every(byte => byte === 0)).toBe(true);
+  expect(app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
+  await expect(role({kind:'service',id:'changes'}).withValue('github', async () => true)).rejects.toMatchObject({code:'denied'});
+  expect(source.read).toHaveBeenCalledTimes(1);
+  const rows = app.db.prepare('SELECT record FROM secrets_uses').all() as {record:string}[];
+  expect(rows.map(row => JSON.parse(row.record))).toMatchObject([{by:{kind:'service',id:'changes'},state:'released'}]);
+  expect(JSON.stringify(rows)).not.toContain('CREDENTIAL-SENTINEL');
+});
+
+it.each(['missing', 'malformed', 'closed'] as const)('refuses %s installed credential access before holder I/O', async reason => {
+  const {app, source} = await setup();
+  const installed = installedSecretUse(app.operations, source, app.live, 'changes');
+  if (reason === 'closed') app.operations.close();
+  const name = reason === 'missing' ? 'absent' : reason === 'malformed' ? '../github' : 'github';
+  expect(installed.mayUse(name)).toBe(false);
+  await expect(installed.withValue(name, async () => true)).rejects.toMatchObject({code:'denied'});
+  expect(source.read).not.toHaveBeenCalled();
+});
+
+it.each(['removed', 'closed'] as const)('rechecks installed lifetime and name after holder waits: %s', async reason => {
+  const {app, source, buffers} = await setup();
+  const installed = installedSecretUse(app.operations, source, app.live, 'changes');
+  const ordinaryRead = source.read.getMockImplementation()!;
+  source.read.mockImplementationOnce(async () => {
+    const bytes = await ordinaryRead();
+    if (reason === 'removed') app.db.prepare('DELETE FROM secrets_names WHERE id=?').run('github');
+    else app.operations.close();
+    return bytes;
+  });
+  const use = vi.fn(async () => true);
+  await expect(installed.withValue('github', use)).rejects.toMatchObject({code:'unavailable',message:'Secret use failed'});
+  expect(use).not.toHaveBeenCalled();
+  expect(buffers[0].every(byte => byte === 0)).toBe(true);
+  const rows = app.db.prepare('SELECT record FROM secrets_uses').all() as {record:string}[];
+  expect(rows.map(row => JSON.parse(row.record))).toMatchObject([{state:'failed'}]);
 });

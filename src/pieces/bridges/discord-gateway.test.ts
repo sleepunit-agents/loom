@@ -45,6 +45,15 @@ async function identified(f: ReturnType<typeof fixture>) { await settled(); cons
 async function connected(f: ReturnType<typeof fixture>) { const s=await identified(f); s.frame(ready()); await settled(); return s; }
 async function retry(f: ReturnType<typeof fixture>,delay=1000) { await settled(); f.clock.advance(delay); await settled(); return f.sockets.at(-1)!; }
 describe('Discord gateway session transport',()=>{
+  it('passes the original frame bytes to durable commit', async () => {
+    const f = fixture(), s = await connected(f);
+    const raw = Buffer.from(JSON.stringify(message(), null, 2));
+    s.emit('message', raw, false); await settled();
+    expect(f.commit).toHaveBeenLastCalledWith(
+      { type: 'MESSAGE_CREATE', data: message().d, seq: 2 },
+      expect.objectContaining({ seq: 2 }), raw,
+    );
+  });
   it('uses fixed Discord JSON v10 and current service credential only in Identify',async()=>{
     const f=fixture(); await settled(); expect(f.withValue).not.toHaveBeenCalled();
     expect(f.socket).toHaveBeenCalledExactlyOnceWith('wss://gateway.discord.gg/?v=10&encoding=json', {maxPayload:1024*1024,followRedirects:false,perMessageDeflate:false,handshakeTimeout:15_000});
