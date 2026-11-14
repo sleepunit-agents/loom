@@ -12,10 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Next Comms backfills retained message references once on startup, with ownership and retention fences and safe retry after interruption.
 - Clock native workers can resolve standalone scheduled files in their own checkout, with exact source checks and native-only acknowledgement.
 
 - Next Comms keeps a bounded word-free reference index with message writes and preserves expired references during fixture imports.
+- Next Comms backfills retained message references once on startup, with ownership and retention fences and safe retry after interruption.
 - Next Inbox retains member-private action success/error FYI for Tasks and central answers, with read marks and an Errors folder.
 
 - Next Inbox retains fixed, member-private action receipts for the remaining registered app mutations; credential and private Comms actions remain excluded.
