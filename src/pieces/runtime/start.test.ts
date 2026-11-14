@@ -725,7 +725,7 @@ it.each(['before-input','during-input'] as const)('denies a public Clock start w
  else expect(f.app.effects!.status(`runtime:input:${job}`)).toBe('done');
 });
 
-it.each(['place','claim','conversation','runner','box','house'] as const)('denies a prepared Clock start after an independently valid %s replacement',async field=>{
+it.each(['place','claim','conversation','runner','box','house'] as const)('denies a prepared Clock start after %s replacement',async field=>{
  const f=await setup();await f.schedule();const job=f.store.ids('job')[0];
  expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
  const original=f.store.read('job',job)!,binding=f.store.read('binding',original.conversation!)!;
@@ -758,8 +758,9 @@ it.each(['place','claim','conversation','runner','box','house'] as const)('denie
  expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false,code:'denied'});
  expect(signin(f.app).tokens.document()).toEqual(credentials);
  spy.mockRestore();
- // A fresh owning read is independently allowed on the replacement; only the
- // one-time input already consumed by the race cannot be released again.
+ // Runner/box changes also fail generic assignment checks; those are not
+ // discriminators for destination pinning. This fresh BODY read establishes
+ // conversation authority only. Place/claim/conversation discriminate pinning.
  f.app.db.transaction(()=>{
   const {changedAt:_,...j}=f.store.read('job',job)!;
   f.store.put('job',{...j,state:'running'},f.clock.now());
