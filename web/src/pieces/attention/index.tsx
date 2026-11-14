@@ -77,7 +77,7 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
     {ask.why && <section><h3>Why</h3><p className="whitespace-pre-wrap">{ask.why}</p></section>}
     {ask.if_yes && <section><h3>If yes</h3><p className="whitespace-pre-wrap">{ask.if_yes}</p></section>}
     {ask.if_no && <section><h3>If no</h3><p className="whitespace-pre-wrap">{ask.if_no}</p></section>}
-    {link && (ask.state === 'open' || notice) && <Button variant="outline" onClick={()=>go(link.path)}>{link.label}</Button>}
+    {link && (ask.state === 'open' || notice || ask.sourceManaged && ask.source.kind==='piece' && ask.source.id==='approvals-notices') && <Button variant="outline" onClick={()=>go(link.path)}>{link.label}</Button>}
     {ask.member && !privateReply && ask.state === 'open' && !link && <p>Answer this in its private conversation. Private replies stay there.</p>}
     {ask.state === 'open' && (!link || notice) && (!ask.member || privateReply) && <>
       {!confirmed && <p role="status">{message || (checked.result?.ok === false ? `Couldn’t check this ask: ${checked.result.message}` : checked.result?.ok && checked.result.value.state !== 'open' ? 'This ask is no longer open.' : 'Checking whether this ask is still open…')}</p>}

@@ -1,4 +1,5 @@
 /** Offline source resolution. Never applies legacy gates, offers or proposals. */
+import {bridgeTemplateSlots,validateBridgeTemplate} from './import-templates.js';
 import {resolveChannelBriefs} from './import-briefs.js';
 import { readBridgeDocuments, type BridgeDocumentFile } from './import-documents.js';
 import { createHash } from 'node:crypto';
@@ -11,6 +12,7 @@ const name=z.string().min(1).max(200);
 export const bridgeImportOptions=z.object({
   instances:z.array(z.object({shuttle:name,people:name,routes:name}).strict()),
   documents:z.array(z.object({path:name,agent:name,key:z.string(),brief:z.string().optional()}).strict()).max(128).optional(),
+  templateFamilies:z.array(z.object({shuttle:name,platform:z.enum(['discord','slack']),briefs:z.record(z.string(),name)}).strict()).max(128).optional(),
   connections:z.array(z.object({agent:name,platform:z.enum(['discord','slack']),workspace:name,bot:name.optional(),tokenSecret:name.optional(),appSecret:name.optional(),setupIncomplete:z.literal(true).optional()}).strict()),
 }).strict();
 export type BridgeImportOptions=z.infer<typeof bridgeImportOptions>;
@@ -263,7 +265,21 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     const noteInventories=effective.routes.filter(r=>r.noteChannels!==undefined).map(r=>({source:r.source,agent:routeOwners.get(r.source),noteChannels:r.noteChannels}));
     const documents=readBridgeDocuments(sources.documents??[]);
     const selections=options.documents??[];
-    if(selections.length!==documents.length||new Set(selections.map(s=>s.path)).size!==selections.length)throw Error();
+    const families=options.templateFamilies??[];
+    const paths=[...selections.map(s=>s.path),...families.flatMap(f=>Object.values(f.briefs))];
+    if(paths.length!==documents.length||new Set(paths).size!==paths.length||new Set(families.map(f=>JSON.stringify([f.shuttle,f.platform]))).size!==families.length)throw Error();
+    const templateFamilies=families.map(family=>{
+      const instance=effective.instances.find(i=>i.source===family.shuttle);
+      if(!instance||!household.agents.includes(instance.agent)||!options.connections.some(c=>c.agent===instance.agent&&c.platform===family.platform))throw Error();
+      const names=Object.keys(bridgeTemplateSlots[family.platform]);
+      if(Object.keys(family.briefs).length!==names.length||names.some(n=>!Object.hasOwn(family.briefs,n)))throw Error();
+      const briefs=names.map(brief=>{
+        const document=documents.find(d=>d.name===family.briefs[brief]);if(!document)throw Error();
+        const references=validateBridgeTemplate(family.platform,brief,document.content);
+        return {brief,path:document.name,sha256:document.sha256,bytes:document.bytes,content:document.content,references};
+      });
+      return {source:instance.source,agent:instance.agent,platform:family.platform,briefs};
+    });
     const selectedDocuments=selections.map(selection=>{
       const document=documents.find(d=>d.name===selection.path);
       if(!document||!household.agents.includes(selection.agent)||!effective.routes.some(r=>routeOwners.get(r.source)===selection.agent&&Object.hasOwn(r.noteChannels??{},selection.key)))throw Error();
@@ -272,7 +288,7 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     // A named mapping is never allowed to silently become membership-only evidence.
     for(const d of selectedDocuments)if(d.brief!==undefined&&!effective.instances.some(i=>i.agent===d.agent&&Object.hasOwn(i.channelNotes,d.key)&&i.channelNotes[d.key]===d.brief))throw Error();
     const configuredBriefs=effective.instances.filter(i=>i.channelNoteOrder?.length).map(instance=>({agent:instance.agent,source:instance.source,routeSource:instance.routeSource,briefs:resolveChannelBriefs(instance,effective.routes,selectedDocuments)}));
-    const evidence=JSON.stringify({inventory,stores,incomplete,retained,...(configuredBriefs.length?{configuredBriefs}:{}),...(selectedDocuments.length?{selectedDocuments}:{}),...(noteInventories.length?{noteInventories}:{})}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping,...(documents.length?[documents]:[])]));
+    const evidence=JSON.stringify({inventory,stores,incomplete,retained,...(templateFamilies.length?{templateFamilies}:{}),...(configuredBriefs.length?{configuredBriefs}:{}),...(selectedDocuments.length?{selectedDocuments}:{}),...(noteInventories.length?{noteInventories}:{})}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping,...(documents.length?[documents]:[])]));
     return {expected,evidence,mapping,checksum};
   }catch(error){if(error instanceof BridgeSourceError)throw error;throw Error('Invalid offline Bridges import mapping or sources');}
 }

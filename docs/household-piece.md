@@ -1173,3 +1173,38 @@ Public usable-home restore/sign-in/stdio acceptance, publication/retention,
 execution boundary checks, local arming, staging holds, jobs, health/Attention
 and generated commands/Setup remain required. Saved backup config remains
 `awaiting-runner` and does not arm itself.
+
+### Bounded encrypted-envelope restore validation
+
+`src/core/household/backup-restore.ts` adds a restore input prerequisite.
+`validateHouseholdBundle` validates borrowed plaintext with no filesystem IO,
+pathname database opens, migrations or destination writes. It accepts the version
+1 compact JSON/binary format emitted by the bundle writer, requiring registered
+household metadata in the actual app image. Generic fake app images accepted by
+the explicit-input encryption helper are deliberately insufficient for restore.
+
+Before handing bytes to a consumer it checks the magic/version, fatal UTF-8,
+canonical compact JSON (including duplicate-key rejection), exact lengths and
+hashes, unique paths, explicit store/key presence or absence, every registered
+creed, SQLite integrity/foreign keys and the notes-image attachment hashes and
+sizes. Only fixed app/Secrets/key paths, registered continuity stores and the
+same portable document allowlist are accepted. Attachments must be exactly the
+set referenced by the captured notes images. Unregistered agents, traversal,
+extra/missing attachments, drill keys and machine-local arming paths refuse.
+The format budgets are 896 MiB total, 256 MiB per app/continuity/Secrets image,
+512 MiB aggregate continuity and 64 MiB/4096 portable documents, with a 4 MiB
+manifest and 16384-entry limits. Callers may lower any of these ceilings, never raise them.
+
+`withHouseholdRestore` bounds encrypted input (envelope ceiling plus 1 MiB age
+framing), decrypts with an explicit identity, validates and lends views to a
+trusted callback, then wipes the owned decrypted buffer on success, validation
+failure or callback rejection. The callback must neither retain nor return
+plaintext views. Native crypto/SQLite/JS internal copies are outside this
+owned-buffer guarantee. Hashes detect corruption, not provenance; age recipients
+can create archives. This is not a native SQLite sandbox for hostile inputs.
+
+This unit does not write a restored home, call an owning Secrets restore method,
+provide a public restore command or prove restored-daemon/sign-in/stdio behavior.
+The owning Secrets recovery role is still unavailable on main. Those acceptance
+steps, publication/retention and the production runner remain required; saved
+backup settings still do not schedule or arm anything.

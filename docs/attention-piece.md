@@ -337,3 +337,37 @@ This completes the current app producer inventory, not all of t-2205. Owning
 notices (including backup failure/recovery), public Runtime answer delivery,
 Runtime-bound metadata/digest/grading reconciliation and final whole-piece
 acceptance still remain. It changes no permissions, schema or Home visuals.
+
+### Approvals reported-step FYI
+
+The pinned old Approvals `tell`/`notice_of`/manifest contract (loom-approvals
+588b3f7c22f86068063153676de159597348216a, bin/approvals) reported merge and
+host steps as notices. Next Approvals owns the bounded newest 50 events and
+publishes `approval.notice` (only the first 50 imported rows, even when an
+oversized legacy source is retained losslessly); Inbox files fixed, resolved FYIs with the same
+agent audience and per-member read marks. Open Approvals goes to Reported
+steps, where the original public wording and exact target remain. Reporting
+records a source claim; it does not prove execution. FYIs never count as
+needs-you, accept answers, spend approvals or deliver replies.
+
+New events receive permanent random ids, independent of numeric storage rows
+and registry retry receipts. Stopped imports receive deterministic
+content/occurrence keys namespaced to the immutable source checksum; existing
+pre-identity database rows and later unidentified offline additions receive
+random event ids. All ids are persisted before filing and never recomputed
+after source removal. A later identical event cannot reuse a retired read key. Prepending
+and bounded trimming cannot shift retained identities. The existing importer
+keeps original notices losslessly and leaves the source untouched; startup
+uses the same owning snapshot capability to file offline/imported facts.
+Owning writes and projections publish atomically; conflicts roll back both.
+Removed source events leave the FYI view, preserving existing read facts
+through a hidden fixed-word tombstone when a read fact references the row.
+No real import or live cutover is part of this change.
+
+Only validated merge/host notices are projected. Unknown/malformed legacy
+kinds remain in the owning stored source for rollback, and are deliberately
+excluded from central FYI. Private-member notices, Comms, Secrets, credentials
+and one-time output are excluded. Inbox never copies tell wording, targets,
+principal names or result/error/command text. Old answered approval verdicts
+remain in Approvals History (`approvals.history`); the central resolved card
+is deliberately only a duplicate-clearing fact, not a verdict archive.

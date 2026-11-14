@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Clock native workers can opt into a bounded idle wait and resume later prompts in the same worker lifetime after fresh owning checks.
+- Next Comms: Tasks and Changes resolve reverse From links through Comms for the original viewer, with private labels hidden from other owners and on disconnect.
 
 - Clock native workers can resolve standalone scheduled files in their own checkout, with exact source checks and native-only acknowledgement.
 
@@ -22,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Next Inbox retains member-private action success/error FYI for Tasks and central answers, with read marks and an Errors folder.
 
 - Next Inbox retains fixed, member-private action receipts for the remaining registered app mutations; credential and private Comms actions remain excluded.
+- File Approvals reported merge/host steps as scoped Inbox FYIs with stable event identities and an owning Reported steps view.
 
 - Add an explicit external dedicated secret-command worker with authenticated Runtime stop/history checks and drained shutdown, reusing the Claude worker control owner.
 

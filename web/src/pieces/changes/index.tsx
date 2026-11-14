@@ -1,3 +1,4 @@
+import { FromConversation } from '../comms/from';
 import { useState, useEffect, useSyncExternalStore } from 'react';
 import { useRecords, call, type Call } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
@@ -28,7 +29,7 @@ function Reader({change:c,enabled}:{change:ChangeRecord;enabled:boolean}){
    {state.pending&&<Loading label="Saving answer…"/>}{state.result&&(state.result.ok?<p role="status">Answer saved. The agent will do the merge.</p>:<Error title="Couldn’t save" text={state.result.message}/>)}
   </section>
   <section><h3>Tasks</h3>{c.tasks.length?<List label="Tasks citing this change">{c.tasks.map(t=><Row key={t.id} title={t.title} meta={t.id} onClick={()=>location.assign(`/p/tasks-preview/task/${t.id}`)}/>)}</List>:<p>No tasks linked</p>}</section>
-  {c.conversation&&<p>Made in conversation {c.conversation}</p>}
+  {c.conversation&&<FromConversation conversation={c.conversation}/>}
   <section><h3>Summary</h3><p className="whitespace-pre-wrap break-words">{c.body||'No description'}</p></section>
   {c.url&&<a href={c.url} target="_blank" rel="noreferrer">Open on GitHub</a>}
  </article>;

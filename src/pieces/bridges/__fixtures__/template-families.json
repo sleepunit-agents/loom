@@ -1,0 +1,16 @@
+{
+ "discord": {
+  "discord": "\uFEFF$where [$chan_id] $chan_name\r\n${notes}\n$new\n$context\n$send\n$owner_line $$literal 🐟",
+  "discord-owner": "$label [$id]", "discord-no-owner": "No owner",
+  "discord-guest": "$cards $send $notify_chan", "discord-peer": "$peers $pair",
+  "discord-peer-bot": "$label $name $note $uid", "discord-peer-webhook": "$name", "discord-pair": "$name"
+ },
+ "slack": {
+  "slack-dm": "$name $slug $tier $tier_note $card_note $cid $send $new $context",
+  "slack-tier-2": "$name $role $send_discord $general", "slack-tier-3": "$name $role $send_discord $general",
+  "slack-card": "$slug $card", "slack-grant": "$grant", "slack-restrict": "$restrict",
+  "slack-group": "$cid $names $roster $tier $note $restricts $cards $slugs $send $new $context",
+  "slack-group-tier-2": "$send_discord $general", "slack-group-tier-3": "$send_discord $general",
+  "slack-group-owner-present": "Owner present", "slack-group-restrict": "$name $restrict"
+ }
+}

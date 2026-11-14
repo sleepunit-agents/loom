@@ -83,13 +83,19 @@ function Rules() {
     {auth.result?.ok && !auth.result.value.mayEdit && <p>Only the household owner edits rules.</p>}
   </div>;
 }
+function Notices({query}:{query:string}) {
+  const {records,status}=useRecords<import('../../data').LiveRecord & {agent:string;at:string;kind:string;target:string;what:string;for?:string}>('approval.notice');
+  const shown=records.filter(n=>`${n.what} ${n.target} ${n.agent}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a,b)=>b.at.localeCompare(a.at)||a.id.localeCompare(b.id));
+  return <div className="p-5"><h1>Reported steps</h1>{status==='loading'?<Loading label="Opening notices…"/>:status!=='live'?<Error text="Waiting for connection."/>:<List label="Approval notices">{shown.map(n=><Row key={n.id} layout="stack" title={n.what} meta={n.target} status={`${n.agent} · ${n.kind}${n.for && n.for!=='owner' ? ` · for ${n.for}` : ''} · ${new Date(n.at).toLocaleString('en-US',{timeZone:'America/Chicago',dateStyle:'short',timeStyle:'short'})} CT`}/>)}</List>}</div>;
+}
 export default function ApprovalsApp({ path: shellPath, go }: { path?: string; go?: (path:string)=>void } = {}) {
   const [localPath,setLocalPath] = useState(() => typeof location === 'undefined' ? '/p/approvals-preview' : location.pathname);
-  const path = shellPath ?? localPath, base = path.split('/approval/')[0];
+  const path = shellPath ?? localPath, base = path.split('/approval/')[0].replace(/\/notices$/,'');
   const selected = /\/approval\/(a-[0-9a-f]{8})$/.exec(path)?.[1];
   const snapshot = useRecords<Approval>('approval');
   const { records,status } = snapshot;
-  const [folder,setFolder] = useState('pending'), [query,setQuery] = useState('');
+  const [folder,setFolder] = useState(path.endsWith('/notices')?'notices':'pending'), [query,setQuery] = useState('');
+  useEffect(()=>{if(path.endsWith('/notices'))setFolder('notices');},[path]);
   const [archiveRequest,setHistory] = useState<{ records:readonly Approval[]; request:Call<{approvals:Approval[]}> }>();
   const archive=useCall(archiveRequest?.request);
   const older=status==='live' && archiveRequest?.records===records && archive.result?.ok ? archive.result.value.approvals : [];
@@ -106,11 +112,11 @@ export default function ApprovalsApp({ path: shellPath, go }: { path?: string; g
   const current = status === 'live' ? all.find(a => a.id === selected) : undefined;
   const shown = all.filter(a => (folder === 'pending' ? a.state === 'pending' : a.state !== 'pending') && matches(a,query)).sort((a,b) => b.at.localeCompare(a.at));
   return <Split className="h-full" label="Approvals" folder={folder} onFolder={id => { setFolder(id); navigate(); }}
-    folders={[{id:'pending',label:'Pending',count:records.filter(a=>a.state==='pending').length},{id:'history',label:'History'},{id:'rules',label:'Rules'}]}
+    folders={[{id:'pending',label:'Pending',count:records.filter(a=>a.state==='pending').length},{id:'history',label:'History'},{id:'rules',label:'Rules'},{id:'notices',label:'Reported steps'}]}
     search={<label>Search approvals<Input type="search" value={query} onChange={e=>setQuery(e.target.value)} /></label>}
     listTop={folder === 'history' ? <div className="p-3"><Button variant="outline" disabled={status!=='live'||archive.pending} onClick={()=>setHistory({records,request:call('approvals.history',{})})}>Load older approvals</Button>{archive.result?.ok===false && <Error text={archive.result.message} />}</div> : undefined}
-    listTitle={folder === 'rules' ? 'Rules' : 'Approvals'} listMeta={folder === 'rules' ? undefined : shown.length}
-    list={folder === 'rules' ? <Rules /> : status === 'loading' ? <Loading label="Opening approvals…" /> : status !== 'live' ? <Error text={status === 'denied' ? 'Sign in to see approvals.' : 'Waiting for connection.'} /> : <><List label="Approval list">{shown.map(a=><Row key={a.id} title={a.title} meta={a.why} status={`${a.who.agent} · ${a.state}`} selected={selected===a.id} onClick={()=>navigate(a.id)} />)}</List>{!shown.length && <Empty title="No approvals here" text={query ? 'Try another search.' : 'Choose another folder.'} />}</>}
+    listTitle={folder==='notices'?'Reported steps':folder === 'rules' ? 'Rules' : 'Approvals'} listMeta={folder === 'rules'||folder==='notices' ? undefined : shown.length}
+    list={folder === 'notices' ? <Notices query={query}/> : folder === 'rules' ? <Rules /> : status === 'loading' ? <Loading label="Opening approvals…" /> : status !== 'live' ? <Error text={status === 'denied' ? 'Sign in to see approvals.' : 'Waiting for connection.'} /> : <><List label="Approval list">{shown.map(a=><Row key={a.id} title={a.title} meta={a.why} status={`${a.who.agent} · ${a.state}`} selected={selected===a.id} onClick={()=>navigate(a.id)} />)}</List>{!shown.length && <Empty title="No approvals here" text={query ? 'Try another search.' : 'Choose another folder.'} />}</>}
     reader={current ? <ApprovalReader key={current.id} approval={current} snapshot={snapshot} /> : selected ? <Empty title="This approval is no longer in view" text="It may have changed or become unavailable." /> : null}
-    open={!!selected} onBack={()=>navigate()} backLabel="Approvals" blank={<Empty title="Open a question" text="Read the question and what happens either way before answering." />} />;
+    open={!!selected} onBack={()=>navigate()} backLabel="Approvals" blank={<Empty title={folder==='notices'?'Reported steps':'Open a question'} text={folder==='notices'?'Merge and host reports appear in the list.':'Read the question and what happens either way before answering.'} />} />;
 }

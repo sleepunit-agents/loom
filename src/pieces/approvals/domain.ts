@@ -169,7 +169,7 @@ export function recordNotice(s: State, input: Record<string,unknown>, c: DomainC
   if (!['do','tell'].includes(rule.tier)) denied(`the rule for ${target.split('@')[0]} is ask me: request a merge approval instead`);
   const what = plain(String(input.what ?? ''));
   if (!what || what.length > 300) invalid('--what says what was merged, at most 300 characters');
-  const notice = { at:iso(c.now), agent:c.caller.who.agent, kind, target, what, ...(c.caller.for !== 'owner' ? {for:c.caller.for} : {}) };
+  const notice = { id:`notice-${randomBytes(16).toString('hex')}`, ...(c.caller.member?{member:c.caller.member}:{}), at:iso(c.now), agent:c.caller.who.agent, kind, target, what, ...(c.caller.for !== 'owner' ? {for:c.caller.for} : {}) };
   s.notices.unshift(notice);
   s.notices = s.notices.slice(0,50);
   return notice;
