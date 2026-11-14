@@ -1,8 +1,8 @@
 import { useEffect, useSyncExternalStore } from 'react';
-import { call, useRecords, type LiveRecord } from '../../data';
+import { useRecords, type LiveRecord } from '../../data';
 import { Button, Loading, Error as ErrorView } from '../../kit';
 import { frozen, idle } from '../../data/mutation';
-import { mutation } from './model';
+import { mutation, submitAccountChange } from './model';
 import { notificationController } from './notifications';
 export const notifications=notificationController();
 interface Devices extends LiveRecord { member:string; devices:Array<{ref:string;session:string;device?:string;at:number;seenAt?:number}> }
@@ -26,7 +26,7 @@ export default function Notifications({enabled}:{enabled:boolean}){
       </>}
       {state.busy&&<Loading label="Updating browser notifications…"/>}{state.message&&<p role="status">{state.message}</p>}
       {!record.devices.length&&<p>No notification devices yet.</p>}
-      {record.devices.map(d=><form key={d.ref} aria-label={`Remove notification device ${d.ref}`} className="grid min-w-0 gap-2 rounded-xl border p-4" onSubmit={event=>{event.preventDefault();if(!can||frozen(mutation.getSnapshot().request?.getSnapshot()??idle))return;mutation.set(call('notifications.remove',{ref:d.ref}),'notifications.remove');event.currentTarget.reset();}}>
+      {record.devices.map(d=><form key={d.ref} aria-label={`Remove notification device ${d.ref}`} className="grid min-w-0 gap-2 rounded-xl border p-4" onSubmit={event=>{event.preventDefault();if(!can||notifications.getSnapshot().busy)return;submitAccountChange('notifications.remove',{ref:d.ref},()=>event.currentTarget.reset());}}>
         <h3 className="font-semibold">{d.device??'Browser'}</h3><p className="break-all">Device reference: {d.ref}</p><p className="break-all">Browser reference: {d.session}</p><p>Enabled {new Date(d.at*1000).toLocaleString()}{d.seenAt!==undefined?` · Last seen ${new Date(d.seenAt*1000).toLocaleString()}`:''}</p>
         <fieldset disabled={!can} className="grid gap-2"><label><input type="checkbox" required/> I confirm removing this notification device</label><Button type="submit" variant="outline">Remove notification device</Button></fieldset>
       </form>)}

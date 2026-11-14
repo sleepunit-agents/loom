@@ -1,9 +1,9 @@
 import { useState, useSyncExternalStore, type FormEvent } from 'react';
-import { call, useRecords, type LiveRecord } from '../../data';
+import { useRecords, type LiveRecord } from '../../data';
 import { AppFrame, Button, Input, Empty, Error as ErrorView, Loading } from '../../kit';
 import { idle, frozen } from '../../data/mutation';
 import DeviceLink from '../../signin/DeviceLink';
-import { mutation } from './model';
+import { mutation, submitAccountChange } from './model';
 import { decode as dec } from './encoding';
 import Notifications, { notifications } from './Notifications';
 interface Account extends LiveRecord { member:string; passkeys:Array<{ref:string;label:string;created:number;lastUsed?:number;ended:boolean;made:number}>;sessions:Array<{ref:string;label?:string;device?:string;issuedAt:number;seenAt?:number;ended:boolean}> }
@@ -31,7 +31,7 @@ export default function AccountApp({go=()=>{},active=true}:{path?:string;go?:(pa
   const held=useSyncExternalStore(mutation.subscribe,mutation.getSnapshot),state=useSyncExternalStore(held.request?.subscribe??noop,held.request?.getSnapshot??(()=>idle));
   const push=useSyncExternalStore(notifications.subscribe,notifications.getSnapshot);
   const enabled=!push.busy&&active&&feed.status==='live'&&!!account&&!frozen(state);
-  const submit=(operation:string,ref:string)=>(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();if(!enabled||notifications.getSnapshot().busy||frozen(mutation.getSnapshot().request?.getSnapshot()??idle))return;const data=new FormData(event.currentTarget);mutation.set(call(operation,{ref,...(operation==='account.removePasskey'?{withMade:data.get('made')==='on'}:{})}),operation);event.currentTarget.reset();};
+  const submit=(operation:string,ref:string)=>(event:FormEvent<HTMLFormElement>)=>{event.preventDefault();if(!enabled||notifications.getSnapshot().busy)return;const data=new FormData(event.currentTarget);submitAccountChange(operation,{ref,...(operation==='account.removePasskey'?{withMade:data.get('made')==='on'}:{})},()=>event.currentTarget.reset());};
   return <AppFrame title="Your account" where="Account" go={go}><div className="grid min-w-0 gap-6 overflow-auto p-4 sm:p-6">
     {feed.status==='loading'?<Loading label="Opening your account…"/>:feed.status==='denied'||!account?<Empty title="Your account is unavailable" text="Sign in as a household member and check the connection."/>:<>
       <h2 className="text-xl font-semibold">{account.member}</h2><p>Your passkeys and browsers. Removing a passkey stops it signing in again and ends browsers using its own sign-in credential. Older shared sign-ins stay active; use the browser list to sign them out. Other passkeys keep working unless you also remove those made from it.</p>

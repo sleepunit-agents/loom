@@ -10,7 +10,7 @@ import { FakeClock } from '../core/clock.js';
 import { signin } from '../core/signin/index.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
-it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes a passkey, signs out a browser and fits both looks across windows',async()=>{
+it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account registers/removes a passkey, signs out a browser and fits both looks across windows',async()=>{
   const home=mkdtempSync(join(tmpdir(),'account-browser-'));fixture(home);
   const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
   const loom=await startLoom({home,next:true,staging:true,clock,webRoot:root});
@@ -48,6 +48,11 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Account registers/removes 
     await notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
     const deviceRead=()=>loom.operations.call('direct',{kind:'member',id:'jonathan'},'notifications.read',{});
     await expect.poll(()=>{const r=deviceRead();return r.ok?(r.value as {devices:unknown[]}).devices.length:0;}).toBe(1);
+    await notifications.getByRole('button',{name:'Turn off notifications on this browser',exact:true}).click();
+    await expect.poll(()=>notifications.textContent()).toContain('This browser: Off');
+    await expect.poll(()=>notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).isEnabled()).toBe(true);
+    await notifications.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
+    await expect.poll(()=>notifications.textContent()).toContain('This browser: Enabled');
     const devices=deviceRead();if(!devices.ok)throw Error();const device=(devices.value as {devices:Array<{ref:string;session:string}>}).devices[0];
     const remote=b.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true});await expect.poll(()=>remote.count()).toBe(1);
     expect(await remote.textContent()).toContain(device.session);

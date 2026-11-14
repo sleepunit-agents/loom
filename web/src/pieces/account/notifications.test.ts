@@ -37,7 +37,7 @@ it('stops late key replies on inactive/offline/navigation and never silently ena
 });
 it('quietly registers an existing subscription once and honors a remote removal',async()=>{
   const f=fixture();f.setCurrent();f.controller.setEnabled(true);await vi.waitFor(()=>expect(f.requests).toHaveLength(1));
-  expect(f.requests[0].input).toEqual({sub:f.sub.toJSON(),again:true});f.requests[0].finish({ok:true,value:{status:'removed'}});
+  expect(f.requests[0].input).toEqual({sub:f.sub.toJSON(),again:true});expect(f.browser.ask).not.toHaveBeenCalled();f.requests[0].finish({ok:true,value:{status:'removed'}});
   await vi.waitFor(()=>expect(f.controller.getSnapshot().busy).toBe(false));expect(f.sub.unsubscribe).toHaveBeenCalledOnce();
   f.controller.setEnabled(false);f.controller.setEnabled(true);expect(f.requests).toHaveLength(1);
 });
@@ -59,7 +59,7 @@ it('waits for an existing Account request before quiet reconciliation, then perm
   f.requests[0].finish({ok:true,value:{status:'removed'}});await vi.waitFor(()=>expect(f.controller.getSnapshot().busy).toBe(false));
   const work=f.controller.enable();await vi.waitFor(()=>expect(f.requests).toHaveLength(2));f.requests[1].finish({ok:true,value:{publicKey:'public'}});
   await vi.waitFor(()=>expect(f.requests).toHaveLength(3));expect(f.requests[2].input).toEqual({sub:f.sub.toJSON()});
-  f.requests[2].finish({ok:true,value:{status:'added'}});await work;expect(f.controller.getSnapshot().on).toBe(true);
+  f.requests[2].finish({ok:true,value:{status:'added'}});await work;expect(f.controller.getSnapshot().on).toBe(true);expect(f.browser.ask).toHaveBeenCalledOnce();
 });
 it('checks generation inside the actual browser adapter after a delayed worker lookup',async()=>{
   const f=fixture();await f.ready();
@@ -82,4 +82,19 @@ it('does not restart a quiet reconciliation after its late browser lookup is inv
   await vi.waitFor(()=>expect(f.controller.getSnapshot().busy).toBe(false));
   expect(f.browser.current).toHaveBeenCalledOnce();expect(f.requests).toHaveLength(0);
   f.controller.setEnabled(false);f.controller.setEnabled(true);expect(f.requests).toHaveLength(0);
+});
+
+it('explicitly enables through the real browser adapter from no subscription with permission requested only on the click',async()=>{
+  const f=fixture();const getSubscription=vi.fn(async()=>null),subscribe=vi.fn(async()=>f.sub);
+  const getRegistration=vi.fn(async(_scope:string)=>({pushManager:{getSubscription,subscribe}}));
+  vi.stubGlobal('navigator',{serviceWorker:{getRegistration}});
+  f.browser.current=notificationBrowser.current;f.browser.create=notificationBrowser.create;
+  await f.ready();expect(f.browser.ask).not.toHaveBeenCalled();expect(subscribe).not.toHaveBeenCalled();
+  const work=f.controller.enable();expect(f.browser.ask).toHaveBeenCalledOnce();
+  await vi.waitFor(()=>expect(f.requests).toHaveLength(1));f.requests[0].finish({ok:true,value:{publicKey:'cHVibGlj'}});
+  await vi.waitFor(()=>expect(f.requests).toHaveLength(2));
+  expect(getRegistration.mock.calls.every(args=>args[0]==='/')).toBe(true);
+  expect(subscribe).toHaveBeenCalledExactlyOnceWith({userVisibleOnly:true,applicationServerKey:Uint8Array.from([112,117,98,108,105,99])});
+  expect(f.requests[1].input).toEqual({sub:f.sub.toJSON()});
+  f.requests[1].finish({ok:true,value:{status:'added'}});await work;expect(f.controller.getSnapshot().on).toBe(true);
 });
