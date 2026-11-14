@@ -476,6 +476,20 @@ it('captures a complete selected template family privately without a route-note 
  expect(result.expected.routes[0].notes).toEqual([]);expect(result.expected.venues[0].enabled).toBe(false);
  expect(evidence.selectedDocuments).toBeUndefined();
  for(const templateFamilies of [[{...family,shuttle:'unknown'}],[family,family],[{...family,platform:'slack'}],[{...family,briefs:{...briefs,unknown:briefs.discord}}],[{...family,briefs:{...briefs,'discord-pair':briefs.discord}}]])expect(()=>readBridgeImport(f.sources,{...options,templateFamilies},h,f.open)).toThrow('Invalid offline');
+ // Keep every other acceptance condition valid when checking family names.
+ const {['discord-pair']:pair,...renamed}=briefs;
+ expect(()=>readBridgeImport(f.sources,{...options,templateFamilies:[{...family,briefs:{...renamed,unknown:pair}}]},h,f.open)).toThrow('Invalid offline');
+ const originalDocuments=f.sources.documents;
+ f.sources.documents=originalDocuments.filter(d=>d.name!==briefs['discord-pair']);
+ expect(()=>readBridgeImport(f.sources,{...options,templateFamilies:[{...family,briefs:renamed}]},h,f.open)).toThrow('Invalid offline');
+ f.sources.documents=originalDocuments;
+ const copiedBriefs:Record<string,string>={};
+ const copies=Object.entries(families.discord).map(([brief,content],i)=>{
+  const path=join(f.root,`copy-${i}.md`),name=`bridges-documents/${i+8}.md`;writeFileSync(path,content);copiedBriefs[brief]=name;return {name,path};
+ });
+ f.sources.documents=[...originalDocuments,...copies];
+ expect(()=>readBridgeImport(f.sources,{...options,templateFamilies:[family,{...family,briefs:copiedBriefs}]},h,f.open)).toThrow('Invalid offline');
+ f.sources.documents=originalDocuments;
  const {['discord-guest']:_,...missing}=briefs;
  expect(()=>readBridgeImport(f.sources,{...options,templateFamilies:[{...family,briefs:missing}]},h,f.open)).toThrow('Invalid offline');
  writeFileSync(f.sources.documents[0].path,'$notes $unknown');expect(()=>readBridgeImport(f.sources,options,h,f.open)).toThrow('Invalid offline');
