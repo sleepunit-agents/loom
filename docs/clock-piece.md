@@ -59,8 +59,10 @@ named-person, unresolved-steering, other-origin or capability hints as eligible;
 file/lane schedules are excluded. The supported archive shape contains only
 `at`, `days`, `prompt`, `note`, `for`, `for_why` and `origin`; unknown fields
 refuse eligibility, even when false. Recovery copies no archived words, Viewer,
-principal, conversation or capability. A linked firing or uncertain occurrence
-must be reconciled first; definitely unstarted linked occurrences are cancelled
+principal, conversation or capability. Active linked firing, uncertain or attempted work
+must be reconciled first. Terminal occurrences remain unchanged, including their
+attempt evidence; recovery submits different fresh work and never retries those
+occurrences. Definitely unstarted active linked occurrences are cancelled
 in the same transaction. Unmarked historical imports are refused rather than
 backfilled. Private/person imports, lanes and capability-bearing schedules still
 need their owning recovery. The Clock app offers eligible current owners a separate blank recovery form, review confirmation and explicit save. Saved prompt, note and timing are never prefilled. Disabled schedules have no ordinary Edit or Run once control; unsupported imports stay disabled. The live availability hint refreshes on linked wake and access changes; the operation independently rechecks current authority and eligibility. Tests in

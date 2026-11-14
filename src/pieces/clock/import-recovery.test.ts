@@ -140,8 +140,27 @@ it('offers recovery only to the current owner and refreshes availability when li
   s.app.db.prepare('DELETE FROM clock_wakes WHERE id=?').run(linked.id);
   changed=once(sockets[0],'message');s.app.live.changed([{type:'wake',id:linked.id}]);[raw]=await changed;
   expect(JSON.parse(raw.toString()).record.canRecover).toBe(true);
+  changed=once(sockets[0],'message');s.access.members.jonathan.agents=[];s.app.live.refreshAccess();[raw]=await changed;
+  expect(JSON.parse(raw.toString()).records[0].canRecover).toBe(false);
+  changed=once(sockets[0],'message');s.access.members.jonathan.agents=['art'];s.app.live.refreshAccess();[raw]=await changed;
+  expect(JSON.parse(raw.toString()).records[0].canRecover).toBe(true);
   changed=once(sockets[0],'message');s.access.members.jonathan.owner=false;s.app.live.refreshAccess();[raw]=await changed;
   expect(JSON.parse(raw.toString()).records[0].canRecover).toBe(false);
   expect(s.call('scheduleRecover',input)).toMatchObject({ok:false,code:'denied'});
  } finally {for(const ws of sockets){const closed=once(ws,'close');ws.terminate();await closed;}}
+});
+
+it.each([{slot:'old-slot'},{prompt:undefined,prompt_file:'routines/night.md'},{for_why:'steered'},{future_capability:false}])('never offers a live recovery control for unsupported archive %j',async raw=>{
+ const s=await setup(raw),ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live');
+ try {await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'schedule'}));const [message]=await initial;
+  expect(JSON.parse(message.toString()).records[0].canRecover).toBe(false);
+ }finally{const closed=once(ws,'close');ws.terminate();await closed;}
+});
+it.each(['failed','cancelled','fired'])('allows fresh work after a terminal %s occurrence without replaying its attempt',async state=>{
+ const s=await setup(),id='w-terminal';
+ const old={id,agent:'art',note:'Old occurrence',prompt:'ARCHIVED_WORDS',schedule:input.id,due:s.clock.now()-1,createdAt:s.clock.now()-1,changedAt:s.clock.now(),by:{kind:'runner',id:'clock-import:unverified'},failures:1,state,attempt:'terminal-attempt'};
+ s.app.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run(id,JSON.stringify(old),s.clock.now());
+ expect(s.call('scheduleRecover',input).ok).toBe(true);
+ expect(wakes(s.app.db).find(w=>w.id===id)).toEqual(old);
+ const fresh=wakes(s.app.db).filter(w=>w.id!==id);expect(fresh).toHaveLength(1);expect(fresh[0]).toMatchObject({prompt:'FRESH_WORDS',state:'pending'});expect(fresh[0].attempt).toBeUndefined();
 });
