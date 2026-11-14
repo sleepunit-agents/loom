@@ -11,7 +11,7 @@ import { digestId } from './digests.js';
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const alice: Viewer = { kind: 'member', id: 'alice' }, art: Viewer = { kind: 'agent', id: 'art' };
-const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] }, carol: { owner: false, agents: [] }, dave: { owner: false, agents: [] } }, projects: { shared: { members: ['alice', 'carol'], agents: ['art'] }, beta: { members: ['dave'], agents: [] } }, services: { reader: { types: ['attention.digest'], operations: [] }, listed: { types: ['attention.digest'], operations: ['attention.digests'] }, writer: { types: ['attention.digest'], operations: ['attention.writeDigest'] } } });
+const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: false, agents: ['art'] }, carol: { owner: false, agents: [] }, dave: { owner: false, agents: [] } }, projects: { shared: { members: ['alice', 'carol'], agents: ['art'] }, beta: { members: ['dave'], agents: [] } }, services: { reader: { types: ['attention.digest'], operations: [] }, listed: { types: ['attention.digest'], operations: ['attention.digests'] }, writer: { types: ['attention.digest'], operations: ['attention.writeDigest'] } } });
 const conversation = conversationId('art', 'relay', 'test');
 const question = { ask: 'Continue with the change?', if_yes: 'I finish it.', if_no: 'I stop.', refs: ['t-40'] };
 async function setup(scope = {}) {

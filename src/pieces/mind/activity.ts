@@ -21,7 +21,7 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
  const allowed=(v:Viewer,agent:string,type='memory')=>maySee(v,{type,agent},options.sharing());
  const agents=(v:Viewer)=>options.agents.filter(a=>allowed(v,a.agent)||allowed(v,a.agent,'conversation'));
  // These are private agent records, never project-scoped. A member scope is
- // checked independently so even the household owner cannot read another thread.
+ // checked independently: only that member and household owners see it.
  const seesConversation=(v:Viewer,c:ActivityConversation,agent:string)=>(c.expires===undefined||c.expires>operations.clock.now())&&c.agent===agent&&allowed(v,agent,'conversation')&&maySee(v,{type:'conversation',agent,...(c.member!==undefined?{member:c.member}:{})},options.sharing())&&(venueKey(c.venue)!=='comms'||c.member!==undefined);
  const conversation=(v:Viewer,agent:string,id:string)=>{const raw=options.conversations?.conversation(v,agent,id);if(!raw)return;const c=conversationSchema.parse(raw);return c.id===id&&seesConversation(v,c,agent)?c:undefined;};
  const ownerPerson=(v:Viewer)=>v.kind==='member'?v.id:options.owner;
@@ -81,7 +81,7 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
     if(!has(db)){if(episodes!=='error')episodes='unavailable';continue;}
     // Bound only after visibility and deduplication: private Comms rows may not
     // crowd visible episodes out of the feed.
-    const query=db.prepare(`SELECT ref,title,substr(content,1,20000) AS content,created,project,metadata,expires_at FROM memories WHERE ${active} AND julianday(created)>=julianday(?) AND julianday(created)<julianday(?) ORDER BY julianday(created) DESC,ref`);
+    const query=db.prepare(`SELECT ref,title,content,created,project,metadata,expires_at FROM memories WHERE ${active} AND julianday(created)>=julianday(?) AND julianday(created)<julianday(?) ORDER BY julianday(created) DESC,ref`);
     let n=0;
     for(const raw of query.iterate(new Date(now).toISOString(),new Date(from).toISOString(),new Date(until).toISOString())){
      const row=raw as Episode,e=episode(v,agent,row);if(!e)continue;
@@ -111,7 +111,7 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
    return runOpen(r,v);
   }catch{return failure('error','The conversation service couldn’t open this entry.');}
   const db=sources.get(agent);if(sourceErrors.has(agent))return failure('error','The episode store couldn’t open this entry.');if(!db)return failure('unavailable','The episode store is not available.');
-  try{if(!has(db))return failure('unavailable','The episode store is not available.');const row=db.prepare(`SELECT ref,title,substr(content,1,20000) AS content,created,project,metadata,expires_at FROM memories WHERE ref=? AND ${active} AND julianday(created)>=julianday(?) AND julianday(created)<=julianday(?)`).get(key,new Date(now).toISOString(),new Date(oldest).toISOString(),new Date(now+60000).toISOString()) as Episode|undefined;return row?episode(v,agent,row):undefined;}catch{return failure('error','The episode store couldn’t open this entry.');}
+  try{if(!has(db))return failure('unavailable','The episode store is not available.');const row=db.prepare(`SELECT ref,title,content,created,project,metadata,expires_at FROM memories WHERE ref=? AND ${active} AND julianday(created)>=julianday(?) AND julianday(created)<=julianday(?)`).get(key,new Date(now).toISOString(),new Date(oldest).toISOString(),new Date(now+60000).toISOString()) as Episode|undefined;return row?episode(v,agent,row):undefined;}catch{return failure('error','The episode store couldn’t open this entry.');}
  }
  const changed=(c:{type:string})=>['memory','core.access','household.sharing','conversation','digest','attention.conversation'].includes(c.type)||c.type.startsWith('comms.');
  operations.register(operation({name:'mind.activityList',input:z.object({to:z.string().max(10).default('recent')}).strict(),output:z.unknown(),may:v=>agents(v).length>0,run:(ctx,i)=>window(i.to,ctx.viewer)??{ok:false,code:'not-found',message:'Activity window not found'}}));
