@@ -1453,8 +1453,8 @@ Normal terminal stop also discards local reuse, conservatively.
 | `active` / `activeInfo` recovery | a fresh worker has no native resume authority | durable physical-process inventory, collection receipts and reconciliation |
 | owner reset / write-off tombstones | remote markers close retained sessions even when idle or returning | conversation-policy delivery and full external body-host integration |
 
-The executable refuses conversation-bound input and model selections. Runtime
-now includes any original conversation id in `takeInput`, even when no private
+The executable refuses conversation-bound input and model/account selections. Runtime
+now includes model-account selection and any original conversation id in `takeInput`, even when no private
 body credential is issued, so this refusal cannot mistake a bridge job for
 unbound work. Supporting conversations requires the owning compiled-policy,
 original-source and credential delivery path; local copied policy is not a

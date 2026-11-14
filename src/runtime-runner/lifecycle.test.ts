@@ -42,12 +42,13 @@ async function setup() {
   return child as ReturnType<SpawnClaude>;
  };
  const selected={command:'/worker/claude',env:{WORKER:'true'},checkout:'/fixture/art',house,binding,rules,spawn};
- let tick:(()=>void)|undefined;
- const runtime:WorkerControlRuntime={request:fetch,deadline:ms=>{expect(ms).toBe(1500);const controller=new AbortController();clock.at(clock.now()+ms,()=>controller.abort());return controller.signal;},every(callback,ms){expect(ms).toBe(1000);tick=callback;return ()=>{tick=undefined;};}};
+ let tick:(()=>void)|undefined,closedResolve:()=>void=()=>{};
+ const controlClosed=new Promise<void>(resolve=>{closedResolve=resolve;});
+ const runtime:WorkerControlRuntime={request:fetch,deadline:ms=>{expect(ms).toBe(1500);const controller=new AbortController();clock.at(clock.now()+ms,()=>controller.abort());return controller.signal;},every(callback,ms){expect(ms).toBe(1000);tick=callback;return ()=>{tick=undefined;closedResolve();};}};
  const update=(set:object)=>app.db.transaction(()=>{const {changedAt:_,...job}=store.read('job','j')!;store.put('job',{...job,...set},clock.now());})();
  const finish=()=>{const c=calls.at(-1)!;const flag=c.args.includes('--resume')?'--resume':'--session-id';c.child.stdout.write(JSON.stringify({type:'result',is_error:false,session_id:c.args[c.args.indexOf(flag)+1],result:'PRIVATE RESULT'}));c.child.emit('close',0);};
  const connect=async()=>{const worker=await connectClaudeWorker(config,selected,runtime);cleanups.push(worker.close);return worker;};
- return {home,app,clock,store,config,calls,selected,runtime,update,finish,connect,waitSpawn,tick:()=>tick?.()};
+ return {home,app,clock,store,config,calls,selected,runtime,update,finish,connect,waitSpawn,controlClosed,tick:()=>tick?.()};
 }
 it('actual API control wraps the real Claude argv/stdin path and retains only its own history',async()=>{
  const f=await setup(),worker=await f.connect();
@@ -94,8 +95,8 @@ it('does not start after an uncertain input response and never retries that requ
 it('the scheduled control consumer fences an idle session before another turn',async()=>{
  const f=await setup(),worker=await f.connect();
  f.update({writtenOff:{approval:'a-owner',by:'jonathan',at:1},state:'lost'});f.tick();
- // Join the scheduled read rather than advance elapsed wall-clock time.
- await expect(worker.refresh()).rejects.toThrow();
+ // Observe closure from the scheduled read alone; no independent refresh.
+ await f.controlClosed;
  await expect(worker.turn({binding,rules,message:'late',current:()=>true})).rejects.toThrow();expect(f.calls).toHaveLength(0);
 });
 it('an unavailable daemon revokes an active session instead of preserving an offline execution lease',async()=>{
@@ -110,8 +111,8 @@ it('a new connection after an ordinary worker restart cannot resume the previous
  const p=first.turn(turn);await f.waitSpawn(1);f.finish();const original=await p;first.close();
  const second=await f.connect(),q=second.turn(turn);await f.waitSpawn(2);expect(f.calls[1].args).not.toContain('--resume');f.finish();expect((await q).session).not.toBe(original.session);
 });
-it.each(['house','model'] as const)('refuses unsupported or mismatched %s input without a process',async drift=>{
- const f=await setup();if(drift==='model')f.update({model:'some-model'});
+it.each(['house','model','account'] as const)('refuses unsupported or mismatched %s input without a process',async drift=>{
+ const f=await setup();if(drift!=='house')f.update({[drift]:'some-selection'});
  await expect(runClaudeJob(f.config,{...f.selected,...(drift==='house'?{house:{...house,repo:'/different'}}:{})},f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(0);
 });
 it('post-output acceptance reads authority after completion even when an earlier retain response is delayed',async()=>{
@@ -165,4 +166,13 @@ it('refuses remote plaintext HTTP before sending a runner credential or starting
  const f=await setup();let requests=0,schedules=0;
  const runtime={...f.runtime,request:async()=>{requests++;throw Error();},every(){schedules++;return ()=>{};}};
  await expect(connectClaudeWorker({...f.config,url:'http://remote.example'},f.selected,runtime)).rejects.toThrow();expect(requests).toBe(0);expect(schedules).toBe(0);expect(f.calls).toHaveLength(0);
+});
+it.each(['false','throws'] as const)('rechecks the original local proof after an asynchronous post-output control read (%s)',async mode=>{
+ const f=await setup();let current=true,hold=false,release:()=>void=()=>{},observed:()=>void=()=>{};
+ const waiting=new Promise<void>(resolve=>{observed=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{const response=await fetch(...args);if(hold){hold=false;observed();await gate;}return response;}};
+ const worker=await connectClaudeWorker(f.config,f.selected,runtime);cleanups.push(worker.close);
+ const p=worker.turn({binding,rules,message:'private',current:()=>{if(!current&&mode==='throws')throw Error('revoked');return current;}}),rejected=expect(p).rejects.toThrow();await f.waitSpawn(1);
+ hold=true;f.finish();await waiting;current=false;release();await rejected;
+ await expect(worker.turn({binding,rules,message:'late',current:()=>true})).rejects.toThrow();
 });

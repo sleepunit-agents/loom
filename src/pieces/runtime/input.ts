@@ -30,12 +30,13 @@ export function installRunnerInput(db: Db, operations: Operations, sharing: () =
     // No login, secret, port, socket or agent credential is conferred by this payload.
       return { job: id, agent: job.agent, house: job.made!, brief: input.brief, needs,
         ...(job.model===undefined?{}:{model:job.model}),
+        ...(job.account===undefined?{}:{account:job.account}),
         ...(job.conversation===undefined?{}:{conversation:job.conversation}) };
   };
   operations.register(operation({
     name: 'runtime.takeInput', doors: ['http', 'direct'],
     input: z.object({ job: z.string().min(1).max(200) }).strict(),
-    output: z.object({ job: z.string(), agent: z.string(), house: buildIdentity, brief: z.string(), needs: z.array(z.string()), model:z.string().optional(), conversation:z.string().optional(), credential:z.string().optional() }),
+    output: z.object({ job: z.string(), agent: z.string(), house: buildIdentity, brief: z.string(), needs: z.array(z.string()), model:z.string().optional(), account:z.string().optional(), conversation:z.string().optional(), credential:z.string().optional() }),
     may: (viewer, input) => assigned(viewer, input.job),
     async prepare(input, { viewer }) {
       const value = snapshot(viewer, input.job);

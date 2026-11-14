@@ -7,7 +7,7 @@ import { buildIdentity } from '../pieces/runtime/records.js';
 import { connectClaudeWorker, type WorkerControlConfig, type WorkerControlRuntime } from './lifecycle.js';
 import type { RunnerBinding, SpawnClaude } from './session.js';
 const inputSchema=z.object({job:z.string(),agent:z.string(),house:buildIdentity,brief:z.string(),needs:z.array(z.string()),
-  model:z.string().optional(),conversation:z.string().optional(),credential:z.string().optional()}).strict();
+  model:z.string().optional(),account:z.string().optional(),conversation:z.string().optional(),credential:z.string().optional()}).strict();
 const failed=()=>new Error('Runtime worker start unavailable; reconcile the job before retrying');
 /** One attempt only. Never retry a claim, input release, report or process after
  * an uncertain response. Native history exists only inside this owned worker.
@@ -47,7 +47,7 @@ export async function runClaudeJob(config:WorkerControlConfig,
     const claimed=await call('claimJob',{job},true);
     z.object({job:z.literal(job),state:z.literal('starting')}).strict().parse(claimed);
     const input=inputSchema.parse(await call('takeInput',{job}));
-    if(input.job!==job||input.agent!==binding.agent||input.conversation!==undefined||input.credential!==undefined||input.model!==undefined
+    if(input.job!==job||input.agent!==binding.agent||input.conversation!==undefined||input.credential!==undefined||input.model!==undefined||input.account!==undefined
       ||JSON.stringify(input.house)!==JSON.stringify(house))throw failed();
     await worker.refresh();
     await Promise.all([worker.turn({binding,rules,checkout,message:input.brief,current:()=>true}),

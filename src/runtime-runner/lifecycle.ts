@@ -60,11 +60,12 @@ export async function connectClaudeWorker(config:WorkerControlConfig,
       /** Checks original authority before input and after output. Polling also
        * kills an active child without waiting for that child to return. */
       async turn(input:WorkerTurn):Promise<TurnResult> {
+        const current=input.current,turn={...input,binding:{...input.binding},rules:structuredClone(input.rules)};
         await fresh();
-        const current=input.current;
-        const result=await session.turn({...input,current:()=>!closed&&active&&current()===true});
+        const result=await session.turn({...turn,current:()=>!closed&&active&&current()===true});
         await fresh();
-        if(closed)throw failed();
+        let valid=false;try {valid=current()===true;}catch { /* revoke on a failed local proof */ }
+        if(closed||!valid){close();throw failed();}
         return result;
       },
       refresh,
