@@ -75,11 +75,13 @@ it('refuses agent bot/person collisions after both accepted connections resolve'
   expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
  }
 });
-it('refuses unrepresentable flags from another accepted agent and inherits parent rules for threads',()=>{
+it('blocks partial flags from another accepted agent and inherits parent rules for threads',()=>{
  const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',answers:{'300':'a'},threads:{'500':{parent:'300',primary:'art',peer:false}},flags:{'300':{peer:true}}}]]);
  expect(readBridgeImport(f.sources,f.options,h,f.open).expected.routes.find(r=>r.channel==='500')?.peer).toBe(true);
  const d=new Database(f.sources.stores[0].path);d.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('channels','mark',JSON.stringify({bot:'200',answers:{'400':'b'},flags:{'400':{guest_venue:true}}}),'now','owner');d.close();
- expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+ const result=readBridgeImport(f.sources,f.options,h,f.open);
+ expect(result.expected.routes).toEqual([]);expect(result.expected.venues[0].ignore).toEqual(expect.arrayContaining(['300','400']));
+ expect(JSON.parse(result.evidence).retained).toContainEqual(expect.objectContaining({source:'shuttle.db',collection:'channels',agent:'art',path:['channels','art','flags','300','peer']}));
 });
 it('requires explicit Slack team/bot/app and token secret names without opening a whole bundle',()=>{
  const f=fixture();writeFileSync(f.sources.files[0].path,JSON.stringify({agent:{slug:'art'},slack:{secrets_env:'/never-open-bundle'}}));writeFileSync(f.sources.files[2].path,'{}');writeFileSync(f.sources.files[1].path,JSON.stringify({people:{jonathan:{slack:{T1:['U1']}}}}));
@@ -236,4 +238,61 @@ it('reports malformed revision JSON without original words and still closes the 
  const store=new Database(f.sources.stores[0].path);store.prepare('INSERT INTO revisions VALUES (1,?,?,?,?,?,?,?)').run('gates','art','PRIVATE_BAD_JSON',1,'put','today','owner');store.close();
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('Invalid offline Bridges configuration inventory: runtime.db at $["revisions"]["1"]["doc"]');
  const reopened=f.open(f.sources.stores[0].path);expect(reopened.open).toBe(true);reopened.close();
+});
+
+it('refuses only contradictory present flags with store, collection, agent and field diagnostics',()=>{
+ const f=fixture();f.store('shuttle',[
+ ['routes','household',{guild:'789'}],
+ ['channels','art',{bot:'100',flags:{'300':{peer:true}}}],
+ ['channels','mark',{bot:'200',flags:{'300':{peer:false}}}],
+ ]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["channels"]["mark"]["flags"]["300"]["peer"]');
+});
+it('validates a malformed present flag even when another part is silent',()=>{
+ const f=fixture();f.store('shuttle',[
+ ['routes','household',{guild:'789'}],['channels','art',{bot:'100',flags:{'300':{peer:'PRIVATE'}}}],['channels','mark',{bot:'200'}],
+ ]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["channels"]["art"]["flags"]["300"]["peer"]');
+});
+
+for(const flags of [null,[],false,'PRIVATE'])it(`rejects a present malformed flags map (${JSON.stringify(flags)})`,()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',flags}],['channels','mark',{bot:'200'}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["channels"]["art"]["flags"]');
+});
+for(const pair of [1.5,9007199254740992])it(`rejects malformed numeric pair before serializing (${pair})`,()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',flags:{'300':{pair}}}],['channels','mark',{bot:'200'}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["channels"]["art"]["flags"]["300"]["pair"]');
+});
+it('keeps explicit default-only sparse flags runnable and blocks descendant mention fallback for non-default partial flags',()=>{
+ const f=fixture();f.store('shuttle',[
+ ['routes','household',{guild:'789'}],
+ ['channels','art',{bot:'100',answers:{'300':'work','400':'default'},flags:{'300':{peer:true},'400':{peer:false,pair:null,guest_venue:false,readers:[]}},threads:{'500':{parent:'300',primary:'art'}}}],
+ ['channels','mark',{bot:'200'}],
+ ]);
+ const result=readBridgeImport(f.sources,f.options,h,f.open);
+ expect(result.expected.routes.map(r=>r.channel)).toEqual(['400']);
+ const venue={...result.expected.venues[0],enabled:true};
+ for(const channel of ['300','500'])expect(addressed(venue,{id:'1',channel,...(channel==='500'?{parent:'300'}:{}),user:'123',text:'hello',mentions:['100'],bot:false,at:'2026-01-01T00:00:00.000Z'},undefined,[venue])).toBe(false);
+ expect(JSON.parse(result.evidence).retained.filter((r:{path?:string[]})=>r.path?.includes('400'))).toEqual([]);
+});
+
+for(const field of ['name','primary','parent'])it(`validates recognized ${field} before sparse entry serialization`,()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',flags:{'300':{[field]:1.5}}}],['channels','mark',{bot:'200'}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(`shuttle.db at $["channels"]["art"]["flags"]["300"]["${field}"]`);
+});
+
+for(const [field,value]of [['peer','PRIVATE'],['pair',1.5],['guest_venue','PRIVATE'],['readers',false]] as const)it(`validates inherited thread ${field} before discarding it`,()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',answers:{'300':'work'},threads:{'500':{parent:'300',primary:'art',[field]:value}}}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(`shuttle.db at $["channels"]["art"]["threads"]["500"]["${field}"]`);
+});
+it('sparse import blocks supplied default and peer routes for enabled channels and threads',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',answers:{'300':'work'},flags:{'300':{peer:true}},threads:{'500':{parent:'300',primary:'art'}}}],['channels','mark',{bot:'200'}]]);
+ const result=readBridgeImport(f.sources,f.options,h,f.open),venue={...result.expected.venues[0],enabled:true};
+ const peer={...venue,id:'peer',agent:'mark',bot:'200'};
+ for(const channel of ['300','500']){
+  const route={id:'test',platform:'discord' as const,workspace:'789',channel,primary:'art',peer:true,guest:false,readers:[],notes:[]};
+  const message={id:'1',channel,...(channel==='500'?{parent:'300'}:{}),user:'123',text:'hello',mentions:[],bot:false,at:'2026-01-01T00:00:00.000Z'};
+  expect(addressed(venue,message,route,[venue,peer])).toBe(false);
+  expect(addressed(venue,{...message,user:'200',bot:true,mentions:['100']},route,[venue,peer])).toBe(false);
+ }
 });

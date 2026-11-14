@@ -1,5 +1,4 @@
-import { runtimeStore } from './pieces/runtime/store.js';
-import { clockDelivery } from './pieces/runtime/clock-delivery.js';
+import { installNotificationSending, type NotificationSendOptions } from './core/signin/notification-send.js';
 import { installAsyncSecretValuesFromFile, type SecretRetryKeyFiles } from './pieces/secrets/retry-key.js';
 import type { AsyncSecretMutations } from './pieces/secrets/async-values.js';
 import { startSecretReconciliation } from './pieces/secrets/reconciliation.js';
@@ -50,6 +49,8 @@ import { installApprovals } from './pieces/approvals/index.js';
 import { installRunnerInput } from './pieces/runtime/input.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { clockRuntime } from './pieces/runtime/clock.js';
+import { runtimeStore } from './pieces/runtime/store.js';
+import { clockDelivery } from './pieces/runtime/clock-delivery.js';
 import { clockDestination } from './pieces/runtime/clock-destination.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { listenHolderAuthority, type AuthorityServerConfig } from './pieces/secrets/holder-authority.js';
@@ -106,9 +107,10 @@ const secretMutationClosers = new WeakMap<Foundation, () => Promise<void>>();
 const secretAuthorities = new WeakMap<Foundation, Awaited<ReturnType<typeof listenHolderAuthority>>>();
 const bridgeDaemons = new WeakMap<Foundation, {close(): Promise<void>}>();
 /** Await outstanding bridge IO before Foundation closes SQLite, including startup failure. */
+const notificationClosers = new WeakMap<Foundation, () => Promise<void>>();
 const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
 export async function closeNext(app: Foundation) {
-  try { await secretMutationClosers.get(app)?.(); }
+  try { await notificationClosers.get(app)?.(); await secretMutationClosers.get(app)?.(); }
   finally {
     try { await bridgeDaemons.get(app)?.close(); }
     finally {
@@ -120,6 +122,7 @@ export async function closeNext(app: Foundation) {
 export interface NextOptions {
   home: string; staging?: boolean; host?: string | string[]; port?: number; webRoot?: string;
   authenticate?: NextSessionResolver; sharing?: () => Sharing;
+  notifications?: NotificationSendOptions;
   changes?: NextChangesOptions;
   secretAuthority?: AuthorityServerConfig;
   /** Trusted authenticated holder only; no discovery or automatic grants. */
@@ -226,6 +229,8 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
   mindTransports.set(app, sources);
   const effects = installEffects(app, sharing, !!options.staging);
+  const notifications=installNotificationSending(app,effects,options.notifications);
+  notificationClosers.set(app,notifications.close);
   const clockBodies=clockDelivery(app,sharing,effects,v=>signin(app).agent(v));
   conversations.connectClock(clockBodies);
   if (!app.operations.has('clock.list')) {
