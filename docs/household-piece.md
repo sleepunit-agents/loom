@@ -1217,6 +1217,10 @@ exact app, continuity, portable documents, optional imported cookie and opaque
 Secrets recovery bytes. This internal Linux-only entry point requires an absent
 destination under an existing OS-user-owned mode-0700 parent. An existing empty
 directory also refuses: this choice avoids replacing or merging with any home.
+The basename must have the reserved `.loom-restore-` prefix and a nonempty suffix.
+App/daemon/household-stdio startup refuses that namespace, including symlink
+aliases, even if a crash leaves only the newly created empty directory before
+the blocker can be created. Future activation must also leave this namespace.
 Every ancestor is opened without following links and pinned through procfs;
 directories are 0700 and exclusively created files are 0600. File writes handle
 short writes and fsync each file; directory entries are synced from children to
@@ -1239,7 +1243,8 @@ holder. The owning Secrets restore boundary, its isolated acceptance witness,
 actual restored sign-in and stopped-daemon stdio acceptance must precede future
 activation. Neither this writer nor a saved backup configuration arms a machine.
 Power loss may leave an incomplete candidate but cannot make it a complete
-accepted recovery: the durable blocker is never removed by this unit.
+accepted recovery: neither the reserved staging name nor the durable blocker
+is removed by this unit.
 
 | Old restore action | New internal unit / remaining work |
 | --- | --- |

@@ -70,7 +70,7 @@ async function fixture(cookie: 'present' | 'absent' = 'absent') {
 function destination() {
   const parent = mkdtempSync(join(tmpdir(), 'loom-restore-output-'));
   cleanups.push(() => rmSync(parent, { recursive: true, force: true }));
-  return { parent, home: join(parent, 'home') };
+  return { parent, home: join(parent, '.loom-restore-home') };
 }
 it.each(['present', 'absent'] as const)('materializes exact private bytes and deliberate absences, cookie %s, retaining the startup fence', async cookie => {
   const f = await fixture(cookie), out = destination();
@@ -89,6 +89,10 @@ it.each(['present', 'absent'] as const)('materializes exact private bytes and de
   });
   expect(fs.lstatSync(out.home).mode & 0o7777).toBe(0o700);
   expect(walk(out.home).sort()).toEqual([...f.files.keys(), restorePending].sort());
+  // Moving a complete candidate out of the reserved namespace is insufficient:
+  // the on-disk blocker independently prevents activation.
+  const renamed = join(out.parent, 'home'); fs.renameSync(out.home, renamed);
+  out.home = renamed;
   const bytes = fs.readFileSync(join(out.home, 'loom.db')), entries = fs.readdirSync(out.home).sort();
   expect(() => openDb(out.home)).toThrow('Household restore is incomplete');
   expect(() => prepareOperatorHome(out.home)).toThrow('Household restore is incomplete');
@@ -97,21 +101,22 @@ it.each(['present', 'absent'] as const)('materializes exact private bytes and de
   expect(fs.readFileSync(join(out.home, 'loom.db'))).toEqual(bytes);
   expect(fs.readdirSync(out.home).sort()).toEqual(entries);
 });
-it.each(['directory', 'file', 'symlink', 'parent-symlink', 'public-parent', 'relative', 'dotdot'] as const)('refuses unsafe or existing destination %s without changing it', async kind => {
+it.each(['directory', 'file', 'symlink', 'parent-symlink', 'public-parent', 'relative', 'dotdot', 'ordinary-name'] as const)('refuses unsafe or existing destination %s without changing it', async kind => {
   const f = await fixture(), out = destination(); let home = out.home;
   if (kind === 'directory') mkdirSync(home);
   if (kind === 'file') writeFileSync(home, 'KEEP');
   if (kind === 'symlink') fs.symlinkSync(f.home, home);
-  if (kind === 'parent-symlink') { fs.symlinkSync(f.home, home); home = join(home, 'new-home'); }
+  if (kind === 'parent-symlink') { fs.symlinkSync(f.home, home); home = join(home, '.loom-restore-new-home'); }
   if (kind === 'public-parent') fs.chmodSync(out.parent, 0o755);
   if (kind === 'relative') home = 'relative';
-  if (kind === 'dotdot') home = join(out.parent, 'x') + '/../new-home';
+  if (kind === 'dotdot') home = join(out.parent, 'x') + '/../.loom-restore-new-home';
+  if (kind === 'ordinary-name') home = join(out.parent, 'ordinary-home');
   const entries = fs.readdirSync(out.parent), source = fs.readFileSync(join(f.home, 'loom.db'));
   await expect(stageHouseholdRestore(f.ciphertext, f.owner, home)).rejects.toThrow(/^Household restore staging failed$/);
   expect(fs.readdirSync(out.parent)).toEqual(entries);
   if (kind === 'file') expect(fs.readFileSync(out.home, 'utf8')).toBe('KEEP');
   expect(fs.readFileSync(join(f.home, 'loom.db'))).toEqual(source);
-  expect(fs.existsSync(join(f.home, 'new-home'))).toBe(false);
+  expect(fs.existsSync(join(f.home, '.loom-restore-new-home'))).toBe(false);
 });
 it('finishes decryption and validation before ANY destination creation', async () => {
   const f = await fixture(), out = destination();
@@ -120,9 +125,48 @@ it('finishes decryption and validation before ANY destination creation', async (
   await expect(stageHouseholdRestore(f.ciphertext, f.owner, out.home, { documentCount: 1 })).rejects.toThrow('Household restore staging failed');
   expect(mkdir).not.toHaveBeenCalled(); expect(fs.readdirSync(out.parent)).toEqual([]);
 });
+it('blocks the mkdir-to-marker failure window, including an alias, and releases pinned descriptors', async () => {
+  const f = await fixture(), out = destination(), open = fs.openSync, close = fs.closeSync;
+  const held = new Set<number>();
+  vi.spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => {
+    if (String(path).endsWith(`/${restorePending}`)) throw Error('No space for marker');
+    const fd = open(path, flags, mode); held.add(fd); return fd;
+  });
+  vi.spyOn(fs, 'closeSync').mockImplementation(fd => { close(fd); held.delete(fd); });
+  await expect(stageHouseholdRestore(f.ciphertext, f.owner, out.home)).rejects.toThrow('Household restore staging failed');
+  expect(held.size).toBe(0); vi.restoreAllMocks();
+  expect(fs.readdirSync(out.home)).toEqual([]);
+  const alias = join(out.parent, 'ordinary-home'); fs.symlinkSync(out.home, alias);
+  for (const home of [out.home, alias]) {
+    expect(() => openDb(home)).toThrow('Household restore is incomplete');
+    expect(() => prepareOperatorHome(home)).toThrow('Household restore is incomplete');
+    expect(() => readContinuityHousehold(home)).toThrow('Household restore is incomplete');
+    await expect(startLoom({ home, next: true, clock: new FakeClock() })).rejects.toThrow('Household restore is incomplete');
+  }
+  expect(fs.readdirSync(out.home)).toEqual([]);
+});
+it.each(['file', 'symlink'] as const)('refuses an injected %s collision immediately before a payload open', async kind => {
+  const f = await fixture(), out = destination(), open = fs.openSync;
+  const target = join(out.parent, 'outside'); writeFileSync(target, 'KEEP');
+  let collided = false;
+  vi.spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => {
+    if (!collided && String(path).endsWith('/loom.db')) {
+      collided = true;
+      if (kind === 'file') fs.writeFileSync(path, 'KEEP');
+      else fs.symlinkSync(target, path);
+    }
+    return open(path, flags, mode);
+  });
+  await expect(stageHouseholdRestore(f.ciphertext, f.owner, out.home)).rejects.toThrow('Household restore staging failed');
+  expect(collided).toBe(true);
+  expect(fs.readFileSync(join(out.home, 'loom.db'), 'utf8')).toBe('KEEP');
+  expect(fs.readFileSync(target, 'utf8')).toBe('KEEP');
+});
 it.each(['write', 'sync', 'close', 'zero-write'] as const)('leaves a blocked candidate after %s failure and refuses a retry', async kind => {
   const f = await fixture(), out = destination();
-  const write = fs.writeSync, sync = fs.fsyncSync, close = fs.closeSync;
+  const write = fs.writeSync, sync = fs.fsyncSync, close = fs.closeSync, open = fs.openSync;
+  const held = new Set<number>();
+  vi.spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => { const fd = open(path, flags, mode); held.add(fd); return fd; });
   // Failure after the durable blocker and app image: exercise a partial home.
   let writes = 0, fail = true;
   vi.spyOn(fs, 'writeSync').mockImplementation(((fd: number, bytes: Uint8Array, offset: number, size: number) => {
@@ -134,8 +178,9 @@ it.each(['write', 'sync', 'close', 'zero-write'] as const)('leaves a blocked can
     return write(fd, bytes, offset, size);
   }) as typeof fs.writeSync);
   vi.spyOn(fs, 'fsyncSync').mockImplementation(fd => { if (kind === 'sync' && writes >= 3 && fail) { fail = false; throw Error('SENSITIVE_DIAGNOSTIC'); } sync(fd); });
-  vi.spyOn(fs, 'closeSync').mockImplementation(fd => { close(fd); if (kind === 'close' && writes >= 3 && fail) { fail = false; throw Error('SENSITIVE_DIAGNOSTIC'); } });
+  vi.spyOn(fs, 'closeSync').mockImplementation(fd => { close(fd); held.delete(fd); if (kind === 'close' && writes >= 3 && fail) { fail = false; throw Error('SENSITIVE_DIAGNOSTIC'); } });
   await expect(stageHouseholdRestore(f.ciphertext, f.owner, out.home)).rejects.toThrow(/^Household restore staging failed$/);
+  expect(held.size).toBe(0);
   vi.restoreAllMocks();
   expect(fs.existsSync(join(out.home, restorePending))).toBe(true);
   expect(() => openDb(out.home)).toThrow('Household restore is incomplete');
@@ -144,32 +189,46 @@ it.each(['write', 'sync', 'close', 'zero-write'] as const)('leaves a blocked can
 it('handles short writes and syncs the blocker directory before writing any app bytes', async () => {
   const f = await fixture(), out = destination(), write = fs.writeSync;
   const events: string[] = [];
-  const sync = fs.fsyncSync;
-  vi.spyOn(fs, 'fsyncSync').mockImplementation(fd => { events.push(fs.fstatSync(fd).isDirectory() ? 'directory-sync' : 'file-sync'); sync(fd); });
+  const sync = fs.fsyncSync, mkdir = fs.mkdirSync, open = fs.openSync, close = fs.closeSync;
+  const made: string[] = [], directorySyncs: string[] = [], fileSyncs: string[] = [], held = new Set<number>();
+  vi.spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => { const fd = open(path, flags, mode); held.add(fd); return fd; });
+  vi.spyOn(fs, 'closeSync').mockImplementation(fd => { close(fd); held.delete(fd); });
+  vi.spyOn(fs, 'mkdirSync').mockImplementation(((path: string, options: fs.MakeDirectoryOptions) => {
+    const parent = path.slice(0, path.lastIndexOf('/')), leaf = path.slice(path.lastIndexOf('/') + 1);
+    made.push(join(fs.realpathSync(parent), leaf)); return mkdir(path, options);
+  }) as typeof fs.mkdirSync);
+  vi.spyOn(fs, 'fsyncSync').mockImplementation(fd => {
+    const directory = fs.fstatSync(fd).isDirectory(), path = fs.readlinkSync(`/proc/self/fd/${fd}`);
+    events.push(directory ? 'directory-sync' : 'file-sync');
+    (directory ? directorySyncs : fileSyncs).push(path); sync(fd);
+  });
   vi.spyOn(fs, 'writeSync').mockImplementation(((fd: number, bytes: Uint8Array, offset: number, size: number) => {
     events.push(fs.readlinkSync(`/proc/self/fd/${fd}`).endsWith('/loom.db') ? 'app-write' : 'other-write');
     return write(fd, bytes, offset, Math.min(size, 101));
   }) as typeof fs.writeSync);
   await stageHouseholdRestore(f.ciphertext, f.owner, out.home);
+  expect(held.size).toBe(0);
   expect(events.slice(0, events.indexOf('app-write')).filter(e => e === 'directory-sync')).toHaveLength(2);
+  expect(fileSyncs).toEqual([restorePending, ...f.files.keys()].map(path => join(out.home, path)));
+  expect(directorySyncs).toEqual([out.home, out.parent, ...made.reverse(), out.parent]);
   expect(fs.readFileSync(join(out.home, 'loom.db'))).toEqual(f.files.get('loom.db'));
 });
-it('pins ancestors during writes, refuses a renamed destination and never writes through its replacement', async () => {
+it('pins ancestors during writes, refuses a renamed ancestor and never writes through its empty replacement', async () => {
   const f = await fixture(), out = destination(), write = fs.writeSync;
+  const moved = out.parent + '-moved'; cleanups.push(() => rmSync(moved, { recursive: true, force: true }));
   let changed = false;
   vi.spyOn(fs, 'writeSync').mockImplementation(((fd: number, bytes: Uint8Array, offset: number, size: number) => {
     if (!changed && fs.readlinkSync(`/proc/self/fd/${fd}`).endsWith('/loom.db')) {
-      changed = true; fs.renameSync(out.home, join(out.parent, 'moved')); fs.symlinkSync(f.home, out.home);
+      changed = true; fs.renameSync(out.parent, moved); mkdirSync(out.parent, { mode: 0o700 });
+      mkdirSync(out.home, { mode: 0o700 });
     }
     return write(fd, bytes, offset, size);
   }) as typeof fs.writeSync);
-  const source = fs.readFileSync(join(f.home, 'loom.db'));
   await expect(stageHouseholdRestore(f.ciphertext, f.owner, out.home)).rejects.toThrow('Household restore staging failed');
   expect(changed).toBe(true);
-  expect(fs.readFileSync(join(f.home, 'loom.db'))).toEqual(source);
-  expect(fs.existsSync(join(f.home, restorePending))).toBe(false);
-  expect(fs.readFileSync(join(out.parent, 'moved', 'loom.db'))).toEqual(f.files.get('loom.db'));
-  expect(() => openDb(join(out.parent, 'moved'))).toThrow('Household restore is incomplete');
+  expect(fs.readdirSync(out.home)).toEqual([]);
+  for (const [path, bytes] of f.files) expect(fs.readFileSync(join(moved, '.loom-restore-home', path))).toEqual(bytes);
+  expect(() => openDb(join(moved, '.loom-restore-home'))).toThrow('Household restore is incomplete');
 });
 it.each(['present', 'absent'] as const)('validates a real registered next envelope with cookie %s without destination IO', async cookie => {
   const f = await fixture(cookie), before = Buffer.from(f.plain);

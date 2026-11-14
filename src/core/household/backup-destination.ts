@@ -2,11 +2,13 @@
  * owning Secrets recovery and usable-home acceptance are separate work. */
 import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, writeSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { restorePending } from '../home-state.js';
+import { restorePending, restorePrefix } from '../home-state.js';
 import { withHouseholdRestore, type RestoreBudget, type ValidatedHouseholdBundle } from './backup-restore.js';
 
 /** Destination must NOT exist, even as an empty directory. Its existing parent
- * must belong to this OS user with mode 0700. Never replaces/deletes any path.
+ * must belong to this OS user with mode 0700. Destination basename must start
+ * with .loom-restore- (with a nonempty suffix): startup reserves that namespace
+ * even before the first blocker write. Never replaces/deletes any path.
  * Decryption and complete validation precede destination IO. Failed writes leave
  * private, blocked candidates, not a usable home. No retry into an existing one.
  * Caller must retain the encrypted source until recovery has been accepted.
@@ -23,6 +25,7 @@ function materialize(bundle: ValidatedHouseholdBundle, home: string): { home: st
     || home.includes('\\') || home.includes('\0') || home.endsWith('/')) throw Error();
   const parts = home.split('/').slice(1);
   if (!parts.length || parts.some(p => !p || p === '.' || p === '..')) throw Error();
+  if (!parts.at(-1)!.startsWith(restorePrefix) || parts.at(-1)!.length <= restorePrefix.length) throw Error();
   const held: number[] = [], edges: { parent: number; leaf: string; fd: number }[] = [];
   const directories = new Map<string, number>();
   const at = (fd: number, leaf: string) => `/proc/self/fd/${fd}/${leaf}`;
