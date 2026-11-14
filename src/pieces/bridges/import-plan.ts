@@ -26,9 +26,20 @@ const parse=(raw:string,path:PropertyKey[]=[]):Record<string,unknown>=>{
     if(typeof v==='number'&&(!c?.source||!/^(0|[1-9]\d*)$/.test(c.source)||!Number.isSafeInteger(v)))return NaN;return v;
   })),path);}catch(error){if(error instanceof BridgeSourceError)throw error;throw new BridgeSourceError('shuttle-store',path);}
 };
+const checkSourceNumbers=(value:unknown,path:PropertyKey[],sourcePath:(path:PropertyKey[])=>PropertyKey[]=p=>p):void=>{
+  if(typeof value==='number'&&!Number.isSafeInteger(value))throw new BridgeSourceError('shuttle-store',sourcePath(path));
+  if(value&&typeof value==='object')for(const [key,child]of Object.entries(value))checkSourceNumbers(child,[...path,Array.isArray(value)?Number(key):key],sourcePath);
+};
 const empty=():LegacyBridgeInventory=>({checksum:'',sources:[],instances:[],settings:[],accounts:[],routes:[]});
+type DroppedFlag={agent:string;channel:string;path:PropertyKey[]};
+/** Validate before any serialization or removal of inherited thread fields. */
+function validateChannelEntry(raw:Record<string,unknown>,path:PropertyKey[]):void {
+  for(const key of ['name','primary','parent','peer','pair','guest_venue','readers'])checkSourceNumbers(raw[key],[...path,key]);
+  try{projectBridgeDocument(empty(),'entry','routes',JSON.stringify({channels:{entry:raw}}));}
+  catch(error){if(error instanceof BridgeSourceError)throw new BridgeSourceError('shuttle-store',[...path,...error.path.slice(2)]);throw error;}
+}
 /** Resolve the pinned shuttle routes_for/assemble contract, refusing lossy conflicts. */
-function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|undefined,parts:Map<string,string>):((result:LegacyBridgeInventory)=>void)|undefined {
+function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|undefined,parts:Map<string,string>, dropped:DroppedFlag[]):((result:LegacyBridgeInventory)=>void)|undefined {
   const household=get('routes','household');
   if(household===undefined||!parts.has(agent))return;
   const h=parse(household,['routes','household']), own=parse(parts.get(agent)!,['channels',agent]);
@@ -57,31 +68,43 @@ function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|
     const p=parse(raw,['channels',a]);if(p.bot!=null&&p.bot!==''){bots[a]=p.bot;origin(['bots',a],['channels',a,'bot']);}if(p.bot_role!=null&&p.bot_role!==''){roles[a]=p.bot_role;origin(['bot_roles',a],['channels',a,'bot_role']);}
     for(const cid of Object.keys(at(p,'answers',['channels',a]))){claims.set(cid,[...(claims.get(cid)??[]),a]);origin(['channels',cid,'primary'],['channels',a,'answers',cid]);}
     for(const [tid,rawThread]of Object.entries(at(p,'threads',['channels',a]))){
-      const t=Object.fromEntries(Object.entries(sourceObject(rawThread,['channels',a,'threads',tid])).filter(([k])=>!['peer','pair','guest_venue','readers'].includes(k)));
+      const raw=sourceObject(rawThread,['channels',a,'threads',tid]);
+      validateChannelEntry(raw,['channels',a,'threads',tid]);
+      const t=Object.fromEntries(Object.entries(raw).filter(([k])=>!['peer','pair','guest_venue','readers'].includes(k)));
       if(Object.hasOwn(threads,tid)&&canonical(threads[tid])!==canonical(t))throw Error();threads[tid]=t;origin(['threads',tid],['channels',a,'threads',tid]);
     }
   }
   for(const [cid,agents]of claims){if(agents.length!==1)throw Error();channels[cid]={...(channels[cid]??{}),primary:agents[0]};}
-  // A global new-side route cannot represent different per-agent accepted rules.
-  const flagKeys=['peer','pair','guest_venue','readers'];
-  const flags=(p:Record<string,unknown>,cid:string,a:string)=>{
-    const raw=sourceObject(at(p,'flags',['channels',a])[cid]??{},['channels',a,'flags',cid]);
-    return {peer:raw.peer??false,pair:raw.pair??null,guest_venue:raw.guest_venue??false,readers:raw.readers??[]};
-  };
-  const saved=[...parts].map(([a,raw])=>({agent:a,doc:parse(raw,['channels',a])}));
-  for(const p of saved)for(const cid of Object.keys(at(p.doc,'flags',['channels',p.agent])))channels[cid]??={primary:null};
+  // Silence is not a contradictory accepted rule. A partial non-default rule
+  // cannot safely become global: retain its paths and block that channel below.
+  const flagKeys=['peer','pair','guest_venue','readers'] as const;
+  const defaults={peer:false,pair:null,guest_venue:false,readers:[]};
+  const saved=[...parts].sort(([a],[b])=>a<b?-1:1).map(([a,raw])=>({agent:a,doc:parse(raw,['channels',a])}));
+  const entries=new Map<string,{agent:string;flags:typeof defaults}[]>();
+  for(const p of saved)for(const [cid,value]of Object.entries(Object.hasOwn(p.doc,'flags')?sourceObject(p.doc.flags,['channels',p.agent,'flags']):{})){
+    const path=['channels',p.agent,'flags',cid];
+    const raw=sourceObject(value,path);
+    validateChannelEntry(raw,path);
+    const flags={peer:raw.peer??false,pair:raw.pair??null,guest_venue:raw.guest_venue??false,readers:raw.readers??[]} as typeof defaults;
+    entries.set(cid,[...(entries.get(cid)??[]),{agent:p.agent,flags}]);
+    channels[cid]??={primary:null};
+  }
   for(const [cid,c]of Object.entries(channels)){
-    const f=flags(own,cid,agent);if(saved.some(p=>canonical(flags(p.doc,cid,p.agent))!==canonical(f)))throw Error();
-    for(const k of flagKeys){c[k]=f[k as keyof typeof f];origin(['channels',cid,k],['channels',agent,'flags',cid,k]);}
+    const present=entries.get(cid)??[],first=present[0];
+    for(const p of present.slice(1))for(const k of flagKeys){
+      if(canonical(p.flags[k])!==canonical(first.flags[k]))throw new BridgeSourceError('shuttle-store',['channels',p.agent,'flags',cid,k]);
+    }
+    const partial=present.length<saved.length;
+    if(partial)for(const p of present)for(const k of flagKeys){
+      if(canonical(p.flags[k])!==canonical(defaults[k]))dropped.push({agent:p.agent,channel:cid,path:['channels',p.agent,'flags',cid,k]});
+    }
+    const f=partial?defaults:first?.flags??defaults;
+    for(const k of flagKeys){c[k]=f[k];if(first)origin(['channels',cid,k],['channels',first.agent,'flags',cid,k]);}
   }
   Object.assign(out,{bots,bot_roles:roles,channels,threads});
   // Extras never override the assembled accepted map. Unknown fields remain in private store evidence.
   for(const [k,v]of Object.entries(at(own,'extra',['channels',agent])))if(!Object.hasOwn(out,k)){out[k]=v;origin([k],['channels',agent,'extra',k]);}
-  const checkNumbers=(value:unknown,path:PropertyKey[]):void=>{
-    if(typeof value==='number'&&!Number.isSafeInteger(value))throw new BridgeSourceError('shuttle-store',sourcePath(path));
-    if(value&&typeof value==='object')for(const [key,child]of Object.entries(value))checkNumbers(child,[...path,Array.isArray(value)?Number(key):key]);
-  };
-  checkNumbers(out,[]);
+  checkSourceNumbers(out,[],sourcePath);
   const source=JSON.stringify(out);
   return result=>{
     try{projectBridgeDocument(result,`accepted:${agent}`,'routes',source);}
@@ -95,6 +118,7 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     const byName=new Map(sources.files.map(f=>[f.name,f]));
     const get=(kind:'shuttle'|'runtime',collection:string,key:string)=>stores.stores.find(s=>s.kind===kind)?.documents.find(d=>d.collection===collection&&d.key===key)?.doc;
     const parts=new Map((stores.stores.find(s=>s.kind==='shuttle')?.documents??[]).filter(d=>d.collection==='channels').map(d=>[d.key,d.doc]));
+    const dropped:DroppedFlag[]=[];
     const effective=empty(),used=new Set<string>(),agents=new Set<string>(),routeOwners=new Map<string,string>(),peopleResolved=new Set<string>();
     const resolvePeople=(agent:string,fallback?:string)=>{
       if(peopleResolved.has(agent))return;
@@ -112,7 +136,7 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
       if(!instanceConfig||agents.has(instanceConfig.agent)||!household.agents.includes(instanceConfig.agent))throw Error();agents.add(instanceConfig.agent);
       effective.instances.push(instanceConfig);
       resolvePeople(instanceConfig.agent,instance.people);
-      const routes=acceptedRoutes(instanceConfig.agent,(c,k)=>get('shuttle',c,k),parts);
+      const routes=acceptedRoutes(instanceConfig.agent,(c,k)=>get('shuttle',c,k),parts,dropped);
       if(routes!==undefined){routes(effective);routeOwners.set(`accepted:${instanceConfig.agent}`,instanceConfig.agent);}
       else{effective.routes.push(...inventory.routes.filter(r=>r.source===instance.routes));routeOwners.set(instance.routes,instanceConfig.agent);}
     }
@@ -123,7 +147,7 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     }
     for(const agent of parts.keys()){
       if([...routeOwners.values()].includes(agent))continue;
-      const resolved=acceptedRoutes(agent,(c,k)=>get('shuttle',c,k),parts);if(resolved===undefined)throw Error();
+      const resolved=acceptedRoutes(agent,(c,k)=>get('shuttle',c,k),parts,dropped);if(resolved===undefined)throw Error();
       resolved(effective);routeOwners.set(`accepted:${agent}`,agent);
     }
     // Every declared legacy connection needs an explicit reviewed secret-name mapping.
@@ -141,7 +165,7 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     for(const key of required){
       const [a,platform]=key.split(':');
       if(platform!=='discord'||[...routeOwners.values()].includes(a))continue;
-      const resolved=acceptedRoutes(a,(c,k)=>get('shuttle',c,k),parts);if(resolved===undefined)continue;
+      const resolved=acceptedRoutes(a,(c,k)=>get('shuttle',c,k),parts,dropped);if(resolved===undefined)continue;
       resolved(effective);routeOwners.set(`accepted:${a}`,a);
     }
     const venues:Venue[]=[],routes:Route[]=[],links:PersonLink[]=[];
@@ -170,7 +194,10 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
       venues.push(venueSchema.parse({...c,...settings[0],id:`legacy:${c.agent}:${c.platform}`,enabled:false}));
     }
     if(required.size)throw Error();
+    const differences=[...new Map(dropped.map(d=>[canonical(d),d])).values()];
+    for(const difference of differences)retained.push({kind:'route',source:'shuttle.db',collection:'channels',...difference,reason:'per-agent flags cannot be represented globally; channel blocked'});
     for(const r of effective.routes){
+      for(const difference of differences)blockedRoutes.add(`legacy:discord:${r.guild}:${difference.channel}`);
       if(!r.guild){if(r.channels.length)throw Error();continue;}
       if(!venues.some(v=>v.platform==='discord'&&v.workspace===r.guild))throw Error();
       for(const c of r.channels){

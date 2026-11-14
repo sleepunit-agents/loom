@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add unregistered one-use Secrets handoff tickets with durable claims, exact grant/Runtime fences and staging holds; real worker delivery remains disabled.
 
+- Bridges import accepts sparse per-agent channel flags, blocks unrepresentable differences with source field evidence, and identifies conflicting present entries.
+
 - Add member-private Inbox read facts without answering asks or copying draft words.
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.

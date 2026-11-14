@@ -89,13 +89,13 @@ it('rehearses the household shape: one local root, three bots, a work Slack bund
  writeFileSync(join(instance,'slack-onterris.env'),'NEVER_OPEN_BUNDLE');
  const store=(kind:string,docs:[string,string,unknown][])=>{const path=join(old,`commons/stores/${kind}.db`);mkdirSync(dirname(path),{recursive:true});const d=new Database(path);d.exec('CREATE TABLE docs(collection TEXT,key TEXT,doc TEXT,rev INTEGER,updated TEXT,by TEXT);CREATE TABLE revisions(id INTEGER,collection TEXT,key TEXT,doc TEXT,rev INTEGER,op TEXT,at TEXT,by TEXT)');for(const[c,k,v]of docs)d.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run(c,k,JSON.stringify(v),'today','owner');d.close();};
  const legacyPeople=JSON.parse(readFileSync(join(instance,'people.json'),'utf8'));
- const commonFlags={'303':{readers:['guest']}};
+ const commonFlags={'303':{readers:['guest']},'305':{peer:true,pair:'mark'}};
  store('shuttle',[
   ['moved','art',{}],['people','art',{people:{stale:{discord:['999']}}}],
   ['routes','household',{guild:'789',channel_names:{'300':'Art','301':'Mark','302':'Fez','303':'Guest'}}],
-  ['channels','art',{bot:'100',bot_role:['101'],answers:{'300':'Art','303':'Guest'},flags:commonFlags,threads:{'304':{primary:'art',parent:'303'}}}],
+  ['channels','art',{bot:'100',bot_role:['101'],answers:{'300':'Art','303':'Guest'},flags:{...commonFlags,'306':{peer:true},'307':{peer:true,guest_venue:true,readers:['jonathan']}},threads:{'304':{primary:'art',parent:'303'}}}],
   ['channels','mark',{bot:'200',bot_role:['201'],answers:{'301':'Mark'},flags:commonFlags}],
-  ['channels','fez',{bot:'250',bot_role:['251'],answers:{'302':'Fez'},flags:commonFlags}],
+  ['channels','fez',{bot:'250',bot_role:['251'],answers:{'302':'Fez'}}],
  ]);
  store('runtime',[['gates','art',legacyPeople]]);
  const state=join(root,'runtime'),data=join(root,'runtime-data');mkdirSync(state);mkdirSync(data);
@@ -111,11 +111,13 @@ it('rehearses the household shape: one local root, three bots, a work Slack bund
  try{
   const venues=d.prepare('SELECT record FROM bridges_venues').all() as{record:string}[];
   expect(venues.map(v=>JSON.parse(v.record))).toEqual([expect.objectContaining({agent:'art',platform:'discord',enabled:false,tokenSecret:'discord-token'})]);
-  expect(JSON.parse(venues[0].record).ignore).toEqual(expect.arrayContaining(['302','303']));
+  expect(JSON.parse(venues[0].record).ignore).toEqual(expect.arrayContaining(['302','303','305','306','307']));
   const routes=d.prepare('SELECT record FROM bridges_routes').all() as{record:string}[];
   expect(routes.map(r=>JSON.parse(r.record).channel).sort()).toEqual(['300','301']);
   expect((d.prepare('SELECT record FROM bridges_links').all() as{record:string}[]).map(r=>JSON.parse(r.record).person)).toEqual(['jonathan','jonathan']);
   const evidence=JSON.parse((d.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as{value:string}).value);
+  expect(evidence.retained).toContainEqual(expect.objectContaining({source:'shuttle.db',collection:'channels',agent:'art',path:['channels','art','flags','307','readers']}));
+  expect(evidence.retained).toContainEqual(expect.objectContaining({agent:'mark',path:['channels','mark','flags','305','pair']}));
   expect(evidence.incomplete).toEqual([expect.objectContaining({agent:'art',platform:'slack',workspace:'TWORK',bundle:'slack-onterris.env'})]);
   expect(evidence.retained).toEqual(expect.arrayContaining([expect.objectContaining({kind:'person',owner:'guest'}),expect.objectContaining({kind:'agent',owner:'fez'}),expect.objectContaining({kind:'route',channel:'302'}),expect.objectContaining({kind:'route',channel:'303'}),expect.objectContaining({kind:'route',channel:'304'})]));
   // Independent verification also covers incomplete/retained evidence, not just live setup.
