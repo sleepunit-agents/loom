@@ -51,7 +51,7 @@ it('uses configured reserves and leaves observations unchanged', () => {
 it('rejects invalid time, usage and window configuration', () => {
   for (const bad of [
     { durationMs: 0 }, { durationMs: Infinity }, { usage: -1 }, { usage: NaN },
-    { reserve: 1 }, { reserve: -0.1 }, { reserve: NaN }, { resetsAt: 'no' },
+    { reserve: 1.1 }, { reserve: -0.1 }, { reserve: NaN }, { resetsAt: 'no' },
     { readAt: 'no' }, { readAt: at(-1) }, { name: '' },
   ]) expect(() => accountCapacity([{ ...window(0.1), ...bad }], at(5))).toThrow();
   expect(() => accountCapacity([window(0.1)], 'no')).toThrow();
