@@ -7,7 +7,7 @@ import {plainEpisode,fallbackParts,whereOfConversation} from './activity-episode
 import {MAX_BACK,MAX_ENTRIES,VENUES,whereLabel,isoDay,hourOf,dayBefore,oneLine,refsIn,venueKey,whatOf,splitTitle,startOf,validDay,windowDays,type ActivityEntry,type ActivityOpen,type ActivityWindow} from './activity-model.js';
 import type {ActivityConversations,ActivityConversation,ActivityRun} from './activity-role.js';
 const link=z.object({label:z.string(),href:z.string().optional()}).strict();
-const conversationSchema=z.object({id:z.string(),agent:z.string(),venue:z.string(),place:z.string(),label:z.string(),people:z.array(z.string()),expires:z.number().finite().optional(),member:z.string().optional()}).strict();
+const conversationSchema=z.object({id:z.string(),agent:z.string(),venue:z.string(),place:z.string(),label:z.string(),people:z.array(z.string()),expires:z.number().finite().optional(),member:z.string().optional(),project:z.string().optional()}).strict();
 const runSchema=z.object({kind:z.enum(['digest','conversation']),key:z.string().min(1).max(300),at:z.string().datetime({offset:true}),conversation:conversationSchema,summary:z.string().optional(),turns:z.number().int().nonnegative().optional(),replies:z.number().int().nonnegative().optional(),asked:z.array(z.string()),decided:z.array(z.string()),tasks:z.array(z.string()),links:z.array(link),steps:z.array(z.object({label:z.string(),state:z.string(),tool:z.string()}).strict()).optional(),needs:z.string().optional(),needsHref:z.string().optional(),needsForMember:z.string().optional(),expires:z.number().finite().optional(),more:z.array(z.object({id:z.string(),at:z.string(),title:z.string()}).strict())}).strict();
 interface ActivityFailure {[key:string]:unknown;id:string;state:'error'|'unavailable';message:string}
 interface Episode {ref:string;title:string;content:string;created:string;project:string|null;metadata:string|null;expires_at:string|null}
@@ -19,10 +19,11 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
  const sources=new Map<string,Database>(),sourceErrors=new Set<string>();
  for(const a of options.agents)try{if(existsSync(a.memories))sources.set(a.agent,new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}));}catch{sourceErrors.add(a.agent);}
  const allowed=(v:Viewer,agent:string,type='memory')=>maySee(v,{type,agent},options.sharing());
- const agents=(v:Viewer)=>options.agents.filter(a=>allowed(v,a.agent)||allowed(v,a.agent,'conversation'));
- // These are private agent records, never project-scoped. A member scope is
- // checked independently: only that member and household owners see it.
- const seesConversation=(v:Viewer,c:ActivityConversation,agent:string)=>(c.expires===undefined||c.expires>operations.clock.now())&&c.agent===agent&&allowed(v,agent,'conversation')&&maySee(v,{type:'conversation',agent,...(c.member!==undefined?{member:c.member}:{})},options.sharing())&&(venueKey(c.venue)!=='comms'||c.member!==undefined);
+ const conversationAllowed=(v:Viewer,agent:string)=>allowed(v,agent,'conversation')||!!options.conversations?.agents?.(v).includes(agent);
+ const agents=(v:Viewer)=>options.agents.filter(a=>allowed(v,a.agent)||conversationAllowed(v,a.agent));
+ // Conversation records carry the shared model's scope. Episode files remain
+ // private to their agent, checked separately before opening the file.
+ const seesConversation=(v:Viewer,c:ActivityConversation,agent:string)=>(c.expires===undefined||c.expires>operations.clock.now())&&c.agent===agent&&maySee(v,{type:'conversation',agent,...(c.project!==undefined?{project:c.project}:{}),...(c.member!==undefined?{member:c.member}:{})},options.sharing());
  const conversation=(v:Viewer,agent:string,id:string)=>{const raw=options.conversations?.conversation(v,agent,id);if(!raw)return;const c=conversationSchema.parse(raw);return c.id===id&&seesConversation(v,c,agent)?c:undefined;};
  const ownerPerson=(v:Viewer)=>v.kind==='member'?v.id:options.owner;
  const ownerLabel=(v:Viewer)=>{const person=ownerPerson(v);return (person===options.owner&&options.ownerLabel?options.ownerLabel:person??'Owner').split(/[\s-]+/)[0].replace(/^./,x=>x.toUpperCase());};
@@ -33,8 +34,8 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
   return {id:`${r.kind==='digest'?'d':'c'}~${c.agent}~${r.key}`,agent:c.agent,at:r.at,...stamp(r.at),title,line:r.summary?oneLine(r.summary):`${r.turns??0} turn${r.turns===1?'':'s'}${r.replies?`, ${r.replies} repl${r.replies===1?'y':'ies'}`:''}, no summary yet`,venue,where,what:whatOf({place:c.place,title,line:r.summary}),...(r.expires!==undefined||c.expires!==undefined?{expires:Math.min(r.expires??Infinity,c.expires??Infinity)}:{}),...(venue==='comms'||(ownerPerson(v)&&c.people.includes(ownerPerson(v)!))?{owner:true as const}:{})};
  }
  function runOpen(r:ActivityRun,v:Viewer):ActivityOpen{
-  const entry=fromRun(r,v),refs=refsIn([r.summary??'',...r.decided].join('\n'),options.github),theirs=v.kind==='member'&&r.needsForMember===v.id;
-  return {...entry,asked:r.asked,decided:r.decided,...(r.summary?{story:r.summary}:{}),tasks:[...new Set([...r.tasks,...refs.tasks])].map(id=>({label:id,href:`/p/tasks-preview/task/${encodeURIComponent(id)}`})),prs:refs.prs,
+  const entry=fromRun(r,v),refs=refsIn([r.summary??'',...r.asked,...r.decided,...r.tasks].join('\n'),options.github),theirs=v.kind==='member'&&r.needsForMember===v.id;
+  return {...entry,asked:r.asked,decided:r.decided,...(r.summary?{story:r.summary}:{}),tasks:[...new Set([...refs.tasks])].map(id=>({label:id,href:`/p/tasks-preview/task/${encodeURIComponent(id)}`})),prs:refs.prs,
    links:[...r.links,...(theirs&&r.needsHref?[{label:'What it needs you for',href:r.needsHref}]:[])],...(theirs&&r.needs?{needs:r.needs}:{}),
    ...(entry.venue==='comms'&&r.steps?{steps:r.steps.filter(s=>s.tool!=='text')}:{}) ,more:r.more.slice(0,8)};
  }
@@ -64,7 +65,7 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
   let conversations:ActivityWindow['conversations']=options.conversations?'available':'unavailable',episodes:ActivityWindow['episodes']='available',truncated=false;
   const deadlines=[startOf(dayBefore(today,-1),tz)];
   for(const {agent} of agents(v)){
-   if(options.conversations&&allowed(v,agent,'conversation'))try{
+   if(options.conversations&&conversationAllowed(v,agent))try{
     const answer=z.object({available:z.boolean(),rows:z.array(runSchema).max(MAX_ENTRIES+1),expires:z.number().finite().optional()}).strict().parse(options.conversations.list(v,{agent,from,until,limit:MAX_ENTRIES+1}));
     if(!answer.available){if(conversations!=='error')conversations='unavailable';}else{
      const rows=answer.rows.filter(r=>seesConversation(v,r.conversation,agent)&&(r.expires===undefined||r.expires>now)&&Date.parse(r.at)>=from&&Date.parse(r.at)<until);
@@ -101,7 +102,7 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
   const m=/^([dce])~([a-z][a-z0-9-]{0,39})~(.{1,300})$/.exec(id);if(!m)return;
   const [,kind,agent,key]=m;if(!agents(v).some(a=>a.agent===agent))return;
   const now=operations.clock.now(),oldest=startOf(dayBefore(isoDay(now,tz),MAX_BACK),tz);
-  if(kind!=='e'&&!allowed(v,agent,'conversation'))return;
+  if(kind!=='e'&&!conversationAllowed(v,agent))return;
   if(kind==='e'&&!allowed(v,agent))return;
   const failure=(state:'error'|'unavailable',message:string):ActivityFailure=>({id,state,message});
   if(kind!=='e')try{
