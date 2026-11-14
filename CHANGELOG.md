@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - New desk: Comms follows counted pixel talking beats through completion, with crisp whole-scale compact portraits.
 
+- New desk: make request and form ids without `crypto.randomUUID`, which browsers withhold on plain HTTP, so the desk works on a home network address.
 - Classify already owned Runtime spawn threads in Comms through original member metadata, preserving independent transport and execution holds.
 
 - New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
