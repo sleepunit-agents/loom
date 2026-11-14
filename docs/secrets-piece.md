@@ -1105,3 +1105,24 @@ The absolute handoff deadline is shared from raw socket acceptance through
 Node's TLS wrapper. Its expiry flag and timestamp are checked synchronously
 before release, independently of delayed socket-close notification. An unknown
 TLS wrapper fails closed rather than starting a fresh per-handler budget.
+
+### Runtime destination metadata (not a credential sink)
+
+`runtimeHouseDestination(app, sharing, viewer)` is Runtime's trusted role for an
+actual current body proof. It binds agent/job/service, assigned runner/box and
+claim time; copied viewers and ordinary agent tokens have no body proof. It
+requires a current eligible box and matching current house configuration, no
+imported/ended/reset/written-off job, and no configured execution hold. A changed
+assignment or claim cannot become the same retained binding. Each `current()`
+call rereads authoritative state and the original central credential.
+
+This role grants no secret and returns no URL, path, certificate, buffer or
+transport callback. Its check is necessary for ticket admission and final release;
+it does not replace the secret grant, expiry, policy, staging or authenticated
+worker sink checks. Public get and holder activation remain unavailable. The real
+runner must bind its own pending delivery sink to this exact metadata before
+Secrets can connect the complete path.
+Destination checks also require current household agent membership, even when a
+previously resolved token proof remains retained. Daemon shutdown marks a shared
+Foundation admission fence synchronously before awaiting operator/listener drains;
+new and retained destination bindings refuse throughout that interval.

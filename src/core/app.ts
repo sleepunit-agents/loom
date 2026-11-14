@@ -8,6 +8,11 @@ import { Live, type Authentication } from './live/index.js';
 import { clock as realClock, type Clock } from './clock.js';
 /** No piece imports: the composition root installs pieces through this public registry. */
 export interface Foundation { db: Db; operations: Operations; live: Live; onClose(stop: () => void): void; close(): void }
+/** Synchronous admission fence shared by async daemon shutdown and trusted roles.
+ * Key by the owned database because startLoom returns a view of Foundation. */
+const closing = new WeakSet<Db>();
+export function beginClosing(app: Pick<Foundation, 'db'>): void { closing.add(app.db); }
+export function isClosing(app: Pick<Foundation, 'db'>): boolean { return closing.has(app.db); }
 export function createFoundation({ home, clock = realClock }: { home: string; clock?: Clock }): Foundation {
   const store = openDb(home);
   let live: Live;
@@ -16,7 +21,7 @@ export function createFoundation({ home, clock = realClock }: { home: string; cl
   const stops: (() => void)[] = [];
   let closed = false;
   return { db: store.db, operations, live, onClose(stop) { if (closed) stop(); else stops.push(stop); }, close() {
-    if (closed) return; closed = true;
+    if (closed) return; beginClosing({db: store.db}); closed = true;
     let error: unknown;
     for (const stop of stops.reverse()) { try { stop(); } catch (e) { error ??= e; } }
     try { operations.close(); live.close(); } finally { store.close(); }
