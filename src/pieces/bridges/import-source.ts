@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
 import { z } from 'zod';
+import {channelBriefOrder} from './import-briefs.js';
 
 /** Annotation keys never participate in projection, including inside accepted store maps. */
 export function bridgeSourceValue(value: unknown): unknown {
@@ -36,7 +37,7 @@ const account = z.object({ discord: ids.optional(), slack: map(ids).optional() }
 const people = z.object({ people: map(account).optional(), agents: map(account).optional() });
 const shuttle = z.object({ agent: z.object({ slug }),
   discord: z.object({ token_file: id.optional() }).nullish(), slack: z.object({ secrets_env: id.optional(), workspaces: map(id).optional() }).nullish(),
-  channel_notes: map(id).optional(),
+  channel_notes: z.record(z.string(),z.string()).optional(),
 });
 export type BridgeSourceKind = 'shuttle' | 'routes' | 'people' | 'discord-settings' | 'slack-settings';
 export interface BridgeSourceFile {
@@ -48,7 +49,7 @@ export interface BridgeSourceFile {
 export interface LegacyBridgeInventory {
   checksum: string;
   sources: { name: string; kind: BridgeSourceKind; sha256: string; bytes: number }[];
-  instances: { source: string; agent: string; discordSecret?: string; slackBundle?: string; slackWorkspaces?: Record<string,string>; channelNotes: Record<string,string> }[];
+  instances: { source: string; agent: string; discordSecret?: string; slackBundle?: string; slackWorkspaces?: Record<string,string>; channelNotes: Record<string,string>; channelNoteOrder?: string[]; routeSource?: string }[];
   settings: { source: string; platform: 'discord' | 'slack'; bots: Record<string,string> }[];
   accounts: { source: string; owner: string; kind: 'person' | 'agent'; platform: 'discord' | 'slack'; user: string; workspace?: string }[];
   routes: { source: string; guild?: string; bots: Record<string,string>; botRoles: Record<string,string[]>;
@@ -150,7 +151,7 @@ export function projectBridgeDocument(result: LegacyBridgeInventory, name: strin
         const v = shuttle.parse(raw);
         result.instances.push({source:name,agent:v.agent.slug,
           ...(v.discord?.token_file === undefined ? {} : {discordSecret:v.discord.token_file}),
-          ...(v.slack?.secrets_env === undefined ? {} : {slackBundle:v.slack.secrets_env,...(v.slack.workspaces===undefined?{}:{slackWorkspaces:v.slack.workspaces})}),channelNotes:v.channel_notes ?? {}});
+          ...(v.slack?.secrets_env === undefined ? {} : {slackBundle:v.slack.secrets_env,...(v.slack.workspaces===undefined?{}:{slackWorkspaces:v.slack.workspaces})}),channelNotes:v.channel_notes ?? {},...(v.channel_notes===undefined?{}:{channelNoteOrder:channelBriefOrder(source)})});
       } else if (kind === 'people') {
         const v = people.parse(raw);
         for (const [section,kind] of [['people','person'],['agents','agent']] as const) {

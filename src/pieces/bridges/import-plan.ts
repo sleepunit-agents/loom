@@ -1,4 +1,5 @@
 /** Offline source resolution. Never applies legacy gates, offers or proposals. */
+import {resolveChannelBriefs} from './import-briefs.js';
 import { readBridgeDocuments, type BridgeDocumentFile } from './import-documents.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -9,7 +10,7 @@ import { venueSchema, routeSchema, linkSchema, type Venue, type Route, type Pers
 const name=z.string().min(1).max(200);
 export const bridgeImportOptions=z.object({
   instances:z.array(z.object({shuttle:name,people:name,routes:name}).strict()),
-  documents:z.array(z.object({path:name,agent:name,key:z.string()}).strict()).max(128).optional(),
+  documents:z.array(z.object({path:name,agent:name,key:z.string(),brief:z.string().optional()}).strict()).max(128).optional(),
   connections:z.array(z.object({agent:name,platform:z.enum(['discord','slack']),workspace:name,bot:name.optional(),tokenSecret:name.optional(),appSecret:name.optional(),setupIncomplete:z.literal(true).optional()}).strict()),
 }).strict();
 export type BridgeImportOptions=z.infer<typeof bridgeImportOptions>;
@@ -142,11 +143,12 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
       for(const [kind,n]of Object.entries(instance)){if(byName.get(n)?.kind!==kind||used.has(n))throw Error();used.add(n);}
       const instanceConfig=inventory.instances.find(s=>s.source===instance.shuttle);
       if(!instanceConfig||agents.has(instanceConfig.agent)||!household.agents.includes(instanceConfig.agent))throw Error();agents.add(instanceConfig.agent);
-      effective.instances.push(instanceConfig);
+      const selectedInstance={...instanceConfig};
+      effective.instances.push(selectedInstance);
       resolvePeople(instanceConfig.agent,instance.people);
       const routes=acceptedRoutes(instanceConfig.agent,(c,k)=>get('shuttle',c,k),parts,dropped);
-      if(routes!==undefined){routes(effective);routeOwners.set(`accepted:${instanceConfig.agent}`,instanceConfig.agent);}
-      else{effective.routes.push(...inventory.routes.filter(r=>r.source===instance.routes));routeOwners.set(instance.routes,instanceConfig.agent);}
+      if(routes!==undefined){routes(effective);routeOwners.set(`accepted:${instanceConfig.agent}`,instanceConfig.agent);selectedInstance.routeSource=`accepted:${instanceConfig.agent}`;}
+      else{effective.routes.push(...inventory.routes.filter(r=>r.source===instance.routes));routeOwners.set(instance.routes,instanceConfig.agent);selectedInstance.routeSource=instance.routes;}
     }
     for(const f of sources.files)if(!f.kind.endsWith('-settings')&&!used.has(f.name))throw Error();
     // Every relevant accepted store agent participates, not only explicit instances.
@@ -267,7 +269,10 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
       if(!document||!household.agents.includes(selection.agent)||!effective.routes.some(r=>routeOwners.get(r.source)===selection.agent&&Object.hasOwn(r.noteChannels??{},selection.key)))throw Error();
       return {...selection,...document};
     });
-    const evidence=JSON.stringify({inventory,stores,incomplete,retained,...(selectedDocuments.length?{selectedDocuments}:{}),...(noteInventories.length?{noteInventories}:{})}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping,...(documents.length?[documents]:[])]));
+    // A named mapping is never allowed to silently become membership-only evidence.
+    for(const d of selectedDocuments)if(d.brief!==undefined&&!effective.instances.some(i=>i.agent===d.agent&&Object.hasOwn(i.channelNotes,d.key)&&i.channelNotes[d.key]===d.brief))throw Error();
+    const configuredBriefs=effective.instances.filter(i=>i.channelNoteOrder?.length).map(instance=>({agent:instance.agent,source:instance.source,routeSource:instance.routeSource,briefs:resolveChannelBriefs(instance,effective.routes,selectedDocuments)}));
+    const evidence=JSON.stringify({inventory,stores,incomplete,retained,...(configuredBriefs.length?{configuredBriefs}:{}),...(selectedDocuments.length?{selectedDocuments}:{}),...(noteInventories.length?{noteInventories}:{})}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping,...(documents.length?[documents]:[])]));
     return {expected,evidence,mapping,checksum};
   }catch(error){if(error instanceof BridgeSourceError)throw error;throw Error('Invalid offline Bridges import mapping or sources');}
 }

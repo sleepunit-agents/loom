@@ -38,7 +38,7 @@ describe('offline legacy Bridges source inventory',()=>{
       threads:{'400':{primary:'peer',parent:'300'}},only:['300'],ignore:{'500':1},webhook_peers:{'600':'peer'},notify:{general:'300'},peer_turns_each:4})];
     const before=sources.map(f=>readFileSync(f.path));
     const v=readBridgeInventory(sources);
-    expect(v.instances).toEqual([{source:'agent/shuttle.json',agent:'art',discordSecret:'art-discord',slackBundle:'art-slack',channelNotes:{notes_channels:'work'}}]);
+    expect(v.instances).toEqual([{source:'agent/shuttle.json',agent:'art',discordSecret:'art-discord',slackBundle:'art-slack',channelNotes:{notes_channels:'work'},channelNoteOrder:['notes_channels']}]);
     expect(v.accounts).toEqual([{source:'agent/people.json',owner:'jonathan',kind:'person',platform:'discord',user:'123'},
       {source:'agent/people.json',owner:'jonathan',kind:'person',platform:'slack',workspace:'T1',user:'U1'},
       {source:'agent/people.json',owner:'peer',kind:'agent',platform:'discord',user:'456'}]);
