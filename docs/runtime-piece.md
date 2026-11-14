@@ -1503,6 +1503,9 @@ replace project scope or both the claimed house and its current configuration;
 the same authenticated job still passes unpinned control, while pinned control,
 running and finish each refuse. Removing only the respective digest field makes
 its regression fail, independently of the other lifecycle checks.
+A relocation case enrolls a second test runner and uses its actual authenticated
+HTTP principal: the newly assigned runner can read unpinned control but cannot
+use the original assignment's assertion for control, running or finish.
 Input-needs tests change the requirement while the same box satisfies both
 versions. Service ownership and an imported policy archive without any active
 policy configuration are tested as sole holds before input release and after

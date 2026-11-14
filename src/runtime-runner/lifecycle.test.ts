@@ -180,8 +180,8 @@ it('an old unpinned control response cannot activate the original input assertio
  release();await old;expect(control.current()).toBe(false);await control.fresh();expect(control.current()).toBe(true);
  expect(()=>control.pinExecution(execution)).toThrow();expect(revoked).toBe(true);expect(control.current()).toBe(false);
 });
-it.each(['project','house'] as const)('original %s survives an independently valid replacement at every server boundary',async field=>{
- const f=await setup();let execution='',reported:()=>void=()=>{};
+it.each(['project','house','assignment'] as const)('original %s survives an independently valid replacement at every server boundary',async field=>{
+ const f=await setup();let execution='',reported:()=>void=()=>{},token=f.config.token;
  const running=new Promise<void>(resolve=>{reported=resolve;});
  const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
   const response=await fetch(...args);
@@ -192,14 +192,19 @@ it.each(['project','house'] as const)('original %s survives an independently val
  }};
  const p=runClaudeJob(f.config,f.selected,runtime),rejected=expect(p).rejects.toThrow();await f.waitSpawn(1);await running;
  if(field==='project')f.update({project:'replacement-project'});
- else {
+ else if(field==='house') {
   const replacement={...house,repo:'/replacement-house'};f.update({made:replacement});
   f.app.db.transaction(()=>{const {changedAt:_,...settings}=f.store.read('settings','art')!;f.store.put('settings',{...settings,house:replacement},f.clock.now());})();
   expect(f.store.read('job','j')?.made).toEqual(f.store.read('settings','art')?.house);
+ } else {
+  f.app.db.transaction(()=>{const {changedAt:_,...box}=f.store.read('box','r')!;f.store.put('box',{...box,id:'r2',name:'r2'},f.clock.now());})();
+  expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'signin.setPrincipal',{kind:'runner',id:'r2',active:true},'new-runner')).toMatchObject({ok:true});
+  token=randomBytes(32).toString('hex');signin(f.app).tokens.change(tokens=>tokens.push({role:'runner:r2',label:'replacement-worker',sha256:hash(token),created:new Date(f.clock.now()).toISOString()}));
+  f.update({runner:'r2',box:'r2'});
  }
  const post=async(op:string,input:unknown,id?:string)=>(await fetch(`${f.app.url}/api/runtime/${op}`,{method:'POST',
-  headers:{authorization:`Bearer ${f.config.token}`,'content-type':'application/json'},body:JSON.stringify({input,id})})).json();
- // Same job, principal, active state and current house still independently work.
+  headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({input,id})})).json();
+ // The current assignment, authenticated principal and house independently work.
  expect(await post('jobControl',{job:'j'})).toEqual({ok:true,value:{stop:false,history:'retain'}});
  expect(execution).toMatch(/^[a-f0-9]{64}$/);
  expect(await post('jobControl',{job:'j',execution})).toMatchObject({ok:false,code:'denied'});
