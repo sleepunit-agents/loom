@@ -429,7 +429,8 @@ operation; Attention's own create/update policy still applies.
 
 | Surface | Merged owning path | Remaining acceptance |
 | --- | --- | --- |
-| Public Clock own reply/action/note | `runtime.recordTurn` derives agent/project, agent sender, operation time and job run; Attention stores metadata only | Incoming source turns are a separate owning projection; own turns do not prove a message was delivered |
+| Public Clock own reply/action/note | `runtime.recordTurn` derives agent/project, agent sender, operation time and job run; Attention stores metadata only | Own turns do not prove a message was delivered |
+| Public Clock accepted incoming input | Runtime #1271's `recordPublicIncoming` files a wordless wake or message inside the owning Clock ACK/native completion or public-answer ACK transaction | Uses central acceptance time and the saved member sender; queue/read alone never projects acceptance. Private/service sources stay with their owners |
 | Public Clock digest and question | `runtime.writeDigest` derives the canonical conversation and run, then calls Attention and records the owning answer destination in the same transaction | An own turn must exist first; managed `waits_on` decisions remain refused by this adapter |
 | Identity reconciliation | `attentionConversationId(agent, 'runtime-clock', runtimeConversation)` produces the central `cv-*`; Runtime keeps its opaque transport id | Neither id nor a reusable lane label grants authority; other destinations need their own binding |
 | Public Clock answers | Owning active input or eligible done/failed successor, as described above | Accepted, read and ACK are distinct; unsupported terminal states retain owning refusals |
@@ -444,6 +445,13 @@ same-input retries, replacement conversations, rejected typed routing/words,
 authority drift, central create/update refusals and managed-question rollback.
 `public-inputs.test.ts` covers owning answer acceptance and continuation. These
 fixtures are evidence for their supported Clock path only.
+
+The merged incoming fixtures in those same files additionally check scheduled,
+active-answer and successor-answer acceptance, nested policy/SQL rollback and
+retry, staged restart, native completion, overlapping ACKs and exactly-once
+source order. The incoming projection uses the same canonical route and project
+as the own-turn writer; its central acceptance timestamp is deliberately not a
+claim about the original source creation time or human reading.
 
 `src/pieces/attention/retention.test.ts` covers findings, folding and policy;
 `client.test.ts` covers the generated direct-operation client. Neither establishes
