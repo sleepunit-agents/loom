@@ -3,7 +3,7 @@ import { operation } from './commands.js';
 import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
-import { taskAskId, type Ask, type AgentStatus, type AttentionSources } from './role.js';
+import { taskAskId, type Ask, type AgentStatus, type AttentionSources, type TaskAskFiling } from './role.js';
 import { installWaitChecks, type AttentionWaits } from './waits.js';
 import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
@@ -141,7 +141,8 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     const withdrawn = (old: Ask, audience: Pick<Ask,'project'|'agent'> = old): Ask => ({id:old.id,source:old.source,sourceManaged:true,
       ...(audience.agent !== undefined ? {agent:audience.agent}:{}), ...(audience.project !== undefined ? {project:audience.project}:{}),
       ask:'Task no longer needs you',state:'resolved',resolution:'Continue in Tasks',createdAt:old.createdAt,changedAt:old.changedAt});
-    return { sync(ctx, inputs) {
+    const project = (ctx: Context, inputs: Parameters<TaskAskFiling['sync']>[1], apply: boolean) => {
+      let dirty = false;
       if (ctx.db !== db || !db.inTransaction) throw new OperationError('unavailable', 'Task filing needs its enclosing database transaction');
       const seen = new Set<string>();
       for (const input of inputs) {
@@ -160,7 +161,8 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
           : withdrawn(old!,parsed);
         if (JSON.stringify(record) === JSON.stringify(old)) continue;
         record.changedAt = ctx.now;
-        saveAsk(record); ctx.changed('attention.ask', key);
+        dirty = true;
+        if (apply) { saveAsk(record); ctx.changed('attention.ask', key); }
       }
       // Withdrawing a source removes its words rather than preserving stale wording
       // after reassignment/deletion. Read marks remain facts about this source id.
@@ -168,9 +170,12 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
         const old = JSON.parse(row.record) as Ask;
         if (!managed(old) || old.source.kind !== 'task' || seen.has(old.id) || old.state === 'resolved') continue;
         const record = withdrawn(old); record.changedAt = ctx.now;
-        saveAsk(record); ctx.changed('attention.ask', record.id);
+        dirty = true;
+        if (apply) { saveAsk(record); ctx.changed('attention.ask', record.id); }
       }
-    } };
+      return dirty;
+    };
+    return { sync(ctx, inputs) { project(ctx,inputs,true); }, pending: (ctx,inputs) => project(ctx,inputs,false) };
   }, register(name, answer) {
     if (!/^[a-z][a-z0-9-]{0,63}$/.test(name) || sources.has(name)) throw new Error('Invalid or duplicate attention source');
     sources.set(name, answer);

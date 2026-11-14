@@ -100,9 +100,11 @@ it('reconciles existing next-side tasks at startup and preserves read marks acro
 });
 it('does not expose reconciliation as a member or agent operation',async()=>{
   const s=await setup();
-  for(const v of [owner,member,{kind:'agent',id:'art'} as Viewer,{kind:'service',id:'attention'} as Viewer])
-    expect(s.call('tasks.reconcileAttention',{},v)).toMatchObject({ok:false,code:'denied'});
-  expect(s.app.operations.call('http',{kind:'service',id:'tasks'},'tasks.reconcileAttention',{},randomUUID()).ok).toBe(false);
+  for(const name of ['tasks.reconcileAttention','tasks.attentionPending']) {
+    for(const v of [owner,member,{kind:'agent',id:'art'} as Viewer,{kind:'service',id:'attention'} as Viewer])
+      expect(s.call(name,{},v)).toMatchObject({ok:false,code:'denied'});
+    expect(s.app.operations.call('http',{kind:'service',id:'tasks'},name,{},randomUUID()).ok).toBe(false);
+  }
 });
 
 it('reconciles owner membership changes without a task mutation and revokes old-project visibility',async()=>{
@@ -198,4 +200,13 @@ it('keeps stopped offline import verification unchanged and files the copied own
   expect(importTasks(seed.db,sourcePath,1_800_000_000_000)).toMatchObject({ok:true,imported:false,tasks:1});
   expect(seed.db.prepare("SELECT name FROM sqlite_master WHERE name='attention_asks'").get()).toBeUndefined();seed.close();
   const s=await setup(home);expect(s.ask('t-9')).toMatchObject({ok:true,value:{state:'open',ask:'Ship the copied task?',project:'pond'}});
+});
+
+it('compares already current filing without writes or receipts during access refresh',async()=>{
+  const s=await setup();s.create();const before=s.app.db.prepare('SELECT * FROM core_operations').all();
+  const asks=s.app.db.prepare('SELECT * FROM attention_asks').all(),changes:unknown[]=[];s.app.live.observe(c=>{if(c.some(x=>x.type==='attention.ask'))changes.push(c);});
+  expect(s.app.operations.call('direct',{kind:'service',id:'tasks'},'tasks.attentionPending',{})).toEqual({ok:true,value:false});
+  s.app.live.changed([{type:'core.access',id:'fixture'}]);
+  expect(s.app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
+  expect(s.app.db.prepare('SELECT * FROM attention_asks').all()).toEqual(asks);expect(changes).toEqual([]);
 });

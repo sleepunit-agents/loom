@@ -137,7 +137,10 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (attentionSources) connectTaskAttention(app.operations, () => attentionSources.tasks());
   if (app.operations.has('tasks.reconcileAttention')) {
-    const reconcile = () => app.operations.call('direct', {kind:'service',id:'tasks'}, 'tasks.reconcileAttention', {}, `task-filing:${randomUUID()}`);
+    const reconcile = () => {
+      const pending = app.operations.call('direct', {kind:'service',id:'tasks'}, 'tasks.attentionPending', {});
+      return !pending.ok || !pending.value ? pending : app.operations.call('direct', {kind:'service',id:'tasks'}, 'tasks.reconcileAttention', {}, `task-filing:${randomUUID()}`);
+    };
     const initial = reconcile();
     if (!initial.ok) console.warn(`Task filing failed (${initial.code})`);
     app.onClose(app.live.observe(changes => {
