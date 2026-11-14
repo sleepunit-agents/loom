@@ -12,8 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Inbox now separates self-cleared asks into searchable FYI history, keeping human answers in Answered.
-
 - New desk: make request and form ids without `crypto.randomUUID`, which browsers withhold on plain HTTP, so the desk works on a home network address.
 - Classify already owned Runtime spawn threads in Comms through original member metadata, preserving independent transport and execution holds.
 
@@ -35,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Bridges import accepts sparse per-agent channel flags, blocks unrepresentable differences with source field evidence, and identifies conflicting present entries.
 
 - Add member-private Inbox read facts without answering asks or copying draft words.
+- Inbox now separates self-cleared asks into searchable FYI history, keeping human answers in Answered.
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 - File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.
