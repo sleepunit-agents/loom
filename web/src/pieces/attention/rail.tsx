@@ -56,7 +56,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
   });
   const card=(agent:(typeof agents)[number])=>{
       const status = statuses.status==='live'?latestStatus(statuses.records,agent.id):undefined;
-      const ask = open.find(a=>a.agent===agent.id);
+      const ownAsks = open.filter(a=>a.agent===agent.id), ask = ownAsks[0];
       const jobs = runtime.status === 'live' ? currentRuntimeJobs(runtime.records, agent.id) : [];
       const recent = threads.status==='live'?threads.records.filter(t=>t.agent===agent.id&&t.archived===null).sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id)):[];
       const unread = recent.filter(t=>t.unread), thread = unread[0]??recent[0];
@@ -66,7 +66,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
         <Row aria-label={`Open ${agent.name} conversation`} onClick={()=>go(path)} title={agent.name}
           icon={<AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state,!!ask)} size={24}/>}
           trailing={<span className="desk-rail-flags"><span role="img" className="desk-rail-dot" data-state={status?.state} title={word} aria-label={word}/>
-            {ask&&<span className="desk-rail-badge">ASK</span>}
+            {ask&&<span className="desk-rail-badge" aria-label={`${ownAsks.length} waiting ${ownAsks.length===1?'question':'questions'}`}>ASK{ownAsks.length>1?` · ${ownAsks.length}`:''}</span>}
             <span className="desk-rail-unread" aria-label={threads.status!=='live'?'Conversations unavailable':`${unread.length} unread threads`}>{threads.status!=='live'?'?':unread.length||''}</span>
           </span>}/>
       </section>;
@@ -83,7 +83,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
             <strong>{job.title || job.id}</strong><span>{job.state} · {job.box}</span>
           </li>)}</ul>}
         </div>
-        {ask&&<button className="desk-rail-ask" onClick={()=>go(inboxPath(ask))}><span className="desk-rail-kicker">Asks you</span>{ask.ask}<span aria-hidden="true"> ›</span></button>}
+        {ask&&<button className="desk-rail-ask" onClick={()=>go(inboxPath(ask))}><span className="desk-rail-kicker">Asks you</span>{ask.ask}{ownAsks.length>1&&<span className="desk-rail-kicker">{`${ownAsks.length-1} more`}</span>}<span aria-hidden="true"> ›</span></button>}
         <button className="desk-rail-thread" onClick={()=>go(path)}>{threads.status!=='live'?'Conversations unavailable':unread.length?`${unread.length} unread ${unread.length===1?'thread':'threads'}`:thread?(thread.title||'Recent conversation'):'Start a conversation'}<span aria-hidden="true"> ↗</span></button>
       </section>;
   };
@@ -92,7 +92,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
     <button className="desk-rail-needs" onClick={()=>go(inboxPath(open[0]))}>
       <span className="desk-rail-kicker">Needs you{asks.status==='live'?` · ${open.length}`:''}</span>
       <span>{asks.status==='live'?(open[0]?.ask??'All clear.'):'Asks unavailable'}</span>
-      <span className="desk-rail-kicker">Inbox ›</span>
+      <span className="desk-rail-kicker">{asks.status==='live'&&open.length>1?`${open.length-1} more · Inbox ›`:'Inbox ›'}</span>
     </button>
     {roster.status !== 'live' ? <p role="status">{roster.status==='loading'?'Opening your agents…':'Your agents are unavailable.'}</p> : !agents.length ? <p>No agents of your own.</p> : agents.filter(a=>a.id!==companion?.id).map(card)}
   </div>;
