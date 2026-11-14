@@ -16,7 +16,8 @@ export const subscription = z.object({
     try { const u=new URL(value);return u.protocol==='https:' && !u.port && !u.username && !u.password && !u.hash && hosts.some(h=>h.test(u.hostname)); } catch { return false; }
   }),
   keys:z.object({p256dh:z.string().regex(/^[A-Za-z0-9_-]{20,200}$/),auth:z.string().regex(/^[A-Za-z0-9_-]{8,64}$/)}).strict(),
-}).strict();
+  expirationTime:z.number().nullable().optional(),
+}).strict().transform(({endpoint,keys})=>({endpoint,keys}));
 const deviceRef=(endpoint:string)=>hash(`notification-device:${endpoint}`);
 const sessionRef=(id:string)=>hash(`account-session:${id}`);
 const info=z.object({ref,session:ref,at:z.number(),seenAt:z.number().optional(),device:z.string().optional()}).strict();

@@ -55,6 +55,7 @@ it('validates real push hosts, rejects URL credentials, ports, fragments, bad ke
   const f=await setup(),a=await f.socket(f.cookie);
   for(const endpoint of ['http://fcm.googleapis.com/x','https://127.0.0.1/x','https://fcm.googleapis.com.evil.example/x','https://fcm.googleapis.com:8443/x','https://user:pass@fcm.googleapis.com/x','https://fcm.googleapis.com/x#secret'])expect(await a('subscribe',{sub:{...sub(),endpoint}})).toMatchObject({ok:false,code:'invalid'});
   for(const input of [{sub:{...sub(),keys:{auth:'x',p256dh:'x'}}},{sub:sub(),device:'Fake phone'},{sub:sub(),session:hash(f.cookie)},{sub:sub(),member:'pollock'}])expect(await a('subscribe',input)).toMatchObject({ok:false,code:'invalid'});
+  expect(await a('subscribe',{sub:{...sub('browser-json'),expirationTime:null}})).toMatchObject({ok:true});expect(f.s.sessions.read().push!.subs![sub('browser-json').endpoint].sub).toEqual(sub('browser-json'));
   for(const host of ['fcm.googleapis.com','updates.push.services.mozilla.com','web.push.apple.com','wns2-by3p.notify.windows.com'])expect(await a('subscribe',{sub:{...sub(),endpoint:`https://${host}/valid`}})).toMatchObject({ok:true});
 });
 it('keeps device through logout, cap, expiry and sign-in; remote removal blocks quiet again until explicit enable',async()=>{
@@ -108,4 +109,16 @@ it('refreshes another member’s actual Live window after reassignment and house
   f.s.sessions.change(file=>{const subs=file.push!.subs!;for(const ep of Object.keys(subs))delete subs[ep];subs[sub().endpoint]={sub:sub(),member:'jonathan',session:hash(f.cookie),token:hash('jonathan'),at:0};for(let i=0;i<19;i++){const x=sub('other-'+i);subs[x.endpoint]={sub:x,member:'pollock',session:hash(f.otherCookie),token:hash('pollock'),at:f.s.now()};}});
   const repopulated=once(ws,'message');f.app.live.changed([{type:'notifications.devices',id:'jonathan'}]);expect(JSON.parse(String((await repopulated)[0])).record.devices).toHaveLength(1);
   const evicted=once(ws,'message');expect(await b('subscribe',{sub:sub('newest')})).toMatchObject({ok:true});expect(JSON.parse(String((await evicted)[0])).record.devices).toEqual([]);
+});
+it.each(['cap','expiry'] as const)('keeps an imported token-less device when its still-present session reaches %s',async mode=>{
+  const f=await setup(),a=await f.socket(f.cookie);await a('subscribe',{sub:sub()});const first=f.read().devices[0];
+  f.s.sessions.change(file=>{delete file.push!.subs![sub().endpoint].token;file.sessions[hash(f.cookie)].issuedAt=mode==='expiry'?f.s.now()-30*86400+1:f.s.now()-1;});
+  expect(f.s.session(f.cookie)).toBeDefined();
+  if(mode==='cap'){
+    for(let i=0;i<51;i++)f.s.createSession(hash('jonathan'));
+    expect(f.s.sessions.read().sessions[hash(f.cookie)]).toBeUndefined();expect(f.s.sessions.read().push!.subs![sub().endpoint].token).toBe(hash('jonathan'));
+  }else{
+    f.clock.advance(1000);expect(f.s.session(f.cookie)).toBeUndefined();expect(f.s.sessions.read().sessions[hash(f.cookie)]).toBeDefined();
+  }
+  expect(f.read().devices[0]).toEqual(first);
 });
