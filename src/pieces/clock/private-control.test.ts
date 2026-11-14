@@ -129,7 +129,7 @@ it('a colliding public wake cannot waive a removed private schedule id window gu
  const id=wakes(f.app.db)[0].id;
  f.proof={...publicProof,member:'jonathan'};
  expect(f.call('scheduleSet',{...input,id}).ok).toBe(true);
- expect(f.call('scheduleRemove',{id}).ok).toBe(true);
+ expect(await f.app.operations.callAsync('socket',owner,'clock.scheduleRemove',{id},randomUUID(),true)).toMatchObject({ok:true});
  f.proof=publicProof;const before=f.snapshot();
  expect(f.call('scheduleSet',{...input,id})).toMatchObject({ok:false,code:'denied'});
  expect(f.snapshot()).toEqual(before);
