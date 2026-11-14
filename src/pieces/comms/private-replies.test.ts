@@ -23,7 +23,10 @@ async function setup(ref='private-ask'){
  const t=JSON.parse((app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(opened.thread) as {record:string}).record);
  await expect.poll(()=>JSON.parse((app.db.prepare('SELECT record FROM comms_messages WHERE thread=? AND seq=1').get(t.id) as {record:string}).record).delivery).toBe('held');
  let attention=attentionRole(app.operations);
- expect(attention.raise(owner,{id:ref,member:owner.id,agent:'art',source:{kind:'conversation',id:t.conversation},ask:'Reply in your private conversation',answers:'words'},'ask')).toMatchObject({ok:true});
+ if(ref.startsWith('comms:')){
+  // Imported legacy ids bypass new-source namespace reservation, as the importer does.
+  app.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run(ref,JSON.stringify({id:ref,member:owner.id,agent:'art',source:{kind:'conversation',id:t.conversation},ask:'Reply in your private conversation',answers:'words',state:'open',createdAt:clock.now(),changedAt:clock.now()}));
+ }else expect(attention.raise(owner,{id:ref,member:owner.id,agent:'art',source:{kind:'conversation',id:t.conversation},ask:'Reply in your private conversation',answers:'words'},'ask')).toMatchObject({ok:true});
  const messages=()=>app.db.prepare("SELECT * FROM comms_messages WHERE thread=? AND id=?").all(t.id,`private-reply:${ref}`);
  const getAsk=()=>value<Record<string,unknown>>(attention.get(owner,{id:ref}));
  return {get app(){return app;},clock,key,held,call,get attention(){return attention;},ref,t,messages,getAsk,
