@@ -139,7 +139,7 @@ then open ask, then unread thread, then first agent. Alphabetical order stays
 fixed. Lines open the same first unread/latest thread as the full cards.
 Changes to authorized content or available width/height retry full cards.
 No message words are fetched. Lost feeds clear their facts and priority.
-Comms' portrait portal remains the next slice.
+Comms' reader-owned portrait now uses the destination described below.
 Device hide choices below preserve the tiling algorithm.
 
 
@@ -161,8 +161,7 @@ Below 1280 the desktop rail is a strip regardless of Always show. Phone dock
 stays visible, preserving the existing phone navigation. Attention's record-only desk signals supply
 the strip/edge's ask/unread glow from authorized feeds, clearing unavailable
 facts. Ctrl+Shift+1…9 opens the corresponding alphabetical agent's first unread,
-else latest thread, else Comms, including while typing. Companion/portal remains
-follow-up; no tiling algorithm, operation, importer, client or schema is added.
+else latest thread, else Comms, including while typing. The reader-owned companion portal is described below; no tiling algorithm, operation, importer, client or schema is added.
 
 Desk signals render no hidden cards. Their small registered surface keeps the
 dock glow and agent shortcuts alive on Home as well as Work; the rail mounts
@@ -182,8 +181,7 @@ That agent sits above Needs you with “With … in Comms”; the rest remain in
 alphabetical order below it. It wins the measured accordion priority. Selection
 changes retry full cards. The selected and previous companion slide260ms from
 their measured previous position; reduced motion moves immediately. No tiling
-algorithm or Home composition changes. The companion retains its existing card
-until the next portrait/portal slice: Comms has no new-side portrait screen yet.
+algorithm or Home composition changes. The permanently shown companion receives the reader-owned portrait; other rail modes keep its compact card and leave the portrait in Comms.
 The shared context's old provider remains compatible and reads no new data.
 
 ### Comms portrait and rail destination
