@@ -17,7 +17,7 @@ export interface PresencePlace {
   current(): boolean;
 }
 const slackId = (id: string) => /^[A-Z][A-Z0-9]{1,199}$/.test(id);
-const slackTs = (id: string) => /^\d{10}\.\d{6}$/.test(id);
+const slackTs = (id: string) => /^\d{1,12}\.\d{1,20}$/.test(id);
 const failed = () => Error('Bridge presence attempt uncertain');
 
 /** One attempt, one service-scoped secret use per HTTP request. Nothing retains

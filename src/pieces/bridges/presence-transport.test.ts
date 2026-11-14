@@ -49,20 +49,20 @@ describe('unregistered service presence transport with fake owning place',()=>{
     expect(f.request.mock.calls[0][1]?.headers).toEqual({Authorization:'Bearer FIXTURE-TOKEN','Content-Type':'application/x-www-form-urlencoded'});
     for(const add of [true,false]) {
       f.request.mockResolvedValueOnce(Response.json({ok:false,error:add?'no_reaction':'already_reacted'}));
-      await expect(f.effects.reaction('1700000000.000001',add,f.facts)).rejects.toThrow(uncertain);
+      await expect(f.effects.reaction('1700000000.000001',add,f.facts)).rejects.toEqual(Error(uncertain));
     }
   });
   it.each(['lifetime','staging','facts'] as const)('holds before credentials and after acquisition for lost %s',async which=>{
     const f=fixture(),hold=()=>which==='lifetime'?f.live(false):which==='staging'?f.released(false):f.owed(false);
-    hold();await expect(f.effects.reaction('101',true,f.facts)).rejects.toThrow(uncertain);
+    hold();await expect(f.effects.reaction('101',true,f.facts)).rejects.toEqual(Error(uncertain));
     expect(f.use).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
     f.live(true);f.released(true);f.owed(true);
     f.use.mockImplementationOnce(async(_name,callback)=>{hold();return callback('DO-NOT-SEND');});
-    await expect(f.effects.typing!(f.facts)).rejects.toThrow(uncertain);expect(f.request).not.toHaveBeenCalled();
+    await expect(f.effects.typing!(f.facts)).rejects.toEqual(Error(uncertain));expect(f.request).not.toHaveBeenCalled();
   });
   it.each([{enabled:false},{workspace:'2'},{agent:'other'},{id:'other'},{bot:'../100'}])('holds invalid initial setup %j',async patch=>{
     const f=fixture(),effects=presenceTransport({...f.venue,...patch},f.place,{withValue:f.use},()=>true,f.request);
-    await expect(effects.reaction('101',true,f.facts)).rejects.toThrow(uncertain);expect(f.use).not.toHaveBeenCalled();
+    await expect(effects.reaction('101',true,f.facts)).rejects.toEqual(Error(uncertain));expect(f.use).not.toHaveBeenCalled();
   });
   it('does not retain a previous callback token',async()=>{
     const f=fixture();
@@ -73,33 +73,58 @@ describe('unregistered service presence transport with fake owning place',()=>{
   });
   it.each(['agent','venue','platform','workspace','channel'] as const)('rejects changed exact-place %s',async key=>{
     const f=fixture();Object.assign(f.place,{[key]:'other'});
-    await expect(f.effects.reaction('101',true,f.facts)).rejects.toThrow(uncertain);expect(f.use).not.toHaveBeenCalled();
+    await expect(f.effects.reaction('101',true,f.facts)).rejects.toEqual(Error(uncertain));expect(f.use).not.toHaveBeenCalled();
+  });
+  it.each(['agent','venue','platform','workspace','channel'] as const)('rechecks exact-place %s after credential acquisition',async key=>{
+    const f=fixture();f.use.mockImplementationOnce(async(_n,cb)=>{Object.assign(f.place,{[key]:'other'});return cb('DO-NOT-SEND');});
+    await expect(f.effects.reaction('101',true,f.facts)).rejects.toEqual(Error(uncertain));expect(f.request).not.toHaveBeenCalled();
+  });
+  it('preserves old-format Slack timestamps accepted by intake',async()=>{
+    const f=fixture(true);await f.effects.reaction('1.000100',true,f.facts);
+    expect(String(f.request.mock.calls[0][1]?.body)).toBe('channel=D1&timestamp=1.000100&name=eyes');
   });
   it.each(['../101','01','0','18446744073709551616','101/other',''])('rejects malformed Discord id %s before a secret use',async id=>{
-    const f=fixture();await expect(f.effects.reaction(id,true,f.facts)).rejects.toThrow(uncertain);expect(f.use).not.toHaveBeenCalled();
+    const f=fixture();await expect(f.effects.reaction(id,true,f.facts)).rejects.toEqual(Error(uncertain));expect(f.use).not.toHaveBeenCalled();
   });
-  it.each(['1700000000','1700000000.1','../1700000000.000001','1700000000.000001&channel=D2'])('rejects malformed Slack timestamp %s',async id=>{
-    const f=fixture(true);await expect(f.effects.reaction(id,true,f.facts)).rejects.toThrow(uncertain);expect(f.use).not.toHaveBeenCalled();
+  it.each(['1700000000','1e3.1','9999999999999.1','../1700000000.000001','1700000000.000001&channel=D2'])('rejects malformed Slack timestamp %s',async id=>{
+    const f=fixture(true);await expect(f.effects.reaction(id,true,f.facts)).rejects.toEqual(Error(uncertain));expect(f.use).not.toHaveBeenCalled();
   });
   it.each([200,403,404,429,500])('keeps Discord status %s uncertain with no retries or private response words',async status=>{
     const f=fixture(),cancel=vi.fn(async()=>{});
     f.request.mockResolvedValueOnce({status,body:{cancel}} as unknown as Response);
-    await expect(f.effects.reaction('101',false,f.facts)).rejects.toThrow(uncertain);expect(cancel).toHaveBeenCalledOnce();expect(f.request).toHaveBeenCalledOnce();
+    await expect(f.effects.reaction('101',false,f.facts)).rejects.toEqual(Error(uncertain));expect(cancel).toHaveBeenCalledOnce();expect(f.request).toHaveBeenCalledOnce();
   });
   it.each([{},[],{ok:'true'},{ok:false,error:'invalid_auth'},{ok:false,error:'ratelimited'}])('rejects malformed/failed Slack reply %j',async body=>{
     const f=fixture(true);f.request.mockResolvedValueOnce(Response.json(body));
-    await expect(f.effects.reaction('1700000000.000001',true,f.facts)).rejects.toThrow(uncertain);
+    await expect(f.effects.reaction('1700000000.000001',true,f.facts)).rejects.toEqual(Error(uncertain));
   });
   it('bounds Slack responses and cancels failed readers',async()=>{
     const f=fixture(true),cancel=vi.fn(async()=>{});
     f.request.mockResolvedValueOnce({ok:true,body:{getReader:()=>({read:async()=>({done:false,value:new Uint8Array(4097)}),cancel})}} as unknown as Response);
-    await expect(f.effects.reaction('1700000000.000001',true,f.facts)).rejects.toThrow(uncertain);expect(cancel).toHaveBeenCalledOnce();
+    await expect(f.effects.reaction('1700000000.000001',true,f.facts)).rejects.toEqual(Error(uncertain));expect(cancel).toHaveBeenCalledOnce();
+  });
+  it.each(['headers','body'] as const)('terminates a stalled Slack %s at the request deadline',async phase=>{
+    vi.useFakeTimers();
+    const timeout=vi.spyOn(AbortSignal,'timeout').mockImplementation(milliseconds=>{
+      const controller=new AbortController();setTimeout(()=>controller.abort(),milliseconds);return controller.signal;
+    });
+    try {
+      const f=fixture(true),cancel=vi.fn(async()=>{});let done=false;
+      f.request.mockImplementationOnce(async(_u,init)=>{
+        const stalled=new Promise<never>((_resolve,reject)=>{init!.signal!.addEventListener('abort',()=>reject(Error('PRIVATE FIXTURE-TOKEN')),{once:true});});
+        return phase==='headers'?stalled:{ok:true,body:{getReader:()=>({read:()=>stalled,cancel})}} as unknown as Response;
+      });
+      const pending=f.effects.reaction('1.000100',true,f.facts).catch(error=>{done=true;return error;});
+      await vi.advanceTimersByTimeAsync(14_999);expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);expect(await pending).toEqual(Error(uncertain));expect(timeout).toHaveBeenCalledWith(15_000);
+      if(phase==='body')expect(cancel).toHaveBeenCalledOnce();
+    } finally {timeout.mockRestore();vi.useRealTimers();}
   });
   it('sanitizes credential, transport and body failures',async()=>{
     const f=fixture();f.use.mockRejectedValueOnce(Error('PRIVATE FIXTURE-TOKEN'));
-    await expect(f.effects.reaction('101',true,f.facts)).rejects.toThrow(uncertain);
+    await expect(f.effects.reaction('101',true,f.facts)).rejects.toEqual(Error(uncertain));
     f.request.mockRejectedValueOnce(Error('PRIVATE FIXTURE-TOKEN'));
-    await expect(f.effects.typing!(f.facts)).rejects.toThrow(uncertain);
+    await expect(f.effects.typing!(f.facts)).rejects.toEqual(Error(uncertain));
     expect(f.request).toHaveBeenCalledOnce();
   });
   it.each([false,true])('acknowledges a late successful add and the controller removes it before typing (Slack=%s)',async slack=>{
@@ -120,13 +145,13 @@ describe('unregistered service presence transport with fake owning place',()=>{
       const source={read:vi.fn(async()=>{const bytes=Buffer.from('FIXTURE-CREDENTIAL');buffers.push(bytes);return bytes;})};
       const effects=presenceTransport(f.venue,f.place,secretUseRole(app.db,source,sharing,{kind:'service',id:'bridges'},()=>clock.now(),app.live),()=>true,f.request);
       f.request.mockImplementation(async(_u,i)=>{expect(i?.headers).toEqual({Authorization:'Bot FIXTURE-CREDENTIAL'});return new Response(null,{status:204});});
-      await expect(effects.reaction('101',true,()=>true)).rejects.toThrow(uncertain);expect(source.read).not.toHaveBeenCalled();
+      await expect(effects.reaction('101',true,()=>true)).rejects.toEqual(Error(uncertain));expect(source.read).not.toHaveBeenCalled();
       expect(app.operations.call('direct',owner,'secrets.describe',{name:'bot',description:'Bot'},'describe').ok).toBe(true);
       expect(app.operations.call('direct',owner,'secrets.grantService',{service:'bridges',name:'bot'},'grant').ok).toBe(true);
       await effects.reaction('101',true,()=>true);await effects.typing!(()=>true);
       expect(buffers).toHaveLength(2);expect(buffers.every(b=>b.every(v=>v===0))).toBe(true);
       expect(app.operations.call('direct',owner,'secrets.revokeService',{service:'bridges',name:'bot'},'revoke').ok).toBe(true);
-      await expect(effects.reaction('101',false,()=>true)).rejects.toThrow(uncertain);expect(f.request).toHaveBeenCalledTimes(2);
+      await expect(effects.reaction('101',false,()=>true)).rejects.toEqual(Error(uncertain));expect(f.request).toHaveBeenCalledTimes(2);
     } finally {await app.close();rmSync(home,{recursive:true,force:true});}
   });
 });
