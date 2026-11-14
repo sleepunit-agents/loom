@@ -1,3 +1,5 @@
+import {routedHolderAuthority} from './holder-routing.js';
+import {listenHolderHandoff,localHolderHandoff} from './holder-handoff.js';
 import {Writable} from 'node:stream';
 import {workerSecretInputs} from '../../runtime-runner/secret-input.js';
 import {listenWorkerSecretInput,workerSecretTransport} from '../../runtime-runner/secret-transport.js';
@@ -417,4 +419,36 @@ it.each(['released','uncertain'])('worker cannot settle an active claim via %s e
   const req=https.request({socketPath:f.config.socket,servername:f.config.servername,ca:readFileSync(f.config.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),method:'POST',path:`/v1/tickets/${t.id}/${action}`,headers:{'content-length':0}},res=>{res.resume();res.once('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end();
  });
  expect(status).toBe(503);expect(f.state(t.id)).toEqual({state:'claimed'});expect(await c.current()).toBe(true);await c.finish(false);
+});
+
+it.each(['release','source','local','lost-worker-ack'] as const)('routes the original bound claim through real holder and worker channels: %s',async outcome=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},inputs=workerSecretInputs();
+ closes.push(()=>inputs.close());let local=true,proof:ReturnType<typeof remoteWorkerTicketProof>|undefined;
+ const writes:string[]=[];
+ const pending=inputs.register(binding,new Writable({write(bytes,_encoding,done){writes.push(bytes.toString());done();}}),()=>local,async()=>proof?.current()??false,Date.now()+30_000);
+ const t=f.tickets.admit(f.viewer,'API',pending);expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ await f.authority.close();
+ const central=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(central.close);
+ proof=remoteWorkerTicketProof({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'),t.id,pending.id);closes.push(proof.close);
+ const worker=await listenWorkerSecretInput({...f.server,socket:join(f.home,'input.sock')},f.fingerprint('holder'),inputs);closes.push(worker.close);
+ const transport=workerSecretTransport({...f.config,socket:join(f.home,'input.sock')},f.fingerprint('daemon'));closes.push(transport.close);
+ const authority=routedHolderAuthority(f.remote,[{binding,transport}]),bytes=Buffer.from('synthetic-routing-value');
+ const read=vi.fn(async()=>{if(outcome==='source')throw Error('synthetic-private-error');return bytes;});
+ const socket=join(f.home,'handoff.sock');
+ const holder=await listenHolderHandoff({...f.config,socket}, {read}, f.fingerprint('daemon'),authority);closes.push(holder.close);
+ const client=localHolderHandoff({...f.server,socket,servername:'holder.test'},f.fingerprint('holder'));closes.push(client.close);
+ if(outcome==='local')local=false;
+ const end=ServerResponse.prototype.end;
+ const drop=outcome==='lost-worker-ack'?vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
+  if(this.req.url?.startsWith('/v1/input/'))this.socket?.destroy();return end.apply(this,args);
+ }):undefined;
+ try {
+  if(outcome==='release')await client.handTo(t.id);
+  else await expect(client.handTo(t.id)).rejects.toThrow(/^Secret handoff unavailable$/);
+  await holder.close();
+  expect(writes).toEqual(outcome==='release'||outcome==='lost-worker-ack'?['synthetic-routing-value']:[]);
+  expect(f.state(t.id)).toEqual({state:outcome==='release'?'claimed':'uncertain'});
+  expect(bytes.every(b=>b===0)).toBe(outcome!=='source');
+  await expect(client.handTo(t.id)).rejects.toThrow();
+ }finally{drop?.mockRestore();bytes.fill(0);}
 });
