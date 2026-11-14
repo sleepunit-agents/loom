@@ -83,7 +83,7 @@ it('checks current private/project/agent visibility and independent service type
   f.sharing.projects.other.agents = [];
   const agent: Viewer = { kind: 'agent', id: 'art' }, pollock: Viewer = { kind: 'member', id: 'pollock' }, svc: Viewer = { kind: 'service', id: 'svc' };
   expect(f.read('j', agent).ok).toBe(true); expect(f.read('private').ok).toBe(true);
-  for (const [job, viewer] of [['private', agent], ['private', pollock], ['project', agent], ['project', pollock], ['j', pollock], ['missing', agent], ['j', { kind: 'runner', id: 'a' }]] as [string, Viewer][])
+  for (const [job, viewer] of [['private', agent], ['private', pollock], ['project', pollock], ['j', pollock], ['missing', agent], ['j', { kind: 'runner', id: 'a' }]] as [string, Viewer][])
     expect(f.read(job, viewer)).toMatchObject({ ok: false, code: 'denied' });
   f.sharing.services.svc = { types: ['runtime.job'], operations: [] };
   expect(f.read('j', svc)).toMatchObject({ ok: false, code: 'denied' });
@@ -93,6 +93,9 @@ it('checks current private/project/agent visibility and independent service type
   expect(f.read('j', svc).ok).toBe(true); expect(f.read('private', svc)).toMatchObject({ ok: false, code: 'denied' });
   f.sharing.members.jonathan.agents = []; // Owner retains visible job access by central rule.
   expect(f.read('j').ok).toBe(true);
+  // The agent sees its own job independently of project membership.
+  expect(f.read('project', agent).ok).toBe(true);
+  f.put('project', { project: 'other', agent: 'mark' });
   f.sharing.projects.other.agents = ['art']; expect(f.read('project', agent).ok).toBe(true);
   f.sharing.projects.other.agents = []; expect(f.read('project', agent)).toMatchObject({ ok: false, code: 'denied' });
   f.sharing.services.svc.operations = []; expect(f.read('j', svc)).toMatchObject({ ok: false, code: 'denied' });

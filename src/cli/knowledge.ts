@@ -116,10 +116,6 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     }
 
     if (env.json) {
-      if (citations.length === 0) {
-        io.stderr('Error: at least one citation is required for knowledge write.\n');
-        return 1;
-      }
       const sourcing = citations.every((c) => c.source_kind === 'conversation') ? 'provisional' : 'sourced';
       const backend = createKnowledgeBackend(env.contextDir);
       try {

@@ -1,7 +1,7 @@
 /** The trusted conversation service. External callers enter through the data API;
  * built-in producers share this interface and the same tables, in every venue. */
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq, max } from 'drizzle-orm';
+import { and, asc, eq, max, ne } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, conversationPeople, turns, inbox, inboxRefs, inboxReads, digests, digestItems, jobs } from '../data/schema.js';
 
@@ -84,8 +84,8 @@ export class Conversations {
       const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
       if (conversation.job !== jobId || job?.conversation !== conversationId || job.agent !== conversation.agent || job.state !== 'running') throw new Error('Job is not running in this conversation');
       const at = this.now();
-      this.db.update(inbox).set({ state: 'taken', job: jobId, takenAt: at, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'))).run();
-      return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.job, jobId), eq(inbox.state, 'taken'))).orderBy(asc(inbox.seq)).all();
+      this.db.update(inbox).set({ state: 'taken', job: jobId, takenAt: at, changedAt: at }).where(and(eq(inbox.conversation, conversationId), eq(inbox.toKind, 'agent'), eq(inbox.to, conversation.agent), eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).run();
+      return this.db.select().from(inbox).where(and(eq(inbox.conversation, conversationId), eq(inbox.job, jobId), eq(inbox.state, 'taken'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.seq)).all();
     });
   }
 
