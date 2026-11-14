@@ -548,3 +548,56 @@ it('uses real scheduled-body provenance for agent-authored six-hour self-rearm s
  const unbound=f.token('agent:art');
  expect(await clockCall(unbound,'in',input,'unbound-rearm')).toMatchObject({ok:true,value:{state:'pending'}});
 });
+it.each([false,true].flatMap(staging=>['once','recurring','runNow'].map(mode=>({staging,mode}))))('delivers private timed words only to its authenticated body ($mode, staging=$staging)',async ({staging,mode})=>{
+ const access=structuredClone(fixtureSharing()),f=await setup(staging,()=>access);access.services=builtinServices(f.app.db);
+ const input={agent:'art',member:'jonathan',project:'pond',prompt:'PRIVATE timed household words',note:'private'};
+ const made=await f.app.operations.callAsync('socket',owner,mode==='once'?'clock.in':'clock.scheduleSet',mode==='once'?{...input,when:'1s'}:{...input,id:'private-care',at:'03:31'},'private-timer',true);
+ expect(made.ok).toBe(true);
+ if(mode==='runNow')expect(await f.app.operations.callAsync('socket',owner,'clock.scheduleRun',{id:'private-care'},'private-run',true)).toMatchObject({ok:true});
+ const work=wakes(f.app.db).filter(w=>w.member==='jonathan').sort((a,b)=>a.due-b.due)[0];
+ f.clock.advance(work.due-f.clock.now());await settle();
+ if(mode!=='once')expect(wakes(f.app.db).filter(w=>w.schedule==='private-care'&&w.state==='pending')).toHaveLength(1);
+ expect(wake(f.app.db,work.id)).toMatchObject({state:'firing'});
+ const job=f.store.ids('job')[0];expect(job).toBeTruthy();
+ expect(f.store.read('job',job)).toMatchObject({member:'jonathan',project:'pond'});
+ expect(await f.post(f.other,'claimJob',{job})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ if(staging){
+  expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
+  expect(f.call('core.releaseEffect',{id:`runtime:input:${job}`}).ok).toBe(true);
+ }
+ const payload=await f.post(f.runner,'takeInput',{job});
+ expect(payload).toMatchObject({ok:true,value:{brief:CLOCK_BRIEF,credential:expect.any(String)}});
+ expect(JSON.stringify(payload)).not.toContain(work.prompt);
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+ expect(wake(f.app.db,work.id)?.state).toBe('fired');
+ const body=payload.value.credential;
+ for(const token of [f.runner,f.member,f.token('agent:art')])
+  expect(await f.post(token,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ if(staging){
+  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'conflict'});
+  expect(f.call('core.releaseEffect',{id:`runtime:clock-read:${job}:1`}).ok).toBe(true);
+ }
+ const read=await f.post(body,'readConversation',{});
+ expect(read).toMatchObject({ok:true,value:{messages:[{text:work.prompt}]}});
+ const committed=wake(f.app.db,work.id)!;
+ f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify({...committed,member:'pollock'}),work.id);
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(body,'acknowledgeClockInput',{through:read.value.messages[0].seq})).toMatchObject({ok:false,code:'denied'});
+ f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(committed),work.id);
+ // Revocation is checked on both read and ACK, including a replay receipt.
+ access.members.jonathan.agents=[];
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(body,'acknowledgeClockInput',{through:read.value.messages[0].seq})).toMatchObject({ok:false,code:'denied'});
+ access.members.jonathan.agents=['art'];access.projects.pond.agents=[];
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ access.projects.pond.agents=['art'];
+ expect(await f.post(body,'acknowledgeClockInput',{through:read.value.messages[0].seq})).toMatchObject({ok:true});
+ // A self-rearm inherits member/project from the owning Clock body.
+ const chain=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'private-chain',input:{agent:'art',prompt:'PRIVATE chained words',note:'chain',when:'1s'}})})).json();
+ expect(chain).toMatchObject({ok:true});expect(JSON.stringify(chain)).not.toContain('PRIVATE chained words');
+ const next=wakes(f.app.db).find(w=>w.prompt==='PRIVATE chained words')!;
+ expect(next).toMatchObject({member:'jonathan',project:'pond',authorship:{member:'jonathan',project:'pond'}});
+ f.clock.advance(1000);await settle();expect(wake(f.app.db,next.id)?.state).toBe('firing');
+ expect(f.store.ids('job')).toHaveLength(2);
+});

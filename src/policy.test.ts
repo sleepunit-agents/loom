@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { maySee, mayAct, mayCreate, mayMove, mayControlAuthoredWork, mayReuseAuthoredWork, consistentWorkAuthority, type WorkAuthority, type WorkAuthorship, type Viewer, type RecordScope } from './policy.js';
+import { mayRunPrivateWork, maySee, mayAct, mayCreate, mayMove, mayControlAuthoredWork, mayReuseAuthoredWork, consistentWorkAuthority, type WorkAuthority, type WorkAuthorship, type Viewer, type RecordScope } from './policy.js';
 import { fixtureSharing } from './fixture.js';
 const sharing = fixtureSharing();
 const viewers: Viewer[] = [
@@ -135,4 +135,21 @@ describe('authored work authority',()=>{
     expect(consistentWorkAuthority(undefined,{service:'restricted'})).toBe(true);
     expect(mayControlAuthoredWork({kind:'agent',id:'art'},record,access,original,undefined)).toBe(false);
   });
+});
+
+it('requires current independent member and project grants for owning private execution, without visibility',()=>{
+ const access=fixtureSharing(),scope={member:'pollock',agent:'pond-bot',project:'pond'};
+ expect(mayRunPrivateWork(scope,access)).toBe(true);
+ expect(mayRunPrivateWork({...scope,agent:'art'},access)).toBe(false);
+ expect(mayRunPrivateWork({...scope,project:'other'},access)).toBe(false);
+ expect(mayRunPrivateWork({...scope,member:'missing'},access)).toBe(false);
+ expect(mayRunPrivateWork({agent:'art'},access)).toBe(false);
+ access.projects.pond.agents=[];expect(mayRunPrivateWork(scope,access)).toBe(false);
+ access.projects.pond.agents=['pond-bot'];access.projects.pond.members=[];
+ expect(mayRunPrivateWork(scope,access)).toBe(false);
+ expect(mayRunPrivateWork({member:'jonathan',agent:'pond-bot',project:'pond'},access)).toBe(false);
+ access.members.jonathan.agents.push('pond-bot');
+ expect(mayRunPrivateWork({member:'jonathan',agent:'pond-bot',project:'pond'},access)).toBe(true);
+ for(const viewer of [{kind:'agent',id:'pond-bot'},{kind:'service',id:'clock'},{kind:'runner',id:'a'}] as Viewer[])
+  expect(maySee(viewer,{...scope,type:'wake'},access)).toBe(false);
 });

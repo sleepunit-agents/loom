@@ -17,7 +17,7 @@ Clock with `src/pieces/runtime/clock.ts`. The bridge accepts plain prompt wakes
 only after agent house configuration and waits for runner-confirmed running or
 waiting state. Queue acceptance alone is never reported as started. Missing
 features (lane files, continuations, slots, approvals, local wakes) remain held;
-private body delivery and account selection are refused. Public prompt conversation delivery is implemented below. Native transport
+Standalone file, local, approval, slot and continuation delivery remain held. Private timed prompt delivery is implemented below. Public prompt conversation delivery is implemented below. Native transport
 interrupt/resume and authenticated continuation resolution remain unfinished.
 
 Runtime now dispatches public prompt work as the Clock service, retaining
@@ -42,7 +42,7 @@ by the proved own body, not a read or a household action. For these private fili
 id/state/due (and the parked-on id), never words or provenance. The member's signed
 window remains the only ordinary private read path. Exports omit these rows and
 retry/event copies, as for private local wakes; this is not a restorable backup.
-Private one-offs remain permission-held before dispatch, without member impersonation.
+Private timed prompt dispatch now uses the owning source and current grants, as described below; private local work remains held.
 Unbound/copy-only calls are unknown, never owner by inference. Existing stored work
 is not backfilled. Ordinary schedules now save original authorship and carry it into occurrences.
 Replacement and run-now meet original and caller principals: owner is widest,
@@ -56,7 +56,7 @@ semantics remain independent. No mutation/join or delivery authority is added he
 
 Remaining work: conversation-bound mutation/join, scope-preserving private body
 schedule control and household lane authorship, continuation issuer/handle/
-deadline/place validation, real service-identity dispatch and private delivery,
+deadline/place validation, native delivery capabilities,
 and other imported provenance recovery or explicit deliberate drops. These are
 gaps, not deliberate drops. Archived strings and caller-supplied handles cannot
 fill them.
@@ -1262,3 +1262,36 @@ file-backed lane hold, not standalone file-path delivery or native resume.
 | --- | --- |
 | Household lane with filed inline/file text, no local marker or slot | Existing Clock service acceptance, Runtime runner start, bound conversation read and ACK; stored text, no daemon file access |
 | Standalone `wake in --file` | Still held: worker-checkout file delivery remains work |
+
+
+## Private timed prompt delivery
+
+Private stored prompts now use the same owning Clock service acceptance and
+Runtime inbox as public prompts. This includes one-offs, recurring occurrences,
+run-now and private self-rearm. The owning committed source must retain the exact
+member, agent, project, credential service and original steering principal.
+Saved attribution limits dispatch; it never constructs a member caller. Central
+policy rechecks the member's agent grant and independent project access for both
+member and agent. Household ownership retains its existing project semantics.
+Every named steering person must still have authority over the private source.
+
+Runtime binds member separately in the permanent source receipt, job and wake
+binding. The existing owning body role issues the credential and guards reads and
+ACKs with current source/configuration checks. The assigned runner may claim and
+report that exact private job but receives only the generic inbox brief, without
+private words or registry read access. Staging holds both runner input and inbox
+words. Source changes and grant revocation deny reads and ACKs; missing authority
+never counts as cancellation. Self-rearm inherits the bound member and project.
+
+Fixtures: `start.test.ts` covers one-off/recurring/run-now × staging/normal,
+runner and unbound-token read denial, member source tampering, grant revocation,
+exact words and private self-rearm. `policy.test.ts` covers independent grants
+and unchanged generic visibility. Standalone file paths, local, approval, slot,
+continuation and native transport resume remain separate outstanding work.
+No UI changes or new private UX evidence are claimed by this delivery slice.
+
+| Old behavior | New behavior in this slice |
+| --- | --- |
+| Private timed prompt, recurring and run-now | Committed Clock source → Runtime scoped job → assigned runner confirmation → authenticated inbox/read/ACK |
+| Private prompt self-rearm | Runtime supplies member/project/service/principal; the new private occurrence uses the same owning delivery path |
+| Private local/approval wake | Still held; requires its separate trusted local execution boundary |
