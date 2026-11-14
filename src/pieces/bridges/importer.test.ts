@@ -213,3 +213,15 @@ it('identifies selected Runtime source fields without pretending they came from 
  const f=fixture();f.store('runtime',[['gates','art',{people:{jonathan:{discord:true}}}]]);
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('Invalid offline Bridges configuration inventory: runtime.db at $["gates"]["art"]["people"]["jonathan"]["discord"]');
 });
+
+for(const [label,household,part,path] of [
+ ['bot',{guild:'789'},{bot:false},'["channels"]["art"]["bot"]'],
+ ['roles',{guild:'789'},{bot:'100',bot_role:[true]},'["channels"]["art"]["bot_role"]'],
+ ['channel name',{guild:'789',channel_names:{'300':false}},{bot:'100'},'["routes"]["household"]["channel_names"]["300"]'],
+ ['thread',{guild:'789'},{bot:'100',threads:{'400':{parent:false}}},'["channels"]["art"]["threads"]["400"]["parent"]'],
+ ['flag',{guild:'789'},{bot:'100',answers:{'300':'work'},flags:{'300':{peer:'PRIVATE_VALUE'}}},'["channels"]["art"]["flags"]["300"]["peer"]'],
+ ['extra',{guild:'789'},{bot:'100',extra:{notify:{general:false}}},'["channels"]["art"]["extra"]["notify"]["general"]'],
+] as const)it(`identifies the original accepted-store ${label} field`,()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',household],['channels','art',part]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(`Invalid offline Bridges configuration inventory: shuttle.db at $${path}`);
+});
