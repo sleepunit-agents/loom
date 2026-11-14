@@ -42,7 +42,7 @@ export async function startSecretWorkers(app:Foundation,sharing:()=>Sharing,effe
   try {
     config=snapshotSecretWorkers(config);
     if(app.db.inTransaction||config.authority.socket===config.admission.socket
-      ||!config.workers.length||config.workers.length>1024)throw failed();
+      ||config.workers.length>1024)throw failed();
     holder=localHolderHandoff(config.holder.config,config.holder.fingerprint);
     const originalHolder=holder;
     const resolve=(selected:SecretWorkersConfig['workers'])=>{
