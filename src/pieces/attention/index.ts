@@ -1,3 +1,4 @@
+import { statement } from '../../core/db/index.js';
 import { installOutcomes } from './outcomes.js';
 import { createHash } from 'node:crypto';
 import { registerBuiltinService } from '../../core/services.js';
@@ -45,10 +46,10 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   installRetention(db, operations, live, sharing);
   installWaitChecks(db, operations, sharing, waits);
   const readAsk = (key: string): Ask | undefined => {
-    const row = db.prepare('SELECT record FROM attention_asks WHERE id=?').get(key) as { record: string } | undefined;
+    const row = statement(db, 'SELECT record FROM attention_asks WHERE id=?').get(key) as { record: string } | undefined;
     return row && JSON.parse(row.record) as Ask;
   };
-  const saveAsk = (record: Ask) => db.prepare('INSERT INTO attention_asks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, JSON.stringify(record));
+  const saveAsk = (record: Ask) => statement(db, 'INSERT INTO attention_asks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, JSON.stringify(record));
   let tasksRegistered = false, approvalsRegistered = false;
   let approvalCurrent: ((ask: Ask) => boolean) | undefined;
   const sourceCurrent = (record: Ask | AgentStatus) => {
@@ -87,7 +88,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   });
   registerAttentionAnnouncements(operations, member => {
     const viewer={kind:'member' as const,id:member},access=sharing();
-    return (db.prepare('SELECT record FROM attention_asks ORDER BY id').all() as {record:string}[]).flatMap(row=>{
+    return (statement(db, 'SELECT record FROM attention_asks ORDER BY id').all() as {record:string}[]).flatMap(row=>{
       const ask=JSON.parse(row.record) as Ask;
       if(ask.state!=='open'||!sourceCurrent(ask)||!maySee(viewer,scoped('attention.ask',ask),access))return [];
       return [{key:`attention:${announcementKey(ask)}`,url:`/p/inbox-preview/ask/${encodeURIComponent(ask.id)}`}];
@@ -134,7 +135,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   operations.register(operation({ name: 'attention.pendingWaits', input: z.object({}).strict(), output: z.array(z.string()),
     may: viewer => viewer.kind !== 'service' || mayAct(viewer, { type: 'attention.ask' }, sharing(), 'act', 'attention.pendingWaits'),
     run(ctx) {
-      return (db.prepare('SELECT record FROM attention_asks ORDER BY id').all() as { record: string }[])
+      return (statement(db, 'SELECT record FROM attention_asks ORDER BY id').all() as { record: string }[])
         .map(row => JSON.parse(row.record) as Ask)
         .filter(ask => ask.state === 'open' && !ask.sourceManaged && !!ask.waits_on && maySee(ctx.viewer, scoped('attention.ask', ask), sharing()))
         .map(ask => ask.id);
@@ -158,7 +159,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       if (input.answer.kind === 'words' && record.member !== undefined) return failure('invalid', 'Reply in the private conversation');
       if (input.answer.kind === 'words' && managed(record) && record.answers !== 'words') return failure('invalid', 'Ask does not accept words');
       if ((input.answer.kind === 'yes' || input.answer.kind === 'no') && record.answers === 'words') return failure('invalid', 'Ask needs words');
-      const publicConversation = record.source.kind === 'conversation' ? db.prepare('SELECT record FROM attention_conversations WHERE id=?').get(record.source.id) as {record:string}|undefined : undefined;
+      const publicConversation = record.source.kind === 'conversation' ? statement(db, 'SELECT record FROM attention_conversations WHERE id=?').get(record.source.id) as {record:string}|undefined : undefined;
       const publicClock = !!publicConversation && JSON.parse(publicConversation.record).venue === 'runtime-clock';
       // The owning public inbox carries verbatim input. Other existing answer
       // sources retain their established normalized wording contract.
@@ -187,22 +188,22 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   }));
   operations.register(operation({ name: 'attention.reportStatus', write: true, input: status, output: z.unknown(),
     may: (viewer, input) => {
-      const row = db.prepare('SELECT record FROM attention_statuses WHERE id=?').get(input.id) as { record: string } | undefined;
+      const row = statement(db, 'SELECT record FROM attention_statuses WHERE id=?').get(input.id) as { record: string } | undefined;
       const old: AgentStatus | undefined = row && JSON.parse(row.record);
       // Status updates cannot move an existing record to another audience.
       return mayCreate(viewer, scoped('attention.agent', input), sharing(), 'attention.reportStatus') && (!old || ['project', 'agent', 'member'].every(k => old[k as keyof AgentStatus] === input[k as keyof typeof input]));
     },
     run(ctx, input) {
       const record: AgentStatus = { ...input, changedAt: ctx.now };
-      db.prepare('INSERT INTO attention_statuses VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, JSON.stringify(record));
+      statement(db, 'INSERT INTO attention_statuses VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, JSON.stringify(record));
       ctx.changed('attention.agent', record.id); return record;
     },
   }));
   for (const [name, table] of [['attention.ask', 'attention_asks'], ['attention.agent', 'attention_statuses']] as const) live.register({
     name,
-    ids: () => (db.prepare(`SELECT id FROM ${table} ORDER BY id`).all() as { id: string }[]).map(r => r.id),
+    ids: () => (statement(db, `SELECT id FROM ${table} ORDER BY id`).all() as { id: string }[]).map(r => r.id),
     read(key, viewer) {
-      const row = db.prepare(`SELECT record FROM ${table} WHERE id=?`).get(key) as { record: string } | undefined;
+      const row = statement(db, `SELECT record FROM ${table} WHERE id=?`).get(key) as { record: string } | undefined;
       if (!row) return;
       const record = JSON.parse(row.record) as Ask | AgentStatus;
       if (!sourceCurrent(record) || !maySee(viewer, scoped(name, record), sharing())) return;
@@ -246,7 +247,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       }
       // Withdrawing a source removes its words rather than preserving stale wording
       // after reassignment/deletion. Read marks remain facts about this source id.
-      for (const row of db.prepare('SELECT record FROM attention_asks').all() as {record:string}[]) {
+      for (const row of statement(db, 'SELECT record FROM attention_asks').all() as {record:string}[]) {
         const old = JSON.parse(row.record) as Ask;
         if (!managed(old) || old.source.kind !== 'task' || seen.has(old.id) || old.state === 'resolved') continue;
         const record = withdrawn(old); record.changedAt = ctx.now;

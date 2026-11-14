@@ -1,3 +1,4 @@
+import { statement } from '../../core/db/index.js';
 import { operation } from './commands.js';
 /** Desk metadata only. Delivered words are rejected before retry storage or SQL. */
 import { createHash } from 'node:crypto';
@@ -36,7 +37,7 @@ export const conversationId = (agent: string, venue: string, place: string) => `
 const key = z.string().regex(/^cv-[a-f0-9]{12}$/);
 export function installConversations(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
   const read = <T>(table: string, id: string): T | undefined => {
-    const row = db.prepare(`SELECT record FROM ${table} WHERE id=?`).get(id) as { record: string } | undefined;
+    const row = statement(db, `SELECT record FROM ${table} WHERE id=?`).get(id) as { record: string } | undefined;
     return row && JSON.parse(row.record) as T;
   };
   const conversation = (id: string) => read<Conversation>('attention_conversations', id);
@@ -48,7 +49,7 @@ export function installConversations(db: Db, operations: Operations, live: Live,
     },
     run(ctx, input) {
       const t = input.turn, id = conversationId(input.agent, t.venue, t.place);
-      if (db.prepare('SELECT 1 FROM attention_days WHERE conversation=? AND day=?').get(id, t.at.slice(0, 10))) return failure('conflict', 'A folded UTC day takes no more turns');
+      if (statement(db, 'SELECT 1 FROM attention_days WHERE conversation=? AND day=?').get(id, t.at.slice(0, 10))) return failure('conflict', 'A folded UTC day takes no more turns');
       const c: Conversation = conversation(id) ?? { id, agent: input.agent, ...(input.project ? { project: input.project } : {}), ...(input.member ? { member: input.member } : {}), venue: t.venue, place: t.place, label: null, people: [], agents: [], projects: [], started: t.at, last: t.at, turns: 0 };
       if (t.from.kind === 'person' && !c.people.includes(t.from.slug) && c.people.length < 32) c.people.push(t.from.slug);
       if (t.from.kind === 'agent' && t.from.id !== c.agent && !c.agents.includes(t.from.id) && c.agents.length < 16) c.agents.push(t.from.id);
@@ -56,15 +57,15 @@ export function installConversations(db: Db, operations: Operations, live: Live,
       const { label, ...metadata } = t;
       const record: Turn = { ...metadata, agent: c.agent, ...(c.project ? { project: c.project } : {}), ...(c.member ? { member: c.member } : {}), id: `${id}:${seq}`, conversation: id, seq, writer: ctx.viewer };
       if (t.kind === 'reply') {
-        const lastReply = (db.prepare("SELECT max(seq) AS seq FROM attention_turns WHERE conversation=? AND json_extract(record,'$.kind')='reply'").get(id) as { seq: number | null }).seq ?? 0;
+        const lastReply = (statement(db, "SELECT max(seq) AS seq FROM attention_turns WHERE conversation=? AND json_extract(record,'$.kind')='reply'").get(id) as { seq: number | null }).seq ?? 0;
         // Arrival order is the old contract (ORDER BY seq), including delayed deliveries.
-        const waiting = db.prepare("SELECT record FROM attention_turns WHERE conversation=? AND seq>? AND json_extract(record,'$.kind')='message' ORDER BY seq LIMIT 1").get(id, lastReply) as { record: string } | undefined;
+        const waiting = statement(db, "SELECT record FROM attention_turns WHERE conversation=? AND seq>? AND json_extract(record,'$.kind')='message' ORDER BY seq LIMIT 1").get(id, lastReply) as { record: string } | undefined;
         if (waiting) record.latency_ms = Math.max(0, Date.parse(t.at) - Date.parse((JSON.parse(waiting.record) as Turn).at));
       }
       c.label = label ?? c.label; c.turns = seq;
       c.started = t.at < c.started ? t.at : c.started; c.last = t.at > c.last ? t.at : c.last;
-      db.prepare('INSERT INTO attention_conversations VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(id, JSON.stringify(c));
-      db.prepare('INSERT INTO attention_turns VALUES (?,?,?,?)').run(record.id, id, seq, JSON.stringify(record));
+      statement(db, 'INSERT INTO attention_conversations VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(id, JSON.stringify(c));
+      statement(db, 'INSERT INTO attention_turns VALUES (?,?,?,?)').run(record.id, id, seq, JSON.stringify(record));
       ctx.changed('attention.conversation', id); ctx.changed('attention.turn', record.id);
       return { conversation: id, seq, ...(record.latency_ms !== undefined ? { latency_ms: record.latency_ms } : {}) };
     },
@@ -76,17 +77,17 @@ export function installConversations(db: Db, operations: Operations, live: Live,
   operations.register(operation({ name: 'attention.conversations', input: z.object({ agent: agentId.optional(), people: slug.optional(), venue: z.string().optional(), since: at.optional(), limit: z.number().int().min(1).max(100).default(100) }).strict(), output: z.unknown(),
     may: v => v.kind !== 'service' || mayAct(v, { type: 'attention.conversation' }, sharing(), 'act', 'attention.conversations'),
     run(ctx, f) {
-      return (db.prepare('SELECT record FROM attention_conversations').all() as { record: string }[]).map(r => JSON.parse(r.record) as Conversation)
+      return (statement(db, 'SELECT record FROM attention_conversations').all() as { record: string }[]).map(r => JSON.parse(r.record) as Conversation)
         .filter(c => maySee(ctx.viewer, { type: 'attention.conversation', ...c }, sharing()) && (!f.agent || c.agent === f.agent) && (!f.people || c.people.includes(f.people)) && (!f.venue || c.venue === f.venue) && (!f.since || c.last > f.since))
         .sort((a, b) => b.last.localeCompare(a.last) || a.id.localeCompare(b.id)).slice(0, f.limit);
     },
   }));
   operations.register(operation({ name: 'attention.turns', input: z.object({ conversation: key, after: z.number().int().min(0).default(0), limit: z.number().int().min(1).max(500).default(100) }).strict(), output: z.unknown(),
     may: (v, input) => { const c = conversation(input.conversation); return !!c && maySee(v, { type: 'attention.turn', ...c }, sharing()); },
-    run: (_ctx, input) => (db.prepare('SELECT record FROM attention_turns WHERE conversation=? AND seq>? ORDER BY seq LIMIT ?').all(input.conversation, input.after, input.limit) as { record: string }[]).map(r => JSON.parse(r.record)),
+    run: (_ctx, input) => (statement(db, 'SELECT record FROM attention_turns WHERE conversation=? AND seq>? ORDER BY seq LIMIT ?').all(input.conversation, input.after, input.limit) as { record: string }[]).map(r => JSON.parse(r.record)),
   }));
   for (const [name, table] of [['attention.conversation', 'attention_conversations'], ['attention.turn', 'attention_turns']] as const) live.register({
-    name, ids: () => (db.prepare(`SELECT id FROM ${table} ORDER BY id`).all() as { id: string }[]).map(r => r.id),
+    name, ids: () => (statement(db, `SELECT id FROM ${table} ORDER BY id`).all() as { id: string }[]).map(r => r.id),
     read(id, viewer) { const r = read<Conversation | Turn>(table, id); return r && maySee(viewer, { type: name, ...r }, sharing()) ? r as unknown as LiveRecord : undefined; },
     inScope: (r, parent) => parent === undefined || r.conversation === parent,
   });

@@ -1,3 +1,4 @@
+import { statement } from '../db/index.js';
 import { invalidateBuiltinServices, unregisterBuiltinServices } from '../services.js';
 import { createHash } from 'node:crypto';
 import type { z } from 'zod';
@@ -80,8 +81,8 @@ export class Operations {
   close() { this.stopExpiry?.(); unregisterBuiltinServices(this); }
   private expire() {
     this.stopExpiry?.();
-    this.db.prepare('DELETE FROM core_operations WHERE expires <= ?').run(this.clock.now());
-    const row = this.db.prepare('SELECT min(expires) AS next FROM core_operations').get() as { next: number | null };
+    statement(this.db, 'DELETE FROM core_operations WHERE expires <= ?').run(this.clock.now());
+    const row = statement(this.db, 'SELECT min(expires) AS next FROM core_operations').get() as { next: number | null };
     this.stopExpiry = row.next === null ? undefined : this.clock.at(row.next, () => this.expire());
   }
   register<I>(op: Operation<I>) {
@@ -107,7 +108,7 @@ export class Operations {
       result = this.db.transaction((): Result => {
         const now = this.clock.now();
         const ctx: Context = {db:this.db, viewer, now, receipt, changed:(type,id)=>changes.push({type,id})};
-        const old = this.db.prepare('SELECT name,input_hash FROM core_operations WHERE viewer=? AND id=?').get(receipt.viewer,receipt.id) as {name:string;input_hash:string}|undefined;
+        const old = statement(this.db, 'SELECT name,input_hash FROM core_operations WHERE viewer=? AND id=?').get(receipt.viewer,receipt.id) as {name:string;input_hash:string}|undefined;
         if (old && (old.name !== receipt.name || old.input_hash !== receipt.inputHash)) throw new OperationError('conflict','Operation id already used for different input');
         let recovered: RecoveredWrite | undefined;
         for (const recover of this.recoveries) {
@@ -121,7 +122,7 @@ export class Operations {
           throw new Error('Recovery unavailable');
         const answer: Result = {ok:true,value:op.output.parse(recovered.value ?? null)};
         const serialized = JSON.stringify(answer);
-        this.db.prepare('INSERT INTO core_operations VALUES (?,?,?,?,?,?) ON CONFLICT(viewer,id) DO UPDATE SET result=excluded.result,expires=excluded.expires')
+        statement(this.db, 'INSERT INTO core_operations VALUES (?,?,?,?,?,?) ON CONFLICT(viewer,id) DO UPDATE SET result=excluded.result,expires=excluded.expires')
           .run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,serialized,recovered.expires);
         return JSON.parse(serialized) as Result;
       })();
@@ -135,7 +136,7 @@ export class Operations {
   }
   /** Trusted metadata for local post-call receipts. Never returns input or output. */
   retryDeadline(viewer: Viewer, id: string, name: string): number | undefined {
-    const row=this.db.prepare('SELECT name,expires FROM core_operations WHERE viewer=? AND id=?').get(canonical(viewer),id) as {name:string;expires:number}|undefined;
+    const row=statement(this.db, 'SELECT name,expires FROM core_operations WHERE viewer=? AND id=?').get(canonical(viewer),id) as {name:string;expires:number}|undefined;
     return row?.name===name && row.expires>this.clock.now() ? row.expires : undefined;
   }
   has(name: string) { return this.ops.has(name); }
@@ -191,8 +192,8 @@ export class Operations {
         if ((op.windowOnly || (typeof op.recheckPolicy === 'function' ? op.recheckPolicy(viewer, parsed.data) : op.recheckPolicy)) && !op.may(viewer, parsed.data, this.db)) return failure('denied', 'Permission denied');
         const who = canonical(viewer), body = op.inputHash ? op.inputHash(canonical(parsed.data), {viewer: who, actor: viewer, input: parsed.data, id, name}) : createHash('sha256').update(canonical(parsed.data)).digest('hex');
         if (op.write) {
-          this.db.prepare('DELETE FROM core_operations WHERE expires <= ?').run(now);
-          const old = this.db.prepare('SELECT * FROM core_operations WHERE viewer = ? AND id = ?').get(who, id) as { name: string; input_hash: string; result: string } | undefined;
+          statement(this.db, 'DELETE FROM core_operations WHERE expires <= ?').run(now);
+          const old = statement(this.db, 'SELECT * FROM core_operations WHERE viewer = ? AND id = ?').get(who, id) as { name: string; input_hash: string; result: string } | undefined;
           if (old) {
             if (old.name !== name || old.input_hash !== body) return failure('conflict', 'Operation id already used for different input');
             op.validateReplay?.(viewer, parsed.data, prepared);
@@ -222,7 +223,7 @@ export class Operations {
         }
         const answer: Result = { ok: true, value: op.output.parse(value ?? null) };
         const serialized = JSON.stringify(answer);
-        if (op.write) this.db.prepare('INSERT INTO core_operations VALUES (?, ?, ?, ?, ?, ?)').run(who, id, name, body, serialized, replay?.expires ?? now + 30 * 86400_000);
+        if (op.write) statement(this.db, 'INSERT INTO core_operations VALUES (?, ?, ?, ?, ?, ?)').run(who, id, name, body, serialized, replay?.expires ?? now + 30 * 86400_000);
         return JSON.parse(serialized) as Result;
       })();
     } catch (e) { result = e instanceof OperationError ? failure(e.code, e.message) : failure('unavailable', 'Operation could not complete'); }

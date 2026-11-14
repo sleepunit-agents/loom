@@ -1,3 +1,4 @@
+import { statement } from '../../core/db/index.js';
 import { createHash } from 'node:crypto';
 import { OperationError, type Context, type Db } from '../../core/index.js';
 import type { ApprovalNotice, ApprovalAskFiling, Ask } from './role.js';
@@ -19,26 +20,26 @@ export function approvalNoticeFiling(db: Db): Pick<ApprovalAskFiling,'syncNotice
     }
     let dirty=false;
     for(const [id,record] of records) {
-      const row=db.prepare('SELECT record FROM attention_asks WHERE id=?').get(id) as {record:string}|undefined;
+      const row=statement(db, 'SELECT record FROM attention_asks WHERE id=?').get(id) as {record:string}|undefined;
       if(row && row.record!==JSON.stringify(record)) {
         const old=JSON.parse(row.record) as Ask;
         if(!(old.sourceManaged && old.source.kind==='piece' && old.source.id==='approvals-notices' && old.ask==='Reported step no longer retained' && JSON.stringify({...old,ask:record.ask})===JSON.stringify(record)))throw new OperationError('conflict',old.sourceManaged && old.source.kind==='piece' && old.source.id==='approvals-notices'?'Notice event changed':'Notice belongs to another source');
       }
       if(row?.record===JSON.stringify(record))continue;
       dirty=true;
-      if(apply){db.prepare('INSERT INTO attention_asks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(id,JSON.stringify(record));ctx.changed('attention.ask',id);}
+      if(apply){statement(db, 'INSERT INTO attention_asks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(id,JSON.stringify(record));ctx.changed('attention.ask',id);}
     }
-    for(const row of db.prepare('SELECT id,record FROM attention_asks').all() as {id:string;record:string}[]) {
+    for(const row of statement(db, 'SELECT id,record FROM attention_asks').all() as {id:string;record:string}[]) {
       const old=JSON.parse(row.record) as Ask;
       if(!old.sourceManaged || old.source.kind!=='piece' || old.source.id!=='approvals-notices' || records.has(row.id))continue;
-      const read=db.prepare('SELECT 1 FROM attention_read_marks WHERE ask=? LIMIT 1').get(row.id);
+      const read=statement(db, 'SELECT 1 FROM attention_read_marks WHERE ask=? LIMIT 1').get(row.id);
       // Read facts reference this row. Keep a hidden word-free tombstone rather
       // than deleting/reassigning those facts or failing the next owning write.
       if(read && old.ask==='Reported step no longer retained' && old.resolution==='Continue in Approvals')continue;
       dirty=true;
       if(apply){
-        if(read)db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify({...old,ask:'Reported step no longer retained',resolution:'Continue in Approvals'}),row.id);
-        else db.prepare('DELETE FROM attention_asks WHERE id=?').run(row.id);
+        if(read)statement(db, 'UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify({...old,ask:'Reported step no longer retained',resolution:'Continue in Approvals'}),row.id);
+        else statement(db, 'DELETE FROM attention_asks WHERE id=?').run(row.id);
         ctx.changed('attention.ask',row.id);
       }
     }

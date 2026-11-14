@@ -1,3 +1,4 @@
+import { statement } from '../../core/db/index.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { mayAct, maySee, type Db, type Live, type LiveRecord, type Operations, type Result, type Sharing, type Viewer } from '../../core/index.js';
@@ -38,7 +39,7 @@ export function installOutcomes(db: Db, operations: Operations, live: Live, shar
   const scope = (member: string) => ({type:'attention.outcome',member});
   const can = (viewer: Viewer) => viewer.kind === 'member' && mayAct(viewer,scope(viewer.id),sharing());
   const read = (id: string): ActionOutcome | undefined => {
-    const row=db.prepare('SELECT record FROM attention_outcomes WHERE id=?').get(id) as {record:string}|undefined;
+    const row=statement(db, 'SELECT record FROM attention_outcomes WHERE id=?').get(id) as {record:string}|undefined;
     return row && JSON.parse(row.record) as ActionOutcome;
   };
   live.observeWindowCalls(({viewer,name,id,retryUntil,result}) => {
@@ -49,29 +50,29 @@ export function installOutcomes(db: Db, operations: Operations, live: Live, shar
     const changes: {type:string;id:string}[]=[];
     db.transaction(() => {
       const now=operations.clock.now();
-      db.prepare('DELETE FROM attention_outcome_seen WHERE expires<=?').run(now);
-      if (db.prepare('SELECT id FROM attention_outcome_seen WHERE id=?').get(key)) return;
+      statement(db, 'DELETE FROM attention_outcome_seen WHERE expires<=?').run(now);
+      if (statement(db, 'SELECT id FROM attention_outcome_seen WHERE id=?').get(key)) return;
       const ok=succeeded(name,result);
       const record: ActionOutcome={id:`outcome-${randomUUID()}`,member:viewer.id,at:now,order:0,ok,text:`${action.label}: ${ok?'saved':'could not be saved'}.`,source:action.source,sourceLabel:action.sourceLabel,page:action.page,operation:name};
-      const inserted=db.prepare('INSERT INTO attention_outcomes(id,member,record) VALUES (?,?,?)').run(record.id,viewer.id,JSON.stringify(record));
+      const inserted=statement(db, 'INSERT INTO attention_outcomes(id,member,record) VALUES (?,?,?)').run(record.id,viewer.id,JSON.stringify(record));
       record.order=Number(inserted.lastInsertRowid);
-      db.prepare('UPDATE attention_outcomes SET record=? WHERE id=?').run(JSON.stringify(record),record.id);
-      db.prepare('INSERT INTO attention_outcome_seen VALUES (?,?)').run(key,retryUntil ?? now+30*86400_000);
+      statement(db, 'UPDATE attention_outcomes SET record=? WHERE id=?').run(JSON.stringify(record),record.id);
+      statement(db, 'INSERT INTO attention_outcome_seen VALUES (?,?)').run(key,retryUntil ?? now+30*86400_000);
       changes.push({type:'attention.outcome',id:record.id});
-      const excess=db.prepare('SELECT id FROM attention_outcomes WHERE member=? ORDER BY ordinal DESC LIMIT -1 OFFSET 50').all(viewer.id) as {id:string}[];
-      for (const row of excess) { db.prepare('DELETE FROM attention_outcomes WHERE id=?').run(row.id); changes.push({type:'attention.outcome',id:row.id}); }
+      const excess=statement(db, 'SELECT id FROM attention_outcomes WHERE member=? ORDER BY ordinal DESC LIMIT -1 OFFSET 50').all(viewer.id) as {id:string}[];
+      for (const row of excess) { statement(db, 'DELETE FROM attention_outcomes WHERE id=?').run(row.id); changes.push({type:'attention.outcome',id:row.id}); }
     })();
     if(changes.length) live.changed(changes);
   });
   operations.register(operation({name:'attention.outcomes',input:z.object({}).strict(),output:z.unknown(),may:can,
-    run(ctx) {return (db.prepare('SELECT record FROM attention_outcomes WHERE member=? ORDER BY ordinal DESC').all(ctx.viewer.id) as {record:string}[]).map(row=>JSON.parse(row.record));},
+    run(ctx) {return (statement(db, 'SELECT record FROM attention_outcomes WHERE member=? ORDER BY ordinal DESC').all(ctx.viewer.id) as {record:string}[]).map(row=>JSON.parse(row.record));},
   }));
   operations.register(operation({name:'attention.readOutcome',write:true,input:z.object({id:z.string().min(1).max(200)}).strict(),output:z.unknown(),
     may(viewer,input){const record=read(input.id);return !!record && can(viewer) && mayAct(viewer,scope(record.member),sharing());},
-    run(ctx,input){const record=read(input.id)!;if(record.readAt===undefined){record.readAt=ctx.now;db.prepare('UPDATE attention_outcomes SET record=? WHERE id=?').run(JSON.stringify(record),record.id);ctx.changed('attention.outcome',record.id);}return {read:true};},
+    run(ctx,input){const record=read(input.id)!;if(record.readAt===undefined){record.readAt=ctx.now;statement(db, 'UPDATE attention_outcomes SET record=? WHERE id=?').run(JSON.stringify(record),record.id);ctx.changed('attention.outcome',record.id);}return {read:true};},
   }));
   live.register({name:'attention.outcome',
-    ids:()=> (db.prepare('SELECT id FROM attention_outcomes ORDER BY ordinal DESC').all() as {id:string}[]).map(row=>row.id),
+    ids:()=> (statement(db, 'SELECT id FROM attention_outcomes ORDER BY ordinal DESC').all() as {id:string}[]).map(row=>row.id),
     read(id,viewer){const record=read(id);return record && maySee(viewer,scope(record.member),sharing()) ? record as unknown as LiveRecord : undefined;},
     inScope:()=>true,
   });

@@ -1,3 +1,4 @@
+import { statement } from '../../core/db/index.js';
 import { z } from 'zod';
 import { OperationError, type Db, type Context } from '../../core/index.js';
 import { approvalNoticeFiling } from './approval-notices.js';
@@ -16,7 +17,7 @@ export function approvalFiling(db: Db): ApprovalAskFiling {
       dirty = true;
       if (!apply) return;
       record.changedAt = ctx.now;
-      db.prepare('INSERT INTO attention_asks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id,JSON.stringify(record));
+      statement(db, 'INSERT INTO attention_asks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id,JSON.stringify(record));
       ctx.changed('attention.ask',record.id);
     };
     const withdraw = (old: Ask, audience: Pick<Ask,'agent'|'project'|'member'> = old): Ask => ({id:old.id,source:old.source,sourceManaged:true,
@@ -26,7 +27,7 @@ export function approvalFiling(db: Db): ApprovalAskFiling {
       const {active,...fields} = input.parse(raw), id = approvalAskId(fields.id);
       if (seen.has(id)) throw new OperationError('invalid','Duplicate approval filing');
       seen.add(id);
-      const row = db.prepare('SELECT record FROM attention_asks WHERE id=?').get(id) as {record:string}|undefined;
+      const row = statement(db, 'SELECT record FROM attention_asks WHERE id=?').get(id) as {record:string}|undefined;
       const old: Ask | undefined = row && JSON.parse(row.record);
       if (old && (!old.sourceManaged || old.source.kind !== 'approval' || old.source.id !== fields.id)) throw new OperationError('conflict','Ask belongs to another source');
       if (!active && !old) continue;
@@ -38,7 +39,7 @@ export function approvalFiling(db: Db): ApprovalAskFiling {
         state:'open',createdAt:old?.createdAt ?? ctx.now,changedAt:old?.changedAt ?? ctx.now} : withdraw(old!,fields);
       save(record,old);
     }
-    for (const row of db.prepare('SELECT record FROM attention_asks').all() as {record:string}[]) {
+    for (const row of statement(db, 'SELECT record FROM attention_asks').all() as {record:string}[]) {
       const old = JSON.parse(row.record) as Ask;
       if (old.sourceManaged && old.source.kind === 'approval' && !seen.has(old.id) && old.state !== 'resolved') save(withdraw(old),old);
     }
