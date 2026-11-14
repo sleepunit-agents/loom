@@ -96,3 +96,38 @@ it('composes the real Comms role: unread not-in-front replies target only their 
  await f.tick();await f.tick();expect(f.attempts()).toHaveLength(1);expect(f.send).not.toHaveBeenCalled();
  expect(await f.app.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.change',{thread,action:'read',seq:2},'read',true)).toMatchObject({ok:true});await f.release();expect(f.send).not.toHaveBeenCalled();expect(f.attempts()[0].state).toBe('cancelled');
 });
+it('releasing one exact device leaves the other attempt held',async()=>{
+ const f=await setup();f.seed('second');f.raise();await f.tick();expect(f.attempts()).toHaveLength(2);
+ const one=f.attempts()[0];expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:`notifications:announcement:${one.id}`},'one-only')).toMatchObject({ok:true});await f.settle();
+ expect(f.send).toHaveBeenCalledOnce();expect(f.attempts().map(a=>a.state).sort()).toEqual(['queued','sent']);
+ const held=f.attempts().find(a=>a.state==='queued')!;expect(f.app.effects!.status(`notifications:announcement:${held.id}`)).toBe('due');await f.tick();expect(f.send).toHaveBeenCalledOnce();await f.release();expect(f.send).toHaveBeenCalledTimes(2);
+});
+it.each(['queued','held','released'] as const)('resumes %s work successfully after restart exactly once',async kind=>{
+ const f=await setup();f.raise();
+ if(kind==='queued'){
+   // Admission commits before the newly scheduled drain runs.
+   // Consume startup's empty drain first so it cannot defer this new one.
+   f.clock.advance(0);await Promise.resolve();await Promise.resolve();
+   // A source is sampled at the minute boundary; a same-time close prevents IO.
+   f.clock.at(f.clock.now()+60_000,()=>{void f.app.close();});f.clock.advance(60_000);
+   await f.app.close();
+ }else{
+   await f.tick();
+   if(kind==='released')expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:`notifications:announcement:${f.attempts()[0].id}`},'release-before-restart')).toMatchObject({ok:true});
+ }
+ await f.restart();expect(f.attempts()).toHaveLength(1);
+ expect(f.app.effects!.status(`notifications:announcement:${f.attempts()[0].id}`)).toBe(kind==='queued'?undefined:kind==='held'?'due':'released');
+ await f.settle();
+ if(kind==='queued'||kind==='held'){expect(f.send).not.toHaveBeenCalled();await f.release();}
+ expect(f.send).toHaveBeenCalledOnce();expect(f.attempts()[0].state).toBe('sent');await f.restart();await f.tick();expect(f.send).toHaveBeenCalledOnce();
+});
+it.each(['device','member','reassigned','keys','generation','vapid'] as const)('rechecks next-device %s after await while the candidate stays eligible',async kind=>{
+ const f=await setup(false);f.seed('second');let done!:(v:unknown)=>void;
+ f.send.mockImplementationOnce(()=>new Promise(yes=>{done=yes;}));f.raise();f.clock.advance(60_000);await vi.waitFor(()=>{f.clock.advance(0);expect(f.send).toHaveBeenCalledOnce();});
+ const first=f.send.mock.calls[0][0].endpoint,second=[sub().endpoint,sub('second').endpoint].find(ep=>ep!==first)!;
+ if(kind==='member')f.app.db.transaction(()=>{changeHouseholdMember(f.app.db,'','pollock','*');changeHouseholdMember(f.app.db,'','jonathan');})();
+ else f.s.sessions.change(file=>{const d=file.push!.subs![second];if(kind==='device')delete file.push!.subs![second];if(kind==='reassigned')d.member='pollock';if(kind==='keys')d.sub.keys.auth='b'.repeat(22);if(kind==='generation')(d as typeof d & {generation:string}).generation='replacement';if(kind==='vapid')file.push!.vapid=webpush.generateVAPIDKeys();});
+ // Source remains open. Any cancellation now depends on policy/binding checks.
+ expect(f.app.db.prepare("SELECT record FROM attention_asks WHERE id='question'").get()).toBeDefined();
+ done({});await f.settle();expect(f.send).toHaveBeenCalledOnce();expect(f.attempts().map(a=>a.state).sort()).toEqual(['cancelled','sent']);
+});

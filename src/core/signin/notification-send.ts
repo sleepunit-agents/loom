@@ -1,3 +1,4 @@
+import { deliverNotification } from './notification-delivery.js';
 /** Durable, deliberately requested test sends. Never IO inside an operation. */
 import { pushTransport, type PushTransport } from './push-transport.js';
 import { z } from 'zod';
@@ -43,24 +44,9 @@ export function installNotificationSending(app:Foundation,effects:OutsideEffects
       const t=target(r.member,r.ref);
       if(!t||t.binding!==r.binding){finish(r,'cancelled');continue;}
       if(!effects.beforeOutside({id:effectId(r.id),kind:'push',title:'Test notification'}))continue;
-      let state:State='sent';
-      const abort=new AbortController(),deadline=app.operations.clock.at(app.operations.clock.now()+15_000,()=>abort.abort());
-      try {
-        await send(t.sub,JSON.stringify({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'}),{
-          vapidDetails:{subject:'mailto:loom@localhost',...t.vapid},TTL:600,urgency:'high',timeout:15_000,
-        },abort.signal);
-      } catch(error){
-        const code=(error as {statusCode?:number}|null)?.statusCode;
-        state=code===404||code===410?'gone':typeof code==='number'?'failed':'uncertain';
-      }
-      finally{deadline();}
-      // Never erase a re-enabled/reassigned subscription after a late 410.
-      const current=target(r.member,r.ref);
-      if(state==='gone'&&current?.binding===r.binding){
-        s.sessions.change(f=>{delete f.push!.subs![current.sub.endpoint];});
-        app.live.changed([{type:'notifications.devices',id:r.member}]);
-      }
-      effects.finish(effectId(r.id),state!=='uncertain');finish(r,state);
+      const state=await deliverNotification(app,effects,send,{effect:effectId(r.id),member:r.member,ref:r.ref,target:t,
+        payload:JSON.stringify({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'}),ttl:600});
+      finish(r,state);
       // The next request resolves policy, exact binding and keys afresh after await.
     }
   }

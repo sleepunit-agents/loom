@@ -1,3 +1,4 @@
+import { deliverNotification } from './notification-delivery.js';
 /** Routine notifications: durable member dedupe, bounded admission, no backlog. */
 import { isClosing, type Foundation } from '../app.js';
 import { migrate } from '../db/index.js';
@@ -61,20 +62,9 @@ export function installNotificationAnnouncements(app:Foundation,effects:OutsideE
         if(!c||!t||t.binding!==a.binding){finish(a,'cancelled');continue;}
         // Payloads contain no source words, device data or credential material.
         if(!effects.beforeOutside({id:effectId(a.id),kind:'push',title:'Routine notification'}))continue;
-        const abort=new AbortController(),deadline=clock.at(clock.now()+15_000,()=>abort.abort());
-        let state='sent';
-        try{await send(t.sub,JSON.stringify({title:'loom',body:'',tag:`ask-${hash(r.key)}`,url:c.url}),{
-          vapidDetails:{subject:'mailto:loom@localhost',...t.vapid},TTL:6*3600,urgency:'high',timeout:15_000,
-        },abort.signal);}catch(error){
-          const code=(error as {statusCode?:number}|null)?.statusCode;
-          state=code===404||code===410?'gone':typeof code==='number'?'failed':'uncertain';
-        }finally{deadline();}
-        const latest=target(r.member,a.ref);
-        if(state==='gone'&&latest?.binding===a.binding){
-          s.sessions.change(f=>{delete f.push!.subs![latest.sub.endpoint];});
-          app.live.changed([{type:'notifications.devices',id:r.member}]);
-        }
-        effects.finish(effectId(a.id),state!=='uncertain');finish(a,state);
+        const state=await deliverNotification(app,effects,send,{effect:effectId(a.id),member:r.member,ref:a.ref,target:t,
+          payload:JSON.stringify({title:'loom',body:'',tag:`ask-${hash(r.key)}`,url:c.url}),ttl:6*3600});
+        finish(a,state);
         // All source/authority/device facts are re-read before the next send.
       }
       if(!attempts(r.id).length)app.db.prepare("UPDATE notifications_announcements SET state='done' WHERE id=?").run(r.id);
