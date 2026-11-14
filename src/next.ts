@@ -157,7 +157,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
       }
     }));
   }
-  if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
+  if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing, { staging: options.staging });
   const conversations=conversationRuntime(app,sharing,v=>signin(app).agent(v));
   const bridgeBodies=bridgeRuntime(app,sharing,v=>signin(app).agent(v));
   conversations.connectBridges(bridgeBodies);

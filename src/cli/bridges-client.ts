@@ -37,9 +37,12 @@ export async function runBridgesClient(argv: string[], io: IOStreams, runtime: C
       if (response.status >= 500 && attempt < 3) { await response.body?.cancel().catch(() => {}); await runtime.retry(100 * (attempt + 1)); continue; }
       if (!response.ok) return fail('Request refused');
       const answer: unknown = await response.json();
-      // Both envelope and acknowledgement are closed shapes; print only the requested id.
-      const result = z.object({ ok: z.literal(true), value: z.object({ id: z.string() }).strict() }).strict().safeParse(answer);
-      if (!result.success || result.data.value.id !== (input as Record<string, unknown>).id) return fail('Invalid daemon response');
+      // Closed envelopes expose only the status summary or requested write id.
+      const valueSchema = command.name === 'status'
+        ? z.object({ mode: z.enum(['live', 'staging']), agents: z.array(z.string()), held: z.number().int().nonnegative() }).strict()
+        : z.object({ id: z.string() }).strict();
+      const result = z.object({ ok: z.literal(true), value: valueSchema }).strict().safeParse(answer);
+      if (!result.success || (command.write && (!('id' in result.data.value) || result.data.value.id !== (input as Record<string, unknown>).id))) return fail('Invalid daemon response');
       io.stdout(JSON.stringify(result.data.value, null, 2) + '\n');
       return 0;
     } catch { if (attempt === 3) return fail('loom daemon is unavailable'); }

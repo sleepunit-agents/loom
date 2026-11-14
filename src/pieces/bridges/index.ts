@@ -9,7 +9,7 @@ import { schema as slackInboxSchema } from './schema/003.js';
 import { schema as discordInboxSchema } from './schema/004.js';
 import { venueSchema, routeSchema, linkSchema } from './model.js';
 import { all, put, bumpSetup } from './store.js';
-export function installBridges(app: Foundation, sharing: () => Sharing) {
+export function installBridges(app: Foundation, sharing: () => Sharing, options: { staging?: boolean } = {}) {
   registerBuiltinService(app.operations, 'bridges', ['bridges.venue', 'bridges.route', 'bridges.link', 'bridges.send']);
   migrate(app.db, 'bridges', [...foundationSchema, ...retrySchema, ...slackInboxSchema, ...discordInboxSchema]);
   const { db, operations, live } = app;
@@ -59,6 +59,19 @@ export function installBridges(app: Foundation, sharing: () => Sharing) {
       db.prepare("UPDATE bridges_outbox SET state='dismissed' WHERE id=?").run(id);
       ctx.changed('bridges.send', id);
       return { id };
+    },
+  }));
+  operations.register(operation({ name: 'bridges.status',
+    input: z.object({ platform: z.enum(['discord', 'slack']) }).strict(),
+    output: z.object({ mode: z.enum(['live', 'staging']), agents: z.array(z.string()), held: z.number().int().nonnegative() }).strict(),
+    may: v => mayAct(v, { type: 'bridges.venue' }, sharing(), 'household'),
+    run(_ctx, { platform }) {
+      // Include disabled setup, as the old status included every configured bot.
+      // Held means refused intake, not pending retries or uncertain outgoing posts.
+      const venues = all(db, 'venues').filter(v => v.platform === platform);
+      const held = db.prepare(`SELECT count(*) AS n FROM bridges_inbox i
+        WHERE json_extract(i.identity,'$[0]')=? AND i.state='held'`).get(platform) as { n: number };
+      return { mode: options.staging ? 'staging' : 'live', agents: [...new Set(venues.map(v => v.agent))].sort(), held: held.n };
     },
   }));
   live.register({ name: 'bridges.send', ids: () => (db.prepare("SELECT id FROM bridges_outbox WHERE state NOT IN ('sent','dismissed')").all() as {id:string}[]).map(r => r.id),
