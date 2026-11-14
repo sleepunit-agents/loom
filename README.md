@@ -1055,3 +1055,5 @@ terms of the GNU Affero General Public License (version 3 or any later
 version). If you run a modified loom and let others interact with it
 over a network, you must offer them the corresponding source. Bundle
 loom into a larger product freely; fork it and go proprietary, no.
+For disposable development data, `loom fixture <dir>` creates an empty-home
+fixture and refuses to overwrite an existing home.
