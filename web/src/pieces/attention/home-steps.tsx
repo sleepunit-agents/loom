@@ -17,7 +17,8 @@ export function HomeSteps({ agent, name, activity, go }: {
       {partial && <p>Some activity is unavailable.</p>}
       {window.truncated && <p>Showing the available recent activity.</p>}
       {entries.length ? <List label={`${name} recent steps`}>{entries.map(entry => <Row key={entry.id} layout="stack"
-        title={entry.title} meta={entry.line} status={`${stamp(Date.parse(entry.at))} · ${entry.where}`}
+        title={entry.title} meta={<span className="grid gap-1">{entry.line && <span>{entry.line}</span>}
+          <span><time dateTime={entry.at}>{stamp(Date.parse(entry.at))}</time> · {entry.where}</span></span>}
         onClick={() => go(address({who:[agent],where:[],what:[]},entry.id,entry.day))} />)}</List>
         : !partial && <p>No recent steps.</p>}
     </>}
