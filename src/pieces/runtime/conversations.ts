@@ -85,12 +85,18 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
  }));
  const refile=(ctx:Context,m:{thread:string;agent:string;member:string;conversation:string;project?:string})=>{
   const binding=store.read('binding',m.conversation);if(!binding)return;
-  if(binding.agent!==m.agent||binding.member!==m.member||binding.place!==m.thread)throw new OperationError('conflict','Conversation binding changed');
+  // Filing uses the unique original Comms owner, not a spawn transport handle.
+  // Comms invokes this before saving its new project, in the same transaction.
+  const owner=commsMetadata(operations)?.privateThread(ctx.viewer,{id:binding.id,agent:binding.agent,member:m.member});
+  if(binding.agent!==m.agent||binding.member!==m.member||!owner||owner.id!==m.thread||owner.project!==binding.project
+   ||(binding.venue!=='loom'&&binding.venue!=='spawn')||(binding.venue==='loom'&&binding.place!==m.thread))
+   throw new OperationError('conflict','Conversation binding changed');
   const {changedAt:_,...before}=binding,next={...before,project:m.project};
   if(!mayMove(ctx.viewer,{...before,type:'runtime.binding'},{...next,type:'runtime.binding'},sharing(),'runtime.acceptConversation'))throw new OperationError('denied','Conversation filing unavailable');
   const job=binding.job?store.read('job',binding.job):undefined;
+  if(binding.job&&!job)throw new OperationError('conflict','Job binding missing');
   if(job){
-   if(job.agent!==m.agent||job.member!==m.member||job.conversation!==m.conversation)throw new OperationError('conflict','Job binding changed');
+   if(job.agent!==m.agent||job.member!==m.member||job.conversation!==m.conversation||job.project!==binding.project)throw new OperationError('conflict','Job binding changed');
    const {changedAt:_,...prior}=job,after={...prior,project:m.project};
    if(!mayMove(ctx.viewer,{...prior,type:'runtime.job'},{...after,type:'runtime.job'},sharing(),'runtime.acceptConversation'))throw new OperationError('denied','Conversation filing unavailable');
    if(store.put('job',after,ctx.now))ctx.changed('runtime.job',job.id);
