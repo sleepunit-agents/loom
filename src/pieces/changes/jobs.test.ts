@@ -74,10 +74,16 @@ it('keeps expired closed detail through successful and unavailable daemon reads 
  fail=true;app.operations.call('direct',owner,'changes.refresh',{},'failed');await job.run();
  expect(app.operations.call('direct',owner,'changes.show',{id:closed.id})).toMatchObject({ok:true,value:{state:'merged',syncError:'GitHub read unavailable'}});
 });
-it('rechecks service registration after it is removed during an in-flight read',async()=>{
+it('does not ask for permission again after an installed job reads',async()=>{
  let release!:(rows:Change[])=>void;const {app,job,config}=setup(()=>new Promise<Change[]>(resolve=>{release=resolve;}));
- const before=change({title:'Retain prior snapshot'});replaceChanges(app.db,[before]);const state=app.db.prepare('SELECT * FROM changes_jobs').all();
- const running=job.run();config.service=false;release([change({title:'Unauthorized replacement'})]);await running;
+ const running=job.run();config.service=false;release([change({title:'Replacement'})]);await running;
+ expect(loadChanges(app.db)).toMatchObject([{title:'Replacement'}]);
+});
+it('does not commit an in-flight read after the job stops',async()=>{
+ let release!:(rows:Change[])=>void;const {app,job}=setup(()=>new Promise<Change[]>(resolve=>{release=resolve;}));
+ const before=change({title:'Prior snapshot'});replaceChanges(app.db,[before]);
+ const state=app.db.prepare('SELECT * FROM changes_jobs').all();
+ const running=job.run();job.close();release([change({title:'Replacement'})]);await running;
  expect(loadChanges(app.db)).toEqual([before]);expect(app.db.prepare('SELECT * FROM changes_jobs').all()).toEqual(state);
 });
 
@@ -91,12 +97,9 @@ it('allows the installed service and refuses commits after close',()=>{
  expect(app.db.prepare('SELECT * FROM changes_jobs').all()).toEqual(before);
 });
 
-for(const omit of ['type','operation'] as const) it(`refuses snapshots when the installed service lacks the required ${omit}`,async()=>{
- const {app,job,config}=setup(async()=>[change({title:'Replacement'})]);
- const before=change({title:'Prior snapshot'});replaceChanges(app.db,[before]);
- const state=app.db.prepare('SELECT * FROM changes_jobs').all();config.omit=omit;
+for(const omit of ['type','operation'] as const) it(`runs the installed job without a ${omit} grant`,async()=>{
+ const {app,job,config}=setup(async()=>[change({title:'Replacement'})]);config.omit=omit;
  await job.run();
- expect(loadChanges(app.db)).toEqual([before]);
- expect(app.db.prepare('SELECT * FROM changes_jobs').all()).toEqual(state);
- expect(app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get()).toBeUndefined();
+ expect(loadChanges(app.db)).toMatchObject([{title:'Replacement'}]);
+ expect(app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get()).toBeDefined();
 });
