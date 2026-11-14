@@ -60,6 +60,33 @@ export function mayFilePrivateWork(v: Viewer, r: RecordScope, s: Sharing): boole
     && (r.project === undefined || maySee(v, { project: r.project }, s));
 }
 
+/** Owning metadata only: these functions do not authenticate a caller or issue
+ * proof. Runtime supplies current evidence, separately from stored authorship. */
+export interface WorkPrincipal {for:string;people:string[]}
+export interface WorkAuthority extends Scope {
+  agent:string; conversation:string; service?:string; principal:WorkPrincipal;
+}
+export interface WorkAuthorship extends Pick<Scope,'member'|'project'> {
+  origin?:string; conversation?:string; service?:string; principal?:WorkPrincipal;
+}
+/** Independent credential metadata must agree with a bound authority witness.
+ * Missing conversation evidence remains unbound, never a principal grant. */
+export function consistentWorkAuthority(current:WorkAuthority|undefined,credential:Pick<WorkAuthority,'service'>|undefined):boolean {
+  return !current||!credential||current.service===credential.service;
+}
+export function mayControlAuthoredWork(v:Viewer,r:RecordScope,s:Sharing,original:WorkAuthorship|undefined,current:WorkAuthority|undefined):boolean {
+  return v.kind==='agent'&&!!current&&!!current.conversation&&current.agent===v.id&&r.agent===v.id&&original?.origin===v.id
+    &&(!!current.conversation&&current.conversation===original.conversation||current.principal.for==='owner')
+    &&current.member===r.member&&current.project===r.project
+    &&(mayCreate(v,r,s)||mayFilePrivateWork(v,{...r,privateControl:!!current.conversation},s));
+}
+/** A body cannot substitute another principal's or service's scheduled work. */
+export function mayReuseAuthoredWork(v:Viewer,r:RecordScope,s:Sharing,original:WorkAuthorship|undefined,current:WorkAuthority|undefined):boolean {
+  return !!original?.principal&&!!current&&original.principal.for===current.principal.for&&original.service===current.service
+    &&original.member===r.member&&original.project===r.project
+    &&mayControlAuthoredWork(v,r,s,original,current);
+}
+
 /** Private Comms membership is independent of project and household-owner access. */
 export function mayUseThread(v: Viewer, r: { member: string; agent: string }, s: Sharing): boolean {
   return v.kind === 'member' && v.id === r.member && !!entry(s.members, v.id)?.agents.includes(r.agent);

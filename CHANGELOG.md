@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
 
 - Check Clock lane reuse against current Runtime destination metadata and deliver public prompts through owning conversations, with service dispatch, authenticated read acknowledgements and staging holds.
+- Suppress agent-authored file self-rearms only with fresh Runtime control, exact original steering and matching scope/service; omit private suppression receipts from exports.
 - File spawned private Comms threads through unique owning metadata while preserving Runtime transport handles and execution holds.
 
 - Preserve private ordinary schedule scope and bind body schedule controls and cancellation, including command receipt replay, to fresh Runtime conversation proof and current policy.

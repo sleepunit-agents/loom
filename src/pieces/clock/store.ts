@@ -71,6 +71,12 @@ export function installPrivateExport(db:Db) {
   }
   const ids=new Set((db.prepare("SELECT key FROM clock_meta WHERE key LIKE 'private-id:%'").all() as {key:string}[]).map(r=>r.key.slice(11)));
   for(const w of [...wakes(db),...schedules(db)])if(w.member)ids.add(w.id);
+  // A private self-rearm acknowledgement contains only schedule id/deadline,
+  // but it is still private metadata. It has no ordinary Work member field.
+  if(table==='core_operations'&&String(row.name).startsWith('clock.')) {
+   const value=JSON.parse(String(row.result))?.value;
+   if(value&&typeof value==='object'&&typeof value.schedule==='string'&&ids.has(value.schedule))return false;
+  }
   return !(table==='core_operations' && privateReceiptOperations.includes(String(row.name))) && !privateExportCopy(row,ids);
  });
 }

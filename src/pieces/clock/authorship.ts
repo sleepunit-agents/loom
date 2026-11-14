@@ -1,15 +1,8 @@
 /** Original filing evidence. Never a Viewer or a substitute for current policy. */
-import { mayAct, type Sharing, type Viewer } from '../../core/index.js';
+import { mayAct, type Sharing, type Viewer, type WorkAuthorship, type WorkPrincipal } from '../../core/index.js';
 import type { ClockProvenanceReader } from '../runtime/role.js';
 import type { Work } from './store.js';
-export interface Authorship {
-  origin?: string;
-  conversation?: string;
-  member?: string;
-  project?: string;
-  service?: string;
-  principal: { for: string; people: string[] };
-}
+export interface Authorship extends WorkAuthorship { principal:WorkPrincipal }
 /** Called with the exact current Signin Viewer, never with a stored attribution. */
 export function filing(viewer: Viewer, input: Work, sharing: Sharing, resolve?: ClockProvenanceReader): Work | undefined {
   const proof = viewer.kind === 'agent' ? resolve?.(viewer) : undefined;

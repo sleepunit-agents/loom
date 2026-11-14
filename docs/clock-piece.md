@@ -55,7 +55,7 @@ with conversation-bound mutation remains the next unit; local approval Caller
 semantics remain independent. No mutation/join or delivery authority is added here.
 
 Remaining work: conversation-bound mutation/join, scope-preserving private body
-schedule control and household lane authorship, agent-authored self-rearm eligibility, continuation issuer/handle/
+schedule control and household lane authorship, continuation issuer/handle/
 deadline/place validation, real service-identity dispatch and private delivery,
 and other imported provenance recovery or explicit deliberate drops. These are
 gaps, not deliberate drops. Archived strings and caller-supplied handles cannot
@@ -305,7 +305,8 @@ the command inventory above, the source has these domain obligations:
 | `pending_full`: 50 wake/parked one-offs per agent; API 40 total and 20 per verified conversation, unknown callers sharing one bucket; API-originated schedules 20 (only new origin-bearing schedules count) | The shared 50 cap covers at/in, park and ordinary or lane schedule run-now. API40 and Runtime-bound conversation20 capacity shares are implemented below; authenticated mutation/join provenance remains unfinished. New origin-bearing schedules have the 20-per-agent cap described below. A caller's continuation or conversation string cannot establish provenance. |
 | `api_may_change`: a body cannot replace/cancel another conversation's work unless the runtime names owner authority | New central agent/project/member policy exists; authenticated conversation provenance still needs reconciliation with runtime, without a piece-specific authority rule. |
 | Schedule re-set and run-now narrow the original principal against the caller's; an edit never widens it | Caller Viewer is retained, but the core currently has no runtime principal/conversation seam. Preserve this boundary when reconciling runtime. |
-| `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Owner-authored schedule suppression and its client response are implemented below; agent-authored eligibility still needs authenticated runtime provenance. |
+| `schedule_for_file`: a self-rearm within six hours of an authorized schedule is answered with “already scheduled” and arms nothing | Owner- and agent-authored schedule suppression and its client response are implemented below; agent-origin candidates require current Runtime control and an exact original principal match. |
+| Earlier experimental next-side proof-bound retry fingerprints | Deliberate before-move drop: current principal and independent unbound credential restriction enter the shared fingerprint. Earlier IDs can conflict; existing actions remain and must be reconciled before a fresh request. Installed legacy behavior is unchanged. |
 | `inspect_continuation`: authenticated issuer, valid opaque handle and runtime deadline before commit; no file/slot/place/approval/standing/local combination | New writes reject file/slot/place/approval/exact-local-marker combinations. The continuation remains opaque; issuer, handle and deadline inspection await runtime and confer no authority today. |
 | `wake_place` / `house_may_join`: a house's named lane joins an existing conversation only with runtime-verified same-conversation provenance | Runtime owns delivery; caller-supplied place must not let work join an arbitrary existing body. The current field has no such validation yet. |
 | `unpark` / `spend_words`: exact allowed-action instructions, secret re-request, no body spend for owner-applied cards; denial and timeout have distinct stop instructions | Current role instruction is appended; exact message/note and scoped next-mode approval/secret-answer composition are implemented below. |
@@ -418,21 +419,49 @@ before Deny, and restart after the resumed wake fires without a second body.
 
 `clock.at` and `clock.in` return `{alreadyScheduled:true,schedule,due}` without
 creating a wake when a file self-rearm falls within six elapsed hours (inclusive)
-of the next pending occurrence of an enabled owner-authored schedule. Ordinary
+of the next pending occurrence of an enabled eligible schedule. Ordinary
 file schedules and household lanes with a matching `source` both qualify. File
 names are exact repository-relative strings; the server does not open or resolve
 them. Work validation and central create policy run before this result; a no-op
 uses no one-off capacity. Extra runs beyond that window are still armed.
 
-A schedule must have the same agent, project and member scope, a currently
-authorized owner author, and a pending future occurrence of its current revision.
-The caller is either that owner or the assignee agent itself. Paused agents,
-held/firing work, explicit run-now rows, continuations, approvals and delivery
-places do not qualify. Agent-authored schedules cannot substitute for a rearm
-until authenticated runtime conversation provenance is available; that remaining
-parity obligation is tracked on t-2201. Non-owner member requests remain explicit
-extra work. This deliberately narrows the old local clock's file matching while
-preserving its six-hour boundary. The opt-in client renders this result
+A schedule must have the same agent, project and member scope and a pending
+future occurrence of its current revision. Owner-authored schedules retain their
+existing owner/assignee and window rules. An agent-authored schedule additionally
+needs fresh owning Runtime proof: the original agent origin, current change
+control (same verified conversation or current owner steering), an exact match
+of the original and current principal `for`, and the same credential service. `owner` is the shared steering label for current
+household owners, as in the pinned legacy rule; named people still bind retry
+fingerprints, and independent member scope never crosses between owners.
+Owner steering cannot substitute a person's schedule for owner work, or unknown
+work for a known requester. Matching unknown steering in its original conversation
+is supported, as in the pinned legacy contract. Saved Viewer, API capacity and
+historical records without original evidence cannot satisfy this branch.
+
+Earlier experimental next-side proof-bound receipt fingerprints are a deliberate
+before-move compatibility drop. The shared filing/control fingerprint now includes
+current steering, including named people; unbound calls bind their independent
+credential restriction. A stored earlier fingerprint may return conflict after
+this update. Existing actions and receipt records remain; clients must reconcile
+existing work before issuing a new operation id, never automatically resubmit.
+Installed legacy commands are unchanged and no real next-side state is migrated
+or deployed here. After the final move, such a format change needs a compatibility
+plan rather than this development-only drop.
+
+Suppression retries bind the current steering principal and credential restriction
+in their fingerprint; a changed authority context conflicts instead of returning
+a stale no-op. Agent-origin authored-work control and substitution decisions live in
+central policy; Clock selects calendar/file candidates. The owner-origin branch
+keeps its existing owner/window checks.
+
+Private body suppression returns only schedule id and deadline, never schedule
+words or original people. Its acknowledgement and retries are omitted from exports,
+including the schedule-id reference which has no ordinary Work member field.
+Paused agents, held/firing work, run-now rows, continuations, approvals and delivery
+places do not qualify. Non-owner member requests remain explicit extra work.
+This preserves exact repository-relative file matching and the inclusive six-hour
+boundary. Suppression uses no one-off capacity and does not dispatch file work;
+actual file delivery remains held pending its owning Runtime support. The opt-in client renders this result
 as `already scheduled: <schedule>, next at <time> (nothing armed)`.
 
 
@@ -1061,7 +1090,9 @@ different person. This is internal metadata: no public operation, record, Live
 feed or export is added. Consumers must preserve scope and still check central
 policy. Ordinary one-off filing now consumes this role and persists original
 evidence as described above. Ordinary schedules now save and narrow principal as described below. Private body schedule controls and conversation-bound mutation are described below.
-Conversation joining and agent-authored self-rearm remain unfinished. Local approval
+Agent-authored self-rearm is documented in the File-lane self-rearm section
+above; public prompt joining is documented in Public prompt conversation delivery
+below. Other delivery workflows remain unfinished. Local approval
 semantics and actual private delivery are unchanged.
 
 
@@ -1136,7 +1167,7 @@ This unit does not grant joining or delivery. Actual private dispatch remains he
 Conversation join authorization must be implemented with service dispatch against
 Runtime's current destination binding; no caller-supplied place, lane name or saved
 conversation alone may select an existing body's conversation. Agent-authored
-six-hour suppression and imported recovery remain unfinished.
+six-hour suppression is described above; imported recovery remains unfinished.
 
 ## Clock lane destination authorization
 
