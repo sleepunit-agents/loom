@@ -1478,7 +1478,7 @@ staging connection records no usage. Failed platform callbacks still count
 credential delivery; audit admission failure prevents the byte-source read,
 and audit settlement failure prevents the platform request and socket startup
 while retaining only `started`, count 0. These fixtures check all database
-tables, Live change notifications and captured diagnostics (including Error
+tables, authenticated Live subscriber payloads, change notifications and captured diagnostics (including Error
 objects) for the fixture credentials and verify erasure of source buffers.
 
 This is connection-path evidence with fixture holder bytes, platform requests

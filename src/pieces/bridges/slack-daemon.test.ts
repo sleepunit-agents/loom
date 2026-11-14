@@ -1,7 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { randomUUID } from 'node:crypto';
-import { inspect } from 'node:util';
-import type { SecretUsage } from '../secrets/usage.js';
+import {assertSecretUsagePrivate,secretUsageEvents,watchSecretUsage} from '../secrets/usage.fixture.js';
 import { EventEmitter } from 'node:events';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -49,6 +48,7 @@ async function setup({staging=false,grant=true,pending=false,audit,requestFailur
   const published:unknown[]=[],diagnostics:unknown[]=[];
   for(const level of ['log','warn','error'] as const)vi.spyOn(console,level).mockImplementation((...args)=>{diagnostics.push(args);});
   const startOptions: Parameters<typeof startLoom>[0]={home,next:true,staging,clock,sharing,stdout:()=>{},
+    authenticate:req=>req.headers.authorization==='usage-fixture-owner'?{viewer:{kind:'member',id:'jonathan'},valid:()=>true}:undefined,
     bridges:{source,name:()=> 'Jonathan',receive,request,socket:()=>{const s=new FakeSocket();sockets.push(s);return s as unknown as ReturnType<NonNullable<SlackSocketOptions['socket']>>;}},
     install(a){
       installSecrets(a.db,a.operations,a.live,sharing);installSecretServices(a.db,a.operations,sharing);installBridges(a,sharing);
@@ -62,14 +62,10 @@ async function setup({staging=false,grant=true,pending=false,audit,requestFailur
       if(pending)void slackInbox(a.db,clock,{venue,app:'A123'}).receive(payload);
     }};
   const app=await startLoom(startOptions);
-  cleanups.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
-  const uses=()=>(app.db.prepare('SELECT record FROM secrets_uses').all() as {record:string}[]).map(row=>JSON.parse(row.record) as SecretUsage);
-  const privateMetadata=()=>{
-    const tables=app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[];
-    const dump=tables.map(t=>app.db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all());
-    for(const value of ['PRIVATE-bot','PRIVATE-app'])expect(inspect([dump,published,diagnostics],{depth:null})).not.toContain(value);
-    expect(buffers.every(b=>b.every(byte=>byte===0))).toBe(true);
-  };
+  const usage=await watchSecretUsage(app.url);
+  cleanups.push(async()=>{await usage.close();await app.close();rmSync(home,{recursive:true,force:true});});
+  const uses=()=>secretUsageEvents(app);
+  const privateMetadata=async()=>{await usage.synced(uses());assertSecretUsagePrivate(app,usage.frames,published,diagnostics,buffers);};
   return {app,clock,sockets,source,buffers,request,receive,uses,privateMetadata,rotate(){epoch=randomUUID();},async restart(){await app.close();const restarted=await startLoom({...startOptions,install:undefined});cleanups.unshift(restarted.close);return restarted;}};
 }
 it('root uses real service grants, authenticates before socket startup, drains saved receipts without new input',async()=>{
@@ -79,20 +75,28 @@ it('root uses real service grants, authenticates before socket startup, drains s
   expect(f.source.read.mock.calls.map(c=>c[0])).toContain('app');expect(f.buffers.every(b=>b.every(x=>x===0))).toBe(true);
   expect(f.uses()).toHaveLength(f.source.read.mock.calls.length);expect(f.uses().map(u=>u.name).sort()).toEqual(f.source.read.mock.calls.map(([name])=>name).sort());
   for(const use of f.uses())expect(use).toEqual({id:expect.stringMatching(/^use-/),name:expect.stringMatching(/^(bot|app)$/),action:'service-use',by:{kind:'service',id:'bridges'},at:f.clock.now(),state:'released'});
-  f.privateMetadata();
+  await f.privateMetadata();
+});
+it('root attributes reconnect acquisitions to the current daemon time',async()=>{
+  const f=await setup();await until(()=>f.sockets.length===1);await settle();
+  const firstAt=f.clock.now(),before=f.uses().length;expect(before).toBeGreaterThan(0);
+  f.rotate();f.clock.advance(5000);await until(()=>f.sockets.length===2);await settle();
+  const events=f.uses();expect(events.length).toBeGreaterThan(before);
+  expect(events.filter(u=>u.at===firstAt)).toHaveLength(before);
+  expect(events.filter(u=>u.at===f.clock.now())).toHaveLength(events.length-before);await f.privateMetadata();
 });
 it('root counts delivered credentials even when the platform callback fails without retaining diagnostics',async()=>{
   const f=await setup({requestFailure:true});await settle();
   expect(f.source.read).toHaveBeenCalledExactlyOnceWith('bot');expect(f.request).toHaveBeenCalledOnce();expect(f.sockets).toHaveLength(0);
   expect(f.uses()).toEqual([{id:expect.stringMatching(/^use-/),name:'bot',action:'service-use',by:{kind:'service',id:'bridges'},at:f.clock.now(),state:'released'}]);
-  f.privateMetadata();
+  await f.privateMetadata();
 });
 it.each(['admission','settlement'] as const)('root %s audit failure prevents credential use and retains no confirmed delivery',async audit=>{
   const f=await setup({audit});await settle();
   expect(f.source.read).toHaveBeenCalledTimes(audit==='admission'?0:1);expect(f.request).not.toHaveBeenCalled();expect(f.sockets).toHaveLength(0);
   expect(f.uses().map(u=>u.state)).toEqual(audit==='admission'?[]:['started']);
   expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.usage',{name:'bot'})).toMatchObject({ok:true,value:{count:0,lastUsedAt:null}});
-  f.privateMetadata();
+  await f.privateMetadata();
 });
 it('missing service grants cause no holder or network IO and recover after the owner grants',async()=>{
   const f=await setup({grant:false});await settle();expect(f.source.read).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
@@ -105,7 +109,7 @@ it('staging holds authentication and dial, then releases one stable connection a
   const rows=f.app.db.prepare("SELECT id FROM core_effects WHERE kind='bridge-send'").all() as {id:string}[];expect(rows).toHaveLength(1);
   expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:rows[0].id},'release').ok).toBe(true);
   f.clock.advance(0);await until(()=>f.sockets.length===1);expect(f.request.mock.calls.filter(c=>String(c[0]).endsWith('auth.test'))).toHaveLength(1);
-  await settle();expect(f.uses()).toHaveLength(f.source.read.mock.calls.length);expect(f.uses().length).toBeGreaterThan(0);expect(f.uses().every(u=>u.state==='released')).toBe(true);f.privateMetadata();
+  await settle();expect(f.uses()).toHaveLength(f.source.read.mock.calls.length);expect(f.uses().length).toBeGreaterThan(0);expect(f.uses().every(u=>u.state==='released'&&u.at===f.clock.now())).toBe(true);await f.privateMetadata();
 });
 it('ACKs a raw commit while normalization waits, and root close waits before closing SQLite',async()=>{
   const handoff=deferred<void>();const receive=vi.fn(async()=>handoff.promise);const f=await setup({receive});await until(()=>f.sockets.length===1);
