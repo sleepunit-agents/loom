@@ -17,7 +17,7 @@ import { runClaudeJob } from './once.js';
 import { runClaudeWorker } from '../cli/claude-worker.js';
 import type { IOStreams } from '../cli/io.js';
 import type { SpawnClaude } from './session.js';
-import { inspectWorkerReceipts } from './receipts.js';
+import { inspectWorkerReceipts, reserveWorkerReceipt } from './receipts.js';
 const cleanups:Array<()=>unknown>=[];
 vi.mock('node:fs',async importOriginal=>{const actual=await importOriginal<typeof fs>();return {...actual,fsyncSync:vi.fn(actual.fsyncSync)};});
 const actualFs=await vi.importActual<typeof fs>('node:fs');
@@ -182,7 +182,7 @@ it('the read-only inspection command emits wordless receipts without contacting 
  for(const word of ['PRIVATE','OWNER FLOOR',f.config.token,'/worker/claude'])expect(output).not.toContain(word);
  expect(f.calls).toHaveLength(1);
 });
-it.each(['claim-attempt','input-attempt','launch-attempt','spawned','finish-attempt'] as const)('a failed durable %s write prevents advancing the real HTTP/process boundary',async phase=>{
+it.each(['claim-attempt','input-attempt','launch-attempt','spawned','running-attempt','finish-attempt'] as const)('a failed durable %s write prevents advancing the real HTTP/process boundary',async phase=>{
  const f=await setup(),requests:string[]=[];
  vi.mocked(fs.fsyncSync).mockImplementation(fd=>{
   if(fs.fstatSync(fd).isFile()&&inspectWorkerReceipts(f.selected.receipts)[0]?.phase===phase)throw Error('disk failed');
@@ -194,9 +194,18 @@ it.each(['claim-attempt','input-attempt','launch-attempt','spawned','finish-atte
  await rejected;
  const forbidden=phase==='claim-attempt'?'claimJob':phase==='input-attempt'?'takeInput':phase==='finish-attempt'?'finishJob':'reportJob';
  expect(requests).not.toContain(forbidden);
- if(phase==='spawned'||phase==='finish-attempt'){expect(f.calls).toHaveLength(1);if(phase==='spawned')expect(f.calls[0].child.killed).toBe(true);}
+ if(phase==='spawned'||phase==='running-attempt'||phase==='finish-attempt'){expect(f.calls).toHaveLength(1);if(phase!=='finish-attempt')expect(f.calls[0].child.killed).toBe(true);}
  else expect(f.calls).toHaveLength(0);
  const before=[...requests];await expect(runClaudeJob(f.config,f.selected,runtime)).rejects.toThrow();expect(requests).toEqual(before);
+});
+it('inspection emits no partial inventory when valid and torn journals coexist',async()=>{
+ const f=await setup(),first=reserveWorkerReceipt(f.selected.receipts,'j');first.close();
+ const prior=fs.readdirSync(f.selected.receipts),second=reserveWorkerReceipt(f.selected.receipts,'other');second.close();
+ const torn=fs.readdirSync(f.selected.receipts).find(name=>!prior.includes(name))!;
+ writeFileSync(join(f.selected.receipts,torn),'{');
+ expect(()=>inspectWorkerReceipts(f.selected.receipts)).toThrow();
+ let output='',error='';const io:IOStreams={stdin:new PassThrough(),stdinIsTTY:false,env:{},stdout:s=>{output+=s;},stderr:s=>{error+=s;}};
+ expect(await runClaudeWorker(['--inspect',f.selected.receipts],io)).toBe(1);expect(output).toBe('');expect(error).toContain('reconcile');expect(f.calls).toHaveLength(0);
 });
 it('refuses remote plaintext HTTP before sending a runner credential or starting a scheduler',async()=>{
  const f=await setup();let requests=0,schedules=0;

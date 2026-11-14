@@ -9,7 +9,7 @@ type Phase = typeof receiptPhases[number];
 const row = z.object({ v:z.literal(1), job:z.string().min(1).max(200), attempt:z.uuid(), phase:z.enum(receiptPhases) }).strict();
 export type WorkerReceipt = z.infer<typeof row>;
 const failed = () => new Error('Worker receipts unavailable; reconcile before retrying');
-const name = (job:string) => `${createHash('sha256').update(job).digest('hex')}.jsonl`;
+const receiptFilename = (job:string) => `${createHash('sha256').update(job).digest('hex')}.jsonl`;
 
 /** Pin all ancestors, refusing aliases. Owner prepares a dedicated 0700 directory.
  * Linux /proc is required; never fall back to a path check followed by a reopen. */
@@ -55,7 +55,7 @@ export function reserveWorkerReceipt(path:string,job:string) {
   };
   try {
     dir=directory(path);
-    file=openSync(`/proc/self/fd/${dir}/${name(job)}`,F.O_WRONLY|F.O_CREAT|F.O_EXCL|F.O_NOFOLLOW|F.O_APPEND,0o600);
+    file=openSync(`/proc/self/fd/${dir}/${receiptFilename(job)}`,F.O_WRONLY|F.O_CREAT|F.O_EXCL|F.O_NOFOLLOW|F.O_APPEND,0o600);
     advance('reserved');
     fsyncSync(dir);
     return Object.freeze({advance,close});
@@ -84,7 +84,7 @@ export function inspectWorkerReceipts(path:string):WorkerReceipt[] {
         if(!text.endsWith('\n'))throw failed();
         const rows=text.slice(0,-1).split('\n').map(line=>row.parse(JSON.parse(line)));
         if(!rows.length||rows.length>receiptPhases.length||rows.some((r,i)=>r.phase!==receiptPhases[i]
-          ||r.job!==rows[0].job||r.attempt!==rows[0].attempt)||name(rows[0].job)!==entry)throw failed();
+          ||r.job!==rows[0].job||r.attempt!==rows[0].attempt)||receiptFilename(rows[0].job)!==entry)throw failed();
         return rows.at(-1)!;
       }finally {closeSync(fd);}
     });
