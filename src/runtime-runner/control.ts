@@ -15,7 +15,7 @@ const defaults:WorkerControlRuntime={deadline:ms=>AbortSignal.timeout(ms),reques
 /** Shared authenticated Runtime control owner. Revocation is sticky and calls
  * the owning process fence synchronously before aborting pending control IO. */
 export async function connectWorkerControl(config:WorkerControlConfig,revoked:()=>void,
-  runtime:WorkerControlRuntime=defaults) {
+  runtime:WorkerControlRuntime=defaults,retained:()=>boolean=()=>true) {
   const base=new URL(config.url),token=config.token,job=config.job;
   if(!['http:','https:'].includes(base.protocol)||base.username||base.password||base.pathname!=='/'||base.search||base.hash
     ||base.protocol==='http:'&&!['localhost','127.0.0.1','[::1]'].includes(base.hostname)
@@ -29,6 +29,7 @@ export async function connectWorkerControl(config:WorkerControlConfig,revoked:()
     for(const request of requests)request.abort();
   };
   const refresh=():Promise<void>=>{
+    try {if(retained()!==true)close();}catch {close();}
     if(closed)return Promise.reject(failed());
     if(inFlight)return inFlight;
     const controller=new AbortController();requests.add(controller);
@@ -40,7 +41,7 @@ export async function connectWorkerControl(config:WorkerControlConfig,revoked:()
           signal:AbortSignal.any([controller.signal,runtime.deadline(1500)])});
         if(!response.ok)throw failed();
         const answer=control.parse(await response.json()).value;
-        if(closed||answer.stop||answer.history!=='retain')throw failed();
+        if(closed||retained()!==true||answer.stop||answer.history!=='retain')throw failed();
         // An older unpinned read cannot activate a newly pinned execution.
         if(expected===execution)active=true;
       }catch {close();throw failed();}
