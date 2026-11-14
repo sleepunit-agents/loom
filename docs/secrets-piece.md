@@ -1246,3 +1246,16 @@ replacement, and reconcile Runtime completion without a credential or diagnostic
 in a stored result. Claude's prompt protocol still cannot consume fd3 credentials;
 its existing credential-input refusal stays in place. Production activation,
 public/granted get and final owner-present move remain unfinished.
+
+### Shared Runtime job transport groundwork
+
+`src/runtime-runner/job-transport.ts` now holds the existing authenticated
+claim/input/report/finish HTTP transport from `runClaudeJob`. Operation names
+determine whether a fresh write id is required; the caller cannot accidentally
+omit one from a claim, report or finish. The original owner still validates
+control, orders durable receipt intents before requests, validates each result,
+and owns process lifetime. The helper snapshots its endpoint, credential, request
+and deadline callbacks and never retries an uncertain response. This extraction
+does not add a secret-job claim path: the source selection/lifecycle owner must
+still connect the exact Runtime assignment, original body proof, daemon and
+holder route replacement, and value-free completion.
