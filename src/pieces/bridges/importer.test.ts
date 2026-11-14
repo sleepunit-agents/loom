@@ -324,3 +324,24 @@ it('refuses invalid accepted-store peer budgets at their original source path',(
   expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["routes"]["household"]["peer_turns_each"]');
  }
 });
+
+it('keeps selected accepted note maps scoped to their source agent without proposal or stale file fallback',()=>{
+ const f=fixture();
+ writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100'},stale:['300']}));
+ f.store('shuttle',[['routes','household',{guild:'789'}],
+ ['channels','art',{bot:'100',answers:{'300':'work'},extra:{'custom / key':['300'],mapped:{'400':'PRIVATE_MAP_VALUE'}}}],
+ ['channels','mark',{bot:'200',extra:{'custom / key':['400']}}],
+ ['route-offers','art',{doc:{bots:{art:'100',mark:'200'},proposal:['999']}}]]);
+ const result=readBridgeImport(f.sources,f.options,h,f.open);
+ expect(JSON.parse(result.evidence).noteInventories).toEqual([
+  {source:'accepted:art',agent:'art',noteChannels:{'custom / key':['300'],mapped:['400']}},
+  {source:'accepted:mark',agent:'mark',noteChannels:{'custom / key':['400']}}]);
+ expect(result.expected.routes.every(r=>r.notes.length===0)).toBe(true);
+ const {db,close}=openDb(join(f.root,'new'));
+ try{
+  expect(()=>importBridges(db,f.sources,f.options,h,f.open,{interrupt:()=>{throw Error('note interruption');}})).toThrow('note interruption');
+  expect(importBridges(db,f.sources,f.options,h,f.open).imported).toBe(true);
+  expect(importBridges(db,f.sources,f.options,h,f.open).imported).toBe(false);
+  expect((db.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as {value:string}).value).toBe(result.evidence);
+ }finally{close();}
+});

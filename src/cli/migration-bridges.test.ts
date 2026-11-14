@@ -15,20 +15,20 @@ import {Readable}from'node:stream';
 import {createFoundation}from'../core/app.js';
 import {importHousehold}from'./household-importer.js';
 const roots:string[]=[];afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();for(const r of roots.splice(0))rmSync(r,{recursive:true,force:true});});
-async function fixture(budgetSource?:'file'|'store'){
+async function fixture(budgetSource?:'file'|'store',notes=false){
  const root=mkdtempSync(join(tmpdir(),'migration-bridges-'));roots.push(root);const old=join(root,'old'),instance=join(root,'instance'),snapshot=join(root,'snapshot'),home=join(root,'new');
  const put=(path:string,value:unknown)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,JSON.stringify(value));};
  put(join(old,'household.json'),{v:1,agents:['art'],default:'art',owner:'jonathan'});
  put(join(instance,'shuttle.json'),{agent:{slug:'art'},discord:{token_file:'/never-open'}});
  put(join(instance,'people.json'),{people:{jonathan:{discord:['123']}}});
- put(join(instance,'routes.json'),{guild:'789',bots:{art:'100'},channels:{'300':{primary:'art'}},...(budgetSource==='file'?{peer_turns_each:0}:{})});
+ put(join(instance,'routes.json'),{guild:'789',bots:{art:'100'},channels:{'300':{primary:'art'}},...(budgetSource==='file'?{peer_turns_each:0,...(notes?{'custom / note':['300'],mapped:{'400':'PRIVATE_IGNORED'}}:{})}:{})});
  writeFileSync(join(instance,'credentials'),'do not collect');
  const storePath=join(old,'commons/stores/shuttle.db');mkdirSync(dirname(storePath),{recursive:true});const store=new Database(storePath);
  store.exec('CREATE TABLE docs(collection TEXT,key TEXT,doc TEXT,rev INTEGER,updated TEXT,by TEXT);CREATE TABLE revisions(id INTEGER,collection TEXT,key TEXT,doc TEXT,rev INTEGER,op TEXT,at TEXT,by TEXT)');
  store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('unknown','private','{"raw":9007199254740991.1}','today','owner');
  if(budgetSource==='store'){
   store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('routes','household','{"guild":"789","peer_turns_each":0}','today','owner');
-  store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('channels','art','{"bot":"100","answers":{"300":"work"}}','today','owner');
+  store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('channels','art',JSON.stringify({bot:'100',answers:{'300':'work'},...(notes?{extra:{'custom / note':['300'],mapped:{'400':'PRIVATE_IGNORED'}}}:{})}),'today','owner');
  }
  store.close();
  await createSnapshot(old,snapshot,undefined,{bridges:[instance]});
@@ -156,4 +156,22 @@ for(const origin of ['file','store'] as const)it(`preserves disabled zero budget
  expect((await verifyMigration(f.snapshot,f.home,f.plan)).status).toBe('different');
  expect((await verifyBridgesMigration(f.snapshot,f.home,f.plan.importers.bridges.options)).status).toBe('different');
  expect(readFileSync(join(f.snapshot,'bridges/0/routes.json'))).toEqual(readFileSync(join(f.instance,'routes.json')));
+});
+
+for(const origin of ['file','store'] as const)it(`verifies arbitrary note membership from ${origin} without activating live route notes`,async()=>{
+ const f=await fixture(origin,true);
+ expect((await runMigrationAll(f.snapshot,f.home,f.plan)).status).toBe('complete');
+ expect((await verifyMigration(f.snapshot,f.home,f.plan)).status).toBe('verified');
+ expect((await verifyBridgesMigration(f.snapshot,f.home,f.plan.importers.bridges.options)).status).toBe('verified');
+ const d=new Database(join(f.home,'loom.db'));
+ try{
+  const row=d.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as {value:string};
+  const evidence=JSON.parse(row.value);
+  expect(evidence.noteInventories[0]).toMatchObject({agent:'art',noteChannels:{'custom / note':['300'],mapped:['400']}});
+  expect((d.prepare('SELECT record FROM bridges_routes').all() as {record:string}[]).every(r=>JSON.parse(r.record).notes.length===0)).toBe(true);
+  evidence.noteInventories[0].noteChannels['custom / note']=['999'];
+  d.prepare("UPDATE bridges_meta SET value=? WHERE key='legacy-evidence'").run(JSON.stringify(evidence));
+ }finally{d.close();}
+ expect((await verifyMigration(f.snapshot,f.home,f.plan)).status).toBe('different');
+ expect((await verifyBridgesMigration(f.snapshot,f.home,f.plan.importers.bridges.options)).status).toBe('different');
 });

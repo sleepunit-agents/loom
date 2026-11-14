@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, openSync, readFileSync, readSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { readBridgeInventory, type BridgeSourceFile, type BridgeSourceKind } from './import-source.js';
+import { bridgeSourceNoteKeys, readBridgeInventory, type BridgeSourceFile, type BridgeSourceKind } from './import-source.js';
 const io = vi.hoisted(()=>({ afterStat: undefined as (()=>void) | undefined, forbidWholeFile: false, nonregular: false }));
 vi.mock('node:fs',async importOriginal=>{
   const actual=await importOriginal<typeof import('node:fs')>();
@@ -176,4 +176,35 @@ describe('offline legacy Bridges source inventory',()=>{
     expect(()=>readBridgeInventory([f])).toThrow('Invalid offline');
     rmSync(f.path);mkdirSync(f.path);expect(()=>readBridgeInventory([f])).toThrow('Invalid offline');
   });
+});
+
+it('inventories arbitrary note-key membership without retaining map values or granting live notes',()=>{
+ const root=mkdtempSync(join(tmpdir(),'bridges-note-keys-'));roots.push(root);
+ const path=join(root,'routes.json');
+ writeFileSync(path,JSON.stringify({guild:'789',channels:{'300':{primary:'art'}},
+   'work / custom': ['300',400], scalar:300, mapped:{'300':'PRIVATE_UNUSED_VALUE','500':false},
+   empty:[], objectEmpty:{}, ignored:true, _annotation:['300'],notify:{art:'300'}}));
+ const route=readBridgeInventory([{name:'routes.json',path,kind:'routes'}]).routes[0];
+ expect(route.noteChannels).toEqual({'work / custom':['300','400'],scalar:['300'],mapped:['300','500'],empty:[],objectEmpty:[]});
+ expect(JSON.stringify(route)).not.toContain('PRIVATE_UNUSED_VALUE');
+ expect(route.channels[0]).not.toHaveProperty('notes');
+ expect(bridgeSourceNoteKeys(route,'300')).toEqual(['mapped','scalar','work / custom']);
+ expect(bridgeSourceNoteKeys(route,'400','300')).toEqual(['mapped','scalar','work / custom']);
+ expect(bridgeSourceNoteKeys(route,'300','unknown')).toEqual([]);
+});
+it('refuses lossy note membership numbers with safe source-key diagnostics',()=>{
+ const root=mkdtempSync(join(tmpdir(),'bridges-note-numbers-'));roots.push(root);const path=join(root,'routes.json');
+ for(const raw of ['9007199254740993','-9007199254740993']){
+  writeFileSync(path,`{"arbitrary_note":[${raw}]}`);
+  expect(()=>readBridgeInventory([{name:'routes.json',path,kind:'routes'}])).toThrow('routes.json at $["arbitrary_note"]["0"]');
+ }
+});
+
+it('ignores Python non-integer scalar shapes while preserving string membership verbatim',()=>{
+ const root=mkdtempSync(join(tmpdir(),'bridges-note-shapes-'));roots.push(root);const path=join(root,'routes.json');
+ writeFileSync(path,'{"fraction":1.25,"float":300.0,"exponent":3e2,"nil":null,"truth":true,"list":["00300",300,true,null,1.25],"__proto__":{"300":true}}');
+ const route=readBridgeInventory([{name:'routes.json',path,kind:'routes'}]).routes[0];
+ expect(route.noteChannels).toEqual({list:['00300','300']});
+ expect(bridgeSourceNoteKeys(route,'300')).toEqual(['list']);
+ expect(bridgeSourceNoteKeys(route,'00300')).toEqual(['list']);
 });

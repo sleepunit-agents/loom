@@ -250,7 +250,8 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
       v.ignore=[...new Set([...v.ignore,...blocked])];
     }
     const expected={venues:unique(venues),routes:unique(routes.filter(r=>!blockedRoutes.has(r.id))),links:unique(links)};
-    const evidence=JSON.stringify({inventory,stores,incomplete,retained}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping]));
+    const noteInventories=effective.routes.filter(r=>r.noteChannels!==undefined).map(r=>({source:r.source,agent:routeOwners.get(r.source),noteChannels:r.noteChannels}));
+    const evidence=JSON.stringify({inventory,stores,incomplete,retained,...(noteInventories.length?{noteInventories}:{})}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping]));
     return {expected,evidence,mapping,checksum};
   }catch(error){if(error instanceof BridgeSourceError)throw error;throw Error('Invalid offline Bridges import mapping or sources');}
 }
