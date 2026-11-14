@@ -109,6 +109,12 @@ it('wires device links to the correct member and clears them through actual app 
   await act(async()=>{f.snapshot={...f.snapshot,status:'offline'};tree.update(h(Setup));});
   expect(JSON.stringify(tree.toJSON())).not.toContain('app-integration-marker');expect(section().findByType('button').props.disabled).toBe(true);
   await act(async()=>section().findByType('button').props.onClick());expect(f.once).toHaveBeenCalledTimes(2);
+  await act(async()=>{f.snapshot={...f.snapshot,status:'live'};tree.update(h(Setup));});
+  await act(async()=>section().findByType('button').props.onClick());expect(f.once).toHaveBeenCalledTimes(3);
+  expect(JSON.stringify(tree.toJSON())).toContain('app-integration-marker');
   await act(async()=>{f.snapshot={...f.snapshot,status:'denied'};tree.update(h(Setup));});
   expect(tree.root.findAllByProps({'aria-label':'Sign-in link for jonathan'})).toHaveLength(0);
+  await act(async()=>{f.snapshot={...f.snapshot,status:'live'};tree.update(h(Setup));});
+  expect(JSON.stringify(tree.toJSON())).not.toContain('app-integration-marker');
+
 });
