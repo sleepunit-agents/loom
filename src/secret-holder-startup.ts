@@ -87,7 +87,7 @@ export async function startPersistentHolder(file:string,owned=false) {
     };
     if(config.handoff) {
       tickets=remoteTicketAuthority(config.handoff.authority,config.daemonFingerprint);
-      routes=managedHolderAuthority(tickets,select(config.handoff.workers));
+      routes=managedHolderAuthority(tickets,select(config.handoff.workers),{owned});
     }
     const authority=remoteHolderAuthority(config.authority,config.daemonFingerprint);
     // Bind every fallible listener before committing key history. Until the

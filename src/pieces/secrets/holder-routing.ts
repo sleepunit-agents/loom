@@ -29,7 +29,9 @@ export function routedHolderAuthority(
 export function managedHolderAuthority(
   tickets: {claim(id: string): Promise<RemoteTicketClaim | null>},
   configured: readonly HolderWorkerRoute[],
+  options:{owned?:boolean}={},
 ) {
+  const owned=options.owned===true;
   const snapshot = (configured: readonly HolderWorkerRoute[]) => {
     try {
       if (configured.length > 1024) throw failed();
@@ -60,11 +62,11 @@ export function managedHolderAuthority(
     if (closed) return null;
     const original = generation;
     let claim: RemoteTicketClaim | null;
-    try { claim = await tickets.claim(id); } catch { poison();return null; }
+    try { claim = await tickets.claim(id); } catch { if(owned)poison();return null; }
     // The production client deliberately hides transport/denial diagnostics as
     // null. That cannot prove no claim was consumed before its ack was lost.
     // Fail closed for both outcomes rather than adopting an equal generation.
-    if (!claim) {poison();return null;}
+    if (!claim) {if(owned)poison();return null;}
     let invalid = false, attempted = false, abandoned = false;
     const abandon = async () => {
       invalid = true;

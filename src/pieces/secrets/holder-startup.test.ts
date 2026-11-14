@@ -46,9 +46,7 @@ async function setup(staging=false) {
  const input={...daemon,socket:endpoint('input')};
  config.handoff.workers.push({binding,config:{...f.config,socket:input.socket},fingerprint:f.fingerprint('daemon')});
  const file=join(f.home,'persistent-holder.json');const save=()=>writeFileSync(file,JSON.stringify(config),{mode:0o600});save();
- const start=async(uncertain=false)=>{const h=await startPersistentHolder(file);closes.push(async()=>{
-  if(uncertain)await expect(h.close()).rejects.toThrow('Persistent secret holder could not close');else await h.close();
- });return h;};
+ const start=async()=>{const h=await startPersistentHolder(file);closes.push(h.close);return h;};
  const mutate=localHolderMutations({...daemon,socket:config.mutation.socket,servername:'holder.test'});
  const inputs=workerSecretInputs(),received:string[]=[],borrowed:Buffer[]=[];
  let proof:ReturnType<typeof remoteWorkerTicketProof>|undefined;
@@ -61,7 +59,7 @@ async function setup(staging=false) {
  return {...f,app,config,file,save,start,put,admit,admission,received,borrowed};
 }
 it.each([false,true])('persistent startup reaches real Runtime-selected worker with central proof (staging=%s)',async staging=>{
- const f=await setup(staging);await f.start(staging);await f.put();const id=await f.admit();
+ const f=await setup(staging);await f.start();await f.put();const id=await f.admit();
  if(staging)await expect(f.admission.dispatch()).rejects.toThrow();else await f.admission.dispatch();
  expect(f.received).toEqual(staging?[]:['SYNTHETIC-PERSISTENT-HANDOFF']);
  expect(f.borrowed.every(b=>b.every(v=>v===0))).toBe(true);

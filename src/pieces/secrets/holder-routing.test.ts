@@ -113,11 +113,10 @@ it('keeps acquisition diagnostics private',async()=>{
  f.tickets.claim.mockRejectedValueOnce(Error('PRIVATE-ACQUISITION-SENTINEL'));
  expect(await c.authority(randomUUID())).toBeNull();
  expect(f.transport.deliver).not.toHaveBeenCalled();expect(f.claim.finish).not.toHaveBeenCalled();
- await expect(c.close()).rejects.toThrow(/^Secret handoff unavailable$/);
- expect(await c.authority(randomUUID())).toBeNull();expect(f.tickets.claim).toHaveBeenCalledOnce();
+ await c.close();
 });
 it('treats an opaque null acquisition as uncertainty and never adopts a replacement generation',async()=>{
- const f=setup(),c=managedHolderAuthority({claim:vi.fn(async()=>null)},f.configured);
+ const f=setup(),c=managedHolderAuthority({claim:vi.fn(async()=>null)},f.configured,{owned:true});
  expect(await c.authority(randomUUID())).toBeNull();await expect(c.replace(f.configured)).rejects.toThrow();
  await expect(c.close()).rejects.toThrow();
 });
@@ -217,4 +216,20 @@ it('joins late acquired original settlement before replacement and propagates fa
  expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);settle();
  await expect(replacing).rejects.toThrow(/^Secret handoff unavailable$/);expect(await pending).toBeNull();
  await expect(c.close()).rejects.toThrow();
+});
+
+it.each([false,true])('keeps null/rejected acquisition per-attempt in standalone and sticky in owned=%s',async owned=>{
+ for(const kind of ['null','reject'] as const) {
+  const f=setup(),tickets={claim:vi.fn().mockImplementationOnce(async()=>{if(kind==='reject')throw Error('PRIVATE');return null;}).mockResolvedValue(f.claim)};
+  const options={owned},c=managedHolderAuthority(tickets,f.configured,options);options.owned=!owned;
+  expect(await c.authority(randomUUID())).toBeNull();
+  if(owned) {
+   await expect(c.replace(f.configured)).rejects.toThrow();expect(await c.authority(randomUUID())).toBeNull();
+   await expect(c.close()).rejects.toThrow();expect(tickets.claim).toHaveBeenCalledOnce();
+  }else {
+   await c.replace(f.configured);const destination=(await c.authority(randomUUID()))!;
+   await destination.handTo(Buffer.from('synthetic'));expect(f.transport.deliver).toHaveBeenCalledOnce();
+   expect(tickets.claim).toHaveBeenCalledTimes(2);await c.close();
+  }
+ }
 });

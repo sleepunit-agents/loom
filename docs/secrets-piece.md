@@ -1350,9 +1350,18 @@ routing generation. Invalid traffic during a held shutdown suppresses its
 success acknowledgement too.
 
 The existing remote ticket client deliberately hides denied and lost-ack
-acquisitions behind the same `null` result. Routing therefore treats both
+acquisitions behind the same `null` result. Owned routing therefore treats both
 `null` and thrown acquisition as sticky uncertainty, fences every generation,
 and refuses a clean replacement or close acknowledgement. This conservative
 choice includes staging denial: no value is read or delivered, and a fresh
 owner is required rather than inferring that the original claim was never
 consumed. The inherited protocol still cannot reconnect or adopt a receipt.
+
+
+The stricter acquisition policy is explicitly opt-in: startup passes its
+captured `owned` mode into the routing owner. Standalone holders keep the
+existing per-attempt null/failed-acquisition refusal and may accept a subsequent
+valid ticket. They do not acquire inherited ownership or claim its transfer
+guarantees. Both modes still fence retired routing generations and join
+original pending acquisitions during explicit replacement/close; failed
+retirement settlement cannot become a clean transfer acknowledgement.
