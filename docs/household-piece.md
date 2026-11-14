@@ -1307,6 +1307,7 @@ stamps from multipart inventory produce one decision. Invalid calendar stamps
 the entire plan with a generic error. It does not recompute dates in the
 machine's time zone or import the old backup program.
 
+Tests reject filesystem calls for successful and refused plans.
 This helper performs no IO and proves neither inventory completeness nor
 publication success. A future owning path/git publisher must establish target
 ownership, recheck the outside-home execution boundary, durably publish and

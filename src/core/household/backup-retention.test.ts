@@ -1,7 +1,28 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { planHouseholdBackupRetention as plan } from './backup-retention.js';
 
+// Guard the behavioral no-IO contract as well as the returned decisions.
+const { filesystemCall } = vi.hoisted(() => ({ filesystemCall: vi.fn(() => { throw new Error('Unexpected retention filesystem IO'); }) }));
+vi.mock('node:fs', async importOriginal => {
+  const original = await importOriginal<typeof import('node:fs')>();
+  const guarded = Object.fromEntries(Object.entries(original).map(([key, value]) => [key, typeof value === 'function' ? filesystemCall : value]));
+  return { ...guarded, default: guarded };
+});
+vi.mock('node:fs/promises', async importOriginal => {
+  const original = await importOriginal<typeof import('node:fs/promises')>();
+  const guarded = Object.fromEntries(Object.entries(original).map(([key, value]) => [key, typeof value === 'function' ? filesystemCall : value]));
+  return { ...guarded, default: guarded };
+});
+
 describe('household backup retention planner', () => {
+  it('performs no filesystem IO for successful or refused plans', () => {
+    filesystemCall.mockClear();
+    expect(plan(['20260101-0300', '20260102-0300', '20260103-0300'], 1)).toEqual({ retain: ['20260101-0300', '20260103-0300'], prune: ['20260102-0300'] });
+    expect(() => plan(['20260230-0300'], 1)).toThrow();
+    expect(() => plan(['20260101-0300'], 0)).toThrow();
+    expect(filesystemCall).not.toHaveBeenCalled();
+  });
+
   it('keeps newest configured nights and each month’s first available night', () => {
     const stamps = ['20251231-0300', '20260102-0300', '20260103-0300', '20260104-0300', '20260202-0300', '20260203-0300', '20260204-0300'];
     expect(plan(stamps, 2)).toEqual({
