@@ -24,9 +24,9 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
   const seedSteps = (base:string,now:number) => {
     const path=join(base,'agents','art');mkdirSync(path,{recursive:true});
     const db=new BetterSqlite3(join(path,'memories.db'));
-    db.exec('CREATE TABLE IF NOT EXISTS memories(ref TEXT PRIMARY KEY,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');
+    db.exec('CREATE TABLE IF NOT EXISTS memories(uuid TEXT,ref TEXT PRIMARY KEY,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');
     for(const [i,title] of ['Shipped the desk look','Checked the live activity','Kept the five agents together','Earlier desk work'].entries())
-      db.prepare('INSERT INTO memories VALUES(?,?,?,?,NULL,?,NULL,?,0)').run(`desk-step-${i}`,title,'The household desk has its look back.',new Date(now-i*60000).toISOString(),'{"where":"terminal"}','episode');
+      db.prepare('INSERT INTO memories(uuid,ref,title,content,created,project,metadata,expires_at,category,archived) VALUES(?,?,?,?,?,NULL,?,NULL,?,0)').run(`desk-step-${i}`,`desk-step-${i}`,title,'The household desk has its look back.',new Date(now-i*60000).toISOString(),'{"where":"terminal"}','episode');
     db.close();
   };
   seedSteps(home,Date.parse('2026-11-13T18:40:00Z'));
