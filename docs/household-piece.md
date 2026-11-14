@@ -1291,3 +1291,28 @@ Saved backup settings continue to report `awaiting-runner`.
 | --- | --- |
 | Restore a piece's opaque part | Explicit owning session restore/accept/close seam, test fake only |
 | Start the recovered household | Still refused; actual owning implementation and usable-home acceptance/activation remain required |
+
+### Retention decision prerequisite
+
+`planHouseholdBackupRetention` in `src/core/household/backup-retention.ts` is a
+pure next-side planner for the old nightly retention rule. Its explicit input
+is the stamps of successfully published, verified bundles, already expressed as
+`YYYYMMDD-HHMM` in the configured backup time zone, plus `keep` (1–90).
+It returns sorted distinct `retain` and `prune` stamps without changing inputs.
+The newest try of each of the latest `keep` available dates stays, along with
+the newest try of the earliest available date in every month. Missing dates
+have no synthetic bundle. Earlier tries of a retained date are pruned; duplicate
+stamps from multipart inventory produce one decision. Invalid calendar stamps
+(including non-leap February 29), malformed inventory and invalid keep refuse
+the entire plan with a generic error. It does not recompute dates in the
+machine's time zone or import the old backup program.
+
+This helper performs no IO and proves neither inventory completeness nor
+publication success. A future owning path/git publisher must establish target
+ownership, recheck the outside-home execution boundary, durably publish and
+verify the new encrypted bundle, and map each decision to every part of that
+bundle before pruning. Its plain result is never deletion authority. No backup
+is published or deleted by this unit; publication/retention execution, the
+Secrets recovery dependency, usable-home acceptance, local arming, daemon job,
+health/Attention, commands and Setup acceptance remain required. Saved backup
+configuration still reports `awaiting-runner` and never arms itself.
