@@ -1,8 +1,10 @@
+import Database from 'better-sqlite3';
+import { importTasks } from './importer.js';
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { startLoom } from '../../foundation.js';
 import { fixture } from '../../fixture.js';
 import { z } from 'zod';
@@ -15,11 +17,13 @@ import { SharingDatabase } from '../../core/household/sharing.js';
 const homes:string[]=[], closes:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const close of closes.splice(0))await close();for(const home of homes.splice(0))rmSync(home,{recursive:true,force:true});});
 const owner:Viewer={kind:'member',id:'jonathan'}, member:Viewer={kind:'member',id:'pollock'};
-async function setup(home?:string, old=false) {
+async function setup(home?:string, old=false, denyTasks=false) {
+  let coreDb: import('../../core/index.js').Db;
   if(!home){home=mkdtempSync(join(tmpdir(),'task-attention-'));homes.push(home);fixture(home);
     mkdirSync(join(home,'commons'),{recursive:true});const people=new PeopleStore({dbPath:join(home,'commons','people.db')});people.write({slug:'pollock',name:'Pollock'});people.close();}
   const types=new Map<string,RecordType>();
-  const app=await startLoom({home,next:true,staging:true,clock:new FakeClock(1_800_000_000_000),stdout:()=>{},install:a=>{
+  const app=await startLoom({home,next:true,staging:true,clock:new FakeClock(1_800_000_000_000),stdout:()=>{},sharing:denyTasks?()=>{const held=new SharingDatabase(coreDb,home!).sharing();return held.services.tasks?{...held,services:{...held.services,tasks:{...held.services.tasks,operations:[]}}}:held;}:undefined,install:a=>{
+    coreDb=a.db;
     const register=a.live.register.bind(a.live);a.live.register=t=>{types.set(t.name,t);register(t);};
     if(old)installTasks(a.db,a.operations,a.live,()=>new SharingDatabase(a.db,home!).sharing());
   }});closes.push(app.close);
@@ -164,4 +168,34 @@ it('preserves distinct valid malformed UTF-16 ids without URI errors or lossy ha
   expect(new Set(ids.map(taskAskId)).size).toBe(3);
   expect(s.call('tasks.import',{actor:'art',at:'2026-11-13T00:00:00Z',tasks:ids.map(id=>({id,title:'Legacy task',type:'task',status:'open',priority:1,assignee:'jonathan',createdAt:'2026-11-13T00:00:00Z',createdBy:'art',comments:[]}))})).toMatchObject({ok:true,value:{result:{ok:true}}});
   for(const id of ids)expect(s.ask(id)).toMatchObject({ok:true,value:{source:{kind:'task',id},state:'open'}});
+});
+
+it('holds startup and membership reconciliation on actual service denial, reports only a code, and keeps authorized Tasks writes working',async()=>{
+  const first=await setup(),id=first.create({why:'Sensitive source wording'}),before=first.ask(id);
+  await first.app.close();closes.pop();
+  const warnings=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  try {
+    const s=await setup(first.home,false,true);
+    expect(s.ask(id)).toEqual(before);
+    expect(warnings.mock.calls).toEqual([['Task filing failed (denied)']]);
+    const other=s.create({assignee:'pollock'});expect(s.ask(other).ok).toBe(false);
+    expect(s.call('household.setMember',{person:'pollock',agents:'*'})).toMatchObject({ok:true});
+    expect(s.ask(other).ok).toBe(false);expect(s.ask(id)).toEqual(before);
+    expect(warnings.mock.calls).toEqual([['Task filing failed (denied)'],['Task filing failed (denied)']]);
+    expect(s.call('tasks.update',{id:other,set:{why:'Changed through owning authorization'},actor:'art',at:'2026-11-13T00:01:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
+    expect(s.ask(other)).toMatchObject({ok:true,value:{state:'open',why:'Changed through owning authorization'}});
+  } finally {warnings.mockRestore();}
+});
+it('keeps stopped offline import verification unchanged and files the copied owner task at next startup',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'offline-task-filing-'));homes.push(home);fixture(home);
+  const sourcePath=join(home,'copied-old-tasks.db'),source=new Database(sourcePath);
+  source.exec('CREATE TABLE tasks(ord INTEGER,record TEXT);CREATE TABLE links(ord INTEGER,record TEXT);CREATE TABLE meta(key TEXT,value TEXT)');
+  source.prepare('INSERT INTO tasks VALUES (?,?)').run(0,JSON.stringify({id:'t-9',title:'Imported owner task',type:'epic',status:'open',priority:1,assignee:'jonathan',project:'pond',ask:'Ship the copied task?',createdAt:'2026-11-13T00:00:00Z',createdBy:'art',comments:[]}));
+  source.prepare('INSERT INTO meta VALUES (?,?)').run('seq','9');source.close();
+  const seed=createFoundation({home});installTasks(seed.db,seed.operations,seed.live,()=>new SharingDatabase(seed.db,home).sharing());
+  for(const id of ['t-1','t-2','t-3','t-4'])expect(seed.operations.call('direct',owner,'tasks.delete',{id,actor:'fixture',at:'2026-11-13T00:00:00Z'},randomUUID())).toMatchObject({ok:true,value:{result:{ok:true}}});
+  expect(importTasks(seed.db,sourcePath,1_800_000_000_000)).toMatchObject({ok:true,imported:true,tasks:1});
+  expect(importTasks(seed.db,sourcePath,1_800_000_000_000)).toMatchObject({ok:true,imported:false,tasks:1});
+  expect(seed.db.prepare("SELECT name FROM sqlite_master WHERE name='attention_asks'").get()).toBeUndefined();seed.close();
+  const s=await setup(home);expect(s.ask('t-9')).toMatchObject({ok:true,value:{state:'open',ask:'Ship the copied task?',project:'pond'}});
 });
