@@ -13,8 +13,8 @@ export function bridgeSourceValue(value: unknown): unknown {
 }
 /** Only constructed from a known file kind and schema field paths; never exception text or values. */
 export class BridgeSourceError extends Error {
-  constructor(kind: BridgeSourceKind, path: PropertyKey[]) {
-    const file = kind.endsWith('-settings') ? `${kind.split('-')[0]}/settings.json` : `${kind}.json`;
+  constructor(kind: BridgeSourceKind | 'shuttle-store' | 'runtime-store', readonly path: PropertyKey[]) {
+    const file = kind.endsWith('-store') ? `${kind.split('-')[0]}.db` : kind.endsWith('-settings') ? `${kind.split('-')[0]}/settings.json` : `${kind}.json`;
     super(`Invalid offline Bridges configuration inventory: ${file} at $${path.map(key => `[${JSON.stringify(String(key))}]`).join('')}`);
   }
 }
@@ -136,7 +136,9 @@ export function projectBridgeDocument(result: LegacyBridgeInventory, name: strin
         const document = z.record(z.string(),z.unknown()).parse(raw);
         const value = document[platform === 'discord' ? 'DISCORD_BOTS' : 'SLACK_BOTS'];
         // The old piece accepts settings as text and parses the JSON map itself.
-        const bots = z.record(slug,id).parse(value === undefined || value === '' ? {} : bridgeSourceValue(typeof value === 'string' ? JSON.parse(value) : value));
+        let bots: Record<string,string>;
+        try { bots = z.record(slug,id).parse(value === undefined || value === '' ? {} : bridgeSourceValue(typeof value === 'string' ? JSON.parse(value) : value)); }
+        catch (error) { throw new BridgeSourceError(kind, [platform === 'discord' ? 'DISCORD_BOTS' : 'SLACK_BOTS', ...(error instanceof z.ZodError ? error.issues[0]?.path ?? [] : [])]); }
         result.settings.push({source:name,platform,bots});
       }
       } catch (error) {

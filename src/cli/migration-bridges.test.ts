@@ -1,4 +1,7 @@
-import {afterEach,expect,it}from'vitest';
+import {afterEach,expect,it,vi}from'vitest';
+import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
 import Database from'better-sqlite3';
 import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,existsSync}from'node:fs';
 import {tmpdir}from'node:os';
@@ -11,7 +14,7 @@ import {migrateBridges}from'./migrate-bridges.js';
 import {Readable}from'node:stream';
 import {createFoundation}from'../core/app.js';
 import {importHousehold}from'./household-importer.js';
-const roots:string[]=[];afterEach(()=>{for(const r of roots.splice(0))rmSync(r,{recursive:true,force:true});});
+const roots:string[]=[];afterEach(()=>{vi.restoreAllMocks();vi.unstubAllGlobals();for(const r of roots.splice(0))rmSync(r,{recursive:true,force:true});});
 async function fixture(){
  const root=mkdtempSync(join(tmpdir(),'migration-bridges-'));roots.push(root);const old=join(root,'old'),instance=join(root,'instance'),snapshot=join(root,'snapshot'),home=join(root,'new');
  const put=(path:string,value:unknown)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,JSON.stringify(value));};
@@ -70,6 +73,10 @@ it('both verifiers derive every setup row from source rather than a receipt',asy
 });
 
 it('rehearses the household shape: one local root, three bots, a work Slack bundle and no split names',async()=>{
+ const outside=vi.fn(()=>{throw Error('offline migration attempted venue IO');});
+ vi.stubGlobal('fetch',outside);
+ vi.spyOn(http,'request').mockImplementation(outside);vi.spyOn(https,'request').mockImplementation(outside);
+ vi.spyOn(net,'connect').mockImplementation(outside);
  const root=mkdtempSync(join(tmpdir(),'bridges-household-'));roots.push(root);
  const old=join(root,'old'),instance=join(root,'instance'),snapshot=join(root,'snapshot'),home=join(root,'new');
  const put=(path:string,value:unknown)=>{mkdirSync(dirname(path),{recursive:true});writeFileSync(path,JSON.stringify(value));};
@@ -116,4 +123,5 @@ it('rehearses the household shape: one local root, three bots, a work Slack bund
  }finally{d.close();}
  expect((await verifyMigration(snapshot,home,plan)).status).toBe('different');
  expect((await verifyBridgesMigration(snapshot,home,plan.importers.bridges.options)).status).toBe('different');
+ expect(outside).not.toHaveBeenCalled();
 });

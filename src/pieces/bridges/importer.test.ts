@@ -194,10 +194,22 @@ it('preserves safe source file and field diagnostics through the owning import p
 it('skips annotations in accepted store assembly without changing exact private evidence',()=>{
  const f=fixture();const note='PRIVATE_STORE_ANNOTATION';
  f.store('shuttle',[['routes','household',{_note:note,guild:'789',channel_names:{_note:note,'300':'work'},webhook_peers:{_comment:'x'.repeat(395)}}],['channels','art',{_note:note,bot:'100',answers:{_note:note,'300':'work'},flags:{_note:note},threads:{_note:note},extra:{_note:note,ignore:{_note:note,'500':true}}}],['route-offers','art',{doc:{bots:{_note:note,art:'100'},channels:{_note:note,'300':{primary:'art'}}}}]]);
+ const store=new Database(f.sources.stores[0].path);
+ store.prepare("UPDATE docs SET doc=? WHERE collection='channels'").run(' { "bot":"100", "answers":{"300":"work"}, "_note":"PRIVATE_STORE_ANNOTATION", "extra":{"ignore":{"500":true}}, "ignored_numeric":1.2500 } ');
+ const originals=store.prepare('SELECT doc FROM docs ORDER BY collection,key').all() as {doc:string}[];store.close();
  const s=readBridgeImport(f.sources,f.options,h,f.open);
  expect(s.expected.routes.map(r=>r.channel)).toEqual(['300']);
  expect(s.expected.venues[0].ignore).toEqual(['500']);
  expect(JSON.stringify(s.expected)).not.toContain(note);
  const evidence=JSON.parse(s.evidence).stores.stores[0].documents as {doc:string}[];
- expect(evidence.some(d=>d.doc.includes(note))).toBe(true);
+ expect(evidence.map(d=>d.doc)).toEqual(originals.map(d=>d.doc));
+});
+
+it('identifies malformed selected accepted-store maps without values',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',answers:42}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('Invalid offline Bridges configuration inventory: shuttle.db at $["channels"]["art"]["answers"]');
+});
+it('identifies selected Runtime source fields without pretending they came from people.json',()=>{
+ const f=fixture();f.store('runtime',[['gates','art',{people:{jonathan:{discord:true}}}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('Invalid offline Bridges configuration inventory: runtime.db at $["gates"]["art"]["people"]["jonathan"]["discord"]');
 });

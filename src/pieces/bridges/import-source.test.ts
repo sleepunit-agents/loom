@@ -107,6 +107,13 @@ describe('offline legacy Bridges source inventory',()=>{
       {source:'pieces/slack/settings.json',platform:'slack',bots:{art:'slack-bundle'}}]);
     expect(JSON.stringify(v)).not.toMatch(/private-value|never\/read|tokenSecret|appSecret|workspace|botUser/);
   });
+  for(const platform of ['discord','slack'] as const) it(`reports full ${platform} settings bot field paths`,()=>{
+    const {file}=fixture(),key=platform==='discord'?'DISCORD_BOTS':'SLACK_BOTS';
+    for(const value of [{art:false},JSON.stringify({art:false})]){
+      const f=file(`pieces/${platform}/settings.json`,`${platform}-settings`,{[key]:value});
+      expect(()=>readBridgeInventory([f])).toThrow(`Invalid offline Bridges configuration inventory: ${platform}/settings.json at $["${key}"]["art"]`);
+    }
+  });
   it('binds checksum to names, kinds and all bytes including ignored metadata, independent of argument order',()=>{
     const {file}=fixture();const a=file('a/people.json','people',{people:{a:{discord:'1'}}}),b=file('b/routes.json','routes',{});
     const v=readBridgeInventory([a,b]);expect(readBridgeInventory([b,a])).toEqual(v);
