@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountBoxes, jobs, jobNeeds, boxFacts } from '../core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts } from '../core/data/schema.js';
 import { Dispatcher } from './dispatcher.js';
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
@@ -21,6 +21,7 @@ function fixture() {
   db.insert(agentModels).values({ agent: 'art', model: 'primary', position: 0 }).run();
   db.insert(agentRunSettings).values({ agent: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'main', nestedContainers: false, gpu: false }).run();
   db.insert(modelAccounts).values({ id: 'account', owner: 'owner', provider: 'provider', label: 'Subscription', hasRoom: true }).run();
+  db.insert(modelAccountWindows).values({ account: 'account', window: 'week', usage: 0.2, usageReadAt: at, resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 7 * 86400_000 }).run();
   db.insert(modelAccountBoxes).values([{ account: 'account', box: 'first' }, { account: 'account', box: 'second' }]).run();
   const roles = [{ model: 'primary', provider: 'provider', harness: 'codex', series: 'series' }];
   const runtime = new Dispatcher(db, now, () => roles), comms = new Conversations(db, now);
@@ -79,6 +80,7 @@ it('current capacity can select the next allowed model and records that worker r
   f.db.insert(agentModels).values({ agent: 'art', model: 'fallback', position: 1 }).run();
   f.roles.push({ model: 'fallback', provider: 'other', harness: 'claude', series: 'other-series' });
   f.db.insert(modelAccounts).values({ id: 'other', owner: 'owner', provider: 'other', label: 'Other subscription', hasRoom: true }).run();
+  f.db.insert(modelAccountWindows).values({ account: 'other', window: 'week', usage: 0.2, usageReadAt: f.now(), resetsAt: '2026-11-14T21:00:00.000Z', durationMs: 7 * 86400_000 }).run();
   f.db.insert(modelAccountBoxes).values({ account: 'other', box: 'first' }).run();
   expect(f.runtime.next('first')).toMatchObject({ model: 'fallback', account: 'other', harness: 'claude' });
   expect(f.db.select().from(jobs).where(eq(jobs.id, f.job.id)).get()?.model).toBe('fallback');
@@ -148,4 +150,18 @@ it('keeps the trusted dispatch import graph free of process and credential I/O',
   };
   await walk(fileURLToPath(new URL('./dispatcher.ts', import.meta.url)));
   expect(seen.size).toBeGreaterThan(1);
+});
+
+it('persists the selected account and harness on each attempt and clears them for queued retry', () => {
+  const f = fixture();
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ account: null, harness: null });
+  const assignment = f.runtime.next('first')!;
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ account: assignment.account, harness: assignment.harness });
+  const result = f.runtime.finish('first', f.job.id, 1, 'start failed');
+  expect(result.job).toMatchObject({ account: 'account', harness: 'codex' });
+  expect(result.retry).toMatchObject({ account: null, harness: null });
+  f.tick(1000); f.roles[0]!.harness = 'configured-next-runner';
+  expect(f.runtime.next('first')?.harness).toBe('configured-next-runner');
+  expect(f.runtime.jobs.get(result.retry!.id)).toMatchObject({ account: 'account', harness: 'configured-next-runner' });
+  expect(f.runtime.jobs.get(f.job.id).harness).toBe('codex');
 });

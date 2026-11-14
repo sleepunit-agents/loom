@@ -44,31 +44,30 @@ async function setup(staging = false, configured = true) {
   };
   return {app, home, clock, source, buffers, request, call, status, refresh};
 }
-it('starts the next-root daemon and wakes it over HTTP using only current real service grants', async () => {
+it('starts the installed Changes reader without inter-module grants, retaining HTTP refresh and buffer erasure', async () => {
   const {app, clock, source, buffers, request, call, status, refresh} = await setup();
   expect(app.operations.has('changes.commit-sync')).toBe(true);
-  expect(call('secrets.describe', {name: 'github-acme', description: 'GitHub read'})).toMatchObject({ok: true});
-  expect(call('secrets.grant', {agent: 'changes', kind: 'secret', target: 'github-acme'})).toMatchObject({ok: true});
   clock.advance(1);
   await vi.waitFor(() => expect(status()).toBeDefined());
   expect(JSON.parse(status()!.value)).toMatchObject({error: true});
   expect(source.read).not.toHaveBeenCalled(); expect(request).not.toHaveBeenCalled();
-  expect(call('secrets.grantService', {service: 'changes', name: 'github-acme'})).toMatchObject({ok: true});
+  expect(call('secrets.describe', {name: 'github-acme', description: 'GitHub read'})).toMatchObject({ok: true});
+  expect(app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
+  expect(app.operations.has('secrets.grantService')).toBe(false);
   await refresh();
   expect(JSON.parse(status()!.value)).toMatchObject({error: false, held: false});
   expect(source.read).toHaveBeenCalledExactlyOnceWith('github-acme');
   expect(request).toHaveBeenCalledTimes(2);
   expect(buffers[0].every(byte => byte === 0)).toBe(true);
   expect(call('changes.list')).toMatchObject({ok: true, value: []});
-  expect(call('secrets.revokeService', {service: 'changes', name: 'github-acme'})).toMatchObject({ok: true});
+  app.db.prepare('DELETE FROM secrets_names WHERE id=?').run('github-acme');
   await refresh();
   expect(JSON.parse(status()!.value)).toMatchObject({error: true});
   expect(source.read).toHaveBeenCalledTimes(1);
 });
-it('starts in staging but holds the value source and forge even with an owner service grant', async () => {
+it('starts in staging but holds the value source and forge without inter-module grants', async () => {
   const {app, call, clock, source, request, status, refresh} = await setup(true);
   expect(call('secrets.describe', {name: 'github-acme', description: ''}).ok).toBe(true);
-  expect(call('secrets.grantService', {service: 'changes', name: 'github-acme'}).ok).toBe(true);
   clock.advance(1); await vi.waitFor(() => expect(status()).toBeDefined());
   await refresh();
   expect(JSON.parse(status()!.value)).toMatchObject({error: false, held: true});
@@ -84,14 +83,13 @@ it('runs without credential configuration, preserving the snapshot and recording
   expect(call('changes.list')).toMatchObject({ok: true, value: [{id: change().id, syncError: 'GitHub read unavailable'}]});
   expect(source.read).not.toHaveBeenCalled(); expect(request).not.toHaveBeenCalled();
 });
-it('rechecks revocation after source acquisition and erases its value without contacting GitHub', async () => {
-  const {call, clock, source, request, status, buffers} = await setup();
+it('rechecks secret removal after source acquisition and erases its value without contacting GitHub', async () => {
+  const {app, call, clock, source, request, status, buffers} = await setup();
   expect(call('secrets.describe', {name: 'github-acme', description: ''}).ok).toBe(true);
-  expect(call('secrets.grantService', {service: 'changes', name: 'github-acme'}).ok).toBe(true);
   const read = source.read.getMockImplementation()!;
   source.read.mockImplementationOnce(async () => {
     const bytes = await read();
-    expect(call('secrets.revokeService', {service: 'changes', name: 'github-acme'}).ok).toBe(true);
+    app.db.prepare('DELETE FROM secrets_names WHERE id=?').run('github-acme');
     return bytes;
   });
   clock.advance(1); await vi.waitFor(() => expect(status()).toBeDefined());
@@ -102,7 +100,6 @@ it('rechecks revocation after source acquisition and erases its value without co
 it('stops a source acquisition on foundation close before any forge request or late snapshot write', async () => {
   const {app, call, clock, source, request, buffers} = await setup();
   expect(call('secrets.describe', {name: 'github-acme', description: ''}).ok).toBe(true);
-  expect(call('secrets.grantService', {service: 'changes', name: 'github-acme'}).ok).toBe(true);
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   const read = source.read.getMockImplementation()!;
@@ -115,10 +112,9 @@ it('stops a source acquisition on foundation close before any forge request or l
   clock.advance(3600000);
   expect(request).not.toHaveBeenCalled(); expect(app.db.open).toBe(false);
 });
-it('rebuilds service registration after restart and keeps the durable due time and pending refresh', async () => {
+it('rebuilds installed authority after restart and keeps the durable due time and pending refresh', async () => {
   const {app, home, call, clock, source, request, status} = await setup();
   expect(call('secrets.describe', {name: 'github-acme', description: ''}).ok).toBe(true);
-  expect(call('secrets.grantService', {service: 'changes', name: 'github-acme'}).ok).toBe(true);
   clock.advance(1); await vi.waitFor(() => expect(status()).toBeDefined());
   const due = app.db.prepare('SELECT due FROM changes_jobs').get();
   await app.close();
