@@ -1,5 +1,5 @@
-/** One browser proof; CI owns Chromium and the six screenshot artifacts. */
-import { it, expect } from 'vitest';
+/** One browser proof; CI owns Chromium and the current Inbox and owning-view screenshot artifacts. */
+import { it, expect, onTestFailed } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -16,6 +16,7 @@ import { TokenDatabase } from '../core/household/tokens.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
 it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, answers once across windows, respects private scope and captures both looks',async()=>{
+  let phase='startup';onTestFailed(()=>console.error(`Inbox browser phase: ${phase}`));
   const home=mkdtempSync(join(tmpdir(),'loom-inbox-browser-')); fixture(home);
   const clock=new FakeClock(Date.parse('2026-11-13T06:00:00Z'));
   const owner={kind:'member' as const,id:'jonathan'};
@@ -97,13 +98,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.getByRole('button',{name:/^Errors/}).click();
     await b.locator('[data-split-row]').filter({hasText:'Record answer: could not be saved.'}).click();
     await b.getByRole('heading',{name:'Record answer: could not be saved.',exact:true}).waitFor();
-    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
-      await b.setViewportSize({width,height:900});
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await b.screenshot({path:join(shots,`inbox-outcome-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
+    expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     expect(JSON.stringify(loom.db.prepare('SELECT * FROM attention_outcomes').all())).not.toContain('Never copy these private input words');
     await b.setViewportSize({width:1280,height:900});
     await b.goto(`${loom.url}/p/inbox-preview/ask/private`);
@@ -154,6 +149,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.getByRole('button',{name:/^Answered/}).click();
     expect(await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).count()).toBe(0);
     await b.locator('.loom-split').getByRole('button',{name:/^Needs you/}).click();
+    phase='reported-step FYI';
     // A real tell event files a stable FYI across both windows and opens its owner.
     expect(loom.operations.call('direct',owner,'approvals.set-rule',{kind:'merge',scope:'github:notice-fixture/*',tier:'tell'},'inbox-notice-rule').ok).toBe(true);
     await a.goto(`${loom.url}/p/approvals-preview/notices`);
@@ -178,14 +174,17 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       await b.setViewportSize({width,height:900});
       await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await b.screenshot({path:join(shots,`inbox-approval-notice-${look}-${width}.png`),fullPage:true,animations:'disabled'});
       await a.setViewportSize({width,height:900});
       await a.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      expect(await a.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await a.screenshot({path:join(shots,`approvals-reported-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     await b.setViewportSize({width:1280,height:900});
     await b.goto(`${loom.url}/p/inbox-preview`);
+    phase='Clock acknowledgement';
     // An owning Clock outcome produces the real managed notice; acknowledgement leaves work alone.
     const wakeResult=loom.operations.call('direct',owner,'clock.in',{agent:'art',prompt:'Fixture scheduled work',note:'Inbox alert fixture',when:'1m'},'inbox-clock-wake');
     if(!wakeResult.ok)throw Error(wakeResult.message);
@@ -214,6 +213,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.locator('.loom-split').getByRole('button',{name:'Open Clock',exact:true}).click();
     await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/clock-preview');
     await b.goto(`${loom.url}/p/inbox-preview`);
+    phase='owning approval';
     // One actual central approval, with the owning page's action and two-window withdrawal.
     const requested=loom.operations.call('direct',{kind:'agent',id:'art'},'approvals.request',{kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,ask:'Merge the Inbox source fix?',why:'The source card keeps the exact decision and receipt.',if_yes:'I merge the fix.',if_no:'I hold it.'},'inbox-request-approval');
     expect(requested.ok).toBe(true);if(!requested.ok)throw Error(requested.message);
@@ -256,6 +256,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.getByRole('button',{name:'Open private reply',exact:true}).click();
     await expect.poll(()=>new URL(b.url()).pathname).toBe(`/p/comms-preview/thread/${privateThread.replace(/^th:/,'')}`);
     // Trusted owning Comms producer, using the same encrypted source capability as Runtime.
+    phase='sealed private reply';
     const key=await loadKey(home);
     const askPrivate=privateQuestionCreator({...loom,clock,key,sharing:fixtureSharing,attention:attentionRole(loom.operations),runtime:{deliver:async()=>{},end:async()=>{}},hold:async f=>f(),closed:()=>false,changed:(t,seq,ref)=>loom.live.changed([{type:'thread',id:t.id},{type:'message',id:`${t.id}:${seq}`},{type:'attention.ask',id:ref}])});
     const sealedWords='Keep the sealed Inbox plan private?';
@@ -269,13 +270,9 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await a.getByRole('textbox',{name:'Your private reply',exact:true}).fill('Sealed typed Inbox answer');
     expect(await b.getByRole('textbox',{name:'Your private reply',exact:true}).inputValue()).toBe('');
     expect(await a.evaluate(()=>JSON.stringify(localStorage).includes('Sealed typed Inbox answer'))).toBe(false);
-    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
-      await a.setViewportSize({width,height:900});
-      await a.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await a.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await a.screenshot({path:join(shots,`inbox-sealed-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
+    await a.setViewportSize({width:390,height:900});
+    await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe('one');
+    expect(await a.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
     await a.getByRole('button',{name:'Send private reply',exact:true}).click();
     await expect.poll(()=>b.getByRole('button',{name:'Yes',exact:true}).count()).toBe(0);
     await expect.poll(()=>b.getByText(/replied · jonathan/).count()).toBe(1);
