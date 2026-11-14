@@ -12,8 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Bridges import accepts sparse per-agent channel flags, blocks unrepresentable differences with source field evidence, and identifies conflicting present entries.
-
 - New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
 - New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail.
 - Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
@@ -28,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Runtime: expose authenticated private conversation description, title and activity controls through the next API; keep imported and policy-held execution fenced.
 
 - Add unregistered one-use Secrets handoff tickets with durable claims, exact grant/Runtime fences and staging holds; real worker delivery remains disabled.
+
+- Bridges import accepts sparse per-agent channel flags, blocks unrepresentable differences with source field evidence, and identifies conflicting present entries.
 
 - Add member-private Inbox read facts without answering asks or copying draft words.
 
