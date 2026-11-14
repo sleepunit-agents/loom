@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { Conversations } from '../core/conversations/index.js';
 import { and, asc, eq, ne, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
@@ -43,6 +45,7 @@ export interface TaskService {
  * alternate database, record JSON or background process is involved.
  */
 export function taskService(db: DataDatabase, now: () => string = () => new Date().toISOString()): TaskService {
+  const mail = new Conversations(db, now);
   const row = (id: string): TaskRow => {
     const found = db.select().from(tasks).where(eq(tasks.id, id)).get();
     if (!found) throw new Error('Task not found');
@@ -102,16 +105,28 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     },
     list(status) { return db.select().from(tasks).where(status ? eq(tasks.status, status) : undefined).orderBy(asc(tasks.priority), asc(tasks.position), asc(tasks.id)).all(); },
     edit(id, input) { const patch = z.object(summary).partial().strict().parse(input); return db.transaction(() => touch(id, patch)); },
-    claim(id, actor) { person.parse(actor); return db.transaction(() => { if (row(id).status !== 'open') throw new Error('Only open work can be claimed'); return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() }); }); },
-    unclaim(id) { return db.transaction(() => { if (row(id).status !== 'in_progress') throw new Error('Task is not in progress'); return touch(id, { status: 'open', assigneeKind: null, assignee: null, startedAt: null }); }); },
-    close(id, reason) { z.string().trim().min(1).parse(reason); return db.transaction(() => touch(id, { status: 'closed', closeReason: reason, closedAt: now() })); },
+    claim(id, actor) { person.parse(actor); return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'open') throw new Error('Only open work can be claimed'); return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() }); }); },
+    unclaim(id) { return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'in_progress') throw new Error('Task is not in progress'); return touch(id, { status: 'open', assigneeKind: null, assignee: null, startedAt: null }); }); },
+    close(id, reason) { z.string().trim().min(1).parse(reason); return db.transaction(() => { const task = touch(id, { status: 'closed', closeReason: reason, closedAt: now(), ask: null, ifYes: null, ifNo: null, answers: null, askedByKind: null, askedBy: null }); mail.resolve('task', id, reason); return task; }); },
     reopen(id) { return db.transaction(() => touch(id, { status: 'open', closeReason: null, closedAt: null, startedAt: null, assigneeKind: null, assignee: null })); },
     comment(id, text, actor) { db.transaction(() => addComment(id, text, actor)); },
     link(id, dependsOn, type) { db.transaction(() => link(id, dependsOn, type)); },
     unlink(id, dependsOn, type) { z.enum(['blocks', 'parent-child']).parse(type); db.transaction(() => { row(id); row(dependsOn); db.delete(taskLinks).where(and(eq(taskLinks.task, id), eq(taskLinks.dependsOn, dependsOn), eq(taskLinks.type, type))).run(); touch(id, {}); }); },
     ask(id, input, actor) {
       const value = z.object({ to: person.extend({ kind: z.literal('member') }), ask: z.string().trim().min(1), ifYes: z.string().trim().min(1), ifNo: z.string().trim().min(1), answers: z.enum(['yes-no', 'words']).default('yes-no') }).parse(input); person.parse(actor);
-      return db.transaction(() => { if (row(id).status === 'closed') throw new Error('Closed work cannot ask a question'); return touch(id, { assigneeKind: value.to.kind, assignee: value.to.id, ask: value.ask, ifYes: value.ifYes, ifNo: value.ifNo, answers: value.answers, askedByKind: actor.kind, askedBy: actor.id }); });
+      return db.transaction(() => {
+        if (row(id).status === 'closed') throw new Error('Closed work cannot ask a question');
+        mail.resolve('task', id, 'Question replaced');
+        const task = touch(id, { assigneeKind: value.to.kind, assignee: value.to.id, ask: value.ask, ifYes: value.ifYes, ifNo: value.ifNo, answers: value.answers, askedByKind: actor.kind, askedBy: actor.id });
+        mail.send({ toKind: 'person', to: value.to.id, source: 'task', sourceId: `${id}:${randomUUID()}`,
+          fromKind: actor.kind === 'member' ? 'person' : 'agent', fromId: actor.id,
+          conversation: task.sourceKind === 'conversation' ? task.sourceId : null,
+          project: task.project, agent: task.ownerKind === 'agent' ? task.owner : null,
+          member: task.ownerKind === 'member' ? task.owner : null,
+          words: value.ask, answers: value.answers, ifYes: value.ifYes, ifNo: value.ifNo,
+          waitsOnKind: 'task', waitsOnId: id, refs: [id] });
+        return task;
+      });
     },
     answer(id, answer, text, actor) {
       person.parse(actor); z.enum(['yes', 'no', 'words']).parse(answer);
@@ -121,6 +136,16 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         if (task.answers === 'words' && answer !== 'words') throw new Error('This question needs words');
         if (answer === 'words') z.string().trim().min(1).parse(text);
         addComment(id, answer === 'words' ? text : `${answer === 'yes' ? 'Yes' : 'No'}, to: ${task.ask}\n${answer === 'yes' ? task.ifYes : task.ifNo}`, actor);
+        const resolved = mail.resolve('task', id, answer === 'words' ? text : answer);
+        if (task.askedByKind && task.askedBy) {
+          // A task can be asked outside a thread; its answer still reaches its asker.
+          const conversation = task.sourceKind === 'conversation' && task.sourceId ? mail.conversation(task.sourceId) : null;
+          mail.send({ toKind: task.askedByKind === 'member' ? 'person' : 'agent', to: task.askedBy,
+            source: 'answer', sourceId: resolved[0]?.id ?? `${id}:${randomUUID()}`,
+            conversation: conversation && (task.askedByKind === 'member' || conversation.agent === task.askedBy) ? conversation.id : null,
+            fromKind: actor.kind === 'member' ? 'person' : 'agent', fromId: actor.id,
+            project: task.project, words: answer === 'words' ? text : `${answer === 'yes' ? 'Yes' : 'No'}, to: ${task.ask}\n${answer === 'yes' ? task.ifYes : task.ifNo}`, refs: [id] });
+        }
         return touch(id, { assigneeKind: task.askedByKind, assignee: task.askedBy, ask: null, ifYes: null, ifNo: null, answers: null, askedByKind: null, askedBy: null });
       });
     },
