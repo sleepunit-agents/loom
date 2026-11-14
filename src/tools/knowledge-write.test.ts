@@ -164,7 +164,7 @@ describe('knowledgeWrite', () => {
     expect(result).not.toMatch(/internal/i);
   });
 
-  it('returns error when no citations provided', async () => {
+  it('keeps a page without citations as provisional', async () => {
     const result = await knowledgeWrite(tempDir, {
       domain: 'test',
       title: 'No Citations',
@@ -172,8 +172,13 @@ describe('knowledgeWrite', () => {
       citations: [],
     });
 
-    expect(result).toMatch(/Error/i);
-    expect(result).toMatch(/citation/i);
+    expect(result).toMatch(/Sourcing: provisional/);
+    expect(result).toContain('No independent source recorded');
+    const backend = createKnowledgeBackend(tempDir);
+    try {
+      const page = await backend.getPage('no-citations');
+      expect(page).toMatchObject({ sourcing: 'provisional', body: 'Some content', citations: [] });
+    } finally { backend.close(); }
   });
 
   it('upserts an existing page by slug', async () => {
