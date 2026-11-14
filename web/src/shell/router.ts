@@ -89,9 +89,9 @@ export class DeskRouter {
     if (!app || !(path === app.path || path.startsWith(app.path + '/') || path.startsWith(app.path + '?'))) {
       const other = this.apps.find(a => path === a.path || path.startsWith(a.path + '/')); if (other) { this.open(other.id,undefined,undefined,id); this.go(other.id,path); } return;
     }
-    this.save({ focused:id, tiles: this.route.tiles.map(t => t.id === id ? { ...t, trail: [...t.trail.slice(0,t.at+1),path], at:t.at+1 } : t) });
+    this.save({ focused:id, tiles: this.route.tiles.map(t => t.id === id ? { ...t, used: ++this.serial, trail: [...t.trail.slice(0,t.at+1),path], at:t.at+1 } : t) });
   }
-  travel(id: string, step: number) { this.save({ ...this.route, tiles: this.route.tiles.map(t => t.id === id ? { ...t, at: Math.max(0,Math.min(t.trail.length-1,t.at+step)) } : t) }); }
+  travel(id: string, step: number) { this.save({ ...this.route, tiles: this.route.tiles.map(t => t.id === id ? { ...t, used: ++this.serial, at: Math.max(0,Math.min(t.trail.length-1,t.at+step)) } : t) }); }
   remove(id: string, minimize = false) {
     const tiles = minimize ? this.route.tiles.map(t => t.id === id ? { ...t, minimized:true,pinned:false } : t) : this.route.tiles.filter(t => t.id !== id);
     this.save({ tiles, focused: this.route.focused === id ? tiles.find(t => !t.minimized)?.id : this.route.focused });
@@ -107,9 +107,9 @@ export class DeskRouter {
     for (;;) {
       const active = this.asTiles(tiles); const under = underMinimum(active,area,screen);
       if (active.length<=capFor(screen) && !under) break;
-      const eligible = tiles.filter(t=>!t.minimized&&!t.pinned&&t.id!==this.route.focused);
+      const eligible = tiles.filter(t=>!t.minimized&&t.id!==this.route.focused);
       if(!eligible.length) break;
-      const gone=eligible.reduce((a,b)=>b.used<a.used?b:a); gone.minimized=true;
+      const gone=eligible.reduce((a,b)=>b.used<a.used?b:a); gone.minimized=true;gone.pinned=false;
       notices.push(`${this.apps.find(a=>a.id===gone.id)!.title} went to the dock to keep tiles usable.`);
     }
     if(notices.length) this.save({...this.route,tiles},true);

@@ -51,7 +51,8 @@ it('files pending exact-scoped approval cards, preserving principal wording and 
 it('projects private approvals as opaque metadata with exact member scope and never copies words',async()=>{
   const s=await setup(),id=s.seed(card({agent:'pond-bot',who:{agent:'pond-bot',where:'private'},project:'pond',member:'pollock',ask:'Secret question?',why:'Secret reason',if_yes:'Secret yes',if_no:'Secret no',details:'Secret details',for:'loren'}));
   expect(s.ask(id,pollock)).toMatchObject({ok:true,value:{member:'pollock',agent:'pond-bot',project:'pond',ask:'Private approval needs you',state:'open'}});
-  for(const viewer of [owner,{kind:'agent',id:'pond-bot'},{kind:'service',id:'attention'}] as Viewer[]){expect(s.ask(id,viewer).ok).toBe(false);expect(s.types.get('attention.ask')!.read(approvalAskId(id),viewer)).toBeUndefined();}
+  expect(s.ask(id,owner)).toMatchObject({ok:true,value:{member:'pollock'}});
+  for(const viewer of [{kind:'agent',id:'pond-bot'},{kind:'service',id:'attention'}] as Viewer[]){expect(s.ask(id,viewer).ok).toBe(false);expect(s.types.get('attention.ask')!.read(approvalAskId(id),viewer)).toBeUndefined();}
   const row=s.app.db.prepare('SELECT record FROM attention_asks WHERE id=?').get(approvalAskId(id)) as {record:string};
   expect(row.record).not.toMatch(/Secret|Loren|if_yes|if_no|why|details/);
   // The owning decision still requires an authenticated member window.
@@ -79,8 +80,8 @@ it('reconciles existing new-side cards on startup without no-op receipts on reop
 });
 it('redacts withdrawn words and follows source scope moves even after resolution',async()=>{
   const s=await setup();s.seed(card({project:'pond'}));expect(s.ask(undefined,pollock).ok).toBe(true);
-  s.seed(card({state:'denied',project:'other',agent:'pond-bot'}));
-  expect(s.ask(undefined,pollock).ok).toBe(false);expect(s.ask()).toMatchObject({ok:true,value:{project:'other',agent:'pond-bot',state:'resolved',ask:'Approval no longer needs you'}});
+  s.seed(card({state:'denied',project:'other',agent:'art'}));
+  expect(s.ask(undefined,pollock).ok).toBe(false);expect(s.ask()).toMatchObject({ok:true,value:{project:'other',agent:'art',state:'resolved',ask:'Approval no longer needs you'}});
   expect(s.ask()).not.toHaveProperty('value.why');
 });
 it('reserves future approval keys and refuses reconciliation over public doors or other identities',async()=>{

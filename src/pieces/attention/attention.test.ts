@@ -10,7 +10,7 @@ import type { AttentionSources } from './role.js';
 import { installAttention } from './index.js';
 const dirs: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
-const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: true, agents: ['art'] } }, projects: {}, services: {} });
+const sharing = () => ({ members: { alice: { owner: true, agents: ['art'] }, bob: { owner: false, agents: ['art'] } }, projects: {}, services: {} });
 async function setup(install = true, next = false) {
   const types = new Map<string, RecordType>();
   const home = mkdtempSync(join(tmpdir(), 'attention-')); dirs.push(home);
@@ -26,7 +26,7 @@ async function setup(install = true, next = false) {
   return { app, call, types, sources };
 }
 const ask = { id: 'ask-1', agent: 'art', ask: 'Continue?', source: { kind: 'piece', id: 'example' } };
-it('keeps stable asks immutable, first answer wins across owners, and retries return the receipt', async () => {
+it('keeps stable asks immutable, first answer wins across members, and retries return the receipt', async () => {
   const { call } = await setup();
   expect(call('raise', ask)).toMatchObject({ ok: true, value: { state: 'open' } });
   expect(call('answer', { id: ask.id, answer: { kind: 'yes' } }, { kind: 'agent', id: 'art' })).toMatchObject({ code: 'denied' });

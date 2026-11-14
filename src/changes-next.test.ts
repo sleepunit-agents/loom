@@ -46,7 +46,7 @@ it('next installs Changes without a fixture and reads current household project 
  } finally {await loom.close();rmSync(home,{recursive:true,force:true});}
 });
 
-it('next reprojects account assignment and clearing over HTTP and live without granting project access', async () => {
+it('next reprojects account assignment and clearing over HTTP and live across project labels', async () => {
  const home=mkdtempSync(join(tmpdir(),'changes-accounts-next-'));
  const loom=await startLoom({home,next:true,clock:new FakeClock(0),authenticate:req=>({viewer:{kind:'member',id:String(req.headers.authorization)},valid:()=>true})});
  const owner={kind:'member' as const,id:'jonathan'};
@@ -72,14 +72,16 @@ it('next reprojects account assignment and clearing over HTTP and live without g
   await once(socket,'open');socket.send(JSON.stringify({kind:'subscribe',type:'change'}));
   expect(await next()).toMatchObject({kind:'set',records:[]});
   expect(assign('art',['ART-BOT'])).toMatchObject({ok:true});
-  expect(await list()).toMatchObject({ok:true,value:[{id:change().id,agent:'art'}]});
+  expect(await list()).toMatchObject({ok:true,value:[{id:change().id,agent:'art'},{id:'github:secret/app#4',agent:'art'}]});
   expect(await next()).toMatchObject({kind:'put',record:{id:change().id,agent:'art',mine:false}});
-  expect((await list()).value).toHaveLength(1); // Agent metadata cannot grant private project access.
+  expect(await next()).toMatchObject({kind:'put',record:{id:'github:secret/app#4',agent:'art'}});
+  expect((await list()).value).toHaveLength(2); // Owned-agent access also reaches another project's record.
   expect(loom.operations.call('direct',owner,'changes.confirm',{id:change().id,head:change().head.id})).toMatchObject({ok:true,value:{open:true}});
   const answer=await fetch(`${loom.url}/api/changes/answer`,{method:'POST',headers:{authorization:'pollock','content-type':'application/json'},body:JSON.stringify({id:'member-answer',input:{id:change().id,head:change().head.id,action:'yes'}})});
   expect(await answer.json()).toMatchObject({ok:false,code:'denied'});
   expect(assign('art',[])).toMatchObject({ok:true});
   expect(await next()).toMatchObject({kind:'del',id:change().id});
+  expect(await next()).toMatchObject({kind:'del',id:'github:secret/app#4'});
   expect(await list()).toMatchObject({ok:true,value:[]});
   ownerSocket=new WebSocket(loom.url.replace('http:','ws:')+'/live',{headers:{authorization:'jonathan'}});
   const ownerNext=socketMessages(ownerSocket);
