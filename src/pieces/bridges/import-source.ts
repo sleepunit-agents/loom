@@ -53,10 +53,48 @@ export interface LegacyBridgeInventory {
   accounts: { source: string; owner: string; kind: 'person' | 'agent'; platform: 'discord' | 'slack'; user: string; workspace?: string }[];
   routes: { source: string; guild?: string; bots: Record<string,string>; botRoles: Record<string,string[]>;
     channels: { channel: string; thread: boolean; primary?: string; parent?: string; peer: boolean; pair?: string; guest: boolean; readers: string[] }[];
+    noteChannels?: Record<string,string[]>;
     only: string[]; ignore: string[]; webhookPeers: Record<string,string>; notify: Record<string,string|null>; peerTurnsEach?: number }[];
 }
 const hash = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
 const keys = (value: string[] | Record<string,unknown> | undefined) => Array.isArray(value) ? value : Object.keys(value ?? {});
+// Pinned loom-discord routing.py CORE_KEYS. Other keys describe context only.
+const coreRouteKeys = new Set(['guild','bots','bot_roles','channels','threads','webhook_peers','peer_turns_each','guests','ignore','only','notify']);
+export const bridgeSourceNoteKey = (key:string):boolean => !coreRouteKeys.has(key) && !key.startsWith('_');
+/** Parse source numeric spellings before JSON can turn a Python float into an int. */
+export function readBridgeSourceNotes(source:string,extra=false):Record<string,string[]> {
+  const raw=bridgeSourceValue(JSON.parse(source,
+    (_key:string,value:unknown,context?:{source?:string}) => typeof value!=='number' ? value
+      : context?.source && /^-?\d+$/.test(context.source) ? value : null)) as Record<string,unknown>;
+  return noteMembership(extra?raw.extra??{}:raw);
+}
+function noteMembership(raw: unknown): Record<string,string[]> {
+  const out: Record<string,string[]> = Object.create(null);
+  for (const [key,value] of Object.entries(z.record(z.string(),z.unknown()).parse(raw))) {
+    if (!bridgeSourceNoteKey(key)) continue;
+    const member = (v:unknown,path:PropertyKey[]):string => {
+      if (typeof v==='string') return v;
+      if (typeof v==='number' && Number.isSafeInteger(v)) return String(v);
+      throw new BridgeSourceError('routes',path);
+    };
+    if (typeof value==='string' || typeof value==='number') out[key]=[member(value,[key])];
+    else if (Array.isArray(value)) out[key]=value.flatMap((v,i)=>typeof v==='string'||typeof v==='number'?[member(v,[key,i])]:[]);
+    else if (value && typeof value==='object') out[key]=Object.keys(value);
+  }
+  return out;
+}
+/** Offline describe selection: a thread uses its parent, including unknown parents. */
+export function bridgeSourceNoteKeys(route: LegacyBridgeInventory['routes'][number],channel:string,parent?:string):string[] {
+  return Object.entries(route.noteChannels??{}).filter(([,channels])=>channels.includes(parent??channel)).map(([key])=>key).sort((a,b)=>{
+    // Python sorts Unicode code points, whereas JS's default compares UTF-16 units.
+    const left=Array.from(a),right=Array.from(b);
+    for(let i=0;i<Math.min(left.length,right.length);i++){
+      const difference=left[i].codePointAt(0)!-right[i].codePointAt(0)!;
+      if(difference)return difference;
+    }
+    return left.length-right.length;
+  });
+}
 /** Explicit files only: never follow an old config's paths, execute commands, or acquire credentials. */
 export function readBridgeInventory(files: readonly BridgeSourceFile[]): LegacyBridgeInventory {
   try {
@@ -124,7 +162,8 @@ export function projectBridgeDocument(result: LegacyBridgeInventory, name: strin
         }
       } else if (kind === 'routes') {
         const v = routes.parse(raw);
-        result.routes.push({source:name,...(v.guild ? {guild:v.guild} : {}),bots:v.bots ?? {},
+        const noteChannels = readBridgeSourceNotes(source);
+        result.routes.push({source:name,...(Object.keys(noteChannels).length?{noteChannels}:{}),...(v.guild ? {guild:v.guild} : {}),bots:v.bots ?? {},
           botRoles:Object.fromEntries(Object.entries(v.bot_roles ?? {}).map(([agent,roles])=>[agent,list(roles)])),
           channels:([['channels',false],['threads',true]] as const).flatMap(([section,thread])=>Object.entries(v[section] ?? {}).map(([channel,c])=>({
             channel,thread,...(c.primary ? {primary:c.primary} : {}),...(c.parent ? {parent:c.parent} : {}),

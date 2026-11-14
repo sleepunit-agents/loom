@@ -20,4 +20,11 @@ CREATE TABLE comms_conversation_steps (
 );
 CREATE INDEX comms_conversation_steps_at ON comms_conversation_steps(at);
 CREATE INDEX comms_conversation_steps_page ON comms_conversation_steps(conversation,seq);
+` }, {number:3,sql:`
+CREATE TABLE comms_refs (
+ thread TEXT NOT NULL REFERENCES comms_threads(id) ON DELETE CASCADE,
+ ref TEXT NOT NULL, seq INTEGER NOT NULL, pos INTEGER NOT NULL, at INTEGER NOT NULL,
+ PRIMARY KEY(thread,ref)
+);
+CREATE INDEX comms_refs_newest ON comms_refs(thread,seq,pos);
 ` }];

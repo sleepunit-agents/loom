@@ -1,3 +1,4 @@
+import { installPrivateRuntimeExport } from './private-export.js';
 import { installBodyPolicyStore } from './policy-store.js';
 import { installRuntimeOwnerApplication } from './owner-application.js';
 import { registerBuiltinService } from '../../core/services.js';
@@ -22,6 +23,7 @@ const inScope = (record: LiveRecord, scope: string | undefined) => scope === und
 export function installRuntime(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: { credentials?: RuntimeCredentials; privateStart?: Parameters<typeof installStartBody>[3] } = {}) {
   registerBuiltinService(operations, 'runtime', ['runtime.box', 'runtime.job', 'runtime.settings', 'runtime.binding']);
   migrate(db, 'runtime', schema);
+  installPrivateRuntimeExport(db);
   const store = runtimeStore(db);
   installBodyPolicyStore(db, operations, sharing);
   installRuntimeOwnerApplication(db, operations, sharing, options.credentials);

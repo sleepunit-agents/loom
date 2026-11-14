@@ -8,7 +8,7 @@ import type { RunnerBinding, SpawnClaude } from './session.js';
 import { reserveWorkerReceipt } from './receipts.js';
 import { runtimeJobTransport } from './job-transport.js';
 const inputSchema=z.object({job:z.string(),agent:z.string(),house:buildIdentity,brief:z.string(),needs:z.array(z.string()),
-  model:z.string().optional(),account:z.string().optional(),conversation:z.string().optional(),credential:z.string().optional()}).strict();
+  execution:z.string().regex(/^[a-f0-9]{64}$/),model:z.string().optional(),account:z.string().optional(),conversation:z.string().optional(),credential:z.string().optional()}).strict();
 const failed=()=>new Error('Runtime worker start unavailable; reconcile the job before retrying');
 /** One attempt only. Never retry a claim, input release, report or process after
  * an uncertain response. Native history exists only inside this owned worker.
@@ -42,22 +42,23 @@ export async function runClaudeJob(config:WorkerControlConfig,
     z.object({job:z.literal(job),state:z.literal('starting')}).strict().parse(claimed);
     receipt.advance('claimed');
     receipt.advance('input-attempt');
-    const input=inputSchema.parse(await call('takeInput',{job}));
+    const input=inputSchema.parse(await call('takeInput',{job,pinUnbound:true}));
     if(input.job!==job||input.agent!==binding.agent||input.conversation!==undefined||input.credential!==undefined||input.model!==undefined||input.account!==undefined
       ||JSON.stringify(input.house)!==JSON.stringify(house))throw failed();
     receipt.advance('input-received');
+    worker.pinExecution(input.execution);
     await worker.refresh();
     receipt.advance('launch-attempt');
     const [result]=await Promise.all([worker.turn({binding,rules,checkout,message:input.brief,current:()=>true}),
       started.then(async()=>{
         receipt.advance('running-attempt');
-        z.object({job:z.literal(job),state:z.literal('running')}).strict().parse(await call('reportJob',{job,state:'running'}));
+        z.object({job:z.literal(job),state:z.literal('running')}).strict().parse(await call('reportJob',{job,execution:input.execution,state:'running'}));
         receipt.advance('running');
       })]);
     receipt.advance('output-returned');
     await worker.refresh();
     receipt.advance('finish-attempt');
-    z.object({job:z.literal(job),state:z.literal('done')}).strict().parse(await call('finishJob',{job,state:'done',exit:0,log:result.text.slice(-4000)}));
+    z.object({job:z.literal(job),state:z.literal('done')}).strict().parse(await call('finishJob',{job,execution:input.execution,state:'done',exit:0,log:result.text.slice(-4000)}));
     receipt.advance('finished');
   }catch {throw failed();}
   finally {try {worker?.close();}finally {receipt.close();}}
