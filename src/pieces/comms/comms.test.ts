@@ -187,6 +187,14 @@ for(const original of ['missing','other'])it(`does not fall back when original p
  await expect(s.comms.spawn('art',{conversation:'cv-unavailable',text:'Private child'})).rejects.toThrow('Spawn unavailable');
  expect(seals).toBe(0);expect(s.app.db.prepare('SELECT count(*) AS n FROM comms_threads').get()).toEqual({n:0});
 });
+it('retains memberless retry behavior after its original private parent is archived',async()=>{
+ let seals=0;const s=await setup({conversation:()=>({agent:'art',venue:'spawn',version:'one'}),key:k=>({...k,seal:async words=>{seals++;return k.seal(words);}})});
+ const parent=await s.open();await s.comms.deliver('art',parent,1);const cv=conversationOf(s.app.db,parent);
+ const created=await s.comms.spawn('art',{conversation:'cv-legacy',text:'First brief',parent:cv});
+ await s.call('change',{thread:parent,action:'archive'});const before=s.app.db.prepare('SELECT * FROM comms_messages').all(),count=seals;
+ expect(await s.comms.spawn('art',{conversation:'cv-legacy',text:'Retry',parent:cv})).toEqual(created);
+ expect(seals).toBe(count);expect(s.app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(before);
+});
 it('refuses retries after original ownership is revoked or a conflicting parent is supplied',async()=>{
  const s=await setup({conversation:id=>({agent:'art',venue:id==='cv-ordinary'?'terminal':'spawn',version:'one',member:id==='cv-ordinary'?'jonathan':id==='cv-bound'?'other':undefined})});
  const parent=await s.open();await s.comms.deliver('art',parent,1);const cv=conversationOf(s.app.db,parent);

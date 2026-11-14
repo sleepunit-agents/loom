@@ -37,6 +37,7 @@ export function spawnCreator(o:Options) {
    if(matches.length>1)return denied();
    const t=matches[0];if(t&&(t.agent!==agent||(cv.member!==undefined&&t.member!==cv.member)||!owner(t)))return denied();return t;
   };
+  const old=existing();if(old&&cv.member===undefined)return {thread:old.id};
   const parentValue=i.parent?o.conversation?.(i.parent):undefined;
   const parentMetadata=parentValue?{...parentValue}:undefined;
   const parentThreads=i.parent?byConversation(i.parent):[];
@@ -45,7 +46,7 @@ export function spawnCreator(o:Options) {
   if(parent&&(parent.agent!==agent||!owner(parent)||parent.archived!==null))return denied();
   if(parentMetadata&&(parentMetadata.agent!==agent||(cv.member!==undefined&&parentMetadata.member!==undefined&&parentMetadata.member!==cv.member)))return denied();
   if(cv.member!==undefined&&(!cv.member||(parent&&parent.member!==cv.member)))return denied();
-  const old=existing();if(old)return {thread:old.id};
+  if(old)return {thread:old.id};
   const members=Object.keys(o.sharing().members);
   const member=cv.member??parent?.member??members.find(id=>mayUseThread({kind:'member',id},{member:id,agent},o.sharing()));
   if(!member||!mayUseThread({kind:'member',id:member},{member,agent},o.sharing()))return denied();
