@@ -74,7 +74,7 @@ export function spawnCreator(o:Options) {
    const t:Thread={id:place,member,agent,conversation:i.conversation,title,titledBy:'agent',pinned:false,archived:null,opened:now,last:now,readSeq:0,nextSeq:1,stop:false,firstId,firstHash:o.hashText(i.text),working:false};
    saveThread(db,t);
    let n=0;
-   const add=(target:Thread,id:string,kind:string)=>append(db,target,{id,kind,sender:agent,at:now,...sealed[n++],record:JSON.stringify(kind==='message'?{delivery:'delivered'}:{})});
+   const add=(target:Thread,id:string,kind:string)=>append(db,target,{id,kind,sender:agent,at:now,...sealed[n++],record:JSON.stringify(kind==='message'?{delivery:'delivered'}:{})},texts[n-1]);
    const childSeqs=[add(t,firstId,'message').seq];
    const parentSeq=parent?add(currentParent[0],`spawn-${i.conversation}`,'reply').seq:undefined;
    if(linked)childSeqs.push(add(t,`parent-${i.parent}`,'reply').seq);

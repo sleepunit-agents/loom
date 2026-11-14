@@ -220,3 +220,27 @@ it('keeps the default reader read-only and sees committed rows in live WAL',asyn
   expect(app.db.prepare('SELECT sender FROM comms_messages WHERE seq=1').get()).toEqual({sender:'wal-member'});
  } finally {spy.mockRestore();}
 });
+
+for(const sameKey of [true,false])it(`preserves expired references, rebuilds retained words once and rolls back reference corruption (${sameKey?'same key':'rekey'})`,async()=>{
+ const s=await source(),to=home();if(sameKey)copyFileSync(join(s.from,'comms.key'),join(to,'comms.key'));else await loadKey(to);
+ const hh=new Database(join(s.from,'household.db'));cleanup.push(()=>hh.close());
+ hh.exec('CREATE TABLE comms_refs(thread,ref,seq,pos,at)');
+ hh.prepare('INSERT INTO comms_refs VALUES (?,?,?,?,?)').run('th:old','t-10',1,9,'2026-11-12T01:00:00Z');
+ hh.prepare('INSERT INTO comms_refs VALUES (?,?,?,?,?)').run('th:old','note:old/expired',99,0,'2026-11-12T01:00:00Z');
+ s.db.prepare('UPDATE comms_messages SET text=? WHERE seq=1').run(await s.key.seal('PLANTED t-10 acme/app#3 note:new/retained'));
+ const app=createFoundation({home:to});cleanup.push(()=>app.close());
+ await expect(importComms(app.db,s.from,to,{interrupt:()=>{app.db.prepare('DELETE FROM comms_refs').run();}})).rejects.toThrow('reference comparison');
+ expect(app.db.prepare("SELECT name FROM sqlite_master WHERE name='comms_refs'").get()).toBeUndefined();
+ await importComms(app.db,s.from,to);
+ const refs=app.db.prepare('SELECT * FROM comms_refs ORDER BY ref').all();
+ expect(refs).toEqual([
+  {thread:'th:old',ref:'github:acme/app#3',seq:1,pos:1,at:Date.parse('2026-11-12T01:00:00Z')},
+  {thread:'th:old',ref:'note:new/retained',seq:1,pos:2,at:Date.parse('2026-11-12T01:00:00Z')},
+  {thread:'th:old',ref:'note:old/expired',seq:99,pos:0,at:Date.parse('2026-11-12T01:00:00Z')},
+  {thread:'th:old',ref:'t-10',seq:1,pos:9,at:Date.parse('2026-11-12T01:00:00Z')},
+ ]);
+ expect(JSON.stringify(refs)).not.toContain('PLANTED');
+ expect(await importComms(app.db,s.from,to)).toMatchObject({imported:false});
+ hh.prepare("UPDATE comms_refs SET pos=8 WHERE ref='t-10'").run();
+ await expect(importComms(app.db,s.from,to)).rejects.toThrow('different');
+});
