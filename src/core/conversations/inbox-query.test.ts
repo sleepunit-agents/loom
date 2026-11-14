@@ -139,3 +139,17 @@ it('returns every named public question detail without decrypting', async () => 
   expect(await f.service.body(alice, question.id)).toEqual(details);
   expect(f.opens()).toBe(0);
 });
+it('withholds words if time passes their unchanged stored or household deadline during decryption', async () => {
+  for (const expiry of ['deadline', 'household'] as const) {
+    const f = await fixture();
+    if (expiry === 'deadline') {
+      f.db.update(messages).set({ keepUntil: '2026-11-14T18:01:00.000Z' }).run();
+      f.onOpen(() => f.time('2026-11-14T18:01:00.000Z'));
+    } else {
+      f.db.insert(household).values({ commsDays: 1 }).run();
+      f.onOpen(() => f.time('2026-11-15T18:00:00.000Z'));
+    }
+    expect(await f.service.body(alice, f.ask.inboxItem!), expiry).toBeNull();
+    expect(f.opens()).toBe(1);
+  }
+});
