@@ -77,6 +77,50 @@ function gate() {
   const promise = new Promise<void>(resolve => { release = resolve; });
   return { promise, release };
 }
+it.each(['success', 'reject-restore', 'reject-accept'] as const)('stateful isolated owning fake retains stopped recovery: %s', async outcome => {
+  const f = await fixture(), out = destination(), holder = join(out.parent, 'isolated-holder');
+  const authority = Symbol('explicit fixture authority');
+  const expected = f.files.get('secrets/recovery.age')!;
+  const enteredClose = gate(), finishClose = gate();
+  let active = false, accepted = false, settled = false;
+  const construct = (owner: symbol, target: string): HouseholdSecretsRestore => {
+    expect(owner).toBe(authority); expect(fs.existsSync(target)).toBe(false);
+    return { restore: async bytes => {
+      fs.mkdirSync(target, { mode: 0o700 }); active = true;
+      if (outcome === 'reject-restore') {
+        active = false; // Rejecting restore owns its acquisitions; no session exists.
+        fs.rmdirSync(target); throw Error('fixture restore failed');
+      }
+      const fd = fs.openSync(join(target, 'complete-state'), 'wx', 0o600);
+      try { fs.writeFileSync(fd, bytes); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      return {
+        accept: async () => {
+          expect(active).toBe(true);
+          expect(fs.readFileSync(join(target, 'complete-state'))).toEqual(expected);
+          if (outcome === 'reject-accept') throw Error('fixture acceptance failed');
+          accepted = true;
+        },
+        close: async () => { enteredClose.release(); await finishClose.promise; active = false; },
+      };
+    } };
+  };
+  const result = stageHouseholdRestoreWithRecovery(f.ciphertext, f.owner, out.home, construct(authority, holder));
+  // Attach rejection handling before yielding, including while failed acceptance cleans up.
+  const observed = result.then(value => ({ value }), error => ({ error })).finally(() => { settled = true; });
+  if (outcome !== 'reject-restore') {
+    await enteredClose.promise;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(settled).toBe(false); expect(active).toBe(true);
+    finishClose.release();
+  }
+  const completion = await observed;
+  if (outcome === 'success') expect(completion).toHaveProperty('value.state', 'awaiting-household-acceptance');
+  else expect(completion).toHaveProperty('error.message', 'Household owning recovery failed');
+  expect(active).toBe(false); expect(accepted).toBe(outcome === 'success');
+  if (outcome === 'reject-restore') expect(fs.existsSync(holder)).toBe(false);
+  else expect(fs.readFileSync(join(holder, 'complete-state'))).toEqual(expected);
+  expect(() => openDb(out.home)).toThrow('Household restore is incomplete');
+});
 it.each(['present', 'absent'] as const)('joins original owning recovery and keeps exact candidate quarantined, cookie %s', async cookie => {
   const f = await fixture(cookie), out = destination();
   const entered = gate(), acceptance = gate(), closing = gate(), closed = gate();

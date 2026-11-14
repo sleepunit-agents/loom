@@ -1278,7 +1278,9 @@ No recovery session is serialized, re-discovered or reconstituted from metadata.
 The role is trusted local code, not an operation input or a sandbox boundary.
 
 There is still no production owning implementation on main; fixtures use the
-smallest explicit fake. A real owning export/verifier/restore and its isolated
+explicit fakes, including an isolated stateful fake that checks copied recovery,
+acceptance, joined cleanup and retained stopped state. This fake does not witness
+real holder recovery. A real owning export/verifier/restore and its isolated
 acceptance witness remain a dependency on t-2208. Public restore, safe activation
 into an empty usable home, every restored sign-in/token and stopped-daemon stdio
 acceptance remain required. No blocker remover, startup bypass, daemon/worker
