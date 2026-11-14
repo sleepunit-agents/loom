@@ -1269,7 +1269,8 @@ existing owner-selected Signin digest through `runtimeHouseDestination` after
 Runtime claims the job. That original destination supplies `claimedAt`; callers
 cannot predict or replace it. The same binding installs both route owners, using
 the existing daemon and persistent holder replacement capabilities. Retirement
-fences the retained source proof and drains both route generations. A supervisor
+fences the retained source proof and joins both route generations and the
+registered original worker startup/close, including child exit and listener cleanup. A supervisor
 must retire and drain this owner before assigning its exclusive slots again.
 
 `runRuntimeSecretJob` consumes that source in one attempt: durable receipt,
@@ -1277,7 +1278,9 @@ existing Runtime control, HTTP claim/takeInput, source route selection, dedicate
 worker startup and delivery, running report, command completion, fresh authority,
 and finish. It consumes only an unbound input with the exact selected agent and
 house, with no credential, conversation or model/account overrides. Brief words
-never choose a command or become command input. Only `{job,state}` is sent in a
+never choose a command or become command input. The released unbound Runtime
+execution assertion is pinned in both control connections and carried unchanged
+in reports and finish, so a later otherwise-valid input cannot replace it. Only job/state metadata and the original Runtime execution assertion are sent in a
 report or finish; command output and exit diagnostics are disconnected. Lost
 acknowledgements remain uncertain and are never retried. The retained source
 proof joins the existing control watchdog and final completion check; private

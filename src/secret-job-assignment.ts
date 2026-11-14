@@ -14,7 +14,7 @@ export interface SecretAssignment {
   current():boolean;
   close():Promise<void>;
 }
-export interface SecretAssignmentSource {readonly signal:AbortSignal;claimed(job:string):Promise<SecretAssignment>;close():Promise<void>}
+export interface SecretAssignmentSource {readonly signal:AbortSignal;claimed(job:string):Promise<SecretAssignment>;own(drain:()=>Promise<void>):void;close():Promise<void>}
 const failed=()=>new Error('Secret job assignment unavailable');
 /** Capture explicit local selections BEFORE claim IO. Resolve the original
  * Signin/Runtime destination only AFTER claim, never predict claimedAt. This
@@ -29,12 +29,21 @@ export function secretJobAssignment(app:Foundation,sharing:()=>Sharing,
   config=structuredClone(config);
   const replaceDaemon=owners.daemon.replaceWorkers.bind(owners.daemon),replaceHolder=owners.holder.replaceWorkers.bind(owners.holder);
   const stop=new AbortController();
-  let used=false,active:SecretAssignment|undefined,closing:Promise<void>|undefined;
+  let used=false,active:SecretAssignment|undefined,closing:Promise<void>|undefined,drain:(()=>Promise<void>)|undefined;
   const retire=()=>{
     stop.abort();
-    return closing??=active?.close()??Promise.resolve();
+    return closing??=(async()=>{
+      const outcomes=await Promise.allSettled([
+        Promise.resolve().then(()=>active?.close()),Promise.resolve().then(()=>drain?.()),
+      ]);
+      if(outcomes.some(result=>result.status==='rejected'))throw failed();
+    })();
   };
-  return Object.freeze({signal:stop.signal,close:retire,async claimed(job:string) {
+  return Object.freeze({signal:stop.signal,close:retire,
+    own(closeWorker:()=>Promise<void>) {
+      if(used||stop.signal.aborted||drain||typeof closeWorker!=='function')throw failed();
+      drain=closeWorker;
+    },async claimed(job:string) {
     if(used||stop.signal.aborted)throw failed();used=true;
     if(app.db.inTransaction||job!==config.job)throw failed();
     const viewer=signin(app).token(config.tokenDigest)?.viewer;
@@ -46,7 +55,7 @@ export function secretJobAssignment(app:Foundation,sharing:()=>Sharing,
     const current=()=>{
       if(retired||stop.signal.aborted)return false;
       try {if(Date.now()<config.expiresAt&&Date.now()<config.grantExpiresAt&&destination.current())return true;}catch {}
-      retired=true;stop.abort();return false;
+      retired=true;void retire().catch(()=>{});return false;
     };
     const close=()=>{
       if(closing)return closing;

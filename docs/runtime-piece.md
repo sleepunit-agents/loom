@@ -1471,6 +1471,48 @@ unsupported input, and a lost one-time input response with no second attempt.
 This is a bounded worker-control unit; the complete standalone runner, durable
 native history, enrollment, accounts, command parity and screens remain open.
 
+### Original unbound input assertion
+
+The reference executable requests `takeInput({job,pinUnbound:true})`. Runtime
+returns an `execution` digest of the original claimed assignment, house, scope
+and input. Only claimed, active, unbound work without model/account selections,
+service ownership or configured/imported body policy can receive it. The worker
+pins that assertion once and sends it on subsequent `jobControl`, `reportJob`
+and `finishJob` calls. An older in-flight unpinned read cannot activate the new
+pin. The watchdog and independent reads before launch and after output use the
+assertion; running and finish validate it again inside their write transaction,
+before storing output or consuming provenance.
+
+Runtime compares current assignment, claim time, scope, original input and house,
+and rechecks box capabilities, house configuration, policy holds and lifecycle
+fences. Same-job relocation or changed selection cannot authorize the old turn.
+The digest is comparison data, never a credential, launch capability or native
+session handle. It does not enter the durable worker journal. Existing API
+clients that do not request a pin retain their previous protocol; the assertion
+does not make an arbitrary runner trustworthy or enable bound execution.
+It compares current facts, without proving the absence of transient changes
+that were restored between checks. Physical process ownership, durable history
+collection and full bound-worker admission remain separate unfinished work.
+
+Real-HTTP regressions change the same job after input release and require no
+spawn; active-watchdog cases wait for the real running acknowledgement before
+changing source/policy/capabilities and require the owned process to be killed.
+Final-write cases change selection immediately before running/finish reaches
+the server and require no state/output write. Scope and house regressions
+replace project scope or both the claimed house and its current configuration;
+the same authenticated job still passes unpinned control, while pinned control,
+running and finish each refuse. Removing only the respective digest field makes
+its regression fail, independently of the other lifecycle checks.
+A relocation case enrolls a second test runner and uses its actual authenticated
+HTTP principal: the newly assigned runner can read unpinned control but cannot
+use the original assignment's assertion for control, running or finish.
+Input-needs tests change the requirement while the same box satisfies both
+versions. Service ownership and an imported policy archive without any active
+policy configuration are tested as sole holds before input release and after
+the running acknowledgement. General input release and unbound-only assertion
+retain small independent needs checks; a broader shared validator is deferred
+to preserve their distinct bound-input and assertion failure semantics here.
+
 ### Durable external worker attempt receipts
 
 The executable requires a dedicated, durable `receipts` directory on the worker.

@@ -8,7 +8,7 @@ const failed=()=>new Error('Runtime secret worker unavailable');
  * local policy/grant/request proofs still gate admission and every pipe write.
  * Runtime control additionally kills an active command on stop/history loss,
  * including after delivery when no further secret transport request occurs. */
-export async function startRuntimeSecretWorker(config:WorkerControlConfig,selection:SecretWorkerSelection,runtime?:WorkerControlRuntime,owner?:{signal:AbortSignal;current():boolean}) {
+export async function startRuntimeSecretWorker(config:WorkerControlConfig,selection:SecretWorkerSelection,runtime?:WorkerControlRuntime,owner?:{signal:AbortSignal;current():boolean;execution?:string}) {
   config={...config};selection=structuredClone(selection);
   if(selection.jobs.length!==1||selection.jobs[0].binding.job!==config.job)throw failed();
   const expiresAt=selection.jobs[0].expiresAt;
@@ -26,6 +26,7 @@ export async function startRuntimeSecretWorker(config:WorkerControlConfig,select
   try {
     if(!current())throw failed();
     control=await connectWorkerControl(config,()=>{void worker?.close().catch(()=>{});},runtime,current);
+    if(owner?.execution){control.pinExecution(owner.execution);await control.fresh();}
     if(!current()||!control.current())throw failed();
     const originalControl=control;
     worker=startSecretWorker(selection);

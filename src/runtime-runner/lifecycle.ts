@@ -19,6 +19,6 @@ export async function connectClaudeWorker(config:WorkerControlConfig,
       if(!control.current()||!valid){control.close();throw failed();}
       return result;
     },
-    refresh:control.refresh,close:control.close,
+    refresh:control.refresh,pinExecution:control.pinExecution,close:control.close,
   });
 }

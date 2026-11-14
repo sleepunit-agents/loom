@@ -15,11 +15,13 @@ import {secretJobAssignment} from '../secret-job-assignment.js';
 import {inspectWorkerReceipts} from './receipts.js';
 import {ticketAuthorityFixture} from './ticket-authority.fixture.js';
 import {runRuntimeSecretJob} from './secret-job.js';
+import {startRuntimeSecretWorker} from './runtime-secret-worker.js';
+import {runtimeJobTransport} from './job-transport.js';
 import type {WorkerControlRuntime} from './control.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
-async function setup(staging=false,commandExit=0) {
- const f=await ticketAuthorityFixture(closes);await f.authority.close();await f.app.close();
+async function setup(staging=false,commandExit=0,service?:string) {
+ const f=await ticketAuthorityFixture(closes,service);await f.authority.close();await f.app.close();
  const app=await startLoom({home:f.home,next:true,staging,clock:f.clock,stdout(){}});closes.push(app.close);
  const sharing=()=>new SharingDatabase(app.db,f.home).sharing();
  const socket=(name:string)=>join(f.home,name+'.sock');
@@ -66,7 +68,7 @@ async function setup(staging=false,commandExit=0) {
   return response;
  }};
  const start=()=>runRuntimeSecretJob({url:app.url,token,job:f.id},{agent:'art',house,receipts},source,runtime);
- return {...f,app,source,config,runtime,calls,start,marker,receipts,directory,store,tick(){for(const tick of [...ticks])tick();}};
+ return {...f,app,source,config,runtime,calls,start,marker,receipts,directory,store,controlConfig:{url:app.url,token,job:f.id},complete(){child?.kill('SIGUSR2');},tick(){for(const tick of [...ticks])tick();}};
 }
 it('drives a real queued claim through original source routes, persistent holder, fd3 command and value-free finish',async()=>{
  const f=await setup();f.clock.advance(17);
@@ -78,7 +80,7 @@ it('drives a real queued claim through original source routes, persistent holder
  expect(row.state).toBe('released');expect(readFileSync(f.marker,'utf8')).toBe('accepted');
  expect(f.calls.filter(c=>c.name!=='jobControl').map(c=>c.name)).toEqual(['claimJob','takeInput','reportJob','finishJob']);
  expect(f.calls.find(c=>c.name==='finishJob')!.body).toMatchObject({input:{job:f.id,state:'done'}});
- expect(Object.keys((f.calls.find(c=>c.name==='finishJob')!.body as {input:object}).input)).toEqual(['job','state']);
+ expect(Object.keys((f.calls.find(c=>c.name==='finishJob')!.body as {input:object}).input)).toEqual(['job','execution','state']);
  expect(inspectWorkerReceipts(f.receipts)).toMatchObject([{job:f.id,phase:'finished'}]);
  for(const {name} of f.app.db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[]) {
   expect(JSON.stringify(f.app.db.prepare('SELECT * FROM "'+name.replaceAll('"','""')+'"').all())).not.toContain('synthetic-owner-value');
@@ -159,7 +161,7 @@ it('retirement during the dedicated worker initial control read cannot spawn a l
  const f=await setup(),request=f.runtime.request,spawn=vi.spyOn(ChildProcess.prototype,'spawn');let reads=0;
  f.runtime.request=async(...args)=>{
   const response=await request(...args);
-  if(String(args[0]).endsWith('/jobControl')&&++reads===2)await f.source.close();
+  if(String(args[0]).endsWith('/jobControl')&&++reads===3)void f.source.close();
   return response;
  };
  await expect(f.start()).rejects.toThrow();expect(spawn).not.toHaveBeenCalled();expect(existsSync(f.marker)).toBe(false);
@@ -175,10 +177,10 @@ it('captures runtime callbacks and their receiver before initial control IO',asy
  await f.start();expect(deadline).toHaveBeenCalled();
 });
 it('retains original expiry through the outer post-completion authority read',async()=>{
- const f=await setup(),request=f.runtime.request;let reads=0;
+ const f=await setup(),request=f.runtime.request;let postReportReads=0;
  f.runtime.request=async(...args)=>{
   const response=await request(...args);
-  if(String(args[0]).endsWith('/jobControl')&&++reads===4)vi.spyOn(Date,'now').mockReturnValue(f.config.expiresAt);
+  if(String(args[0]).endsWith('/jobControl')&&f.calls.some(c=>c.name==='reportJob')&&++postReportReads===2)vi.spyOn(Date,'now').mockReturnValue(f.config.expiresAt);
   return response;
  };
  await expect(f.start()).rejects.toThrow();expect(f.calls.some(c=>c.name==='finishJob')).toBe(false);
@@ -191,4 +193,52 @@ it('does not finish a delivered command that exits unsuccessfully',async()=>{
  expect(f.app.db.prepare('SELECT state FROM secrets_tickets').get()).toEqual({state:'released'});
  expect(f.calls.some(c=>c.name==='reportJob')).toBe(true);expect(f.calls.some(c=>c.name==='finishJob')).toBe(false);
  expect(inspectWorkerReceipts(f.receipts)).toMatchObject([{phase:'running'}]);
+});
+
+it('pins the released Runtime input through the final completion boundary',async()=>{
+ const f=await setup(),request=f.runtime.request;let postReportReads=0;
+ f.runtime.request=async(...args)=>{
+  if(String(args[0]).endsWith('/jobControl')&&f.calls.some(c=>c.name==='reportJob')&&++postReportReads===2)
+   f.app.db.prepare('UPDATE runtime_inputs SET brief=? WHERE job=?').run('Replacement otherwise-valid brief',f.id);
+  return request(...args);
+ };
+ await expect(f.start()).rejects.toThrow();expect(f.calls.some(c=>c.name==='finishJob')).toBe(false);
+ expect(f.store.read('job',f.id)).toMatchObject({state:'running'});
+ const input=f.calls.find(c=>c.name==='takeInput')!.body as {input:unknown};expect(input.input).toEqual({job:f.id,pinUnbound:true});
+ const controls=f.calls.filter(c=>c.name==='jobControl').map(c=>(c.body as {input:{execution?:string}}).input.execution);
+ expect(controls.filter(Boolean).every(pin=>pin===controls.find(Boolean))).toBe(true);
+});
+
+it('carries a service-bearing original source assignment through a real claim and both routes',async()=>{
+ const f=await setup(false,0,'bridge');let worker:Awaited<ReturnType<typeof startRuntimeSecretWorker>>|undefined;
+ f.source.own(async()=>{await worker?.close();});
+ const call=runtimeJobTransport(f.controlConfig,f.runtime);
+ expect(await call('claimJob',{job:f.id})).toEqual({job:f.id,state:'starting'});
+ const assignment=await f.source.claimed(f.id);
+ expect(assignment.selection.jobs[0].binding).toMatchObject({job:f.id,service:'bridge',claimedAt:f.clock.now()});
+ worker=await startRuntimeSecretWorker(f.controlConfig,assignment.selection,f.runtime,{signal:f.source.signal,current:assignment.current});closes.push(worker.close);
+ expect(await worker.delivery).toBe(true);await expect.poll(()=>existsSync(f.marker)).toBe(true);f.complete();expect(await worker.completed).toBe(true);
+ const row=f.app.db.prepare('SELECT destination,state FROM secrets_tickets').get() as {destination:string;state:string};
+ expect(JSON.parse(row.destination)).toEqual(assignment.selection.jobs[0].binding);expect(row.state).toBe('released');
+ await f.source.close();
+});
+it('source retirement joins the actual child close before allowing exclusive slots to be reused',async()=>{
+ const f=await setup(),request=f.runtime.request;let report!:()=>void,resumeReport!:()=>void,childClosed!:()=>void;
+ const ready=new Promise<void>(resolve=>{report=resolve;}),wait=new Promise<void>(resolve=>{resumeReport=resolve;}),closedEvent=new Promise<void>(resolve=>{childClosed=resolve;});
+ f.runtime.request=async(...args)=>{if(String(args[0]).endsWith('/reportJob')){report();await wait;}return request(...args);};
+ const delegate=vi.mocked(ChildProcess.prototype.emit).getMockImplementation()!;
+ let lateChild:ChildProcess|undefined,lateArgs:Parameters<ChildProcess['emit']>|undefined,released=false;
+ vi.mocked(ChildProcess.prototype.emit).mockImplementation(function(this:ChildProcess,...args:Parameters<ChildProcess['emit']>){
+  if(args[0]==='close'&&!released){lateChild=this;lateArgs=args;childClosed();return true;}
+  return Reflect.apply(delegate,this,args);
+ });
+ const running=f.start();void running.catch(()=>{});let drained=false;
+ try {
+  await ready;const closing=f.source.close().then(()=>{drained=true;});
+  await closedEvent;await new Promise<void>(resolve=>setImmediate(resolve));expect(drained).toBe(false);
+  released=true;Reflect.apply(delegate,lateChild!,lateArgs!);await closing;expect(drained).toBe(true);
+  resumeReport();await expect(running).rejects.toThrow();expect(existsSync(f.config.command.input.socket)).toBe(false);
+ }finally {
+  released=true;if(lateChild&&lateArgs)Reflect.apply(delegate,lateChild,lateArgs);resumeReport();await running.catch(()=>{});
+ }
 });
