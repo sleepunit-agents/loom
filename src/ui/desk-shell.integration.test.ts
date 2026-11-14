@@ -108,6 +108,10 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await reference.locator('.loom-agentwin').getByRole('button',{name:'Save',exact:true}).click();
     await expect.poll(()=>reference.locator('.loom-aghead__desc').getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
     for(const page of [a,b])await page.goto(app.url);
+    await a.evaluate(()=>document.fonts.ready);
+    await a.getByRole('button',{name:'Open art agent window',exact:true}).click();
+    await expect.poll(async()=>({path:new URL(a.url()).pathname,readers:await a.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]});
+    await a.goto(app.url);
     // Exercise the real renderer through the database-backed display feed on both surfaces.
     const painted = async (page: typeof a, selector: string) => page.locator(selector).evaluateAll(nodes => nodes.some(node => {
       const cv = node as HTMLCanvasElement, data = cv.getContext('2d')?.getImageData(0,0,cv.width,cv.height).data;
@@ -396,8 +400,10 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
           }
           if(surface==='agent') {
             await page.keyboard.press('Escape');await page.goto(app.url);
+            // A fresh Home can still be loading its web fonts; settle its geometry before pointer activation.
+            await page.evaluate(()=>document.fonts.ready);
             await page.getByRole('button',{name:'Open art agent window',exact:true}).click();
-            await expect.poll(()=>page.getByRole('article',{name:'art agent window',exact:true}).count()).toBe(1);
+            await expect.poll(async()=>({path:new URL(page.url()).pathname,readers:await page.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]});
             await expect.poll(()=>page.getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
             expect(await page.getByRole('button',{name:'Edit profile in Setup',exact:false}).count()).toBe(1);
             expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
