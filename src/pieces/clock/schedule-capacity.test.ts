@@ -13,12 +13,12 @@ const owner:Viewer={kind:'member',id:'jonathan'}, agent:Viewer={kind:'agent',id:
 const sharing:Sharing={members:{jonathan:{owner:true,agents:['art','fish']}},projects:{},services:{}};
 const cleanup:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
-async function setup(){
+async function setup(proven=false){
  const home=mkdtempSync(join(tmpdir(),'clock-schedule-capacity-'));
  cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const access=structuredClone(sharing), clock=new FakeClock();
  const starts=vi.fn(async (_input:Parameters<import('./role.js').Runtime['startBody']>[0])=>({state:'held' as const,reason:'Fixture staging hold'}));
- const open=async()=>{const app=await startLoom({home,clock,install(app){const jobs=installClock(app.db,app.operations,app.live,()=>access,{runtime:{startBody:starts}});app.onClose(jobs.close);}});const close=app.close;let closed=false;app.close=async()=>{if(!closed){closed=true;await close();}};cleanup.push(app.close);return app;};
+ const open=async()=>{const app=await startLoom({home,clock,install(app){const jobs=installClock(app.db,app.operations,app.live,()=>access,{runtime:{startBody:starts},provenance:v=>proven && v===agent?{agent:'art',conversation:'cv-capacity',principal:{for:'owner',people:['jonathan']}}:undefined});app.onClose(jobs.close);}});const close=app.close;let closed=false;app.close=async()=>{if(!closed){closed=true;await close();}};cleanup.push(app.close);return app;};
  const app=await open();
  const set=(id:string,viewer:Viewer=agent,extra:object={})=>app.operations.call('direct',viewer,'clock.scheduleSet',{id,agent:'art',at:'12:31',prompt:'Continue work',note:'schedule',...extra},randomUUID());
  return {app,open,set,access,clock,starts};
@@ -46,7 +46,7 @@ it('allows owner schedules beyond twenty without consuming the API share',async(
  expect(set('owner-extra',owner).ok).toBe(true);
 });
 it('allows replacement at capacity and frees a slot only after removal',async()=>{
- const {app,set}=await setup();
+ const {app,set}=await setup(true);
  fillApiShare(set);
  expect(set('api-0',agent,{prompt:'Replacement'}).ok).toBe(true);
  expect(set('overflow').ok).toBe(false);

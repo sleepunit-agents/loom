@@ -1,0 +1,106 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { afterEach, expect, it } from 'vitest';
+import { startLoom } from '../../foundation.js';
+import { FakeClock, exportDatabase, type Viewer, type Sharing } from '../../core/index.js';
+import type { ClockProvenance } from '../runtime/role.js';
+import { installClock } from './index.js';
+import { schedules, wakes } from './store.js';
+const cleanup:Array<()=>void|Promise<void>>=[];
+afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
+const body:Viewer={kind:'agent',id:'art'},owner:Viewer={kind:'member',id:'jonathan'};
+const input={agent:'art',id:'art/daily',at:'13:17',prompt:'PRIVATE_WORDS',note:'PRIVATE_NOTE'};
+async function setup(privateWork=true){
+ const home=mkdtempSync(join(tmpdir(),'clock-private-control-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
+ let proof:ClockProvenance|undefined={agent:'art',conversation:'cv-original',...(privateWork?{member:'jonathan'}:{}),principal:{for:'pollock',people:['pollock']}};
+ const access:Sharing={members:{jonathan:{owner:true,agents:['art']},other:{owner:true,agents:['art']}},projects:{pond:{members:['jonathan'],agents:['art']}},services:{}};
+ const app=await startLoom({home,clock:new FakeClock(),install(app){const jobs=installClock(app.db,app.operations,app.live,()=>access,{provenance:v=>v===body?proof:undefined});app.onClose(jobs.close);}});cleanup.push(app.close);
+ const call=(name:string,data:object,viewer=body,id=randomUUID())=>app.operations.call('direct',viewer,'clock.'+name,data,id);
+ const snapshot=()=>JSON.stringify({s:schedules(app.db),w:wakes(app.db),e:app.db.prepare('SELECT * FROM clock_events').all()});
+ return {app,call,snapshot,access,get proof(){return proof;},set proof(p:ClockProvenance|undefined){proof=p;}};
+}
+it('creates and replaces private schedules without flattening scope or exposing words, including receipts and export',async()=>{
+ const f=await setup(),id=randomUUID(),ack=f.call('scheduleSet',input,body,id);
+ expect(ack).toMatchObject({ok:true,value:{id:input.id,private:true,due:expect.any(Number)}});
+ expect(JSON.stringify(ack)).not.toMatch(/PRIVATE_|authorship|pollock|cv-original/);
+ expect(f.call('scheduleSet',input,body,id)).toEqual(ack);
+ expect(schedules(f.app.db)[0]).toMatchObject({member:'jonathan',authorship:{origin:'art',conversation:'cv-original',member:'jonathan',principal:{for:'pollock',people:['pollock']}}});
+ expect(wakes(f.app.db)[0].authorship).toEqual(schedules(f.app.db)[0].authorship);
+ expect(f.call('scheduleSet',{...input,prompt:'PRIVATE_EDIT'}).ok).toBe(true);
+ expect(schedules(f.app.db)[0].member).toBe('jonathan');
+ for(const v of [body,owner,{kind:'member',id:'other'}] as Viewer[])for(const op of ['list','schedules','log'])expect(JSON.stringify(f.call(op,{},v))).not.toContain('PRIVATE_');
+ expect(JSON.stringify(exportDatabase(f.app.db))).not.toMatch(/PRIVATE_|cv-original|pollock/);
+});
+it.each([true,false])('controls require same authenticated origin and same verified conversation or owner principal (private=%s)',async privateWork=>{
+ const f=await setup(privateWork);expect(f.call('scheduleSet',input).ok).toBe(true);
+ const original=f.proof!,before=f.snapshot();
+ for(const proof of [undefined,{...original,conversation:'cv-other'},{...original,agent:'fish'}, {...original,member:'other'}, {...original,project:'pond'}]){
+  f.proof=proof;
+  for(const [op,data] of [['scheduleSet',{...input,prompt:'FORGED'}],['scheduleRun',{id:input.id}],['scheduleRemove',{id:input.id}],['cancel',{id:wakes(f.app.db)[0].id}]] as const)expect(f.call(op,data).ok,op).toBe(false);
+  expect(f.snapshot()).toEqual(before);
+ }
+ f.proof=original;
+ expect(f.call('scheduleRun',{id:input.id},{...body}).ok).toBe(false);
+ expect(f.call('scheduleRun',{id:input.id}).ok).toBe(true);
+ const run=wakes(f.app.db).find(w=>w.runNow)!;expect(run.authorship?.conversation).toBe('cv-original');
+ f.proof={...original,conversation:'cv-owner',principal:{for:'owner',people:['jonathan']}};
+ expect(f.call('scheduleRun',{id:input.id}).ok).toBe(true);
+ expect(wakes(f.app.db).filter(w=>w.runNow).find(w=>w.id!==run.id)?.authorship).toMatchObject({conversation:'cv-owner',principal:{for:'pollock',people:['jonathan','pollock']}});
+ expect(f.call('cancel',{id:run.id}).ok).toBe(true);
+ expect(f.call('scheduleRemove',{id:input.id}).ok).toBe(true);
+});
+it('never makes owner-created or historical no-origin work body-mutable, even with fresh owner steering',async()=>{
+ const f=await setup(false);expect(f.call('scheduleSet',input,owner).ok).toBe(true);
+ f.proof={...f.proof!,principal:{for:'owner',people:['jonathan']}};
+ const before=f.snapshot();
+ for(const [op,data] of [['scheduleSet',input],['scheduleRun',{id:input.id}],['scheduleRemove',{id:input.id}],['cancel',{id:wakes(f.app.db)[0].id}]] as const)expect(f.call(op,data).ok).toBe(false);
+ expect(f.snapshot()).toEqual(before);
+});
+it('checks current central policy and fresh binding before replaying private mutation acknowledgements',async()=>{
+ const f=await setup();expect(f.call('scheduleSet',input).ok).toBe(true);
+ const id=randomUUID(),data={id:input.id},ack=f.call('scheduleRun',data,body,id);expect(ack.ok).toBe(true);
+ expect(f.call('scheduleRun',data,body,id)).toEqual(ack);
+ f.access.members.jonathan.agents=[];expect(f.call('scheduleRun',data,body,id)).toMatchObject({ok:false,code:'denied'});
+ f.access.members.jonathan.agents=['art'];f.proof={...f.proof!,conversation:'cv-other',principal:{for:'owner',people:['jonathan']}};
+ expect(f.call('scheduleRun',data,body,id)).toMatchObject({ok:false,code:'conflict'});
+ f.proof=undefined;expect(f.call('scheduleRun',data,body,id).ok).toBe(false);
+});
+it('private command creation, replace, run, cancel and removal share replay authorization without private list reads',async()=>{
+ const f=await setup(),id=randomUUID(),data={argv:['schedule','set','daily','--at','13:17','-p','PRIVATE_COMMAND']};
+ const ack=f.call('command',data,body,id);expect(ack).toMatchObject({ok:true,value:{exit:0}});expect(JSON.stringify(ack)).not.toContain('PRIVATE_');
+ expect(f.call('command',data,body,id)).toEqual(ack);
+ expect(f.call('command',{argv:['schedule','run','daily']})).toMatchObject({ok:true,value:{exit:0}});
+ const run=wakes(f.app.db).find(w=>w.runNow)!;
+ expect(f.call('command',{argv:['cancel',run.id]})).toMatchObject({ok:true,value:{exit:0,stdout:`cancelled ${run.id}\n`}});
+ const original=f.proof!;f.proof={...original,conversation:'cv-other'};expect(f.call('command',data,body,id)).toMatchObject({ok:false,code:'denied'});
+ f.proof=original;f.access.members.jonathan.agents=[];expect(f.call('command',data,body,id)).toMatchObject({ok:false,code:'denied'});
+ f.access.members.jonathan.agents=['art'];expect(f.call('command',{argv:['schedule','rm','daily']})).toMatchObject({ok:true,value:{exit:0}});
+ expect(f.call('command',data,body,id)).toMatchObject({ok:false,code:'denied'});
+ expect(f.call('scheduleSet',input,body,id).ok).toBe(false);
+ expect(JSON.stringify(exportDatabase(f.app.db))).not.toContain('PRIVATE_');
+});
+
+it('private ids and deleted private receipts never become token-readable, including explicit member input',async()=>{
+ const f=await setup(),receipt=randomUUID(),original=f.call('scheduleSet',{...input,member:'jonathan'},body,receipt);
+ expect(original.ok).toBe(true);
+ const removeId=randomUUID();expect(f.call('scheduleRemove',{id:input.id},body,removeId).ok).toBe(true);
+ expect(f.call('scheduleSet',{...input,member:'jonathan'},body,receipt).ok).toBe(false);
+ expect(f.call('scheduleRemove',{id:input.id},body,removeId).ok).toBe(false);
+ for(const v of [owner,{kind:'member',id:'other'}] as Viewer[])expect(f.call('scheduleSet',{...input,member:'jonathan'},v,receipt)).toMatchObject({ok:false,code:'denied'});
+ expect(schedules(f.app.db)).toEqual([]);
+});
+it('does not authorize control from capacity, saved by, archive or historical missing authorship',async()=>{
+ const f=await setup(false);expect(f.call('scheduleSet',input).ok).toBe(true);
+ const saved=schedules(f.app.db)[0];delete saved.authorship;
+ f.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify({...saved,legacy:{origin:'art',for_in:'cv-original',for:'owner'}}),saved.id);
+ f.proof={...f.proof!,principal:{for:'owner',people:['jonathan']}};
+ for(const op of ['scheduleSet','scheduleRun','scheduleRemove'])expect(f.call(op,op==='scheduleSet'?input:{id:input.id}).ok).toBe(false);
+});
+it('retains public command names for noncanonical public schedule ids',async()=>{
+ const f=await setup(false);expect(f.call('scheduleSet',{...input,id:'daily'}).ok).toBe(true);
+ expect(f.call('command',{argv:['schedule','set','daily','--at','13:17','-p','Replacement']})).toMatchObject({ok:true,value:{exit:0}});
+ expect(schedules(f.app.db)).toHaveLength(1);expect(schedules(f.app.db)[0].id).toBe('daily');
+ expect(f.call('command',{argv:['schedule','run','daily']})).toMatchObject({ok:true,value:{exit:0}});
+});

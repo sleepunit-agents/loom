@@ -835,11 +835,11 @@ describe('durable daemon clock', () => {
     expect(app.call('now', { id: uncertain.id })).toMatchObject({ ok: false, code: 'invalid' });
     expect(wakes(app.db).filter(w => w.state === 'pending')).toHaveLength(verb === 'laneAssign' ? 1 : 0);
   });
-  it('attributes replacement schedule work to its authenticated editor', async () => {
+  it('attributes replacement of body-filed schedule work to its authenticated editor', async () => {
     const startBody = vi.fn(async () => ({ state: 'started', body: 'b' } as const));
-    const app = await loom({ runtime: { startBody } });
-    app.value('scheduleSet', { id: 'daily', agent: 'art', at: '00:01', prompt: 'Owner words', note: 'daily' });
     const agent: Viewer = { kind: 'agent', id: 'art' };
+    const app = await loom({ runtime: { startBody }, provenance:v=>v===agent?{agent:'art',conversation:'cv-edit',principal:{for:'owner',people:['jonathan']}}:undefined });
+    app.value('scheduleSet', { id: 'daily', agent: 'art', at: '00:01', prompt: 'Original words', note: 'daily' },agent);
     expect(app.value<Schedule>('scheduleSet', { id: 'daily', agent: 'art', at: '00:01', prompt: 'Agent words', note: 'daily' }, agent).by).toEqual(agent);
     const pending = wakes(app.db).find(w => w.state === 'pending' && w.schedule === 'daily')!;
     app.clock.advance(pending.due - app.clock.now()); await settled();

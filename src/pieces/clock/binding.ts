@@ -34,12 +34,13 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   if (name === 'park' && !flags.on) return fail('park needs --on',2);
   if (['pause','resume','now'].includes(name!)) input.agent = agent;
   if (name === 'list') input.agent = agent;
-  if (name === 'cancel') {
+  if (name === 'cancel' && viewer.kind !== 'agent') {
     const list=ops.call('direct',viewer,'clock.list',{agent});
     if (!list.ok) return fail(list.message);
     if (!(list.value as Wake[]).some(w => w.id===positional[0] && w.agent===agent && active(w))) return fail(`no spool entry ${positional[0]}`);
     input.id = positional[0];
   }
+  if (name === 'cancel') input.id = positional[0];
   if (name?.startsWith('schedule ') && name !== 'schedule list') {
     if (!/^[a-z][a-z0-9-]{0,39}$/.test(positional[0])) return fail("a schedule's name is lowercase letters, digits and dashes, like nightly");
     const found = ops.call('direct',viewer,'clock.schedules',{});
@@ -123,7 +124,10 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
     const next = (pending.value as Wake[]).find(w=>w.schedule===s.id && w.state==='pending')!;
     return `schedule ${label}: next at ${clockTime(next.due)} (${next.id})`;
   };
-  if (name === 'schedule set') return success(confirmation(value as Schedule,positional[0]));
+  if (name === 'schedule set') {
+    const ack=value as Schedule & {private?:boolean;due:number};
+    return success(ack.private ? `schedule ${positional[0]}: next at ${clockTime(ack.due)} (private work armed)` : confirmation(ack,positional[0]));
+  }
   if (name === 'lane set' || name === 'lane assign') {
     const s = value as Schedule;
     return success(`${confirmation(s,s.lane!)}\nloom lane ${s.lane}: ${s.agent[0].toUpperCase()+s.agent.slice(1)}'s, ${when(s)}${s.laneDetails!.local ? " (on loom's machine)" : ''}`);
@@ -175,4 +179,13 @@ export function oneOffCommandInput(viewer:Viewer,request:ClockCommandInput):{age
  const parsed=parseCommand(viewer,request);if('reply' in parsed)return;
  const {agent,name,flags}=parsed;if(!['at','in','park'].includes(name))return;
  return {agent:agent??'',note:'',...(name==='park'&&typeof flags.on==='string'?{on:flags.on}:{})};
+}
+
+/** Pure command target shared with the outer replay policy. No private reads. */
+export function controlCommandInput(viewer:Viewer,request:ClockCommandInput, visible:readonly Schedule[]=[]):{operation:string;id:string;agent:string}|undefined {
+ const parsed=parseCommand(viewer,request);if('reply' in parsed)return;
+ const {agent,name,positional,operation}=parsed;
+ if(!['schedule set','schedule rm','schedule run','cancel'].includes(name) || !agent)return;
+ const candidates=visible.filter(s=>s.agent===agent && scheduleName(s.id,agent)===positional[0]);
+ return {operation,id:name==='cancel'?positional[0]:candidates.length===1?candidates[0].id:`${agent}/${positional[0]}`,agent};
 }

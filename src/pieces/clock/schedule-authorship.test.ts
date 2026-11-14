@@ -71,11 +71,12 @@ it('unbound schedules stay unknown and historical rows are never backfilled from
  expect(f.call('scheduleRun',{id:s.id}).ok).toBe(true);expect(wakes(f.app.db).find(w=>w.runNow)?.authorship?.principal.for).toBe('?');
  expect(f.call('scheduleSet',input).ok).toBe(true);expect(schedules(f.app.db)[0].authorship?.principal.for).toBe('?');
 });
-it('refuses private body schedules without flattening their member or writing public words, including command path',async()=>{
+it('preserves private body schedule scope and returns only acknowledgements, including command path',async()=>{
  const f=await setup();f.proof={agent:'art',conversation:'cv-bound',member:'jonathan',principal:{for:'owner',people:['jonathan']}};
- expect(f.call('scheduleSet',input,body)).toMatchObject({ok:false,code:'denied'});
- expect(f.call('command',{agent:'art',argv:['schedule','set','daily','--at','13:17','-p','SAVED_WORDS']},body)).toMatchObject({ok:true,value:{exit:1}});
- expect(schedules(f.app.db)).toEqual([]);expect(wakes(f.app.db)).toEqual([]);
+ expect(f.call('scheduleSet',input,body)).toMatchObject({ok:true,value:{private:true}});
+ expect(f.call('command',{agent:'art',argv:['schedule','set','daily','--at','13:17','-p','SAVED_WORDS']},body)).toMatchObject({ok:true,value:{exit:0}});
+ expect(schedules(f.app.db)).toHaveLength(2);expect(schedules(f.app.db).every(s=>s.member==='jonathan')).toBe(true);
+ expect(JSON.stringify(f.call('schedules',{},body))).not.toContain('SAVED_WORDS');
 });
 it.each([false,true])('private schedule receipts stay private after removal (historical marker absent: %s)',async historical=>{
  const f=await setup(),id=randomUUID();

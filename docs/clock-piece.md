@@ -1059,9 +1059,8 @@ Private member scope survives even when the principal is unknown or names a
 different person. This is internal metadata: no public operation, record, Live
 feed or export is added. Consumers must preserve scope and still check central
 policy. Ordinary one-off filing now consumes this role and persists original
-evidence as described above. Ordinary schedules now save and narrow principal as described below. Clock
-mutation/join, private body schedule control and
-agent-authored self-rearm remain unfinished. Local approval
+evidence as described above. Ordinary schedules now save and narrow principal as described below. Private body schedule controls and conversation-bound mutation are described below.
+Conversation joining and agent-authored self-rearm remain unfinished. Local approval
 semantics and actual private delivery are unchanged.
 
 
@@ -1081,10 +1080,8 @@ resulting evidence, including across restart.
 
 This unit grants no new private body mutation, schedule-run, join or dispatch
 right. Household lanes keep their separate administration policy. Their original
-authorship is now captured as described below; conversation-bound controls remain
-unfinished.
-Authenticated private body `scheduleSet` is deliberately refused until that
-scope-preserving control path lands. Existing member-window schedule work remains
+authorship is now captured as described below; ordinary body controls are described
+in the private control section below. Existing member-window schedule work remains
 private; schedule removal cannot turn its cached receipts into token responses.
 
 
@@ -1102,3 +1099,35 @@ internal evidence.
 Lane administration still requires current household authority and independent
 target-agent creation permission. This persistence unit adds no body mutation,
 join, private schedule control, six-hour eligibility or delivery authority.
+
+
+### Private ordinary schedule controls
+
+Ordinary body `scheduleSet` now preserves Runtime's independent private member and
+project, just like one-off filing. Body replace, remove, cancel and ordinary
+schedule-run require fresh proof for the same authenticated agent origin AND
+(either the saved verified conversation or a current owner steering principal).
+The fresh member/project must match the record, and current central filing policy
+must still allow that scope. Saved authorship, capacity, `by` and archive fields
+never supply authority. Owner-created no-origin work and historical missing
+originals cannot become body-mutable through owner steering. Household lane
+administration and household run-now keep their separate owner requirements.
+
+Both the direct operation and the outer generated-command receipt check current
+authority before replay. Their fingerprints bind Runtime's current independent
+conversation/member/project/service. Private body results acknowledge only id,
+state/deadline and parked wait id; no private words, original people or saved
+Viewer is returned. Core passes the exact authenticated Viewer into the optional
+per-record window gate; existing input-only gates and signed-in windows retain
+their behavior. Private reads remain window-only. Deleted private ids retain their
+window gate, including receipt retries; removing a schedule does not make its
+previous results token-readable. Public command names and response text remain
+unchanged; private schedule confirmation uses its deadline acknowledgement rather
+than reading a private list. A removed private id requires member-window recovery;
+a body cannot silently reuse it.
+
+This unit does not grant joining or delivery. Actual private dispatch remains held.
+Conversation join authorization must be implemented with service dispatch against
+Runtime's current destination binding; no caller-supplied place, lane name or saved
+conversation alone may select an existing body's conversation. Agent-authored
+six-hour suppression and imported recovery remain unfinished.
