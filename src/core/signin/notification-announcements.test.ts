@@ -1,3 +1,4 @@
+import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -88,13 +89,16 @@ it('recovers held attempts, refuses interrupted replay and aborts transport on d
  for(const a of f.attempts().filter(a=>a.state==='queued'))expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'core.releaseEffect',{id:`notifications:announcement:${a.id}`},`release-close`)).toMatchObject({ok:true});f.clock.advance(0);expect(f.send).toHaveBeenCalledOnce();
  let closed=false;const close=f.app.close().then(()=>{closed=true;});await Promise.resolve();expect(closed).toBe(false);f.clock.advance(15_000);await close;expect(closed).toBe(true);expect(f.send).toHaveBeenCalledOnce();
 });
-it('composes the real Comms role: unread not-in-front replies target only their member and reading cancels a held attempt',async()=>{
+it('delivers real Comms replies to their member and reading cancels a later held attempt',async()=>{
  const f=await setup(true,true);f.seed('other','pollock');
  const opened=await f.app.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.open',{agent:'art',id:'aaaaaaaaaaaaaaaa',text:'PRIVATE message'},'open',true);expect(opened).toMatchObject({ok:true});
  const thread=(opened as {ok:true;value:{thread:string}}).value.thread;
  await f.comms.post('art',thread,{id:'reply',kind:'reply',text:'PRIVATE title and words'});
  await f.tick();await f.tick();expect(f.attempts()).toHaveLength(1);expect(f.send).not.toHaveBeenCalled();
- expect(await f.app.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.change',{thread,action:'read',seq:2},'read',true)).toMatchObject({ok:true});await f.release();expect(f.send).not.toHaveBeenCalled();expect(f.attempts()[0].state).toBe('cancelled');
+ await f.release();expect(f.send).toHaveBeenCalledOnce();expect(f.send.mock.calls[0][0]).toEqual(sub());
+ expect(JSON.parse(f.send.mock.calls[0][1])).toEqual({title:'loom',body:'',tag:expect.stringMatching(/^ask-[a-f0-9]{64}$/),url:`/p/comms-preview/thread/${thread.replace(/^th:/,'')}`});
+ await f.comms.post('art',thread,{id:'later',kind:'reply',text:'PRIVATE later reply'});await f.tick();expect(f.attempts()).toHaveLength(2);
+ expect(await f.app.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.change',{thread,action:'read',seq:3},'read',true)).toMatchObject({ok:true});await f.release();expect(f.send).toHaveBeenCalledOnce();expect(f.attempts().map(a=>a.state).sort()).toEqual(['cancelled','sent']);
 });
 it('releasing one exact device leaves the other attempt held',async()=>{
  const f=await setup();f.seed('second');f.raise();await f.tick();expect(f.attempts()).toHaveLength(2);
@@ -147,4 +151,19 @@ it('samples once at the current time after a long clock jump instead of replayin
  expect(read.mock.calls.map(call=>call[0]).sort()).toEqual(members.sort());
  f.clock.advance(59_999);await f.settle();expect(read).toHaveBeenCalledTimes(members.length);
  f.clock.advance(1);await f.settle();expect(read).toHaveBeenCalledTimes(2*members.length);
+});
+
+it.each(['minute','delivery'] as const)('close fences the queued %s callback before it can admit or send',async phase=>{
+ const f=await setup(false);f.raise();f.clock.advance(60_000);
+ if(phase==='delivery'){
+   await Promise.resolve();expect(f.attempts()).toHaveLength(1);
+   expect(f.app.effects!.status(`notifications:announcement:${f.attempts()[0].id}`)).toBeUndefined();
+ }
+ const closing=f.app.close();f.clock.advance(0);await closing;
+ f.clock.advance(31*86400_000);await Promise.resolve();expect(f.send).not.toHaveBeenCalled();
+ const db=new Database(join(f.home,'loom.db'),{readonly:true});
+ try{
+   expect(db.prepare('SELECT count(*) AS n FROM notifications_announcements').get()).toEqual({n:phase==='minute'?0:1});
+   expect(db.prepare('SELECT * FROM core_effects WHERE kind=\'push\'').all()).toEqual([]);
+ }finally{db.close();}
 });

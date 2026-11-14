@@ -921,3 +921,8 @@ one owned in-process daemon. Existing deliberate test sends use the same exact
 binding resolver and abortable transport. Tests use startLoom, synthetic data,
 the fake clock and fake transport; there is no real push or host change. Account
 screens and their existing CI screenshots are unchanged by this backend unit.
+
+The routine cadence and deliberate test-drain schedulers remain separate small
+lifecycles: only the routine scheduler coalesces minute samples. They share the
+credential-sensitive transport/deadline/result/cleanup lifecycle. Their distinct
+close, queued-work and restart behavior is covered by tests.
