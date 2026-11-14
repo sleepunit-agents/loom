@@ -31,7 +31,7 @@ const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...r
 const installedSources = new WeakMap<Operations, AttentionSources>();
 export const attentionSources = (operations: Operations): AttentionSources | undefined => installedSources.get(operations);
 export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}, waits: AttentionWaits = {}) {
-  registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding']);
+  registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding', 'task', 'approval'], 'attention', ['tasks.show']);
   migrate(db, 'attention', attentionMigrations);
   installHomeRoster(live, sharing);
   installConversations(db, operations, live, sharing);
