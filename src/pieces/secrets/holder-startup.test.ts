@@ -3,6 +3,8 @@ import {mkdirSync,writeFileSync,existsSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {Writable} from 'node:stream';
+import {ServerResponse} from 'node:http';
+import {localSecretSource} from './local-holder.js';
 import {generateIdentity} from 'age-encryption';
 import {ticketAuthorityFixture} from '../../runtime-runner/ticket-authority.fixture.js';
 import {workerSecretInputs} from '../../runtime-runner/secret-input.js';
@@ -17,6 +19,7 @@ import {startPersistentHolder} from './holder-lifecycle.js';
 import {localHolderMutations} from './holder-mutations.js';
 import {localHolderHandoff} from './holder-handoff.js';
 import * as storage from './holder-store.js';
+import * as authority from './ticket-authority.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
 async function setup(staging=false) {
@@ -62,7 +65,7 @@ it.each([false,true])('persistent startup reaches real Runtime-selected worker w
 });
 it.each(['grant','job','token'] as const)('persistent handoff denies original %s revoked after admission',async kind=>{
  const f=await setup();await f.start();await f.put();await f.admit();
- if(kind==='grant'){const {expiresAt:_,...grant}=f.grant;f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.revoke',grant,randomUUID());}
+ if(kind==='grant'){const {expiresAt:_,...grant}=f.grant;expect(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.revoke',grant,randomUUID()).ok).toBe(true);}
  if(kind==='token')signin(f.app).tokens.change(tokens=>{for(const t of tokens)if(t.sha256===f.tokenDigest)t.revoked=new Date(f.clock.now()).toISOString();});
  if(kind==='job') { // Use the actual Runtime store, never a replacement proof.
   const {runtimeStore}=await import('../runtime/store.js');const store=runtimeStore(f.app.db),{changedAt:_,...before}=store.read('job',f.id)!;
@@ -86,9 +89,11 @@ it('binds handoff before key history commits and rejects authenticated work unti
  const f=await setup(),actual=storage.openHolderStore;let entered!:()=>void,resume!:()=>void;
  const ready=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{resume=r;});
  vi.spyOn(storage,'openHolderStore').mockImplementation(async(...args)=>{entered();await hold;return actual(...args);});
+ const minted=vi.spyOn(authority,'remoteTicketAuthority');
  const starting=f.start();await ready;
+ const claims=vi.spyOn(minted.mock.results[0].value as ReturnType<typeof authority.remoteTicketAuthority>,'claim');
  const client=localHolderHandoff({...f.server,socket:f.config.handoff.listen.socket,servername:'holder.test'},f.fingerprint('holder'));closes.push(client.close);
- try {expect(existsSync(f.config.handoff.listen.socket)).toBe(true);await expect(client.handTo(randomUUID())).rejects.toThrow();expect(existsSync(join(f.config.directory,'holder.db'))).toBe(false);}
+ try {expect(existsSync(f.config.handoff.listen.socket)).toBe(true);await expect(client.handTo(randomUUID())).rejects.toThrow();expect(claims).not.toHaveBeenCalled();expect(existsSync(join(f.config.directory,'holder.db'))).toBe(false);}
  finally {resume();await starting;}
 });
 it('shutdown fences a held read, drains its route and source before closing storage',async()=>{
@@ -100,9 +105,47 @@ it('shutdown fences a held read, drains its route and source before closing stor
    expect(existsSync(f.config.handoff.listen.socket)).toBe(false);expect(bytes?.every(v=>v===0)).toBe(true);closed();store.close();
   }};
  });
+ let retired=false;
+ const end=ServerResponse.prototype.end;
+ vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
+  const value=end.apply(this,args);if(this.req.url?.endsWith('/uncertain'))retired=true;return value;
+ });
  const holder=await f.start();await f.put();const id=await f.admit();const delivery=f.admission.dispatch().catch(e=>e);await ready;
  const first=holder.close(),second=holder.close();expect(second).toBe(first);expect(closed).not.toHaveBeenCalled();
- try {await vi.waitFor(()=>expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(id)).toEqual({state:'uncertain'}));}
+ try {await vi.waitFor(()=>expect(retired).toBe(true));expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(id)).toEqual({state:'uncertain'});}
  finally {resume();await first;}
  expect(await delivery).toBeInstanceOf(Error);expect(f.received).toEqual([]);expect(closed).toHaveBeenCalledOnce();
+});
+
+it.each(['pin','binding','empty'] as const)('configured %s cannot redirect a central original claim',async kind=>{
+ const f=await setup();
+ if(kind==='pin')f.config.handoff.workers[0].fingerprint=f.fingerprint('stranger');
+ if(kind==='binding')f.config.handoff.workers[0].binding.claimedAt++;
+ if(kind==='empty')f.config.handoff.workers=[];
+ f.save();await f.start();await f.put();const id=await f.admit();
+ await expect(f.admission.dispatch()).rejects.toThrow();expect(f.received).toEqual([]);
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(id)).toEqual({state:'uncertain'});
+});
+
+it.each(['read','mutation'] as const)('shutdown drains original %s handler before closing persistent storage',async kind=>{
+ const f=await setup(),actual=storage.openHolderStore;let entered!:()=>void,resume!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{resume=r;});let borrowed:Uint8Array|undefined;
+ const closed=vi.fn();
+ vi.spyOn(storage,'openHolderStore').mockImplementation(async(...args)=>{
+  const store=await actual(...args);return {...store,
+   async read(name:string){const value=await store.read(name);if(kind==='read'){borrowed=value;entered();await hold;}return value;},
+   async set(...args:Parameters<typeof store.set>){await store.set(...args);if(kind==='mutation'){borrowed=args[2];entered();await hold;}},
+   close(){expect(borrowed?.every(v=>v===0)).toBe(true);closed();store.close();}
+  };
+ });
+ const holder=await f.start();
+ let pending:Promise<unknown>;
+ if(kind==='read'){
+  await f.put();const source=localSecretSource({...f.server,socket:f.config.read.socket,servername:'holder.test'});
+  pending=source.read('API').catch(e=>e);
+ }else pending=f.put().catch(e=>e);
+ await ready;const closing=holder.close();
+ try {await pending;expect(closed).not.toHaveBeenCalled();}
+ finally {resume();await closing;}
+ expect(closed).toHaveBeenCalledOnce();
 });

@@ -88,7 +88,9 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
     if (!isAbsolute(config.socket) || typeof authority !== 'function') throw failed();
     assertPrivateDirectory(dirname(config.socket));
     const material=tlsMaterial(config);
-    const server=https.createServer({...material,requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3',maxHeaderSize:8192},async(req,res)=>{
+    const active=new Set<Promise<void>>();let closed=false;
+    const server=https.createServer({...material,requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3',maxHeaderSize:8192},(req,res)=>{
+      const work=(async()=>{
       const chunks:Buffer[]=[];let bytes:Buffer|undefined;
       let expired=false;
       const deadline=setTimeout(()=>{expired=true;req.destroy();res.destroy();},5000);
@@ -100,7 +102,7 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
         const match=/^\/v1\/mutation\/(add|replace|remove)\/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$/.exec(req.url??'');
         const member=req.headers['x-holder-member'],writeId=req.headers['x-holder-write-id'];
         const length=req.headers['content-length'];
-        if (!peer.authorized || !fingerprint || req.method!=='POST' || (!match && !receipt)
+        if (closed || !peer.authorized || !fingerprint || req.method!=='POST' || (!match && !receipt)
           || req.headers['content-type']!=='application/octet-stream' || req.headers['transfer-encoding']
           || typeof member!=='string' || !/^[A-Za-z0-9_-]{1,1366}$/.test(member)
           || typeof writeId!=='string' || typeof length!=='string' || !/^(0|[1-9][0-9]{0,4})$/.test(length)) throw failed();
@@ -110,16 +112,16 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
         if (expected>limit || (mode==='remove' || mode==='receipt' ? expected!==0 : expected===0)) throw failed();
         const memberId=await authority(fingerprint,asserted);
         const who=whoSchema.parse({member:memberId,writeId});
-        if (expired || req.destroyed) throw failed();
+        if (closed || expired || req.destroyed) throw failed();
         let size=0;
         for await (const chunk of req) {
           const b=chunk as Buffer; size+=b.length;
           if (size>expected || expired) { b.fill(0);throw failed(); }
           chunks.push(b);
         }
-        if (size!==expected || expired || res.destroyed) throw failed();
+        if (closed || size!==expected || expired || res.destroyed) throw failed();
         bytes=Buffer.concat(chunks);
-        if (await authority(fingerprint,asserted)!==who.member || expired || res.destroyed) throw failed();
+        if (await authority(fingerprint,asserted)!==who.member || closed || expired || res.destroyed) throw failed();
         let committed=true;
         if (mode==='receipt') {
           const found:unknown=store.hasReceipt(who);
@@ -130,7 +132,7 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
           if (await authority(fingerprint,asserted)!==who.member) throw failed();
         } else if (mode==='remove') await store.remove(who,name!);
         else await store.set(who,name!,bytes,mode);
-        if (expired || res.destroyed) throw failed();
+        if (closed || expired || res.destroyed) throw failed();
         res.writeHead(committed?204:404,{'content-length':0,'cache-control':'no-store'});res.end();
       } catch {
         if (!res.headersSent && !res.destroyed) res.writeHead(503,{'content-length':0,'cache-control':'no-store'});
@@ -138,6 +140,8 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
         // Close unread request input rather than retaining unbounded plaintext.
         if (!req.complete) res.once('finish',()=>req.destroy());
       } finally {clearTimeout(deadline);bytes?.fill(0);for (const b of chunks) b.fill(0);}
+      })();
+      active.add(work);void work.catch(()=>{}).finally(()=>active.delete(work));
     });
     // Enforce the absolute bound from Unix connection acceptance, before TLS or
     // HTTP headers complete. Node's headersTimeout is checked on a coarse timer.
@@ -151,6 +155,11 @@ export async function listenHolderMutations(config: Omit<LocalHolderConfig,'serv
       await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(config.socket,resolve);});
       chmodSync(config.socket,0o600);
     } catch {server.close();throw failed();}
-    return {async close(){server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(e=>e?reject(failed()):resolve()));}};
+    let closing:Promise<void>|undefined;
+    return {close(){return closing??=(async()=>{
+      closed=true;server.closeAllConnections();
+      try {await new Promise<void>((resolve,reject)=>server.close(e=>e?reject(failed()):resolve()));}
+      finally {await Promise.allSettled(active);}
+    })();}};
   } catch { throw failed(); }
 }

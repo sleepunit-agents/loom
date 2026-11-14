@@ -1082,7 +1082,8 @@ URLs, paths, names or callbacks. A daemon-local service value reader is not a
 runner destination.
 
 This primitive does not admit tickets, implement one-use receipts, register
-`secrets.houseGet`, or install a listener in `startPersistentHolder`. Runtime's
+`secrets.houseGet`. The later persistent startup composition below can install
+a listener in `startPersistentHolder` from explicit private configuration. Runtime's
 real authenticated destination transport and the daemon's ticket admission,
 revocation and staging protocol must be composed before activation. Those remain
 required on t-2208; an in-process fixture destination is not production delivery.
