@@ -515,6 +515,8 @@ async function proveNextComms(browser:Browser,webRoot:string) {
      });
      await expect.poll(async()=>(await b.getByLabel('Thread messages',{exact:true}).boundingBox())!.height,{message:JSON.stringify(layout)}).toBeGreaterThanOrEqual(100);
      await expect.poll(()=>b.locator('.comms-work-strip').isVisible()).toBe(width<1920);
+     await b.getByLabel('Thread messages',{exact:true}).evaluate(el=>{const q=el.querySelector('[aria-label="Private question"]')!;el.scrollTop+=q.getBoundingClientRect().top-el.getBoundingClientRect().top-16;el.dispatchEvent(new Event('scroll'));});
+     expect(await b.getByText('Which fixture should I check next?',{exact:true}).evaluate(el=>{const q=el.getBoundingClientRect(),reader=el.closest('[aria-label="Thread messages"]')!.getBoundingClientRect();return q.top>=reader.top&&q.bottom<=reader.bottom;})).toBe(true);
      await b.screenshot({path:join(shots,`comms-next-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     await b.getByRole('button',{name:'Send private reply',exact:true}).click();
