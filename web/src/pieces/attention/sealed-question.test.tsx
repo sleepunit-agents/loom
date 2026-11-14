@@ -14,6 +14,7 @@ const row=():SealedQuestion=>({id:ask.id,thread:'th:one',seq:2,state:'open',crea
 let tree:ReturnType<typeof create>;
 const guard=()=>({lock:{current:false},busy:false,setBusy:vi.fn()});
 const text=()=>JSON.stringify(tree.toJSON());
+// Renderer callbacks expose arbitrary DOM props; this mirrors the existing Inbox renderer harness.
 const words=(n:any):string=>typeof n==='string'?n:(n.children??[]).map(words).join('');
 const buttons=(label:string)=>tree.root.findAllByType('button').filter((n:any)=>words(n)===label);
 const click=async(label:string)=>act(async()=>{buttons(label)[0].props.onClick();});
@@ -40,7 +41,7 @@ it('keeps refused typed words in the mounted window and uses only the ephemeral 
 it.each(['offline','denied','loading'] as const)('hides retained words immediately on %s and drops drafts',async(status)=>{
  const q=f.snapshot.records[0];f.call.mockReturnValue({result:Promise.resolve({ok:true,value:q})});await draw();await click('Check private question');
  await act(async()=>tree.root.findByType('textarea').props.onChange({target:{value:'Draft'}}));
- await publish({records:f.snapshot.records,status});expect(text()).not.toContain('Secret question?');expect(text()).not.toContain('Draft');expect(buttons('Yes')).toHaveLength(0);
+ await publish({records:f.snapshot.records,status});expect(text()).not.toContain('Secret question?');expect(text()).not.toContain('Draft');expect(buttons('Yes')).toHaveLength(0);expect(buttons('Open private conversation')).toHaveLength(0);
  await publish({records:[q],status:'live'});await click('Check private question');expect(tree.root.findByType('textarea').props.value).toBe('');
 });
 it('expires words and controls at keepUntil without another socket change',async()=>{
@@ -51,7 +52,7 @@ it.each(['changed','expired','unmounted','denied'] as const)('refuses a send aft
  if(mode==='changed')await publish({records:[{...q,changedAt:2}],status:'live'});
  if(mode==='expired')await act(async()=>vi.advanceTimersByTime(1000));
  if(mode==='unmounted')await act(async()=>tree.unmount());
- await fresh.finish(mode==='denied'?{ok:false,message:'Denied'}:{ok:true,value:q});expect(f.call.mock.calls.filter((c:any)=>c[0]==='comms.answer')).toHaveLength(0);
+ await fresh.finish(mode==='denied'?{ok:false,message:'Denied'}:{ok:true,value:q});expect(f.call.mock.calls.filter((c:unknown[])=>c[0]==='comms.answer')).toHaveLength(0);
 });
 it.each([{thread:'th:other'},{seq:99},{changedAt:99},{state:'answered' as const}])('hides inconsistent route/current state %j',async(fields)=>{
  f.snapshot={records:[{...row(),...fields}],status:'live'};await draw();expect(text()).not.toContain('Secret question?');expect(buttons('Check private question')).toHaveLength(0);
@@ -60,4 +61,13 @@ it('shows answered history and wordless receipt navigation after retention',asyn
  const answer={kind:'replied',by:{kind:'member',id:'jonathan'},at:2,reply:{thread:'th:one',seq:3}};
  f.snapshot={records:[{...row(),state:'answered',question:null,answer}],status:'live'};await draw({...ask,state:'answered'});
  expect(text()).toContain('replied');expect(text()).toContain('Words no longer kept');expect(buttons('Open private reply')).toHaveLength(1);expect(buttons('Check private question')).toHaveLength(0);
+});
+
+it.each([{state:'answered' as const},{changedAt:2},{privateQuestion:{thread:'th:other',seq:2}}])('refuses stale Attention props while the scoped feed has not yet updated: %j',async(fields)=>{
+ const q=f.snapshot.records[0],g=guard(),go=vi.fn();f.call.mockReturnValue({result:Promise.resolve({ok:true,value:q})});
+ await act(async()=>{tree=create(h(SealedQuestionReader,{ask,guard:g,go}));});await click('Check private question');
+ const fresh=pending();f.call.mockReturnValueOnce(fresh);await click('Yes');
+ await act(async()=>tree.update(h(SealedQuestionReader,{ask:{...ask,...fields},guard:g,go})));
+ await fresh.finish({ok:true,value:q});expect(f.call.mock.calls.filter((c:unknown[])=>c[0]==='comms.answer')).toHaveLength(0);
+ expect(text()).not.toContain('Secret question?');expect(buttons('Open private conversation')).toHaveLength(0);
 });

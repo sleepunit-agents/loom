@@ -17,6 +17,7 @@ export function SealedQuestionReader({ ask, guard, go }: { ask: Ask; guard: Guar
   const [now,setNow] = useState(Date.now), [draft,setDraft] = useState('');
   const [checked,setChecked] = useState<readonly SealedQuestion[]>(), [message,setMessage] = useState('');
   const latest = useRef(snapshot); latest.current = snapshot;
+  const latestAsk = useRef(ask); latestAsk.current = ask;
   const mounted = useRef(true);
   useEffect(()=>{mounted.current=true;return ()=>{mounted.current=false;};},[]);
   const row = snapshot.status === 'live' ? snapshot.records.find(q=>q.id===ask.id && q.thread===ask.privateQuestion?.thread && q.seq===ask.privateQuestion.seq && q.state===ask.state && q.changedAt===ask.changedAt) : undefined;
@@ -32,13 +33,13 @@ export function SealedQuestionReader({ ask, guard, go }: { ask: Ask; guard: Guar
   const confirmed = !!question && checked===snapshot.records;
   async function act(answer?: 'yes'|'no'|'words') {
     if (!row || !question || row.state!=='open' || guard.lock.current || guard.busy || answer && !confirmed || answer==='words' && (!draft.trim() || draft.length>4000)) return;
-    const records=snapshot.records, original=JSON.stringify(row), words=draft;
+    const records=snapshot.records, original=JSON.stringify(row), originalAsk=JSON.stringify(ask), words=draft;
     guard.lock.current=true;guard.setBusy(true);setMessage('');
     try {
       // Ephemeral plaintext response: never put a Call carrying words in component state.
       const fresh=await callOnce<SealedQuestion>('comms.question',{ref:ask.id}).result;
       if (!mounted.current) return;
-      if (latest.current.status!=='live' || latest.current.records!==records || !fresh.ok || JSON.stringify(fresh.value)!==original || fresh.value.keepUntil<=Date.now() || !fresh.value.question) {
+      if (JSON.stringify(latestAsk.current)!==originalAsk || latest.current.status!=='live' || latest.current.records!==records || !fresh.ok || JSON.stringify(fresh.value)!==original || fresh.value.keepUntil<=Date.now() || !fresh.value.question) {
         setChecked(undefined);setMessage('This question changed or could not be checked. Nothing was recorded.');return;
       }
       if (!answer) {setChecked(records);return;}
@@ -72,7 +73,7 @@ export function SealedQuestionReader({ ask, guard, go }: { ask: Ask; guard: Guar
     </>}
     {message&&<p role="status">{message}</p>}
     {row?.answer&&<section><h3>Answer</h3><p>{row.answer.kind} · {row.answer.by.id} · {stamp(row.answer.at)}</p></section>}
-    <Button variant="outline" onClick={()=>go(commsThreadPath(ask.privateQuestion!.thread))}>Open private conversation</Button>
+    {row&&<Button variant="outline" onClick={()=>go(commsThreadPath(row.thread))}>Open private conversation</Button>}
     {row?.answer?.reply&&<Button variant="outline" onClick={()=>go(commsThreadPath(row.answer!.reply!.thread))}>Open private reply</Button>}
   </article>;
 }
