@@ -3,8 +3,8 @@ import { createElement as h } from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
 import { act, create } from 'react-test-renderer';
 import type { CallState, Result, Snapshot } from '../../data';
-const f=vi.hoisted(()=>({snapshot:{status:'live',records:[]} as Snapshot,call:vi.fn()}));
-vi.mock('../../data',()=>({useRecords:()=>f.snapshot,call:f.call}));
+const f=vi.hoisted(()=>({snapshot:{status:'live',records:[]} as Snapshot,call:vi.fn(),once:vi.fn()}));
+vi.mock('../../data',()=>({useRecords:()=>f.snapshot,call:f.call,callOnce:f.once}));
 vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Empty','Error','Loading'].map(name=>[name,(props:object)=>h(name==='Button'?'button':name==='Input'?'input':'div',props)])));
 import Account from './index';
 import { mutation } from './model';
@@ -33,4 +33,26 @@ it('keeps browser/device, link label and both dates visible together and disting
   f.snapshot={status:'live',records:[{id:'jonathan',member:'jonathan',passkeys:[{ref:'1'.repeat(64),label:'Phone',created:0,ended:false,made:0},{ref:'2'.repeat(64),label:'Phone',created:0,ended:false,made:0}],sessions:[{ref:'3'.repeat(64),label:'Daily',device:'Chrome on Linux',issuedAt,seenAt,ended:false}]}]};
   await act(async()=>{tree=create(h(Account));});const text=JSON.stringify(tree.toJSON());
   for(const value of ['Chrome on Linux','Daily',new Date(issuedAt*1000).toLocaleString(),new Date(seenAt*1000).toLocaleString(),'1'.repeat(64),'2'.repeat(64)])expect(text).toContain(value);
+});
+
+it('wires device links to the correct member and clears them through actual app inactive/offline/denied states',async()=>{
+  vi.stubGlobal('location',{origin:'https://loom.example'});
+  f.once.mockReturnValue({result:Promise.resolve({ok:true,value:{path:'/login/app-integration-marker'}})});
+  await act(async()=>{tree=create(h(Account));});
+  const section=()=>tree.root.findByProps({'aria-label':'Sign in another device'});
+  await act(async()=>section().findByType('button').props.onClick());
+  expect(f.once).toHaveBeenCalledExactlyOnceWith('signin.browserLink',{});
+  expect(JSON.stringify(tree.toJSON())).toContain('app-integration-marker');
+  await act(async()=>tree.update(h(Account,{active:false})));
+  expect(JSON.stringify(tree.toJSON())).not.toContain('app-integration-marker');
+  expect(section().findByType('button').props.disabled).toBe(true);
+  await act(async()=>section().findByType('button').props.onClick());expect(f.once).toHaveBeenCalledOnce();
+  await act(async()=>tree.update(h(Account,{active:true})));
+  expect(JSON.stringify(tree.toJSON())).not.toContain('app-integration-marker');
+  await act(async()=>section().findByType('button').props.onClick());expect(f.once).toHaveBeenCalledTimes(2);
+  await act(async()=>{f.snapshot={...f.snapshot,status:'offline'};tree.update(h(Account));});
+  expect(JSON.stringify(tree.toJSON())).not.toContain('app-integration-marker');expect(section().findByType('button').props.disabled).toBe(true);
+  await act(async()=>section().findByType('button').props.onClick());expect(f.once).toHaveBeenCalledTimes(2);
+  await act(async()=>{f.snapshot={...f.snapshot,status:'denied'};tree.update(h(Account));});
+  expect(tree.root.findAllByProps({'aria-label':'Sign in another device'})).toHaveLength(0);
 });
