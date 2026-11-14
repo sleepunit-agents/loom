@@ -1430,7 +1430,7 @@ state visible instead of asserting that a process never started.
 
 Its local JSON configuration is owner authority, never operation or model data:
 `url`, absolute `tokenFile`, `job`, `agent`, absolute `command`, absolute
-`checkout`, `house` (the exact configured build identity), explicit `env`, and
+`checkout`, `receipts` (an owner-prepared durable 0700 directory), `house` (the exact configured build identity), explicit `env`, and
 `rules` (the compiled key, denies and required sections). The owner prepares and
 verifies the checkout and policy first. This program does not fetch/build a
 repository, discover logins, install a token, enroll a box or inherit the runner
@@ -1470,3 +1470,48 @@ unknown-history fences, offline control, idle watchdog, fresh native ids,
 unsupported input, and a lost one-time input response with no second attempt.
 This is a bounded worker-control unit; the complete standalone runner, durable
 native history, enrollment, accounts, command parity and screens remain open.
+
+### Durable external worker attempt receipts
+
+The executable requires a dedicated, durable `receipts` directory on the worker.
+Linux descriptor-pinned directory opens refuse every symlink and empty or dot
+path component. The final directory must belong to the worker uid with mode 0700.
+It must be provisioned durably before starting a worker; a disposable checkout or
+ephemeral container directory cannot preserve evidence across its destruction.
+
+Before any daemon contact, the worker exclusively creates a mode-0600 journal
+named by the SHA-256 of the job id. Its first row and directory entry are fsynced
+before proceeding. Every subsequent intent row is appended and fsynced before
+the corresponding claim, input request, process attempt, running report or final
+report. Acknowledgement rows follow successful responses. The journal contains
+only version, job id, random attempt id and phase. It retains no token, endpoint,
+environment, command, brief, output, native session id or process id.
+
+An existing journal blocks another attempt for that job before HTTP or launch,
+including after a restart, concurrent reservation, partial write, lost response
+or successfully acknowledged finish. Nothing deletes or overwrites a receipt.
+A disk failure stops further work and closes the owned foreground process. An
+intent records an attempted boundary, never proof that the action happened or
+did not happen. In particular, a `finish-attempt` can accompany a terminal job
+whose acknowledgement was lost. Even `finished` proves only the acknowledgement,
+not physical process termination or native-history collection.
+
+`loom-claude-worker --inspect <receipts-directory>` prints read-only JSON with
+each journal's latest phase and identity. It makes no daemon connection and
+cannot execute, adopt, resume, reconcile or clear anything. It refuses malformed,
+torn, oversized, aliased or out-of-order evidence instead of repairing it. It
+does not choose a winner or return a partial inventory when one file is invalid.
+The owner's later reconciliation must compare this evidence with current daemon
+state and independently established physical inventory; this unit adds no such
+automatic recovery or not-started attestation.
+
+| Legacy worker bookkeeping | This unit | Remaining |
+| --- | --- | --- |
+| `box.mjs` completion receipts and local tombstones | durable one-attempt journal used by the external executable; terminal acknowledgement retained | native collection protocol and completion/tombstone reconciliation |
+| `reconcile` scans historical receipts after restart | read-only bounded receipt inspection; existing reservation prevents a new attempt | physical process/container discovery and authoritative recovery |
+| `nativeCollection` verifies physical termination | no absence or termination claim is manufactured from journal phases | durable native artifacts, collection receipts and explicit loss handling |
+
+This is worker-local bookkeeping, outside the daemon's stores and importer.
+Bound private execution still requires owning policy/source/credential delivery;
+all existing policy and history holds remain. No old program or running home is
+read or changed by this implementation.

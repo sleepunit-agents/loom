@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/index.js';
 import { fixture } from '../fixture.js';
@@ -16,8 +17,11 @@ import { runClaudeJob } from './once.js';
 import { runClaudeWorker } from '../cli/claude-worker.js';
 import type { IOStreams } from '../cli/io.js';
 import type { SpawnClaude } from './session.js';
+import { inspectWorkerReceipts, reserveWorkerReceipt } from './receipts.js';
 const cleanups:Array<()=>unknown>=[];
-afterEach(async()=>{for(const close of cleanups.splice(0).reverse())await close();});
+vi.mock('node:fs',async importOriginal=>{const actual=await importOriginal<typeof fs>();return {...actual,fsyncSync:vi.fn(actual.fsyncSync)};});
+const actualFs=await vi.importActual<typeof fs>('node:fs');
+afterEach(async()=>{vi.mocked(fs.fsyncSync).mockReset().mockImplementation(actualFs.fsyncSync);for(const close of cleanups.splice(0).reverse())await close();});
 const house={repo:'/fixture/art',houseFile:'house/house.json'};
 const rules={key:'a'.repeat(64),deny:['mcp__secrets'],sections:[{text:'OWNER FLOOR'}]};
 const binding={agent:'art',conversation:'j',venue:'worker',place:'j'};
@@ -42,7 +46,8 @@ async function setup() {
   const call={command,options,args,input:'',child};child.stdin.on('data',data=>call.input+=data.toString());calls.push(call);queueMicrotask(()=>child.emit('spawn'));for(const notify of listeners)notify();
   return child as ReturnType<SpawnClaude>;
  };
- const selected={command:'/worker/claude',env:{WORKER:'true'},checkout:'/fixture/art',house,binding,rules,spawn};
+ const receipts=join(home,'receipts');mkdirSync(receipts,{mode:0o700});
+ const selected={command:'/worker/claude',env:{WORKER:'true'},checkout:'/fixture/art',receipts,house,binding,rules,spawn};
  let tick:(()=>void)|undefined,closedResolve:()=>void=()=>{};
  const controlClosed=new Promise<void>(resolve=>{closedResolve=resolve;});
  const runtime:WorkerControlRuntime={request:fetch,deadline:ms=>{expect(ms).toBe(1500);const controller=new AbortController();clock.at(clock.now()+ms,()=>controller.abort());return controller.signal;},every(callback,ms){expect(ms).toBe(1000);tick=callback;return ()=>{tick=undefined;closedResolve();};}};
@@ -82,6 +87,7 @@ it('the external startup claims, takes one gated input, runs and finishes throug
  await f.waitSpawn(1);
  expect(f.calls[0].input).toBe('OWNER FLOOR\nPRIVATE WORK');f.finish();await p;
  expect(f.store.read('job','j')?.state).toBe('done');expect(jobResults(f.app.db).read('j')).toEqual({exit:0,log:'PRIVATE RESULT'});
+ expect(inspectWorkerReceipts(f.selected.receipts)).toMatchObject([{job:'j',phase:'finished'}]);
  await expect(runClaudeJob(f.config,f.selected,f.runtime)).rejects.toThrow();expect(f.calls).toHaveLength(1);
 });
 it('does not launch an input with a conversation that lacks owning policy delivery',async()=>{
@@ -92,6 +98,9 @@ it('does not start after an uncertain input response and never retries that requ
  const f=await setup();let takes=0;
  const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{if(String(args[0]).endsWith('/takeInput')){takes++;await fetch(...args);throw Error('lost');}return fetch(...args);}};
  await expect(runClaudeJob(f.config,f.selected,runtime)).rejects.toThrow();expect(takes).toBe(1);expect(f.calls).toHaveLength(0);
+ expect(inspectWorkerReceipts(f.selected.receipts)).toMatchObject([{phase:'input-attempt'}]);
+ const noRetry={...f.runtime,request:async()=>{throw Error('restart must not call the daemon');}};
+ await expect(runClaudeJob(f.config,f.selected,noRetry)).rejects.toThrow();expect(takes).toBe(1);
 });
 it('the scheduled control consumer fences an idle session before another turn',async()=>{
  const f=await setup(),worker=await f.connect();
@@ -144,7 +153,7 @@ it('the control deadline cancels a hung read and kills foreground execution',asy
 });
 it('the executable configuration boundary uses the selected token file, command, environment, checkout and rules',async()=>{
  const f=await setup(),file=join(f.home,'worker-config.json'),tokenFile=join(f.home,'worker-token');
- writeFileSync(tokenFile,f.config.token);writeFileSync(file,JSON.stringify({url:f.config.url,tokenFile,job:'j',agent:'art',command:f.selected.command,checkout:f.selected.checkout,house,env:{ONLY:'owner'},rules}));
+ writeFileSync(tokenFile,f.config.token);writeFileSync(file,JSON.stringify({url:f.config.url,tokenFile,job:'j',agent:'art',command:f.selected.command,checkout:f.selected.checkout,receipts:f.selected.receipts,house,env:{ONLY:'owner'},rules}));
  let diagnostic='';const io:IOStreams={stdin:new PassThrough(),stdinIsTTY:false,env:{PRIVATE_RUNNER:'never inherited'},stdout:()=>{throw Error('unexpected stdout');},stderr:text=>{diagnostic+=text;}};
  const p=runClaudeWorker([file],io,{...f.runtime,spawn:f.selected.spawn});await f.waitSpawn(1);
  expect(f.calls[0]).toMatchObject({command:'/worker/claude',input:'OWNER FLOOR\nPRIVATE WORK',options:{cwd:'/fixture/art',env:{ONLY:'owner'},shell:false}});
@@ -162,6 +171,41 @@ it.each(['claimJob','reportJob','finishJob'] as const)('does not retry or advanc
  if(lost==='claimJob'){expect(operations).not.toContain('takeInput');expect(f.calls).toHaveLength(0);expect(f.store.read('job','j')?.state).toBe('starting');}
  if(lost==='reportJob'){expect(operations).not.toContain('finishJob');expect(f.calls).toHaveLength(1);expect(f.calls[0].child.killed).toBe(true);expect(f.store.read('job','j')?.state).toBe('running');}
  if(lost==='finishJob'){expect(f.calls).toHaveLength(1);expect(f.store.read('job','j')?.state).toBe('done');}
+ expect(inspectWorkerReceipts(f.selected.receipts)).toMatchObject([{phase:lost==='claimJob'?'claim-attempt':lost==='reportJob'?'running-attempt':'finish-attempt'}]);
+ const before=[...operations];await expect(runClaudeJob(f.config,f.selected,runtime)).rejects.toThrow();expect(operations).toEqual(before);
+});
+it('the read-only inspection command emits wordless receipts without contacting the daemon',async()=>{
+ const f=await setup(),p=runClaudeJob(f.config,f.selected,f.runtime);await f.waitSpawn(1);f.finish();await p;
+ let output='';const io:IOStreams={stdin:new PassThrough(),stdinIsTTY:false,env:{},stdout:s=>{output+=s;},stderr:()=>{throw Error('unexpected diagnostic');}};
+ expect(await runClaudeWorker(['--inspect',f.selected.receipts],io)).toBe(0);
+ expect(JSON.parse(output)).toEqual([{v:1,job:'j',attempt:expect.any(String),phase:'finished'}]);
+ for(const word of ['PRIVATE','OWNER FLOOR',f.config.token,'/worker/claude'])expect(output).not.toContain(word);
+ expect(f.calls).toHaveLength(1);
+});
+it.each(['claim-attempt','input-attempt','launch-attempt','spawned','running-attempt','finish-attempt'] as const)('a failed durable %s write prevents advancing the real HTTP/process boundary',async phase=>{
+ const f=await setup(),requests:string[]=[];
+ vi.mocked(fs.fsyncSync).mockImplementation(fd=>{
+  if(fs.fstatSync(fd).isFile()&&inspectWorkerReceipts(f.selected.receipts)[0]?.phase===phase)throw Error('disk failed');
+  actualFs.fsyncSync(fd);
+ });
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{requests.push(new URL(String(args[0])).pathname.split('/').at(-1)!);return fetch(...args);}};
+ const p=runClaudeJob(f.config,f.selected,runtime),rejected=expect(p).rejects.toThrow();
+ if(phase==='finish-attempt'){await f.waitSpawn(1);f.finish();}
+ await rejected;
+ const forbidden=phase==='claim-attempt'?'claimJob':phase==='input-attempt'?'takeInput':phase==='finish-attempt'?'finishJob':'reportJob';
+ expect(requests).not.toContain(forbidden);
+ if(phase==='spawned'||phase==='running-attempt'||phase==='finish-attempt'){expect(f.calls).toHaveLength(1);if(phase!=='finish-attempt')expect(f.calls[0].child.killed).toBe(true);}
+ else expect(f.calls).toHaveLength(0);
+ const before=[...requests];await expect(runClaudeJob(f.config,f.selected,runtime)).rejects.toThrow();expect(requests).toEqual(before);
+});
+it('inspection emits no partial inventory when valid and torn journals coexist',async()=>{
+ const f=await setup(),first=reserveWorkerReceipt(f.selected.receipts,'j');first.close();
+ const prior=fs.readdirSync(f.selected.receipts),second=reserveWorkerReceipt(f.selected.receipts,'other');second.close();
+ const torn=fs.readdirSync(f.selected.receipts).find(name=>!prior.includes(name))!;
+ writeFileSync(join(f.selected.receipts,torn),'{');
+ expect(()=>inspectWorkerReceipts(f.selected.receipts)).toThrow();
+ let output='',error='';const io:IOStreams={stdin:new PassThrough(),stdinIsTTY:false,env:{},stdout:s=>{output+=s;},stderr:s=>{error+=s;}};
+ expect(await runClaudeWorker(['--inspect',f.selected.receipts],io)).toBe(1);expect(output).toBe('');expect(error).toContain('reconcile');expect(f.calls).toHaveLength(0);
 });
 it('refuses remote plaintext HTTP before sending a runner credential or starting a scheduler',async()=>{
  const f=await setup();let requests=0,schedules=0;
