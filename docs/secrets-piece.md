@@ -1174,3 +1174,29 @@ worker pending sink and its final release fence remain required. A remote
 `current()` response alone does not authorize value release; the holder-to-worker
 transport must authenticate the exact original destination and perform the final
 release check. No public get, typed granted-get or holder activation ships here.
+
+### Persistent holder handoff startup
+
+The private `loom-secret-holder --config` composition now accepts an optional
+`handoff` object alongside its existing read/mutation configuration. This is
+owner-provided process configuration, never an operation argument or endpoint
+discovery. `handoff.listen` is a holder TLS listener; `handoff.authority` is a
+holder client TLS configuration (including `servername`) for the daemon ticket
+listener, pinned by the existing `daemonFingerprint`. Each `handoff.workers`
+entry contains an exact `binding` (agent, job, runner, box, claimedAt, optional
+service), a client TLS `config` for that worker's input socket, and its server
+certificate `fingerprint`. Empty workers deny all handoffs; duplicate bindings,
+unknown fields, overlapping socket selections and invalid TLS material fail
+startup before storage/key history commits.
+
+Startup composes the original remote ticket claim with managed holder routes
+and pinned worker transports. All listeners bind before opening storage, and
+requests fail closed until storage is ready. Shutdown retires routes and drains
+listeners and their original continuations before closing ticket/worker clients
+and storage. Existing configurations without `handoff` keep read/mutation only.
+The daemon's existing `secretWorkers` startup resolves the configured token digest
+through original Signin/Runtime capabilities; the fixture exercises that real
+composition with a persistent holder and a worker input using the original
+remote worker proof. Staging still prevents dispatch before the holder reads.
+This does not install configuration or enable public/granted get; production
+worker orchestration and final owner-present activation remain move work.
