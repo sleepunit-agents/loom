@@ -7,20 +7,21 @@ import { WebSocket } from 'ws';
 import { z } from 'zod';
 import { fixture } from '../../fixture.js';
 import { startLoom } from '../../foundation.js';
-import { FakeClock, operation, type RecordType, type Viewer } from '../../core/index.js';
+import { FakeClock, operation, migrate, type RecordType, type Viewer } from '../../core/index.js';
 import { installAttention } from './index.js';
+import { attentionMigrations } from './schema/index.js';
 import { installTasks } from '../tasks/index.js';
 import type { ActionOutcome } from './outcomes.js';
 const cleanup: (()=>Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 const alice:Viewer={kind:'member',id:'alice'},bob:Viewer={kind:'member',id:'bob'};
-async function setup() {
+async function setup(upgrade=false) {
   const home=mkdtempSync(join(tmpdir(),'attention-outcomes-'));fixture(home);
   const clock=new FakeClock(), types=new Map<string,RecordType>();
   const access={members:{alice:{owner:true,agents:['art']},bob:{owner:true,agents:['art']}},projects:{},services:{}};
   const app=await startLoom({home,next:true,host:'127.0.0.1',port:0,stdout:()=>{},clock,sharing:()=>access,
     authenticate:req=>({viewer:req.headers.authorization==='bob'?bob:alice,window:req.headers.authorization!=='api',valid:()=>true}),
-    install:app=>{const register=app.live.register.bind(app.live);app.live.register=t=>{types.set(t.name,t);register(t);};installAttention(app.db,app.operations,app.live,()=>access);installTasks(app.db,app.operations,app.live,()=>access);},
+    install:app=>{const register=app.live.register.bind(app.live);app.live.register=t=>{types.set(t.name,t);register(t);};if(upgrade){migrate(app.db,'attention',attentionMigrations.filter(m=>m.number<=6));app.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run('old',JSON.stringify({id:'old',agent:'art',ask:'Existing question',source:{kind:'piece',id:'fixture'},state:'open',createdAt:1,changedAt:1}));}installAttention(app.db,app.operations,app.live,()=>access);installTasks(app.db,app.operations,app.live,()=>access);},
   });
   cleanup.push(async()=>{await app.close();rmSync(home,{recursive:true,force:true});});
   const list=(viewer=alice)=>{const result=app.operations.call('direct',viewer,'attention.outcomes',{});expect(result.ok).toBe(true);return (result as {value:ActionOutcome[]}).value;};
@@ -88,4 +89,15 @@ it('excludes background/API calls, unknown operations, reads, private Comms and 
   const record=list()[0];delete (access.members as Record<string,unknown>).alice;
   expect(types.get('attention.outcome')!.read(record.id,alice)).toBeUndefined();
   expect(app.operations.call('direct',alice,'attention.outcomes',{})).toMatchObject({ok:false,code:'denied'});
+});
+
+it('adds schema seven to a version-six home without changing held asks and reapplies without deleting outcomes',async()=>{
+  const {app,list,socket}=await setup(true);
+  const before=app.db.prepare('SELECT * FROM attention_asks').all();
+  expect(before).toHaveLength(1);
+  expect(app.db.prepare("SELECT max(number) AS n FROM core_migrations WHERE piece='attention'").get()).toEqual({n:7});
+  const client=await socket();await client.call('attention.answer',{id:'missing',answer:{kind:'yes'}},'upgrade');
+  const outcomes=list();expect(outcomes).toHaveLength(1);
+  migrate(app.db,'attention',attentionMigrations);
+  expect(list()).toEqual(outcomes);expect(app.db.prepare('SELECT * FROM attention_asks').all()).toEqual(before);
 });
