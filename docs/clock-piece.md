@@ -49,7 +49,8 @@ Generic prompt consumers still use `runtime.readConversation` and
 before ACK and grants no file execution authority.
 
 This first consumer deliberately supports one stored prompt with no model or
-account override and no configured/imported central body policy. Standalone
+account override on the job, root or selected source (including later joined
+inputs), rechecked throughout execution and no configured/imported central body policy. Standalone
 files, native joining/resume, continuation handles, local/approval/slot execution,
 central compiled policy integration and the full runner lifecycle remain work
 under t-2201. The worker is present as a package entry point but is not installed

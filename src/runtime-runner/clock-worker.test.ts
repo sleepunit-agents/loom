@@ -64,12 +64,12 @@ async function setup(staging=false,privateInput=false){
  const withdraw=()=>{fenceSource();};
  const fenceSource=()=>{app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.withdrawn',json('true')) WHERE id=?").run(wake);};
  const attempt=()=>{autoFinish=true;return start().completed.finally(()=>{autoFinish=false;});};
- const joinInput=async()=>{
-  const response=await (await fetch(`${app.url}/api/clock/in`,{method:'POST',headers:{authorization:`Bearer ${config.credential}`,'content-type':'application/json'},body:JSON.stringify({input:{agent:'art',prompt:'LATER JOINED WORDS',note:'join',place:config.binding.place,when:'1s'},id:`join-${++n}`})})).json();
+ const joinInput=async(extra:Record<string,unknown>={})=>{
+  const response=await (await fetch(`${app.url}/api/clock/in`,{method:'POST',headers:{authorization:`Bearer ${config.credential}`,'content-type':'application/json'},body:JSON.stringify({input:{agent:'art',prompt:'LATER JOINED WORDS',note:'join',place:config.binding.place,when:'1s',...extra},id:`join-${++n}`})})).json();
   expect(response).toMatchObject({ok:true});clock.advance(1000);await settle();return response.value.id as string;
  };
  const consumed=()=>app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${wake}`) as {consumed:number|null};
- return {home,app,clock,store,call,post,wake,job,config,calls,ready,finish,start,attempt,joinInput,launch,consumed,withdraw,access};
+ return {home,app,clock,store,call,post,wake,job,config,calls,ready,finish,start,attempt,joinInput,launch,runner,consumed,withdraw,access};
 }
 it('actual worker startup obtains owning Runtime admission, executes the original words and only then ACKs',async()=>{
  const f=await setup(),worker=f.start();await f.ready;
@@ -261,4 +261,37 @@ it.each(['selected-sequence','source-contents','root-replacement'] as const)('pi
  });
  expect(await f.attempt()).toBe(false);expect(mutated).toBe(true);expect(f.calls).toHaveLength(1);
  if(kind!=='source-contents')expect(await f.post(f.config.credential,'readConversation',{})).toMatchObject({ok:true});
+});
+
+it('holds a joined source model override even when the original job has no model override',async()=>{
+ const f=await setup(),first=f.start();await f.ready;f.finish();expect(await first.completed).toBe(true);
+ const second=await f.joinInput({model:'other-model'});expect(f.store.read('job',f.job)?.model).toBeUndefined();
+ expect(await f.attempt()).toBe(false);expect(f.calls).toHaveLength(1);
+ expect(f.app.effects!.status(`runtime:clock-native:clock:${second}`)).toBeUndefined();
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${second}`)).toEqual({consumed:null});
+});
+it('holds a source model override introduced after preparation while its old generic source record still matches',async()=>{
+ const f=await setup(),original=preparation.prepareClockInput;let mutated=false;
+ vi.spyOn(preparation,'prepareClockInput').mockImplementation((...args)=>{
+  const value=original(...args);f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.model','other-model') WHERE id=?").run(f.wake);mutated=true;return value;
+ });
+ expect(await f.attempt()).toBe(false);expect(mutated).toBe(true);expect(f.calls).toHaveLength(0);
+ expect(await f.post(f.config.credential,'readConversation',{})).toMatchObject({ok:true});expect(f.consumed().consumed).toBeNull();
+});
+it.each(['revokePolicy','stopJob','cancelRequest','close'] as const)('running local %s kills the child and cannot be restored by a delayed successful authority response',async action=>{
+ const f=await setup(),held=holdResponse('currentClockExecution',2),worker=f.start();
+ try {
+  await f.ready;f.clock.advance(1000);await held.ready;const stopped=worker[action]();
+  try {expect(f.calls[0].child.killed).toBe(true);}finally {f.finish();}
+  held.release();await stopped;expect(await worker.completed).toBe(false);expect(f.consumed().consumed).toBeNull();
+ }finally {held.release();held.spy.mockRestore();}
+});
+it.each(['job-finish','job-state','credential','policy','job-model'] as const)('remote %s during native execution kills the foreground child without ACK',async kind=>{
+ const f=await setup(),worker=f.start();await f.ready;
+ if(kind==='job-finish')expect(await f.post(f.runner,'finishJob',{job:f.job,state:'failed'})).toMatchObject({ok:true});
+ if(kind==='job-state')f.store.put('job',{...f.store.read('job',f.job)!,state:'stopped'},f.clock.now());
+ if(kind==='job-model')f.store.put('job',{...f.store.read('job',f.job)!,model:'other-model'},f.clock.now());
+ if(kind==='credential')signin(f.app).tokens.change(tokens=>{for(const t of tokens)if(t.sha256===hash(f.config.credential))t.revoked=new Date(f.clock.now()).toISOString();});
+ if(kind==='policy')expect(f.call('runtime.configureBodyPolicy',{agent:'art',revision:0,gates:{people:{}},policy:{deny:['Bash']}}).ok).toBe(true);
+ f.clock.advance(1000);expect(await worker.completed).toBe(false);expect(f.calls[0].child.killed).toBe(true);expect(f.consumed().consumed).toBeNull();
 });
