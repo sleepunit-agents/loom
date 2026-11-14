@@ -35,3 +35,11 @@ it('retains the explicit ciphertext bound and refuses invalid allocation limits'
  const value=privateBytes(path,128*1024);expect(value.length).toBe(128*1024);value.fill(0);
  for(const limit of [0,-1,NaN,Infinity,1.5,128*1024+1])expect(()=>privateBytes(path,limit)).toThrow(/^Local secret holder unavailable$/);
 });
+
+it.each(['mtimeMs','ctimeMs'] as const)('refuses same-size changed %s and erases scratch bytes',field=>{
+ const path=file(),captured:Buffer[]=[];let stats=0;
+ vi.mocked(fstatSync).mockImplementation(fd=>{const stat=real.fstatSync(fd);if(++stats===2)Object.assign(stat,{[field]:stat[field]+1000});return stat;});
+ vi.mocked(readSync).mockImplementation((...args:Parameters<typeof real.readSync>)=>{captured.push(args[1] as Buffer);return real.readSync(...args);});
+ expect(()=>privateBytes(path,32)).toThrow(/^Local secret holder unavailable$/);
+ expect(stats).toBe(2);expect(captured.length).toBeGreaterThan(0);expect(captured.every(b=>b.every(v=>v===0))).toBe(true);
+});

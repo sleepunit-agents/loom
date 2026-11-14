@@ -90,15 +90,20 @@ export async function listenHolderHandoff(config: Omit<LocalHolderConfig, 'serve
     const material = tlsMaterial(config);
     let closed = false;
     const active = new Set<Promise<void>>();
+    const connections = new WeakMap<object, {expired: boolean; deadline: number}>();
     const server = https.createServer({...material, requestCert: true, rejectUnauthorized: true,
       minVersion: 'TLSv1.3', maxHeaderSize: 8192}, (req, res) => {
       const work = (async () => {
         let bytes: Uint8Array | undefined, expired = false;
         const deadline = setTimeout(() => { expired = true; req.destroy(); res.destroy(); }, 5000);
-        const alive = () => !closed && !expired && !res.destroyed;
+        const peer = req.socket as TLSSocket;
+        // Node's TLS socket wraps the accepted net.Socket. Carry the original
+        // acceptance fence across that wrapper; unsupported wrappers fail closed.
+        const connection = connections.get(peer) ?? connections.get((peer as TLSSocket & {_parent?: object})._parent ?? {});
+        const alive = () => !!connection && !connection.expired && Date.now() < connection.deadline
+          && !closed && !expired && !res.destroyed;
         res.on('error', () => {});
         try {
-          const peer = req.socket as TLSSocket;
           const match = /^\/v1\/handoff\/([^/]+)$/.exec(req.url ?? '');
           if (!alive() || !peer.authorized || peer.getPeerCertificate().fingerprint256 !== daemonFingerprint
             || req.method !== 'POST' || !match || req.headers['content-length'] !== '0' || req.headers['transfer-encoding']) throw failed();
@@ -121,7 +126,10 @@ export async function listenHolderHandoff(config: Omit<LocalHolderConfig, 'serve
       active.add(work); void work.catch(() => {}).finally(() => active.delete(work));
     });
     server.on('connection', socket => {
-      const timer = setTimeout(() => socket.destroy(), 5000); socket.once('close', () => clearTimeout(timer));
+      const state = {expired: false, deadline: Date.now() + 5000};
+      connections.set(socket, state);
+      const timer = setTimeout(() => { state.expired = true; socket.destroy(); }, 5000);
+      socket.once('close', () => { state.expired = true; clearTimeout(timer); });
     });
     server.requestTimeout = 5000; server.headersTimeout = 5000;
     try {

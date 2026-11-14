@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import https from 'node:https';
 import { ServerResponse, type IncomingMessage } from 'node:http';
-import { connect as netConnect } from 'node:net';
+import { connect as netConnect, Socket } from 'node:net';
 import { connect as tlsConnect } from 'node:tls';
 import { startLoom } from '../../foundation.js';
 import { fixture } from '../../fixture.js';
@@ -208,3 +208,21 @@ async function fakeHolder(f:Awaited<ReturnType<typeof setup>>,handler:(req:Incom
  const {chmodSync}=await import('node:fs');chmodSync(f.server.socket,0o600);
  closes.push(()=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());}));
 }
+
+it('fences source settlement synchronously at the accepted deadline before socket close propagates',async()=>{
+ const f=await setup(),entered=deferred<void>(),release=deferred<Buffer>();
+ f.read.mockImplementationOnce(async()=>{entered.resolve();return release.promise;});
+ vi.useFakeTimers({toFake:['setTimeout','clearTimeout','Date']});const raw=rawPeer(f,true);
+ try {
+  await new Promise<void>(resolve=>raw.peer.once('secureConnect',resolve));
+  await vi.advanceTimersByTimeAsync(3000);raw.peer.write('\r\n');await entered.promise;
+  // Delay the network's close propagation, so the acceptance timer itself
+  // must fence release rather than relying on res.destroyed becoming true.
+  const destroy=vi.spyOn(Socket.prototype,'destroy').mockImplementation(function(this:Socket){return this;});
+  try {
+   await vi.advanceTimersByTimeAsync(2000);release.resolve(f.bytes);
+   await vi.waitFor(()=>expect(f.bytes.every(b=>b===0)).toBe(true));
+   expect(raw.closed()).toBe(false);expect(f.handTo).not.toHaveBeenCalled();
+  }finally{destroy.mockRestore();}
+ }finally{release.resolve(f.bytes);raw.peer.destroy();vi.useRealTimers();}
+});

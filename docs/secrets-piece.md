@@ -1101,3 +1101,7 @@ Private TLS/configuration/key reads use a fixed limit-plus-one scratch buffer,
 refuse growth or metadata changes during the read, and erase scratch bytes on
 both success and failure. The shared helper preserves the separate 128 KiB
 ciphertext limit; it never reads a growing file to EOF without a bound.
+The absolute handoff deadline is shared from raw socket acceptance through
+Node's TLS wrapper. Its expiry flag and timestamp are checked synchronously
+before release, independently of delayed socket-close notification. An unknown
+TLS wrapper fails closed rather than starting a fresh per-handler budget.
