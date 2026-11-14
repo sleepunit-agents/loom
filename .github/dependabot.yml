@@ -9,6 +9,13 @@ updates:
       npm:
         patterns:
           - "*"
+    ignore:
+      # Exact-pinned deliberately: the vendored runtime must stay bit-for-bit
+      # with fastembed@2.1.0's golden vectors (t-1424). Bumping drifts
+      # embedding output ~1e-8 from every vector already stored in loom
+      # databases — a silent recall-quality regression, not a routine bump.
+      - dependency-name: "onnxruntime-node"
+      - dependency-name: "onnxruntime-common"
 
   - package-ecosystem: github-actions
     directory: /
