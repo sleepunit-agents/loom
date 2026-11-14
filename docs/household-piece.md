@@ -772,7 +772,8 @@ Devices survive ordinary logout, cookie expiry, session eviction and later
 sign-in. Quiet `again` refreshes a same-member device without resetting its first
 registration time, but cannot undo removal or take another member's device.
 Explicit enable clears a tombstone and can reassign a shared tablet, resetting
-its first registration time. The household cap remains 20, oldest last-seen first.
+its first registration time. The household cap remains 20 bound devices, oldest
+last-seen first; unresolved import evidence does not take active device capacity.
 Existing Account/session/compromise revocations still remove associated rows.
 
 Member-less imported devices resolve through their retained token (or retained

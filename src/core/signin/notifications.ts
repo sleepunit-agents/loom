@@ -67,7 +67,8 @@ export function installNotifications(app:Foundation) {
       if(was&&!same&&i.again)throw new OperationError('denied','Turn notifications on explicitly for this member');
       subs[i.sub.endpoint]={sub:i.sub,session:proof.session,token:proof.token,member:ctx.viewer.id,at:same?was.at:s.now(),...(same&&i.again?{seenAt:s.now()}:{}),...(proof.device?{device:proof.device}:{})};
       f.push.subs=subs;
-      const all=Object.entries(subs).sort((a,b)=>(b[1].seenAt??b[1].at)-(a[1].seenAt??a[1].at));
+      // Unresolved imports remain evidence, not active device capacity.
+      const all=Object.entries(subs).filter(([,d])=>member(d,f)!==undefined).sort((a,b)=>(b[1].seenAt??b[1].at)-(a[1].seenAt??a[1].at));
       for(const [ep]of all.slice(20))delete subs[ep];
       return 'added' as const;
     });changed(ctx);return {status};

@@ -86,6 +86,8 @@ it('resolves imported member-less devices from original token bindings, refuses 
   expect(f.read().devices).toHaveLength(1);expect(f.read(other).devices).toEqual([]);
   f.s.tokens.change(ts=>{ts.find(t=>t.sha256===hash('legacy'))!.revoked='2026-01-01';});expect(f.read().devices).toHaveLength(1);
   f.s.tokens.change(ts=>ts.push({role:'owner',member:'pollock',label:'conflict',sha256:hash('legacy'),created:'2026-01-01'}));expect(f.read().devices).toEqual([]);expect(f.read(other).devices).toEqual([]);
+  const active=await f.socket(f.cookie);for(let i=0;i<21;i++){f.clock.advance(1000);expect(await active('subscribe',{sub:sub('pressure-'+i)})).toMatchObject({ok:true});}
+  const retained=f.s.sessions.read().push!;expect(retained.subs![sub().endpoint]).toBeDefined();expect(retained.subs![sub('orphan').endpoint]).toBeDefined();expect(Object.keys(retained.subs!)).toHaveLength(22);expect(f.read().devices).toHaveLength(20);
 });
 it('bounds devices at twenty and tombstones at one hundred; rollback includes keys, device, receipt and live changes',async()=>{
   const f=await setup(),a=await f.socket(f.cookie);await a('key');const changes:unknown[]=[];const stop=f.app.live.observe(c=>changes.push(c));
