@@ -742,7 +742,7 @@ existing loom window is navigated and focused; if it closed, another window or a
 new one is used. No private response or push payload is added to a cache.
 
 This is the display/tap part of the old worker contract only. Imported push rows
-do not yet trigger new-side delivery: Account controls, test sending, daemon dispatch, per-member eligibility revalidation,
+do not yet trigger new-side delivery: test sending, daemon dispatch, per-member eligibility revalidation,
 deduplication, rate limits and staging are still pending. The old SessionStore
 and push watcher are never called. No migration or live rollout is needed for
 this worker change; finish those remaining operations before the final move.
@@ -789,11 +789,44 @@ No schema, importer or old-side change is needed.
 | `/push/key` | `notifications.key`, cookie window, public key only |
 | `/push/subscribe` | `notifications.subscribe`, trusted cookie proof, explicit/quiet registration |
 | `/push/unsubscribe` | `notifications.unsubscribe`, own-member removal only |
-| Profile's notification device list / `push-remove` | `notifications.read`, `notifications.devices`, `notifications.remove`; Account controls pending |
+| Profile's notification device list / `push-remove` | `notifications.read`, `notifications.devices`, `notifications.remove`; Account live device list and confirmed removal |
 | `push-test` | Pending staged send operation; this unit sends nothing |
 | legacy push watch | Pending daemon job; never call SessionStore/watch from next |
 
 These are page operations; no previous notification CLI needs replacing. The
-Account controls, browser subscription API, test notification delivery and daemon
-dispatch (eligibility, dedupe, rate limits, staging) remain part of t-2203 before
-the final move. This unit introduces no new screen or screenshot claim.
+Account controls and browser subscription API are implemented below. Test notification
+delivery and daemon dispatch (eligibility, dedupe, rate limits, staging) remain
+part of t-2203 before the final move.
+
+
+### Account notification controls
+
+Account reads member-private `notifications.devices`, shows opaque device and browser
+references together, and requires confirmation for `notifications.remove`. Its browser
+control uses the existing next worker registration and cookie-only notification
+operations. Existing browser subscriptions are quietly registered once per window;
+a remembered removal turns the local subscription off instead of resurrecting it.
+Explicit Enable requests browser permission and can bind a shared tablet anew.
+Turn off waits for a definite server unsubscribe reply before discarding the local
+subscription. Standard browser `expirationTime` is accepted by the operation.
+
+The window-lifetime browser flow retains each original mutation handle across
+navigation and unavailable replies. Retry sends the original id/input and resumes
+that flow; a late key or browser reply after leaving the active connected screen
+cannot start another registration step or automatically restart quiet reconciliation. Return and explicitly Enable to finish an invalidated flow. Inactive/offline/denied views cannot write.
+No subscription endpoints or keys appear in the device list. Account shares its
+mutation lock with passkey/session changes. CI extends the single two-window
+Account acceptance using a fake browser Push API with real cookie/socket operations,
+Live updates and six notification-focused images. It does not contact a push host.
+
+Test sending and daemon dispatch remain pending; registering a device does not yet
+send notifications. The existing worker display/tap behavior is unchanged.
+
+Quiet reconciliation intentionally runs automatically, rather than asking for a
+click to restore an already-enabled browser. This is a narrow exception to the
+app guide's event-handler request pattern: a window-lifetime controller owns its
+once-only guard, shared mutation lock and stable retry handle, outside React.
+Replaying the screen effect cannot create another reconciliation request.
+Entering while another mutation is uncertain waits for that same request to settle.
+The browser adapter rechecks activation after its worker lookup and immediately
+before calling the browser's subscribe API.
