@@ -10,6 +10,8 @@ import * as policy from '../../core/index.js';
 import {FakeClock,exportDatabase,type Viewer} from '../../core/index.js';
 import {signin,hash} from '../../core/signin/index.js';
 import {runtimeStore} from './store.js';
+import {runtimeDestination} from './destination.js';
+import {provenanceStore} from './provenance-store.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
 async function setup(project?:string,privateInput=false,afterRead?:()=>void){
@@ -411,4 +413,73 @@ it('continues a successor question after its own body ends without retargeting e
  expect(await f.post(next.value.credential,'readPublicInputs',{})).toMatchObject({ok:true,value:{messages:[{origin:{job}}]}});
  expect(f.store.read('binding',f.store.read('job',f.job)!.conversation!)!.job).toBe(f.job);
  expect(f.store.read('binding',f.store.read('job',job)!.conversation!)!.job).toBe(job);
+});
+
+it.each(['claim','binding','original-claim'] as const)('rejects changed successor %s before issuing credentials or releasing runner input',async drift=>{
+ const f=await setup(),{job}=await terminalSuccessor(f),record=f.store.read('job',job)!;
+ if(drift==='claim')f.put('job',{...record,claimedAt:record.claimedAt!+1});
+ if(drift==='binding')f.put('binding',{...f.store.read('binding',record.conversation!)!,place:'other'});
+ if(drift==='original-claim')f.put('job',{...f.store.read('job',f.job)!,claimedAt:f.clock.now()+1});
+ expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false});
+ expect(f.app.db.prepare('SELECT * FROM core_effects WHERE id=?').get(`runtime:input:${job}`)).toBeUndefined();
+ expect(signin(f.app).tokens.document()!.tokens.filter(t=>t.role===`agent:art@${job}`)).toEqual([]);
+});
+
+it('retains distinct predecessor senders without redelivering their queued inputs',async()=>{
+ const f=await setup(),ask=await f.ask(),original=f.store.read('job',f.job)!,provenance=provenanceStore(f.app.db);
+ f.app.db.transaction(()=>{
+  provenance.note(original.conversation!,'art',{key:'old-mark',sender:{kind:'person',person:'mark'},at:f.clock.now()},['jonathan']);
+  provenance.note(original.conversation!,'art',{key:'old-unknown',sender:{kind:'unknown'},at:f.clock.now()},['jonathan']);
+ })();
+ const before=provenance.read(original.conversation!)!;
+ expect(before.history).toMatchObject({owner:true,people:['mark'],unknown:true});expect(before.queue.length).toBeGreaterThan(1);
+ expect(await f.post(f.runner,'finishJob',{job:f.job,state:'done'})).toMatchObject({ok:true});
+ expect(await f.post(f.owner,'attention.answer',{id:ask,answer:{kind:'yes'}})).toMatchObject({ok:true});
+ const successor=f.store.ids('job').find(id=>id!==f.job)!,after=provenance.read(f.store.read('job',successor)!.conversation!)!;
+ expect(after.history).toEqual(before.history);
+ expect(after.queue).toEqual([{key:`public-answer:${ask}`,sender:{kind:'person',person:'jonathan'},at:f.clock.now()}]);
+ expect(provenance.read(original.conversation!)).toEqual(before);
+});
+it('accepts the 100th generation but rolls back a 101st answer before creating unusable work',async()=>{
+ const f=await setup(),rootAsk=await f.ask(),root=f.store.read('job',f.job)!,provenance=provenanceStore(f.app.db);
+ expect(await f.post(f.runner,'finishJob',{job:f.job,state:'done'})).toMatchObject({ok:true});
+ // Materialize 98 already-owned generations, then exercise the actual HTTP
+ // metadata/answer/claim/credential path at both sides of the production bound.
+ let prior=f.store.read('job',f.job)!;
+ f.app.db.transaction(()=>{
+  for(let n=2;n<=99;n++){
+   const job=`generation-${n}`,conversation=`generation-conversation-${n}`;
+   f.store.put('binding',{id:conversation,agent:'art',venue:'wake',place:`generation:${n}`,job},f.clock.now());
+   const {changedAt:_,...record}=root;
+   f.store.put('job',{...record,id:job,conversation,state:n===99?'running':'done',...(n===99?{}:{endedAt:f.clock.now()})},f.clock.now());
+   provenance.put(conversation,{agent:'art',history:provenance.read(root.conversation!)!.history,queue:[]});
+   const next=f.store.read('job',job)!;
+   f.app.db.prepare('INSERT INTO runtime_public_continuations VALUES (?,?,?,?,?)').run(job,prior.id,rootAsk,runtimeDestination(f.app.db,prior),runtimeDestination(f.app.db,next));
+   prior=next;
+  }
+ })();
+ const body99=f.token(`agent:art@${prior.id}`);
+ expect(await f.post(body99,'recordTurn',{kind:'note',outcome:'progressed'})).toMatchObject({ok:true});
+ const ask99=await f.post(body99,'writeDigest',{digest:{summary:'At bound',needs_owner:f.question}});expect(ask99).toMatchObject({ok:true});
+ expect(await f.post(f.runner,'finishJob',{job:prior.id,state:'done'})).toMatchObject({ok:true});
+ expect(await f.post(f.owner,'attention.answer',{id:ask99.value.ask,answer:{kind:'yes'}})).toMatchObject({ok:true});
+ expect(f.store.ids('job')).toHaveLength(100);
+ const job100=f.store.ids('job').find(id=>f.store.read('job',id)!.state==='queued')!;
+ expect(await f.post(f.runner,'claimJob',{job:job100})).toMatchObject({ok:true});
+ const input=await f.post(f.runner,'takeInput',{job:job100});expect(input).toMatchObject({ok:true});
+ expect(await f.post(f.runner,'reportJob',{job:job100,state:'running'})).toMatchObject({ok:true});
+ expect(await f.post(input.value.credential,'readPublicInputs',{})).toMatchObject({ok:true});
+ expect(await f.post(input.value.credential,'recordTurn',{kind:'note',outcome:'progressed'})).toMatchObject({ok:true});
+ const ask100=await f.post(input.value.credential,'writeDigest',{digest:{summary:'No next generation',needs_owner:f.question}});expect(ask100).toMatchObject({ok:true});
+ expect(await f.post(f.runner,'finishJob',{job:job100,state:'done'})).toMatchObject({ok:true});
+ expect(await f.post(f.owner,'attention.answer',{id:ask100.value.ask,answer:{kind:'yes'}},'generation-limit')).toMatchObject({ok:false,code:'conflict'});
+ expect(f.store.ids('job')).toHaveLength(100);expect(f.call('attention.get',{id:ask100.value.ask})).toMatchObject({ok:true,value:{state:'open'}});
+ expect(f.app.db.prepare("SELECT * FROM core_operations WHERE id='generation-limit'").all()).toEqual([]);
+});
+it.each(['missing-root','cycle'] as const)('does not release a Clock continuation brief with %s ancestry',async drift=>{
+ const f=await setup(),{job}=await terminalSuccessor(f);
+ if(drift==='missing-root')f.app.db.prepare('DELETE FROM runtime_clock_turns').run();
+ else f.app.db.prepare('UPDATE runtime_public_continuations SET original_job=? WHERE job=?').run(job,job);
+ expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false});
+ expect(f.app.db.prepare('SELECT * FROM core_effects WHERE id=?').get(`runtime:input:${job}`)).toBeUndefined();
 });

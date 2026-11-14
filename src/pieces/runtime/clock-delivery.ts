@@ -1,4 +1,4 @@
-import type {PublicContinuation} from './public-continuation.js';
+import {publicAncestors,PUBLIC_GENERATIONS,type PublicContinuation} from './public-continuation.js';
 import { runtimeDestination } from './destination.js';
 import { installPublicInputs } from './public-inputs.js';
 import { installPublicMetadata } from './public-metadata.js';
@@ -50,16 +50,11 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       && source.member===job.member && source.project===job.project && source.authorship?.service===job.service;
   };
   const rootFor=(jobId:string)=>{
-    const seen=new Set<string>();
-    while(!seen.has(jobId)&&seen.size<100){
-      seen.add(jobId);
-      const link=db.prepare('SELECT * FROM runtime_public_continuations WHERE job=?').get(jobId) as PublicContinuation|undefined;
-      if(!link)return db.prepare('SELECT * FROM runtime_clock_turns WHERE job=? ORDER BY seq LIMIT 1').get(jobId) as Turn|undefined;
-      jobId=link.original_job;
-    }
+    const root=publicAncestors(db,jobId)?.at(-1);
+    return root?db.prepare('SELECT * FROM runtime_clock_turns WHERE job=? ORDER BY seq LIMIT 1').get(root) as Turn|undefined:undefined;
   };
   const valid=(jobId:string,terminal=false,seen=new Set<string>()):boolean=>{
-    if(seen.has(jobId)||seen.size>=100)return false;
+    if(seen.has(jobId)||seen.size>=PUBLIC_GENERATIONS)return false;
     seen.add(jobId);
     const job=store.read('job',jobId),binding=job?.conversation?store.read('binding',job.conversation):undefined;
     const root=rootFor(jobId);
@@ -249,7 +244,11 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     // it is not native launch authority after the payload leaves Runtime.
     inputCurrent(jobId:string){
       const root=rootFor(jobId);
-      if(!root)return ()=>true;
+      if(!root){
+        const job=store.read('job',jobId),binding=job?.conversation?store.read('binding',job.conversation):undefined;
+        const linked=db.prepare('SELECT job FROM runtime_public_continuations WHERE job=?').get(jobId);
+        return ()=>!linked&&binding?.venue!=='wake';
+      }
       const job=store.read('job',jobId),original=job&&readDestination(job);
       return ()=>{
         const current=store.read('job',jobId);
