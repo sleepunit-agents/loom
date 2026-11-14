@@ -16,7 +16,7 @@ export function recordAccountUsage(db: DataDatabase, input: {
     ? Math.min(...readings.map(Date.parse)) : null;
   const usageReadAt = oldest === null || readings.some(at => Date.parse(at) > Date.parse(input.now))
     ? null : new Date(oldest).toISOString();
-  const resetsAt = input.windows.length ? new Date(Math.min(...input.windows.map(window => Date.parse(window.resetsAt)))).toISOString() : null;
+  const resetsAt = input.windows.length && input.windows.every(window => window.resetsAt !== null) ? new Date(Math.min(...input.windows.map(window => Date.parse(window.resetsAt!)))).toISOString() : null;
   const usage = capacity.windows.length && capacity.windows.every(window => window.estimatedUsage !== null)
     ? Math.min(1, Math.max(...capacity.windows.map(window => window.estimatedUsage!))) : null;
   return db.transaction(() => {
