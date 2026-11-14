@@ -75,7 +75,7 @@ it('preserves private body schedule scope and returns only acknowledgements, inc
  const f=await setup();f.proof={agent:'art',conversation:'cv-bound',member:'jonathan',principal:{for:'owner',people:['jonathan']}};
  expect(f.call('scheduleSet',input,body)).toMatchObject({ok:true,value:{private:true}});
  expect(f.call('command',{agent:'art',argv:['schedule','set','daily','--at','13:17','-p','SAVED_WORDS']},body)).toMatchObject({ok:true,value:{exit:0}});
- expect(schedules(f.app.db)).toHaveLength(2);expect(schedules(f.app.db).every(s=>s.member==='jonathan')).toBe(true);
+ expect(schedules(f.app.db)).toHaveLength(1);expect(schedules(f.app.db).every(s=>s.member==='jonathan')).toBe(true);
  expect(JSON.stringify(f.call('schedules',{},body))).not.toContain('SAVED_WORDS');
 });
 it.each([false,true])('private schedule receipts stay private after removal (historical marker absent: %s)',async historical=>{

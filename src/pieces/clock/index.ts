@@ -109,6 +109,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   const mayScheduleControl = (v:Viewer, name:string, saved:Schedule) =>
     saved.laneDetails || name==='scheduleRun' && v.kind!=='agent'
       ? act(v,saved,true) && create(v,saved) : mayControl(v,saved);
+  // Trusted metadata only: a body can resolve names it may control without
+  // obtaining private schedule words through a registry read.
+  const commandSchedules = (v:Viewer) => schedules(db)
+    .filter(s=>s.member ? v.kind==='agent' && mayControl(v,s) : see(v,s,'schedule'))
+    .map(({id,agent})=>({id,agent}));
   const filedWork = <T extends Work>(v: Viewer, w: T): T & Work => prepareFiling(v, w) as (T & Work) | undefined
     ?? (() => { throw new OperationError('denied', 'Work must retain its authenticated conversation scope'); })();
   const privateLocal=(w:Wake)=>w.member!==undefined && !!w.approval && !!filedLocal(db,w.approval);
@@ -458,7 +463,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     && create(v, { agent: i.agent, note: '' }), (ctx, i) => ensureDeadman(ctx, i.agent), true);
   operations.register(operation({ name: 'clock.command', write: true, recheckPolicy:true, inputHash:(body, identity) => {
       const input = identity.input;
-      return !localCommandInput(identity.actor,input) && (oneOffCommandInput(identity.actor,input) || controlCommandInput(identity.actor,input,schedules(db).filter(s=>see(identity.actor,s,'schedule'))))
+      return !localCommandInput(identity.actor,input) && (oneOffCommandInput(identity.actor,input) || controlCommandInput(identity.actor,input,commandSchedules(identity.actor)))
         ? filingHash(body,identity) : createHash('sha256').update(body).digest('hex');
     },
     input: z.object({ argv: z.array(z.string()).max(100), agent: text.optional(), laneFile: z.object({path:text,text:z.string().max(100_000)}).optional() }),
@@ -466,7 +471,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     may: (viewer,input) => {
       const local=localCommandInput(viewer,input);
       if (local) return localPublicPolicy(operations,sharing,options.caller,viewer,local);
-      const control=controlCommandInput(viewer,input,schedules(db).filter(s=>see(viewer,s,'schedule')));
+      const control=controlCommandInput(viewer,input,commandSchedules(viewer));
       if(control){
         const saved=control.operation==='cancel'?wake(db,control.id):schedule(db,control.id);
         if(!saved?.member && db.prepare('SELECT 1 FROM clock_meta WHERE key=?').get('private-id:'+control.id))return false;
@@ -482,7 +487,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       const result=command(operations,ctx.viewer,input,id=>{
         const w=wake(db,id);
         return w && mayControl(ctx.viewer,w) ? {agent:w.agent,active:active(w)} : undefined;
-      });
+      },commandSchedules(ctx.viewer));
       if(result.exit===0 && input.argv.includes('--standing'))saveLocalReceipt(ctx,result);
       return result;
     },

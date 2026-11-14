@@ -1124,7 +1124,10 @@ window gate, including receipt retries and collisions with public wake ids; remo
 previous results token-readable. Public command names and response text remain
 unchanged, including the selected-clock and active-entry checks for body cancel
 commands (using authorized metadata, never private list reads); private schedule confirmation uses its deadline acknowledgement rather
-than reading a private list. A removed private id requires member-window recovery;
+than reading a private list. Authorized ID/agent metadata resolves both canonical
+and noncanonical private schedule names for replacement, run and removal; it
+never exposes the private schedule record. Public cancellation receipts also
+recheck current proof and policy before replay. A removed private id requires member-window recovery;
 a body cannot silently reuse it.
 
 This unit does not grant joining or delivery. Actual private dispatch remains held.

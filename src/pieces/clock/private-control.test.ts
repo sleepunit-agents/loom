@@ -143,3 +143,25 @@ it.each([true,false])('keeps body cancel commands on the selected clock and acti
  expect(f.call('command',{argv:['cancel',id]})).toMatchObject({ok:true,value:{exit:0,stdout:`cancelled ${id}\n`}});
  expect(f.call('command',{argv:['cancel',id]})).toMatchObject({ok:true,value:{exit:1,stderr:`wake: no spool entry ${id}\n`}});
 });
+
+it('resolves authorized noncanonical private schedule names for replace, run and remove without returning words',async()=>{
+ const f=await setup();expect(f.call('scheduleSet',{...input,id:'daily'}).ok).toBe(true);
+ for(const argv of [['schedule','set','daily','--at','13:17','-p','PRIVATE_REPLACEMENT'],['schedule','run','daily'],['schedule','rm','daily']]){
+  const result=f.call('command',{argv});expect(result).toMatchObject({ok:true,value:{exit:0}});expect(JSON.stringify(result)).not.toContain('PRIVATE_');
+  if(argv[1]==='set'){expect(schedules(f.app.db)).toHaveLength(1);expect(schedules(f.app.db)[0]).toMatchObject({id:'daily',member:'jonathan',prompt:'PRIVATE_REPLACEMENT'});}
+  if(argv[1]==='run')expect(wakes(f.app.db).find(w=>w.runNow)).toMatchObject({member:'jonathan',prompt:'PRIVATE_REPLACEMENT'});
+ }
+ expect(schedules(f.app.db)).toEqual([]);
+});
+it.each(['direct','command'])('reauthorizes public body cancellation receipt replay through %s',async door=>{
+ const f=await setup(false);f.proof={...f.proof!,project:'pond',service:'bridge'};
+ expect(f.call('in',{agent:'art',when:'1h',prompt:'Public',note:''}).ok).toBe(true);
+ const id=wakes(f.app.db)[0].id,receipt=randomUUID(),op=door==='direct'?'cancel':'command',data=door==='direct'?{id}:{argv:['cancel',id]};
+ const originalProof=f.proof!,ack=f.call(op,data,body,receipt);expect(ack).toMatchObject({ok:true});expect(f.call(op,data,body,receipt)).toEqual(ack);
+ const before=f.snapshot();
+ f.proof={...originalProof,service:'other'};expect(f.call(op,data,body,receipt)).toMatchObject({ok:false,code:'conflict'});
+ f.proof={...originalProof,conversation:'cv-owner',principal:{for:'owner',people:['jonathan']}};expect(f.call(op,data,body,receipt)).toMatchObject({ok:false,code:'conflict'});
+ f.proof=undefined;expect(f.call(op,data,body,receipt)).toMatchObject({ok:false,code:'denied'});
+ f.proof=originalProof;f.access.projects.pond.agents=[];expect(f.call(op,data,body,receipt)).toMatchObject({ok:false,code:'denied'});
+ expect(f.snapshot()).toEqual(before);
+});
