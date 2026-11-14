@@ -1136,3 +1136,26 @@ through its own original-member body proof before agents can use it. Inbox must
 resolve the encrypted projection through an owning Comms window read, and the
 inline card must join current state/history. Those are subsequent obligations;
 no words may be added to Attention to complete them.
+
+## Private question reads and kept state
+
+`comms.question({ref})` reads a Comms-created sealed question through the owning
+member's page socket. The `comms.question` live record uses that exact Attention
+ref as its required scope; an unscoped subscription enumerates nothing. Both
+surfaces return the full question, current state and wordless answer history,
+thread/sequence and word-retention deadline. Archived threads retain the history.
+At the exact deadline the question becomes null while state/history remains.
+Deletion or lost original-member ownership removes the record.
+
+The reader resolves unique current owning-thread metadata through Comms's role,
+then checks the exact original member, agent, conversation and sealed row pointer.
+It decrypts outside SQLite and rechecks routing, source state and ciphertext before
+returning. The live record refreshes on owning/source changes and expiry, including
+while idle. The operation returns no cached retry result. Attention's getter still
+returns synchronous metadata; it never receives the decrypted question.
+
+This is the read seam for Inbox and the inline card, not their finished rendering.
+It handles newly Comms-created projections; imported legacy cards and managed
+Approval/Task protocols retain their own source behavior and still need the final
+acceptance audit. No agent command, runtime producer or execution authority is
+added by this window-only read.

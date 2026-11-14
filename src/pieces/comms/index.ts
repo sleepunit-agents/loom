@@ -8,6 +8,7 @@ import { installConversationSteps, type StepConversation } from './conversation-
 import { threadActivity } from './thread-activity.js';
 import { spawnCreator } from './spawn.js';
 import { privateQuestionCreator } from './private-questions.js';
+import { installQuestionRead } from './question-read.js';
 import { installPrivateReplies } from './private-replies.js';
 import { installCommsWork } from './work.js';
 import { about, aboutPointer, aboutIdentity, attachedText } from './about.js';
@@ -303,6 +304,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const value=answer.value as {thread:string;seq:number};
   const t=thread(db,value.thread); if(t)void deliver(t.agent,t.id,value.seq);
  }
+ installQuestionRead({...o,closed:()=>closed});
  installPrivateReplies({...o,closed:()=>closed,changed:touched,after:sendAfter});
  operations.register(operation({name:'comms.open',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),
   input:z.object({agent:id,id:clientId,text,project:id.optional(),about:about.optional()}),output:ack,
