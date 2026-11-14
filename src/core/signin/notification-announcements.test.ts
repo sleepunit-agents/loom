@@ -58,9 +58,9 @@ it('uses current central visibility per member, with per-member durable dedupe a
  const f=await setup(false);f.seed('other','pollock');
  f.raise('private');f.raise('household','jonathan',{});await f.tick();expect(f.send).toHaveBeenCalledTimes(2);expect(f.send.mock.calls.every(c=>c[0].endpoint===sub().endpoint)).toBe(true);
  expect(attentionAnnouncements(f.app.operations,'pollock')).toEqual([]);
- // A later owner gains the household item only; private membership remains exact.
- f.app.db.transaction(()=>{changeHouseholdMember(f.app.db,'','pollock','*');})();await f.tick();expect(f.send).toHaveBeenCalledTimes(3);expect(f.send.mock.calls[2][0]).toEqual(sub('other'));
- expect(f.items().filter(r=>r.member==='pollock')).toHaveLength(1);
+ // A later household owner gains both the household item and the private item.
+ f.app.db.transaction(()=>{changeHouseholdMember(f.app.db,'','pollock','*');})();await f.tick();expect(f.send).toHaveBeenCalledTimes(4);expect(f.send.mock.calls[2][0]).toEqual(sub('other'));expect(f.send.mock.calls[3][0]).toEqual(sub('other'));
+ expect(f.items().filter(r=>r.member==='pollock')).toHaveLength(2);
  expect(new SharingDatabase(f.app.db,'').sharing().services).not.toHaveProperty('notifications');
 });
 it.each(['answered','member','device','keys','generation','vapid'] as const)('revalidates %s before a held send is released',async kind=>{

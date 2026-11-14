@@ -95,14 +95,14 @@ it('closes the generic standing bypass and retains private exclusions after stan
  expect(JSON.stringify(exportDatabase(s.app.db))).not.toContain('PRIVATE_TRIMMED');
 });
 
-it('sends private words only to that member’s authenticated window, never a member token or another owner',async()=>{
+it('sends private words to the member and household owners in authenticated windows',async()=>{
  const s=await setupLocal('standing',undefined,req=>({viewer:{kind:'member',id:req.headers['x-fixture-viewer']==='other'?'second-owner':'jonathan'},window:req.headers['x-fixture-window']==='yes',valid:()=>true}));secondOwner(s);
  const id=value<{id:string}>(s.request(prompt,'PRIVATE_LIVE_WORDS',privateCaller)).id;
  const receipt=randomUUID();value(await s.app.operations.callAsync('socket',owner,'approvals.every-time',{id},receipt,true));
  // A token cannot replay a browser response containing the private card.
  expect(s.app.operations.call('http',owner,'approvals.every-time',{id},receipt).ok).toBe(false);
  value(clockLocalStanding(s.app.operations).schedule(privateCaller,{approval:id,mode:'in',when:'1h'}));
- for(const type of ['wake','approval','approval-rule'])for(const [viewer,window,visible] of [['self','yes',true],['other','yes',false],['self','no',false]]) {
+ for(const type of ['wake','approval','approval-rule'])for(const [viewer,window,visible] of [['self','yes',true],['other','yes',true],['self','no',false]]) {
   const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-fixture-viewer':viewer,'x-fixture-window':window}});
   try{await once(ws,'open');const result=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type}));
    const [raw]=await result;expect(String(raw).includes('PRIVATE_LIVE_WORDS')).toBe(visible);
