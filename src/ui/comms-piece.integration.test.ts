@@ -244,13 +244,19 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByRole('link',{name:'Work made in this thread'}).count()).toBe(1);
   await b.clock.resume();
 
-  await comms.startNotice('art',place,{kind:'start-failed',seq,attempt:3});
+  // The cited reply superseded the earlier pending start. Exercise failure and
+  // retry against a fresh accepted member message, rather than that stale start.
+  const failedStart=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.send',{thread:place,id:'retryaftercitedaa',text:'A fresh queued start after the cited reply'},'fixture-after-citation',true);
+  expect(failedStart.ok).toBe(true);if(!failedStart.ok)throw new Error('start fixture failed');
+  const failedSeq=(failedStart.value as {seq:number}).seq;
+  await comms.deliver('art',place,failedSeq);
+  await comms.startNotice('art',place,{kind:'start-failed',seq:failedSeq,attempt:3});
   await expect.poll(()=>b.getByRole('button',{name:'Send again',exact:true}).count()).toBe(1);
   await expect.poll(()=>b.getByLabel('Thinking status').count()).toBe(0);
   await b.getByRole('button',{name:'Send again',exact:true}).click();
-  await expect.poll(()=>starts.filter(d=>d.seq===seq&&d.generation===1).length).toBe(1);
+  await expect.poll(()=>starts.filter(d=>d.seq===failedSeq&&d.generation===1).length).toBe(1);
   await expect.poll(()=>b.getByRole('button',{name:'Send again',exact:true}).count()).toBe(0);
-  await comms.startNotice('art',place,{kind:'start-retry',seq,generation:1,attempt:1,retryAt});
+  await comms.startNotice('art',place,{kind:'start-retry',seq:failedSeq,generation:1,attempt:1,retryAt});
   await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(1);
   comms.status('art',place,'working');
   await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(0);
