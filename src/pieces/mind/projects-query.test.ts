@@ -50,7 +50,10 @@ it('composes generated fields with typed complete cards, canonical aliases, sect
 
 it('uses the authenticated viewer and current sharing; a shared project never opens private cards', async () => {
  const f = fixture(); f.store.write({ slug: 'pond', name: 'Private' }); f.other.write({ slug: 'pond', name: 'Other private' });
+ f.database.exec(`CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,category TEXT,created TEXT,updated TEXT,archived INTEGER,expires_at TEXT);
+ INSERT INTO memories VALUES('secret','Fictional secret','Private fictional story','project','2026-11-14T17:00:00Z',NULL,0,NULL)`);
  const query = '{ memoryProjects { id } memoryProject(id:"fiction:pond") { name } memoryProjectMemory(id:"fiction:secret") { content } }';
+ expect(await f.query(query, { kind: 'member', id: 'member' })).toEqual({ data: { memoryProjects: [{ id: 'fiction:pond' }], memoryProject: { name: 'Private' }, memoryProjectMemory: { content: 'Private fictional story' } } });
  expect(await f.query(query, { kind: 'member', id: 'peer' })).toEqual({ data: { memoryProjects: [], memoryProject: null, memoryProjectMemory: null } });
  expect(await f.query('{ memoryProjects { id } }', { kind: 'agent', id: 'fiction' })).toEqual({ data: { memoryProjects: [{ id: 'fiction:pond' }] } });
  expect(await f.query('{ memoryProjects { id } }', { kind: 'member', id: 'member' })).toEqual({ data: { memoryProjects: [{ id: 'fiction:pond' }] } });
