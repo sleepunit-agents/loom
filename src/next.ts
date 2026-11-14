@@ -1,3 +1,4 @@
+import {startSecretWorkers, type SecretWorkersConfig} from './secret-worker-startup.js';
 import { installNotificationSending, type NotificationSendOptions } from './core/signin/notification-send.js';
 import { installAsyncSecretValuesFromFile, type SecretRetryKeyFiles } from './pieces/secrets/retry-key.js';
 import type { AsyncSecretMutations } from './pieces/secrets/async-values.js';
@@ -104,6 +105,7 @@ export interface NextChangesOptions {
   interval?: number;
 }
 export interface NextBridgesOptions extends Omit<SlackDaemonOptions, 'secrets' | 'credentialEpoch' | 'observeCredentials' | 'name' | 'receive'> { name?: SlackDaemonOptions['name']; receive?: SlackDaemonOptions['receive']; runtime?: BridgeRuntime; source: SecretValueSource & HolderGeneration; discordSocket?: DiscordDaemonOptions['socket'] }
+const secretWorkerClosers = new WeakMap<Foundation, () => Promise<void>>();
 const secretMutationClosers = new WeakMap<Foundation, () => Promise<void>>();
 const secretAuthorities = new WeakMap<Foundation, Awaited<ReturnType<typeof listenHolderAuthority>>>();
 const bridgeDaemons = new WeakMap<Foundation, {close(): Promise<void>}>();
@@ -111,12 +113,15 @@ const bridgeDaemons = new WeakMap<Foundation, {close(): Promise<void>}>();
 const notificationClosers = new WeakMap<Foundation, () => Promise<void>>();
 const runtimeClosers = new WeakMap<Foundation, () => Promise<void>>();
 export async function closeNext(app: Foundation) {
-  try { await notificationClosers.get(app)?.(); await secretMutationClosers.get(app)?.(); }
+  try {await secretWorkerClosers.get(app)?.();}
   finally {
-    try { await bridgeDaemons.get(app)?.close(); }
+    try { await notificationClosers.get(app)?.(); await secretMutationClosers.get(app)?.(); }
     finally {
-      try { await secretAuthorities.get(app)?.close(); secretAuthorities.delete(app); }
-      finally { await runtimeClosers.get(app)?.(); }
+      try { await bridgeDaemons.get(app)?.close(); }
+      finally {
+        try { await secretAuthorities.get(app)?.close(); secretAuthorities.delete(app); }
+        finally { await runtimeClosers.get(app)?.(); }
+      }
     }
   }
 }
@@ -126,6 +131,8 @@ export interface NextOptions {
   notifications?: NotificationSendOptions;
   changes?: NextChangesOptions;
   secretAuthority?: AuthorityServerConfig;
+  /** Source-only owner opt-in; no public operation or installed activation. */
+  secretWorkers?: SecretWorkersConfig;
   /** Trusted authenticated holder only; no discovery or automatic grants. */
   secretWrites?: {holder: AsyncSecretMutations; retryKeys: string | SecretRetryKeyFiles};
   bridges?: NextBridgesOptions;
@@ -306,6 +313,10 @@ export async function installNext(app: Foundation, options: NextOptions) {
       options.secretWrites.retryKeys, secretAttention);
     const job = startSecretReconciliation(app, recovery);
     secretMutationClosers.set(app,async()=>{job.close();await holder.close();});
+  }
+  if(options.secretWorkers) {
+    const workers=await startSecretWorkers(app,sharing,effects,options.secretWorkers);
+    secretWorkerClosers.set(app,workers.close);
   }
   return effects;
 }

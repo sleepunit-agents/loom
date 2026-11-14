@@ -198,3 +198,30 @@ rejects duplicate requests before their cleanup can retire a running original
 request. A rejected or lost complete admission reply can remain undispatched
 until bounded expiry. A deadline may lose acknowledgement even after release;
 `delivery: false` never licenses retry. Command expiry closes its admission client.
+
+### Daemon startup ownership (source opt-in, uninstalled)
+
+`startLoom({next:true, secretWorkers})` now owns a single `secretTickets`
+instance shared by its actual private admission and ticket-authority listeners.
+The explicit in-process configuration supplies separate listener sockets, one
+pinned holder endpoint/client identity, and worker pins paired with existing job
+credential digests. Signin resolves each original viewer; Runtime derives its
+exact current assignment. Configuration accepts no supplied viewer, assignment,
+proof, dispatch callback or credential source. The original minted holder client
+and original daemon completion remain internal. Owner selections are captured
+before startup awaits. Nothing discovers or issues job credentials here.
+
+Startup failure drains any listener/client already created. Normal daemon
+shutdown retires admission and drains its dispatches, then stops authority and
+closes the holder client before SQLite closes. Staging holds remain enforced by
+the owning daemon's OutsideEffects gate; starting listeners grants no release.
+Tests use synthetic values and actual pinned TLS plus a real fd3 subprocess.
+
+This source option has no CLI/environment configuration or installed activation.
+It selects existing job credentials at daemon startup; it does not yet schedule
+runner processes, refresh peers for newly started jobs, or supply a worker's
+original local policy/grant/request proof. Trusted runner job startup must own
+that lifecycle and call the existing `startAdmittedSecretCommand` path. Production
+tombstone capacity/lifecycle and staging/value-free accounting across the whole
+installed path remain required before public activation. ClaudeWorkerSession
+continues using prompt stdin and is not an fd3 consumer.

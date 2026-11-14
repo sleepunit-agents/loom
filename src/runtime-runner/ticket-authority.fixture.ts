@@ -48,5 +48,5 @@ export async function ticketAuthorityFixture(closes:Array<()=>unknown>,service?:
  const remote=remoteTicketAuthority(config,fingerprint('daemon'));closes.push(remote.close);
  const admitted=()=>{const ticket=admit();expect(tickets.claim(ticket.id)).toBeNull();release(ticket.id);return ticket;};
  const state=(ticket:string)=>app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(ticket);
- return {home,app,clock,id,viewer,job,call,tickets,admit,release,grant,server,config,fingerprint,authority,remote,admitted,state};
+ return {home,app,clock,id,viewer,tokenDigest:hash(token),job,call,tickets,admit,release,grant,server,config,fingerprint,authority,remote,admitted,state};
 }
