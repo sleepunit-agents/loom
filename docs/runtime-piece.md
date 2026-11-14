@@ -759,7 +759,9 @@ conversation, source and `waits_on` are never caller authority. The exact centra
 Signin body proof must own the current private loom binding, original member,
 job and service; all existing policy/import/reset/write-off/execution holds apply.
 Comms rechecks this original body capability inside the write transaction after
-sealing. Losing authority during encryption persists neither a message nor an
+sealing. Both commit and acknowledgement require the captured job, service,
+conversation, thread, agent, member and project; moving the same job to another
+valid private binding cannot authorize a write to the former thread. Losing authority during encryption persists neither a message nor an
 Attention projection. The operation stores no generic receipt or question words.
 
 The complete question stays encrypted in Comms, with a metadata-only Attention

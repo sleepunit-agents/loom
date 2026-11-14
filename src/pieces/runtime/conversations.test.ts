@@ -1194,7 +1194,7 @@ it('binds private questions to the original body and seals words without publish
  expect(await f.socket('attention.get',{id:ack.ref})).toMatchObject({ok:true,value:{state:'answered'}});
 });
 
-it.each(['credential','policy','archive','imported','reset','writeoff','ended','service','binding','duplicate','tombstone','member','box','hosting','house','membership','lending'] as const)('rejects a private question revoked during actual encryption by %s without partial persistence',async drift=>{
+it.each(['credential','policy','archive','imported','reset','writeoff','ended','service','binding','duplicate','tombstone','member','box','hosting','house','membership','lending','relocation'] as const)('rejects a private question revoked during actual encryption by %s without partial persistence',async drift=>{
  let armed=false,entered:()=>void=()=>{},release:()=>void=()=>{};
  const sealing=new Promise<void>(r=>{entered=r;}),gate=new Promise<void>(r=>{release=r;});
  vi.spyOn(commsCrypto,'loadKey').mockImplementation(async home=>{
@@ -1202,6 +1202,8 @@ it.each(['credential','policy','archive','imported','reset','writeoff','ended','
   return {...key,async seal(words){if(armed&&words.includes('PRIVATE INFLIGHT QUESTION')){entered();await gate;}return key.seal(words);}};
  });
  const f=await commsBodyFixture(drift==='membership'||drift==='lending'?'pollock':'jonathan'),viewer=signin(f.app).token(hash(f.body))!.viewer;
+ const relocated=drift==='relocation'?value<{thread:string}>(await f.socket('comms.open',{agent:'art',id:'relocationthread',text:'Separate owning private thread'})).thread:undefined;
+ if(relocated)await f.queued();
  const snapshot=()=>['attention_asks','comms_messages'].map(table=>f.app.db.prepare(`SELECT * FROM ${table}`).all());
  const before=snapshot();armed=true;
  const pending=f.app.operations.callAsync('http',viewer,'runtime.askQuestion',{id:'inflight-question',question:{ask:'PRIVATE INFLIGHT QUESTION'}},'inflight-question');
@@ -1209,6 +1211,12 @@ it.each(['credential','policy','archive','imported','reset','writeoff','ended','
  await sealing;
  f.app.db.transaction(()=>{
   const store=runtimeStore(f.app.db),{changedAt:_,...job}=store.read('job',f.job)!,t=f.record();
+  if(relocated){
+   const other=store.ids('binding').map(id=>store.read('binding',id)!).find(b=>b.place===relocated)!;
+   const {changedAt:__,...binding}=other;
+   store.put('binding',{...binding,job:f.job},f.clock.now());
+   store.put('job',{...job,conversation:binding.id},f.clock.now());
+  }
   if(['box','hosting','lending'].includes(drift)){const {changedAt:__,...box}=store.read('box','a')!;store.put('box',{...box,...(drift==='box'?{revokedAt:f.clock.now()}:drift==='hosting'?{mayHost:[]}:{lentTo:[]})},f.clock.now());}
   if(drift==='house'){const {changedAt:__,...settings}=store.read('settings','art')!;store.put('settings',{...settings,house:{repo:'/changed',houseFile:'house.json'}},f.clock.now());}
   if(drift==='membership')new HouseholdDatabase(f.app.db).change(f.home,raw=>{(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person==='pollock')!.agents=[];});
@@ -1275,4 +1283,23 @@ it('enforces bounded private Question fields before encryption and accepts their
  const ack=value<{ref:string;seq:number}>(await f.post(f.body,'runtime.askQuestion',maximum));
  expect(await f.socket('comms.messages',{thread:f.thread})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:maximum.question})])});
  expect(await f.socket('attention.get',{id:ack.ref})).toMatchObject({ok:true,value:{answers:'yes-no'}});
+});
+
+it('withholds a former-thread question acknowledgement if the same job moves after the authorized commit',async()=>{
+ const f=await commsBodyFixture(),other=value<{thread:string}>(await f.socket('comms.open',{agent:'art',id:'ackrelocatethrda',text:'Other private thread'})).thread;
+ await f.queued();let moved=false;
+ const stop=f.app.live.observe(changes=>{
+  if(moved||!changes.some(c=>c.type==='attention.ask'))return;
+  moved=true;expect(f.app.db.inTransaction).toBe(false);
+  f.app.db.transaction(()=>{
+   const store=runtimeStore(f.app.db),{changedAt:_,...job}=store.read('job',f.job)!;
+   const {changedAt:__,...binding}=store.ids('binding').map(id=>store.read('binding',id)!).find(b=>b.place===other)!;
+   store.put('binding',{...binding,job:f.job},f.clock.now());store.put('job',{...job,conversation:binding.id},f.clock.now());
+  })();
+ });cleanups.push(stop);
+ expect(await f.post(f.body,'runtime.askQuestion',{id:'former-thread-ack',question:{ask:'PRIVATE AUTHORIZED QUESTION'}})).toMatchObject({ok:false,code:'denied'});
+ expect(moved).toBe(true);
+ // The write was authorized when committed; only its late acknowledgement is withheld.
+ expect(f.app.db.prepare("SELECT thread FROM comms_messages WHERE kind='ask'").all()).toEqual([{thread:f.thread}]);
+ expect(await f.post(f.body,'runtime.describeConversation',{})).toMatchObject({ok:true});
 });

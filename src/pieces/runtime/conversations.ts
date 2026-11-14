@@ -171,9 +171,19 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   async prepare(i,{viewer}){
    const b=commsBody(viewer)!;
    const source='body-question:'+createHash('sha256').update(JSON.stringify([b.job.id,i.id])).digest('hex');
-   return comms!.ask(b.job.agent,b.binding.place,{id:source,question:i.question},
-    {agent:b.job.agent,conversation:b.binding.id,valid:()=>commsBody(viewer)?.job.id===b.job.id});
-  },run(ctx,_i,prepared){const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
+   // The same job can move to another valid private binding while sealing.
+   // Re-proving only its id would authorize a write to the former thread.
+   const valid=()=>{
+    const current=commsBody(viewer);
+    return !!current&&current.job.id===b.job.id&&current.job.service===b.job.service
+     &&current.binding.id===b.binding.id&&current.binding.place===b.binding.place
+     &&current.binding.agent===b.binding.agent&&current.binding.member===b.binding.member
+     &&current.binding.project===b.binding.project;
+   };
+   const ack=await comms!.ask(b.job.agent,b.binding.place,{id:source,question:i.question},
+    {agent:b.job.agent,conversation:b.binding.id,valid});
+   return {ack,valid};
+  },run(ctx,_i,prepared){if(!prepared.valid())throw new OperationError('denied','Body binding ended');const b=commsBody(ctx.viewer)!;hearJob(db,b.job.id,ctx.now);return prepared.ack;},
  }));
  operations.register(operation({name:'runtime.conversationStatus',doors:['http','direct'],input:z.object({state:z.enum(['working','done']).optional()}).strict(),output:z.object({stop:z.boolean(),archived:z.boolean()}),
   may:v=>!!commsBody(v),run(ctx,i){const b=commsBody(ctx.viewer)!;hearJob(db,b.job.id,ctx.now);const status=comms!.status(b.job.agent,b.binding.place,i.state);
