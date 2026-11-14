@@ -26,9 +26,14 @@ const realLoadKey=commsCrypto.loadKey;
 const value=<T>(r:Result):T=>{expect(r.ok).toBe(true);return (r as {ok:true;value:T}).value;};
 const cleanups:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{try{for(const f of cleanups.splice(0).reverse())await f();}finally{vi.restoreAllMocks();}});
-async function setup(staging=false,member='jonathan'){
+async function setup(staging=false,member='jonathan',prepared?:{name:string;after():Promise<void>}){
  const home=mkdtempSync(join(tmpdir(),'runtime-private-'));fixture(home);cleanups.push(()=>rmSync(home,{recursive:true,force:true}));
- const clock=new FakeClock();let app=await startLoom({home,clock,next:true,staging,stdout:()=>{}});cleanups.push(()=>app.close());
+ const clock=new FakeClock();let app=await startLoom({home,clock,next:true,staging,stdout:()=>{},install(a){
+  if(prepared){const register=a.operations.register.bind(a.operations);vi.spyOn(a.operations,'register').mockImplementation(op=>{
+   if(op.name===prepared.name){const prepare=op.prepare!;register({...op,async prepare(...args){const result=await prepare(...args);await prepared.after();return result;}});}
+   else register(op);
+  });}
+ }});cleanups.push(()=>app.close());
  const auth=signin(app);app.db.transaction(()=>auth.tokens.replace({v:1,tokens:[]},{}))();let n=0;
  if(member!=='jonathan')app.db.transaction(()=>new HouseholdDatabase(app.db).change(home,raw=>{const m=(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person===member)!;m.agents=['art'];}))();
  const token=(role:string,person?:string)=>{const secret=randomBytes(32).toString('hex');auth.tokens.change(ts=>ts.push({role,...(person?{member:person}:{}),sha256:hash(secret),label:role,created:new Date(clock.now()).toISOString()}));return secret;};
@@ -891,8 +896,8 @@ it('cannot redirect terminal reconciliation onto another working private thread 
  await f.restart();expect(working(first)).toBe(true);expect(working(second)).toBe(true);
 });
 
-async function commsBodyFixture(member='jonathan',staging=false){
- const f=await setup(staging,member),thread=await f.open();
+async function commsBodyFixture(member='jonathan',staging=false,prepared?:{name:string;after():Promise<void>}){
+ const f=await setup(staging,member,prepared),thread=await f.open();
  if(staging){
   const effect=`comms-deliver:${thread}:1`;
   await expect.poll(()=>f.app.db.prepare("SELECT id FROM core_effects WHERE id=? AND state='due'").get(effect)).toEqual({id:effect});
@@ -1452,4 +1457,60 @@ it('does not return prepared Clock words through a separately valid replacement 
  // cannot discriminate the branch-switch bypass.
  expect(await f.post(payload.credential,'runtime.describeConversation',{})).toMatchObject({ok:true});
  expect(await f.post(payload.credential,'runtime.readConversation',{})).toMatchObject({ok:true,value:{messages:[expect.objectContaining({text:'PRIVATE inbound sentinel'})]}});
+});
+
+
+it.each(['read','reply'] as const)('fences an in-flight private %s when the same job moves to another valid conversation',async action=>{
+ let armed=false,entered:()=>void=()=>{},release:()=>void=()=>{};
+ const waiting=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+ vi.spyOn(commsCrypto,'loadKey').mockImplementation(async home=>{
+  const key=await realLoadKey(home);
+  return {...key,async open(blob){if(armed&&action==='read'){entered();await gate;}return key.open(blob);},
+   async seal(words){if(armed&&action==='reply'&&words.includes('PRIVATE relocated reply')){entered();await gate;}return key.seal(words);}};
+ });
+ const f=await commsBodyFixture(),viewer=signin(f.app).token(hash(f.body))!.viewer;
+ const other=value<{thread:string}>(await f.socket('comms.open',{agent:'art',id:'relocationthread',text:'PRIVATE other source'})).thread;
+ await f.queued();
+ const before=f.app.db.prepare('SELECT * FROM comms_messages WHERE thread=?').all(f.thread);
+ armed=true;
+ const pending=f.app.operations.callAsync('http',viewer,action==='read'?'runtime.readConversation':'runtime.reply',action==='read'?{}:{id:'relocated-reply',text:'PRIVATE relocated reply'});
+ try {
+  await waiting;
+  f.app.db.transaction(()=>{
+   const store=runtimeStore(f.app.db),{changedAt:_,...job}=store.read('job',f.job)!;
+   const {changedAt:__,...binding}=store.ids('binding').map(id=>store.read('binding',id)!).find(b=>b.place===other)!;
+   store.put('binding',{...binding,job:f.job},f.clock.now());
+   store.put('job',{...job,conversation:binding.id},f.clock.now());
+  })();
+  // Establish the replacement really is independently valid, not merely revoked.
+  expect(await f.post(f.body,'runtime.describeConversation',{})).toMatchObject({ok:true});
+  release();expect(await pending).toMatchObject({ok:false,code:'denied'});
+  expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE thread=?').all(f.thread)).toEqual(before);
+ }finally{release();await pending;}
+});
+
+
+it.each(['read','reply'] as const)('retains a completed Comms %s preparation through final dispatch to a newly valid Bridges consumer',async action=>{
+ let role!:ReturnType<typeof realConversationRuntime>,armed=false,entered:()=>void=()=>{},release:()=>void=()=>{};
+ vi.spyOn(conversationModule,'conversationRuntime').mockImplementation((...args)=>role=realConversationRuntime(...args));
+ const waiting=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+ const f=await commsBodyFixture('jonathan',false,{name:action==='read'?'runtime.readConversation':'runtime.reply',async after(){if(armed){entered();await gate;}}});
+ const viewer=signin(f.app).token(hash(f.body))!.viewer,store=runtimeStore(f.app.db);
+ // A role fake isolates final dispatch. It supplies no real venue admission,
+ // credential or transport authority; the actual private Comms prepare runs.
+ const bound=vi.fn((v:typeof viewer)=>v===viewer?store.read('job',f.job):undefined);
+ const read=vi.fn(()=>({messages:[]})),reply=vi.fn(()=>({seq:123}));
+ const replacement={bound,read,reply} as unknown as Parameters<typeof role.connectBridges>[0];
+ armed=true;
+ const pending=f.app.operations.callAsync('http',viewer,action==='read'?'runtime.readConversation':'runtime.reply',action==='read'?{}:{id:'prepared-reply',text:'PRIVATE original committed reply'});
+ try {
+  await waiting;
+  // The original IO has completed; a reply already belongs to the old source.
+  if(action==='reply')expect(JSON.stringify(value(await f.socket('comms.messages',{thread:f.thread})))).toContain('PRIVATE original committed reply');
+  f.app.db.transaction(()=>{const {changedAt:_,...job}=store.read('job',f.job)!;store.put('job',{...job,conversation:'replacement-bridge'},f.clock.now());})();
+  role.connectBridges(replacement);
+  expect(bound(viewer)).toMatchObject({id:f.job,conversation:'replacement-bridge'});
+  release();expect(await pending).toMatchObject({ok:false,code:'denied'});
+  expect(read).not.toHaveBeenCalled();expect(reply).not.toHaveBeenCalled();
+ }finally{release();await pending;}
 });

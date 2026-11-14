@@ -1515,3 +1515,15 @@ This is worker-local bookkeeping, outside the daemon's stores and importer.
 Bound private execution still requires owning policy/source/credential delivery;
 all existing policy and history holds remain. No old program or running home is
 read or changed by this implementation.
+
+### Original private route across asynchronous IO
+
+Private reads and replies capture the original job, service, conversation,
+transport place, agent, member and project before Comms decrypts or encrypts.
+They recheck that route during Comms IO and again when Runtime returns the
+prepared result. Moving the same job to another independently valid private
+conversation cannot authorize returning the old thread's words or posting to
+it. Opaque in-process preparation markers preserve the original Comms consumer
+through Runtime's final dispatch. Private questions use the same route check.
+This compares current routing facts; it does not establish physical worker
+ownership or durable native history, and does not enable external bound work.
