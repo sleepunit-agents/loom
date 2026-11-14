@@ -5,7 +5,7 @@ import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import { approvalFiling } from './approval-filing.js';
-import { registerAttentionAnnouncements, taskAskId, registerPrivateQuestions, registerPrivateReplies, type Ask, type AgentStatus, type AttentionSources, type TaskAskFiling } from './role.js';
+import { registerAttentionAnnouncements, taskAskId, registerPrivateQuestions, registerPrivateReplies, registerPrivateDecisions, type Ask, type AgentStatus, type AttentionSources, type TaskAskFiling } from './role.js';
 import { installWaitChecks, type AttentionWaits } from './waits.js';
 import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
@@ -71,6 +71,18 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     }
     saveAsk(record);ctx.changed('attention.ask',record.id);return {ok:true,value:{id:record.id}};
   });
+  registerPrivateDecisions(operations, (ctx, raw) => {
+    if(ctx.db!==db||!db.inTransaction||ctx.window!==true)return failure('denied','Private decision needs its owning window transaction');
+    const parsed=z.object({id,conversation:id,agent:id,member:id,thread:id,seq:z.number().int().positive(),verdict:z.enum(['yes','no'])}).strict().safeParse(raw);
+    if(!parsed.success)return failure('invalid','Invalid private decision reference');
+    const i=parsed.data,r=readAsk(i.id);
+    if(!r||r.id!==i.id||r.member!==i.member||r.agent!==i.agent||r.source.kind!=='conversation'||r.source.id!==i.conversation
+      ||r.privateQuestion?.thread!==i.thread||r.privateQuestion.seq!==i.seq||r.sourceManaged||r.waits_on||r.answers!=='yes-no'
+      ||ctx.viewer.kind!=='member'||ctx.viewer.id!==i.member||!mayAct(ctx.viewer,scoped('attention.ask',r),sharing(),'answer-person'))return failure('denied','Question unavailable');
+    if(r.state!=='open')return failure('conflict','Question is no longer open');
+    r.state='answered';r.changedAt=ctx.now;r.answer={kind:i.verdict,by:ctx.viewer,at:ctx.now};
+    saveAsk(r);ctx.changed('attention.ask',r.id);return {ok:true,value:{answered:true}};
+  });
   registerAttentionAnnouncements(operations, member => {
     const viewer={kind:'member' as const,id:member},access=sharing();
     return (db.prepare('SELECT record FROM attention_asks ORDER BY id').all() as {record:string}[]).flatMap(row=>{
@@ -130,10 +142,10 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     may: (viewer, input) => { const r = readAsk(input.id); return !!r && sourceCurrent(r) && maySee(viewer, scoped('attention.ask', r), sharing()); },
     run: (_ctx, input) => readAsk(input.id),
   }));
-  operations.register(operation({ name: 'attention.answer', write: true, input: z.object({ id, answer, requireOwnership: z.literal(true).optional() }), output: z.unknown(),
+  operations.register(operation({ name: 'attention.answer', write: true, recheckPolicy: (_viewer, input) => !!readAsk(input.id)?.privateQuestion, input: z.object({ id, answer, requireOwnership: z.literal(true).optional() }), output: z.unknown(),
     may: (viewer, input) => {
       const r = readAsk(input.id), held = sharing();
-      return !!r && !(managed(r) && (r.source.kind === 'task' || r.source.kind === 'approval')) && mayAct(viewer, scoped('attention.ask', r), held, managed(r) ? 'household' : 'answer-person', 'attention.answer')
+      return !!r && !r.privateQuestion && !(managed(r) && (r.source.kind === 'task' || r.source.kind === 'approval')) && mayAct(viewer, scoped('attention.ask', r), held, managed(r) ? 'household' : 'answer-person', 'attention.answer')
         && (!input.requireOwnership || mayAct(viewer, { agent: r.agent }, held, 'give-work'));
     },
 

@@ -1184,3 +1184,11 @@ a competing invocation commits the same operation id during crypto. This prevent
 a new valid receipt from acknowledging an older, replaced question. Legacy
 operations keep their existing replay semantics; no private plaintext is added
 to the core receipt.
+
+The sealed verdict uses Attention's in-process `privateDecision` capability,
+which requires the same database's active window transaction, original member,
+exact conversation/thread/question sequence, yes/no mode and an unmanaged,
+unanswered source. Generic `attention.answer` refuses every sealed question on
+all doors, so it cannot strand a verdict without the encrypted Comms message.
+Imported historical done/dismiss states remain readable; legacy unsealed asks
+continue through their existing public/source protocols.

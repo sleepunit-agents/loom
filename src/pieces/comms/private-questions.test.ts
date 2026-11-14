@@ -167,7 +167,7 @@ for(const drift of ['member','conversation','project','archive','delete','access
   if(drift==='access')f.sharing.members.jonathan.agents=[];
   else if(drift==='ciphertext')f.app.db.prepare('UPDATE comms_messages SET words=? WHERE thread=? AND seq=?').run(await seal(JSON.stringify({...question,answers:'yes-no',ask:'REPLACED QUESTION'})),f.place,r.seq);
   else if(drift==='expired')f.clock.advance(14*86400_000);
-  else if(drift==='answered')expect(f.attention.answer(f.viewer,{id:r.ref,answer:{kind:'no'}},'competing-answer')).toMatchObject({ok:true});
+  else if(drift==='answered')expect(f.app.db.transaction(()=>f.attention.privateDecision({db:f.app.db,viewer:f.viewer,window:true,now:f.clock.now(),changed:()=>{}},{id:r.ref,conversation:JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(f.place) as {record:string}).record).conversation,agent:'art',member:f.viewer.id,thread:f.place,seq:r.seq,verdict:'no'}))()).toMatchObject({ok:true});
   else if(drift==='archive'||drift==='delete')expect(await f.call('comms.change',{thread:f.place,action:drift})).toMatchObject({ok:true});
   else {
    const row=f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(f.place) as {record:string};const t=JSON.parse(row.record);
@@ -230,4 +230,27 @@ it('coalesces concurrent identical decisions across operation ids and on cached 
   await began;release();const results=await Promise.all([a,b]);expect(results[0]).toMatchObject({ok:true});expect(results[1]).toEqual(results[0]);
   expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').all(`answer:${r.ref}`)).toHaveLength(1);
  }
+});
+it('refuses the generic Attention answer bypass on every door and requires a window transaction for the decision capability',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'boolean',question:{...question,answers:'yes-no'}});
+ for(const door of ['direct','http','mcp','socket'] as const)for(const kind of ['yes','no','done','dismiss'] as const)
+  expect(await f.app.operations.callAsync(door,f.viewer,'attention.answer',{id:r.ref,answer:{kind}},`bypass-${door}-${kind}`,door==='socket')).toMatchObject({ok:false,code:'denied'});
+ const conversation=JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(f.place) as {record:string}).record).conversation;
+ const input={id:r.ref,conversation,agent:'art',member:f.viewer.id,thread:f.place,seq:r.seq,verdict:'yes' as const};
+ const ctx={db:f.app.db,viewer:f.viewer,window:true,now:f.clock.now(),changed:()=>{}};
+ expect(f.attention.privateDecision(ctx,input)).toMatchObject({ok:false});
+ for(const changed of [{window:false},{viewer:{kind:'member',id:'other'} as const}])
+  expect(f.app.db.transaction(()=>f.attention.privateDecision({...ctx,...changed},input))()).toMatchObject({ok:false});
+ for(const changed of [{thread:'other'},{seq:r.seq+1},{conversation:'other'},{member:'other'},{agent:'other'}])
+  expect(f.app.db.transaction(()=>f.attention.privateDecision(ctx,{...input,...changed}))()).toMatchObject({ok:false});
+ expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{state:'open'}});
+ expect(await f.call('comms.answer',{thread:f.place,ref:r.ref,verdict:'yes'})).toMatchObject({ok:true});
+});
+it('refuses a preexisting generic answer receipt once its source is sealed',async()=>{
+ const f=await setup(),ref='legacy-receipt';
+ expect(f.attention.raise(f.viewer,{id:ref,agent:'art',member:f.viewer.id,source:{kind:'conversation',id:'legacy'},ask:'Legacy fixture',answers:'yes-no'},'raise-legacy')).toMatchObject({ok:true});
+ expect(f.attention.answer(f.viewer,{id:ref,answer:{kind:'yes'}},'old-receipt')).toMatchObject({ok:true});
+ const record=JSON.parse((f.app.db.prepare('SELECT record FROM attention_asks WHERE id=?').get(ref) as {record:string}).record);
+ record.privateQuestion={thread:f.place,seq:2};f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify(record),ref);
+ expect(f.attention.answer(f.viewer,{id:ref,answer:{kind:'yes'}},'old-receipt')).toMatchObject({ok:false,code:'denied'});
 });

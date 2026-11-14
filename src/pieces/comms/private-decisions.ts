@@ -13,7 +13,7 @@ type Input={thread:string;ref:string;verdict:'yes'|'no';words?:string};
 export function privateDecisions(o:Options & {closed():boolean}) {
  const deny=():never=>{throw new OperationError('denied','Question unavailable');};
  const lookup=(viewer:Viewer,i:Input)=>{
-  if(o.closed()||viewer.kind!=='member'||i.words!==undefined||!o.attention.get)return deny();
+  if(o.closed()||viewer.kind!=='member'||i.words!==undefined||!o.attention.get||!o.attention.privateDecision)return deny();
   const got=o.attention.get(viewer,{id:i.ref});if(!got.ok)return deny();
   const parsed=projection.safeParse(got.value);if(!parsed.success)return deny();const a=parsed.data;
   if(a.id!==i.ref||a.member!==viewer.id)return deny();
@@ -26,6 +26,7 @@ export function privateDecisions(o:Options & {closed():boolean}) {
   return {a,t:stored,row};
  };
  const route=(t:ReturnType<typeof lookup>['t'])=>[t.id,t.member,t.agent,t.conversation,t.project,t.archived];
+ const unchanged=(current:ReturnType<typeof lookup>,before:ReturnType<typeof lookup>)=>JSON.stringify(route(current.t))===JSON.stringify(route(before.t))&&JSON.stringify(current.row)===JSON.stringify(before.row);
  const existing=(i:Input)=>o.db.prepare('SELECT * FROM comms_messages WHERE thread=? AND id=?').get(i.thread,`answer:${i.ref}`) as MessageRow|undefined;
  const hash=(i:Input)=>o.key.hash(JSON.stringify(i));
  const receipt=(s:ReturnType<typeof lookup>,i:Input)=>{
@@ -49,7 +50,7 @@ export function privateDecisions(o:Options & {closed():boolean}) {
    const p=(raw as {decision?:{before:ReturnType<typeof lookup>}}|undefined)?.decision;
    if(!p)return;
    const current=lookup(viewer,i);
-   if(JSON.stringify(route(current.t))!==JSON.stringify(route(p.before.t))||JSON.stringify(current.row)!==JSON.stringify(p.before.row))return deny();
+   if(!unchanged(current,p.before))return deny();
   },
   async prepare(i:Input,viewer:Viewer){
    const before=lookup(viewer,i),old=receipt(before,i);
@@ -61,7 +62,7 @@ export function privateDecisions(o:Options & {closed():boolean}) {
   run(ctx:Context,i:Input,p:{before:ReturnType<typeof lookup>;old:MessageRow|undefined;words:Buffer|undefined}){
    const current=lookup(ctx.viewer,i);
    // Route and ciphertext are immutable across decryption/encryption, even on replay.
-   if(JSON.stringify(route(current.t))!==JSON.stringify(route(p.before.t))||JSON.stringify(current.row)!==JSON.stringify(p.before.row))return deny();
+   if(!unchanged(current,p.before))return deny();
    const old=receipt(current,i);
    if(old){
     const stable=(r:MessageRow)=>[r.thread,r.seq,r.id,r.kind,r.at,r.sender,r.hash];
@@ -69,9 +70,9 @@ export function privateDecisions(o:Options & {closed():boolean}) {
     return {thread:i.thread,seq:old.seq};
    }
    if(JSON.stringify(current.a)!==JSON.stringify(p.before.a))return deny();
-   const answer=o.attention.answer(ctx.viewer,{id:i.ref,answer:{kind:i.verdict}},`comms-answer:${hash(i)}`);
+   const answer=o.attention.privateDecision!(ctx,{id:i.ref,conversation:current.t.conversation,agent:current.t.agent,member:current.t.member,thread:i.thread,seq:current.row.seq,verdict:i.verdict});
    if(!answer.ok)throw new OperationError(answer.code,answer.message);
-   // Throwing on append failure rolls back Attention and its nested operation receipt too.
+   // Throwing on append failure rolls back Attention and the enclosing operation receipt too.
    const row=append(o.db,current.t,{id:`answer:${i.ref}`,kind:'message',at:ctx.now,sender:current.t.member,words:p.words!,hash:hash(i),record:JSON.stringify({delivery:'sending',attempted:false})});
    ctx.changed('thread',i.thread);ctx.changed('message',`${i.thread}/${row.seq}`);
    return {thread:i.thread,seq:row.seq};
