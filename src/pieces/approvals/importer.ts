@@ -1,3 +1,4 @@
+import { identifyNotices } from './notices.js';
 /** Offline only. Old files are read solely here, never on the daemon's request path. */
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -63,5 +64,6 @@ export function readApprovalsImport(from: string, options: { projects?: Record<s
       expected.audit.push({at:a.at,event:'retire-agent-grant',id:a.id,kind:a.kind,target:a.target,who:a.who,reason});
     }
   }
+  identifyNotices(expected,checksum);
   return { expected, checksum, approvals };
 }

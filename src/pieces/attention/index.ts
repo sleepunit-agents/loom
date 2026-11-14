@@ -52,7 +52,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   let tasksRegistered = false, approvalsRegistered = false;
   let approvalCurrent: ((ask: Ask) => boolean) | undefined;
   const sourceCurrent = (record: Ask | AgentStatus) => {
-    if (!('sourceManaged' in record) || !record.sourceManaged || record.source.kind !== 'approval') return true;
+    if (!('sourceManaged' in record) || !record.sourceManaged || record.source.kind !== 'approval' && !(record.source.kind === 'piece' && record.source.id === 'approvals-notices')) return true;
     try { return approvalCurrent?.(record) === true; } catch { return false; }
   };
   registerPrivateQuestions(operations, (ctx, raw) => {
@@ -120,7 +120,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   operations.register(operation({ name: 'attention.raise', write: true, input: question, output: z.unknown(),
     may: (viewer, input) => {
       const old = readAsk(input.id);
-      if (input.id.startsWith('comms:') || input.id.startsWith('task:') || input.id.startsWith('approval:') || input.source.kind === 'approval' && approvalsRegistered || (old ? managed(old) : input.source.kind === 'task' && tasksRegistered || input.source.kind === 'piece' && sources.has(input.source.id))) return false;
+      if (input.id.startsWith('comms:') || input.id.startsWith('task:') || input.id.startsWith('approval:') || input.id.startsWith('approval-notice:') || input.source.kind === 'piece' && input.source.id === 'approvals-notices' || input.source.kind === 'approval' && approvalsRegistered || (old ? managed(old) : input.source.kind === 'task' && tasksRegistered || input.source.kind === 'piece' && sources.has(input.source.id))) return false;
       return old ? mayAct(viewer, scoped('attention.ask', old), sharing(), 'act', 'attention.raise') : mayCreate(viewer, scoped('attention.ask', input), sharing(), 'attention.raise');
     },
     run(ctx, input) {
