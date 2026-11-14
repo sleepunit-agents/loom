@@ -84,6 +84,12 @@ export class BridgeEvents {
   private sweep(): void {
     if (this.closed) return;
     this.cancel?.(); this.cancel = undefined;
+    // A fake clock or a caller may fire the timer inside an unrelated SQL
+    // transaction. Never let its rollback restore bytes after losing our timer.
+    if (this.db.$client.inTransaction) {
+      this.cancel = this.clock.at(this.clock.now() + 1, () => this.sweep());
+      return;
+    }
     const now = new Date(this.clock.now()).toISOString();
     this.db.delete(bridgeRawEvents).where(sql`julianday(${bridgeRawEvents.expiresAt}) <= julianday(${now})`).run();
     const first = this.db.select({ expiresAt: bridgeRawEvents.expiresAt }).from(bridgeRawEvents)

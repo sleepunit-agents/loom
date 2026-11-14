@@ -146,3 +146,28 @@ it('requires its own transaction, including rejecting reentrant drain', () => {
   expect(f.rows()).toHaveLength(1);
   spool.close();
 });
+
+it('retains expiry scheduling when a timer fires inside a rolled-back transaction', () => {
+  const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
+  spool.retain('slack', 'one', f.input);
+  f.db.$client.exec('BEGIN');
+  f.clock.advance(HOUR);
+  f.db.$client.exec('ROLLBACK');
+  f.clock.advance(1);
+  expect(f.rows()).toEqual([]);
+  spool.close();
+});
+
+it('keeps earlier successful normalization when the next event fails', () => {
+  const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
+  spool.retain('slack', 'one', f.input);
+  spool.retain('slack', 'two', f.input);
+  expect(() => spool.drain('slack', id => {
+    f.db.insert(bridgeIncoming).values({ id, connection: 'slack', channel: 'c', isDm: false,
+      user: 'u', text: 'new', postedAt: f.now(), receivedAt: f.now(), state: 'pending' }).run();
+    if (id === 'two') throw Error('second failed');
+  })).toThrow('second failed');
+  expect(f.db.select().from(bridgeIncoming).all().map(r => r.id)).toEqual(['slack', 'discord', 'one']);
+  expect(f.rows().map(r => r.id)).toEqual(['two']);
+  spool.close();
+});
