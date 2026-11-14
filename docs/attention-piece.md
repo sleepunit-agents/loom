@@ -232,3 +232,21 @@ Inbox files resolved asks in FYI, separate from human Answered history. FYI rows
 | Seven-day answered/FYI view | Complete visible central history | Deliberately retain searchable history rather than hide it after a week |
 
 This completes resolution-history classification only. Piece-emitted notices, action-error outcomes, public delivery, private Inbox replies and the Runtime/grading audit still remain before retiring the old Inbox.
+
+### Clock operational alerts
+
+Only source-managed `piece/clock` asks are notices. The Alerts folder selects their open records; Needs you and Home retain the same open-record count. Acknowledge sends the existing `attention.answer` done fact after the same live/display/immediate checks as other answers. The installed Clock source hook is a no-op: acknowledgement cannot retry, cancel or otherwise change scheduled work. Acknowledged notices appear in FYI, rather than human decision history. Open Clock uses the canonical internal `/p/clock-preview` route, independent of the external-reference URL filter. Secrets and other registered sources retain their declared decision mode. No schema, permissions, new health store or source ingestion is introduced.
+
+Old Inbox audit against `src/ui/handler.ts:inboxItems`:
+
+| Old input | New owning surface / status |
+| --- | --- |
+| Clock retry/give-up/capacity alerts | Clock source-managed Attention records; Alerts, Acknowledge and Open Clock in this unit |
+| Piece manifest `notices` | Generic manifest aggregation is retired with the old side; each emitting piece owns its new records. This unit establishes Clock only, not parity for every emitter. |
+| Piece manifest `answered` | Owning decision/history records, including Approvals History and Tasks state; central human answers remain Answered. No copying piece history into another store. |
+| Resolved central asks | FYI resolution history already merged |
+| Backup failure and recovery FYI | Still an owning Household/backup inventory gap (see `docs/household-piece.md`); not claimed implemented or replaced by Clock |
+| Per-member meaningful action outcomes (`done`) | Still outstanding. The old handler records non-secret success/error messages per reader; merely displaying a transient call result does not satisfy Jonathan's recorded meaningful-toast FYI requirement. No blanket retirement or completion claim. |
+| Runtime lifecycle notices | Owning Runtime integration audit still required; Clock capacity notices cover scheduled work only |
+
+These gaps remain part of the final old-to-new reconciliation before closing t-2205. No old-store reads or compatibility adapter are added.

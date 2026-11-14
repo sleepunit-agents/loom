@@ -259,3 +259,40 @@ it('files self-cleared asks as searchable FYI, separate from human answers and n
   expect(buttons('Yes')).toHaveLength(0);
   expect(f.call).not.toHaveBeenCalled();
 });
+
+it('acknowledges Clock notices through a fresh central check and navigates canonically',async()=>{
+  const record=ask('clock:w-1:failed',{sourceManaged:true,source:{kind:'piece',id:'clock'},href:'/p/clock-preview',answers:undefined});
+  const shown=request<Ask>(),fresh=request<Ask>(),write=request<Ask>(),go=vi.fn();
+  f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call).mockReturnValueOnce(write.call);
+  await draw(h(AskReader,{ask:record,snapshot:{records:[record],status:'live'},go}));
+  await shown.finish({ok:true,value:record});
+  expect(buttons('Yes')).toHaveLength(0);expect(buttons('Dismiss')).toHaveLength(0);expect(tree!.root.findAllByType('textarea')).toHaveLength(0);
+  expect(text()).toContain('does not retry or cancel');
+  await click('Open Clock');expect(go).toHaveBeenCalledWith('/p/clock-preview');
+  await click('Acknowledge');expect(f.call).toHaveBeenLastCalledWith('attention.get',{id:record.id});
+  await fresh.finish({ok:true,value:record});
+  expect(f.call).toHaveBeenLastCalledWith('attention.answer',{id:record.id,answer:{kind:'done'}});
+  await write.finish({ok:true,value:{...record,state:'answered'}});expect(text()).toContain('Alert acknowledged');
+});
+it('keeps Clock alerts discoverable and acknowledged notices in FYI, without turning Secrets decisions into notices',async()=>{
+  const alert=ask('alert',{sourceManaged:true,source:{kind:'piece',id:'clock'}}),ack={...alert,id:'ack',state:'answered' as const};
+  const secret=ask('secret',{sourceManaged:true,source:{kind:'piece',id:'secrets'}});
+  expect(inFolder(alert,'alerts')).toBe(true);expect(inFolder(alert,'needs')).toBe(true);
+  expect(inFolder(ack,'alerts')).toBe(false);expect(inFolder(ack,'answered')).toBe(false);expect(inFolder(ack,'fyi')).toBe(true);
+  expect(inFolder(secret,'alerts')).toBe(false);expect(inFolder({...secret,state:'answered'},'answered')).toBe(true);
+  expect(decisionLink({...alert,href:'javascript:alert(1)'})).toEqual({path:'/p/clock-preview',label:'Open Clock'});
+  f.snapshot={records:[alert,ack,secret],status:'live'};
+  await draw(h(InboxApp,{}));await click('Alerts1');
+  expect(tree!.root.findAllByProps({'data-split-row':''})).toHaveLength(1);
+  await click('FYI1');expect(text()).toContain('Acknowledged');
+});
+
+it('automatically confirms a Clock alert opened from its folder despite its source navigation link',async()=>{
+  const record=ask('clock-alert',{sourceManaged:true,source:{kind:'piece',id:'clock'},ask:'Clock needs review'}),shown=request<Ask>();
+  f.snapshot={records:[record],status:'live'};f.call.mockReturnValueOnce(shown.call);
+  await draw(h(InboxApp,{}));await click('Alerts1');
+  await act(async()=>tree!.root.findAllByProps({'data-split-row':''})[0].props.onClick());
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('attention.get',{id:record.id});
+  await shown.finish({ok:true,value:record});
+  expect(buttons('Acknowledge')).toHaveLength(1);expect(buttons('Check again')).toHaveLength(0);
+});

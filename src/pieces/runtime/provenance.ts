@@ -41,6 +41,13 @@ export function principalFromHistory(history: Provenance, owners: readonly strin
   return { for: history.unknown || people.length > 1 ? '?' : people[0] ?? (history.owner ? 'owner' : '?'), people };
 }
 
+/** Scheduled work transfers steering evidence, not only the current display
+ * principal. Keep named owners so later demotion can narrow their authority. */
+export function principalForWork(history:Provenance,owners:readonly string[]) {
+  const principal=principalFromHistory(history,owners);
+  return {...principal,people:[...new Set([...principal.people,...history.owners])].sort()};
+}
+
 /** The owner can adopt only unplaced sources shown on the original card.
  * In particular, a wake explicitly assigned to someone is never adoptable.
  */

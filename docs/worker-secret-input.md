@@ -225,3 +225,33 @@ that lifecycle and call the existing `startAdmittedSecretCommand` path. Producti
 tombstone capacity/lifecycle and staging/value-free accounting across the whole
 installed path remain required before public activation. ClaudeWorkerSession
 continues using prompt stdin and is not an fd3 consumer.
+
+### Worker-side job startup owner (source opt-in, uninstalled)
+
+`runtime-runner/secret-worker.ts` provides a separate worker-side startup root.
+Owner configuration supplies a local name policy, expiring grants for exact job
+assignments, and dedicated fd3 consumer jobs. Startup validates every selection
+before IO (including command paths, peer endpoints, pins, arguments, environment
+and duplicate normalized socket paths), snapshots configuration, and mints its own private policy, grant,
+assignment and request records. It starts the actual commands using the existing
+`startAdmittedSecretCommand` path. Neither a daemon response nor an externally
+supplied `current` callback creates local authority. Local grants are explicit
+owner configuration; they do not create or replace daemon grants.
+
+The returned owner lifecycle handles revoke policy, revoke a grant, stop a job,
+cancel a request or close the worker. Each event fences original local records
+synchronously before draining started resources, including startup still awaiting
+listener creation. Revocations cannot be reversed with equal metadata. Policy
+revocation fences every configured job for that name. Each startup attempts each
+job once, without restart or retry. TLS file contents, permissions and process
+execution are checked during IO; failure retires that job without restarting it.
+A fresh assignment requires a fresh worker
+and daemon peer configuration. Jobs have distinct input sockets. Delivery and
+process completion remain separate results. This root must run in a worker
+process, never in the daemon that cannot receive credential bytes.
+
+This is in-process source configuration, with no CLI/environment loader, installed
+worker entrypoint, public operation or host activation. Runtime dynamic job/peer
+refresh, production tombstone lifecycle/capacity and whole-path staging/value-free
+accounting remain required before public activation. No Claude fd3 compatibility
+is implied; only explicit command consumers implementing fd3-to-EOF are supported.
