@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 /** The desk's seam. Other pieces raise/resolve asks here, never in their own tables. */
-import { migrate, type Db } from '../../core/index.js';
+import { migrate, failure, type Db } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import type { Context, Operations, Result, Scope, Viewer } from '../../core/index.js';
 
@@ -33,8 +33,8 @@ export interface Ask extends RaiseAsk {
   state: 'open' | 'answered' | 'resolved';
   createdAt: number;
   changedAt: number;
-  /** Legacy imports know a reply was delivered, never its words. Not accepted by answer writes. */
-  answer?: (AskAnswer | { kind: 'replied' }) & { by: Viewer; at: number };
+  /** Wordless reply acknowledgements may carry a Comms reference; legacy imports have none. */
+  answer?: (AskAnswer | { kind: 'replied'; reply?: {thread: string; seq: number} }) & { by: Viewer; at: number };
   resolution?: string;
 }
 export interface AgentStatus extends Scope {
@@ -48,9 +48,19 @@ export interface AgentStatus extends Scope {
 }
 /** All calls retain the original viewer and registry policy/transaction/retry checks.
  * A resolve records an external fact (e.g. approval answered), never a person's answer.
- * Only answer writes answer.by; first answer wins. Agents cannot answer person asks.
+ * Only member answer paths write answer.by; first answer wins. Agents cannot answer person asks.
  */
+export interface PrivateReply {
+  id: string; conversation: string; agent: string; member: string; thread: string; seq: number;
+}
+const privateReplies = new WeakMap<object, (ctx: Context, input: PrivateReply) => Result>();
+/** Trusted composition only; the handler receives the enclosing Comms transaction. */
+export function registerPrivateReplies(operations: Operations, reply: (ctx: Context, input: PrivateReply) => Result): void {
+  if (privateReplies.has(operations)) throw new Error('Private reply role already installed');
+  privateReplies.set(operations, reply);
+}
 export interface Attention {
+  privateReply(ctx: Context, input: PrivateReply): Result;
   raise(viewer: Viewer, input: RaiseAsk, operationId: string): Result;
   resolve(viewer: Viewer, input: { id: string; reason: string }, operationId: string): Result;
   answer(viewer: Viewer, input: { id: string; answer: AskAnswer; requireOwnership?: true }, operationId: string): Result;
@@ -59,6 +69,7 @@ export interface Attention {
 }
 export function attentionRole(operations: Pick<Operations, 'call'>): Attention {
   return {
+    privateReply: (ctx, input) => privateReplies.get(operations)?.(ctx, input) ?? failure('unavailable', 'Private reply source is unavailable'),
     raise: (viewer, input, id) => operations.call('direct', viewer, 'attention.raise', input, id),
     resolve: (viewer, input, id) => operations.call('direct', viewer, 'attention.resolve', input, id),
     answer: (viewer, input, id) => operations.call('direct', viewer, 'attention.answer', input, id),

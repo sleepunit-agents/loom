@@ -101,6 +101,7 @@ project or the household never grants access to another member's thread.
 | `comms.conversationSteps` | Non-private conversation and optional before-sequence; newest 100 retained step labels in sequence order. Requires a trusted conversation lookup and the ordinary agent viewer gate. |
 | `comms.change` | Thread and title/project/pin/unpin/archive/unarchive/read/stop/delete action. |
 | `comms.resend` | Thread and sequence; retry an undelivered member message. |
+| `comms.replyToAsk` | Attention ask id and typed text (1–4000 characters); window-only encrypted member message and atomic opaque Attention reply acknowledgement. |
 | `comms.answer` | Thread, attention reference, yes/no; encrypted answer record. Freeform words are refused pending the private attention seam. |
 
 The `thread` live record contains thread state with the first-message dedupe
@@ -161,7 +162,7 @@ data does not remove the behavior it delivered.
 | Activity route, `postActivity` | `Comms.activityCards` and `Comms.post` | Partial: trusted private batches now validate atomically, preserve original tool/timing/deadline and enforce body/detail/plan bounds; runtime capture/redaction and production binding remain missing. The generic trusted `post` path still exists for replies/asks/errors and legacy card callers; it is not the validated activity-batch API. Ordinary conversation label batches now have a trusted writer with encrypted run/card identity; runtime binding remains missing; a scoped read-only activity view now exists. |
 | `conversationSteps` | `comms.conversationSteps`, encrypted step records | Partial: import, export exclusion, retention and window-only pages of 100 now exist. Reads require authoritative new-side conversation metadata, ordinary agent viewer policy, and fail closed for private/spawned venues, live private threads and deleted-thread tombstones. Trusted runtime writes, a per-conversation cap of 1000 and window-only Live pages now exist. Production lookup/runtime binding and navigation from an authoritative conversation list remain missing; the scoped activity view now exists. |
 | `comms_thread`, `agentThreadRead` | Bound internal runtime role | Partial: trusted in-process `Comms.reader` snapshots agent/conversation/house restrictions and exposes read-only pages (default 30, cap 100), with validity/ownership/row checks after crypto and retention at return. Runtime tool binding remains to be connected; no bearer operation is exposed. |
-| Inline asks, kept asks, `/act`, Inbox sync | Comms ciphertext and opaque attention reference | Partial: distinct reference id and original-member yes/no forwarding work. Need private ask creation, state/history/Inbox synchronization and freeform answers without plaintext attention rows or retry results. |
+| Inline asks, kept asks, `/act`, Inbox sync | Comms ciphertext and opaque attention reference | Partial: distinct reference id and original-member yes/no forwarding work. The window-only `comms.replyToAsk` backend now seals typed replies and atomically records an opaque Attention acknowledgement. Private ask creation, state/history/Inbox synchronization and client routing still remain. |
 | `/work`, `comms-work` piece feeds | Shared piece roles and live records | Partial: made-here Tasks/Changes now read through their roles, with exact conversation source matching, per-piece central filtering, bad/warn/newest ordering and links to their new apps. Window-only `threadWork` records update the panel from task/change/thread/access events and expire closed changes at seven days. Referenced work/notes and reverse source links still remain. |
 | `/refs`, `comms-refs`, chip cards | Shared piece roles | Missing: authorized ref resolution, safe links and live chip updates. |
 | `/about`, `/route`, `comms-about`, Chat about this | Comms operations and shell action | Partial: `comms.open` validates and encrypts the quoted attachment with the first message. Recipient rule and five recent owned-thread matching now exist as window-only operations. Imported associations now use destination-key fingerprints. Production registry binding and attachment UI remain missing. |
@@ -1055,3 +1056,44 @@ Pending actions and unavailable connections prevent pinning; operation errors
 remain above the list. The single browser proof covers hold timing, no
 navigation, cancellation and the resulting Unpin menu in all six views.
 Swipe and archive Undo remain unfinished.
+
+
+## Private typed reply seam
+
+`comms.replyToAsk({ref, text})` is the owning window-only operation for Inbox and
+Comms typed replies. `ref` is the actual Attention ask id. The source must be an
+unmanaged member-private conversation ask whose agent, conversation and original
+member match exactly one currently owned Comms thread. Other members, including
+household owners, bearer callers and non-socket doors are refused. Archived
+threads require an explicit unarchive. Waiting/managed asks keep their source's
+decision protocol; typed words cannot authorize an approval or finish a task.
+
+The words and their ask reference are encrypted before the transaction, so the
+bound body can identify which question the normal member message answers. Commit rechecks thread routing,
+current ownership, the exact ask snapshot and an existing reply row. One normal
+member message and Attention's `replied` acknowledgement commit together; the
+latter holds only member/time and a thread/sequence reference. Its in-process
+`privateReply` capability requires the caller's current database transaction and
+central answer policy. It accepts no words and is not a registry operation.
+Public `attention.answer` continues to refuse member-private typed words.
+
+Replies enter the ordinary Comms delivery/staging/receipt path. Same-input
+retries, including after restart or word expiry, keep the original sequence and
+ciphertext, including overlapping identical calls with different operation ids.
+Delivery-only metadata movement may be acknowledged without changing the message;
+observed message identity/ciphertext and question/routing remain checked, with
+only exact-deadline word clearing allowed. Changed words conflict. A competing
+answer wins once, and rejection
+rolls back message, status and retry receipt together. Core retry fingerprints
+are keyed; neither Attention rows nor generic retry receipts contain reply words.
+
+This is the backend seam, not the finished ask UI. Inbox must call it directly
+for private replies instead of forwarding text to `attention.answer`. Encrypted
+private question creation/projection, kept inline history and source/Inbox
+synchronization remain required. Existing `comms.answer` boolean/legacy behavior
+is unchanged. No importer, schema, installed state or real data is changed.
+
+The reply path uses Attention's synchronous metadata `get` role for routing.
+If a later public question getter decrypts asynchronously, retain an independent
+synchronous metadata read for this transaction path. Private question words
+continue to belong to Comms, not generic Attention rows or retry results.

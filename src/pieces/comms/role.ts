@@ -11,9 +11,11 @@ export interface RuntimeDelivery {
 }
 /** The frame's staging gate must wrap every effect, including runtime delivery. */
 export type Hold = <T>(effect: () => Promise<T>, facts?: EffectFacts) => Promise<T>;
-import type { Operations, Viewer, Result } from '../../core/index.js';
+import type { Context, Operations, Viewer, Result } from '../../core/index.js';
 /** Structural subset of attention/role.ts; keep the original member and stable retry id. */
 export interface Attention {
+ get?(viewer: Viewer, input: {id: string}): Result;
+ privateReply?(ctx: Context, input: {id:string;conversation:string;agent:string;member:string;thread:string;seq:number}): Result;
  answer(viewer: Viewer, input: { id: string; answer: { kind: 'yes' | 'no' } | { kind: 'words'; text: string } }, operationId: string): Result;
 }
 export interface AgentPost {

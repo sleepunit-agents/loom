@@ -7,6 +7,7 @@ import type { WordsKey } from './crypto.js';
 import { installConversationSteps, type StepConversation } from './conversation-steps.js';
 import { threadActivity } from './thread-activity.js';
 import { spawnCreator } from './spawn.js';
+import { installPrivateReplies } from './private-replies.js';
 import { installCommsWork } from './work.js';
 import { about, aboutPointer, aboutIdentity, attachedText } from './about.js';
 import { HeldEffect, registerCommsMetadata } from './role.js';
@@ -286,6 +287,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const value=answer.value as {thread:string;seq:number};
   const t=thread(db,value.thread); if(t)void deliver(t.agent,t.id,value.seq);
  }
+ installPrivateReplies({...o,closed:()=>closed,changed:touched,after:sendAfter});
  operations.register(operation({name:'comms.open',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),
   input:z.object({agent:id,id:clientId,text,project:id.optional(),about:about.optional()}),output:ack,
   may:(v,i)=>v.kind==='member' && mayUseThread(v,{member:v.id,agent:i.agent},o.sharing()) && (!i.project || maySee(v,{project:i.project},o.sharing()) && maySee({kind:'agent',id:i.agent},{project:i.project},o.sharing())),
