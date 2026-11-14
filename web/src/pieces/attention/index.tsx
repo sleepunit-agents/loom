@@ -119,7 +119,7 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   const guard: Guard = {lock,busy,setBusy};
   function navigate(id?: string) {
     const record = records.find(a=>a.id===id);
-    const request = record && status==='live' && record.state==='open' && !record.member && !decisionLink(record) ? startCheck(guard,record.id) : undefined;
+    const request = record && status==='live' && record.state==='open' && !record.member && (!decisionLink(record) || isNotice(record)) ? startCheck(guard,record.id) : undefined;
     setOpening(request && record ? {id:record.id,confirmation:{records,request}} : undefined);
     const next = id ? `${base}/ask/${encodeURIComponent(id)}` : base;
     if (go) go(next); else { if (typeof history !== 'undefined') history.pushState(null,'',next); setLocalPath(next); }

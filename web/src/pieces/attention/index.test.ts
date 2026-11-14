@@ -286,3 +286,13 @@ it('keeps Clock alerts discoverable and acknowledged notices in FYI, without tur
   expect(tree!.root.findAllByProps({'data-split-row':''})).toHaveLength(1);
   await click('FYI1');expect(text()).toContain('Acknowledged');
 });
+
+it('automatically confirms a Clock alert opened from its folder despite its source navigation link',async()=>{
+  const record=ask('clock-alert',{sourceManaged:true,source:{kind:'piece',id:'clock'},ask:'Clock needs review'}),shown=request<Ask>();
+  f.snapshot={records:[record],status:'live'};f.call.mockReturnValueOnce(shown.call);
+  await draw(h(InboxApp,{}));await click('Alerts1');
+  await act(async()=>tree!.root.findAllByProps({'data-split-row':''})[0].props.onClick());
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('attention.get',{id:record.id});
+  await shown.finish({ok:true,value:record});
+  expect(buttons('Acknowledge')).toHaveLength(1);expect(buttons('Check again')).toHaveLength(0);
+});
