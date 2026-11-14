@@ -1208,6 +1208,9 @@ changed content/name or a changed delivery manifest refuses without overwrite.
 Deduplication never refreshes the original file age. Descriptors persist only as
 a digest, without the Slack URL.
 
+The save proof also binds the original Runtime delivery timestamp; replaying an
+expired source refuses even after prune/restart, and changing its timestamp on an
+existing delivery refuses. Retention starts at that original delivery time.
 Scope is agent + venue + workspace + channel, with a separate exact delivered
 message association. `read` additionally requires a trusted exact active-body
 Runtime proof, rechecks it before returning an owned buffer, and checks content

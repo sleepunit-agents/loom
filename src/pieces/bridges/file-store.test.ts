@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,28 +6,75 @@ import { exportDatabase } from '../../core/db/export.js';
 import { startLoom } from '../../foundation.js';
 import { FakeClock, type Sharing } from '../../core/index.js';
 import { installBridges } from './index.js';
-import { bridgeFileStore, BRIDGE_FILE_RETENTION, type BridgeFileReadPermit } from './file-store.js';
-import { SLACK_FILE_BYTES, slackFiles, type SlackFilesPermit } from './slack-files.js';
+import { bridgeFileStore, BRIDGE_FILE_RETENTION, type BridgeFileSavePermit, type BridgeFileReadPermit } from './file-store.js';
+import { SLACK_FILE_BYTES, slackFiles } from './slack-files.js';
 const sharing:Sharing={members:{jonathan:{owner:true,agents:['art']}},projects:{},services:{}};
 const closes:(()=>Promise<void>)[]=[],roots:string[]=[];
 afterEach(async()=>{for(const close of closes.splice(0))await close();for(const root of roots.splice(0))rmSync(root,{recursive:true,force:true});});
 async function fixture(home=mkdtempSync(join(tmpdir(),'bridge-files-')),at=1000){
   if(!roots.includes(home))roots.push(home);
   const clock=new FakeClock(at);
-  const app=await startLoom({home,clock,install:app=>installBridges(app,()=>sharing)});
+  const records:import('../../core/live/index.js').RecordType[]=[];
+  const app=await startLoom({home,clock,install:app=>{
+    const register=app.live.register.bind(app.live);app.live.register=type=>{records.push(type);register(type);};
+    installBridges(app,()=>sharing);
+  }});
   let closed=false;const close=async()=>{if(!closed){closed=true;await app.close();}};closes.push(close);
   const store=bridgeFileStore(app.db,()=>clock.now());
   // Explicit FAKE Runtime issuer. No caller/viewer can issue these in production.
   const facts={authenticated:true,setup:true,credential:true,delivered:true,job:true,policy:true};
   const current=()=>Object.values(facts).every(Boolean);
-  const permit:SlackFilesPermit={agent:'art',venue:'slack-art',workspace:'T1',channel:'D1',delivery:'delivery-1',
+  const permit:BridgeFileSavePermit={agent:'art',venue:'slack-art',workspace:'T1',channel:'D1',delivery:'delivery-1',deliveredAt:at,
     files:[{id:'FABC',name:'../photo 1.jpg',size:4,url:'https://files.slack.com/x'}],current};
+  const body={job:'job-1',conversation:'conversation-1',delivery:'delivery-1'};
   const read:BridgeFileReadPermit={agent:permit.agent,venue:permit.venue,workspace:permit.workspace,channel:permit.channel,
-    delivery:permit.delivery,job:'job-1',file:'FABC',current};
+    delivery:permit.delivery,job:'job-1',conversation:'conversation-1',file:'FABC',
+    current:()=>current()&&body.job==='job-1'&&body.conversation==='conversation-1'&&body.delivery==='delivery-1'};
   const batch=()=>[{id:'FABC',name:'photo_1.jpg',bytes:Buffer.from('data')}];
-  return {app,home,clock,store,facts,permit,read,batch,close};
+  return {app,home,clock,store,facts,permit,read,batch,close,body,records};
 }
 describe('private attachment storage (fake owning Runtime permits)',()=>{
+  it('never revives an expired original delivery, even after explicit prune or restart',async()=>{
+    const f=await fixture();f.store.save(f.permit,f.batch());f.clock.advance(BRIDGE_FILE_RETENTION);
+    expect(()=>f.store.save(f.permit,f.batch())).toThrow();f.store.prune();
+    expect(()=>f.store.save({...f.permit,files:[{...f.permit.files[0],url:'https://files.slack.com/changed'}]},f.batch())).toThrow();
+    await f.close();const g=await fixture(f.home,1000+BRIDGE_FILE_RETENTION);
+    expect(()=>g.store.save(f.permit,g.batch())).toThrow();expect(()=>g.store.read(g.read)).toThrow();
+  });
+  for(const fact of ['job','conversation','delivery'] as const)it(`checks exact fake owning body ${fact}`,async()=>{
+    const f=await fixture();f.store.save(f.permit,f.batch());f.body[fact]='other-valid-owner';
+    expect(()=>f.store.read(f.read)).toThrow('Bridge file unavailable');
+  });
+  it('stores the first five descriptors and never associates a sixth',async()=>{
+    const f=await fixture();const files=Array.from({length:6},(_,i)=>({...f.permit.files[0],id:`FAB${i}`}));
+    f.store.save({...f.permit,files},files.slice(0,5).map(d=>({id:d.id,name:'photo_1.jpg',bytes:Buffer.from('data')})));
+    expect(f.app.db.prepare('SELECT count(*) n FROM bridges_files').get()).toEqual({n:5});
+    expect(()=>f.store.read({...f.read,file:'FAB5'})).toThrow();
+  });
+  it('rolls back all prune deletions when the later delivery delete fails',async()=>{
+    const f=await fixture();f.store.save(f.permit,f.batch());f.clock.advance(BRIDGE_FILE_RETENTION);
+    f.app.db.exec("CREATE TRIGGER fail_file_prune BEFORE DELETE ON bridges_file_deliveries BEGIN SELECT RAISE(ABORT,'injected'); END");
+    expect(()=>f.store.prune()).toThrow('Bridge file unavailable');
+    for(const table of ['bridges_files','bridges_file_deliveries','bridges_file_sources'])expect(f.app.db.prepare(`SELECT count(*) n FROM ${table}`).get()).toEqual({n:1});
+  });
+  it('erases the selected owned buffer when the post-read body check fails',async()=>{
+    const f=await fixture();f.store.save(f.permit,f.batch());let selected:Buffer|undefined,calls=0;
+    const prepare=f.app.db.prepare.bind(f.app.db);
+    const spy=vi.spyOn(f.app.db,'prepare').mockImplementation((sql:string)=>{
+      const statement=prepare(sql);
+      if(sql.startsWith('SELECT f.name')){const get=statement.get.bind(statement);vi.spyOn(statement,'get').mockImplementation((...args:unknown[])=>{
+        const row=get(...args) as {bytes:Buffer};selected=row.bytes;return row;
+      });}
+      return statement;
+    });
+    try{expect(()=>f.store.read({...f.read,current:()=>++calls===1})).toThrow();expect(selected).toEqual(Buffer.alloc(4));}finally{spy.mockRestore();}
+  });
+  it('registers only setup/send live records, exposing no attachment data or associations',async()=>{
+    const f=await fixture();f.store.save(f.permit,f.batch());
+    expect(f.records.map(r=>r.name).filter(n=>n.startsWith('bridges.')).sort()).toEqual(['bridges.link','bridges.route','bridges.send','bridges.venue']);
+    const live=f.records.flatMap(r=>r.ids(undefined).map(id=>r.read(id,{kind:'member',id:'jonathan'})));
+    expect(JSON.stringify(live)).not.toContain('FABC');expect(JSON.stringify(live)).not.toContain('delivery-1');
+  });
   it('migrates idempotently and retains an exact delivery across restart',async()=>{
     const f=await fixture();f.store.save(f.permit,f.batch());await f.close();
     const g=await fixture(f.home,2000);
