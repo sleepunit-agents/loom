@@ -1,3 +1,4 @@
+import { runtimeDiscordHistoryPermit, runtimeHouseDestination } from './role.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import * as policy from '../../core/index.js';
 import * as effectModule from '../../core/effects.js';
@@ -280,4 +281,11 @@ it('native Clock completion uses the same atomic accepted-input metadata path',a
  expect(await f.post(f.body,'completeClockExecution',{execution:execution.value.execution},'native-metadata')).toMatchObject({ok:true});
  expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(1);
  f.clock.advance(1000);const reply=await f.post(f.body,'recordTurn',{kind:'reply',outcome:'answered'});expect(reply).toMatchObject({ok:true});expect(reply.value).not.toHaveProperty('latency_ms');
+});
+
+it.each([false,true])('refuses an otherwise current owner Clock source (private=%s) as venue history authority',async privateInput=>{
+ const f=await setup(privateInput),viewer=signin(f.app).token(hash(f.body))!.viewer;
+ expect(await f.post(f.body,'readConversation',{})).toMatchObject({ok:true});
+ expect(runtimeHouseDestination(f.app,()=>f.sharing,viewer)?.current()).toBe(true);
+ expect(runtimeDiscordHistoryPermit(f.app,viewer,{workspace:'300',channel:'400',kind:'channel'})).toBeUndefined();
 });

@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Next Comms renders authorized reference chips in retained sealed questions, with live privacy fences and owning app navigation.
 - Clock owners can recover plain disabled imported schedules through a fresh complete prompt and timing submission; archived authority and uncertain occurrences stay inert.
 
+- Clock offers owners a blank, confirmed recovery form for eligible disabled imported schedules, with live availability and fresh work only.
+
 - Reconcile Clock documentation with merged prompt/file execution, provenance, control and recovery work; retain explicit gaps before cutover.
 
 - Clock owner vouch records fresh owner authorship so eligible imported prompts can reach the native worker after current authority checks.

@@ -5,6 +5,7 @@ import { useRecords } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
 import { active, time, title, state, type Wake, type Schedule, type Clock } from './model';
 import { WorkForm } from './forms';
+import { ScheduleRecovery } from './schedule-recovery';
 import { LocalScheduling } from './local-scheduling';
 import { send, useRequest } from './request';
 const isWake = (w: Wake | Schedule): w is Wake => typeof w.due === 'number';
@@ -65,8 +66,10 @@ export default function ClockApp({ path: shellPath, go }: { path?: string; go?: 
   else if (schedule) reader = <article className="grid gap-4 p-5">
     <header><h1 className="text-2xl font-semibold">{schedule.lane ?? schedule.id}</h1><p>{schedule.agent} · {schedule.enabled ? 'Enabled' : 'Disabled · review required'}</p></header>
     <p>{schedule.at.join(', ')} CT · {schedule.days || 'Every day'}</p><p>{schedule.note}</p>
-    <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" disabled={!enabled} onClick={() => {setForm(schedule.laneDetails ? 'lane' : 'schedule');setEditing(true);}}>Edit {schedule.laneDetails ? 'lane' : 'schedule'}</Button>
-      {action('scheduleRun',{id:schedule.id},'Run once','Run an extra occurrence immediately, including while paused?')}
+    {schedule.canRecover && <ScheduleRecovery key={schedule.id} schedule={schedule} enabled={enabled} />}
+    {!schedule.enabled && <p>Imported schedules stay disabled until recovered through their owning flow. Saved words do not authorize new work.</p>}
+    <div className="flex flex-wrap gap-2">{schedule.enabled && <Button variant="outline" size="sm" disabled={!enabled} onClick={() => {setForm(schedule.laneDetails ? 'lane' : 'schedule');setEditing(true);}}>Edit {schedule.laneDetails ? 'lane' : 'schedule'}</Button>}
+      {schedule.enabled && action('scheduleRun',{id:schedule.id},'Run once','Run an extra occurrence immediately, including while paused?')}
       {action(schedule.laneDetails ? 'laneRemove' : 'scheduleRemove',schedule.laneDetails ? {name:schedule.lane} : {id:schedule.id},'Remove schedule','Remove the schedule and cancel its pending occurrences? A body already running may continue.')}
     </div>
     {schedule.laneDetails && <form aria-label="Reassign lane" className="flex flex-wrap gap-2" onSubmit={e => { e.preventDefault(); if(enabled) ask('laneAssign',{name:schedule.lane,agent:new FormData(e.currentTarget).get('agent')},'Confirm reassignment','Reassign this lane and replace its pending occurrences?'); }}><label>Assign to<Input name="agent" required defaultValue={schedule.agent} disabled={!enabled} /></label><Button type="submit" variant="outline" disabled={!enabled}>Reassign lane</Button></form>}
