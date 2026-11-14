@@ -1,5 +1,6 @@
+import { z } from 'zod';
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,7 +8,7 @@ import { createFoundation, type Foundation } from './app.js';
 import { FakeClock } from './clock.js';
 import { migrateHouseholdTables } from './household/schema.js';
 import { SharingDatabase } from './household/sharing.js';
-import { builtinServices } from './services.js';
+import { builtinServices, registerBuiltinService } from './services.js';
 import { mayAct, maySee } from '../policy.js';
 import { installChanges } from '../pieces/changes/index.js';
 import { installTasks } from '../pieces/tasks/index.js';
@@ -142,4 +143,26 @@ it('composes only the exact Clock local lifecycle calls across the Approvals bou
  for(const name of ['approvals.answer','approvals.grant','approvals.piece-use','approvals.standing','approvals.piece-withdraw'])
   expect(mayAct(v,{type:'approval'},s,'act',name)).toBe(false);
  expect(maySee(v,{type:'approval',member:'jonathan'},s)).toBe(false);
+});
+
+it('reuses immutable snapshots until an installation, operation registration or close changes authority', () => {
+  const { app } = fixture();
+  const offered = vi.spyOn(app.operations, 'offered');
+  const empty = builtinServices(app.db);
+  expect(builtinServices(app.db)).toBe(empty);
+  registerBuiltinService(app.operations, 'bench', ['bench.record']);
+  const installed = builtinServices(app.db);
+  expect(installed).not.toBe(empty);
+  expect(installed.bench.operations).toEqual([]);
+  const calls = offered.mock.calls.length;
+  for (let n = 0; n < 1000; n++) expect(builtinServices(app.db)).toBe(installed);
+  expect(offered).toHaveBeenCalledTimes(calls);
+  app.operations.register({ name: 'bench.read', input: z.object({}), output: z.null(), may: () => true, run: () => null });
+  const registered = builtinServices(app.db);
+  expect(registered.bench.operations).toEqual(['bench.read']);
+  expect(installed.bench.operations).toEqual([]);
+  app.operations.register({ name: 'bench.hidden', doors: ['socket'], input: z.object({}), output: z.null(), may: () => true, run: () => null });
+  expect(builtinServices(app.db).bench.operations).toEqual(['bench.read']);
+  app.operations.close();
+  expect(builtinServices(app.db)).toEqual({});
 });

@@ -4,6 +4,9 @@ import type { Operations } from './operations/index.js';
 import type { Sharing, Viewer } from '../policy.js';
 
 interface Service { types: readonly string[]; operations: Set<Operations>; namespace: string; calls: readonly string[] }
+const snapshots = new WeakMap<Db, Sharing['services']>();
+/** Registration changes the set of direct operations available to installed services. */
+export function invalidateBuiltinServices(db: Db): void { snapshots.delete(db); }
 const installed = new WeakMap<Db, Map<string, Service>>();
 
 /** Called by a built-in installer, with its own record types and operation namespace.
@@ -21,10 +24,13 @@ export function registerBuiltinService(operations: Operations, id: string, types
     if (existing.operations.has(operations)) throw new Error('duplicate built-in service');
     existing.operations.add(operations);
   } else services.set(id, { types: [...types], operations: new Set([operations]), namespace, calls: [...calls] });
+  invalidateBuiltinServices(operations.db);
   return { kind: 'service', id };
 }
 
 export function builtinServices(db: Db): Sharing['services'] {
+  const cached = snapshots.get(db);
+  if (cached) return cached;
   const snapshot = Object.fromEntries([...(installed.get(db) ?? [])].map(([id, service]) => {
     const entry = {
       types: [...service.types],
@@ -33,13 +39,16 @@ export function builtinServices(db: Db): Sharing['services'] {
     Object.freeze(entry.types); Object.freeze(entry.operations); Object.freeze(entry);
     return [id, entry];
   }));
-  return Object.freeze(snapshot);
+  Object.freeze(snapshot);
+  snapshots.set(db, snapshot);
+  return snapshot;
 }
 
 /** Operations registries may lease the same DB; closing one removes only its installation. */
 export function unregisterBuiltinServices(operations: Operations): void {
   const services = installed.get(operations.db);
   if (!services) return;
+  invalidateBuiltinServices(operations.db);
   for (const [id, service] of services) {
     service.operations.delete(operations);
     if (!service.operations.size) services.delete(id);

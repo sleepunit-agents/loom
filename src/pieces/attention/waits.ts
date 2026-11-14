@@ -1,3 +1,4 @@
+import { statement } from '../../core/db/index.js';
 /** Wait facts come from owning read roles under the operation's original viewer. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -30,7 +31,7 @@ export function resolveAsk(ctx: Context, ask: Ask, reason: string, save: (ask: A
 }
 export function installWaitChecks(db: Db, operations: Operations, sharing: () => Sharing, waits: AttentionWaits) {
   const read = (id: string): Ask | undefined => {
-    const row = db.prepare('SELECT record FROM attention_asks WHERE id=?').get(id) as {record: string} | undefined;
+    const row = statement(db, 'SELECT record FROM attention_asks WHERE id=?').get(id) as {record: string} | undefined;
     return row && JSON.parse(row.record) as Ask;
   };
   const reasonFor = (ask: Ask, viewer: Viewer, facts: AttentionWaits): string | undefined => {
@@ -51,7 +52,7 @@ export function installWaitChecks(db: Db, operations: Operations, sharing: () =>
       && mayAct(viewer, { type: 'attention.ask' }, sharing(), 'act', 'attention.pendingWaits'),
     run(ctx) {
       const held = sharing();
-      const pending = (db.prepare('SELECT record FROM attention_asks ORDER BY id').all() as { record: string }[])
+      const pending = (statement(db, 'SELECT record FROM attention_asks ORDER BY id').all() as { record: string }[])
         .map(row => JSON.parse(row.record) as Ask)
         .filter(ask => ask.state === 'open' && !ask.sourceManaged && !!ask.waits_on && maySee(ctx.viewer, { type: 'attention.ask', ...ask }, held));
       const eligible = pending.filter(ask => !ask.privateQuestion && mayAct(ctx.viewer, { type: 'attention.ask', ...ask }, held, 'act', 'attention.checkWait')
@@ -59,7 +60,7 @@ export function installWaitChecks(db: Db, operations: Operations, sharing: () =>
       // No cross-operation cache: all facts and policy share this transaction.
       let facts: AttentionWaits;
       try { facts = waits.batch?.(eligible, ctx.viewer) ?? {}; } catch { return { pending: pending.length, resolved: 0 }; }
-      const save = db.prepare('UPDATE attention_asks SET record=? WHERE id=?');
+      const save = statement(db, 'UPDATE attention_asks SET record=? WHERE id=?');
       let resolved = 0;
       for (const ask of eligible) {
         const reason = reasonFor(ask, ctx.viewer, facts);

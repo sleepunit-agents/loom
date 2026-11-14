@@ -1,3 +1,4 @@
+import { statement } from '../../core/db/index.js';
 import { operation } from './commands.js';
 /** Agent-authored summaries. Delivered messages never pass through this operation. */
 import { createHash } from 'node:crypto';
@@ -30,11 +31,11 @@ export const digestId = (conversation: string, run: string) => `dg-${createHash(
 export function installDigests(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}) {
   const role = attentionRole(operations);
   const read = <T>(table: string, id: string): T | undefined => {
-    const row = db.prepare(`SELECT record FROM ${table} WHERE id=?`).get(id) as { record: string } | undefined;
+    const row = statement(db, `SELECT record FROM ${table} WHERE id=?`).get(id) as { record: string } | undefined;
     return row && JSON.parse(row.record) as T;
   };
   const conversation = (id: string) => read<Conversation>('attention_conversations', id);
-  const all = (id: string) => (db.prepare('SELECT record FROM attention_digests WHERE conversation=? ORDER BY rowid').all(id) as { record: string }[]).map(r => JSON.parse(r.record) as Digest);
+  const all = (id: string) => (statement(db, 'SELECT record FROM attention_digests WHERE conversation=? ORDER BY rowid').all(id) as { record: string }[]).map(r => JSON.parse(r.record) as Digest);
   operations.register(operation({ name: 'attention.writeDigest', write: true, input: digestInput, output: z.unknown(),
     may: (v, i) => {
       const c = conversation(i.conversation); if (!c) return false;
@@ -63,9 +64,9 @@ export function installDigests(db: Db, operations: Operations, live: Live, shari
         if (!result.ok) return result;
       }
       const record: Digest = { ...input.digest, ...scope, projects: projects.value, id, conversation: c.id, run: input.run, revision, order: Math.max(0, ...records.map(d => d.order)) + 1, at: new Date(ctx.now).toISOString(), ask };
-      db.prepare('INSERT INTO attention_digests VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision, record=excluded.record').run(id, c.id, revision, JSON.stringify(record));
+      statement(db, 'INSERT INTO attention_digests VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision, record=excluded.record').run(id, c.id, revision, JSON.stringify(record));
       c.projects = [...new Set([...records.filter(d => d.id !== id).flatMap(d => d.projects), ...record.projects])].sort();
-      db.prepare('UPDATE attention_conversations SET record=? WHERE id=?').run(JSON.stringify(c), c.id);
+      statement(db, 'UPDATE attention_conversations SET record=? WHERE id=?').run(JSON.stringify(c), c.id);
       ctx.changed('attention.digest', id); ctx.changed('attention.conversation', c.id);
       return record;
     },
@@ -74,7 +75,7 @@ export function installDigests(db: Db, operations: Operations, live: Live, shari
     may: (v, i) => { const c = conversation(i.conversation); return !!c && maySee(v, { type: 'attention.digest', ...c }, sharing()) && (v.kind !== 'service' || mayAct(v, { type: 'attention.digest', ...c }, sharing(), 'act', 'attention.digests')); },
     run: (_ctx, i) => all(i.conversation).sort((a, b) => b.order - a.order).slice(0, i.limit),
   }));
-  live.register({ name: 'attention.digest', ids: () => (db.prepare('SELECT id FROM attention_digests ORDER BY id').all() as { id: string }[]).map(r => r.id),
+  live.register({ name: 'attention.digest', ids: () => (statement(db, 'SELECT id FROM attention_digests ORDER BY id').all() as { id: string }[]).map(r => r.id),
     read(id, viewer) { const d = read<Digest>('attention_digests', id); return d && maySee(viewer, { type: 'attention.digest', ...d }, sharing()) ? d as unknown as LiveRecord : undefined; },
     inScope: (r, parent) => parent === undefined || r.conversation === parent,
   });

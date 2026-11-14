@@ -214,7 +214,12 @@ referenced Node timer only during idle, so production Clock timers being
 unreferenced cannot end the executable while it is waiting. That handle is
 cleared on arrival, clean expiry, failure and owner shutdown. Late responses cannot
 restart a closed worker. The idle window restarts only after another successfully
-executed prompt; 100 turns and 1024 total retained source slots remain the bounds.
+executed prompt, but the entire retained native chain keeps the first admission's
+absolute 30-minute deadline. Successor admission returns only the remaining
+lifetime; a shorter idle expiry bounds admission without shortening an admitted
+active successor. The worker also pins its first locally measured deadline, so
+even a longer successor response cannot renew native history. 100 turns and
+1024 total retained source slots remain the bounds.
 Standalone file completion never retains an idle join proof.
 
 Public/private fixtures file through actual Clock, claim/takeInput/report through

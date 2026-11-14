@@ -1,3 +1,6 @@
+import { installDiscordHistory, type HistoryAccess } from './pieces/bridges/history-operation.js';
+import { discordApi } from './pieces/bridges/discord-api.js';
+import { runtimeDiscordHistoryPermit } from './pieces/runtime/role.js';
 import { installVenueHistory } from './pieces/runtime/venue-history.js';
 import { privateRuntimeExport } from './pieces/runtime/private-export.js';
 import {startSecretWorkers, type SecretWorkersConfig} from './secret-worker-startup.js';
@@ -267,6 +270,8 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const jobs = installClock(app.db, app.operations, app.live, sharing, { provenance: conversations.clockProvenance, credentialService: conversations.clockCredentialService, caller: conversations.approvalCaller, capacityConversation: conversations.capacityConversation, runtime: clockRuntime(app, effects, clockDestination(app, sharing), clockBodies), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
+  let historyRead: HistoryAccess['read'] = async () => ({value:'wait',current:()=>false});
+  installDiscordHistory(app, {permit:(viewer,place)=>runtimeDiscordHistoryPermit(app,viewer,place),read:(...args)=>historyRead(...args)});
   if (options.bridges && !bridgeDaemons.has(app)) {
     if (!app.operations.has('secrets.grantService')) installSecretServices(app.db, app.operations, sharing);
     const secrets=secretUseRole(app.db,options.bridges.source,sharing,{kind:'service',id:'bridges'},()=>app.operations.clock.now(),app.live);
@@ -278,12 +283,20 @@ export async function installNext(app: Foundation, options: NextOptions) {
       const epoch=credentials.current();
       return closed || epoch===undefined ? undefined : JSON.stringify([serial,epoch,setupRevision(app.db),v]);
     };
-    const adapters=venueAdapters(secrets,{request:options.bridges.request,lifetime:marker,beforeRead:v=>{
+    const beforeRead=(v:Venue)=>{
       const key=marker(v);if(key===undefined)return false;
       let attempt=readAttempts.get(v.id);
       if(attempt?.key!==key){if(attempt)effects.finish(attempt.id);attempt={key,id:`bridges:inspect:${randomUUID()}`};readAttempts.set(v.id,attempt);}
       return effects.status(attempt.id)==='started' || effects.beforeOutside({id:attempt.id,kind:'bridge-send',title:'Inspect bridge recipients'});
-    }});
+    };
+    historyRead=async(venue,query,permit)=>{
+      const original=marker(venue);
+      if(original===undefined)return {value:'wait',current:()=>false};
+      const current=()=>marker(venue)===original&&permit.current();
+      const result=await discordApi(secrets,()=>current()&&beforeRead(venue),options.bridges!.request).history(venue,query,permit);
+      return {value:current()?result:'wait',current};
+    };
+    const adapters=venueAdapters(secrets,{request:options.bridges.request,lifetime:marker,beforeRead});
     const engine=new Bridges(app,app.operations.clock,options.bridges.runtime??bridgeBodies.runtime,adapters,effects);
     bridgeBodies.connect(engine);
     const receive=options.bridges.receive??((venue,message)=>engine.receive(venue,message));

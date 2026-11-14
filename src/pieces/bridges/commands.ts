@@ -3,6 +3,7 @@ import { operation as defineOperation, type Operation, type CliCommand } from '.
 import type { z } from 'zod';
 import type { venueSchema, routeSchema, linkSchema } from './model.js';
 export interface BridgesInputs {
+  discordHistory: { venue:string; channel:string; kind:'channel'|'thread'; after?:string; limit?:number };
   status: { platform: 'discord' | 'slack' };
   putVenues: z.input<typeof venueSchema>;
   putRoutes: z.input<typeof routeSchema>;
@@ -14,7 +15,7 @@ export interface BridgesInputs {
 }
 export const bridgeCommands: readonly CliCommand[] = [
   'putVenues', 'removeVenues', 'putRoutes', 'removeRoutes', 'putLinks', 'removeLinks', 'dismissSend',
-].map(name => ({ name, write: true, positional: ['json'] })).concat([{ name: 'status', write: false, positional: ['json'] }]);
+].map(name => ({ name, write: true, positional: ['json'] })).concat([{ name: 'status', write: false, positional: ['json'] }, { name: 'discordHistory', write: false, positional: ['json'] }]);
 export function operation<I>(op: Operation<I>): Operation<I> {
   const cli = bridgeCommands.find(command => `bridges.${command.name}` === op.name);
   if (!cli || !!cli.write !== !!op.write) throw new Error('Bridges CLI metadata does not match operation');

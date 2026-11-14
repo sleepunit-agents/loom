@@ -24,7 +24,7 @@ const token=z.object({execution:z.uuid()}).strict();
 export function installClockExecution(app:Foundation,effects:OutsideEffects,
   prepare:(viewer:Viewer)=>ClockExecutionInput) {
   const {operations}=app;
-  const executions=new Map<string,{input:ClockExecutionInput;history:ClockExecutionInput[];completed:boolean;expires:number}>();
+  const executions=new Map<string,{input:ClockExecutionInput;history:ClockExecutionInput[];completed:boolean;expires:number;deadline:number}>();
   const occupied=()=>[...executions.values()].reduce((n,e)=>n+1+e.history.length,0);
   const prune=()=>{for(const [id,e] of executions)if(e.expires<=operations.clock.now())executions.delete(id);};
   const current=(viewer:Viewer,id:string,completed=false)=>{
@@ -52,18 +52,21 @@ export function installClockExecution(app:Foundation,effects:OutsideEffects,
         throw new OperationError('conflict','Scheduled execution is held or already attempted');
       effects.finish(id);
       if(!input.current(viewer))throw denied();
-      return {input,history:previous?[...previous.history,previous.input]:[]};
+      return {input,history:previous?[...previous.history,previous.input]:[],deadline:previous?.deadline};
     },
     run(ctx,request,prepared) {
-      const {input,history}=prepared as {input:ClockExecutionInput;history:ClockExecutionInput[]};
+      const {input,history,deadline:inherited}=prepared as {input:ClockExecutionInput;history:ClockExecutionInput[];deadline?:number};
       if(request.previous)current(ctx.viewer,request.previous,true);
       if(!input.current(ctx.viewer))throw denied();
       prune();if(occupied()>=1024)throw new OperationError('unavailable','Scheduled execution is busy');
       const execution=randomUUID();
       if(request.previous)executions.delete(request.previous);
-      executions.set(execution,{input,history,completed:false,expires:ctx.now+30*60_000});
+      // A successor retains native history, so it inherits its original chain's
+      // absolute deadline. The shorter idle expiry only bounds admission.
+      const deadline=inherited??ctx.now+30*60_000;
+      executions.set(execution,{input,history,completed:false,expires:deadline,deadline});
       return {execution,historyKey:input.historyKey,job:input.job,assignment:input.assignment,binding:input.binding,
-        batch:{conversation:input.binding.conversation,messages:[input.message]},ttl:5000 as const,lifetime:30*60_000};
+        batch:{conversation:input.binding.conversation,messages:[input.message]},ttl:5000 as const,lifetime:deadline-ctx.now};
     },
   }));
   operations.register(operation({name:'runtime.currentClockExecution',doors:['http','direct'],
