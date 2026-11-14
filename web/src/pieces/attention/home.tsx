@@ -2,6 +2,7 @@ import { useDeskRoster } from './roster';
 import { stamp } from './time';
 import { agentPath } from './home-model';
 import { HomeSteps } from './home-steps';
+import { LastAnswer } from './last-answer';
 import type { ActivityWindow } from '../activity/model';
 import { HomeConversations, HomeComposer, useHomeComms, threadPath } from './home-comms';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
@@ -9,7 +10,7 @@ import './home.css';
 import { useEffect, useRef, useState } from 'react';
 import { useRecords, type Snapshot } from '../../data';
 import { AppFrame, Button, Empty, Error, List, Loading, Row } from '../../kit';
-import { AskReader, AnswerReceipt, type Guard } from './index';
+import { AskReader, type Guard } from './index';
 import { useWaitChecks } from './wait-checks';
 import { useMemberRetention } from './member-retention';
 import type { Ask } from './model';
@@ -68,7 +69,6 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
         {roster.status !== 'live' ? <Unavailable status={roster.status} label="your agents" /> : !roster.records.length ? <Empty title="No agents of your own" text="Agents you own appear here, including when idle." /> : <div className={`desk-home-agents grid min-w-0 grid-cols-1 items-start gap-4 ${columns}`} aria-label="Your agents">
           {ordered.map(agent=>{
             const ownAsks = open.filter(ask=>ask.agent===agent.id), first=ownAsks[0];
-            const receipt = asks.status === 'live' ? asks.records.filter(ask=>ask.agent===agent.id && ask.answer).sort((a,b)=>b.answer!.at-a.answer!.at || a.id.localeCompare(b.id))[0] : undefined;
             const status = statuses.status === 'live' ? latestStatus(statuses.records,agent.id) : undefined;
             if(fold && agent.id!==opened) {
               const recent=threads.filter(t=>t.agent===agent.id).sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id));
@@ -92,7 +92,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
               <div role="region" aria-label={`${agent.name} desk details`} tabIndex={0} className="grid min-w-0 gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 lg:max-h-[70dvh] lg:overflow-y-auto lg:pr-2">
               {asks.status !== 'live' ? <Unavailable status={asks.status} label="agent asks" /> : first ? <AskReader key={first.id} ask={first} snapshot={asks} go={go} guard={guard} requireOwnership /> : <p>Nothing needs you from {agent.name}.</p>}
               {ownAsks.length > 1 && <Button variant="outline" onClick={()=>go(inboxPath(ownAsks[1]))}>Next ask · {ownAsks.length-1} more</Button>}
-              {receipt && <section aria-label={`${agent.name} last answer`}><h3>Last answer</h3><p>{receipt.ask}</p><AnswerReceipt ask={receipt} /></section>}
+              <LastAnswer key={agent.id} agent={agent.id} name={agent.name} />
               <div className="desk-home-columns">
                 <div className="grid min-w-0 content-start gap-4">
               <section aria-label={`${agent.name} runtime jobs`} className="grid min-w-0 gap-2">

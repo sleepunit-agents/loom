@@ -8,7 +8,7 @@ import type { Call, CallState, Result, Snapshot } from '../../data';
 // Renderer nodes carry arbitrary DOM callbacks; snapshots mix three record types for the hook fake.
 type Node={children:Array<Node|string>;props:Record<string,any>};
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),call:vi.fn(),once:vi.fn()}));
-vi.mock('../../data/graphql',()=>({useDataQuery:()=>useMemo(()=>({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent']])}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>useMemo(()=>({status:'live',data:{recentConversations:(f.snapshots['conversation.summary']?.records??[]).filter((row:any)=>row.agent===variables?.agent),agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.snapshots['conversation.summary'],document,variables?.agent])}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]),call:f.call,callOnce:f.once}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import Home from './home';
@@ -54,7 +54,7 @@ it('shows the full first ask and latest status; checks at display and again befo
   await draw();for(const word of ['The whole reason','I continue.','I stop.','t-2205','Current work'])expect(text()).toContain(word);expect(text()).not.toContain('Old work');expect(text()).toContain('11/13/2026, 2:00:00 AM');expect(text()).toContain(' CT');expect(buttons('Yes')).toHaveLength(0);
   await click('Check again');await shown.finish({ok:true,value:first});await click('Yes');expect(f.call).toHaveBeenLastCalledWith('attention.get',{id:'first'});
   await fresh.finish({ok:true,value:first});expect(f.call).toHaveBeenLastCalledWith('attention.answer',{id:'first',answer:{kind:'yes'},requireOwnership:true});
-  const answered={...first,state:'answered' as const,answer:{kind:'yes',by:{kind:'member',id:'jonathan'},at:Date.parse('2026-11-13T08:00:00Z')}};await write.finish({ok:true,value:answered});await publish('attention.ask',live([answered]));expect(buttons('Check again')).toHaveLength(0);expect(text()).toContain('All clear.');expect(text()).toContain('Art card');expect(text()).toContain('Art last answer');expect(text()).toContain('jonathan');expect(text()).toContain('11/13/2026, 2:00:00 AM');
+  const answered={...first,state:'answered' as const,answer:{kind:'yes',by:{kind:'member',id:'jonathan'},at:Date.parse('2026-11-13T08:00:00Z')}};await write.finish({ok:true,value:answered});await publish('attention.ask',live([answered]));expect(buttons('Check again')).toHaveLength(0);expect(text()).toContain('All clear.');expect(text()).toContain('Art card');expect(text()).not.toContain('jonathan');expect(text()).toContain('11/13/2026, 2:00:00 AM');
 });
 it('keeps one answer guard across cards and invalidates a prewrite check when its first ask is replaced',async()=>{
   const first=ask('first'),second=ask('second',{agent:'mark'});f.snapshots['attention.ask']=live([first,second]);
@@ -285,4 +285,11 @@ it('shows each owned agent’s latest three Activity entries with exact reader n
 
 it('opens an owned agent’s dedicated window from its Home face',async()=>{
  const go=await draw(),link=tree!.root.findByProps({'aria-label':'Open Art agent window'});expect(link.props.href).toBe('/p/agents-preview/agent/art');const preventDefault=vi.fn();await act(async()=>link.props.onClick({button:0,preventDefault}));expect(preventDefault).toHaveBeenCalled();expect(go).toHaveBeenLastCalledWith('/p/agents-preview/agent/art');go.mockClear();await act(async()=>link.props.onClick({button:0,ctrlKey:true,preventDefault}));expect(go).not.toHaveBeenCalled();
+});
+
+it('renders the generated agent reply on Home instead of a human approval receipt, and removes it with its owned card',async()=>{
+ f.snapshots['attention.ask']=live([ask('human',{state:'answered',answer:{kind:'yes',by:{kind:'member',id:'human-approver'},at:1}})]);
+ f.snapshots['conversation.summary']=live([{id:'cv-art',agent:'art',lastAnswer:{at:'2026-11-14T11:00:00Z',words:'Actual agent reply'}}]);
+ await draw();expect(text()).toContain('Actual agent reply');expect(text()).not.toContain('human-approver');
+ await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).not.toContain('Actual agent reply');
 });
