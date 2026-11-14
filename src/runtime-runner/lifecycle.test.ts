@@ -251,3 +251,15 @@ it.each(['claimJob','reportJob','finishJob'] as const)('rejects a mismatched %s 
  expect(inspectWorkerReceipts(f.selected.receipts)).toMatchObject([{phase:bad==='claimJob'?'claim-attempt':bad==='reportJob'?'running-attempt':'finish-attempt'}]);
  const before=[...operations];await expect(runClaudeJob(f.config,f.selected,runtime)).rejects.toThrow();expect(operations).toEqual(before);
 });
+it.each(['job','agent'] as const)('refuses input for another %s without launching or reporting',async field=>{
+ const f=await setup(),operations:string[]=[];
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
+  const name=new URL(String(args[0])).pathname.split('/').at(-1)!;operations.push(name);
+  const response=await fetch(...args);
+  if(name!=='takeInput')return response;
+  const result=await response.json();return Response.json({...result,value:{...result.value,[field]:'replacement'}});
+ }};
+ await expect(runClaudeJob(f.config,f.selected,runtime)).rejects.toThrow();
+ expect(f.calls).toHaveLength(0);expect(operations).not.toContain('reportJob');expect(operations).not.toContain('finishJob');
+ expect(inspectWorkerReceipts(f.selected.receipts)).toMatchObject([{phase:'input-attempt'}]);
+});
