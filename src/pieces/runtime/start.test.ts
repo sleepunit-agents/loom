@@ -150,12 +150,48 @@ it.each(['file','continuation','slot','approval','local','missing-house'])('hold
   const {id}=(result as {ok:true;value:Wake}).value;f.clock.advance(1000);await settle();
   expect(wake(f.app.db,id)).toMatchObject({state:'held'});expect(f.store.ids('job')).toEqual([]);
 });
-it('holds a file-backed lane run-now through the actual Clock adapter',async()=>{
-  const f=await setup(),lane=f.call('clock.laneSet',{name:'upkeep',agent:'art',at:'03:31',text:'work',source:'routines/upkeep.md'});
+it.each([{staging:false,runNow:false},{staging:true,runNow:false},{staging:false,runNow:true},{staging:true,runNow:true}])('delivers a stored file-backed lane prompt through the owning inbox ($staging, runNow=$runNow)',async ({staging,runNow})=>{
+  const f=await setup(staging),text='Stored household instructions, not a host file read';
+  const lane=f.call('clock.laneSet',{name:'upkeep',agent:'art',at:'03:31',text,source:'routines/upkeep.md'});
   expect(lane.ok).toBe(true);const id=(lane as {ok:true;value:{id:string}}).value.id;
-  const result=f.call('clock.scheduleRun',{id});expect(result.ok).toBe(true);
-  const work=(result as {ok:true;value:Wake}).value;f.clock.advance(0);await settle();
-  expect(wake(f.app.db,work.id)).toMatchObject({state:'held'});expect(f.store.ids('job')).toEqual([]);
+  let work:Wake;
+  if(runNow){const result=f.call('clock.scheduleRun',{id});expect(result.ok).toBe(true);work=(result as {ok:true;value:Wake}).value;}
+  else work=wakes(f.app.db).find(w=>w.schedule===id&&w.state==='pending')!;
+  f.clock.advance(work.due-f.clock.now());await settle();
+  expect(wakes(f.app.db).filter(w=>w.schedule===id&&w.state==='pending')).toHaveLength(1);
+  expect(wake(f.app.db,work.id)).toMatchObject({state:'firing',laneVersion:expect.any(String)});
+  const job=f.store.ids('job')[0];expect(job).toBeTruthy();
+  expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+  if(staging){
+    expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
+    expect(f.call('core.releaseEffect',{id:`runtime:input:${job}`}).ok).toBe(true);
+  }
+  const payload=await f.post(f.runner,'takeInput',{job});
+  expect(payload).toMatchObject({ok:true,value:{brief:CLOCK_BRIEF,credential:expect.any(String)}});
+  expect(JSON.stringify(payload)).not.toContain(text);
+  expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+  expect(wake(f.app.db,work.id)).toMatchObject({state:'fired',outcome:job});
+  const body=payload.value.credential;
+  if(staging){
+    expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'conflict'});
+    expect(f.call('core.releaseEffect',{id:`runtime:clock-read:${job}:1`}).ok).toBe(true);
+  }
+  expect(await f.post(f.runner,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+  const read=await f.post(body,'readConversation',{});
+  expect(read).toMatchObject({ok:true,value:{messages:[{text:work.prompt}]}});
+  expect(read.value.messages[0].text).toContain(text);
+  expect(await f.post(body,'acknowledgeClockInput',{through:read.value.messages[0].seq})).toMatchObject({ok:true});
+  expect(f.store.ids('job')).toEqual([job]);
+});
+it.each(['local','slot'])('keeps %s household lanes held before any job',async feature=>{
+  const f=await setup();
+  const lane=f.call('clock.laneSet',{name:'restricted',agent:'art',at:'03:31',text:'Work',
+    ...(feature==='local'?{local:true}:{slot:'restricted'})});
+  expect(lane.ok).toBe(true);
+  const result=f.call('clock.scheduleRun',{id:(lane as {ok:true;value:{id:string}}).value.id});
+  expect(result.ok).toBe(true);f.clock.advance(0);await settle();
+  expect(wake(f.app.db,(result as {ok:true;value:Wake}).value.id)).toMatchObject({state:'held'});
+  expect(f.store.ids('job')).toEqual([]);
 });
 it('keeps terminal-without-confirmation uncertain and accepts waiting as runner confirmation',async()=>{
   const f=await setup(),id=await f.schedule(),job=f.store.ids('job')[0];
