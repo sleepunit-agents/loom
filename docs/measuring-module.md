@@ -71,6 +71,24 @@ owners and agents reading daily rows through the one query endpoint; wiring
 the wrappers to its actual request, operation and job boundaries. Those
 integration points depend on the concrete model and endpoint work in t-2235.
 
+`Operations` now exposes the trusted composition hooks `timingTargets()` and
+`measureWith(runtime)`. After registering operations, include `timingTargets()`
+in the runtime's bounded inventory and attach that stable handle. Each known
+operation dispatch is counted once, including asynchronous preparation and
+receipt replay. The async door's synchronous fallback does not count twice.
+Unknown names supplied by callers are never added to the inventory or counted.
+Results, failures, authentication and receipt behavior are unchanged. Detach with
+`measureWith(undefined)`; the composition still owns runtime reload and close.
+This hook is not an operation or an external permission surface. It does not
+attach itself: root composition, request and job instrumentation remain pending.
+
+The in-process workflow fixture in `src/core/measuring/workflow.test.ts` connects
+real Approvals, an outer transaction, committed settings reload, OpenTelemetry,
+the shared timing store and generated policy-filtered GraphQL reads. It proves
+that a rolled-back outer answer leaves the runtime off, approved changes take
+effect after reload, disabling stops new rows, and current owner revocation
+removes reads from an already-created schema. It is not a running-root mount.
+
 `src/core/measuring/visibility.ts` supplies the read policy for that endpoint:
 include `timingDays` and `measuringSettings` in its selected tables and merge
 `measuringVisibility(authenticatedViewer)` into its visibility map. Registered
