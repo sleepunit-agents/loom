@@ -107,17 +107,21 @@ function PersistentReader({ member, ...props }: Parameters<typeof AskReader>[0] 
 function InboxReader(props: Parameters<typeof AskReader>[0] & { member: string }) {
   return props.ask.member && props.ask.privateQuestion && props.guard ? <SealedQuestionReader ask={props.ask} guard={props.guard} go={props.go} /> : props.ask.member ? <AskReader {...props} /> : <PersistentReader {...props} />;
 }
+interface ActionOutcome extends LiveRecord { member:string; at:number; order:number; ok:boolean; text:string; sourceLabel:string; page:string; readAt?:number }
 interface ReadMark extends LiveRecord { ask: string; member: string; readAt: number }
 interface MemberPreferences extends LiveRecord { member: string }
 export default function InboxApp({ path: shellPath, go }: { path?: string; go?: (path:string)=>void } = {}) {
   const [localPath,setLocalPath] = useState(() => typeof location === 'undefined' ? '/p/inbox-preview' : location.pathname);
-  const path = (shellPath ?? localPath).split('?')[0], base = path.split('/ask/')[0];
-  let selected: string | undefined;
-  try { selected = path.includes('/ask/') ? decodeURIComponent(path.slice(path.indexOf('/ask/')+5)) : undefined; } catch { /* Malformed paths select nothing. */ }
+  const path = (shellPath ?? localPath).split('?')[0], base = path.split(/\/(?:ask|outcome)\//)[0];
+  let selected: string | undefined, selectedOutcome: string | undefined;
+  try { selected = path.includes('/ask/') ? decodeURIComponent(path.slice(path.indexOf('/ask/')+5)) : undefined; if(path.includes('/outcome/')) selectedOutcome=decodeURIComponent(path.slice(path.indexOf('/outcome/')+9)); } catch { /* Malformed paths select nothing. */ }
   const snapshot = useRecords<Ask>('attention.ask'), {records,status} = snapshot;
   const identity = useRecords<MemberPreferences>('household.preferences');
   const member = identity.status === 'live' ? identity.records[0]?.member : undefined;
   const marks = useRecords<ReadMark>('attention.readMark');
+  const outcomes = useRecords<ActionOutcome>('attention.outcome');
+  const ownOutcomes = outcomes.status === 'live' && member ? outcomes.records.filter(item=>item.member===member) : [];
+  const currentOutcome = ownOutcomes.find(item=>item.id===selectedOutcome);
   const read = new Set(marks.status === 'live' && member ? marks.records.filter(mark => mark.member === member).map(mark => mark.ask) : []);
   useWaitChecks(snapshot);
   useMemberRetention(snapshot.status);
@@ -126,11 +130,11 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   const [busy,setBusy] = useState(false);
   const lock = useRef(false);
   const guard: Guard = {lock,busy,setBusy};
-  function navigate(id?: string) {
+  function navigate(id?: string, outcome = false) {
     const record = records.find(a=>a.id===id);
     const request = record && status==='live' && record.state==='open' && (!record.member || record.source.kind === 'conversation' && !record.sourceManaged && !record.waits_on) && (!decisionLink(record) || isNotice(record)) ? startCheck(guard,record.id) : undefined;
     setOpening(request && record ? {id:record.id,confirmation:{records,request}} : undefined);
-    const next = id ? `${base}/ask/${encodeURIComponent(id)}` : base;
+    const next = id ? `${base}/${outcome ? 'outcome' : 'ask'}/${encodeURIComponent(id)}` : base;
     if (go) go(next); else { if (typeof history !== 'undefined') history.pushState(null,'',next); setLocalPath(next); }
   }
   const openLink = (next: string) => { if (go) go(next); else location.assign(next); };
@@ -144,15 +148,18 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   useEffect(() => {
     if (current && member) void call('attention.markRead', {id:current.id}).result.catch(() => {});
   }, [current?.id, member, status]);
+  useEffect(()=>{if(currentOutcome && member && currentOutcome.readAt===undefined) void call('attention.readOutcome',{id:currentOutcome.id}).result.catch(()=>{});},[currentOutcome?.id,currentOutcome?.readAt,member,outcomes.status]);
   const listed = listedAsks(records);
-  const shown = listed.filter(a=>inFolder(a,folder) && matches(a,query)).sort((a,b)=>folder==='answered' || folder==='fyi' ? b.changedAt-a.changedAt || a.id.localeCompare(b.id) : a.createdAt-b.createdAt || a.id.localeCompare(b.id));
+  const shown = listed.filter(a=>folder!=='errors' && inFolder(a,folder) && matches(a,query)).sort((a,b)=>folder==='answered' || folder==='fyi' ? b.changedAt-a.changedAt || a.id.localeCompare(b.id) : a.createdAt-b.createdAt || a.id.localeCompare(b.id));
+  const shownOutcomes = ownOutcomes.filter(item=>(folder==='fyi' || folder==='errors' && !item.ok) && (!query.trim() || `${item.text} ${item.sourceLabel}`.toLowerCase().includes(query.trim().toLowerCase())));
+  const entries = [...shown.map(ask=>({id:ask.id,at:folder==='fyi'||folder==='answered'?ask.changedAt:ask.createdAt,ask})),...shownOutcomes.map(outcome=>({id:outcome.id,at:outcome.at,outcome}))].sort((a,b)=>folder==='fyi'||folder==='errors'||folder==='answered'?b.at-a.at||('outcome' in b ? b.outcome.order : 0)-('outcome' in a ? a.outcome.order : 0)||a.id.localeCompare(b.id):a.at-b.at||a.id.localeCompare(b.id));
   const agents = [...new Set(records.flatMap(a=>a.agent ? [a.agent] : []))].sort();
   return <Split className="h-full" label="Inbox" folder={folder} onFolder={id=>{setFolder(id);navigate();}}
-    folders={[{id:'needs',label:'Needs you',count:listed.filter(a=>a.state==='open').length},{id:'alerts',label:'Alerts',count:listed.filter(a=>inFolder(a,'alerts')).length},{id:'answered',label:'Answered',count:listed.filter(a=>inFolder(a,'answered')).length},{id:'fyi',label:'FYI',count:listed.filter(a=>inFolder(a,'fyi')).length},{heading:'By agent'},...agents.map(agent=>({id:`agent:${agent}`,label:agent,count:listed.filter(a=>a.agent===agent && a.state==='open').length}))]}
+    folders={[{id:'needs',label:'Needs you',count:listed.filter(a=>a.state==='open').length},{id:'alerts',label:'Alerts',count:listed.filter(a=>inFolder(a,'alerts')).length},{id:'answered',label:'Answered',count:listed.filter(a=>inFolder(a,'answered')).length},{id:'fyi',label:'FYI',count:listed.filter(a=>inFolder(a,'fyi')).length+ownOutcomes.length},{id:'errors',label:'Errors',count:ownOutcomes.filter(item=>!item.ok).length},{heading:'By agent'},...agents.map(agent=>({id:`agent:${agent}`,label:agent,count:listed.filter(a=>a.agent===agent && a.state==='open').length}))]}
     search={<label className="grid gap-1">Search asks<Input type="search" value={query} onChange={e=>setQuery(e.target.value)} /></label>}
     listTop={busy ? <p role="status" className="p-3">An answer is still being checked or recorded. Other answers wait.</p> : undefined}
-    listTitle={folder==='alerts' ? 'Alerts' : folder==='fyi' ? 'FYI' : folder==='answered' ? 'Answered' : folder.startsWith('agent:') ? `From ${folder.slice(6)}` : 'Needs you'} listMeta={shown.length}
-    list={status==='loading' ? <Loading label="Opening Inbox…" /> : status!=='live' ? <Error text={status==='denied' ? 'Sign in to see your Inbox.' : 'Waiting for connection. Answers wait until loom is reachable.'} /> : <><List label="Ask list">{shown.map(ask=><Row key={ask.id} title={ask.ask} meta={isNotice(ask) && ask.state==='answered' ? 'Acknowledged' : ask.state==='resolved' ? `Cleared itself: ${ask.resolution ?? 'No longer needs an answer'}` : ask.why} unread={marks.status === 'live' && !!member && !read.has(ask.id)} status={`${ask.agent ?? 'Household'} · ${ask.state} · ${marks.status !== 'live' || !member ? 'Read state unavailable' : read.has(ask.id) ? 'Read' : 'Unread'}`} selected={ask.id===selected} onClick={()=>navigate(ask.id)} />)}</List>{!shown.length && <Empty title={query ? `Nothing matches “${query}”` : folder==='needs' ? 'Nothing needs you' : 'No asks here'} text={query ? 'Try another search.' : 'Asks from your agents appear here.'} />}</>}
-    reader={current && member ? <InboxReader key={`${member}:${current.id}:${current.member ?? "public"}`} member={member} ask={current} snapshot={snapshot} go={openLink} initialConfirmation={opening?.id===current.id ? opening.confirmation : undefined} guard={guard} onOpened={()=>setOpening(undefined)} /> : current ? <Loading label="Checking Inbox member…" /> : selected ? <Empty title="This ask is no longer in view" text="It may have changed or become unavailable." /> : null}
-    open={!!selected} onBack={()=>navigate()} backLabel="Inbox" blank={<Empty title="Open an ask" text="Read the full question and what happens either way." />} />;
+    listTitle={folder==='errors' ? 'Errors' : folder==='alerts' ? 'Alerts' : folder==='fyi' ? 'FYI' : folder==='answered' ? 'Answered' : folder.startsWith('agent:') ? `From ${folder.slice(6)}` : 'Needs you'} listMeta={entries.length}
+    list={status==='loading' ? <Loading label="Opening Inbox…" /> : status!=='live' ? <Error text={status==='denied' ? 'Sign in to see your Inbox.' : 'Waiting for connection. Answers wait until loom is reachable.'} /> : <><List label="Ask list">{entries.map(entry=>{if('outcome' in entry){const item=entry.outcome;return <Row key={item.id} title={item.text} meta={stamp(item.at)} status={`${item.sourceLabel} · ${item.ok ? 'Saved' : 'Error'}`} unread={item.readAt===undefined} selected={item.id===selectedOutcome} onClick={()=>navigate(item.id,true)} />;}const ask=entry.ask;return <Row key={ask.id} title={ask.ask} meta={isNotice(ask) && ask.state==='answered' ? 'Acknowledged' : ask.state==='resolved' ? `Cleared itself: ${ask.resolution ?? 'No longer needs an answer'}` : ask.why} unread={marks.status === 'live' && !!member && !read.has(ask.id)} status={`${ask.agent ?? 'Household'} · ${ask.state} · ${marks.status !== 'live' || !member ? 'Read state unavailable' : read.has(ask.id) ? 'Read' : 'Unread'}`} selected={ask.id===selected} onClick={()=>navigate(ask.id)} />;})}</List>{!entries.length && <Empty title={query ? `Nothing matches “${query}”` : folder==='needs' ? 'Nothing needs you' : 'No asks here'} text={query ? 'Try another search.' : 'Asks from your agents appear here.'} />}</>}
+    reader={currentOutcome ? <article className="grid gap-5 p-5"><header><p>{currentOutcome.sourceLabel} · {currentOutcome.ok ? 'Saved' : 'Error'}</p><h1 className="text-2xl font-semibold">{currentOutcome.text}</h1><p>{stamp(currentOutcome.at)}</p></header><Button variant="outline" onClick={()=>openLink(currentOutcome.page)}>Open {currentOutcome.sourceLabel}</Button></article> : current && member ? <InboxReader key={`${member}:${current.id}:${current.member ?? "public"}`} member={member} ask={current} snapshot={snapshot} go={openLink} initialConfirmation={opening?.id===current.id ? opening.confirmation : undefined} guard={guard} onOpened={()=>setOpening(undefined)} /> : current ? <Loading label="Checking Inbox member…" /> : selected || selectedOutcome ? <Empty title={selectedOutcome ? "This item is no longer in view" : "This ask is no longer in view"} text="It may have changed or become unavailable." /> : null}
+    open={!!selected || !!selectedOutcome} onBack={()=>navigate()} backLabel="Inbox" blank={<Empty title="Open an ask" text="Read the full question and what happens either way." />} />;
 }

@@ -278,3 +278,22 @@ An explicit check confirms the displayed question; every send checks the exact c
 | Private Done/Dismiss | Deliberately omitted: these do not provide an answer through the sealed protocol |
 
 No new schema, import, command or permission rule is introduced. The existing Comms retention and policy are authoritative. Lasting member action outcomes, notices/source reconciliation, public delivery and Runtime metadata/digest/grading reconciliation remain before t-2205 closes.
+
+
+## Member action history (bounded first inventory)
+
+Schema 7 adds `attention.outcome`: the signed-in member's newest 50 meaningful action outcomes. A completed authenticated **window socket** call reaches a trusted in-process observer after the ordinary operation result and authentication check. No public operation accepts notice text or another member's identity. Background, direct, HTTP/API, read and housekeeping calls do not produce these notices. The history survives reload/restart, marks read independently, and never raises an ask or changes Home counts. FYI combines outcomes with source resolutions; Errors selects failed actions. Source navigation returns to the owning preview app.
+
+The first explicit inventory covers Tasks create/claim/unclaim/close/reopen/update/comment/link/unlink/delete and central `attention.answer`. Tasks' nested domain rejection counts as failure even when transport succeeded. Answering an already-answered ask is quiet. Same viewer/write-id retries do not add a row, even after the row ages out of the newest 50; retry tombstones last 30 days, matching core receipts. Same-clock outcomes retain commit order. Policy is the existing member-private rule: even another household owner cannot read the member's outcomes.
+
+| Old surface | New surface / choice |
+| --- | --- |
+| Reader-local `Done` newest 50 success/error messages | Member-private `attention.outcome`, newest 50, live across windows and durable in loom.db |
+| Toast wording, truncated to 300 characters | Fixed operation summaries for this inventory, deliberately carrying no authored input, result, error text, private words, secret or one-time link |
+| Per-reader opened keys for action outcomes | `attention.readOutcome({id})`; an independent read fact on the member's outcome |
+| FYI/error folders and source/page links | Inbox FYI + Errors; safe constant owning-app routes, no old-side page links |
+| New-side agent command read | Generated `loom-attention outcomes {}` and `readOutcome`; member identity comes from authentication |
+
+This is the first bounded action inventory, **not blanket parity for every app's meaningful toast**. Source reconciliation must inventory remaining pieces' safe messages and exclusions before adding producers. Comms private words, Secrets, one-time credentials/links, sign-in/session actions, quiet duplicate answer history and empty/housekeeping results are excluded from automatic capture. No returned error wording or CLI output is ever copied. Existing old session Done arrays are not imported by the conversation importer; their deliberate retirement or an offline importer must be recorded in the final old-to-new reconciliation. Remaining app producers, owning notices (including backup failure/recovery), public Runtime delivery, Runtime metadata/digest/grading audit and final acceptance remain obligations of t-2205.
+
+An optional notice failure cannot alter the original action's committed result. The observer commits its own history transaction before sending the socket result. It is a local FYI receipt, not proof of outside delivery. No old-store read, real-data import, installed-piece change or deployment is involved.
