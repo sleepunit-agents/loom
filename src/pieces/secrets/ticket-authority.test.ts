@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdtempSync,rmSync,chmodSync,readFileSync,writeFileSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,existsSync,rmSync,chmodSync,readFileSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {X509Certificate,randomUUID} from 'node:crypto';
@@ -13,7 +13,7 @@ import type {RuntimeRecords} from '../runtime/records.js';
 import {secretTickets} from './tickets.js';
 import {fileURLToPath} from 'node:url';
 import https from 'node:https';
-import {ServerResponse} from 'node:http';
+import {ServerResponse,type IncomingMessage} from 'node:http';
 import {Socket,connect as netConnect} from 'node:net';
 import {connect as tlsConnect} from 'node:tls';
 import {listenTicketAuthority,remoteTicketAuthority} from './ticket-authority.js';
@@ -55,6 +55,13 @@ async function setup(service?:string) {
  const admitted=()=>{const ticket=admit();expect(tickets.claim(ticket.id)).toBeNull();release(ticket.id);return ticket;};
  const state=(ticket:string)=>app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(ticket);
  return {home,app,clock,id,job,call,tickets,admit,release,grant,server,config,fingerprint,authority,remote,admitted,state};
+}
+async function fakeAuthority(f:Awaited<ReturnType<typeof setup>>,handler:(req:IncomingMessage,res:ServerResponse)=>void) {
+ await f.authority.close();
+ const server=https.createServer({ca:readFileSync(f.server.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),
+  requestCert:true,rejectUnauthorized:true},handler);
+ await new Promise<void>(resolve=>server.listen(f.config.socket,resolve));chmodSync(f.config.socket,0o600);
+ closes.push(()=>{server.closeAllConnections();return new Promise<void>(resolve=>server.close(()=>resolve()));});
 }
 it.each([undefined,'slack'])('claims exact original metadata through real pinned mutual TLS for service %s',async service=>{
  const f=await setup(service),t=f.admitted(),c=await f.remote.claim(t.id);
@@ -130,19 +137,13 @@ it('rejects malformed method/path/body before consuming an otherwise valid ticke
 });
 it('fails closed on holder diagnostics and malformed metadata without echoing them',async()=>{
  const f=await setup();await f.authority.close();let calls=0;
- const server=https.createServer({ca:readFileSync(f.server.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),
-  requestCert:true,rejectUnauthorized:true},(_req,res)=>{calls++;const body=JSON.stringify({name:'API',destination:{job:'SECRET-SENTINEL'}});
+ await fakeAuthority(f,(_req,res)=>{calls++;const body=JSON.stringify({name:'API',destination:{job:'SECRET-SENTINEL'}});
   res.writeHead(200,{'content-length':Buffer.byteLength(body)});res.end(body);});
- await new Promise<void>(resolve=>server.listen(f.config.socket,resolve));chmodSync(f.config.socket,0o600);
- closes.push(()=>new Promise<void>(resolve=>server.close(()=>resolve())));
  expect(await f.remote.claim(randomUUID())).toBeNull();expect(calls).toBe(1);
 });
 it('does not send a ticket to a CA-valid server with the wrong pin',async()=>{
  const f=await setup();await f.authority.close();const handler=vi.fn((_req:unknown,res:import('node:http').ServerResponse)=>res.end());
- const server=https.createServer({ca:readFileSync(f.server.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),
-  requestCert:true,rejectUnauthorized:true},handler);
- await new Promise<void>(resolve=>server.listen(f.config.socket,resolve));chmodSync(f.config.socket,0o600);
- closes.push(()=>new Promise<void>(resolve=>server.close(()=>resolve())));
+ await fakeAuthority(f,handler);
  const remote=remoteTicketAuthority(f.config,f.fingerprint('holder'));closes.push(remote.close);
  expect(await remote.claim(randomUUID())).toBeNull();expect(handler).not.toHaveBeenCalled();
 });
@@ -161,10 +162,7 @@ it('consumes a claim when its metadata reply is lost and never retries the claim
 it.each(['deadline','close'])('bounds pending client work on %s independently of a silent authenticated server',async phase=>{
  const f=await setup();await f.authority.close();let entered!:()=>void;
  const ready=new Promise<void>(resolve=>{entered=resolve;});
- const server=https.createServer({ca:readFileSync(f.server.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),
-  requestCert:true,rejectUnauthorized:true},()=>entered());
- await new Promise<void>(resolve=>server.listen(f.config.socket,resolve));chmodSync(f.config.socket,0o600);
- closes.push(()=>{server.closeAllConnections();return new Promise<void>(resolve=>server.close(()=>resolve()));});
+ await fakeAuthority(f,()=>entered());
  vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
  try {const pending=f.remote.claim(randomUUID());await ready;if(phase==='deadline')await vi.advanceTimersByTimeAsync(5000);else await f.remote.close();expect(await pending).toBeNull();}
  finally {vi.useRealTimers();}
@@ -172,14 +170,11 @@ it.each(['deadline','close'])('bounds pending client work on %s independently of
 it('rejects oversized and nonempty empty-ack responses with fixed errors',async()=>{
  const f=await setup();await f.authority.close();let phase=0;
  const value=JSON.stringify({name:'API',destination:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:0}});
- const server=https.createServer({ca:readFileSync(f.server.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),
-  requestCert:true,rejectUnauthorized:true},(_req,res)=>{
+ await fakeAuthority(f,(_req,res)=>{
    if(phase===0){res.writeHead(200,{'content-length':9000});res.end('SECRET-SENTINEL');}
    else if(phase===1){res.writeHead(200,{'content-length':Buffer.byteLength(value)});res.end(value);}
    else {res.writeHead(200,{'content-length':15});res.end('SECRET-SENTINEL');}
   });
- await new Promise<void>(resolve=>server.listen(f.config.socket,resolve));chmodSync(f.config.socket,0o600);
- closes.push(()=>new Promise<void>(resolve=>server.close(()=>resolve())));
  expect(await f.remote.claim(randomUUID())).toBeNull();phase=1;
  const c=(await f.remote.claim(randomUUID()))!;expect(c).not.toBeNull();phase=2;
  expect(await c.current()).toBe(false);await expect(c.finish(true)).rejects.toThrow(/^Secret ticket authority unavailable$/);
@@ -261,4 +256,26 @@ it('rejects an unknown action without settling a retained claim',async()=>{
  });
  expect(status).toBe(503);expect(f.state(t.id)).toEqual({state:'claimed'});
  expect(await c.current()).toBe(true);await c.finish(true);expect(f.state(t.id)).toEqual({state:'released'});
+});
+it('rejects an accessible server directory before binding or ticket consumption',async()=>{
+ const f=await setup(),t=f.admitted(),spy=vi.spyOn(f.tickets,'claim');
+ const directory=join(f.home,'accessible');mkdirSync(directory,{mode:0o755});chmodSync(directory,0o755);
+ const config={...f.server,socket:join(directory,'authority.sock')};
+ await expect(listenTicketAuthority(config,f.fingerprint('holder'),f.tickets)).rejects.toThrow(/^Secret ticket authority unavailable$/);
+ expect(existsSync(config.socket)).toBe(false);expect(spy).not.toHaveBeenCalled();
+ expect(f.state(t.id)).toEqual({state:'admitted'});
+ chmodSync(directory,0o700);
+ const server=await listenTicketAuthority(config,f.fingerprint('holder'),f.tickets);closes.push(server.close);
+});
+it.each(['directory','socket'])('rejects accessible client %s before transmitting ticket metadata',async target=>{
+ const f=await setup(),t=f.admitted(),spy=vi.spyOn(f.tickets,'claim');
+ const remote=remoteTicketAuthority(f.config,f.fingerprint('daemon'));closes.push(remote.close);
+ // Construct with valid TLS files first; fail at the socket admission call site.
+ const path=target==='directory'?f.home:f.config.socket;
+ chmodSync(path,target==='directory'?0o755:0o666);
+ try {
+  expect(await remote.claim(t.id)).toBeNull();expect(spy).not.toHaveBeenCalled();
+  expect(f.state(t.id)).toEqual({state:'admitted'});
+ }finally {chmodSync(path,target==='directory'?0o700:0o600);}
+ const c=await remote.claim(t.id);expect(c).not.toBeNull();await c!.finish(false);
 });
