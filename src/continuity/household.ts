@@ -8,6 +8,7 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { HouseholdDatabase } from '../core/household/document.js';
 import { agentDir, commonsDir, commonsKnowledgePath, type Household } from '../household.js';
+import { assertHomeReady } from '../core/home-state.js';
 
 export interface ContinuityHousehold {
   household: Household;
@@ -26,6 +27,7 @@ export interface ContinuityHousehold {
  */
 export function readContinuityHousehold(home: string, agent?: string): ContinuityHousehold {
   const canonicalHome = realpathSync(home);
+  assertHomeReady(canonicalHome);
   const db = new Database(join(canonicalHome, 'loom.db'), { readonly: true, fileMustExist: true, timeout: 0 });
   let household: Household;
   try {

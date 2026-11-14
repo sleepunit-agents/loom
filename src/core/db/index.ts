@@ -1,10 +1,12 @@
 import Database from 'better-sqlite3';
 import { closeSync, constants, fchmodSync, mkdirSync, openSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { assertHomeReady } from '../home-state.js';
 export type Db = Database.Database;
 export interface Migration { number: number; sql: string }
 const opened = new Map<string, { db: Db; refs: number }>();
 export function openDb(home: string): { db: Db; close(): void } {
+  assertHomeReady(home);
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const path = join(realpathSync(home), 'loom.db');
   const existing = opened.get(path);
