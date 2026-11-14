@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Let a current private body ask an encrypted Comms question through its original member binding, with authority rechecked after encryption and a wordless acknowledgement.
+
 - Deliver stored public household lane prompts through Runtime’s scheduled inbox, with runner confirmation, authenticated reads and staging holds.
 - Add next-mode Bridges status JSON for Discord and Slack with configured agents, intake holds and explicit staging mode.
 - Archive orphan Comms delivery bindings without inventing an owner, and report their skipped conversation ids through offline Runtime imports.

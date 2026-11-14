@@ -728,6 +728,7 @@ thread working; assigned runner running/waiting reports confirm its start.
 | Bound private description | runtime.describeConversation derives the thread from authenticated job proof; no routing arguments |
 | Bound private title | runtime.titleConversation preserves a member's title and returns an acknowledgement only |
 | Bound private activity | runtime.conversationActivity records monotonic movement and tokens without extending working state |
+| Bound body's unmanaged question | runtime.askQuestion derives the original member/thread from current body proof, seals via Comms.ask, returns ref and seq only |
 | Bound body's reply | runtime.reply uses Comms encrypted deduplication, returns seq only |
 | Working/done heartbeat and stop | runtime.conversationStatus updates Comms and generic Attention status |
 | Archive/delete ends body | Comms end role stops the bound job and revokes its central body credentials |
@@ -749,6 +750,25 @@ gates. Account/model enrollment, automatic start retries, remaining
 lifecycle reconciliation, importer, command parity and screens remain on t-2209.
 No deploy, live import or transition is part of this implementation.
 
+
+### Bound private questions
+
+`runtime.askQuestion({id, question})` is an HTTP/direct body operation. It accepts
+only the bounded unmanaged Question fields from Comms; agent, member, thread,
+conversation, source and `waits_on` are never caller authority. The exact central
+Signin body proof must own the current private loom binding, original member,
+job and service; all existing policy/import/reset/write-off/execution holds apply.
+Comms rechecks this original body capability inside the write transaction after
+sealing. Losing authority during encryption persists neither a message nor an
+Attention projection. The operation stores no generic receipt or question words.
+
+The complete question stays encrypted in Comms, with a metadata-only Attention
+projection. `{ref, seq}` is the only acknowledgement. Retry ids are namespaced
+by the authenticated job and question id, so retries preserve the original
+question and answered state across restart, and a replacement job cannot reuse
+its predecessor's question identity. This does not create an approval or task
+decision, enable spawn access, or remove any runner execution hold. Window-only
+question reading and rendering remain owned by Comms and Inbox.
 
 ### Terminal private working state
 

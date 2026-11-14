@@ -1,20 +1,16 @@
 /** In-process source capability. Never enters generic operation input/receipt storage. */
 import { createHash } from 'node:crypto';
-import { z } from 'zod';
 import { OperationError, mayUseThread } from '../../core/index.js';
 import type { Options } from './index.js';
-import type { Comms } from './role.js';
+import { privateQuestionInput, type Comms } from './role.js';
 import { append, thread, type Thread } from './store.js';
-const id=z.string().min(1).max(200);
-const line=z.string().min(1).max(4000);
-const input=z.object({id,question:z.object({ask:line,why:line.optional(),if_yes:line.optional(),if_no:line.optional(),
- href:z.string().max(2000).optional(),refs:z.array(id).max(100).optional(),answers:z.enum(['yes-no','words']).default('words')}).strict()}).strict();
 export function privateQuestionCreator(o:Options & {closed():boolean; changed(t:Thread,seq:number,ref:string):void}):Comms['ask'] {
- return async(agent,place,raw)=>{
-  const parsed=input.parse(raw);
+ return async(agent,place,raw,binding)=>{
+  const parsed=privateQuestionInput.parse(raw);
   const available=()=>{
    const t=thread(o.db,place);
    if(o.closed()||!t||t.agent!==agent||!mayUseThread({kind:'member',id:t.member},t,o.sharing()))throw new OperationError('denied','Thread unavailable');
+   if(binding&&(binding.agent!==agent||binding.conversation!==t.conversation||!binding.valid()))throw new OperationError('denied','Body binding ended');
    if(t.archived!==null)throw new OperationError('conflict','Thread archived');
    if(!o.attention.privateQuestion)throw new OperationError('unavailable','Private question source unavailable');
    return t;

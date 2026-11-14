@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ClockBodies } from './clock-delivery.js';
 import { bodyPolicyExecutionHeld } from './policy-store.js';
 import type { BridgeBodies } from './bridges.js';
@@ -12,7 +13,7 @@ import { controlScope, currentExecution } from './control.js';
 import { z } from 'zod';
 import { operation, OperationError, mayUseThread, mayAct, mayMove, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
-import { commsMetadata, type Comms, type RuntimeDelivery, type DeliveryReceipt } from '../comms/role.js';
+import { commsMetadata, privateQuestionInput, type Comms, type RuntimeDelivery, type DeliveryReceipt } from '../comms/role.js';
 import { runtimeStore } from './store.js';
 import { centralRuntimeCredentials } from './central-credentials.js';
 export const PRIVATE_BRIEF='Read the bound private conversation through runtime.readConversation. Reply through runtime.reply.';
@@ -162,6 +163,17 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    const b=commsBody(viewer)!;
    return comms!.bodyPost({agent:b.job.agent,conversation:b.binding.id,valid:()=>commsBody(viewer)?.job.id===b.job.id},b.binding.place,{id:i.id,text:i.text,kind:'reply',run:b.job.id});
   },run(ctx,i,prepared){const job=bridges?.bound(ctx.viewer);if(job){const result=bridges!.reply(ctx.viewer,i,ctx);hearJob(db,job.id,ctx.now);return result;}const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
+ }));
+ // Comms owns encrypted words, retries and the wordless Attention projection.
+ // A read-style async operation keeps question text out of generic receipts.
+ operations.register(operation({name:'runtime.askQuestion',doors:['http','direct'],input:privateQuestionInput,
+  output:z.object({ref:id,seq:z.number().int().positive()}),may:v=>!!commsBody(v),
+  async prepare(i,{viewer}){
+   const b=commsBody(viewer)!;
+   const source='body-question:'+createHash('sha256').update(JSON.stringify([b.job.id,i.id])).digest('hex');
+   return comms!.ask(b.job.agent,b.binding.place,{id:source,question:i.question},
+    {agent:b.job.agent,conversation:b.binding.id,valid:()=>commsBody(viewer)?.job.id===b.job.id});
+  },run(ctx,_i,prepared){const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
  }));
  operations.register(operation({name:'runtime.conversationStatus',doors:['http','direct'],input:z.object({state:z.enum(['working','done']).optional()}).strict(),output:z.object({stop:z.boolean(),archived:z.boolean()}),
   may:v=>!!commsBody(v),run(ctx,i){const b=commsBody(ctx.viewer)!;hearJob(db,b.job.id,ctx.now);const status=comms!.status(b.job.agent,b.binding.place,i.state);
