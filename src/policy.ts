@@ -16,9 +16,9 @@ const entry = <T>(map: Record<string, T>, id: string): T | undefined => Object.h
 export function maySee(v: Viewer, r: RecordScope, s: Sharing): boolean {
   if (v.kind === 'runner') return r.member === undefined && r.type === 'runtime.job' && r.runner === v.id;
   if (v.kind === 'service') return r.member === undefined && !!r.type && !!entry(s.services, v.id)?.types.includes(r.type);
-  if (r.member !== undefined) return v.kind === 'member' && v.id === r.member && !!entry(s.members, v.id);
   const m = v.kind === 'member' ? entry(s.members, v.id) : undefined;
   if (m?.owner) return true;
+  if (r.member !== undefined) return v.kind === 'member' && v.id === r.member && !!m;
   if (r.project !== undefined) {
     const p = entry(s.projects, r.project);
     return !!p && (v.kind === 'member' ? !!m && p.members.includes(v.id) : p.agents.includes(v.id));

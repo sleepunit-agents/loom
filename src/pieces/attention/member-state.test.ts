@@ -43,9 +43,9 @@ it('marks only the authenticated member, leaves the ask open, and publishes once
   expect(call('markRead', { id: 'ask' }, bob)).toMatchObject({ value: { member: 'bob' } });
   expect(type.ids(undefined)).toHaveLength(2);
   const bobMark = type.ids(undefined).find(key => type.read(key, bob) !== undefined)!;
-  expect(type.read(bobMark, alice)).toBeUndefined(); // Household owner still cannot read Bob's fact.
+  expect(type.read(bobMark, alice)).toMatchObject({ member: 'bob' }); // Household owners see all private records.
   access.members.bob.owner = true;
-  expect(type.read(id, bob)).toBeUndefined(); // A second owner cannot read Alice's fact either.
+  expect(type.read(id, bob)).toMatchObject({ member: 'alice' });
 });
 it('rejects forged membership and nonmembers; revocation hides held marks without widening ask scope', async () => {
   const { call, type, access } = await setup();
