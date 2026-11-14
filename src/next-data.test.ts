@@ -17,8 +17,15 @@ const selection = { type: 'subscribe', id: 'tasks', payload: {
   query: 'subscription($query: String!) { observe(query: $query) { revision patches { path removed value } } }', variables: { query },
 } };
 async function setup() {
-  const client = new Database(':memory:'); clean.push(() => { client.close(); });
+  const client = new Database(':memory:'); clean.push(() => { if (client.open) client.close(); });
+  const pending = new Set<symbol>();
   const clock = new FakeClock();
+  const schedule = clock.at.bind(clock);
+  clock.at = (time, fn) => {
+    const id = Symbol(); pending.add(id);
+    const cancel = schedule(time, () => { pending.delete(id); fn(); });
+    return () => { pending.delete(id); cancel(); };
+  };
   const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   const at = new Date(clock.now()).toISOString();
   client.exec(`INSERT INTO members (id,role,joined_at) VALUES ('sam','member','${at}'),('owner','owner','${at}');
@@ -26,7 +33,7 @@ async function setup() {
     INSERT INTO project_members (project,member) VALUES ('pond','sam');
     INSERT INTO tasks (id,title,project,owner_kind,owner,created_by_kind,created_by,created_at,changed_at)
     VALUES ('pump','Pump','pond','member','owner','member','owner','${at}','${at}');`);
-  client.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at) VALUES (?,?,?,?,?)').run(hash(token),'Sam','owner','sam',at);
+  client.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(hash(token),'Sam','owner','sam',at,new Date(clock.now()+3600000).toISOString());
   client.prepare('INSERT INTO sessions (id,token,device,via,is_agent,issued_at,seen_at,proved_at) VALUES (?,?,?,?,?,?,?,?)').run(hash(cookie),hash(token),'Browser','token',0,at,at,at);
   const data = nextData(db, clock, req => !req.headers.origin || req.headers.origin === `http://${req.headers.host}`);
   clean.push(() => data.close());
@@ -45,7 +52,7 @@ async function setup() {
     return ws;
   }
   const post = (headers: Record<string,string>) => data.http.request('/graphql', {method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify({query})});
-  return {client,clock,data,url,bind,open,post};
+  return {client,clock,pending,data,url,bind,open,post};
 }
 async function read(ws: WebSocket, action: () => void) {
   const received = once(ws,'message'); action(); return JSON.parse(String((await received)[0]));
@@ -91,6 +98,32 @@ it('does not publish rolled-back writes and closes sockets on shutdown', async (
   expect(await (await f.post({authorization:`Bearer ${token}`})).json()).toEqual({data:{tasks:[{id:'pump',title:'Pump'}]}});
   const update = await read(ws,()=>{f.data.writes.run(()=>f.client.exec("UPDATE tasks SET title='Committed'"));});
   expect(update.payload.data.observe).toMatchObject({revision:2,patches:[{value:'Committed'}]});
+  expect(f.pending.size).toBe(1);
   const closed = once(ws,'close'); await f.data.close(); await closed;
+  expect(f.pending.size).toBe(0);
+  f.client.close();
+  f.clock.advance(3600000);
   expect(f.data.close()).toBe(f.data.close());
+});
+
+it('mounts all five HTTP projection tables with current visibility on the socket', async () => {
+  const f = await setup(), at = new Date(f.clock.now()).toISOString();
+  f.client.exec(`INSERT INTO projects (id,name) VALUES ('hidden','Hidden');
+    INSERT INTO agents (id,about,mark_bg,mark_fg,face_shape,face_eyes) VALUES ('visible','','#000','#fff','pebble','dot'),('hidden','','#000','#fff','pebble','dot');
+    INSERT INTO project_agents (project,agent) VALUES ('pond','visible'),('hidden','hidden');
+    INSERT INTO tasks (id,title,project,owner_kind,owner,created_by_kind,created_by,created_at,changed_at)
+    VALUES ('other','Other','pond','member','owner','member','owner','${at}','${at}'),('private','Private','hidden','member','owner','member','owner','${at}','${at}');
+    INSERT INTO task_comments (task,seq,actor_kind,actor,at,text) VALUES ('pump',1,'member','owner','${at}','Visible'),('private',1,'member','owner','${at}','Hidden');
+    INSERT INTO task_links (task,depends_on,type) VALUES ('pump','other','blocks'),('pump','private','blocks');`);
+  const query = '{ tasks(orderBy:{id:{direction:asc,priority:0}}) { id } taskComments { text } taskLinks { task dependsOn } projects { id } agents { id } }';
+  const response = await f.data.http.request('/graphql',{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({query})});
+  const expected = {tasks:[{id:'other'},{id:'pump'}],taskComments:[{text:'Visible'}],taskLinks:[{task:'pump',dependsOn:'other'}],projects:[{id:'pond'}],agents:[{id:'visible'}]};
+  expect(await response.json()).toEqual({data:expected});
+  const ws = await f.open();
+  const result = await read(ws,()=>ws.send(JSON.stringify({...selection,payload:{...selection.payload,variables:{query}}})));
+  expect(result.payload.data.observe.patches[0].value).toEqual(expected);
+  const message = once(ws,'message');
+  f.data.writes.run(()=>f.client.exec("DELETE FROM project_members WHERE member='sam'"));
+  const patches = JSON.parse(String((await message)[0])).payload.data.observe.patches;
+  for (const table of ['tasks','taskComments','taskLinks','projects','agents']) expect(patches.some((p: {path:string[];removed:boolean})=>p.path[0]===table&&p.removed)).toBe(true);
 });

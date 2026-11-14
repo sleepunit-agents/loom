@@ -229,12 +229,20 @@ it('next serves real PWA files and rejects missing resources instead of returnin
 it('mounts shared-credential GraphQL HTTP and websocket doors in the next listener', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-next-data-'));
   const token = 'shared-root-token-'.repeat(4), at = '2026-11-12T00:00:00.000Z';
-  const loom = await startLoom({ home, next: true, clock: new FakeClock(), stdout: () => {},
+  const clock = new FakeClock(), expiry = clock.now()+3600000;
+  let credentialTimer = false, databaseClosed = false;
+  const schedule = clock.at.bind(clock);
+  clock.at = (time, fn) => {
+    if (time === expiry) credentialTimer = true;
+    const cancel = schedule(time, fn);
+    return () => { if (time === expiry) credentialTimer = false; cancel(); };
+  };
+  const loom = await startLoom({ home, next: true, clock, stdout: () => {},
     install(app) {
       app.db.function('loom_now', () => new Date(app.operations.clock.now()).toISOString());
       app.db.exec(readFileSync(new URL('../assets/data/schema.sql', import.meta.url), 'utf8'));
       app.db.prepare('INSERT INTO members (id,role,joined_at) VALUES (?,?,?)').run('sam','member',at);
-      app.db.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at) VALUES (?,?,?,?,?)').run(createHash('sha256').update(token).digest('hex'),'Sam','owner','sam',at);
+      app.db.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(createHash('sha256').update(token).digest('hex'),'Sam','owner','sam',at,new Date(expiry).toISOString());
       app.db.prepare('INSERT INTO tasks (id,title,owner_kind,owner,created_by_kind,created_by,created_at,changed_at) VALUES (?,?,?,?,?,?,?,?)').run('pump','Pump','member','sam','member','sam',at,at);
     },
     // Legacy operation-door authentication must not confer shared-data access.
@@ -251,6 +259,11 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
     const first = once(ws,'message');
     ws.send(JSON.stringify({type:'subscribe',id:'tasks',payload:{query:'subscription { observe(query: "{ tasks { id title } }") { revision patches { path value } } }'}}));
     expect(JSON.parse(String((await first)[0])).payload.data.observe.patches[0].value).toEqual({tasks:[{id:'pump',title:'Pump'}]});
+    expect(credentialTimer).toBe(true);
+    const databaseClose = loom.db.close.bind(loom.db);
+    loom.db.close = () => { expect(credentialTimer).toBe(false); databaseClosed = true; return databaseClose(); };
     const closed = once(ws,'close'); await loom.close(); await closed;
+    expect(databaseClosed).toBe(true);
+    clock.advance(3600000);
   } finally { ws?.terminate(); await loom.close(); rmSync(home,{recursive:true,force:true}); }
 });
