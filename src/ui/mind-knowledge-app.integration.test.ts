@@ -30,6 +30,15 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
   try{
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
     const a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});
+    // Keep fixture diagnostics only on failure; never include sign-in links or cookies.
+    const diagnostics:string[]=[];
+    for(const [name,page] of [['desktop',a],['phone',b]] as const){
+      page.on('pageerror',error=>diagnostics.push(`${name}: ${error.message}`));
+      page.on('websocket',socket=>socket.on('framereceived',({payload})=>{
+        try{const frame=JSON.parse(String(payload));if(frame.ok===false)diagnostics.push(`${name}: ${frame.code}: ${frame.message}`);}catch{/* not a JSON frame */}
+      }));
+    }
+    try{
     // Signin's shell gate uses the real disposable cookie even with a fixture
     // live resolver. Preserve that composition when main adds authentication.
     const link=app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});
@@ -40,10 +49,12 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     expect((await signedIn).status()).toBe(303);
     await Promise.all([a.goto(`${app.url}/p/knowledge-preview`),b.goto(`${app.url}/p/knowledge-preview`)]);
     const row=(p:typeof a,title:string)=>p.locator('[data-split-row]').filter({hasText:title});
+    await expect.poll(()=>row(a,'Six voices').count()).toBe(1);
     await expect.poll(()=>row(b,'Six voices').count()).toBe(1);
     await a.setViewportSize({width:1280,height:900});
     await b.getByRole('button',{name:/^ours/}).click();
-    await expect.poll(()=>row(b,'Nightly backup').count()).toBe(1);expect(await row(b,'Six voices').count()).toBe(0);
+    await expect.poll(()=>row(b,'Six voices').count()).toBe(0);
+    await expect.poll(()=>row(b,'Nightly backup').count()).toBe(1);
     await b.getByRole('button',{name:/Recently verified/}).click();
     await expect.poll(()=>row(b,'Six voices').count()).toBe(1);
     await row(a,'Six voices').click();await row(b,'Six voices').click();
@@ -90,5 +101,11 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>row(a,'A shared new fact').count()).toBe(1);
     await b.getByRole('button',{name:'Open fact',exact:true}).click();
     await expect.poll(()=>b.getByRole('heading',{name:'A shared new fact',exact:true}).count()).toBe(1);
+    }catch(error){
+      for(const [name,page] of [['desktop',a],['phone',b]] as const){
+        diagnostics.push(`${name} Knowledge view: ${await page.locator('main').allTextContents().catch(()=>[]).then(text=>text.join(' ').slice(0,3000))}`);
+      }
+      console.error('Knowledge fixture diagnostics',diagnostics);throw error;
+    }
   }finally{await browser.close();await app.close();source.close();rmSync(home,{recursive:true,force:true});}
 },60_000);
