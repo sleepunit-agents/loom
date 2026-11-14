@@ -66,3 +66,46 @@ it('tile and inline cards follow the same current answer/head and clear retained
     }
   }
 });
+
+it('opens the exact change from a Comms deep link and follows shell navigation and back', async () => {
+  fixture();
+  const id = 'github:acme/app#3';
+  feed.changes.changes[0] = { ...feed.changes.changes[0], id };
+  const go = vi.fn();
+  const route = `/p/changes-preview/change/${encodeURIComponent(id)}`;
+  await draw(h(ChangesApp, { path: route, go }));
+  expect(words()).toContain('first-head');
+  await act(async () => tree.root.findByType('Split').props.onBack());
+  expect(go).toHaveBeenLastCalledWith('/p/changes-preview');
+  await act(async () => tree.update(h(ChangesApp, { path: '/p/changes-preview', go })));
+  expect(words()).not.toContain('first-head');
+  await selectRow();
+  expect(go).toHaveBeenLastCalledWith(route);
+  await act(async () => tree.update(h(ChangesApp, { path: route, go })));
+  expect(words()).toContain('first-head');
+  await act(async () => tree.root.findByType('Split').props.onFolder('you'));
+  expect(go).toHaveBeenLastCalledWith('/p/changes-preview');
+  for (const path of ['/p/changes-preview/change/%broken', '/p/changes-preview/change/missing', '/p/changes-preview/change/']) {
+    await act(async () => tree.update(h(ChangesApp, { path, go })));
+    expect(words()).not.toContain('first-head');
+  }
+});
+
+it('linked work opens the Tasks reader route and unavailability withdraws the deep-linked reader', async () => {
+  fixture();
+  feed.changes.changeTasks = [{ change: 'c-one', task: 't-42', taskRow: { id: 't-42', title: 'Linked task', status: 'open' } }];
+  const go = vi.fn();
+  const node = h(ChangesApp, { go });
+  await draw(node);
+  await selectRow();
+  await act(async () => tree.update(h(ChangesApp, { path: '/p/changes-preview/change/c-one', go })));
+  const linked = tree.root.findAllByType('Row').find((row: { props: { title: string } }) => row.props.title === 'Linked task');
+  await act(async () => linked.props.onClick());
+  expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/t-42');
+  for (const status of ['offline', 'denied', 'loading']) {
+    feed.status = status;
+    await act(async () => tree.update(h(ChangesApp, { path: '/p/changes-preview/change/c-one', go })));
+    expect(words()).not.toContain('first-head');
+    expect(words()).not.toContain('Linked task');
+  }
+});

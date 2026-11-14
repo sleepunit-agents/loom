@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import Approvals, { ApprovalCard, type ApprovalActions } from '../pieces/approval-view';
 import Changes, { ChangeCard, type ChangeActions } from '../pieces/change-view';
 import { renderMeasuringChange } from '../pieces/measuring/settings';
@@ -18,9 +19,32 @@ export function useChangeSnapshot(timezone = localTimezone()) {
 export function ApprovalsApp({ timezone, actions }: { path?: string; timezone?: string; actions?: ApprovalActions }) {
   return <Approvals snapshot={useApprovalSnapshot(timezone)} actions={actions} renderChange={renderMeasuringChange} />;
 }
-export function ChangesApp({ timezone, actions, go }: { timezone?: string; actions?: ChangeActions; go?(path: string): void }) {
+export function ChangesApp({ path, timezone, actions, go }: { path?: string; timezone?: string; actions?: ChangeActions; go?(path: string): void } = {}) {
+  const base = '/p/changes-preview';
+  const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
+  useEffect(() => {
+    if (go) return;
+    const pop = () => setLocalPath(location.pathname);
+    if (typeof window === 'undefined') return;
+    window.addEventListener('popstate', pop);
+    return () => window.removeEventListener('popstate', pop);
+  }, [go]);
+  const currentPath = path ?? localPath;
+  let selected: string | undefined;
+  if (currentPath.startsWith(`${base}/change/`)) {
+    try { selected = decodeURIComponent(currentPath.slice(`${base}/change/`.length)) || undefined; }
+    catch { /* Malformed URLs leave the reader closed. */ }
+  }
+  const visit = (next: string) => {
+    if (go) go(next);
+    else {
+      if (typeof history !== 'undefined') history.pushState(null, '', next);
+      setLocalPath(next);
+    }
+  };
   return <Changes snapshot={useChangeSnapshot(timezone)} actions={actions}
-    openTask={go ? id => go(`/p/tasks-preview/${encodeURIComponent(id)}`) : undefined} />;
+    navigation={{ selected, select: id => visit(id ? `${base}/change/${encodeURIComponent(id)}` : base) }}
+    openTask={go ? id => go(`/p/tasks-preview/task/${encodeURIComponent(id)}`) : undefined} />;
 }
 /** Cards read the same current entities as the tiles, never copied payloads. */
 export function LiveApprovalCard({ id, timezone, actions }: { id: string; timezone?: string; actions?: ApprovalActions }) {

@@ -50,8 +50,10 @@ function Details({ change: c, snapshot, actions, openTask }: { change: Change; s
     {c.body && <section><h3>Description</h3><p className="whitespace-pre-wrap">{c.body}</p></section>}
   </article>;
 }
-export default function Changes({ snapshot, actions, openTask }: { snapshot: ChangeSnapshot; actions?: ChangeActions; openTask?(id: string): void }) {
-  const [folder, setFolder] = useState('all'), [query, setQuery] = useState(''), [selected, setSelected] = useState<string>();
+export default function Changes({ snapshot, actions, openTask, navigation }: { snapshot: ChangeSnapshot; actions?: ChangeActions; openTask?(id: string): void; navigation?: { selected?: string; select(id?: string): void } }) {
+  const [folder, setFolder] = useState('all'), [query, setQuery] = useState(''), [localSelected, setLocalSelected] = useState<string>();
+  const selected = navigation ? navigation.selected : localSelected;
+  const setSelected = navigation ? navigation.select : setLocalSelected;
   const [refreshing, setRefreshing] = useState(false), [error, setError] = useState('');
   const refreshActive = useRef(false);
   const live = snapshot.status === 'live';
