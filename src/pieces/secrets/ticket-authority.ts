@@ -7,7 +7,7 @@ import { dirname, isAbsolute } from 'node:path';
 import { z } from 'zod';
 import { certificateFingerprint } from './holder-authority.js';
 import { assertPrivateDirectory, privateSocket, tlsMaterial, type LocalHolderConfig } from './local-holder.js';
-import { secretInputBindingSchema, type SecretInputBinding } from '../../runtime-runner/secret-input.js';
+import { secretInputBindingSchema, type SecretInputBinding } from './worker-binding.js';
 import { secretName } from './input.js';
 import type { secretTickets } from './tickets.js';
 

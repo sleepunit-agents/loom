@@ -1,6 +1,6 @@
 /** Trusted metadata-only admission. Unregistered until a real holder/runner
  * composition exists. An opaque ticket is neither a grant nor a destination. */
-import { secretInputBindingSchema, type SecretInputBinding } from '../../runtime-runner/secret-input.js';
+import { secretInputBindingSchema, type SecretInputBinding } from './worker-binding.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { isClosing, type Foundation } from '../../core/app.js';
