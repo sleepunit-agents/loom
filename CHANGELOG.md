@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Expose private persistent-holder worker route replacement with complete selection preflight and retirement of original claims and clients.
+
 - Bind sealed typed Comms replies and retry receipts to the retained original encrypted question and owning route.
 - Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
 - Add native-age encryption and an actual encrypted restore drill for filtered next-database images; full household file coverage and backup execution remain pending.
