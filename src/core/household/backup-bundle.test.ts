@@ -24,13 +24,13 @@ async function fixture() {
   writeFileSync(join(home, 'agents', 'art', 'IDENTITY.md'), 'CREED_SENTINEL');
   writeFileSync(join(home, 'agents', 'art', 'note-files', hash.slice(0, 2), hash), attachment);
   writeFileSync(join(home, 'agents', 'art', 'ignored.key'), 'EXCLUDED_KEY');
-  const owner = await generateX25519Identity(), drillIdentity = await generateX25519Identity();
+  const owner = await generateX25519Identity(), secondOwner = await generateX25519Identity(), drillIdentity = await generateX25519Identity();
   const recovery = Buffer.from('OPAQUE_OWNER_ENCRYPTED_RECOVERY_FIXTURE');
   const verifyRestore = vi.fn(async (bytes: Buffer) => { expect(bytes.equals(Buffer.from('OPAQUE_OWNER_ENCRYPTED_RECOVERY_FIXTURE'))).toBe(true); });
   const input: HouseholdBundleInput = { db, home, continuity: { agents: [{ agent: 'art', memories: null, notes }], knowledge: null, people: null },
     cookieKey: Buffer.alloc(32, 73), secrets: { export: vi.fn(async () => recovery), verifyRestore },
-    recipients: [await identityToRecipient(owner)], drillIdentity };
-  return { input, owner, recovery, verifyRestore, notes };
+    recipients: [await identityToRecipient(owner), await identityToRecipient(secondOwner)], drillIdentity };
+  return { input, owner, secondOwner, recovery, verifyRestore, notes };
 }
 function unpack(bytes: Buffer) {
   const start = Buffer.from('loom-next-household\0\x01').length + 4;
@@ -51,9 +51,10 @@ it('owner and drill restore the actual encrypted app, notes, exact attachments, 
     drill: { app: true, continuity: true, files: true, cookieKey: true, secrets: true } });
   expect(f.input.db.serialize()).toEqual(original); expect(f.input.cookieKey).toEqual(Buffer.alloc(32, 73));
   expect(f.recovery.every(byte => byte === 0)).toBe(true); expect(f.verifyRestore).toHaveBeenCalledTimes(1);
+  expect(f.input.secrets.export).toHaveBeenCalledExactlyOnceWith(f.input.recipients);
   for (const word of ['RETAINED', 'CREED_SENTINEL', 'ATTACHED_NOTE', 'OPAQUE_OWNER_ENCRYPTED_RECOVERY_FIXTURE', f.owner, f.input.drillIdentity])
     expect(result.bytes.includes(Buffer.from(word))).toBe(false);
-  for (const identity of [f.owner, f.input.drillIdentity]) {
+  for (const identity of [f.owner, f.secondOwner, f.input.drillIdentity]) {
     const decrypt = new Decrypter(); decrypt.addIdentity(identity);
     const plain = await decrypt.decrypt(result.bytes);
     try {
@@ -116,4 +117,25 @@ it('enforces lower-only app, Secrets and final-envelope budgets', async () => {
     f.input.secrets.export = async () => Buffer.from('OPAQUE_OWNER_ENCRYPTED_RECOVERY_FIXTURE');
     await expect(encryptHouseholdBundle(f.input, invalid)).rejects.toThrow(failure);
   }
+});
+
+it.each([
+  ['app', 'integrity_check'], ['app', 'foreign_key_check'],
+  ['continuity', 'integrity_check'], ['continuity', 'foreign_key_check'],
+] as const)('rejects and wipes a %s %s failure only after bundle decryption', async (kind, check) => {
+  const f = await fixture(); let plain: Uint8Array | undefined, opened: Uint8Array | undefined;
+  const encrypt = Encrypter.prototype.encrypt, decrypt = Decrypter.prototype.decrypt, pragma = Database.prototype.pragma;
+  vi.spyOn(Encrypter.prototype, 'encrypt').mockImplementation(async function(this: Encrypter, bytes) { plain = bytes as Uint8Array; return encrypt.call(this, bytes); });
+  vi.spyOn(Decrypter.prototype, 'decrypt').mockImplementation(async function(this: Decrypter, bytes) { opened = await decrypt.call(this, bytes); return opened; });
+  let injected = false;
+  vi.spyOn(Database.prototype, 'pragma').mockImplementation(function(this: Database.Database, sql: string, options?: Database.PragmaOptions) {
+    if (opened && sql === check && this.prepare("SELECT 1 FROM sqlite_master WHERE name=?").get(kind === 'app' ? 'records' : 'note_files')) {
+      injected = true; return check === 'integrity_check' ? 'damaged' : [{ table: 'broken' }];
+    }
+    return pragma.call(this, sql, options);
+  });
+  await expect(encryptHouseholdBundle(f.input)).rejects.toThrow(failure);
+  expect(injected).toBe(true); expect(f.verifyRestore).not.toHaveBeenCalled();
+  for (const bytes of [plain, opened, f.recovery]) { expect(bytes?.length).toBeGreaterThan(0); expect(bytes?.every(byte => byte === 0)).toBe(true); }
+  expect(f.input.cookieKey).toEqual(Buffer.alloc(32, 73));
 });
