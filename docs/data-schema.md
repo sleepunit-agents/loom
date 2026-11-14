@@ -143,3 +143,22 @@ same rows over actual HTTP; it does not touch a home or installed state.
 Remaining on t-2235: other outside table projections, file-backed Memory roots,
 comment counts, websocket deltas and normalized Tasks client, deleting replaced
 interim reads/tables, and configurable database providers.
+
+## Runtime account placement and quota windows
+
+The site specifies an account summary but is silent on providers with concurrent
+usage windows. `modelAccountWindows` (`model_account_windows`) stores one row per
+`(account, window)`, with `usage`, `usageReadAt`, `resetsAt`, `durationMs` and
+`reserve` (default 0.05). Unknown observation fields are NULL; consumers must not
+interpret them or a passed reset time as available capacity. Duration must be
+positive and finite; usage and reserve are fractions from zero to one. The
+account FK and composite key share observations across all agents, rather than
+keeping agent-local quota copies. The existing `modelAccounts` fields remain the
+site's account summary. Runtime owns ingestion and the capacity evaluator.
+
+`jobs.account` is a nullable FK to the account selected for a job, and
+`jobs.harness` is the selected harness name. Both may be absent before placement.
+Typed relations include `jobs.accountRow`, `modelAccounts.jobsByAccount`, and
+`modelAccounts.modelAccountWindowsByAccount`. These are schema additions for a
+fresh database, not a migration. They add no public GraphQL projection: exact
+account observations still require the account-owner/household-owner projection.
