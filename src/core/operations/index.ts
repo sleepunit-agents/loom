@@ -168,6 +168,7 @@ export class Operations {
   }
   /** Trusted metadata for local post-call receipts. Never returns input or output. */
   retryDeadline(viewer: Viewer, id: string, name: string): number | undefined {
+    this.expireReceipts(this.clock.now());
     const row = this.receipt(callerKey(viewer), id);
     return row?.operation===name && row.expires>this.clock.now() ? row.expires : undefined;
   }

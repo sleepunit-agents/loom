@@ -73,6 +73,8 @@ it('schedules expiry, expires before replay even without timer delivery, and can
   expect([...timers.keys()]).toEqual([deadline]);
   expect(ops.retryDeadline(owner, 'retry', 'example.save')).toBe(deadline);
   s.clock.advance(30 * 86400_000);
+  expect(ops.retryDeadline(owner, 'retry', 'example.save')).toBeUndefined();
+  expect(s.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
   expect(ops.call('http', owner, 'example.save', { name: 'second' }, 'retry').ok).toBe(true);
   expect(s.run).toHaveBeenCalledTimes(2);
   expect([...timers.keys()]).toEqual([deadline + 30 * 86400_000]);
@@ -136,4 +138,13 @@ it('keeps committed effects and receipts successful when publication throws, wit
   expect(s.operations.call('socket', owner, 'example.save', { name: 'pond' }, 'retry')).toEqual(result);
   expect(s.run).toHaveBeenCalledTimes(1);
   expect(s.committed).toHaveBeenCalledTimes(1);
+});
+
+it('expires before command replay when the store gained an expired receipt without a timer', () => {
+  const s = setup();
+  s.store.insert({ caller: JSON.stringify({ id: 'owner', kind: 'member' }), id: 'retry', operation: 'example.save',
+    inputHash: 'old', result: { ok: true, value: { saved: 'old' } }, expires: s.clock.now() });
+  expect(s.operations.call('http', owner, 'example.save', { name: 'fresh' }, 'retry'))
+    .toEqual({ ok: true, value: { saved: 'fresh' } });
+  expect(s.run).toHaveBeenCalledTimes(1);
 });
