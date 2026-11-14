@@ -33,6 +33,7 @@ async function setup() {
   return { app, home, tokenFile, run };
 }
 const inputs: Record<string, unknown> = {
+  backup: {}, setBackup: { target: 'path:/mnt/backups', recipients: ['age1' + 'a'.repeat(40)], at: '03:17', tz: 'America/Chicago', keep: 7, required: ['tasks'] }, backupOff: {},
   profile: { agent: 'art' }, setProfile: { agent: 'art', text: 'Owner description.' }, requestProfile: { agent: 'art' }, describeSelf: { text: 'I help the household.' },
   bootstrapAgent: { agent: 'gabe', name: 'Gabe', purpose: 'Help with the garden.', voice: 'Warm and direct.', rules: 'Keep private things private.', ask: 'Before spending money.' },
   show: {}, setMember: { person: 'guest', agents: ['art'] }, removeMember: { person: 'guest' },
@@ -51,6 +52,8 @@ it('generates registry metadata/help and runs every household command through re
     writeFileSync(tokenFile, command.name === 'describeSelf' ? 'art-token' : 'owner-token');
     const result = await run([command.name, JSON.stringify(inputs[command.name])]);
     expect(result).toMatchObject({ code: 0, stderr: '' });
+    if (command.name === 'setBackup') expect(JSON.parse(result.stdout)).toMatchObject({ state: 'awaiting-runner', settings: inputs.setBackup, message: expect.stringContaining('no backup is scheduled') });
+    if (command.name === 'backupOff') expect(JSON.parse(result.stdout)).toMatchObject({ state: 'off', settings: null });
     const operation = offered.find(o => o.name === `household.${command.name}`)!;
     expect(operation.output.safeParse(JSON.parse(result.stdout)).success).toBe(true);
     expect(JSON.parse(result.bodies[0]).input).toEqual(inputs[command.name]);
