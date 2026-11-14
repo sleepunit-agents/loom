@@ -10,22 +10,21 @@ export interface TempoSnapshot {
   timezone: string;
 }
 
-/** The composition supplies one visible, live query snapshot; this view owns no transport. */
-export default function Tempo({ snapshot }: { snapshot: TempoSnapshot }) {
-  const [folder, setFolder] = useState<Folder>('due');
-  const [query, setQuery] = useState('');
-  const [agent, setAgent] = useState('');
-  const [selected, setSelected] = useState<string>();
-  const live = snapshot.status === 'live';
-  // Never keep displaying a previous viewer's rows during reconnect or access loss.
-  const triggers = live ? snapshot.triggers : [];
-  const shown = rows(triggers, folder, query, agent);
-  const trigger = triggers.find(item => item.id === selected);
-  const agents = [...new Set(triggers.filter(item => item.toKind === 'agent').map(item => item.to!))].sort();
+/** Inline conversation view. Resolve IDs only against the current visible snapshot. */
+export function TempoCard({ snapshot, triggerId }: { snapshot: TempoSnapshot; triggerId: string }) {
+  if (snapshot.status !== 'live') return snapshot.status === 'loading'
+    ? <Loading label="Opening Tempo…" />
+    : <Error text={snapshot.status === 'denied' ? 'Sign in with access to see Tempo.' : 'Waiting for connection.'} />;
+  const trigger = snapshot.triggers.find(item => item.id === triggerId);
+  if (!trigger) return <Empty title="Trigger unavailable" text="This trigger is no longer in your Tempo view." />;
+  return <TriggerDetails snapshot={snapshot} trigger={trigger} />;
+}
+
+function TriggerDetails({ snapshot, trigger }: { snapshot: TempoSnapshot; trigger: Trigger }) {
   const time = (at: string) => new Intl.DateTimeFormat(undefined, {
     timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short',
   }).format(new Date(at));
-  const reader = trigger ? <article className="grid gap-4 p-5">
+  return trigger ? <article className="grid gap-4 p-5">
     <header><h1 className="text-2xl font-semibold">{title(trigger)}</h1><p>{trigger.sourceKind} · {trigger.lifespan} · {status(trigger, snapshot.pauses)}</p></header>
     <p>{source(trigger)}</p>
     {trigger.nextDueAt && <p>Due: {time(trigger.nextDueAt)} · {snapshot.timezone}</p>}
@@ -42,6 +41,22 @@ export default function Tempo({ snapshot }: { snapshot: TempoSnapshot }) {
       {history(snapshot.events, trigger.id).map(event => <li key={event.seq}>{time(event.at)} · {event.event}{event.note && ` · ${event.note}`}</li>)}
     </ol> : <p>No events yet.</p>}</section>
   </article> : null;
+}
+
+/** The composition supplies one visible, live query snapshot; this view owns no transport. */
+export default function Tempo({ snapshot }: { snapshot: TempoSnapshot }) {
+  const [folder, setFolder] = useState<Folder>('due');
+  const [query, setQuery] = useState('');
+  const [agent, setAgent] = useState('');
+  const [selected, setSelected] = useState<string>();
+  const live = snapshot.status === 'live';
+  // Never keep displaying a previous viewer's rows during reconnect or access loss.
+  const triggers = live ? snapshot.triggers : [];
+  const shown = rows(triggers, folder, query, agent);
+  const trigger = triggers.find(item => item.id === selected);
+  const agents = [...new Set(triggers.filter(item => item.toKind === 'agent').map(item => item.to!))].sort();
+  const reader = trigger ? <TriggerDetails snapshot={snapshot} trigger={trigger} /> : null;
+  const time = (at: string) => new Intl.DateTimeFormat(undefined, { timeZone: snapshot.timezone, dateStyle: 'medium', timeStyle: 'short' }).format(new Date(at));
   return <Split label="Tempo" className="h-full" folders={folders.map(item => ({ ...item, count: live ? rows(triggers, item.id, '', agent).length : undefined }))}
     folder={folder} onFolder={id => { setFolder(id as Folder); setSelected(undefined); }}
     search={<div className="grid gap-2"><label>Search tempo<Input type="search" value={query} onChange={event => setQuery(event.target.value)} /></label>
