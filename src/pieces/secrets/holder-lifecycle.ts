@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import { isAbsolute, dirname, resolve } from 'node:path';
 import { realpathSync } from 'node:fs';
-import { privateBytes, listenLocalHolder, tlsMaterial } from './local-holder.js';
+import { privateBytes, listenLocalHolder, tlsMaterial, assertPrivateDirectory } from './local-holder.js';
 import { openHolderStore, type HolderStore } from './holder-store.js';
 import { listenHolderMutations } from './holder-mutations.js';
 import { holderTls, certificateFingerprint, remoteHolderAuthority } from './holder-authority.js';
@@ -45,8 +45,11 @@ export async function startPersistentHolder(file:string) {
       ...(config.handoff?[config.handoff.listen,config.handoff.authority,...config.handoff.workers.map(w=>w.config)]:[])];
     // Reject lexical and filesystem aliases before comparing selections. A
     // not-yet-bound socket may be absent; its private parent must already exist.
-    for(const endpoint of endpoints)if(endpoint.socket!==resolve(endpoint.socket)
-      ||dirname(endpoint.socket)!==realpathSync(dirname(endpoint.socket)))throw Error();
+    for(const endpoint of endpoints) {
+      assertPrivateDirectory(dirname(endpoint.socket));
+      if(endpoint.socket!==resolve(endpoint.socket)
+        ||dirname(endpoint.socket)!==realpathSync(dirname(endpoint.socket)))throw Error();
+    }
     if(new Set(endpoints.map(e=>e.socket)).size!==endpoints.length)throw Error();
     // Validate every peer and TLS material before the first listener or store.
     for(const endpoint of endpoints) {

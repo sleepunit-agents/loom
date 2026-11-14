@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdirSync,writeFileSync,existsSync,readFileSync,symlinkSync} from 'node:fs';
+import {mkdirSync,writeFileSync,existsSync,readFileSync,symlinkSync,chmodSync} from 'node:fs';
 import {join} from 'node:path';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {Writable} from 'node:stream';
@@ -73,13 +73,18 @@ it.each(['grant','job','token'] as const)('persistent handoff denies original %s
  }
  await expect(f.admission.dispatch()).rejects.toThrow();expect(f.received).toEqual([]);
 });
-it.each(['duplicate','overlap','dot-alias','parent-alias','symlink-alias','tls','unknown','listener'] as const)('preflights %s failure without committing holder storage/key history',async kind=>{
+it.each(['duplicate','overlap','dot-alias','parent-alias','symlink-alias','authority-directory','worker-directory','tls','unknown','listener'] as const)('preflights %s failure without committing holder storage/key history',async kind=>{
  const f=await setup();
  if(kind==='duplicate')f.config.handoff.workers.push({...f.config.handoff.workers[0]});
  if(kind==='overlap')f.config.handoff.listen.socket=f.config.mutation.socket;
  if(kind==='dot-alias')f.config.handoff.workers.push({...f.config.handoff.workers[0],binding:{...f.config.handoff.workers[0].binding,job:randomUUID()},config:{...f.config.handoff.workers[0].config,socket:f.home+'/./input.sock'}});
  if(kind==='parent-alias'){mkdirSync(join(f.home,'child'),{mode:0o700});f.config.handoff.workers[0].config.socket=f.home+'/child/../input.sock';}
  if(kind==='symlink-alias'){symlinkSync(f.home,join(f.home,'alias'));f.config.handoff.workers[0].config.socket=join(f.home,'alias','input.sock');}
+ if(kind==='authority-directory'||kind==='worker-directory'){
+  const directory=join(f.home,'public');mkdirSync(directory,{mode:0o755});chmodSync(directory,0o755);
+  const endpoint=kind==='authority-directory'?f.config.handoff.authority:f.config.handoff.workers[0].config;
+  endpoint.socket=join(directory,'endpoint.sock');
+ }
  if(kind==='tls')f.config.handoff.workers[0].config.key=join(f.home,'missing-key');
  if(kind==='unknown')Object.assign(f.config.handoff,{extra:true});
  if(kind==='listener')writeFileSync(f.config.handoff.listen.socket,'occupied',{mode:0o600});
