@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Give the new desk device-local rail and dock hide modes, overlay edge reveals and agent keyboard shortcuts.
+- Add an unregistered pinned metadata ticket authority channel for the separate Secrets holder; worker delivery and public get remain unavailable.
 
 - Add unregistered one-use Secrets handoff tickets with durable claims, exact grant/Runtime fences and staging holds; real worker delivery remains disabled.
 
@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 - Clear private Comms working state from committed terminal Runtime jobs and recover missed completion notifications at startup.
+
+- Give the new desk device-local rail and dock hide modes, overlay edge reveals and agent keyboard shortcuts.
 
 - Fold overflowing agent-rail cards into compact lines, retaining the agent with current work or a question and retrying full cards when room returns.
 
@@ -1198,6 +1200,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add row-backed agent profile descriptions to Setup, with owner edits/requests, scoped Live records and once-only authenticated agent replies.
 
 - Add Account and Setup device sign-in links that inherit the source browser’s original sign-in time.
+
+- Let the next-side service worker show content-free push notifications and open their signed-in destinations.
 
 ## [0.16.1] - 2026-10-25
 
