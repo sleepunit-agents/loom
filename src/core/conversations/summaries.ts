@@ -62,7 +62,7 @@ export function conversationSummaryFields(service: ConversationSummaries): Graph
   } });
   const summary = new GraphQLObjectType<Conversation, { viewer: Viewer }>({ name: 'ConversationSummary', fields: {
     id: { type: new GraphQLNonNull(GraphQLString) }, agent: { type: new GraphQLNonNull(GraphQLString) },
-    label: { type: new GraphQLNonNull(GraphQLString) }, venue: { type: new GraphQLNonNull(GraphQLString) },
+    label: { type: new GraphQLNonNull(GraphQLString) }, place: { type: new GraphQLNonNull(GraphQLString) }, venue: { type: new GraphQLNonNull(GraphQLString) },
     project: { type: GraphQLString }, member: { type: GraphQLString }, lastAt: { type: new GraphQLNonNull(GraphQLString) },
     lastAnswer: { type: answer, resolve: (row, _args, context) => service.lastAnswer(context.viewer, row.id) },
   } });

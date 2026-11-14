@@ -58,8 +58,9 @@ it('returns only the latest agent reply, selected lazily through the shared quer
   await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'card', words: 'Later progress' });
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: conversationSummaryFields(f.service) }) });
   const contextValue = { viewer: { kind: 'member', id: 'owner' } };
-  const metadata = await graphql({ schema, source: '{ recentConversations(agent:"art") { label } }', contextValue });
+  const metadata = await graphql({ schema, source: '{ recentConversations(agent:"art") { label place } }', contextValue });
   expect(metadata.errors).toBeUndefined(); expect(f.opens()).toBe(0);
+  expect(JSON.parse(JSON.stringify(metadata.data))).toEqual({ recentConversations: [{ label: 'Private pump', place: f.thread.id }] });
   const result = await graphql({ schema, source: '{ recentConversations(agent:"art",limit:1) { lastAnswer { words } } }', contextValue });
   expect(result.errors).toBeUndefined();
   expect(JSON.parse(JSON.stringify(result.data))).toEqual({ recentConversations: [{ lastAnswer: { words: 'Latest agent answer' } }] });
