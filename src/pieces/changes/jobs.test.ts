@@ -103,3 +103,15 @@ for(const omit of ['type','operation'] as const) it(`runs the installed job with
  expect(loadChanges(app.db)).toMatchObject([{title:'Replacement'}]);
  expect(app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get()).toBeDefined();
 });
+
+it('keeps an empty home quiet across retry expiry and discovers newly configured repositories',async()=>{
+ const read=vi.fn(async()=>[change()]);const {app,job,config,clock}=setup(read);config.projects=[];
+ const changed=vi.spyOn(app.live,'changed');
+ clock.advance(30*86400_000);await job.run();
+ expect(read).not.toHaveBeenCalled();expect(changed).not.toHaveBeenCalled();
+ expect(app.db.prepare('SELECT count(*) AS n FROM core_operations').get()).toEqual({n:0});
+ expect(app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get()).toBeUndefined();
+ config.projects=[{slug:'pond',name:'Pond',repos:['acme/app']}];
+ clock.advance(180000);await Promise.resolve();await job.run();
+ expect(read).toHaveBeenCalledOnce();expect(loadChanges(app.db)).toMatchObject([{title:change().title}]);
+});
