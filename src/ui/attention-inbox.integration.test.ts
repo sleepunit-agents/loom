@@ -136,7 +136,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     expect(await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).count()).toBe(0);
     await b.locator('.loom-split').getByRole('button',{name:/^Needs you/}).click();
     // An owning Clock outcome produces the real managed notice; acknowledgement leaves work alone.
-    const wakeResult=loom.operations.call('direct',owner,'clock.in',{agent:'art',prompt:'Fixture scheduled work',when:'1m'},'inbox-clock-wake');
+    const wakeResult=loom.operations.call('direct',owner,'clock.in',{agent:'art',prompt:'Fixture scheduled work',note:'Inbox alert fixture',when:'1m'},'inbox-clock-wake');
     if(!wakeResult.ok)throw Error(wakeResult.message);
     const wake=wakeResult.value as {id:string;due:number}; clock.advance(wake.due-clock.now());
     // FakeClock may synchronously commit the daemon intent before its deferred external call.
