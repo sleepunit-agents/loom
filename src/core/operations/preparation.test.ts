@@ -198,3 +198,18 @@ it.each(['before','after'])('journal recovery runs global guards registered %s t
   expect(app.db.prepare('SELECT * FROM core_operations WHERE id=?').all('reserved')).toEqual([]);
   expect(app.db.prepare('SELECT * FROM guard_effect').all()).toEqual([]);
 });
+
+it.each([false,true])('passes the exact authenticated viewer to per-record window gates before replay (async=%s)',async asynchronous=>{
+ const {app}=setup(),body:Viewer={kind:'agent',id:'art'};
+ let bound=true,runs=0;
+ app.operations.register({name:'example.control',input:z.object({id:z.string()}),output:z.object({ack:z.literal(true)}),write:true,
+  requiresWindow:(_input,viewer)=>!(viewer===body && bound),may:()=>true,run:()=>{runs++;return {ack:true};}});
+ const call=(viewer:Viewer=body)=>asynchronous?app.operations.callAsync('mcp',viewer,'example.control',{id:'private'},'receipt'):app.operations.call('mcp',viewer,'example.control',{id:'private'},'receipt');
+ const ack=await call();expect(ack).toEqual({ok:true,value:{ack:true}});expect(await call()).toEqual(ack);
+ bound=false;expect(await call()).toMatchObject({ok:false,code:'denied'});
+ bound=true;expect(await call({...body})).toMatchObject({ok:false,code:'denied'});expect(runs).toBe(1);
+ // Existing input-only gates and actual signed-in windows keep their semantics.
+ app.operations.register({name:'example.window',input:z.object({private:z.boolean()}),output:z.null(),requiresWindow:i=>i.private,may:()=>true,run:()=>null});
+ expect(app.operations.call('direct',owner,'example.window',{private:true})).toMatchObject({code:'denied'});
+ expect(await app.operations.callAsync('socket',owner,'example.window',{private:true},undefined,true)).toEqual({ok:true,value:null});
+});

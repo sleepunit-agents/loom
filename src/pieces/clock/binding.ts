@@ -9,13 +9,17 @@ export interface CommandAnswer { exit: number; stdout: string; stderr: string }
 const formatter = new Intl.DateTimeFormat('en-CA', { timeZone, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit', second:'2-digit', hourCycle:'h23' });
 export function clockTime(epoch: number) { const p = Object.fromEntries(formatter.formatToParts(epoch).map(p => [p.type,p.value])); return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}:${p.second}`; }
 const scheduleName = (id: string, agent: string) => id.startsWith(`${agent}/`) ? id.slice(agent.length+1) : id.startsWith('lane/') ? id.slice(5) : id;
+function resolveScheduleId(visible:readonly Pick<Schedule,'id'|'agent'>[],agent:string,name:string) {
+  const candidates=visible.filter(s=>s.agent===agent && scheduleName(s.id,agent)===name);
+  return {id:candidates[0]?.id ?? `${agent}/${name}`,ambiguous:candidates.length>1};
+}
 const when = (s: Schedule) => {
   const at = s.at.map(t => { const [h,m] = t.split(':').map(Number); return `${h%12 || 12}:${String(m).padStart(2,'0')} ${h>=12 ? 'PM' : 'AM'}`; }).join(', ');
   const named: Record<string,string> = {'mon-fri':'Weekdays','sat,sun':'Weekends','sat-sun':'Weekends'};
   return !s.days ? `${at} daily` : `${named[s.days] ?? s.days.split(',').map(d=>d[0].toUpperCase()+d.slice(1)).join(', ')} ${at}`;
 };
 const moved = 'wake: relays moved to loom\'s runtime: use the relay tool (to, say, why?, reply_to?, from?, approval?), or from a house: loom runtime relay --to <agent> --say "…" [--reply-to r-…] [--approval a-…]; loom runtime relays lists them\n';
-export function command(ops: Operations, viewer: Viewer, request: ClockCommandInput): CommandAnswer {
+export function command(ops: Operations, viewer: Viewer, request: ClockCommandInput, controlTarget?: (id:string)=>{agent:string;active:boolean}|undefined, scheduleTargets?:readonly Pick<Schedule,'id'|'agent'>[]): CommandAnswer {
   const fail = (message: string, exit = 1): CommandAnswer => ({ exit, stdout:'', stderr: message.startsWith('wake:') ? message+'\n' : `wake: ${message}\n` });
   const success = (text: string): CommandAnswer => ({ exit:0, stdout:text.endsWith('\n') ? text : text+'\n', stderr:'' });
   const parsed=parseCommand(viewer,request);
@@ -34,20 +38,25 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
   if (name === 'park' && !flags.on) return fail('park needs --on',2);
   if (['pause','resume','now'].includes(name!)) input.agent = agent;
   if (name === 'list') input.agent = agent;
-  if (name === 'cancel') {
+  if(name==='cancel' && viewer.kind==='agent'){
+    const target=controlTarget?.(positional[0]);
+    if(!target || target.agent!==agent || !target.active)return fail(`no spool entry ${positional[0]}`);
+  }
+  if (name === 'cancel' && viewer.kind !== 'agent') {
     const list=ops.call('direct',viewer,'clock.list',{agent});
     if (!list.ok) return fail(list.message);
     if (!(list.value as Wake[]).some(w => w.id===positional[0] && w.agent===agent && active(w))) return fail(`no spool entry ${positional[0]}`);
     input.id = positional[0];
   }
+  if (name === 'cancel') input.id = positional[0];
   if (name?.startsWith('schedule ') && name !== 'schedule list') {
     if (!/^[a-z][a-z0-9-]{0,39}$/.test(positional[0])) return fail("a schedule's name is lowercase letters, digits and dashes, like nightly");
     const found = ops.call('direct',viewer,'clock.schedules',{});
     if (!found.ok) return fail(found.message);
-    const rows = found.value as Schedule[];
-    const candidates=rows.filter(s => s.agent===agent && scheduleName(s.id,agent!)===positional[0]);
-    if (candidates.length>1) return fail('schedule name is ambiguous; use its exact id in the Clock app');
-    input.id = candidates[0]?.id ?? `${agent}/${positional[0]}`;
+    const rows = viewer.kind==='agent' && scheduleTargets ? scheduleTargets : found.value as Schedule[];
+    const resolved=resolveScheduleId(rows,agent!,positional[0]);
+    if (resolved.ambiguous) return fail('schedule name is ambiguous; use its exact id in the Clock app');
+    input.id = resolved.id;
   }
   if (name?.startsWith('lane ') && positional.length) input.name = positional[0];
   if (name === 'lane set' || name === 'lane assign') {
@@ -123,7 +132,10 @@ export function command(ops: Operations, viewer: Viewer, request: ClockCommandIn
     const next = (pending.value as Wake[]).find(w=>w.schedule===s.id && w.state==='pending')!;
     return `schedule ${label}: next at ${clockTime(next.due)} (${next.id})`;
   };
-  if (name === 'schedule set') return success(confirmation(value as Schedule,positional[0]));
+  if (name === 'schedule set') {
+    const ack=value as Schedule & {private?:boolean;due:number};
+    return success(ack.private ? `schedule ${positional[0]}: next at ${clockTime(ack.due)} (private work armed)` : confirmation(ack,positional[0]));
+  }
   if (name === 'lane set' || name === 'lane assign') {
     const s = value as Schedule;
     return success(`${confirmation(s,s.lane!)}\nloom lane ${s.lane}: ${s.agent[0].toUpperCase()+s.agent.slice(1)}'s, ${when(s)}${s.laneDetails!.local ? " (on loom's machine)" : ''}`);
@@ -175,4 +187,13 @@ export function oneOffCommandInput(viewer:Viewer,request:ClockCommandInput):{age
  const parsed=parseCommand(viewer,request);if('reply' in parsed)return;
  const {agent,name,flags}=parsed;if(!['at','in','park'].includes(name))return;
  return {agent:agent??'',note:'',...(name==='park'&&typeof flags.on==='string'?{on:flags.on}:{})};
+}
+
+/** Pure command target shared with the outer replay policy. No private reads. */
+export function controlCommandInput(viewer:Viewer,request:ClockCommandInput, visible:readonly Pick<Schedule,'id'|'agent'>[]=[]):{operation:string;id:string;agent:string;ambiguous?:boolean}|undefined {
+ const parsed=parseCommand(viewer,request);if('reply' in parsed)return;
+ const {agent,name,positional,operation}=parsed;
+ if(!['schedule set','schedule rm','schedule run','cancel'].includes(name) || !agent)return;
+ const resolved=resolveScheduleId(visible,agent,positional[0]);
+ return {operation,...(name==='cancel'?{id:positional[0]}:resolved),agent};
 }

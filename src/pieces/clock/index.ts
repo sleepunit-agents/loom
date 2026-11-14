@@ -8,7 +8,7 @@ import { localOwner, sameLocalCaller } from '../approvals/role.js';
 import { standingBinding, bindStandingWake, checkStandingWake } from './local-standing.js';
 import { filedLocal, localFilingWords, installLocalFiling } from './local-filing.js';
 import { clockCommands, clockOperationCommands } from './commands.js';
-import { command, localCommandInput, oneOffCommandInput } from './binding.js';
+import { command, controlCommandInput, localCommandInput, oneOffCommandInput } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -93,6 +93,27 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     return !!filed && (create(v, filed) || mayFilePrivateWork(v, { ...scope(filed),
       privateControl: !!filed.authorship?.conversation }, sharing()));
   };
+  // Saved evidence limits a fresh caller; it never supplies a Viewer or a grant.
+  const mayControl = (v: Viewer, w: Work) => {
+    if (v.kind !== 'agent') return act(v, w);
+    const proof = options.provenance?.(v);
+    return !!proof && proof.agent === v.id && w.agent === v.id && w.authorship?.origin === v.id
+      && (!!proof.conversation && proof.conversation === w.authorship.conversation || proof.principal.for === 'owner')
+      && proof.member === w.member && proof.project === w.project
+      && mayFile(v, w);
+  };
+  const maySetSchedule = (v:Viewer, input:Work & {id:string}) => {
+    const saved=schedule(db,input.id);
+    return mayFile(v,input) && (!saved || (saved.laneDetails ? act(v,saved,true) : mayControl(v,saved)));
+  };
+  const mayScheduleControl = (v:Viewer, name:string, saved:Schedule) =>
+    saved.laneDetails || name==='scheduleRun' && v.kind!=='agent'
+      ? act(v,saved,true) && create(v,saved) : mayControl(v,saved);
+  // Trusted metadata only: a body can resolve names it may control without
+  // obtaining private schedule words through a registry read.
+  const commandSchedules = (v:Viewer) => schedules(db)
+    .filter(s=>s.member ? v.kind==='agent' && mayControl(v,s) : see(v,s,'schedule'))
+    .map(({id,agent})=>({id,agent}));
   const filedWork = <T extends Work>(v: Viewer, w: T): T & Work => prepareFiling(v, w) as (T & Work) | undefined
     ?? (() => { throw new OperationError('denied', 'Work must retain its authenticated conversation scope'); })();
   const privateLocal=(w:Wake)=>w.member!==undefined && !!w.approval && !!filedLocal(db,w.approval);
@@ -108,14 +129,29 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   };
   function register<I>(name: string, input: z.ZodType<I>, write: boolean, may: (v: Viewer, i: I) => boolean, run: (ctx: Context, i: I) => unknown, internal = false) {
     const ordinaryFiling = ['at','in','park'].includes(name);
-    operations.register(operation({ name: `clock.${name}`, input, output, write, recheckPolicy: name === 'scheduleSet' ? true : write && ordinaryFiling ? viewer => !!options.provenance?.(viewer) : false, inputHash: ordinaryFiling || name === 'scheduleSet' ? filingHash : undefined, requiresWindow: internal ? undefined : (i)=>{const input=i as {id?:string;member?:string};return input.member!==undefined || !!(input.id && ((wake(db,input.id)??schedule(db,input.id))?.member || db.prepare('SELECT 1 FROM clock_meta WHERE key=?').get('private-id:'+input.id)));}, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
+    const control = ['scheduleSet','scheduleRun','scheduleRemove','cancel'].includes(name);
+    operations.register(operation({ name: `clock.${name}`, input, output, write,
+      recheckPolicy: control || (write && ordinaryFiling ? (viewer:Viewer) => !!options.provenance?.(viewer) : false),
+      inputHash: ordinaryFiling || control ? filingHash : undefined,
+      requiresWindow: internal ? undefined : (i,v)=>{
+        const input=i as {id?:string;member?:string};
+        const saved=input.id ? name.startsWith('schedule') ? schedule(db,input.id) : wake(db,input.id)??schedule(db,input.id) : undefined;
+        const privateId=!!(input.id && db.prepare('SELECT 1 FROM clock_meta WHERE key=?').get('private-id:'+input.id));
+        // The durable marker also protects deleted schedules whose id collides
+        // with a public wake (and the reverse). A public row cannot waive it.
+        if(privateId && !saved?.member)return true;
+        if(input.member===undefined && !saved?.member && !privateId)return false;
+        // Only an authorized control can replace the window requirement. Reads
+        // and historical removed ids remain window-only, including cache replay.
+        return !(control && v.kind==='agent' && (saved ? mayControl(v,saved) : name==='scheduleSet' && !privateId && mayFile(v,i as Work)));
+      }, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
       run(ctx, i) {
         if (closed) throw new OperationError('unavailable', 'Clock stopped');
         const result = run(ctx, i);
         if (write) { for (const agent of deadmanAgents) ensureDeadman(ctx, agent); queue(); }
         if (write && ctx.viewer.kind === 'agent' && result && typeof result === 'object' && 'member' in result && result.member) {
           const row = result as Wake & Schedule;
-          return { id: row.id, state: row.state, due: row.due,
+          return { id: row.id, state: row.state, due: row.due ?? wakes(db).find(w=>w.schedule===row.id && w.state==='pending')?.due,
             ...(row.wait ? { wait: { id: row.wait.id } } : {}),
             private: true };
         }
@@ -262,7 +298,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     const ids = new Set(wakes(db).filter(w => readSee(ctx, w)).map(w => w.id));
     return (db.prepare('SELECT wake,record FROM clock_events ORDER BY seq').all() as { wake: string; record: string }[]).filter(r => ids.has(r.wake)).map(r => JSON.parse(r.record)).filter(r => (i.since === undefined || r.at >= i.since) && (!i.grep || JSON.stringify(r).includes(i.grep)));
   });
-  register('cancel', idInput, true, (v, i) => !wake(db, i.id) || act(v, get(i.id)), (ctx, i) => {
+  register('cancel', idInput, true, (v, i) => !wake(db, i.id) || mayControl(v, get(i.id)), (ctx, i) => {
     const w = get(i.id); if (!active(w) || w.hold === 'uncertain') return w;
     const firing = w.state === 'firing'; w.state = firing ? 'held' : 'cancelled'; if (firing) w.hold = 'uncertain'; w.outcome = firing ? 'Cancellation raced dispatch; a body may have started' : 'Cancelled';
     saveWake(ctx, w); event(ctx, w, 'cancel');
@@ -349,7 +385,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   register('agentNext', agentInput, false, (v, i) => see(v, { agent: i.agent, note: '' }), (ctx, i) => agentNext(i.agent, deskWakes(ctx, i.agent), paused(db, i.agent)));
 
   const scheduleInput = workInput.extend({ id: text, at: z.union([text, z.array(text)]), days: z.string().default(''), lane: text.optional() });
-  register('scheduleSet', scheduleInput, true, (v, i) => !!prepareFiling(v, i) && create(v, prepareFiling(v, i)!) && (!schedule(db, i.id) || act(v, schedule(db, i.id)!, !!schedule(db, i.id)!.laneDetails)), (ctx, input) => {
+  register('scheduleSet', scheduleInput, true, maySetSchedule, (ctx, input) => {
     const i = filedWork(ctx.viewer, input);
     newWork(i); calendar(() => daysOf(i.days));
     const old = schedule(db, i.id);
@@ -363,11 +399,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     saveSchedule(ctx, s); next(ctx, s, ctx.now); return s;
   });
   register('schedules', z.object({}), false, () => true, ctx => schedules(db).filter(s => readSee(ctx, s, 'schedule')).map(publicWork));
-  register('scheduleRemove', idInput, true, (v, i) => { const s = schedule(db, i.id); return !s || act(v, s, !!s.laneDetails) && (!s.laneDetails || create(v, s)); }, (ctx, i) => {
+  register('scheduleRemove', idInput, true, (v, i) => { const s = schedule(db, i.id); return !s || mayScheduleControl(v,'scheduleRemove',s); }, (ctx, i) => {
     const s = schedule(db, i.id); if (!s) throw new OperationError('not-found', 'Schedule not found');
     removeSchedule(ctx, s); return { id: s.id };
   });
-  register('scheduleRun', idInput.extend({ note:z.string().max(100_000).optional() }), true, (v, i) => { const s = schedule(db, i.id); return !!s && act(v, s, true) && create(v, s); }, (ctx, i) => {
+  register('scheduleRun', idInput.extend({ note:z.string().max(100_000).optional() }), true, (v, i) => { const s = schedule(db, i.id); return !!s && mayScheduleControl(v,'scheduleRun',s); }, (ctx, i) => {
     const s = schedule(db, i.id)!;
     oneOffRoom(ctx, s.agent);
     const caller = filedWork(ctx.viewer, { agent: s.agent, member: s.member, project: s.project, note: '' }).authorship!;
@@ -427,20 +463,35 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     && create(v, { agent: i.agent, note: '' }), (ctx, i) => ensureDeadman(ctx, i.agent), true);
   operations.register(operation({ name: 'clock.command', write: true, recheckPolicy:true, inputHash:(body, identity) => {
       const input = identity.input;
-      return !localCommandInput(identity.actor,input) && oneOffCommandInput(identity.actor,input)
-        ? filingHash(body,identity) : createHash('sha256').update(body).digest('hex');
+      if(localCommandInput(identity.actor,input))return createHash('sha256').update(body).digest('hex');
+      const control=controlCommandInput(identity.actor,input,commandSchedules(identity.actor));
+      // A name may resolve to a different id after removal. That is never a
+      // replay of the original private acknowledgement, even in the same body.
+      return control ? filingHash(JSON.stringify([body,control.id]),identity)
+        : oneOffCommandInput(identity.actor,input) ? filingHash(body,identity) : createHash('sha256').update(body).digest('hex');
     },
     input: z.object({ argv: z.array(z.string()).max(100), agent: text.optional(), laneFile: z.object({path:text,text:z.string().max(100_000)}).optional() }),
     output: z.object({ exit:z.number().int(), stdout:z.string(), stderr:z.string() }),
     may: (viewer,input) => {
       const local=localCommandInput(viewer,input);
       if (local) return localPublicPolicy(operations,sharing,options.caller,viewer,local);
+      const control=controlCommandInput(viewer,input,commandSchedules(viewer));
+      if(control){
+        const saved=control.operation==='cancel'?wake(db,control.id):schedule(db,control.id);
+        if(!saved?.member && db.prepare('SELECT 1 FROM clock_meta WHERE key=?').get('private-id:'+control.id))return false;
+        if(control.operation==='scheduleSet')return maySetSchedule(viewer,{id:control.id,agent:control.agent,note:''});
+        if(!saved)return viewer.kind==='member';
+        return control.operation==='cancel' ? mayControl(viewer,saved) : mayScheduleControl(viewer,control.operation,saved as Schedule);
+      }
       const oneOff = oneOffCommandInput(viewer,input);
       return oneOff && options.provenance?.(viewer) ? mayFile(viewer,oneOff) && (!oneOff.on || !!options.approvals?.check(oneOff.on,viewer))
         : viewer.kind === 'member' || viewer.kind === 'agent';
     },
     run: (ctx,input) => {
-      const result=command(operations,ctx.viewer,input);
+      const result=command(operations,ctx.viewer,input,id=>{
+        const w=wake(db,id);
+        return w && mayControl(ctx.viewer,w) ? {agent:w.agent,active:active(w)} : undefined;
+      },commandSchedules(ctx.viewer));
       if(result.exit===0 && input.argv.includes('--standing'))saveLocalReceipt(ctx,result);
       return result;
     },
