@@ -12,6 +12,7 @@ it('uses retained asks and real connection before working or thinking',()=>{
  const ask={...reply(2,'Allow?'),kind:'ask',ask:{ask:'Allow?'},ref:'ask'};
  expect(portraitState([ask],true,true,true)).toBe('needs-input');
  expect(portraitState([ask],false,true,true)).toBe('error');
+ expect(portraitState([{...reply(3),kind:'message',delivery:'failed'}],true,false,true)).toBe('error');
  expect(portraitState([{...ask,text:null,ask:undefined}],true,false,true)).toBe('thinking');
  expect(portraitState([{...ask,answer:{verdict:'yes'}}],true,true,false)).toBe('working');
 });

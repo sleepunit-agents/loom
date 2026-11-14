@@ -11,7 +11,7 @@ import './portrait.css';
 export function portraitState(messages:readonly Message[],connected:boolean,working:boolean,thinking:boolean):FaceState {
  if(!connected)return 'error';
  const latest=messages.at(-1);
- if(latest?.kind==='error'&&latest.text!==null)return 'error';
+ if(latest&&latest.text!==null&&(latest.kind==='error'||latest.delivery==='failed'))return 'error';
  if(messages.some(m=>{const ask=messageView(m).ask;return ask&&!ask.answered;}))return 'needs-input';
  return working?'working':thinking?'thinking':'idle';
 }
