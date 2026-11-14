@@ -172,18 +172,19 @@ it('preserves distinct valid malformed UTF-16 ids without URI errors or lossy ha
   for(const id of ids)expect(s.ask(id)).toMatchObject({ok:true,value:{source:{kind:'task',id},state:'open'}});
 });
 
-it('holds startup and membership reconciliation on actual service denial, reports only a code, and keeps authorized Tasks writes working',async()=>{
+it('reconciles startup and membership changes without service grants while keeping outside Tasks policy',async()=>{
   const first=await setup(),id=first.create({why:'Sensitive source wording'}),before=first.ask(id);
   await first.app.close();closes.pop();
   const warnings=vi.spyOn(console,'warn').mockImplementation(()=>{});
   try {
     const s=await setup(first.home,false,true);
     expect(s.ask(id)).toEqual(before);
-    expect(warnings.mock.calls).toEqual([['Task filing failed (denied)']]);
+    expect(warnings.mock.calls).toEqual([]);
     const other=s.create({assignee:'pollock'});expect(s.ask(other).ok).toBe(false);
     expect(s.call('household.setMember',{person:'pollock',agents:'*'})).toMatchObject({ok:true});
-    expect(s.ask(other).ok).toBe(false);expect(s.ask(id)).toEqual(before);
-    expect(warnings.mock.calls).toEqual([['Task filing failed (denied)'],['Task filing failed (denied)']]);
+    expect(s.ask(other)).toMatchObject({ok:true,value:{state:'open'}});expect(s.ask(id)).toEqual(before);
+    expect(warnings.mock.calls).toEqual([]);
+    expect(s.call('tasks.reconcileAttention',{}, {kind:'service',id:'tasks'})).toMatchObject({ok:false,code:'denied'});
     expect(s.call('tasks.update',{id:other,set:{why:'Changed through owning authorization'},actor:'art',at:'2026-11-13T00:01:00Z'})).toMatchObject({ok:true,value:{result:{ok:true}}});
     expect(s.ask(other)).toMatchObject({ok:true,value:{state:'open',why:'Changed through owning authorization'}});
   } finally {warnings.mockRestore();}
@@ -209,4 +210,21 @@ it('compares already current filing without writes or receipts during access ref
   s.app.live.changed([{type:'core.access',id:'fixture'}]);
   expect(s.app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
   expect(s.app.db.prepare('SELECT * FROM attention_asks').all()).toEqual(asks);expect(changes).toEqual([]);
+});
+
+
+it('keeps active task question words and read marks behind the task project audience',async()=>{
+  const s=await setup(),id=s.create({project:'pond',agent:'pond-bot'});
+  expect(s.call('attention.markRead',{id:taskAskId(id)},member).ok).toBe(true);
+  const mark=s.app.db.prepare('SELECT id FROM attention_read_marks WHERE ask=?').get(taskAskId(id)) as {id:string};
+  expect(s.ask(id,member).ok).toBe(true);
+  expect(s.call('tasks.update',{id,set:{project:'other'},actor:'art',at:'2026-11-13T00:03:00Z'}).ok).toBe(true);
+  for(const viewer of [member,{kind:'agent' as const,id:'pond-bot'}]) {
+    expect(s.call('tasks.show',{id},viewer)).toMatchObject({ok:false,code:'denied'});
+    expect(s.ask(id,viewer)).toMatchObject({ok:false,code:'denied'});
+    expect(s.types.get('attention.ask')!.read(taskAskId(id),viewer)).toBeUndefined();
+  }
+  expect(s.call('attention.markRead',{id:taskAskId(id)},member)).toMatchObject({ok:false,code:'denied'});
+  expect(s.types.get('attention.readMark')!.read(mark.id,member)).toBeUndefined();
+  expect(s.ask(id)).toMatchObject({ok:true,value:{ask:'Ship the plan?',project:'other',agent:'pond-bot'}});
 });

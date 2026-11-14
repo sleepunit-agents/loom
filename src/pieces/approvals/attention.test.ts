@@ -80,8 +80,8 @@ it('reconciles existing new-side cards on startup without no-op receipts on reop
 });
 it('redacts withdrawn words and follows source scope moves even after resolution',async()=>{
   const s=await setup();s.seed(card({project:'pond'}));expect(s.ask(undefined,pollock).ok).toBe(true);
-  s.seed(card({state:'denied',project:'other',agent:'pond-bot'}));
-  expect(s.ask(undefined,pollock).ok).toBe(false);expect(s.ask()).toMatchObject({ok:true,value:{project:'other',agent:'pond-bot',state:'resolved',ask:'Approval no longer needs you'}});
+  s.seed(card({state:'denied',project:'other',agent:'art'}));
+  expect(s.ask(undefined,pollock).ok).toBe(false);expect(s.ask()).toMatchObject({ok:true,value:{project:'other',agent:'art',state:'resolved',ask:'Approval no longer needs you'}});
   expect(s.ask()).not.toHaveProperty('value.why');
 });
 it('reserves future approval keys and refuses reconciliation over public doors or other identities',async()=>{
@@ -114,12 +114,12 @@ it('holds colliding source identity and rolls an owning request back',async()=>{
   expect(s.ask(id)).toMatchObject({ok:true,value:{ask:'Keep me'}});
 });
 
-it('holds startup reconciliation on actual service denial, without altering owning write policy',async()=>{
+it('reconciles installed startup despite service denial without altering outside write policy',async()=>{
   const first=await setup();first.seed(card({why:'Sensitive wording'}));await first.app.close();closes.pop();
   const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
   try{
     const s=await setup(first.home,true);
-    expect(warn.mock.calls).toEqual([['Approval filing failed (denied)']]);
+    expect(warn.mock.calls).toEqual([]);
     expect(s.call('approvals.attentionPending',{}, {kind:'service',id:'approvals'})).toMatchObject({ok:false,code:'denied'});
     expect(s.call('approvals.reconcileAttention',{}, {kind:'service',id:'approvals'})).toMatchObject({ok:false,code:'denied'});
     expect(s.call('approvals.answer',{id:'a-12345678',action:'deny'}).ok).toBe(true);
@@ -148,20 +148,18 @@ it('uses fixed owning promises for an applied owner action despite conflicting s
   expect(s.ask()).toMatchObject({ok:true,value:{ask:'Count this conversation as your work from now on?',if_yes:'I count this conversation as your work from now on.',if_no:'I leave the conversation unchanged.'}});
 });
 
-it('hides stale source projections when startup reconciliation is denied after stopped source changes',async()=>{
+it('reconciles changed private sources at startup without service grants, hiding them from other members',async()=>{
   const first=await setup();first.seed(card({project:'pond'}));expect(first.ask(undefined,pollock).ok).toBe(true);
   await first.app.close();closes.pop();
   const Database=(await import('better-sqlite3')).default,db=new Database(join(first.home,'loom.db'));
   db.prepare('UPDATE approvals_approvals SET record=? WHERE id=?').run(JSON.stringify(card({member:'jonathan',project:'other',ask:'New private wording',why:'New private reason'})),'a-12345678');db.close();
   const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
   try{
-    const s=await setup(first.home,true);expect(warn.mock.calls).toEqual([['Approval filing failed (denied)']]);
-    for(const v of [owner,pollock]){
-      expect(s.ask(undefined,v).ok).toBe(false);
-      expect(s.types.get('attention.ask')!.read(approvalAskId('a-12345678'),v)).toBeUndefined();
-    }
-    expect(s.app.db.prepare('SELECT record FROM attention_asks WHERE id=?').get(approvalAskId('a-12345678'))).not.toEqual(expect.objectContaining({record:expect.stringContaining('New private')}));
-    // An authorized owning answer can reconcile even while the background service is held.
+    const s=await setup(first.home,true);expect(warn.mock.calls).toEqual([]);
+    expect(s.ask(undefined,owner)).toMatchObject({ok:true,value:{member:'jonathan',project:'other',ask:'Private approval needs you'}});
+    expect(s.ask(undefined,pollock).ok).toBe(false);
+    expect(s.types.get('attention.ask')!.read(approvalAskId('a-12345678'),pollock)).toBeUndefined();
+    // The owning answer still uses its outside caller's policy and confirmation window.
     expect((await s.app.operations.callAsync('socket',owner,'approvals.answer',{id:'a-12345678',action:'deny'},randomUUID(),true)).ok).toBe(true);
     expect(s.ask()).toMatchObject({ok:true,value:{state:'resolved',member:'jonathan',project:'other'}});
   }finally{warn.mockRestore();}
@@ -176,11 +174,11 @@ it('keeps private source words out of filing and read-mark retry results after a
   expect(receipts.length).toBeGreaterThan(0);expect(JSON.stringify(receipts)).not.toContain('Private sentinel');
   expect(JSON.stringify(s.app.db.prepare('SELECT record FROM attention_asks').all())).not.toContain('Private sentinel');
 });
-it('holds missing source filing on denied startup while the owning card remains available',async()=>{
+it('files missing source projections at startup without service grants',async()=>{
   const first=await setup();first.seed();await first.app.close();closes.pop();
   const Database=(await import('better-sqlite3')).default,db=new Database(join(first.home,'loom.db'));db.prepare('DELETE FROM attention_asks WHERE id=?').run(approvalAskId('a-12345678'));db.close();
   const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
-  try{const s=await setup(first.home,true);expect(warn.mock.calls).toEqual([['Approval filing failed (denied)']]);expect(s.ask().ok).toBe(false);expect(s.call('approvals.open',{id:'a-12345678'})).toMatchObject({ok:true,value:{open:true,mayAnswer:true}});}finally{warn.mockRestore();}
+  try{const s=await setup(first.home,true);expect(warn.mock.calls).toEqual([]);expect(s.ask()).toMatchObject({ok:true,value:{state:'open'}});expect(s.call('approvals.open',{id:'a-12345678'})).toMatchObject({ok:true,value:{open:true,mayAnswer:true}});}finally{warn.mockRestore();}
 });
 it('holds source conflicts at startup without replacing the unrelated record or hiding the owning approval',async()=>{
   const first=await setup();first.seed();await first.app.close();closes.pop();

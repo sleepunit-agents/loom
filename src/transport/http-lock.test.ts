@@ -19,8 +19,9 @@ it('recovers the same lock inode after process death', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-http-crash-'));
   const require = createRequire(import.meta.url);
   const script = join(home, 'hold.cjs');
-  writeFileSync(script, `const D=require(${JSON.stringify(require.resolve('better-sqlite3'))});const db=new D(process.argv[2]);db.exec('BEGIN EXCLUSIVE');process.send('ready');process.stdin.resume();`);
-  const child = spawn(process.execPath, [script, join(home, 'http-daemon-lock.db')], { stdio: ['pipe', 'ignore', 'inherit', 'ipc'] });
+  // Keep the native connection reachable for the child's lifetime, even after GC.
+  writeFileSync(script, `const D=require(${JSON.stringify(require.resolve('better-sqlite3'))});const db=new D(process.argv[2]);db.exec('BEGIN EXCLUSIVE');global.lockDatabase=db;setImmediate(()=>{global.gc();process.send('ready');});process.stdin.resume();`);
+  const child = spawn(process.execPath, ['--expose-gc', script, join(home, 'http-daemon-lock.db')], { stdio: ['pipe', 'ignore', 'inherit', 'ipc'] });
   try {
     await once(child, 'message');
     expect(() => acquireHttpLock(home)).toThrow(/already running/);

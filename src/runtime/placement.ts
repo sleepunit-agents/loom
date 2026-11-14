@@ -1,3 +1,4 @@
+import { currentAccountCapacity } from './account-windows.js';
 import { asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { agentBoxes, agentModels, boxes, boxAgents, boxFacts, memberAgents, modelAccounts, modelAccountBoxes } from '../core/data/schema.js';
@@ -29,7 +30,7 @@ export function selectPlacement(db: DataDatabase, input: {
   const preferences = db.select().from(agentBoxes).where(eq(agentBoxes.agent, input.agent)).orderBy(asc(agentBoxes.position), asc(agentBoxes.box)).all();
   const models = db.select().from(agentModels).where(eq(agentModels.agent, input.agent)).orderBy(asc(agentModels.position), asc(agentModels.model)).all()
     .filter(row => input.model === undefined || row.model === input.model);
-  const accounts = db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all().filter(account => account.hasRoom);
+  const accounts = db.select().from(modelAccounts).orderBy(asc(modelAccounts.id)).all().filter(account => currentAccountCapacity(db, account.id, input.now).hasRoom);
   const signedIn = db.select().from(modelAccountBoxes).all();
   for (const preference of preferences) {
     const box = db.select().from(boxes).where(eq(boxes.id, preference.box)).get();
