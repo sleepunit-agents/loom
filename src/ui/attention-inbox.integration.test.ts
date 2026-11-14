@@ -18,6 +18,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
   let serial=0;
   const raise=(input:object)=>{const result=loom.operations.call('direct',owner,'attention.raise',{agent:'art',answers:'yes-no',source:{kind:'piece',id:'fixture'},...input},`raise:${++serial}`);expect(result.ok).toBe(true);};
   raise({id:'public',ask:'Continue the Attention rebuild?',why:'The shared Inbox should show one current question in every window.',if_yes:'I build the remaining Home cards.',if_no:'I stop and keep this preview available.',refs:['t-2205','sleepunit-agents/loom#912']});
+  raise({id:'reading',ask:'Read this without answering it?'});
   raise({id:'private',member:'jonathan',ask:'Private conversation needs you'});
   raise({id:'pond',agent:'pond-bot',project:'pond',ask:'Review the shared Pond plan?'});
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
@@ -34,12 +35,28 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     };
     await signIn(a,'jonathan');
     await Promise.all([a.goto(`${loom.url}/p/inbox-preview/ask/public`),b.goto(`${loom.url}/p/inbox-preview/ask/public`)]);
+    const readingRow=b.locator('[data-split-row]').filter({hasText:'Read this without answering it?'});
+    await expect.poll(()=>readingRow.getAttribute('data-unread')).toBe('true');
+    await a.goto(`${loom.url}/p/inbox-preview/ask/reading`);
+    await expect.poll(()=>readingRow.getAttribute('data-unread')).toBe(null);
+    expect(loom.operations.call('direct',owner,'attention.get',{id:'reading'})).toMatchObject({ok:true,value:{state:'open'}});
+    await a.goto(`${loom.url}/p/inbox-preview/ask/public`);
     await a.getByRole('button',{name:'Check again',exact:true}).click();
     await b.getByRole('button',{name:'Check again',exact:true}).click();
     const yes=(p:typeof a)=>p.getByRole('button',{name:'Yes',exact:true});
     await expect.poll(()=>yes(a).isEnabled()).toBe(true);await expect.poll(()=>yes(b).isEnabled()).toBe(true);
     await a.getByRole('textbox',{name:'Or answer in your own words'}).fill('Continue after the small fix.');
     expect(await yes(a).isDisabled()).toBe(true);
+    await expect.poll(()=>b.getByRole('textbox',{name:'Or answer in your own words'}).inputValue()).toBe('Continue after the small fix.');
+    await a.reload();
+    await a.getByRole('button',{name:'Check again',exact:true}).click();
+    await expect.poll(()=>a.getByRole('textbox',{name:'Or answer in your own words'}).inputValue()).toBe('Continue after the small fix.');
+    await a.goto(`${loom.url}/p/inbox-preview/ask/private`);
+    await a.getByText('Answer this in its private conversation. Private replies stay there.').waitFor();
+    expect(await a.getByRole('textbox',{name:'Or answer in your own words'}).count()).toBe(0);
+    await a.goto(`${loom.url}/p/inbox-preview/ask/public`);
+    await a.getByRole('button',{name:'Check again',exact:true}).click();
+    await expect.poll(()=>a.getByRole('textbox',{name:'Or answer in your own words'}).inputValue()).toBe('Continue after the small fix.');
     const shots=resolve('artifacts/attention-inbox');mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
       await b.setViewportSize({width,height:900});
@@ -52,6 +69,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await expect.poll(()=>yes(b).count()).toBe(0);
     await expect.poll(()=>b.getByText(/words · jonathan/).count()).toBe(1);
     await expect.poll(()=>b.getByText('Continue after the small fix.',{exact:true}).count()).toBe(1);
+    await expect.poll(()=>a.evaluate(()=>Object.keys(localStorage).filter(key=>key.startsWith('loom:inbox:draft:') && localStorage.getItem(key)==='Continue after the small fix.').length)).toBe(0);
     expect(loom.operations.call('direct',owner,'attention.get',{id:'public'})).toMatchObject({ok:true,value:{answer:{kind:'words',text:'Continue after the small fix.',by:owner}}});
     await b.setViewportSize({width:1280,height:900});
     await b.getByRole('button',{name:/Answered/}).click();
@@ -78,4 +96,4 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     if(!fact.ok)throw Error('Missing wait');expect(fact.value).not.toHaveProperty('answer');
     await member.close();
   } finally {await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
-},60_000);
+},90_000);

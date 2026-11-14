@@ -56,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- Show live Inbox read indicators and retain member-scoped device reply drafts through navigation, reload and failed sends.
+
 - Clock links local-work requests to private chat; its browser proof now files through a real Runtime-bound body before owner review and scheduling.
 
 - Clock’s owning local-request reader now reviews explicit timing and schedules saved private words with one-time or existing every-time authority; Runtime delivery remains held.
