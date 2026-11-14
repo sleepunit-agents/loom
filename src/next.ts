@@ -1,4 +1,7 @@
 import {startSecretWorkers, type SecretWorkersConfig} from './secret-worker-startup.js';
+import { replyAnnouncements } from './pieces/comms/role.js';
+import { installNotificationAnnouncements } from './core/signin/notification-announcements.js';
+import { attentionAnnouncements } from './pieces/attention/role.js';
 import { installNotificationSending, type NotificationSendOptions } from './core/signin/notification-send.js';
 import { installAsyncSecretValuesFromFile, type SecretRetryKeyFiles } from './pieces/secrets/retry-key.js';
 import type { AsyncSecretMutations } from './pieces/secrets/async-values.js';
@@ -299,6 +302,8 @@ export async function installNext(app: Foundation, options: NextOptions) {
     runtimeClosers.set(app,async()=>{await conversations.close();await comms.close();});
     app.onClose(()=>{void conversations.close();void comms.close();});
   }
+  const announcements=installNotificationAnnouncements(app,effects,member=>[...attentionAnnouncements(app.operations,member),...replyAnnouncements(app.operations,member)],options.notifications);
+  notificationClosers.set(app,async()=>{await announcements.close();await notifications.close();});
   if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects,
     {valid:id=>conversations.validInput(id)||bridgeBodies.valid(id)||clockBodies.valid(id),issue:(agent,job)=>signin(app).issueBody(agent,job,runtimeStore(app.db).read('job',job)?.service)});
   if (options.secretAuthority && !secretAuthorities.has(app)) {

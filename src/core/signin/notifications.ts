@@ -48,6 +48,19 @@ export function notificationBrowserAllowed(s:Signin,v:Viewer,sharing:Sharing):bo
   try{s.notificationBrowser(v);return true;}catch{return false;}
 }
 
+/** Exact current delivery binding; recompute after every asynchronous boundary. */
+export function notificationTarget(s:Signin,sharing:Sharing,member:string,ref:string) {
+  if(!mayAct({kind:'member',id:member},{member},sharing))return;
+  const f=s.sessions.read();
+  const hit=Object.entries(f.push?.subs??{}).find(([ep,d])=>deviceRef(ep)===ref&&notificationMember(s,d,f)===member);
+  if(!hit||f.push?.removed?.includes(hash(hit[0])))return;
+  const parsed=subscription.safeParse(hit[1].sub);
+  if(!parsed.success||parsed.data.endpoint!==hit[0]||!f.push?.vapid)return;
+  const {publicKey,privateKey}=f.push.vapid;
+  if(!publicKey||!privateKey)return;
+  return {sub:parsed.data,vapid:{publicKey,privateKey},binding:hash(JSON.stringify([member,hit[0],hit[1],f.push.vapid]))};
+}
+
 export function installNotifications(app:Foundation) {
   const s=signin(app),sharing=new SharingDatabase(app.db,'');
   const allowed=(v:Viewer)=>mayAct(v,{member:v.id},sharing.sharing());

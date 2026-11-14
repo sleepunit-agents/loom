@@ -119,3 +119,9 @@ export interface AttentionSources {
 
 /** Offline source importers share the caller's transaction; no registry/authentication is installed. */
 export function prepareAttentionImport(db: Db): void { migrate(db, 'attention', schema); }
+
+/** Metadata-only current Inbox candidates for trusted daemon composition. */
+export interface AttentionAnnouncement { key:string; url:string }
+const announcementReaders=new WeakMap<Operations,(member:string)=>AttentionAnnouncement[]>();
+export function registerAttentionAnnouncements(operations:Operations,read:(member:string)=>AttentionAnnouncement[]) { announcementReaders.set(operations,read); }
+export function attentionAnnouncements(operations:Operations,member:string):AttentionAnnouncement[] { return announcementReaders.get(operations)?.(member)??[]; }

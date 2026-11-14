@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto';
 import { registerBuiltinService } from '../../core/services.js';
 import { operation } from './commands.js';
 import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import { approvalFiling } from './approval-filing.js';
-import { taskAskId, registerPrivateQuestions, registerPrivateReplies, type Ask, type AgentStatus, type AttentionSources, type TaskAskFiling } from './role.js';
+import { registerAttentionAnnouncements, taskAskId, registerPrivateQuestions, registerPrivateReplies, type Ask, type AgentStatus, type AttentionSources, type TaskAskFiling } from './role.js';
 import { installWaitChecks, type AttentionWaits } from './waits.js';
 import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
@@ -69,6 +70,14 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       return JSON.stringify(stable(old))===JSON.stringify(stable(record)) ? {ok:true,value:{id:old.id}} : failure('conflict','Private question identity changed');
     }
     saveAsk(record);ctx.changed('attention.ask',record.id);return {ok:true,value:{id:record.id}};
+  });
+  registerAttentionAnnouncements(operations, member => {
+    const viewer={kind:'member' as const,id:member},access=sharing();
+    return (db.prepare('SELECT record FROM attention_asks ORDER BY id').all() as {record:string}[]).flatMap(row=>{
+      const ask=JSON.parse(row.record) as Ask;
+      if(ask.state!=='open'||!sourceCurrent(ask)||!maySee(viewer,scoped('attention.ask',ask),access))return [];
+      return [{key:`attention:${announcementKey(ask)}`,url:`/p/inbox-preview/ask/${encodeURIComponent(ask.id)}`}];
+    });
   });
   registerPrivateReplies(operations, (ctx, raw) => {
     if (ctx.db !== db || !db.inTransaction) return failure('unavailable', 'Private reply needs its enclosing transaction');
@@ -263,4 +272,8 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   installedSources.set(operations, role);
   return role;
 
+}
+
+function announcementKey(ask:Ask):string {
+  return createHash('sha256').update(JSON.stringify([ask.id,ask.ask,ask.href??''])).digest('hex');
 }
