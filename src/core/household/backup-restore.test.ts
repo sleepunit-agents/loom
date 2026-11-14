@@ -145,6 +145,27 @@ it('blocks the mkdir-to-marker failure window, including an alias, and releases 
   }
   expect(fs.readdirSync(out.home)).toEqual([]);
 });
+it.each(['symlink', 'directory'] as const)('refuses a %s blocker outside the reserved namespace before any startup side effects', async kind => {
+  const out = destination(), home = join(out.parent, 'ordinary-home'); mkdirSync(home, { mode: 0o700 });
+  if (kind === 'directory') mkdirSync(join(home, restorePending));
+  else fs.symlinkSync('missing-target', join(home, restorePending));
+  expect(() => openDb(home)).toThrow('Household restore is incomplete');
+  expect(() => prepareOperatorHome(home)).toThrow('Household restore is incomplete');
+  expect(() => readContinuityHousehold(home)).toThrow('Household restore is incomplete');
+  await expect(startLoom({ home, next: true, clock: new FakeClock() })).rejects.toThrow('Household restore is incomplete');
+  expect(fs.readdirSync(home)).toEqual([restorePending]);
+});
+it('continues closing every pinned directory if one directory close fails', async () => {
+  const f = await fixture(), out = destination(), open = fs.openSync, close = fs.closeSync;
+  const held = new Set<number>(); let failed = false;
+  vi.spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => { const fd = open(path, flags, mode); held.add(fd); return fd; });
+  vi.spyOn(fs, 'closeSync').mockImplementation(fd => {
+    const directory = fs.fstatSync(fd).isDirectory(); close(fd); held.delete(fd);
+    if (directory && !failed) { failed = true; throw Error('Directory close failed'); }
+  });
+  await expect(stageHouseholdRestore(f.ciphertext, f.owner, out.home)).rejects.toThrow('Household restore staging failed');
+  expect(failed).toBe(true); expect(held.size).toBe(0);
+});
 it.each(['file', 'symlink'] as const)('refuses an injected %s collision immediately before a payload open', async kind => {
   const f = await fixture(), out = destination(), open = fs.openSync;
   const target = join(out.parent, 'outside'); writeFileSync(target, 'KEEP');
