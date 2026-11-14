@@ -1049,6 +1049,8 @@ Every present entry is validated before deciding whether it can be projected.
 A present null/non-object flags map refuses; invalid numeric lexemes refuse
 before serialization can turn their internal NaN marker into a nullable field,
 including any schema-recognized channel fields present in an accepted flag entry.
+Thread fields are validated before discarding their local permission flags for
+parent inheritance.
 
 The new route is global; accepted flags were per agent. If a non-default flag has
 any silent part, the importer conservatively blocks the entire channel and its

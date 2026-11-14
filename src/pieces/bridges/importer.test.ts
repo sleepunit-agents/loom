@@ -280,3 +280,19 @@ for(const field of ['name','primary','parent'])it(`validates recognized ${field}
  const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',flags:{'300':{[field]:1.5}}}],['channels','mark',{bot:'200'}]]);
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(`shuttle.db at $["channels"]["art"]["flags"]["300"]["${field}"]`);
 });
+
+for(const [field,value]of [['peer','PRIVATE'],['pair',1.5],['guest_venue','PRIVATE'],['readers',false]] as const)it(`validates inherited thread ${field} before discarding it`,()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',answers:{'300':'work'},threads:{'500':{parent:'300',primary:'art',[field]:value}}}]]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(`shuttle.db at $["channels"]["art"]["threads"]["500"]["${field}"]`);
+});
+it('sparse import blocks supplied default and peer routes for enabled channels and threads',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',answers:{'300':'work'},flags:{'300':{peer:true}},threads:{'500':{parent:'300',primary:'art'}}}],['channels','mark',{bot:'200'}]]);
+ const result=readBridgeImport(f.sources,f.options,h,f.open),venue={...result.expected.venues[0],enabled:true};
+ const peer={...venue,id:'peer',agent:'mark',bot:'200'};
+ for(const channel of ['300','500']){
+  const route={id:'test',platform:'discord' as const,workspace:'789',channel,primary:'art',peer:true,guest:false,readers:[],notes:[]};
+  const message={id:'1',channel,...(channel==='500'?{parent:'300'}:{}),user:'123',text:'hello',mentions:[],bot:false,at:'2026-01-01T00:00:00.000Z'};
+  expect(addressed(venue,message,route,[venue,peer])).toBe(false);
+  expect(addressed(venue,{...message,user:'200',bot:true,mentions:['100']},route,[venue,peer])).toBe(false);
+ }
+});

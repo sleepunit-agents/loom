@@ -31,8 +31,15 @@ const checkSourceNumbers=(value:unknown,path:PropertyKey[],sourcePath:(path:Prop
   if(value&&typeof value==='object')for(const [key,child]of Object.entries(value))checkSourceNumbers(child,[...path,Array.isArray(value)?Number(key):key],sourcePath);
 };
 const empty=():LegacyBridgeInventory=>({checksum:'',sources:[],instances:[],settings:[],accounts:[],routes:[]});
+type DroppedFlag={agent:string;channel:string;path:PropertyKey[]};
+/** Validate before any serialization or removal of inherited thread fields. */
+function validateChannelEntry(raw:Record<string,unknown>,path:PropertyKey[]):void {
+  for(const key of ['name','primary','parent','peer','pair','guest_venue','readers'])checkSourceNumbers(raw[key],[...path,key]);
+  try{projectBridgeDocument(empty(),'entry','routes',JSON.stringify({channels:{entry:raw}}));}
+  catch(error){if(error instanceof BridgeSourceError)throw new BridgeSourceError('shuttle-store',[...path,...error.path.slice(2)]);throw error;}
+}
 /** Resolve the pinned shuttle routes_for/assemble contract, refusing lossy conflicts. */
-function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|undefined,parts:Map<string,string>, dropped:{agent:string;channel:string;path:PropertyKey[]}[]):((result:LegacyBridgeInventory)=>void)|undefined {
+function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|undefined,parts:Map<string,string>, dropped:DroppedFlag[]):((result:LegacyBridgeInventory)=>void)|undefined {
   const household=get('routes','household');
   if(household===undefined||!parts.has(agent))return;
   const h=parse(household,['routes','household']), own=parse(parts.get(agent)!,['channels',agent]);
@@ -61,7 +68,9 @@ function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|
     const p=parse(raw,['channels',a]);if(p.bot!=null&&p.bot!==''){bots[a]=p.bot;origin(['bots',a],['channels',a,'bot']);}if(p.bot_role!=null&&p.bot_role!==''){roles[a]=p.bot_role;origin(['bot_roles',a],['channels',a,'bot_role']);}
     for(const cid of Object.keys(at(p,'answers',['channels',a]))){claims.set(cid,[...(claims.get(cid)??[]),a]);origin(['channels',cid,'primary'],['channels',a,'answers',cid]);}
     for(const [tid,rawThread]of Object.entries(at(p,'threads',['channels',a]))){
-      const t=Object.fromEntries(Object.entries(sourceObject(rawThread,['channels',a,'threads',tid])).filter(([k])=>!['peer','pair','guest_venue','readers'].includes(k)));
+      const raw=sourceObject(rawThread,['channels',a,'threads',tid]);
+      validateChannelEntry(raw,['channels',a,'threads',tid]);
+      const t=Object.fromEntries(Object.entries(raw).filter(([k])=>!['peer','pair','guest_venue','readers'].includes(k)));
       if(Object.hasOwn(threads,tid)&&canonical(threads[tid])!==canonical(t))throw Error();threads[tid]=t;origin(['threads',tid],['channels',a,'threads',tid]);
     }
   }
@@ -75,10 +84,7 @@ function acceptedRoutes(agent:string,get:(collection:string,key:string)=>string|
   for(const p of saved)for(const [cid,value]of Object.entries(Object.hasOwn(p.doc,'flags')?sourceObject(p.doc.flags,['channels',p.agent,'flags']):{})){
     const path=['channels',p.agent,'flags',cid];
     const raw=sourceObject(value,path);
-    for(const key of ['name','primary','parent',...flagKeys])checkSourceNumbers(raw[key],[...path,key]);
-    // Validate even a rule that will be dropped. Diagnostics retain its origin.
-    try{projectBridgeDocument(empty(),'flags','routes',JSON.stringify({channels:{[cid]:raw}}));}
-    catch(error){if(error instanceof BridgeSourceError)throw new BridgeSourceError('shuttle-store',[...path,...error.path.slice(2)]);throw error;}
+    validateChannelEntry(raw,path);
     const flags={peer:raw.peer??false,pair:raw.pair??null,guest_venue:raw.guest_venue??false,readers:raw.readers??[]} as typeof defaults;
     entries.set(cid,[...(entries.get(cid)??[]),{agent:p.agent,flags}]);
     channels[cid]??={primary:null};
@@ -112,7 +118,7 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     const byName=new Map(sources.files.map(f=>[f.name,f]));
     const get=(kind:'shuttle'|'runtime',collection:string,key:string)=>stores.stores.find(s=>s.kind===kind)?.documents.find(d=>d.collection===collection&&d.key===key)?.doc;
     const parts=new Map((stores.stores.find(s=>s.kind==='shuttle')?.documents??[]).filter(d=>d.collection==='channels').map(d=>[d.key,d.doc]));
-    const dropped:{agent:string;channel:string;path:PropertyKey[]}[]=[];
+    const dropped:DroppedFlag[]=[];
     const effective=empty(),used=new Set<string>(),agents=new Set<string>(),routeOwners=new Map<string,string>(),peopleResolved=new Set<string>();
     const resolvePeople=(agent:string,fallback?:string)=>{
       if(peopleResolved.has(agent))return;
