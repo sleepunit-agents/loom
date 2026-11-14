@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { startLoom } from '../../foundation.js';
 import { fixture } from '../../fixture.js';
 import { FakeClock, failure, type Viewer } from '../../core/index.js';
+import { HouseholdDatabase } from '../../core/household/document.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
 import { installAttentionMaintenance } from './daemon.js';
 const cleanups: (() => Promise<void>)[] = [];
@@ -29,7 +30,7 @@ async function setup() {
   };
   const read = (id: string) => call('attention.get', { id });
   const close = () => expect(call('tasks.close', { id: 't-1', actor: 'jonathan', at: '2026-11-13T12:00:00Z' })).toMatchObject({ value: { result: { ok: true } } });
-  return { app, clock, grants, call, raise, read, close };
+  return { app, clock, grants, call, raise, read, close, home };
 }
 it('resolves public task waits without a page, preserves answers and leaves private/missing waits open', async () => {
   const { app, clock, call, raise, read, close } = await setup();
@@ -129,14 +130,15 @@ it('stops inventory work while empty, resumes on a new ask and stops its observe
   await app.close();
 });
 
-it.each([10, 1000])('checks %i task waits with a constant number of operation calls, including terminal waits', async count => {
-  const { app, clock } = await setup();
+it.each([10, 1000].flatMap(count => ['closed', 'open', 'answered'].map(state => [count, state] as const)))('checks %i %s task waits with a constant number of operation calls', async (count, state) => {
+  const { app, clock, home } = await setup();
+  new HouseholdDatabase(app.db).change(home, raw => { raw.owner = 'jonathan'; });
   const putTask = app.db.prepare('INSERT INTO tasks_tasks (ord,id,record,changed_at) VALUES (?,?,?,?)');
   const putAsk = app.db.prepare('INSERT INTO attention_asks VALUES (?,?)');
   app.db.transaction(() => {
     for (let n = 0; n < count; n++) {
       const id = `t-batch-${n}`;
-      putTask.run(100 + n, id, JSON.stringify({ id, status: 'closed', comments: [] }), clock.now());
+      putTask.run(100 + n, id, JSON.stringify({ id, status: state === 'closed' ? 'closed' : 'open', comments: state === 'answered' ? [{ actor: 'jonathan', at: new Date(clock.now()).toISOString(), text: 'Yes, to: Check?' }] : [] }), clock.now());
       putAsk.run(`batch-${n}`, JSON.stringify({ id: `batch-${n}`, agent: 'art', ask: 'Check?', source: { kind: 'conversation', id: 'cv-fixture' }, waits_on: { task: id }, state: 'open', createdAt: clock.now(), changedAt: clock.now() }));
     }
   })();
@@ -147,8 +149,8 @@ it.each([10, 1000])('checks %i task waits with a constant number of operation ca
   expect(calls.mock.calls.find(args => args[2] === 'tasks.readMany')?.[1]).toEqual(service);
   expect(names).not.toContain('tasks.show');
   // Retention, sweep, one Tasks batch, then the empty follow-up woken by live changes.
-  expect(names).toEqual(['attention.retain', 'attention.sweepWaits', 'tasks.readMany', 'attention.sweepWaits']);
-  expect((app.db.prepare("SELECT count(*) AS n FROM attention_asks WHERE json_extract(record, '$.state')='resolved'").get() as { n: number }).n).toBe(count);
+  expect(names).toEqual(['attention.retain', 'attention.sweepWaits', 'tasks.readMany', ...(state === 'open' ? [] : ['attention.sweepWaits'])]);
+  expect((app.db.prepare("SELECT count(*) AS n FROM attention_asks WHERE json_extract(record, '$.state')='resolved'").get() as { n: number }).n).toBe(state === 'open' ? 0 : count);
 });
 
 it('keeps task batches under the original viewer and does not infer missing or hidden tasks are closed', async () => {
