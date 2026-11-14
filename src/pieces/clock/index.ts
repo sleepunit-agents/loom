@@ -1,6 +1,5 @@
 import { saveLocalReceipt } from './local-receipt.js';
 import { filing } from './authorship.js';
-import { mayFilePrivateWork } from '../../policy.js';
 import type { ClockProvenanceReader } from '../runtime/role.js';
 import { installLocalWindow } from './local-window.js';
 import { installLocalPublic, localPublicPolicy } from './local-public.js';
@@ -13,7 +12,7 @@ import { command, localCommandInput, oneOffCommandInput } from './binding.js';
 import { registerBuiltinService } from '../../core/services.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
+import { migrate, operation, OperationError, RecoveredWrite, maySee, mayAct, mayCreate, mayFilePrivateWork, type Db, type Operations, type Live, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import { wakes, schedules, wake, schedule, saveWake, saveSchedule, event, paused, active, type Wake, type Work, type Schedule } from './store.js';
 import { parseAt, parseIn, nextOccurrence, timesOf, daysOf } from './time.js';
