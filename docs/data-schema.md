@@ -24,7 +24,8 @@ Nothing calls this initializer on an installed home yet.
 - Times are UTC ISO-8601 text; durations and usage ratios use real numbers.
 - SQL NULL means an optional value is absent. A household task's owner is NULL;
   its required `ownerKind` is `household`. Polymorphic references stay named
-  columns rather than pretending a foreign key can target two tables.
+  columns. Declared polymorphic references emit SQLite triggers that enforce both
+  child writes and parent deletes/key updates.
 - Join tables have natural composite keys. Settings tables with one household
   row have a `singleton` key constrained to 1. A household-wide approval rule
   uses the empty person string, so the natural rule key is never nullable.
@@ -38,6 +39,8 @@ Nothing calls this initializer on an installed home yet.
   No secret value is stored in the schema or its write journal.
 - Measuring's local retention defaults to 90 days, bounded to 1–3650, matching
   the existing Measuring module. Measuring is off by default.
+- Backups retain seven copies by default, at 03:00 UTC until the household sets
+  its timezone. Inbox settle time defaults to five seconds and dim to one day.
 
 ## Query library checks
 

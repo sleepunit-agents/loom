@@ -5,6 +5,7 @@ CREATE TABLE `members` (
 	`full_owner` integer DEFAULT false NOT NULL,
 	`position` integer DEFAULT 0 NOT NULL,
 	`joined_at` text NOT NULL,
+	CONSTRAINT "members_joined_at_utc" CHECK("members"."joined_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "members"."joined_at") = "members"."joined_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "members"."joined_at") = "members"."joined_at", 0)),
 	CONSTRAINT "members_role_choice" CHECK("members"."role" in ('owner', 'member')),
 	CONSTRAINT "members_full_owner_boolean" CHECK("members"."full_owner" in (0, 1)),
 	CONSTRAINT "members_full_owner_role" CHECK(not "members"."full_owner" or "members"."role" = 'owner')
@@ -20,6 +21,8 @@ CREATE TABLE `agents` (
 	`face_shape` text NOT NULL,
 	`face_eyes` text NOT NULL,
 	`sprite_version` text,
+	CONSTRAINT "agents_about_asked_at_utc" CHECK("agents"."about_asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "agents"."about_asked_at") = "agents"."about_asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "agents"."about_asked_at") = "agents"."about_asked_at", 0)),
+	CONSTRAINT "agents_about_length" CHECK(length("agents"."about") <= 600),
 	CONSTRAINT "agents_face_shape_choice" CHECK("agents"."face_shape" in ('pebble', 'trefoil', 'clover', 'drop')),
 	CONSTRAINT "agents_face_eyes_choice" CHECK("agents"."face_eyes" in ('dot', 'oval'))
 );
@@ -112,6 +115,7 @@ CREATE TABLE `member_preferences` (
 	`contrast` text NOT NULL,
 	`changed_at` text NOT NULL,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "member_preferences_changed_at_utc" CHECK("member_preferences"."changed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "member_preferences"."changed_at") = "member_preferences"."changed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "member_preferences"."changed_at") = "member_preferences"."changed_at", 0)),
 	CONSTRAINT "member_preferences_look_choice" CHECK("member_preferences"."look" in ('neon', 'lowlight', 'daylight')),
 	CONSTRAINT "member_preferences_ground_choice" CHECK("member_preferences"."ground" in ('depth', 'contours', 'wash')),
 	CONSTRAINT "member_preferences_sound_boolean" CHECK("member_preferences"."sound" in (0, 1)),
@@ -142,6 +146,11 @@ CREATE TABLE `tokens` (
 	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`box`) REFERENCES `boxes`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`made_from`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "tokens_created_at_utc" CHECK("tokens"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "tokens"."created_at") = "tokens"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "tokens"."created_at") = "tokens"."created_at", 0)),
+	CONSTRAINT "tokens_expires_at_utc" CHECK("tokens"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "tokens"."expires_at") = "tokens"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "tokens"."expires_at") = "tokens"."expires_at", 0)),
+	CONSTRAINT "tokens_revoked_at_utc" CHECK("tokens"."revoked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "tokens"."revoked_at") = "tokens"."revoked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "tokens"."revoked_at") = "tokens"."revoked_at", 0)),
+	CONSTRAINT "tokens_last_used_at_utc" CHECK("tokens"."last_used_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "tokens"."last_used_at") = "tokens"."last_used_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "tokens"."last_used_at") = "tokens"."last_used_at", 0)),
+	CONSTRAINT "tokens_identity" CHECK(("tokens"."kind" = 'owner' and "tokens"."member" is not null and "tokens"."agent" is null and "tokens"."box" is null and "tokens"."job" is null) or ("tokens"."kind" = 'agent' and "tokens"."agent" is not null and "tokens"."member" is null and "tokens"."box" is null) or ("tokens"."kind" = 'runner' and "tokens"."box" is not null and "tokens"."member" is null and "tokens"."agent" is null and "tokens"."job" is null)),
 	CONSTRAINT "tokens_kind_choice" CHECK("tokens"."kind" in ('owner', 'agent', 'runner'))
 );
 
@@ -157,6 +166,9 @@ CREATE TABLE `sessions` (
 	`seen_at` text NOT NULL,
 	`proved_at` text NOT NULL,
 	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "sessions_issued_at_utc" CHECK("sessions"."issued_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "sessions"."issued_at") = "sessions"."issued_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "sessions"."issued_at") = "sessions"."issued_at", 0)),
+	CONSTRAINT "sessions_seen_at_utc" CHECK("sessions"."seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "sessions"."seen_at") = "sessions"."seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "sessions"."seen_at") = "sessions"."seen_at", 0)),
+	CONSTRAINT "sessions_proved_at_utc" CHECK("sessions"."proved_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "sessions"."proved_at") = "sessions"."proved_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "sessions"."proved_at") = "sessions"."proved_at", 0)),
 	CONSTRAINT "sessions_via_choice" CHECK("sessions"."via" in ('link', 'passkey', 'token')),
 	CONSTRAINT "sessions_is_agent_boolean" CHECK("sessions"."is_agent" in (0, 1))
 );
@@ -166,7 +178,8 @@ CREATE TABLE `signin_links` (
 	`token` text NOT NULL,
 	`label` text NOT NULL,
 	`expires_at` text NOT NULL,
-	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "signin_links_expires_at_utc" CHECK("signin_links"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "signin_links"."expires_at") = "signin_links"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "signin_links"."expires_at") = "signin_links"."expires_at", 0))
 );
 
 CREATE TABLE `passkeys` (
@@ -177,7 +190,9 @@ CREATE TABLE `passkeys` (
 	`counter` integer NOT NULL,
 	`created_at` text NOT NULL,
 	`last_used_at` text,
-	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`token`) REFERENCES `tokens`(`fingerprint`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "passkeys_created_at_utc" CHECK("passkeys"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "passkeys"."created_at") = "passkeys"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "passkeys"."created_at") = "passkeys"."created_at", 0)),
+	CONSTRAINT "passkeys_last_used_at_utc" CHECK("passkeys"."last_used_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "passkeys"."last_used_at") = "passkeys"."last_used_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "passkeys"."last_used_at") = "passkeys"."last_used_at", 0))
 );
 
 CREATE TABLE `notification_devices` (
@@ -189,7 +204,9 @@ CREATE TABLE `notification_devices` (
 	`created_at` text NOT NULL,
 	`seen_at` text NOT NULL,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`session`) REFERENCES `sessions`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`session`) REFERENCES `sessions`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "notification_devices_created_at_utc" CHECK("notification_devices"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_devices"."created_at") = "notification_devices"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_devices"."created_at") = "notification_devices"."created_at", 0)),
+	CONSTRAINT "notification_devices_seen_at_utc" CHECK("notification_devices"."seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "notification_devices"."seen_at") = "notification_devices"."seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "notification_devices"."seen_at") = "notification_devices"."seen_at", 0))
 );
 
 CREATE TABLE `tasks` (
@@ -226,6 +243,10 @@ CREATE TABLE `tasks` (
 	`changed_at` text NOT NULL,
 	`position` integer DEFAULT 0 NOT NULL,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "tasks_created_at_utc" CHECK("tasks"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "tasks"."created_at") = "tasks"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "tasks"."created_at") = "tasks"."created_at", 0)),
+	CONSTRAINT "tasks_started_at_utc" CHECK("tasks"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "tasks"."started_at") = "tasks"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "tasks"."started_at") = "tasks"."started_at", 0)),
+	CONSTRAINT "tasks_closed_at_utc" CHECK("tasks"."closed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "tasks"."closed_at") = "tasks"."closed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "tasks"."closed_at") = "tasks"."closed_at", 0)),
+	CONSTRAINT "tasks_changed_at_utc" CHECK("tasks"."changed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "tasks"."changed_at") = "tasks"."changed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "tasks"."changed_at") = "tasks"."changed_at", 0)),
 	CONSTRAINT "tasks_type_choice" CHECK("tasks"."type" in ('task', 'bug', 'feature', 'epic')),
 	CONSTRAINT "tasks_status_choice" CHECK("tasks"."status" in ('open', 'in_progress', 'closed')),
 	CONSTRAINT "tasks_owner_kind_choice" CHECK("tasks"."owner_kind" in ('member', 'agent', 'household')),
@@ -263,6 +284,7 @@ CREATE TABLE `task_comments` (
 	`text` text NOT NULL,
 	PRIMARY KEY(`task`, `seq`),
 	FOREIGN KEY (`task`) REFERENCES `tasks`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "task_comments_at_utc" CHECK("task_comments"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "task_comments"."at") = "task_comments"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "task_comments"."at") = "task_comments"."at", 0)),
 	CONSTRAINT "task_comments_actor_kind_choice" CHECK("task_comments"."actor_kind" in ('member', 'agent'))
 );
 
@@ -282,6 +304,8 @@ CREATE TABLE `conversations` (
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "conversations_started_at_utc" CHECK("conversations"."started_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversations"."started_at") = "conversations"."started_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversations"."started_at") = "conversations"."started_at", 0)),
+	CONSTRAINT "conversations_last_at_utc" CHECK("conversations"."last_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "conversations"."last_at") = "conversations"."last_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "conversations"."last_at") = "conversations"."last_at", 0)),
 	CONSTRAINT "conversations_venue_choice" CHECK("conversations"."venue" in ('loom', 'discord', 'slack', 'wake', 'handoff'))
 );
 
@@ -311,6 +335,7 @@ CREATE TABLE `turns` (
 	`latency_ms` real,
 	PRIMARY KEY(`conversation`, `seq`),
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "turns_at_utc" CHECK("turns"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "turns"."at") = "turns"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "turns"."at") = "turns"."at", 0)),
 	CONSTRAINT "turns_kind_choice" CHECK("turns"."kind" in ('message', 'reply', 'action', 'wake', 'note', 'refused')),
 	CONSTRAINT "turns_from_kind_choice" CHECK("turns"."from_kind" in ('person', 'agent', 'schedule', 'unknown')),
 	CONSTRAINT "turns_outcome_choice" CHECK("turns"."outcome" in ('answered', 'progressed', 'deferred', 'failed', 'none'))
@@ -325,7 +350,9 @@ CREATE TABLE `digests` (
 	`summary` text NOT NULL,
 	`inbox_item` text,
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`inbox_item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`inbox_item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "digests_summary_length" CHECK(length("digests"."summary") <= 600),
+	CONSTRAINT "digests_at_utc" CHECK("digests"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "digests"."at") = "digests"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "digests"."at") = "digests"."at", 0))
 );
 
 CREATE TABLE `digest_items` (
@@ -343,6 +370,7 @@ CREATE TABLE `agent_status` (
 	`work` text NOT NULL,
 	`changed_at` text NOT NULL,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "agent_status_changed_at_utc" CHECK("agent_status"."changed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "agent_status"."changed_at") = "agent_status"."changed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "agent_status"."changed_at") = "agent_status"."changed_at", 0)),
 	CONSTRAINT "agent_status_state_choice" CHECK("agent_status"."state" in ('working', 'waiting', 'idle', 'offline'))
 );
 
@@ -412,6 +440,14 @@ CREATE TABLE `inbox` (
 	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`answered_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`thread`,`message_seq`) REFERENCES `messages`(`thread`,`seq`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "inbox_at_utc" CHECK("inbox"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."at") = "inbox"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."at") = "inbox"."at", 0)),
+	CONSTRAINT "inbox_quiet_until_utc" CHECK("inbox"."quiet_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."quiet_until") = "inbox"."quiet_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."quiet_until") = "inbox"."quiet_until", 0)),
+	CONSTRAINT "inbox_taken_at_utc" CHECK("inbox"."taken_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."taken_at") = "inbox"."taken_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."taken_at") = "inbox"."taken_at", 0)),
+	CONSTRAINT "inbox_done_at_utc" CHECK("inbox"."done_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."done_at") = "inbox"."done_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."done_at") = "inbox"."done_at", 0)),
+	CONSTRAINT "inbox_answered_at_utc" CHECK("inbox"."answered_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."answered_at") = "inbox"."answered_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."answered_at") = "inbox"."answered_at", 0)),
+	CONSTRAINT "inbox_changed_at_utc" CHECK("inbox"."changed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox"."changed_at") = "inbox"."changed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox"."changed_at") = "inbox"."changed_at", 0)),
+	CONSTRAINT "inbox_message_pair" CHECK("inbox"."message_seq" is null or "inbox"."thread" is not null),
 	CONSTRAINT "inbox_to_kind_choice" CHECK("inbox"."to_kind" in ('person', 'agent')),
 	CONSTRAINT "inbox_source_choice" CHECK("inbox"."source" in ('thread', 'discord', 'slack', 'trigger', 'handoff', 'answer', 'task', 'approval', 'secret-request', 'notice')),
 	CONSTRAINT "inbox_from_kind_choice" CHECK("inbox"."from_kind" in ('person', 'agent', 'schedule', 'unknown')),
@@ -438,7 +474,8 @@ CREATE TABLE `inbox_reads` (
 	`read_at` text NOT NULL,
 	PRIMARY KEY(`item`, `member`),
 	FOREIGN KEY (`item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "inbox_reads_read_at_utc" CHECK("inbox_reads"."read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "inbox_reads"."read_at") = "inbox_reads"."read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "inbox_reads"."read_at") = "inbox_reads"."read_at", 0))
 );
 
 CREATE TABLE `action_results` (
@@ -450,6 +487,8 @@ CREATE TABLE `action_results` (
 	`page` text NOT NULL,
 	`read_at` text,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "action_results_at_utc" CHECK("action_results"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "action_results"."at") = "action_results"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "action_results"."at") = "action_results"."at", 0)),
+	CONSTRAINT "action_results_read_at_utc" CHECK("action_results"."read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "action_results"."read_at") = "action_results"."read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "action_results"."read_at") = "action_results"."read_at", 0)),
 	CONSTRAINT "action_results_ok_boolean" CHECK("action_results"."ok" in (0, 1))
 );
 
@@ -468,7 +507,13 @@ CREATE TABLE `threads` (
 	`working_beat` text,
 	`stop_requested` integer NOT NULL,
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "threads_archived_at_utc" CHECK("threads"."archived_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "threads"."archived_at") = "threads"."archived_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "threads"."archived_at") = "threads"."archived_at", 0)),
+	CONSTRAINT "threads_opened_at_utc" CHECK("threads"."opened_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "threads"."opened_at") = "threads"."opened_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "threads"."opened_at") = "threads"."opened_at", 0)),
+	CONSTRAINT "threads_last_at_utc" CHECK("threads"."last_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "threads"."last_at") = "threads"."last_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "threads"."last_at") = "threads"."last_at", 0)),
+	CONSTRAINT "threads_working_since_utc" CHECK("threads"."working_since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "threads"."working_since") = "threads"."working_since" or strftime('%Y-%m-%dT%H:%M:%fZ', "threads"."working_since") = "threads"."working_since", 0)),
+	CONSTRAINT "threads_working_beat_utc" CHECK("threads"."working_beat" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "threads"."working_beat") = "threads"."working_beat" or strftime('%Y-%m-%dT%H:%M:%fZ', "threads"."working_beat") = "threads"."working_beat", 0)),
 	CONSTRAINT "threads_titled_by_choice" CHECK("threads"."titled_by" in ('member', 'agent')),
+	CONSTRAINT "threads_title_length" CHECK(length("threads"."title") <= 60),
 	CONSTRAINT "threads_pinned_boolean" CHECK("threads"."pinned" in (0, 1)),
 	CONSTRAINT "threads_working_boolean" CHECK("threads"."working" in (0, 1)),
 	CONSTRAINT "threads_stop_requested_boolean" CHECK("threads"."stop_requested" in (0, 1))
@@ -493,6 +538,8 @@ CREATE TABLE `messages` (
 	PRIMARY KEY(`thread`, `seq`),
 	FOREIGN KEY (`thread`) REFERENCES `threads`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`inbox_item`) REFERENCES `inbox`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "messages_at_utc" CHECK("messages"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "messages"."at") = "messages"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "messages"."at") = "messages"."at", 0)),
+	CONSTRAINT "messages_keep_until_utc" CHECK("messages"."keep_until" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "messages"."keep_until") = "messages"."keep_until" or strftime('%Y-%m-%dT%H:%M:%fZ', "messages"."keep_until") = "messages"."keep_until", 0)),
 	CONSTRAINT "messages_kind_choice" CHECK("messages"."kind" in ('message', 'reply', 'card', 'ask', 'answer', 'notice')),
 	CONSTRAINT "messages_delivery_choice" CHECK("messages"."delivery" in ('sending', 'held', 'failed', 'delivered')),
 	CONSTRAINT "messages_verdict_choice" CHECK("messages"."verdict" in ('yes', 'no')),
@@ -513,7 +560,8 @@ CREATE TABLE `thread_refs` (
 CREATE TABLE `deleted_threads` (
 	`id` text PRIMARY KEY NOT NULL,
 	`conversation` text NOT NULL,
-	`at` text NOT NULL
+	`at` text NOT NULL,
+	CONSTRAINT "deleted_threads_at_utc" CHECK("deleted_threads"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "deleted_threads"."at") = "deleted_threads"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "deleted_threads"."at") = "deleted_threads"."at", 0))
 );
 
 CREATE TABLE `approvals` (
@@ -548,6 +596,10 @@ CREATE TABLE `approvals` (
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`decided_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`overridden_by`) REFERENCES `approvals`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "approvals_asked_at_utc" CHECK("approvals"."asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "approvals"."asked_at") = "approvals"."asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "approvals"."asked_at") = "approvals"."asked_at", 0)),
+	CONSTRAINT "approvals_decided_at_utc" CHECK("approvals"."decided_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "approvals"."decided_at") = "approvals"."decided_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "approvals"."decided_at") = "approvals"."decided_at", 0)),
+	CONSTRAINT "approvals_expires_at_utc" CHECK("approvals"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "approvals"."expires_at") = "approvals"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "approvals"."expires_at") = "approvals"."expires_at", 0)),
+	CONSTRAINT "approvals_used_at_utc" CHECK("approvals"."used_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "approvals"."used_at") = "approvals"."used_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "approvals"."used_at") = "approvals"."used_at", 0)),
 	CONSTRAINT "approvals_kind_choice" CHECK("approvals"."kind" in ('merge', 'command', 'setting', 'dangerous')),
 	CONSTRAINT "approvals_state_choice" CHECK("approvals"."state" in ('pending', 'allowed', 'denied', 'used', 'withdrawn', 'expired'))
 );
@@ -561,6 +613,7 @@ CREATE TABLE `approval_rules` (
 	`set_at` text NOT NULL,
 	PRIMARY KEY(`kind`, `scope`, `person`),
 	FOREIGN KEY (`set_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "approval_rules_set_at_utc" CHECK("approval_rules"."set_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "approval_rules"."set_at") = "approval_rules"."set_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "approval_rules"."set_at") = "approval_rules"."set_at", 0)),
 	CONSTRAINT "approval_rules_kind_choice" CHECK("approval_rules"."kind" in ('merge', 'command', 'setting', 'dangerous')),
 	CONSTRAINT "approval_rules_tier_choice" CHECK("approval_rules"."tier" in ('do', 'tell', 'ask'))
 );
@@ -572,7 +625,8 @@ CREATE TABLE `approval_notices` (
 	`target` text NOT NULL,
 	`what` text NOT NULL,
 	`at` text NOT NULL,
-	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "approval_notices_at_utc" CHECK("approval_notices"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "approval_notices"."at") = "approval_notices"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "approval_notices"."at") = "approval_notices"."at", 0))
 );
 
 CREATE TABLE `approval_record` (
@@ -584,6 +638,7 @@ CREATE TABLE `approval_record` (
 	`note` text NOT NULL,
 	FOREIGN KEY (`approval`) REFERENCES `approvals`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "approval_record_at_utc" CHECK("approval_record"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "approval_record"."at") = "approval_record"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "approval_record"."at") = "approval_record"."at", 0)),
 	CONSTRAINT "approval_record_event_choice" CHECK("approval_record"."event" in ('request', 'allow', 'deny', 'use', 'withdraw', 'grant', 'refused-use'))
 );
 
@@ -611,6 +666,12 @@ CREATE TABLE `triggers` (
 	`created_at` text NOT NULL,
 	`changed_at` text NOT NULL,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "triggers_next_due_at_utc" CHECK("triggers"."next_due_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."next_due_at") = "triggers"."next_due_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."next_due_at") = "triggers"."next_due_at", 0)),
+	CONSTRAINT "triggers_last_fired_at_utc" CHECK("triggers"."last_fired_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."last_fired_at") = "triggers"."last_fired_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."last_fired_at") = "triggers"."last_fired_at", 0)),
+	CONSTRAINT "triggers_created_at_utc" CHECK("triggers"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."created_at") = "triggers"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."created_at") = "triggers"."created_at", 0)),
+	CONSTRAINT "triggers_changed_at_utc" CHECK("triggers"."changed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "triggers"."changed_at") = "triggers"."changed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "triggers"."changed_at") = "triggers"."changed_at", 0)),
+	CONSTRAINT "triggers_owner_required" CHECK(("triggers"."owner_kind" = 'household' and "triggers"."owner" is null) or ("triggers"."owner_kind" <> 'household' and "triggers"."owner" is not null)),
+	CONSTRAINT "triggers_target_required" CHECK(("triggers"."target_kind" = 'operation' and "triggers"."target" is not null and length("triggers"."target") > 0) or ("triggers"."target_kind" = 'inbox' and "triggers"."to_kind" is not null and "triggers"."to" is not null)),
 	CONSTRAINT "triggers_owner_kind_choice" CHECK("triggers"."owner_kind" in ('member', 'agent', 'household')),
 	CONSTRAINT "triggers_source_kind_choice" CHECK("triggers"."source_kind" in ('time', 'pull-request', 'answer', 'job')),
 	CONSTRAINT "triggers_lifespan_choice" CHECK("triggers"."lifespan" in ('until-stopped', 'today', 'once')),
@@ -627,13 +688,15 @@ CREATE TABLE `trigger_log` (
 	`at` text NOT NULL,
 	`event` text NOT NULL,
 	`note` text NOT NULL,
-	FOREIGN KEY (`trigger`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`trigger`) REFERENCES `triggers`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "trigger_log_at_utc" CHECK("trigger_log"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "trigger_log"."at") = "trigger_log"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "trigger_log"."at") = "trigger_log"."at", 0))
 );
 
 CREATE TABLE `agent_pauses` (
 	`agent` text PRIMARY KEY NOT NULL,
 	`since` text NOT NULL,
-	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "agent_pauses_since_utc" CHECK("agent_pauses"."since" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "agent_pauses"."since") = "agent_pauses"."since" or strftime('%Y-%m-%dT%H:%M:%fZ', "agent_pauses"."since") = "agent_pauses"."since", 0))
 );
 
 CREATE TABLE `tempo_settings` (
@@ -670,6 +733,9 @@ CREATE TABLE `changes` (
 	`closed_at` text,
 	FOREIGN KEY (`project`) REFERENCES `projects`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "changes_opened_at_utc" CHECK("changes"."opened_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "changes"."opened_at") = "changes"."opened_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "changes"."opened_at") = "changes"."opened_at", 0)),
+	CONSTRAINT "changes_updated_at_utc" CHECK("changes"."updated_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "changes"."updated_at") = "changes"."updated_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "changes"."updated_at") = "changes"."updated_at", 0)),
+	CONSTRAINT "changes_closed_at_utc" CHECK("changes"."closed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "changes"."closed_at") = "changes"."closed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "changes"."closed_at") = "changes"."closed_at", 0)),
 	CONSTRAINT "changes_state_choice" CHECK("changes"."state" in ('open', 'merged', 'closed')),
 	CONSTRAINT "changes_draft_boolean" CHECK("changes"."draft" in (0, 1)),
 	CONSTRAINT "changes_checks_choice" CHECK("changes"."checks" in ('passing', 'failing', 'running', 'none')),
@@ -709,6 +775,8 @@ CREATE TABLE `change_sync` (
 	`read_at` text,
 	`failed` integer NOT NULL,
 	`next_at` text,
+	CONSTRAINT "change_sync_read_at_utc" CHECK("change_sync"."read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "change_sync"."read_at") = "change_sync"."read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "change_sync"."read_at") = "change_sync"."read_at", 0)),
+	CONSTRAINT "change_sync_next_at_utc" CHECK("change_sync"."next_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "change_sync"."next_at") = "change_sync"."next_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "change_sync"."next_at") = "change_sync"."next_at", 0)),
 	CONSTRAINT "change_sync_singleton" CHECK("change_sync"."singleton" = 1),
 	CONSTRAINT "change_sync_failed_boolean" CHECK("change_sync"."failed" in (0, 1))
 );
@@ -725,6 +793,9 @@ CREATE TABLE `boxes` (
 	`last_seen_at` text,
 	`revoked_at` text,
 	FOREIGN KEY (`owner`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "boxes_enrolled_at_utc" CHECK("boxes"."enrolled_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."enrolled_at") = "boxes"."enrolled_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."enrolled_at") = "boxes"."enrolled_at", 0)),
+	CONSTRAINT "boxes_last_seen_at_utc" CHECK("boxes"."last_seen_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."last_seen_at") = "boxes"."last_seen_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."last_seen_at") = "boxes"."last_seen_at", 0)),
+	CONSTRAINT "boxes_revoked_at_utc" CHECK("boxes"."revoked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "boxes"."revoked_at") = "boxes"."revoked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "boxes"."revoked_at") = "boxes"."revoked_at", 0)),
 	CONSTRAINT "boxes_same_machine_as_loom_boolean" CHECK("boxes"."same_machine_as_loom" in (0, 1)),
 	CONSTRAINT "boxes_hosts_any_boolean" CHECK("boxes"."hosts_any" in (0, 1)),
 	CONSTRAINT "boxes_report_only_boolean" CHECK("boxes"."report_only" in (0, 1)),
@@ -785,6 +856,11 @@ CREATE TABLE `jobs` (
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`retry_of`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`ended_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "jobs_retry_at_utc" CHECK("jobs"."retry_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."retry_at") = "jobs"."retry_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."retry_at") = "jobs"."retry_at", 0)),
+	CONSTRAINT "jobs_queued_at_utc" CHECK("jobs"."queued_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."queued_at") = "jobs"."queued_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."queued_at") = "jobs"."queued_at", 0)),
+	CONSTRAINT "jobs_claimed_at_utc" CHECK("jobs"."claimed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."claimed_at") = "jobs"."claimed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."claimed_at") = "jobs"."claimed_at", 0)),
+	CONSTRAINT "jobs_heard_at_utc" CHECK("jobs"."heard_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."heard_at") = "jobs"."heard_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."heard_at") = "jobs"."heard_at", 0)),
+	CONSTRAINT "jobs_ended_at_utc" CHECK("jobs"."ended_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "jobs"."ended_at") = "jobs"."ended_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "jobs"."ended_at") = "jobs"."ended_at", 0)),
 	CONSTRAINT "jobs_state_choice" CHECK("jobs"."state" in ('queued', 'starting', 'running', 'waiting', 'done', 'failed', 'stopped', 'lost')),
 	CONSTRAINT "jobs_ended_reason_choice" CHECK("jobs"."ended_reason" in ('reset', 'write-off'))
 );
@@ -867,6 +943,8 @@ CREATE TABLE `model_accounts` (
 	`resets_at` text,
 	`has_room` integer NOT NULL,
 	FOREIGN KEY (`owner`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "model_accounts_usage_read_at_utc" CHECK("model_accounts"."usage_read_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_accounts"."usage_read_at") = "model_accounts"."usage_read_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_accounts"."usage_read_at") = "model_accounts"."usage_read_at", 0)),
+	CONSTRAINT "model_accounts_resets_at_utc" CHECK("model_accounts"."resets_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "model_accounts"."resets_at") = "model_accounts"."resets_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "model_accounts"."resets_at") = "model_accounts"."resets_at", 0)),
 	CONSTRAINT "model_accounts_has_room_boolean" CHECK("model_accounts"."has_room" in (0, 1)),
 	CONSTRAINT "model_accounts_usage_range" CHECK("model_accounts"."usage" is null or "model_accounts"."usage" between 0 and 1)
 );
@@ -901,6 +979,7 @@ CREATE TABLE `bridge_connections` (
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`token_secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`app_secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "bridge_connections_state_at_utc" CHECK("bridge_connections"."state_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_connections"."state_at") = "bridge_connections"."state_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_connections"."state_at") = "bridge_connections"."state_at", 0)),
 	CONSTRAINT "bridge_connections_platform_choice" CHECK("bridge_connections"."platform" in ('discord', 'slack')),
 	CONSTRAINT "bridge_connections_enabled_boolean" CHECK("bridge_connections"."enabled" in (0, 1)),
 	CONSTRAINT "bridge_connections_state_choice" CHECK("bridge_connections"."state" in ('connecting', 'connected', 'backoff', 'disconnected'))
@@ -953,6 +1032,9 @@ CREATE TABLE `bridge_incoming` (
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`member`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "bridge_incoming_posted_at_utc" CHECK("bridge_incoming"."posted_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_incoming"."posted_at") = "bridge_incoming"."posted_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_incoming"."posted_at") = "bridge_incoming"."posted_at", 0)),
+	CONSTRAINT "bridge_incoming_received_at_utc" CHECK("bridge_incoming"."received_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_incoming"."received_at") = "bridge_incoming"."received_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_incoming"."received_at") = "bridge_incoming"."received_at", 0)),
+	CONSTRAINT "bridge_incoming_delivered_at_utc" CHECK("bridge_incoming"."delivered_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_incoming"."delivered_at") = "bridge_incoming"."delivered_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_incoming"."delivered_at") = "bridge_incoming"."delivered_at", 0)),
 	CONSTRAINT "bridge_incoming_is_dm_boolean" CHECK("bridge_incoming"."is_dm" in (0, 1)),
 	CONSTRAINT "bridge_incoming_state_choice" CHECK("bridge_incoming"."state" in ('pending', 'held', 'dropped', 'delivered'))
 );
@@ -969,6 +1051,7 @@ CREATE TABLE `bridge_sends` (
 	`created_at` text NOT NULL,
 	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "bridge_sends_created_at_utc" CHECK("bridge_sends"."created_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_sends"."created_at") = "bridge_sends"."created_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_sends"."created_at") = "bridge_sends"."created_at", 0)),
 	CONSTRAINT "bridge_sends_state_choice" CHECK("bridge_sends"."state" in ('pending', 'held', 'sending', 'sent', 'uncertain', 'dismissed'))
 );
 
@@ -981,7 +1064,8 @@ CREATE TABLE `bridge_files` (
 	`fetched_at` text NOT NULL,
 	PRIMARY KEY(`connection`, `file`),
 	FOREIGN KEY (`connection`) REFERENCES `bridge_connections`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`incoming`) REFERENCES `bridge_incoming`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "bridge_files_fetched_at_utc" CHECK("bridge_files"."fetched_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "bridge_files"."fetched_at") = "bridge_files"."fetched_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "bridge_files"."fetched_at") = "bridge_files"."fetched_at", 0))
 );
 
 CREATE TABLE `secrets` (
@@ -989,7 +1073,8 @@ CREATE TABLE `secrets` (
 	`description` text NOT NULL,
 	`changed_at` text NOT NULL,
 	`changed_by` text NOT NULL,
-	FOREIGN KEY (`changed_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`changed_by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "secrets_changed_at_utc" CHECK("secrets"."changed_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "secrets"."changed_at") = "secrets"."changed_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "secrets"."changed_at") = "secrets"."changed_at", 0))
 );
 
 CREATE TABLE `secret_grants` (
@@ -1004,7 +1089,9 @@ CREATE TABLE `secret_grants` (
 	FOREIGN KEY (`secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`request`) REFERENCES `secret_requests`(`id`) ON UPDATE no action ON DELETE no action
+	FOREIGN KEY (`request`) REFERENCES `secret_requests`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "secret_grants_granted_at_utc" CHECK("secret_grants"."granted_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "secret_grants"."granted_at") = "secret_grants"."granted_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "secret_grants"."granted_at") = "secret_grants"."granted_at", 0)),
+	CONSTRAINT "secret_grants_expires_at_utc" CHECK("secret_grants"."expires_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "secret_grants"."expires_at") = "secret_grants"."expires_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "secret_grants"."expires_at") = "secret_grants"."expires_at", 0))
 );
 
 CREATE TABLE `secret_requests` (
@@ -1024,6 +1111,8 @@ CREATE TABLE `secret_requests` (
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`conversation`) REFERENCES `conversations`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "secret_requests_asked_at_utc" CHECK("secret_requests"."asked_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "secret_requests"."asked_at") = "secret_requests"."asked_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "secret_requests"."asked_at") = "secret_requests"."asked_at", 0)),
+	CONSTRAINT "secret_requests_answered_at_utc" CHECK("secret_requests"."answered_at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "secret_requests"."answered_at") = "secret_requests"."answered_at" or strftime('%Y-%m-%dT%H:%M:%fZ', "secret_requests"."answered_at") = "secret_requests"."answered_at", 0)),
 	CONSTRAINT "secret_requests_state_choice" CHECK("secret_requests"."state" in ('pending', 'allowed', 'denied', 'cancelled', 'revoked')),
 	CONSTRAINT "secret_requests_always_boolean" CHECK("secret_requests"."always" in (0, 1))
 );
@@ -1056,6 +1145,7 @@ CREATE TABLE `secret_uses` (
 	FOREIGN KEY (`secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`agent`) REFERENCES `agents`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`job`) REFERENCES `jobs`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "secret_uses_at_utc" CHECK("secret_uses"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "secret_uses"."at") = "secret_uses"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "secret_uses"."at") = "secret_uses"."at", 0)),
 	CONSTRAINT "secret_uses_state_choice" CHECK("secret_uses"."state" in ('started', 'released', 'failed'))
 );
 
@@ -1067,6 +1157,7 @@ CREATE TABLE `secret_changes` (
 	`at` text NOT NULL,
 	FOREIGN KEY (`secret`) REFERENCES `secrets`(`name`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`by`) REFERENCES `members`(`id`) ON UPDATE no action ON DELETE no action,
+	CONSTRAINT "secret_changes_at_utc" CHECK("secret_changes"."at" is null or coalesce(strftime('%Y-%m-%dT%H:%M:%SZ', "secret_changes"."at") = "secret_changes"."at" or strftime('%Y-%m-%dT%H:%M:%fZ', "secret_changes"."at") = "secret_changes"."at", 0)),
 	CONSTRAINT "secret_changes_action_choice" CHECK("secret_changes"."action" in ('add', 'replace', 'removed'))
 );
 
@@ -1168,3 +1259,97 @@ CREATE TABLE `secret_write_journal` (
 	CONSTRAINT "secret_write_journal_state_choice" CHECK("secret_write_journal"."state" in ('prepared', 'committed', 'undone'))
 );
 
+CREATE TRIGGER "tasks_owner_member_insert" BEFORE INSERT ON "tasks" WHEN NEW."owner_kind" = 'member' AND NEW."owner" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."owner") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_owner_member_update" BEFORE UPDATE ON "tasks" WHEN NEW."owner_kind" = 'member' AND NEW."owner" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."owner") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_owner_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "tasks" WHERE "owner" = OLD.id AND "owner_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_owner_member_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "tasks" WHERE "owner" = OLD.id AND "owner_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_owner_agent_insert" BEFORE INSERT ON "tasks" WHEN NEW."owner_kind" = 'agent' AND NEW."owner" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."owner") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_owner_agent_update" BEFORE UPDATE ON "tasks" WHEN NEW."owner_kind" = 'agent' AND NEW."owner" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."owner") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_owner_agent_parent_delete" BEFORE DELETE ON "agents" WHEN 1 AND EXISTS (SELECT 1 FROM "tasks" WHERE "owner" = OLD.id AND "owner_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_owner_agent_parent_update" BEFORE UPDATE OF id ON "agents" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "tasks" WHERE "owner" = OLD.id AND "owner_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_owner_pair_insert" BEFORE INSERT ON "tasks" WHEN NOT coalesce(((NEW."owner" IS NULL AND NEW."owner_kind" IS NULL) OR (NEW."owner" IS NULL AND NEW."owner_kind" = 'household') OR (NEW."owner" IS NOT NULL AND NEW."owner_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "tasks_owner_pair_update" BEFORE UPDATE ON "tasks" WHEN NOT coalesce(((NEW."owner" IS NULL AND NEW."owner_kind" IS NULL) OR (NEW."owner" IS NULL AND NEW."owner_kind" = 'household') OR (NEW."owner" IS NOT NULL AND NEW."owner_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "tasks_assignee_member_insert" BEFORE INSERT ON "tasks" WHEN NEW."assignee_kind" = 'member' AND NEW."assignee" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."assignee") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_assignee_member_update" BEFORE UPDATE ON "tasks" WHEN NEW."assignee_kind" = 'member' AND NEW."assignee" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."assignee") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_assignee_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "tasks" WHERE "assignee" = OLD.id AND "assignee_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_assignee_member_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "tasks" WHERE "assignee" = OLD.id AND "assignee_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_assignee_agent_insert" BEFORE INSERT ON "tasks" WHEN NEW."assignee_kind" = 'agent' AND NEW."assignee" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."assignee") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_assignee_agent_update" BEFORE UPDATE ON "tasks" WHEN NEW."assignee_kind" = 'agent' AND NEW."assignee" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."assignee") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_assignee_agent_parent_delete" BEFORE DELETE ON "agents" WHEN 1 AND EXISTS (SELECT 1 FROM "tasks" WHERE "assignee" = OLD.id AND "assignee_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_assignee_agent_parent_update" BEFORE UPDATE OF id ON "agents" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "tasks" WHERE "assignee" = OLD.id AND "assignee_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_assignee_pair_insert" BEFORE INSERT ON "tasks" WHEN NOT coalesce(((NEW."assignee" IS NULL AND NEW."assignee_kind" IS NULL) OR (NEW."assignee" IS NOT NULL AND NEW."assignee_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "tasks_assignee_pair_update" BEFORE UPDATE ON "tasks" WHEN NOT coalesce(((NEW."assignee" IS NULL AND NEW."assignee_kind" IS NULL) OR (NEW."assignee" IS NOT NULL AND NEW."assignee_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "tasks_asked_by_member_insert" BEFORE INSERT ON "tasks" WHEN NEW."asked_by_kind" = 'member' AND NEW."asked_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."asked_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_asked_by_member_update" BEFORE UPDATE ON "tasks" WHEN NEW."asked_by_kind" = 'member' AND NEW."asked_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."asked_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_asked_by_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "tasks" WHERE "asked_by" = OLD.id AND "asked_by_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_asked_by_member_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "tasks" WHERE "asked_by" = OLD.id AND "asked_by_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_asked_by_agent_insert" BEFORE INSERT ON "tasks" WHEN NEW."asked_by_kind" = 'agent' AND NEW."asked_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."asked_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_asked_by_agent_update" BEFORE UPDATE ON "tasks" WHEN NEW."asked_by_kind" = 'agent' AND NEW."asked_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."asked_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_asked_by_agent_parent_delete" BEFORE DELETE ON "agents" WHEN 1 AND EXISTS (SELECT 1 FROM "tasks" WHERE "asked_by" = OLD.id AND "asked_by_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_asked_by_agent_parent_update" BEFORE UPDATE OF id ON "agents" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "tasks" WHERE "asked_by" = OLD.id AND "asked_by_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_asked_by_pair_insert" BEFORE INSERT ON "tasks" WHEN NOT coalesce(((NEW."asked_by" IS NULL AND NEW."asked_by_kind" IS NULL) OR (NEW."asked_by" IS NOT NULL AND NEW."asked_by_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "tasks_asked_by_pair_update" BEFORE UPDATE ON "tasks" WHEN NOT coalesce(((NEW."asked_by" IS NULL AND NEW."asked_by_kind" IS NULL) OR (NEW."asked_by" IS NOT NULL AND NEW."asked_by_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "tasks_created_by_member_insert" BEFORE INSERT ON "tasks" WHEN NEW."created_by_kind" = 'member' AND NEW."created_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."created_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_created_by_member_update" BEFORE UPDATE ON "tasks" WHEN NEW."created_by_kind" = 'member' AND NEW."created_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."created_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_created_by_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "tasks" WHERE "created_by" = OLD.id AND "created_by_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_created_by_member_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "tasks" WHERE "created_by" = OLD.id AND "created_by_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_created_by_agent_insert" BEFORE INSERT ON "tasks" WHEN NEW."created_by_kind" = 'agent' AND NEW."created_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."created_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_created_by_agent_update" BEFORE UPDATE ON "tasks" WHEN NEW."created_by_kind" = 'agent' AND NEW."created_by" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."created_by") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_created_by_agent_parent_delete" BEFORE DELETE ON "agents" WHEN 1 AND EXISTS (SELECT 1 FROM "tasks" WHERE "created_by" = OLD.id AND "created_by_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_created_by_agent_parent_update" BEFORE UPDATE OF id ON "agents" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "tasks" WHERE "created_by" = OLD.id AND "created_by_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tasks_created_by_pair_insert" BEFORE INSERT ON "tasks" WHEN NOT coalesce(((NEW."created_by" IS NULL AND NEW."created_by_kind" IS NULL) OR (NEW."created_by" IS NOT NULL AND NEW."created_by_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "tasks_created_by_pair_update" BEFORE UPDATE ON "tasks" WHEN NOT coalesce(((NEW."created_by" IS NULL AND NEW."created_by_kind" IS NULL) OR (NEW."created_by" IS NOT NULL AND NEW."created_by_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "task_comments_actor_member_insert" BEFORE INSERT ON "task_comments" WHEN NEW."actor_kind" = 'member' AND NEW."actor" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."actor") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "task_comments_actor_member_update" BEFORE UPDATE ON "task_comments" WHEN NEW."actor_kind" = 'member' AND NEW."actor" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."actor") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "task_comments_actor_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "task_comments" WHERE "actor" = OLD.id AND "actor_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "task_comments_actor_member_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "task_comments" WHERE "actor" = OLD.id AND "actor_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "task_comments_actor_agent_insert" BEFORE INSERT ON "task_comments" WHEN NEW."actor_kind" = 'agent' AND NEW."actor" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."actor") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "task_comments_actor_agent_update" BEFORE UPDATE ON "task_comments" WHEN NEW."actor_kind" = 'agent' AND NEW."actor" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."actor") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "task_comments_actor_agent_parent_delete" BEFORE DELETE ON "agents" WHEN 1 AND EXISTS (SELECT 1 FROM "task_comments" WHERE "actor" = OLD.id AND "actor_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "task_comments_actor_agent_parent_update" BEFORE UPDATE OF id ON "agents" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "task_comments" WHERE "actor" = OLD.id AND "actor_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "task_comments_actor_pair_insert" BEFORE INSERT ON "task_comments" WHEN NOT coalesce(((NEW."actor" IS NULL AND NEW."actor_kind" IS NULL) OR (NEW."actor" IS NOT NULL AND NEW."actor_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "task_comments_actor_pair_update" BEFORE UPDATE ON "task_comments" WHEN NOT coalesce(((NEW."actor" IS NULL AND NEW."actor_kind" IS NULL) OR (NEW."actor" IS NOT NULL AND NEW."actor_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "triggers_owner_member_insert" BEFORE INSERT ON "triggers" WHEN NEW."owner_kind" = 'member' AND NEW."owner" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."owner") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_owner_member_update" BEFORE UPDATE ON "triggers" WHEN NEW."owner_kind" = 'member' AND NEW."owner" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."owner") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_owner_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "triggers" WHERE "owner" = OLD.id AND "owner_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_owner_member_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "triggers" WHERE "owner" = OLD.id AND "owner_kind" = 'member') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_owner_agent_insert" BEFORE INSERT ON "triggers" WHEN NEW."owner_kind" = 'agent' AND NEW."owner" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."owner") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_owner_agent_update" BEFORE UPDATE ON "triggers" WHEN NEW."owner_kind" = 'agent' AND NEW."owner" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."owner") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_owner_agent_parent_delete" BEFORE DELETE ON "agents" WHEN 1 AND EXISTS (SELECT 1 FROM "triggers" WHERE "owner" = OLD.id AND "owner_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_owner_agent_parent_update" BEFORE UPDATE OF id ON "agents" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "triggers" WHERE "owner" = OLD.id AND "owner_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_owner_pair_insert" BEFORE INSERT ON "triggers" WHEN NOT coalesce(((NEW."owner" IS NULL AND NEW."owner_kind" IS NULL) OR (NEW."owner" IS NULL AND NEW."owner_kind" = 'household') OR (NEW."owner" IS NOT NULL AND NEW."owner_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "triggers_owner_pair_update" BEFORE UPDATE ON "triggers" WHEN NOT coalesce(((NEW."owner" IS NULL AND NEW."owner_kind" IS NULL) OR (NEW."owner" IS NULL AND NEW."owner_kind" = 'household') OR (NEW."owner" IS NOT NULL AND NEW."owner_kind" IN ('member', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "triggers_to_person_insert" BEFORE INSERT ON "triggers" WHEN NEW."to_kind" = 'person' AND NEW."to" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."to") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_to_person_update" BEFORE UPDATE ON "triggers" WHEN NEW."to_kind" = 'person' AND NEW."to" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."to") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_to_person_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "triggers" WHERE "to" = OLD.id AND "to_kind" = 'person') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_to_person_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "triggers" WHERE "to" = OLD.id AND "to_kind" = 'person') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_to_agent_insert" BEFORE INSERT ON "triggers" WHEN NEW."to_kind" = 'agent' AND NEW."to" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."to") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_to_agent_update" BEFORE UPDATE ON "triggers" WHEN NEW."to_kind" = 'agent' AND NEW."to" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."to") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_to_agent_parent_delete" BEFORE DELETE ON "agents" WHEN 1 AND EXISTS (SELECT 1 FROM "triggers" WHERE "to" = OLD.id AND "to_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_to_agent_parent_update" BEFORE UPDATE OF id ON "agents" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "triggers" WHERE "to" = OLD.id AND "to_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "triggers_to_pair_insert" BEFORE INSERT ON "triggers" WHEN NOT coalesce(((NEW."to" IS NULL AND NEW."to_kind" IS NULL) OR (NEW."to" IS NOT NULL AND NEW."to_kind" IN ('person', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "triggers_to_pair_update" BEFORE UPDATE ON "triggers" WHEN NOT coalesce(((NEW."to" IS NULL AND NEW."to_kind" IS NULL) OR (NEW."to" IS NOT NULL AND NEW."to_kind" IN ('person', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "inbox_to_person_insert" BEFORE INSERT ON "inbox" WHEN NEW."to_kind" = 'person' AND NEW."to" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."to") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "inbox_to_person_update" BEFORE UPDATE ON "inbox" WHEN NEW."to_kind" = 'person' AND NEW."to" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."to") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "inbox_to_person_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "inbox" WHERE "to" = OLD.id AND "to_kind" = 'person') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "inbox_to_person_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "inbox" WHERE "to" = OLD.id AND "to_kind" = 'person') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "inbox_to_agent_insert" BEFORE INSERT ON "inbox" WHEN NEW."to_kind" = 'agent' AND NEW."to" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."to") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "inbox_to_agent_update" BEFORE UPDATE ON "inbox" WHEN NEW."to_kind" = 'agent' AND NEW."to" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."to") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "inbox_to_agent_parent_delete" BEFORE DELETE ON "agents" WHEN 1 AND EXISTS (SELECT 1 FROM "inbox" WHERE "to" = OLD.id AND "to_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "inbox_to_agent_parent_update" BEFORE UPDATE OF id ON "agents" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "inbox" WHERE "to" = OLD.id AND "to_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "inbox_to_pair_insert" BEFORE INSERT ON "inbox" WHEN NOT coalesce(((NEW."to" IS NULL AND NEW."to_kind" IS NULL) OR (NEW."to" IS NOT NULL AND NEW."to_kind" IN ('person', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "inbox_to_pair_update" BEFORE UPDATE ON "inbox" WHEN NOT coalesce(((NEW."to" IS NULL AND NEW."to_kind" IS NULL) OR (NEW."to" IS NOT NULL AND NEW."to_kind" IN ('person', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "tempo_settings_who_person_insert" BEFORE INSERT ON "tempo_settings" WHEN NEW."who_kind" = 'person' AND NEW."who" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."who") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tempo_settings_who_person_update" BEFORE UPDATE ON "tempo_settings" WHEN NEW."who_kind" = 'person' AND NEW."who" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."who") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tempo_settings_who_person_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "tempo_settings" WHERE "who" = OLD.id AND "who_kind" = 'person') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tempo_settings_who_person_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "tempo_settings" WHERE "who" = OLD.id AND "who_kind" = 'person') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tempo_settings_who_agent_insert" BEFORE INSERT ON "tempo_settings" WHEN NEW."who_kind" = 'agent' AND NEW."who" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."who") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tempo_settings_who_agent_update" BEFORE UPDATE ON "tempo_settings" WHEN NEW."who_kind" = 'agent' AND NEW."who" IS NOT NULL AND NOT EXISTS (SELECT 1 FROM "agents" WHERE id = NEW."who") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tempo_settings_who_agent_parent_delete" BEFORE DELETE ON "agents" WHEN 1 AND EXISTS (SELECT 1 FROM "tempo_settings" WHERE "who" = OLD.id AND "who_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tempo_settings_who_agent_parent_update" BEFORE UPDATE OF id ON "agents" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "tempo_settings" WHERE "who" = OLD.id AND "who_kind" = 'agent') BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "tempo_settings_who_pair_insert" BEFORE INSERT ON "tempo_settings" WHEN NOT coalesce(((NEW."who" IS NULL AND NEW."who_kind" IS NULL) OR (NEW."who" IS NOT NULL AND NEW."who_kind" IN ('person', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "tempo_settings_who_pair_update" BEFORE UPDATE ON "tempo_settings" WHEN NOT coalesce(((NEW."who" IS NULL AND NEW."who_kind" IS NULL) OR (NEW."who" IS NOT NULL AND NEW."who_kind" IN ('person', 'agent'))), 0) BEGIN SELECT RAISE(ABORT, 'polymorphic reference pair failed'); END;
+CREATE TRIGGER "approval_rules_person_member_insert" BEFORE INSERT ON "approval_rules" WHEN NEW."person" IS NOT NULL AND NEW."person" <> '' AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."person") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "approval_rules_person_member_update" BEFORE UPDATE ON "approval_rules" WHEN NEW."person" IS NOT NULL AND NEW."person" <> '' AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."person") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "approval_rules_person_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "approval_rules" WHERE "person" = OLD.id) BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "approval_rules_person_member_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "approval_rules" WHERE "person" = OLD.id) BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;

@@ -6,7 +6,8 @@ import { generateSQLiteDrizzleJson, generateSQLiteMigration } from 'drizzle-kit/
 import { buildSchema } from 'drizzle-graphql';
 import { graphql } from 'graphql/index.js';
 import { createDataSchema } from './database.js';
-import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays } from './schema.js';
+import { referenceStatements } from './references.js';
+import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, digests } from './schema.js';
 
 const opened: Database.Database[] = [];
 function fresh() {
@@ -45,15 +46,15 @@ describe('the approved data model', () => {
   it('keeps generated installation SQL exactly in step with the sole Drizzle definition', async () => {
     const statements = await generateSQLiteMigration(await generateSQLiteDrizzleJson({}), await generateSQLiteDrizzleJson(schema));
     const checkedIn = readFileSync(new URL('../../../assets/data/schema.sql', import.meta.url), 'utf8');
-    expect(checkedIn.slice(checkedIn.indexOf('\n') + 1)).toBe(statements.join('\n') + '\n');
+    expect(checkedIn.slice(checkedIn.indexOf('\n') + 1)).toBe([...statements, ...referenceStatements()].join('\n') + '\n');
   });
 
   it('refuses an existing database and leaves its records intact', () => {
     const client = new Database(':memory:'); opened.push(client);
-    client.exec("CREATE TABLE precious (words TEXT); INSERT INTO precious VALUES ('keep me')");
+    client.exec("CREATE TABLE sqliteXprecious (words TEXT); INSERT INTO sqliteXprecious VALUES ('keep me')");
     expect(() => createDataSchema(client)).toThrow('requires an empty database');
-    expect(client.prepare('SELECT words FROM precious').get()).toEqual({ words: 'keep me' });
-    expect(client.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all()).toEqual([{ name: 'precious' }]);
+    expect(client.prepare('SELECT words FROM sqliteXprecious').get()).toEqual({ words: 'keep me' });
+    expect(client.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all()).toEqual([{ name: 'sqliteXprecious' }]);
   });
 
   it('joins connected records through the typed schema and rejects invalid rows', () => {
@@ -90,4 +91,83 @@ describe('the approved data model', () => {
     expect(result.errors).toBeUndefined();
     expect(result.data).toEqual({ tasks: [], timingDays: [] });
   });
+
+  function household() {
+    const store = fresh(); const { db } = store;
+    const at = '2026-11-14T00:00:00Z';
+    db.insert(members).values({ id: 'jonathan', role: 'owner', joinedAt: at }).run();
+    db.insert(agents).values({ id: 'art', about: 'Art', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+    db.insert(conversations).values({ id: 'cv-1', agent: 'art', venue: 'loom', place: 'test', label: 'Test', startedAt: at, lastAt: at, turnCount: 0 }).run();
+    const task = { id: 't-1', title: 'Pick a pump', ownerKind: 'member' as const, owner: 'jonathan', createdByKind: 'member' as const, createdBy: 'jonathan', createdAt: at, changedAt: at };
+    db.insert(tasks).values(task).run();
+    return { ...store, at, task };
+  }
+
+  it('requires one matching token identity and valid polymorphic references on writes and parent changes', () => {
+    const { db, client, at, task } = household();
+    const token = { fingerprint: 'fp', label: 'browser', kind: 'owner' as const, createdAt: at };
+    expect(() => db.insert(tokens).values(token).run()).toThrow();
+    expect(() => db.insert(tokens).values({ ...token, member: 'jonathan', agent: 'art' }).run()).toThrow();
+    db.insert(tokens).values({ ...token, member: 'jonathan' }).run();
+    expect(() => db.insert(tasks).values({ ...task, id: 'bad', owner: 'nobody' }).run()).toThrow();
+    expect(() => db.update(tasks).set({ ownerKind: 'agent', owner: 'jonathan' }).run()).toThrow();
+    expect(() => db.insert(taskComments).values({ task: task.id, seq: 1, actorKind: 'agent', actor: 'nobody', at, text: 'bad' }).run()).toThrow();
+    expect(() => db.update(tasks).set({ assignee: 'art', assigneeKind: null }).run()).toThrow();
+    expect(() => client.prepare("DELETE FROM members WHERE id = 'jonathan'").run()).toThrow();
+    expect(() => client.prepare("UPDATE members SET id = 'other' WHERE id = 'jonathan'").run()).toThrow();
+    db.insert(approvalRules).values({ kind: 'merge', scope: '*', tier: 'ask', setBy: 'jonathan', setAt: at }).run();
+    expect(() => db.insert(approvalRules).values({ kind: 'merge', scope: '*', person: 'nobody', tier: 'ask', setBy: 'jonathan', setAt: at }).run()).toThrow();
+    db.insert(members).values({ id: 'mark', role: 'member', joinedAt: at }).run();
+    db.insert(approvalRules).values({ kind: 'merge', scope: '*', person: 'mark', tier: 'ask', setBy: 'jonathan', setAt: at }).run();
+    expect(() => client.prepare("DELETE FROM members WHERE id = 'mark'").run()).toThrow();
+  });
+
+  it('enforces trigger owners and a usable target', () => {
+    const { db, at } = household();
+    const trigger = { id: 'tr-1', ownerKind: 'member' as const, sourceKind: 'time' as const, lifespan: 'once' as const, targetKind: 'inbox' as const, note: 'Test', enabled: true, state: 'standing' as const, createdAt: at, changedAt: at };
+    expect(() => db.insert(triggers).values(trigger).run()).toThrow();
+    expect(() => db.insert(triggers).values({ ...trigger, owner: 'jonathan' }).run()).toThrow();
+    expect(() => db.insert(triggers).values({ ...trigger, owner: 'jonathan', toKind: 'agent', to: 'missing' }).run()).toThrow();
+    expect(() => db.insert(triggers).values({ ...trigger, owner: 'jonathan', targetKind: 'operation' }).run()).toThrow();
+    db.insert(triggers).values({ ...trigger, owner: 'jonathan', toKind: 'agent', to: 'art' }).run();
+  });
+
+  it('checks documented length limits and rejects non-UTC or invalid timestamps', () => {
+    const { db, at } = household();
+    expect(() => db.update(agents).set({ about: 'x'.repeat(601) }).run()).toThrow();
+    db.update(agents).set({ about: 'x'.repeat(600) }).run();
+    expect(() => db.insert(digests).values({ id: 'dg-1', conversation: 'cv-1', run: 'r-1', revision: 1, at, summary: 'x'.repeat(601) }).run()).toThrow();
+    for (const invalid of ['yesterday', '2026-11-14T00:00:00+01:00', '2026-02-30T00:00:00Z']) {
+      expect(() => db.update(members).set({ joinedAt: invalid }).run()).toThrow();
+    }
+    db.update(members).set({ joinedAt: '2026-11-14T00:00:00.123Z' }).run();
+    const thread = { id: 'th-1', conversation: 'cv-1', title: 'x'.repeat(61), titledBy: 'member' as const, pinned: false, openedAt: at, lastAt: at, readSeq: 0, working: false, stopRequested: false };
+    expect(() => db.insert(threads).values(thread).run()).toThrow();
+    db.insert(threads).values({ ...thread, title: 'x'.repeat(60) }).run();
+  });
+
+  it('enforces one parent, one active job per conversation, usage ranges and thread deletion', () => {
+    const { db, client, at, task } = household();
+    for (const id of ['t-2', 't-3']) db.insert(tasks).values({ ...task, id }).run();
+    db.insert(taskLinks).values({ task: 't-1', dependsOn: 't-2', type: 'parent-child' }).run();
+    expect(() => db.insert(taskLinks).values({ task: 't-1', dependsOn: 't-3', type: 'parent-child' }).run()).toThrow();
+    const job = { id: 'j-1', agent: 'art', conversation: 'cv-1', title: 'Test', state: 'running' as const, brief: 'Test', model: 'test', startedByKind: 'member', startedBy: 'jonathan', houseRepository: 'repo', houseFile: 'house', houseBranch: 'main', queuedAt: at };
+    db.insert(jobs).values(job).run();
+    expect(() => db.insert(jobs).values({ ...job, id: 'j-2' }).run()).toThrow();
+    db.update(jobs).set({ state: 'done' }).run();
+    db.insert(jobs).values({ ...job, id: 'j-2' }).run();
+    expect(() => db.insert(modelAccounts).values({ id: 'ma-1', owner: 'jonathan', provider: 'test', label: 'Test', usage: 1.1, hasRoom: false }).run()).toThrow();
+    db.insert(threads).values({ id: 'th-1', conversation: 'cv-1', title: 'Test', titledBy: 'member', pinned: false, openedAt: at, lastAt: at, readSeq: 0, working: false, stopRequested: false }).run();
+    db.insert(messages).values({ thread: 'th-1', seq: 1, kind: 'message', sender: 'jonathan', at }).run();
+    db.insert(threadRefs).values({ thread: 'th-1', ref: 't-1', messageSeq: 1 }).run();
+    const item = { id: 'i-1', toKind: 'person' as const, to: 'jonathan', source: 'notice' as const, fromKind: 'agent' as const, fromId: 'art', at, state: 'waiting' as const, changedAt: at, thread: 'th-1', messageSeq: 2 };
+    expect(() => db.insert(inbox).values(item).run()).toThrow();
+    db.insert(inbox).values({ ...item, messageSeq: 1 }).run();
+    db.delete(inbox).run();
+    db.delete(threads).run();
+    expect(db.select().from(messages).all()).toEqual([]);
+    expect(db.select().from(threadRefs).all()).toEqual([]);
+    expect(client.pragma('foreign_key_check')).toEqual([]);
+  });
+
 });
