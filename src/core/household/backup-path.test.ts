@@ -67,10 +67,10 @@ it.each(['20260229-0300', '../20261114-0317', '20261114-2400', '20261114-0317\n'
   await expect(publishHouseholdPathBundle(f.home, f.target, bad, f.produce)).rejects.toThrow(error);
   expect(spy).not.toHaveBeenCalled(); expect(f.produce).not.toHaveBeenCalled();
 });
-it.each(['target-moved', 'home-moved', 'ancestor-moved', 'new-unmarked-file', 'mode-changed', 'marker-removed'] as const)(
+it.each(['target-moved', 'home-moved', 'ancestor-moved', 'new-unmarked-file', 'mode-changed', 'marker-removed', 'final-collision'] as const)(
   'rechecks %s after suspended export before any writes', async kind => {
     const f = fixture();
-    if (kind === 'marker-removed') fs.writeFileSync(join(f.target, '.loom-backup'), 'KEEP');
+    if (kind === 'marker-removed' || kind === 'final-collision') fs.writeFileSync(join(f.target, '.loom-backup'), 'KEEP');
     let resume!: () => void;
     f.produce.mockImplementation(async () => { await new Promise<void>(resolve => { resume = resolve; }); return f.bundle; });
     const running = f.run(); expect(f.produce).toHaveBeenCalledOnce();
@@ -81,8 +81,10 @@ it.each(['target-moved', 'home-moved', 'ancestor-moved', 'new-unmarked-file', 'm
     if (kind === 'new-unmarked-file') fs.writeFileSync(join(f.target, 'KEEP'), 'KEEP');
     if (kind === 'mode-changed') fs.chmodSync(f.target, 0o777);
     if (kind === 'marker-removed') { fs.unlinkSync(join(f.target, '.loom-backup')); fs.writeFileSync(join(f.target, 'KEEP'), 'KEEP'); }
+    if (kind === 'final-collision') fs.writeFileSync(join(f.target, name), 'KEEP');
     resume(); await expect(running).rejects.toThrow(error);
     expect(write).not.toHaveBeenCalled();
+    if (kind === 'final-collision') expect(fs.readFileSync(join(f.target, name), 'utf8')).toBe('KEEP');
   });
 it('writes nothing when export or drill rejects and hides private diagnostics', async () => {
   const f = fixture(); f.produce.mockRejectedValue(Error('/private/target/secret'));

@@ -1352,7 +1352,8 @@ even for identical bytes; the runner must choose a fresh stamp or report failure
 All held ancestor descriptors receive close attempts, including on error.
 Regression tests inject foreign target/marker ownership before and after export,
 exercise malformed existing paths for both inputs, and corrupt the published
-inode separately from pending-file readback.
+inode separately from pending-file readback. A final-name collision introduced
+during suspended export refuses before any marker or pending-file write.
 
 There is no production caller, public command, deletion, retention execution,
 git publication, RESTORE.md writer, local arming, staging bypass, daemon job or
