@@ -139,9 +139,11 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     const wakeResult=loom.operations.call('direct',owner,'clock.in',{agent:'art',prompt:'Fixture scheduled work',when:'1m'},'inbox-clock-wake');
     if(!wakeResult.ok)throw Error(wakeResult.message);
     const wake=wakeResult.value as {id:string;due:number}; clock.advance(wake.due-clock.now());
-    const intent=loom.operations.call('direct',owner,'clock.dispatch',{id:wake.id,attempt:'inbox-clock-attempt'},'inbox-clock-dispatch');
-    expect(intent.ok).toBe(true);
-    const outcome=loom.operations.call('direct',owner,'clock.outcome',{id:wake.id,attempt:'inbox-clock-attempt',result:{state:'not-started',code:'quota',reason:'Fixture capacity wait'}},'inbox-clock-outcome');
+    // FakeClock may synchronously commit the daemon intent before its deferred external call.
+    const current=JSON.parse((loom.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(wake.id) as {record:string}).record) as {state:string;attempt?:string};
+    const attempt=current.state==='firing' ? current.attempt! : 'inbox-clock-attempt';
+    if(current.state!=='firing')expect(loom.operations.call('direct',owner,'clock.dispatch',{id:wake.id,attempt},'inbox-clock-dispatch').ok).toBe(true);
+    const outcome=loom.operations.call('direct',owner,'clock.outcome',{id:wake.id,attempt,result:{state:'not-started',code:'quota',reason:'Fixture capacity wait'}},'inbox-clock-outcome');
     expect(outcome.ok).toBe(true);
     const noticeId=`clock:${wake.id}:quota`;
     await b.goto(`${loom.url}/p/inbox-preview/ask/${encodeURIComponent(noticeId)}`);
