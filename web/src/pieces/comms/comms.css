@@ -1,8 +1,10 @@
 /* Comms owns a bounded message scroller, including on the standalone preview.
-   In a desktop tile Split's 100cqh rule supplies the available height instead. */
+   A tile supplies its own available height instead of the screen height. */
 .loom-comms { height: 100dvh; grid-template-rows: minmax(0, 1fr); }
 .loom-comms > .loom-split__list, .loom-comms > .loom-split__nav { min-height: 0; overflow-y: auto; }
-.loom-comms > .loom-split__reader { display: flex; flex-direction: column; min-height: 0; }
+.loom-comms > .loom-split__reader { display: flex; flex-direction: column; min-height: 0; container: comms-reader / inline-size; }
+.next-page:has(> .loom-comms) { container-type: size; overflow: hidden; scrollbar-gutter: auto; }
+.next-page > .loom-comms { height: 100cqh; }
 .loom-comms .loom-split__back, .loom-comms article > header, .loom-comms article > form { flex-shrink: 0; }
 
 /* Visual keyboards can resize only the visual viewport (100dvh stays tall).
@@ -11,20 +13,22 @@
 .loom-comms[data-comms-keyboard] > .loom-split__reader { padding-bottom: max(12px, env(safe-area-inset-bottom)); }
 .loom-comms[data-comms-keyboard] article > header { max-height: 30%; flex-shrink: 1; overflow-y: auto; }
 
-/* Split's measured mode follows the tile, including on narrow desktop tiles. */
+/* The Work column follows the reader width, after Split takes its list/folders. */
 .comms-work { flex-shrink: 0; min-width: 0; }
 .comms-work-body { display: none; max-height: 30dvh; overflow-y: auto; overflow-wrap: anywhere; }
 .comms-work[data-open] .comms-work-body { display: block; }
 .comms-work-desktop { display: none; }
-.loom-comms:not([data-mode="one"]) .comms-thread { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 30%); grid-template-rows: auto minmax(0, 1fr) auto auto; }
-.loom-comms:not([data-mode="one"]) .comms-thread > header { grid-column: 1; grid-row: 1; }
-.loom-comms:not([data-mode="one"]) .comms-thread > [aria-label="Thread messages"] { grid-column: 1; grid-row: 2; }
-.loom-comms:not([data-mode="one"]) .comms-new-messages { grid-column: 1; grid-row: 3; }
-.loom-comms:not([data-mode="one"]) .comms-thread > :last-child { grid-column: 1; grid-row: 4; }
-.loom-comms:not([data-mode="one"]) .comms-work { grid-column: 2; grid-row: 1 / 5; min-height: 0; overflow-y: auto; border-left: 1px solid var(--v-border); }
-.loom-comms:not([data-mode="one"]) .comms-work-strip { display: none; }
-.loom-comms:not([data-mode="one"]) .comms-work-body { display: block; max-height: none; overflow-y: visible; }
-.loom-comms:not([data-mode="one"]) .comms-work-desktop { display: grid; gap: 8px; }
+@container comms-reader (min-width: 640px) {
+.loom-comms .comms-thread { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 30%); grid-template-rows: auto minmax(0, 1fr) auto auto; }
+.loom-comms .comms-thread > header { grid-column: 1; grid-row: 1; }
+.loom-comms .comms-thread > [aria-label="Thread messages"] { grid-column: 1; grid-row: 2; }
+.loom-comms .comms-new-messages { grid-column: 1; grid-row: 3; }
+.loom-comms .comms-thread > :last-child { grid-column: 1; grid-row: 4; }
+.loom-comms .comms-work { grid-column: 2; grid-row: 1 / 5; min-height: 0; overflow-y: auto; border-left: 1px solid var(--v-border); }
+.loom-comms .comms-work-strip { display: none; }
+.loom-comms .comms-work-body { display: block; max-height: none; overflow-y: visible; }
+.loom-comms .comms-work-desktop { display: grid; gap: 8px; }
+}
 
 .comms-work [data-tone="bad"] { color: var(--status-danger-ink, var(--v-pink)); background: var(--status-danger-bg, transparent); }
 .comms-work [data-tone="warn"] { color: var(--status-warn-ink, var(--v-yellow)); background: var(--status-warn-bg, transparent); }

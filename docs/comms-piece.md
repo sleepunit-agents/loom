@@ -65,6 +65,10 @@ in both windows, deduplicates a reply retry, sends a follow-up on the same body,
 and verifies credential revocation after completion. Runtime tables and generic
 operation receipts are checked for absence of inbound/reply words and credentials.
 Six additional captures show the real filed thread in both looks and all widths.
+These revealed and now guard two integration defects: the transcript must fit
+its tile height to keep Send visible, and Work must fold based on the reader
+width after Split takes its list/folders, rather than the whole app width.
+The standalone preview keeps its viewport height.
 
 This does not prove an external model process or worker transport. Runtime's
 worker execution remains held pending its own acceptance. It also does not prove

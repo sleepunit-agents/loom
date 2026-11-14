@@ -93,6 +93,14 @@ export async function proveNextComms(browser:Browser,webRoot:string) {
      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+     // A viewport-sized transcript can pass page overflow checks while the tile
+     // clips its composer. Check the visible tile boundary and actual reader width.
+     await expect.poll(()=>b.getByRole('button',{name:'Send',exact:true}).evaluate(el=>{
+      const send=el.getBoundingClientRect(),tile=el.closest('.next-page')!.getBoundingClientRect();
+      return send.top>=tile.top&&send.bottom<=tile.bottom&&send.left>=tile.left&&send.right<=tile.right;
+     })).toBe(true);
+     expect(await b.getByLabel('Thread messages',{exact:true}).evaluate(el=>el.getBoundingClientRect().width)).toBeGreaterThan(200);
+     await expect.poll(()=>b.locator('.comms-work-strip').isVisible()).toBe(width<1920);
      await b.screenshot({path:join(shots,`comms-next-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
    }
