@@ -1291,8 +1291,13 @@ It decrypts nothing, registers no public operation and confers no execution or
 history authority. Returned facts are snapshots: resolve again after awaits.
 
 Runtime now requires this lookup to agree with its existing explicit Comms route
-at delivery and bound-body checks, including rechecks across private read/reply
-awaits. It still treats binding.place as the route at those call sites. Resolving
+at delivery and bound-body checks, including cached acceptance acknowledgements
+and rechecks across private read/reply
+awaits. The shared bound-body check also refuses imported/reset/written-off or
+ended jobs, policy holds and non-loom venues for private reads, replies, status
+and the other bound-body consumers. Private Comms controls also require service
+proof agreement; Approvals and Clock retain the restricted authenticated service
+identity when deriving their own caller/provenance. It still treats binding.place as the route at those call sites. Resolving
 spawn transport handles through every consumer, preserving the original binding
 and member/parent proof, remains on t-2209; this prerequisite does not activate
 imported execution or remove any policy hold.
