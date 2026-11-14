@@ -7,12 +7,12 @@ import { buildSchema } from 'drizzle-graphql';
 import { graphql } from 'graphql/index.js';
 import { createDataSchema } from './database.js';
 import { referenceStatements } from './references.js';
-import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, digests, migrations, operationResults, signinChallenges, household as householdSettings, secrets, secretRules, secretRuleAgents } from './schema.js';
+import { schema, tables, plumbing, tasks, taskComments, members, projects, projectMembers, measuringSettings, timingDays, agents, conversations, threads, messages, threadRefs, inbox, tokens, triggers, approvals, approvalRules, taskLinks, jobs, modelAccounts, digests, migrations, operationResults, signinChallenges, household as householdSettings, secrets, secretRules, secretRuleAgents, deletedThreads, approvalRecord, agentAccounts, boxes } from './schema.js';
 
 const opened: Database.Database[] = [];
 function fresh() {
   const client = new Database(':memory:'); opened.push(client);
-  return { client, db: createDataSchema(client) };
+  return { client, db: createDataSchema(client, () => '2026-11-14T00:00:00.000Z') };
 }
 afterEach(() => { for (const client of opened.splice(0)) client.close(); });
 
@@ -85,11 +85,14 @@ describe('the approved data model', () => {
   });
 
   it('can generate GraphQL reads for the entire schema without hand-written table reads', async () => {
-    const { db } = fresh();
+    const { db, at } = household();
+    db.insert(projects).values({ id: 'pond', name: 'Pond' }).run();
+    db.update(tasks).set({ project: 'pond' }).run();
+    db.insert(taskComments).values({ task: 't-1', seq: 1, actorKind: 'member', actor: 'jonathan', at, text: 'Fits the hose' }).run();
     const generated = buildSchema(db, { relationsDepthLimit: 2 });
     const result = await graphql({ schema: generated.schema, source: '{ tasks { id title projectRow { name } taskCommentsByTask { text } } timingDays { day totalMs } }' });
     expect(result.errors).toBeUndefined();
-    expect(result.data).toEqual({ tasks: [], timingDays: [] });
+    expect(result.data).toEqual({ tasks: [{ id: 't-1', title: 'Pick a pump', projectRow: { name: 'Pond' }, taskCommentsByTask: [{ text: 'Fits the hose' }] }], timingDays: [] });
   });
 
   function household() {
@@ -212,6 +215,44 @@ describe('the approved data model', () => {
     db.insert(secrets).values({ name: 'github', description: 'Test', changedAt: at, changedBy: 'jonathan' }).run();
     db.insert(secretRules).values({ secret: 'github', answer: 'ask', minutes: 10 }).run();
     expect(() => client.prepare("UPDATE secret_rules SET answer = 'sometimes'").run()).toThrow();
+  });
+
+
+  it('reuses expired token labels but refuses two live credentials or reviving a conflicting one', () => {
+    const { db, at } = household();
+    const token = { fingerprint: 'expired', label: 'browser', kind: 'owner' as const, member: 'jonathan', createdAt: at, expiresAt: '2026-11-13T00:00:00Z' };
+    db.insert(tokens).values(token).run();
+    db.insert(tokens).values({ ...token, fingerprint: 'current', expiresAt: '2026-11-15T00:00:00Z' }).run();
+    db.insert(tokens).values({ ...token, fingerprint: 'at-boundary', expiresAt: '2026-11-14T00:00:00Z' }).run();
+    expect(() => db.insert(tokens).values({ ...token, fingerprint: 'conflict', expiresAt: null }).run()).toThrow();
+    expect(() => db.update(tokens).set({ expiresAt: null }).where(eq(tokens.fingerprint, 'expired')).run()).toThrow();
+  });
+
+  it('records thread deletion permanently and never reuses a deleted id', () => {
+    const { db, at } = household();
+    const thread = { id: 'th-1', conversation: 'cv-1', title: 'Test', titledBy: 'member' as const, pinned: false, openedAt: at, lastAt: at, readSeq: 0, working: false, stopRequested: false };
+    db.insert(threads).values(thread).run();
+    db.delete(threads).run();
+    expect(db.select().from(deletedThreads).get()).toEqual({ id: 'th-1', conversation: 'cv-1', at: '2026-11-14T00:00:00.000Z' });
+    expect(() => db.insert(threads).values(thread).run()).toThrow();
+    expect(() => db.delete(deletedThreads).run()).toThrow();
+    expect(() => db.update(deletedThreads).set({ id: 'changed' }).run()).toThrow();
+    db.insert(approvals).values({ id: 'a-1', kind: 'merge', target: 'repo#1', what: 'Merge', why: 'Test', agent: 'art', askedFrom: 'test', actingFor: 'owner', state: 'pending', minutes: 10, ask: 'Merge?', ifYes: 'Merge', ifNo: 'Leave', details: 'Test', askedAt: at }).run();
+    db.insert(approvalRecord).values({ seq: 1, at, event: 'request', approval: 'a-1', agent: 'art', note: 'Asked' }).run();
+    expect(() => db.update(approvalRecord).set({ note: 'Rewritten' }).run()).toThrow();
+    expect(() => db.delete(approvalRecord).run()).toThrow();
+  });
+
+  it('makes outside service logins exclusive to one agent and live machine names unique', () => {
+    const { db, at } = household();
+    db.insert(agents).values({ id: 'mark', about: 'Mark', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+    db.insert(agentAccounts).values({ agent: 'art', service: 'github', login: 'art-e-fish' }).run();
+    expect(() => db.insert(agentAccounts).values({ agent: 'mark', service: 'github', login: 'art-e-fish' }).run()).toThrow();
+    const box = { id: 'box-1', name: 'worker', owner: 'jonathan', sameMachineAsLoom: false, hostsAny: true, reportOnly: false, alwaysOn: true, enrolledAt: at };
+    db.insert(boxes).values(box).run();
+    expect(() => db.insert(boxes).values({ ...box, id: 'box-2' }).run()).toThrow();
+    db.update(boxes).set({ revokedAt: at }).run();
+    db.insert(boxes).values({ ...box, id: 'box-2' }).run();
   });
 
 });

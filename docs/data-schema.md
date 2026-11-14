@@ -41,6 +41,10 @@ Nothing calls this initializer on an installed home yet.
   the existing Measuring module. Measuring is off by default.
 - Backups retain seven copies by default, at 03:00 UTC until the household sets
   its timezone. Inbox settle time defaults to five seconds and dim to one day.
+- Immutable approval audit rows and thread deletion markers reject edits. Thread
+  deletion writes its own marker; deleted identifiers cannot be inserted again.
+- Live token-label uniqueness includes expiry, evaluated using the connection
+  clock (`loom_now`). Pass a clock to `dataDatabase`/`createDataSchema` in tests.
 
 ## Query library checks
 

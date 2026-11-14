@@ -170,7 +170,7 @@ export const tokens = sqliteTable('tokens', {
   check('tokens_last_used_at_utc', utc(t.lastUsedAt)),
   check('tokens_identity', sql`(${t.kind} = 'owner' and ${t.member} is not null and ${t.agent} is null and ${t.box} is null and ${t.job} is null) or (${t.kind} = 'agent' and ${t.agent} is not null and ${t.member} is null and ${t.box} is null) or (${t.kind} = 'runner' and ${t.box} is not null and ${t.member} is null and ${t.agent} is null and ${t.job} is null)`),
   check('tokens_kind_choice', sql`${t.kind} in ('owner', 'agent', 'runner')`),
-  uniqueIndex('tokens_live_label_unique').on(t.label).where(sql`${t.revokedAt} is null`),
+  index('tokens_label_idx').on(t.label),
   index('tokens_expires_at_idx').on(t.expiresAt),
 ]);
 
@@ -1949,3 +1949,8 @@ export const polymorphicReferences = [
   { table: tempoSettings, kind: 'who_kind', id: 'who', targets: { person: members, agent: agents } },
   { table: approvalRules, id: 'person', targets: { '': members }, emptyIsAbsent: true },
 ] as const;
+
+/** Lifecycle constraints that need triggers rather than static SQLite CHECKs. */
+export const immutableTables = [approvalRecord, deletedThreads] as const;
+export const expiringUniqueKeys = [{ table: tokens, key: 'label', identity: 'fingerprint', expires: 'expires_at', revoked: 'revoked_at' }] as const;
+export const deletionMarkers = [{ table: threads, marker: deletedThreads, identity: 'id', copy: ['conversation'], at: 'at' }] as const;

@@ -154,7 +154,7 @@ CREATE TABLE `tokens` (
 	CONSTRAINT "tokens_kind_choice" CHECK("tokens"."kind" in ('owner', 'agent', 'runner'))
 );
 
-CREATE UNIQUE INDEX `tokens_live_label_unique` ON `tokens` (`label`) WHERE "tokens"."revoked_at" is null;
+CREATE INDEX `tokens_label_idx` ON `tokens` (`label`);
 CREATE INDEX `tokens_expires_at_idx` ON `tokens` (`expires_at`);
 CREATE TABLE `sessions` (
 	`id` text PRIMARY KEY NOT NULL,
@@ -1366,3 +1366,12 @@ CREATE TRIGGER "approval_rules_person_member_insert" BEFORE INSERT ON "approval_
 CREATE TRIGGER "approval_rules_person_member_update" BEFORE UPDATE ON "approval_rules" WHEN NEW."person" IS NOT NULL AND NEW."person" <> '' AND NOT EXISTS (SELECT 1 FROM "members" WHERE id = NEW."person") BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
 CREATE TRIGGER "approval_rules_person_member_parent_delete" BEFORE DELETE ON "members" WHEN 1 AND EXISTS (SELECT 1 FROM "approval_rules" WHERE "person" = OLD.id) BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
 CREATE TRIGGER "approval_rules_person_member_parent_update" BEFORE UPDATE OF id ON "members" WHEN OLD.id <> NEW.id AND EXISTS (SELECT 1 FROM "approval_rules" WHERE "person" = OLD.id) BEGIN SELECT RAISE(ABORT, 'polymorphic foreign key failed'); END;
+CREATE TRIGGER "approval_record_immutable_update" BEFORE UPDATE ON "approval_record" BEGIN SELECT RAISE(ABORT, 'permanent record cannot be edited'); END;
+CREATE TRIGGER "approval_record_immutable_delete" BEFORE DELETE ON "approval_record" BEGIN SELECT RAISE(ABORT, 'permanent record cannot be edited'); END;
+CREATE TRIGGER "deleted_threads_immutable_update" BEFORE UPDATE ON "deleted_threads" BEGIN SELECT RAISE(ABORT, 'permanent record cannot be edited'); END;
+CREATE TRIGGER "deleted_threads_immutable_delete" BEFORE DELETE ON "deleted_threads" BEGIN SELECT RAISE(ABORT, 'permanent record cannot be edited'); END;
+CREATE TRIGGER "tokens_live_key_insert" BEFORE INSERT ON "tokens" WHEN NEW."revoked_at" IS NULL AND (NEW."expires_at" IS NULL OR julianday(NEW."expires_at") > julianday(loom_now())) AND EXISTS (SELECT 1 FROM "tokens" WHERE "label" = NEW."label" AND "fingerprint" <> NEW."fingerprint" AND "revoked_at" IS NULL AND ("expires_at" IS NULL OR julianday("expires_at") > julianday(loom_now()))) BEGIN SELECT RAISE(ABORT, 'live label must be unique'); END;
+CREATE TRIGGER "tokens_live_key_update" BEFORE UPDATE ON "tokens" WHEN NEW."revoked_at" IS NULL AND (NEW."expires_at" IS NULL OR julianday(NEW."expires_at") > julianday(loom_now())) AND EXISTS (SELECT 1 FROM "tokens" WHERE "label" = NEW."label" AND "fingerprint" <> NEW."fingerprint" AND "revoked_at" IS NULL AND ("expires_at" IS NULL OR julianday("expires_at") > julianday(loom_now()))) BEGIN SELECT RAISE(ABORT, 'live label must be unique'); END;
+CREATE TRIGGER "threads_no_reuse" BEFORE INSERT ON "threads" WHEN EXISTS (SELECT 1 FROM "deleted_threads" WHERE "id" = NEW."id") BEGIN SELECT RAISE(ABORT, 'deleted id cannot be reused'); END;
+CREATE TRIGGER "threads_fixed_id" BEFORE UPDATE OF "id" ON "threads" WHEN NEW."id" <> OLD."id" BEGIN SELECT RAISE(ABORT, 'id cannot be changed'); END;
+CREATE TRIGGER "threads_mark_deleted" AFTER DELETE ON "threads" BEGIN INSERT OR IGNORE INTO "deleted_threads" ("id", "conversation", "at") VALUES (OLD."id", OLD."conversation", loom_now()); END;
