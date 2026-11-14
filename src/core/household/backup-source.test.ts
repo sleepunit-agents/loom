@@ -13,6 +13,7 @@ import { migrateHouseholdTables } from './schema.js';
 import { startLoom } from '../../foundation.js';
 import { fixture as fixtureHome, installFixture } from '../../fixture.js';
 import { FakeClock } from '../clock.js';
+import { registerExportFilter } from '../db/export.js';
 const databaseGuard = vi.hoisted(() => ({ check: undefined as undefined | ((path: unknown) => void) }));
 vi.mock('better-sqlite3', async original => {
   const actual = await original<typeof import('better-sqlite3')>();
@@ -148,4 +149,13 @@ it('performs no cookie lookup for explicit absence and no old-source reads or pa
   expect(lookedUp.filter(path => forbidden.test(path))).toEqual([]);
   expect(databasePaths.length).toBeGreaterThan(0);
   expect(databasePaths.every(path => path === ':memory:' || Buffer.isBuffer(path))).toBe(true);
+});
+
+it('refuses registration removed by an owning export filter even while live registration remains valid', async () => {
+  const { input } = await fixture();
+  expect(new HouseholdDatabase(input.db).household(input.home)?.agents).toContain('pond-bot');
+  registerExportFilter(input.db, 'source-filter-fixture', (table, row) => table !== 'household_agents' || row.id !== 'pond-bot');
+  await expect(encryptRegisteredHouseholdBundle(input)).rejects.toThrow(/^Registered household backup capture failed$/);
+  expect(input.secrets.export).not.toHaveBeenCalled();
+  expect(new HouseholdDatabase(input.db).household(input.home)?.agents).toContain('pond-bot');
 });
