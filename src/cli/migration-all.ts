@@ -93,7 +93,7 @@ function saveReceipt(home: string, receipt: Receipt, publication: Publication): 
   publication.rename(join(home, pendingName), join(home, receiptName));
   const dir = openSync(home, 'r'); try { publication.sync(dir); } finally { closeSync(dir); }
 }
-export interface MigrationReport { status: 'complete' | 'incomplete'; snapshot: string; plan: string; pieces: { name: string; status: 'imported' | 'completed' }[]; missing: string[]; blocked: string[]; skipped?: {piece:'runtime';id:string;reason:string}[] }
+export interface MigrationReport { status: 'complete' | 'incomplete'; snapshot: string; plan: string; pieces: { name: string; status: 'imported' | 'completed' }[]; missing: string[]; blocked: string[]; skippedCount: number; skipped?: {piece:'runtime';id:string;reason:string}[] }
 /** Hooks and alternate registries are internal TypeScript only, never JSON plan options. */
 export async function runMigrationAll(snapshot: string, destination: string, supplied?: unknown, controls: { registry?: MigrationRegistry; now?: () => number; afterPiece?: (name: string) => void; publication?: Publication } = {}): Promise<MigrationReport> {
   const prepared = prepareMigrationPlan(snapshot, supplied), home = canonical(destination);
@@ -120,8 +120,9 @@ export async function runMigrationAll(snapshot: string, destination: string, sup
       if (!Object.hasOwn(plan.importers, entry.name)) throw Error('Dependency absent from plan');
       return true;
     });
-    const report: MigrationReport = { status: missing.size || blocked.size ? 'incomplete' : 'complete', snapshot: plan.snapshot, plan: checksum, pieces: [], missing: [...missing].sort(), blocked: [...blocked].sort() };
+    const report: MigrationReport = { status: missing.size || blocked.size ? 'incomplete' : 'complete', snapshot: plan.snapshot, plan: checksum, pieces: [], missing: [...missing].sort(), blocked: [...blocked].sort(), skippedCount: 0 };
     const finishReport=()=>{
+      report.skippedCount=receipt.runtimeSkipped?.length ?? 0;
       if(receipt.runtimeSkipped?.length)report.skipped=receipt.runtimeSkipped.map(row=>({piece:'runtime',...row}));
       return report;
     };

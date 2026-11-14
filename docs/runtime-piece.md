@@ -978,7 +978,8 @@ When a `loom` venue or `th:` place has neither a matching owning thread nor a
 matching tombstone, an explicit `{}` mapping also retains only the private
 archive and creates no binding or provenance. Its id-only report reason is
 `skipped: owning Comms thread missing`, including after interruption and on
-repeat imports. Explicit member or project mappings still refuse without an
+repeat imports. Standalone and household reports expose `skippedCount`, derived
+from the skipped list (zero when none), without disclosing private source fields. Explicit member or project mappings still refuse without an
 owning thread; a missing spawn handle owner alone does not qualify. No owner,
 thread or execution authority is invented. Independent verification checks both
 the excluded live rows and exact archived bytes for this disposition too.

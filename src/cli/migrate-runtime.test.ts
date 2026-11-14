@@ -47,7 +47,7 @@ async function fixture(deleted: boolean | 'household' | 'orphan'=false) {
     const db=new Database(join(old,'household.db'));
     db.exec('CREATE TABLE comms_threads(id,agent,member,conversation,title,titled_by,project,pinned,archived,opened,last,read_seq,first_id,first_hash,stop,working_since); CREATE TABLE comms_deleted(id,member,agent,channel,conversation,at)');
     if(deleted!=='orphan')db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?,?)').run('kehvhuwzdm','jonathan','art',1,null,'2026-11-13T00:00:00Z');db.close();
-    writeFileSync(join(data,'delivery','conversations','cv-abcdef123456.json'),JSON.stringify({conversation:'cv-abcdef123456',agent:'art',venue:'loom',place:'th:kehvhuwzdm',msgs:[{text:'PRIVATE DELETED WORDS'}]}));
+    writeFileSync(join(data,'delivery','conversations','cv-abcdef123456.json'),JSON.stringify({conversation:'cv-abcdef123456',agent:'art',venue:'loom',place:'th:kehvhuwzdm',kind:'live',started:'2026-11-06T00:00:00Z',last:'2026-11-06T00:00:00Z',msgs:[{text:'PRIVATE DELETED WORDS'}]}));
   }
   const shaped: {conversation:string;venue:string;place:string;thread?:string}[]=[];
   if(deleted==='household') {
@@ -184,7 +184,7 @@ it.each(['deleted','missing'] as const)('reports archive-only %s bindings throug
  await expect(runMigrationAll(f.snapshot,f.home,f.plan,{afterPiece:name=>{if(name==='runtime')throw Error('death after commit');}})).rejects.toThrow('death after commit');
  for(let i=0;i<2;i++) {
   const report=await runMigrationAll(f.snapshot,f.home,f.plan);
-  expect(report).toMatchObject({status:'complete',skipped:skipped.map(row=>({piece:'runtime',...row}))});
+  expect(report).toMatchObject({status:'complete',skippedCount:1,skipped:skipped.map(row=>({piece:'runtime',...row}))});
   expect(JSON.stringify(report)).not.toMatch(/jonathan|PRIVATE|kehvhuwzdm/);
  }
  expect(await verifyMigration(f.snapshot,f.home,f.plan)).toMatchObject({status:'verified'});
@@ -193,7 +193,7 @@ it.each(['deleted','missing'] as const)('reports archive-only %s bindings throug
  let stdout='';const io:IOStreams={stdin:Readable.from([]),stdout:s=>stdout+=s,stderr:()=>{},env:{}};
  for(let i=0;i<2;i++) {
   stdout='';expect(await run(['runtime','--home',home,'--from',f.snapshot,'--mapping',mapping],io)).toBe(0);
-  expect(JSON.parse(stdout)).toMatchObject({imported:i===0,skipped});expect(stdout).not.toMatch(/PRIVATE|jonathan|kehvhuwzdm/);
+  expect(JSON.parse(stdout)).toMatchObject({imported:i===0,skipped,skippedCount:1});expect(stdout).not.toMatch(/PRIVATE|jonathan|kehvhuwzdm/);
  }
  expect(await verifyRuntimeMigration(f.snapshot,home,f.options)).toMatchObject({status:'verified'});
  expect(bytes(f.snapshot)).toEqual(before);
