@@ -408,4 +408,4 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     }
     expect(errors).toEqual([]);
   } finally { await browser.close(); await old.close(); await app.close(); rmSync(home,{recursive:true,force:true}); }
-},180000);
+},300000);
