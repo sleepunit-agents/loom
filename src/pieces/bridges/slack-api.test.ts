@@ -321,3 +321,12 @@ it('keeps inspection bound to its original venue and message across async metada
   expect((f.request.mock.calls[1][1]?.body as URLSearchParams).get('user')).toBe('U111');
   expect(f.read.mock.calls.map(c=>c[0])).toEqual(['slack-bot','slack-bot']);
 });
+it('rechecks lifetime after deferred credential acquisition before starting HTTP',async()=>{
+  const f=fixture();let open=true,release!:()=>void,entered!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  const blocked=new Promise<void>(resolve=>{release=resolve;});
+  f.read.mockImplementationOnce(async(_name,use)=>{entered();await blocked;return use('SECRET');});
+  const pending=slackApi({withValue:f.read},()=>open,f.request as typeof fetch).inspect(venue,message);
+  await started;open=false;release();
+  expect(await pending).toBe('wait'); expect(f.read).toHaveBeenCalledTimes(1); expect(f.request).not.toHaveBeenCalled();
+});
