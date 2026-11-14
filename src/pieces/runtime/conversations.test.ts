@@ -928,7 +928,7 @@ it('derives private description, title and monotonic activity from the authentic
  expect(f.record().title).toBe('Member title');
  for(const table of ['runtime_inputs','core_operations'])expect(JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain('PRIVATE');
 });
-it.each(['imported','reset','writeoff','ended','binding','project','venue','archived','membership','policy','archived-policy','service','box','house','credential','terminal','live-conversation','live-project','live-thread'] as const)('refuses bound Comms controls after %s changes',async drift=>{
+it.each(['imported','reset','writeoff','ended','binding','project','venue','archived','membership','policy','archived-policy','service','box','house','credential','terminal','live-conversation','live-project','live-thread','ambiguous-owner','deleted-owner'] as const)('refuses bound Comms controls after %s changes',async drift=>{
  const f=await commsBodyFixture(drift==='membership'?'pollock':'jonathan'),store=runtimeStore(f.app.db);
  expect(await f.post(f.body,'runtime.describeConversation',{})).toMatchObject({ok:true});
  const viewer=signin(f.app).token(hash(f.body))!.viewer;
@@ -954,6 +954,13 @@ it.each(['imported','reset','writeoff','ended','binding','project','venue','arch
   }
   if(drift==='archived'){const t=f.record();t.archived=f.clock.now();f.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(t),f.thread);}
   if(drift==='live-conversation'||drift==='live-project'){const t=f.record();if(drift==='live-conversation')t.conversation='other-conversation';else t.project='pond';f.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(t),f.thread);}
+  if(drift==='ambiguous-owner'){
+   const t=f.record(),copy={...t,id:'th:duplicate-owner'};
+   f.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(copy.id,copy.member,copy.agent,copy.project??null,JSON.stringify(copy));
+  }
+  if(drift==='deleted-owner'){
+   const t=f.record();f.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('th:deleted-owner',t.member,t.agent,t.conversation,f.clock.now());
+  }
   if(drift==='membership')new HouseholdDatabase(f.app.db).change(f.home,raw=>{(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person==='pollock')!.agents=[];});
   if(drift==='service')store.put('job',{...job,service:'discord'},f.clock.now());
   if(drift==='archived-policy')f.app.db.prepare('INSERT INTO runtime_import_documents (collection,key,record) VALUES (?,?,?)').run('gates','art',JSON.stringify({doc:'{}'}));
@@ -964,7 +971,7 @@ it.each(['imported','reset','writeoff','ended','binding','project','venue','arch
  })();
  const before=f.record();
  for(const [name,input,id] of writes)expect(f.app.operations.call('direct',viewer,`runtime.${name}`,input,id)).toMatchObject({ok:false});
- for(const [name,input] of [['describeConversation',{}],['titleConversation',{title:'Forbidden title'}],['conversationActivity',{at:f.clock.now(),tokens:99}]] as const)
+ for(const [name,input] of [['readConversation',{}],['reply',{id:'held-reply',text:'PRIVATE held'}],['conversationStatus',{state:'working'}],['describeConversation',{}],['titleConversation',{title:'Forbidden title'}],['conversationActivity',{at:f.clock.now(),tokens:99}]] as const)
   expect(await f.post(f.body,`runtime.${name}`,input)).toMatchObject({ok:false});
  expect(f.record()).toEqual(before);
 });
@@ -994,4 +1001,55 @@ it('rejects a centrally authenticated service credential for the same private jo
  expect(signin(f.app).body(signin(f.app).token(hash(secret))!.viewer)).toMatchObject({agent:'art',job:f.job,service:'discord'});
  for(const [name,input] of [['describeConversation',{}],['titleConversation',{title:'Service title'}],['conversationActivity',{at:f.clock.now()}]] as const)
   expect(await f.post(secret,`runtime.${name}`,input)).toMatchObject({ok:false,code:'denied'});
+});
+
+it.each(['duplicate','tombstone','imported','policy','venue','reset','writeoff','ended','service'] as const)('refuses pending private read/reply after %s authority evidence appears',async drift=>{
+ const f=await commsBodyFixture(),viewer=signin(f.app).token(hash(f.body))!.viewer;
+ const read=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
+ const reply=f.app.operations.callAsync('direct',viewer,'runtime.reply',{id:'ownership-race',text:'PRIVATE must not escape'});
+ const t=f.record();
+ if(drift==='duplicate'){
+  const copy={...t,id:'th:duplicate-race'};
+  f.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(copy.id,copy.member,copy.agent,copy.project??null,JSON.stringify(copy));
+ }else if(drift==='tombstone')f.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('th:deleted-race',t.member,t.agent,t.conversation,f.clock.now());
+ else f.app.db.transaction(()=>{
+  const store=runtimeStore(f.app.db),{changedAt:_,...job}=store.read('job',f.job)!;
+  if(drift==='policy')f.app.db.prepare('INSERT INTO runtime_body_policy (agent,record) VALUES (?,?)').run('art','{}');
+  else if(drift==='venue'){
+   const {changedAt:__,...binding}=store.read('binding',job.conversation!)!;store.put('binding',{...binding,venue:'spawn'},f.clock.now());
+  }else store.put('job',{...job,...(drift==='imported'?{imported:{history:'discard' as const}}:drift==='reset'?{principalReset:{approval:'a-reset',by:'jonathan',at:f.clock.now()}}:drift==='writeoff'?{writtenOff:{approval:'a-writeoff',by:'jonathan',at:f.clock.now()}}:drift==='service'?{service:'discord'}:{endedAt:f.clock.now()})},f.clock.now());
+ })();
+ expect(await read).toMatchObject({ok:false,code:'denied'});
+ expect(await reply).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare("SELECT * FROM comms_messages WHERE id='ownership-race'").all()).toEqual([]);
+});
+
+it.each(['duplicate','tombstone'] as const)('refuses delivery acceptance and receipt with %s ownership evidence',async drift=>{
+ let role!:ReturnType<typeof realConversationRuntime>;
+ vi.spyOn(conversationModule,'conversationRuntime').mockImplementation((...args)=>role=realConversationRuntime(...args));
+ const f=await setup(true),thread=await f.open();
+ await expect.poll(()=>f.app.db.prepare("SELECT id FROM core_effects WHERE id=? AND state='due'").get(`comms-deliver:${thread}:1`)).toBeDefined();
+ const t=JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record);
+ const route={thread,conversation:t.conversation,agent:t.agent,member:t.member,seq:1};
+ expect(await role.delivery.receipt!(route)).toBe('not-accepted');
+ if(drift==='duplicate'){
+  const copy={...t,id:'th:duplicate-delivery'};
+  f.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(copy.id,copy.member,copy.agent,copy.project??null,JSON.stringify(copy));
+ }else f.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('th:deleted-delivery',t.member,t.agent,t.conversation,f.clock.now());
+ expect(await role.delivery.receipt!(route)).toBe('unknown');
+ await expect(role.delivery.deliver({...route,text:'PRIVATE delivery must refuse'})).rejects.toThrow();
+ for(const table of ['runtime_jobs','runtime_bindings','runtime_deliveries'])expect(f.app.db.prepare(`SELECT * FROM ${table}`).all()).toEqual([]);
+ expect(f.app.db.prepare("SELECT * FROM core_operations WHERE name='runtime.acceptConversation'").all()).toEqual([]);
+ if(drift==='duplicate')f.app.db.prepare("DELETE FROM comms_threads WHERE id='th:duplicate-delivery'").run();
+ else f.app.db.prepare("DELETE FROM comms_deleted WHERE id='th:deleted-delivery'").run();
+ expect(await role.delivery.receipt!(route)).toBe('not-accepted');
+ await role.delivery.deliver({...route,text:'PRIVATE source stays in Comms'});
+ expect(await role.delivery.receipt!(route)).toBe('accepted');
+ expect(runtimeStore(f.app.db).ids('job')).toHaveLength(1);
+ // A cached acceptance acknowledgement must not bypass current ownership.
+ f.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('th:deleted-replay',t.member,t.agent,t.conversation,f.clock.now());
+ expect(await role.delivery.receipt!(route)).toBe('unknown');
+ await expect(role.delivery.deliver({...route,text:'PRIVATE replay'})).rejects.toThrow();
+ expect(runtimeStore(f.app.db).ids('job')).toHaveLength(1);
+ for(const table of ['runtime_inputs','runtime_jobs','runtime_bindings','runtime_deliveries','core_operations'])expect(JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain('PRIVATE');
 });

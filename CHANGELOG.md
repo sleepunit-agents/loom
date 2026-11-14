@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Preserve private ordinary schedule scope and bind body schedule controls and cancellation, including command receipt replay, to fresh Runtime conversation proof and current policy.
+- Resolve unique member-private Comms ownership as metadata and refuse ambiguous or deleted Runtime routes.
+
 - Add an unregistered pinned metadata ticket authority channel for the separate Secrets holder; worker delivery and public get remain unavailable.
 - Runtime: expose authenticated private conversation description, title and activity controls through the next API; keep imported and policy-held execution fenced.
 

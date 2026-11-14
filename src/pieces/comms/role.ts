@@ -111,7 +111,14 @@ export function stagingHold(effects: OutsideEffects): Hold {
 }
 
 /** Metadata-only seam; private thread filing never enters a public conversation. */
+export interface PrivateThreadRoute {
+ id: string; conversation: string; agent: string; member: string;
+ project?: string; archived: number | null;
+}
 export interface CommsMetadata {
+ /** Current unique owner of a conversation, independent of a spawn transport place.
+  * Member-scoped metadata only. Re-read after awaits; this grants no body capability. */
+ privateThread(viewer: Viewer, conversation: {id: string; agent: string; member: string}): PrivateThreadRoute | undefined;
  threadProject(viewer: Viewer, conversation: {id: string; agent: string; member?: string}): string | null;
 }
 const metadataRoles = new WeakMap<Operations, CommsMetadata>();

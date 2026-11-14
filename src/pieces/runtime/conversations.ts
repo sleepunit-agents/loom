@@ -11,7 +11,7 @@ import { controlScope, currentExecution } from './control.js';
 import { z } from 'zod';
 import { operation, OperationError, mayUseThread, mayAct, mayMove, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
-import type { Comms, RuntimeDelivery, DeliveryReceipt } from '../comms/role.js';
+import { commsMetadata, type Comms, type RuntimeDelivery, type DeliveryReceipt } from '../comms/role.js';
 import { runtimeStore } from './store.js';
 import { centralRuntimeCredentials } from './central-credentials.js';
 export const PRIVATE_BRIEF='Read the bound private conversation through runtime.readConversation. Reply through runtime.reply.';
@@ -32,6 +32,8 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
  const available=(m:Routing)=>{
   if(closed||!comms||!mayUseThread({kind:'member',id:m.member},m,sharing()))return false;
   try {
+   const owner=commsMetadata(operations)?.privateThread({kind:'member',id:m.member},{id:m.conversation,agent:m.agent,member:m.member});
+   if(!owner||owner.id!==m.thread||owner.project!==m.project||owner.archived!==null)return false;
    const trace=comms.trace(m.agent,m.thread),description=comms.describe(m.agent,m.thread);
    return trace.conversation===m.conversation&&trace.project===m.project&&trace.archived===null&&description.readers.length===1&&description.readers[0]===m.member;
   } catch{return false;}
@@ -54,17 +56,15 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
  const bound=(viewer:Viewer)=>{
   const authenticated=authenticatedJob(viewer);if(!authenticated)return;
   const {job,proof:p}=authenticated,binding=job.conversation?store.read('binding',job.conversation):undefined;
-  if(!binding||!job.member||binding.job!==job.id||binding.member!==job.member||binding.agent!==p.agent||binding.project!==job.project
+  if(!binding||binding.venue!=='loom'||job.imported||job.principalReset||job.writtenOff
+   ||job.endedAt!==undefined||bodyPolicyExecutionHeld(db,job.agent)||!job.member||binding.job!==job.id||binding.member!==job.member||binding.agent!==p.agent||binding.project!==job.project
    ||!available({thread:binding.place,agent:p.agent,member:job.member,conversation:binding.id,project:binding.project,seq:1}))return;
   return {job,binding,proof:p};
  };
- // These private Comms controls never accept a thread, job or conversation id.
+ // Every private body consumer shares the original source/execution fences.
  // Archived/imported execution is evidence, not a fresh body capability.
  const commsBody=(viewer:Viewer)=>{
-  const b=bound(viewer);
-  if(!b||b.job.service!==b.proof.service||b.binding.venue!=='loom'||b.job.imported||b.job.principalReset||b.job.writtenOff
-   ||b.job.endedAt!==undefined||bodyPolicyExecutionHeld(db,b.job.agent))return;
-  return b;
+  const b=bound(viewer);return b&&b.job.service===b.proof.service?b:undefined;
  };
  operations.register(operation({name:'runtime.describeConversation',doors:['http','direct'],input:z.object({}).strict(),
   output:z.object({brief:z.array(z.string()),readers:z.array(z.string())}),may:v=>!!commsBody(v),
@@ -97,7 +97,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   }
   if(store.put('binding',next,ctx.now))ctx.changed('runtime.binding',binding.id);
  };
- operations.register(operation({name:'runtime.acceptConversation',doors:['direct'],write:true,input:routing,output:z.object({job:id}),
+ operations.register(operation({name:'runtime.acceptConversation',doors:['direct'],write:true,recheckPolicy:true,input:routing,output:z.object({job:id}),
   may:(v,m)=>v.kind==='member'&&v.id===m.member&&available(m),
   run(ctx,m){
    const old=receipt(m);if(old)return old;
@@ -139,23 +139,23 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   may:v=>v.kind==='runner',run(ctx){return {jobs:store.ids('job').filter(id=>{const job=store.read('job',id)!,box=store.read('box',job.box);return box?.revokedAt===undefined&&!!box&&job.state==='queued'&&mayAct(ctx.viewer,controlScope(store,job,sharing()),sharing(),'report-job');})};},
  }));
  operations.register(operation({name:'runtime.readConversation',doors:['http','direct'],input:z.object({before:z.number().int().positive().optional()}).strict(),output:z.unknown(),
-  may:v=>!!bound(v)||!!bridges?.bound(v),async prepare(i,{viewer}){
+  may:v=>!!commsBody(v)||!!bridges?.bound(v),async prepare(i,{viewer}){
    if(bridges?.bound(viewer))return bridges.read(viewer,i.before);
-   const b=bound(viewer)!;
-   return comms!.reader({agent:b.job.agent,conversation:b.binding.id,valid:()=>bound(viewer)?.job.id===b.job.id}).read({thread:b.binding.place,...i});
-  },run(ctx,_i,prepared){const job=bridges?.bound(ctx.viewer);if(job){hearJob(db,job.id,ctx.now);return prepared;}const b=bound(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
+   const b=commsBody(viewer)!;
+   return comms!.reader({agent:b.job.agent,conversation:b.binding.id,valid:()=>commsBody(viewer)?.job.id===b.job.id}).read({thread:b.binding.place,...i});
+  },run(ctx,_i,prepared){const job=bridges?.bound(ctx.viewer);if(job){hearJob(db,job.id,ctx.now);return prepared;}const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
  }));
  // Each transcript owns durable reply deduplication. This read-style async operation
  // returns only a sequence acknowledgement, never stores words or credentials.
  operations.register(operation({name:'runtime.reply',doors:['http','direct'],input:z.object({id,conversation:id.optional(),job:id.optional(),text:z.string().min(1).max(40_000)}).strict(),output:z.object({seq:z.number()}),
-  may:(v,i)=>{const job=bridges?.bound(v);if(job)return (!i.job||i.job===job.id)&&(!i.conversation||i.conversation===job.conversation);const b=bound(v);return !!b&&(!i.job||i.job===b.job.id)&&(!i.conversation||i.conversation===b.binding.id);},async prepare(i,{viewer}){
+  may:(v,i)=>{const job=bridges?.bound(v);if(job)return (!i.job||i.job===job.id)&&(!i.conversation||i.conversation===job.conversation);const b=commsBody(v);return !!b&&(!i.job||i.job===b.job.id)&&(!i.conversation||i.conversation===b.binding.id);},async prepare(i,{viewer}){
    if(bridges?.bound(viewer))return undefined;
-   const b=bound(viewer)!;
-   return comms!.bodyPost({agent:b.job.agent,conversation:b.binding.id,valid:()=>bound(viewer)?.job.id===b.job.id},b.binding.place,{id:i.id,text:i.text,kind:'reply',run:b.job.id});
-  },run(ctx,i,prepared){const job=bridges?.bound(ctx.viewer);if(job){const result=bridges!.reply(ctx.viewer,i,ctx);hearJob(db,job.id,ctx.now);return result;}const b=bound(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
+   const b=commsBody(viewer)!;
+   return comms!.bodyPost({agent:b.job.agent,conversation:b.binding.id,valid:()=>commsBody(viewer)?.job.id===b.job.id},b.binding.place,{id:i.id,text:i.text,kind:'reply',run:b.job.id});
+  },run(ctx,i,prepared){const job=bridges?.bound(ctx.viewer);if(job){const result=bridges!.reply(ctx.viewer,i,ctx);hearJob(db,job.id,ctx.now);return result;}const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
  }));
  operations.register(operation({name:'runtime.conversationStatus',doors:['http','direct'],input:z.object({state:z.enum(['working','done']).optional()}).strict(),output:z.object({stop:z.boolean(),archived:z.boolean()}),
-  may:v=>!!bound(v),run(ctx,i){const b=bound(ctx.viewer)!;hearJob(db,b.job.id,ctx.now);const status=comms!.status(b.job.agent,b.binding.place,i.state);
+  may:v=>!!commsBody(v),run(ctx,i){const b=commsBody(ctx.viewer)!;hearJob(db,b.job.id,ctx.now);const status=comms!.status(b.job.agent,b.binding.place,i.state);
    if(i.state){const report=attentionRole(operations).reportStatus(ctx.viewer,{id:b.job.agent,agent:b.job.agent,state:i.state==='working'?'working':'idle',work:'Private conversation',jobs:[],watched:[]},`body-status:${b.job.id}:${ctx.now}:${i.state}`);if(!report.ok)throw new OperationError(report.code,report.message);}
    return status;},
  }));
