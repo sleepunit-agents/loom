@@ -797,7 +797,7 @@ it('executable signal drains a sleeping idle worker without another fake-clock t
  expect(signals.listenerCount('SIGTERM')).toBe(0);expect(signals.listenerCount('SIGINT')).toBe(0);
 });
 
-it.each(['expire','signal'] as const)('executable owns a real referenced idle handle until %s',async ending=>{
+it.each(['expire','signal','arrival','failure'] as const)('executable owns a real referenced idle handle until %s',async ending=>{
  const f=await setup(),input=new PassThrough(),signals=new EventEmitter(),stderr=vi.fn();
  const intervals=vi.spyOn(globalThis,'setInterval'),clear=vi.spyOn(globalThis,'clearInterval');
  const completed=runClockWorker({input,args:[],signals,stderr},{clock:f.clock,launch:f.launch});
@@ -808,9 +808,14 @@ it.each(['expire','signal'] as const)('executable owns a real referenced idle ha
  // The actual Node handle is referenced, even though injected Clock timers
  // need no OS handle and production Clock timers deliberately unref.
  expect(handle.hasRef()).toBe(true);expect(clear).not.toHaveBeenCalledWith(handle);
- if(ending==='signal')signals.emit('SIGTERM');else f.clock.advance(3000);
- expect(await completed).toBe(ending==='signal'?1:0);
- expect(clear).toHaveBeenCalledWith(handle);expect(f.calls).toHaveLength(1);
+ if(ending==='signal')signals.emit('SIGTERM');
+ else if(ending==='failure'){f.withdraw();f.clock.advance(1000);}
+ else if(ending==='arrival'){
+  await f.joinInput();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+  expect(clear).toHaveBeenCalledWith(handle);signals.emit('SIGTERM');
+ }else f.clock.advance(3000);
+ expect(await completed).toBe(ending==='expire'?0:1);
+ expect(clear).toHaveBeenCalledWith(handle);expect(f.calls).toHaveLength(ending==='arrival'?2:1);
 });
 
 // A conservative lower advertised lifetime makes the worker's boundary fast
@@ -844,4 +849,44 @@ it('the admission lifetime fences native history while a completion response is 
  try{f.finish();await held.ready;f.clock.advance(500);await settle();expect(close).toHaveBeenCalled();
   expect(await worker.completed).toBe(false);held.release();await settle();expect(f.calls).toHaveLength(1);
  }finally{held.release();}
+});
+
+it.each([false,true])('a successfully decoded idle reply crossing its deadline stays uncertain (more=%s)',async more=>{
+ const f=await setup(),original=globalThis.fetch,now=f.clock.now();
+ const readClock=vi.spyOn(f.clock,'now');
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+  const response=await original(...args);
+  if(String(args[0]).endsWith('/api/runtime/idleClockExecution')){
+   const body=await response.clone().json();expect(body).toMatchObject({ok:true,value:{more}});
+   // Simulate time spent decoding a successful response without delivering the
+   // overdue timer callback. This is the deadline edge a held socket misses.
+   readClock.mockReturnValue(now+3001);
+   return new Response(JSON.stringify(body),{status:response.status,headers:response.headers});
+  }
+  return response;
+ });
+ const worker=f.start({...f.config,idleMs:3000});await f.ready;await finishToIdle(f);
+ try{
+  if(more)await f.joinInput();else f.clock.advance(1000);
+  expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(1);
+ }finally{readClock.mockRestore();}
+});
+async function emptyIdleTick(f:Awaited<ReturnType<typeof setup>>){
+ const at=vi.spyOn(f.clock,'at');f.clock.advance(1000);
+ await vi.waitFor(()=>expect(at).toHaveBeenCalledWith(f.clock.now()+1000,expect.any(Function)));at.mockRestore();
+}
+it('a successful resumed turn opens a new idle window beyond the first deadline',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:4000});await f.ready;
+ await finishToIdle(f);const firstDeadline=f.clock.now()+4000;
+ await emptyIdleTick(f);await emptyIdleTick(f);
+ await f.joinInput();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+ await finishToIdle(f);const secondDeadline=f.clock.now()+4000;
+ await emptyIdleTick(f);
+ const third=await f.joinInput();expect(f.clock.now()).toBeGreaterThan(firstDeadline);expect(f.clock.now()).toBeLessThan(secondDeadline);
+ await vi.waitFor(()=>expect(f.calls).toHaveLength(3));
+ expect(f.calls[2].args).toContain('--resume');
+ expect(f.calls[2].args[f.calls[2].args.indexOf('--resume')+1]).toBe(f.calls[0].args[f.calls[0].args.indexOf('--session-id')+1]);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${third}`)).toEqual({consumed:null});
+ await finishToIdle(f);f.clock.advance(4000);expect(await worker.completed).toBe(true);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${third}`)).toEqual({consumed:expect.any(Number)});
 });

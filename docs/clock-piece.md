@@ -1359,7 +1359,7 @@ and terminal-body resumption remain unfinished.
 
 | Old surface | New authorization boundary |
 | --- | --- |
-| `house_may_join`, `wake_place`, persisted `places.json` | `clockRoute` plus Runtime's current exact destination witness; never imported place strings or caller-selected bodies. Native queued feed/resume is described above; idle/cross-process resume remains unfinished. |
+| `house_may_join`, `wake_place`, persisted `places.json` | `clockRoute` plus Runtime's current exact destination witness; never imported place strings or caller-selected bodies. Bounded same-worker queued/idle feed and native resume are described above; cross-process resume remains unfinished. |
 
 ### Public prompt conversation delivery
 

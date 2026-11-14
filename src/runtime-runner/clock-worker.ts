@@ -133,7 +133,7 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
               const checked=clock.now();
               const idle=clockExecutionIdle.parse(await call('idleClockExecution',{execution:input.execution},idleUntil));
               if(!active||clock.now()>=checked+idle.ttl)throw fail();
-              if(clock.now()>=idleUntil)break;
+              if(clock.now()>=idleUntil)throw fail();
               if(idle.more){more=true;break;}
             }
             if(!active)throw fail();
