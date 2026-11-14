@@ -3,7 +3,7 @@
  * here executes a process, opens credentials or invents another transport. */
 import { asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { jobNeeds, jobs } from '../core/data/schema.js';
+import { boxes, jobNeeds, jobs } from '../core/data/schema.js';
 import { Jobs } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
@@ -16,8 +16,9 @@ export class Dispatcher {
   /** Polls also report machine health when idle or report-only. Placement and
    * claim share one transaction, so a second poll cannot receive the same job. */
   next(box: string) {
+    this.machines.heartbeat(box);
     return this.db.transaction(() => {
-      const machine = this.machines.heartbeat(box);
+      const machine = this.liveMachine(box);
       if (machine.reportOnly) return;
       const at = this.now(), roles = this.roles();
       const queued = this.db.select().from(jobs).where(eq(jobs.state, 'queued')).orderBy(asc(jobs.queuedAt), asc(jobs.id)).all();
@@ -38,16 +39,23 @@ export class Dispatcher {
       }
     }, { behavior: 'immediate' });
   }
+  private liveMachine(box: string) {
+    const machine = this.db.select().from(boxes).where(eq(boxes.id, box)).get();
+    if (!machine || machine.revokedAt) throw new Error('Machine not available');
+    return machine;
+  }
   started(box: string, job: string, build: string) {
+    this.machines.heartbeat(box);
     return this.db.transaction(() => {
-      this.machines.heartbeat(box);
+      this.liveMachine(box);
       this.jobs.started(job, box, build);
       return { ok: true as const };
     }, { behavior: 'immediate' });
   }
   heartbeat(box: string, id: string, state: 'starting' | 'running') {
+    this.machines.heartbeat(box);
     return this.db.transaction(() => {
-      this.machines.heartbeat(box);
+      this.liveMachine(box);
       const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
       if (!job || job.box !== box || !(state === 'starting' ? job.state === 'starting' : ['running', 'waiting'].includes(job.state)))
         return { active: false };
@@ -58,8 +66,9 @@ export class Dispatcher {
   /** Root reports job/retry source changes to Tempo after this transaction
    * commits. The HTTP adapter returns only {ok:true} to the worker. */
   finish(box: string, job: string, exitCode: number, logTail: string) {
+    this.machines.heartbeat(box);
     return this.db.transaction(() => {
-      this.machines.heartbeat(box);
+      this.liveMachine(box);
       return this.jobs.finish(job, box, exitCode, logTail);
     }, { behavior: 'immediate' });
   }

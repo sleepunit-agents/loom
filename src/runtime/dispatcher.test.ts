@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
@@ -28,7 +28,7 @@ function fixture() {
   const mail = comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Private brief' });
   const job = runtime.jobs.admit(conversation.id)!;
   const tick = (ms: number) => { at = new Date(Date.parse(at) + ms).toISOString(); };
-  return { db, now, tick, runtime, comms, conversation, mail, job, roles };
+  return { client, db, now, tick, runtime, comms, conversation, mail, job, roles };
 }
 it('claims only on the selected worker and delivers an execution-ready snapshot once', () => {
   const f = fixture();
@@ -87,4 +87,28 @@ it('a failed placement leaves the job queued and never releases its brief', () =
   const f = fixture(); f.db.update(modelAccounts).set({ hasRoom: false }).run();
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ box: null, state: 'queued', claimedAt: null });
+});
+it('keeps machine health when a report rejects, without changing the foreign or ended job', () => {
+  const f = fixture(); f.runtime.next('first'); f.tick(10_000);
+  expect(() => f.runtime.started('second', f.job.id, 'wrong')).toThrow();
+  expect(f.db.select().from(boxes).where(eq(boxes.id, 'second')).get()?.lastSeenAt).toBe(f.now());
+  f.runtime.started('first', f.job.id, 'image'); f.runtime.finish('first', f.job.id, 0, 'done'); f.tick(10_000);
+  expect(() => f.runtime.finish('first', f.job.id, 0, 'duplicate')).toThrow();
+  expect(f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.lastSeenAt).toBe(f.now());
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'done', logTail: 'done' });
+});
+it('refreshes health on every successful phase report', () => {
+  const f = fixture(); f.runtime.next('first');
+  const health = () => f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.lastSeenAt;
+  f.tick(10_000); f.runtime.started('first', f.job.id, 'image'); expect(health()).toBe(f.now());
+  f.tick(10_000); f.runtime.heartbeat('first', f.job.id, 'running'); expect(health()).toBe(f.now());
+  f.tick(10_000); f.runtime.finish('first', f.job.id, 0, 'done'); expect(health()).toBe(f.now());
+});
+it('holds the same transaction across placement reads and claim', () => {
+  const f = fixture();
+  const runtime = new Dispatcher(f.db, f.now, () => { expect(f.client.inTransaction).toBe(true); return f.roles; });
+  const claim = runtime.jobs.claim.bind(runtime.jobs);
+  const observed = vi.spyOn(runtime.jobs, 'claim').mockImplementation((...args) => { expect(f.client.inTransaction).toBe(true); return claim(...args); });
+  expect(runtime.next('first')?.id).toBe(f.job.id);
+  expect(observed).toHaveBeenCalledOnce();
 });
