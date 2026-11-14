@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add bounded, descriptor-pinned capture of allowlisted context documents and referenced note attachments for a future household bundle; full backup execution remains pending.
+
 - Bind sealed typed Comms replies and retry receipts to the retained original encrypted question and owning route.
 - Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
 - Add native-age encryption and an actual encrypted restore drill for filtered next-database images; full household file coverage and backup execution remain pending.
