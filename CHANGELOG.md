@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Show live new-side piece counts and a Boxes enrollment glyph in the desk bar, with unavailable sources and unknown health stated explicitly.
 
 - Keep ordinary one-off Clock work filed by authenticated private bodies member-private, with original steering evidence and acknowledgements that omit words.
+- Clock schedules retain original steering across replacement and run-now; private schedule receipts keep their window check after removal.
 - Add a pinned metadata-only holder handoff channel with fresh destination checks, buffer erasure and drained shutdown; runner ticket admission and production activation remain separate.
 - Add a trusted Runtime destination metadata binding for future Secrets tickets, with fresh job, runner, box and claim checks.
 - Bind authenticated HOUSE request/status metadata in the typed Secrets client, with exact-job assertions, stable retries and value-free JSON acknowledgements.

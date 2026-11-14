@@ -43,12 +43,18 @@ window remains the only ordinary private read path. Exports omit these rows and
 retry/event copies, as for private local wakes; this is not a restorable backup.
 Private one-offs remain permission-held before dispatch, without member impersonation.
 Unbound/copy-only calls are unknown, never owner by inference. Existing stored work
-is not backfilled. Schedule creation/replacement/run must consume this evidence and
-narrow the original principal together in the following unit; local approval Caller
+is not backfilled. Ordinary schedules now save original authorship and carry it into occurrences.
+Replacement and run-now meet original and caller principals: owner is widest,
+different named people become unknown, and every named person is retained.
+Historical missing authorship stays unknown, never inferred from saved Viewer or
+archive. Public responses hide authorship. Private schedule ids retain durable
+window checks even after removal. Authenticated private body schedule filing
+currently refuses instead of flattening thread scope; supporting it together
+with conversation-bound mutation remains the next unit; local approval Caller
 semantics remain independent. No mutation/join or delivery authority is added here.
 
-Remaining work: conversation-bound mutation/join, original schedule principal
-narrowing, agent-authored self-rearm eligibility, continuation issuer/handle/
+Remaining work: conversation-bound mutation/join, scope-preserving private body
+schedule control and household lane authorship, agent-authored self-rearm eligibility, continuation issuer/handle/
 deadline/place validation, real service-identity dispatch and private delivery,
 and other imported provenance recovery or explicit deliberate drops. These are
 gaps, not deliberate drops. Archived strings and caller-supplied handles cannot
@@ -1053,6 +1059,29 @@ Private member scope survives even when the principal is unknown or names a
 different person. This is internal metadata: no public operation, record, Live
 feed or export is added. Consumers must preserve scope and still check central
 policy. Ordinary one-off filing now consumes this role and persists original
-evidence as described above. Clock mutation/join, schedule principal persistence/
-narrowing and self-rearm still do not consume it and remain unfinished. Local approval
+evidence as described above. Ordinary schedules now save and narrow principal as described below. Clock
+mutation/join, private body schedule control, household lane authorship and
+agent-authored self-rearm remain unfinished. Local approval
 semantics and actual private delivery are unchanged.
+
+
+### Schedule authorship unit
+
+Ordinary `scheduleSet` captures the same trusted original evidence as one-off
+filing. Member-created schedules save the actual member principal (owner only by
+current central household policy); unbound agent schedules remain unknown. No
+historical schedule acquires proof from its saved `by`, API capacity or archive.
+Replacement meets the old principal with the current caller and retains the
+union of named steering. Owner edits and owner run-now cannot promote a person's
+schedule or an unknown schedule to owner work. A replacement only retains its
+verified conversation if the resulting principal still matches the caller or
+both originals name that conversation. A member's run-now retains the original
+conversation only while its principal is unchanged. Occurrences inherit the
+resulting evidence, including across restart.
+
+This unit grants no new private body mutation, schedule-run, join or dispatch
+right. Household lanes still have their separate administration policy; original
+lane authorship and conversation-bound controls follow with the next unit.
+Authenticated private body `scheduleSet` is deliberately refused until that
+scope-preserving control path lands. Existing member-window schedule work remains
+private; schedule removal cannot turn its cached receipts into token responses.

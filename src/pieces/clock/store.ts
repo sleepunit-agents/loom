@@ -38,14 +38,18 @@ export function wakes(db: Db): Wake[] { return (db.prepare('SELECT record FROM c
 export function schedules(db: Db): Schedule[] { return (db.prepare('SELECT record FROM clock_schedules ORDER BY id').all() as { record: string }[]).map(r => JSON.parse(r.record)); }
 export function wake(db: Db, id: string): Wake | undefined { const r = db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(id) as { record: string } | undefined; return r && JSON.parse(r.record); }
 export function schedule(db: Db, id: string): Schedule | undefined { const r = db.prepare('SELECT record FROM clock_schedules WHERE id=?').get(id) as { record: string } | undefined; return r && JSON.parse(r.record); }
+export function rememberPrivateId(ctx: Context, w: Work & {id:string}) {
+  if(w.member)ctx.db.prepare("INSERT OR IGNORE INTO clock_meta(key,value) VALUES (?,?)").run("private-id:"+w.id,JSON.stringify({member:w.member}));
+}
 export function saveWake(ctx: Context, w: Wake) {
   w.changedAt = ctx.now;
-  if(w.member)ctx.db.prepare("INSERT OR IGNORE INTO clock_meta(key,value) VALUES (?,?)").run("private-id:"+w.id,JSON.stringify({member:w.member}));
+  rememberPrivateId(ctx, w);
   ctx.db.prepare('INSERT INTO clock_wakes VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record, changed_at=excluded.changed_at').run(w.id, JSON.stringify(w), ctx.now);
   ctx.changed('wake', w.id);
 }
 export function saveSchedule(ctx: Context, s: Schedule) {
   s.changedAt = ctx.now;
+  rememberPrivateId(ctx, s);
   ctx.db.prepare('INSERT INTO clock_schedules VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record, changed_at=excluded.changed_at').run(s.id, JSON.stringify(s), ctx.now);
   ctx.changed('schedule', s.id);
 }
