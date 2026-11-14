@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
 - New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail.
 - Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
 

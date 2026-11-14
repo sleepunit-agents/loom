@@ -16,7 +16,7 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | Per-device dock/rail hide modes | Always show / Minimize to strip / Auto-hide; browser-local next-only keys, overlay reveals, live ask/unread dot, keyboard agent shortcuts. Below 1280 the rail is a 14px strip |
 | Selected Comms companion | Visible live thread selects its owned agent above Needs you; others stay alphabetical. Minimize, list navigation or source loss releases it; short move respects reduced motion |
 | Comms portrait portal | Next slice; the selected companion currently retains its card |
-| Grouped launcher sections and account tile | Flat registration inventory for now; no old Shell discovery or fabricated live stats |
+| Grouped launcher sections and account tile | Grouped registration inventory and Your account shortcut; no old Shell discovery or fabricated live stats |
 | Home Needs you band and full questions, clock, runtime jobs, reported work | Existing live Home content in desk-coloured cut cards; desktop cards scroll within the available height; phone cards grow |
 | Depth / Contours / Wash | Existing lazy ground components, selected by member `household.preferences`; Appearance offers all three |
 | Home conversations and composer | Existing private `comms.agents` summary; latest thread and unread-thread navigation. Shared Comms composer opens a thread with member/agent drafts and stable retry IDs. No Home message-feed subscription or retained reply-word preview |
@@ -196,3 +196,18 @@ The new Comms reader owns its portrait, driven only by its live thread and retai
 | Old Comms fetch/marks | Replaced with retained message feed and household.agentDisplay; no old data reads |
 
 Slot registration and cleanup carry source tokens; stale cleanup cannot remove a newer destination. List navigation, minimize and source loss release selection. No tiling changes. The existing five-agent comparison scenario includes the same 36 boards; fixture evidence is not owner acceptance.
+
+### Launcher groups and account shortcut
+
+The registered inventory is grouped in the old desk's order: Work, People & agents, Library, System, Look & feel, Pieces. Empty groups disappear; unknown registrations stay in Work. Within a group the registration order stays unchanged. No app is duplicated across groups. Section names and profile/passkey/sign-out aliases participate in search. Enter chooses a title prefix, then an alias, then the first result. Arrow keys continue to measure the displayed tiles. Enter on the account shortcut or Close activates that control.
+
+| Old launcher behavior | New desk |
+|---|---|
+| Grouped applications | Registration IDs select groups; every registered app remains reachable |
+| Member account tile | Your account / Profile shortcut opens the registered account screen |
+| Profile found by passkey or sign out | Search aliases select the existing Your account app |
+| Separate Appearance/Accessibility launch apps | Not duplicated in the launcher: Appearance and accessibility stay together in the existing status-bar panel; Settings is the actual secrets/access app, so it is never falsely offered as appearance |
+| Individual agent tiles and per-app count duplicates | Not carried: agents stay on Home/rail, live counts in bar/owning app; no second launcher data subscription |
+| Member name in launcher header | Generic Your account label; no new session or credential handling for a navigation shortcut |
+
+This is presentation/navigation only. No new operations, records, importer, client or data authority is needed; no old data is read and no tiling rule changes. The same five-agent36board evidence scenario checks grouping, aliases and keyboard activation and captures every size/look.
