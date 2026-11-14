@@ -138,7 +138,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         expect(await page.locator('.next-system-icons').isVisible()).toBe(width!==390);
         expect(await page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('1 agent');
         await expect.poll(()=>page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('Tasks · 0 in progress · 0 ready');
-        expect(await page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('0 enrolled boxes · health unavailable');
+        await expect.poll(()=>page.locator('.next-status-bar .loom-tick__line').first().innerText()).toContain('0 enrolled boxes · health unavailable');
         expect(await page.locator('.next-system-icons [aria-label="0 enrolled boxes; health unavailable"]').count()).toBe(1);
         expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
         await expect.poll(() => page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
