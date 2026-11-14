@@ -242,15 +242,15 @@ describe.runIf(built && chrome)('desk tiling: apps share the screen as tiles', (
       await p.reload(); await p.locator('.loom-tile').first().waitFor();
       await expect.poll(() => labels(p)).toEqual(['Inbox', 'Comms']);
       expect(where(p)).toBe('/comms?t=inbox!,*comms&m=people');
-      // People comes back from the dock with its key (at 1280×800, Comms goes to the dock for it: Inbox is pinned)
+      // People comes back from the dock; at 1280 the least recently used Inbox docks, even when promoted.
       await p.click(KEY('People'));
-      await expect.poll(() => labels(p)).toEqual(w >= 1920 ? ['Inbox', 'Comms', 'People'] : ['Inbox', 'People']);
-      expect(query(p, 'm')).toBe(w >= 1920 ? null : 'comms');
+      await expect.poll(() => labels(p)).toEqual(w >= 1920 ? ['Inbox', 'Comms', 'People'] : ['Comms', 'People']);
+      expect(query(p, 'm')).toBe(w >= 1920 ? null : 'inbox');
       // an address with no set restores this device's last one, the address's page focused
       await p.goto(`${base}/people`); await p.locator('.loom-tile').first().waitFor();
-      // (at 1280 the cap is 3: the least recently used that isn't pinned or focused, Comms, goes to the dock)
+      // Reload retains the visible order and the docked least recently used tile.
       await expect.poll(() => labels(p)).toContain('People');
-      expect((await labels(p))[0]).toBe('Inbox');
+      expect((await labels(p))[0]).toBe(w >= 1920 ? 'Inbox' : 'Comms');
       expect((await tiles(p)).find((t) => t.focused)?.label).toBe('People');
       await p.context().close();
     }, 60_000);
