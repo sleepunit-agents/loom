@@ -1,0 +1,9 @@
+/** Fresh schema only; never introspects or connects to an existing database. */
+import { generateSQLiteDrizzleJson, generateSQLiteMigration } from 'drizzle-kit/api';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { referenceStatements } from '../src/core/data/references.js';
+import { schema } from '../src/core/data/schema.js';
+
+const statements = await generateSQLiteMigration(await generateSQLiteDrizzleJson({}), await generateSQLiteDrizzleJson(schema));
+mkdirSync('assets/data', { recursive: true });
+writeFileSync('assets/data/schema.sql', '-- Generated from src/core/data/schema.ts. Run npm run schema:generate.\n' + [...statements, ...referenceStatements()].join('\n') + '\n');
