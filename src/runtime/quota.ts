@@ -57,7 +57,10 @@ export function accountCapacity(windows: readonly QuotaWindow[], now: string): A
     const estimatedUsage = rate === null ? window.usage : Math.max(window.usage, rate * (current - start));
     const forecast = rate === null ? null : rate * window.durationMs;
     const normalRoom = estimatedUsage < 1 - reserve;
-    const lendable = current >= reset - window.durationMs * 0.1 && forecast !== null && forecast < 1;
+    // Compare the observed fraction directly with elapsed time: computing a
+    // rate first can round an exact 100% forecast just below one.
+    const lendable = current >= reset - window.durationMs * 0.1 && elapsed > 0
+      && window.usage < elapsed / window.durationMs;
     const reserveLent = !normalRoom && estimatedUsage < 1 && lendable;
     return { name: window.name, estimatedUsage, forecast, hasRoom: normalRoom || reserveLent, reserveLent };
   });

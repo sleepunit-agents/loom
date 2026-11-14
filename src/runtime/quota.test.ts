@@ -58,3 +58,8 @@ it('rejects invalid time, usage and window configuration', () => {
   // Some providers report usage beyond the nominal allowance; it stays exhausted.
   expect(accountCapacity([window(1.1)], at(5)).hasRoom).toBe(false);
 });
+it('does not lend reserve when an exact full-window forecast rounds below one', () => {
+  expect(accountCapacity([window(0.5, 1, 2)], at(1 + 59 / 60))).toMatchObject({
+    hasRoom: false, windows: [{ reserveLent: false }],
+  });
+});
