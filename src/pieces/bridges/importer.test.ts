@@ -491,6 +491,14 @@ it('captures a complete selected template family privately without a route-note 
  f.sources.documents=[...originalDocuments,...copies];
  expect(()=>readBridgeImport(f.sources,{...options,templateFamilies:[family,{...family,briefs:copiedBriefs}]},h,f.open)).toThrow('Invalid offline');
  f.sources.documents=originalDocuments;
+ // The mixed positive control is valid; only cross-kind path uniqueness changes.
+ writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100'},channels:{'300':{primary:'art'}},work:['300']}));
+ const notePath=join(f.root,'note.md');writeFileSync(notePath,'Independent selected note');
+ f.sources.documents=[...originalDocuments,{name:'bridges-documents/20.md',path:notePath}];
+ const mixed={...options,documents:[{path:'bridges-documents/20.md',agent:'art',key:'work'}]};
+ expect(readBridgeImport(f.sources,mixed,h,f.open)).toBeDefined();
+ expect(()=>readBridgeImport(f.sources,{...mixed,documents:[{...mixed.documents[0],path:briefs.discord}]},h,f.open)).toThrow('Invalid offline');
+ f.sources.documents=originalDocuments;
  const {['discord-guest']:_,...missing}=briefs;
  expect(()=>readBridgeImport(f.sources,{...options,templateFamilies:[{...family,briefs:missing}]},h,f.open)).toThrow('Invalid offline');
  writeFileSync(f.sources.documents[0].path,'$notes $unknown');expect(()=>readBridgeImport(f.sources,options,h,f.open)).toThrow('Invalid offline');
@@ -504,6 +512,7 @@ it('captures a complete selected template family privately without a route-note 
  }finally{close();}
 });
 
+// Keep this control's capture local so it stays independent of the mixed-family fixture.
 it('requires a mapped platform even for a complete otherwise valid selected Slack family',async()=>{
  const {default:families}=await import('./__fixtures__/template-families.json',{with:{type:'json'}});
  const f=fixture(),briefs:Record<string,string>={};

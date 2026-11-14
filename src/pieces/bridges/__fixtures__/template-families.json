@@ -7,10 +7,10 @@
  },
  "slack": {
   "slack-dm": "$name $slug $tier $tier_note $card_note $cid $send $new $context",
-  "slack-tier-2": "$name $role $send_discord $general", "slack-tier-3": "$name $role",
+  "slack-tier-2": "$name $role $send_discord $general", "slack-tier-3": "$name $role $send_discord $general",
   "slack-card": "$slug $card", "slack-grant": "$grant", "slack-restrict": "$restrict",
   "slack-group": "$cid $names $roster $tier $note $restricts $cards $slugs $send $new $context",
-  "slack-group-tier-2": "$send_discord $general", "slack-group-tier-3": "Owner tier",
+  "slack-group-tier-2": "$send_discord $general", "slack-group-tier-3": "$send_discord $general",
   "slack-group-owner-present": "Owner present", "slack-group-restrict": "$name $restrict"
  }
 }
