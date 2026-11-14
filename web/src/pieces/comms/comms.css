@@ -2,7 +2,8 @@
    A tile supplies its own available height instead of the screen height. */
 .loom-comms { height: 100dvh; grid-template-rows: minmax(0, 1fr); }
 .loom-comms > .loom-split__list, .loom-comms > .loom-split__nav { min-height: 0; overflow-y: auto; }
-.loom-comms > .loom-split__reader { display: flex; flex-direction: column; min-height: 0; container: comms-reader / inline-size; }
+.loom-comms > .loom-split__reader { display: flex; flex-direction: column; min-height: 0; height: 100%; overflow: hidden; container: comms-reader / inline-size; }
+.loom-comms .comms-thread { flex: 1 1 0px; }
 .next-page:has(> .loom-comms) { container-type: size; overflow: hidden; scrollbar-gutter: auto; }
 .next-page > .loom-comms { height: 100cqh; }
 .loom-comms .loom-split__back, .loom-comms article > header, .loom-comms article > form { flex-shrink: 0; }
