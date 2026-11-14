@@ -1177,6 +1177,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add row-backed agent profile descriptions to Setup, with owner edits/requests, scoped Live records and once-only authenticated agent replies.
 
+- Add Account and Setup device sign-in links that inherit the source browser’s original sign-in time.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed

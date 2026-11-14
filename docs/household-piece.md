@@ -656,8 +656,8 @@ as the token/session clients. There was no legacy Account CLI; these are explici
 new-side commands, with JSON output and the same 0/1/2 exit convention.
 
 This replaces Account's credential list/removal controls, not its notification
-subscription/test controls or device-to-device sign-in links. Those remain in
-the inventory, as do profile, backup and artwork work. Registration, sign-in and
+subscription/test controls. Push, backup and artwork reconciliation remain in
+the inventory; device links and profiles are described below. Registration, sign-in and
 logout keep their existing cryptographic/CSRF policy. No schema, job, legacy
 route adaptation or host installation is added. Account's single browser test
 uses two windows and actual virtual-authenticator WebAuthn registration; CI
@@ -698,5 +698,31 @@ its registry MCP endpoint. Generated `loom-household profile`, `setProfile`,
 The existing single two-window Setup browser test edits, requests and observes an
 agent reply through Live, and captures the profile section at all three widths in
 Neon Noir and Daylight. CI supplies these screenshots; no local browser run is
-required or claimed. Device sign-in links, push devices/delivery and backup remain
-separate inventory gaps.
+required or claimed. Push devices/delivery and backup remain separate inventory gaps.
+
+### Sign in another device
+
+Account offers a single-use ten-minute link for the signed-in member. Setup offers
+the same control for each member to household owners. `signin.browserLink` is an
+ephemeral socket operation for authenticated cookie windows only. The resolver
+attaches an in-memory proof of the exact source session to the authenticated viewer;
+input cannot name a source session or supply a sign-in time. Central own-member
+policy allows self links and existing household-owner policy allows another member.
+The receiving browser inherits the earlier of the source session's issued and
+signed-in times, including through repeated hops. A stale browser cannot manufacture
+a fresh session to register a passkey for itself or another person.
+
+| Old action | Next replacement |
+| --- | --- |
+| Account `signin-link` | Account's “Sign in another device”, `signin.browserLink({})` |
+| Members `member-link` | Setup member control, `signin.browserLink({member})`, household owner only for another member |
+| `loom token link` | Existing bearer-only `signin.link` / explicit command; intentionally fresh operator sign-in |
+
+The operation has no durable retry receipt, and the browser uses `callOnce` (no
+queue or reconnect replay). A lost response can leave an unseen link that expires
+within ten minutes. The displayed URL remains only in the active connected screen
+and clears on Hide, navigation, loss of access or connection. Screenshots show the
+controls with no URL displayed. GET shows a confirmation form without consuming or
+reflecting the code; POST consumes it once. The existing row-backed importer,
+passkey freshness check and link spend route stay in use; no migration, job or
+generated command is added for a capability that specifically requires a browser.

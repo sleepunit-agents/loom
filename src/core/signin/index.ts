@@ -52,6 +52,7 @@ export class Signin {
   readonly sessions: SessionDatabase;
   readonly tokens: TokenDatabase;
   private readonly key: Buffer;
+  private readonly browsers = new WeakMap<Viewer, string>();
   private readonly bodies = new WeakMap<Viewer, {agent: string; job?: string; service?: string; valid(): boolean}>();
   constructor(private app: Foundation) {
     this.sessions=new SessionDatabase(app.db); this.tokens=new TokenDatabase(app.db);
@@ -138,7 +139,16 @@ export class Signin {
     // Bearer callers never gain it, including when they also send a cookie.
     const valid=()=>{const c=this.session(id);return !!c && c.s.secret===s.s.secret && c.viewer.id===s.viewer.id;};
     if (transport!=='upgrade') this.used(s.s.secret,id);
+    this.browsers.set(s.viewer,id);
     return {window:true,viewer:s.viewer,expiresAt:s.expiresAt,valid,activity:()=>{if(valid())this.used(s.s.secret,id);}};
+  }
+  /** Proof is attached only by cookie authentication, never by operation input. */
+  browserLink(viewer: Viewer, member = viewer.id) {
+    const id=this.browsers.get(viewer), current=id?this.session(id):undefined;
+    if (!current || current.viewer.id!==viewer.id) throw new OperationError('denied','A signed-in browser is required');
+    if (member!==viewer.id && !this.owner(viewer.id)) throw new OperationError('denied','Permission denied');
+    // Preserve the earliest sign-in across any number of device-to-device hops.
+    return this.link(member,undefined,undefined,Math.min(current.s.issuedAt,current.s.signedInAt ?? current.s.issuedAt),600);
   }
   createSession(secret: string, meta: { label?: string; signedInAt?: number; agent?: true; via?: 'link'|'passkey'; device?: string } = {}) {
     if (this.token(secret)?.viewer.kind!=='member') throw new Error('Sign-in refused');
@@ -220,6 +230,7 @@ export function installSignin(app: Foundation) {
   const s=signin(app);
   installAccessAdmin(app);
   installAccount(app);
+  app.operations.register({name:'signin.browserLink',windowOnly:true,doors:['socket'],input:z.object({member:z.string().optional()}).strict(),output:z.object({path:z.string()}),may:v=>mayAct(v,{member:v.id},new SharingDatabase(app.db,'').sharing()),run:(ctx,i)=>{const path=s.browserLink(ctx.viewer,i.member);ctx.changed('signin.admin','household');return {path};}});
   // Deliberately ephemeral: no write retry journal may retain a sign-in URL or its input hash.
   app.operations.register({name:'signin.link',input:z.object({member:z.string(),label:z.string().optional(),agent:z.boolean().optional(),ttl:z.number().int().min(1).max(3600).optional()}),output:z.object({path:z.string()}),doors:['direct'],may:v=>v.kind==='member'&&s.owner(v.id),run:(_ctx,i)=>({path:s.link(i.member,i.label,i.agent,undefined,i.ttl)})});
   app.operations.register({name:'signin.setPrincipal',write:true,input:z.object({kind:z.enum(['runner','service']),id:z.string().regex(/^[a-z0-9-]+$/),active:z.boolean()}),output:z.object({ok:z.literal(true)}),may:v=>v.kind==='member'&&s.owner(v.id),run:(ctx,i)=>{new HouseholdRows(ctx.db,'settings').put(`signin-principal:${i.kind}:${i.id}`,{active:i.active});ctx.changed('core.access','credentials');return {ok:true as const};}});
