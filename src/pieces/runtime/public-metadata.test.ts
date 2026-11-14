@@ -234,6 +234,7 @@ it('records accepted scheduled input once at ACK time, without projecting queued
  expect(await f.post(f.body,'acknowledgeClockInput',{through})).toMatchObject({ok:true});
  expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(1);
  expect(JSON.stringify(f.app.db.prepare('SELECT * FROM attention_turns').all())).not.toContain('SCHEDULED WORDS');
+ const reply=await f.post(f.body,'recordTurn',{kind:'reply',outcome:'answered'});expect(reply).toMatchObject({ok:true});expect(reply.value).not.toHaveProperty('latency_ms');
 });
 it.each(['create','update','sql'] as const)('rolls back scheduled acceptance and nested metadata receipts on %s failure',async failure=>{
  const f=await setup();
@@ -278,4 +279,5 @@ it('native Clock completion uses the same atomic accepted-input metadata path',a
  expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(1);
  expect(await f.post(f.body,'completeClockExecution',{execution:execution.value.execution},'native-metadata')).toMatchObject({ok:true});
  expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(1);
+ f.clock.advance(1000);const reply=await f.post(f.body,'recordTurn',{kind:'reply',outcome:'answered'});expect(reply).toMatchObject({ok:true});expect(reply.value).not.toHaveProperty('latency_ms');
 });

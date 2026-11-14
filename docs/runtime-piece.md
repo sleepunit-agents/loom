@@ -1672,7 +1672,9 @@ Runtime derives the canonical `runtime-clock` conversation and original project
 from the accepting job. Scheduled input is from `schedule`; an Inbox answer is
 from the saved authenticated member. The timestamp is acceptance time on the
 central clock, rather than a claim about source arrival or process execution.
-Attention's reply latency therefore measures from acceptance. No words, source
+Attention's existing first-pending-message reply latency therefore measures from
+Inbox-answer acceptance. Scheduled `wake` turns do not create reply-latency
+samples. No words, source
 label, run id, model or harness are copied into an incoming turn. This is
 metadata, never execution or source authority.
 
