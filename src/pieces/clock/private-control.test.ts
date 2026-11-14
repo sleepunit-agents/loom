@@ -174,3 +174,43 @@ it('does not replay a deleted private noncanonical acknowledgement against a dif
  expect(f.call('scheduleSet',input).ok).toBe(true);
  const before=f.snapshot();expect(f.call('command',data,body,receipt)).toMatchObject({ok:false,code:'conflict'});expect(f.snapshot()).toEqual(before);
 });
+
+it.each([true,false])('suppresses an agent-authored file rearm only for its current exact principal and binding (private=%s)',async privateWork=>{
+ const f=await setup(privateWork),scheduleInput={...input,prompt:undefined,file:'routines/rearm.md'};
+ expect(f.call('scheduleSet',scheduleInput).ok).toBe(true);
+ const occurrence=wakes(f.app.db)[0],request={agent:'art',file:scheduleInput.file,note:'rearm',when:`${(occurrence.due-f.app.operations.clock.now())/1000}s`};
+ const count=()=>wakes(f.app.db).length,original=f.proof!,before=count();
+ const suppressed=f.call('in',request);expect(suppressed).toEqual({ok:true,value:{alreadyScheduled:true,schedule:input.id,due:occurrence.due}});
+ expect(count()).toBe(before);expect(JSON.stringify(suppressed)).not.toMatch(/PRIVATE_|pollock|cv-original|member|authorship/);
+ for(const proof of [{...original,conversation:'cv-other'},{...original,service:'other-service'},
+  {...original,principal:{for:'owner',people:['jonathan']}},{...original,principal:{for:'?',people:['pollock']}}]){
+  f.proof=proof;expect(f.call('in',request)).toMatchObject({ok:true,value:{state:'pending'}});
+ }
+ f.proof=original;
+ expect(f.call('in',request,{...body})).toMatchObject({ok:true,value:{state:'pending'}});
+ const saved=schedules(f.app.db)[0];delete saved.authorship;
+ f.app.db.prepare('UPDATE clock_schedules SET record=? WHERE id=?').run(JSON.stringify(saved),saved.id);
+ expect(f.call('in',request)).toMatchObject({ok:true,value:{state:'pending'}});
+});
+
+it('keeps private schedule suppression acknowledgements and retries out of exports',async()=>{
+ const f=await setup(),scheduleInput={...input,prompt:undefined,file:'routines/private-rearm.md'};
+ expect(f.call('scheduleSet',scheduleInput).ok).toBe(true);
+ const occurrence=wakes(f.app.db)[0],request={agent:'art',file:scheduleInput.file,note:'rearm',when:`${(occurrence.due-f.app.operations.clock.now())/1000}s`},receipt=randomUUID();
+ const answer=f.call('in',request,body,receipt);expect(answer).toMatchObject({ok:true,value:{alreadyScheduled:true}});
+ expect(f.call('in',request,body,receipt)).toEqual(answer);
+ expect(f.app.db.prepare('SELECT id FROM core_operations WHERE id=?').get(receipt)).toEqual({id:receipt});
+ const snapshot=exportDatabase(f.app.db),receipts=snapshot.find(table=>table.name==='core_operations')!.rows;
+ expect(receipts.some(row=>row.id===receipt)).toBe(false);
+ f.proof=undefined;expect(f.call('in',request,body,receipt).ok).toBe(false);
+});
+
+it.each(['owner','?'])('uses exact %s steering with the legacy conversation-or-owner control rule',async principal=>{
+ const f=await setup(false);f.proof={...f.proof!,principal:{for:principal,people:principal==='owner'?['jonathan']:['pollock']}};
+ const original=f.proof!,scheduleInput={...input,prompt:undefined,file:'routines/steering.md'};
+ expect(f.call('scheduleSet',scheduleInput).ok).toBe(true);
+ const occurrence=wakes(f.app.db)[0],request={agent:'art',file:scheduleInput.file,note:'rearm',when:`${(occurrence.due-f.app.operations.clock.now())/1000}s`};
+ expect(f.call('in',request)).toMatchObject({ok:true,value:{alreadyScheduled:true}});
+ f.proof={...original,conversation:'cv-other'};
+ expect(f.call('in',request)).toMatchObject({ok:true,value:principal==='owner'?{alreadyScheduled:true}:{state:'pending'}});
+});

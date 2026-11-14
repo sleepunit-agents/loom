@@ -279,14 +279,21 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     newWork(i);
     const due = calendar(() => name === 'at' ? parseAt(i.when, ctx.now) : parseIn(i.when, ctx.now));
     if (due <= ctx.now) invalid('Wake must be in the future');
-    // Only a currently owner-authored schedule can stand in for a self-chain.
-    // Agent-authored schedules need runtime conversation provenance first.
+    // Agent-authored candidates also need fresh owning control and the exact
+    // original steering principal; another person's schedule cannot cover a rearm.
     if (i.file && !i.continuation && !i.approval && !i.place && !paused(db, i.agent)) {
       for (const s of schedules(db)) {
         if (!s.enabled || s.continuation || s.approval || s.place || s.agent !== i.agent || s.project !== i.project || s.member !== i.member
-          || (s.laneDetails?.source ?? s.file) !== i.file || !readSee(ctx, s, 'schedule')
-          || s.by.kind !== 'member' || !mayAct(s.by, {}, sharing(), 'household') || !create(s.by, s)
-          || !(ctx.viewer.kind === 'agent' && ctx.viewer.id === i.agent || ctx.viewer.kind === 'member' && ctx.viewer.id === s.by.id)) continue;
+          || (s.laneDetails?.source ?? s.file) !== i.file) continue;
+        if(s.by.kind==='member') {
+          if(!readSee(ctx,s,'schedule') || !mayAct(s.by,{},sharing(),'household') || !create(s.by,s)
+            || !(ctx.viewer.kind==='agent'&&ctx.viewer.id===i.agent || ctx.viewer.kind==='member'&&ctx.viewer.id===s.by.id)) continue;
+        }else{
+          const proof=options.provenance?.(ctx.viewer);
+          if(ctx.viewer.kind!=='agent' || !proof || s.authorship?.origin!==i.agent
+            || proof.principal.for!==s.authorship.principal.for || proof.service!==s.authorship.service
+            || !mayControl(ctx.viewer,s)) continue;
+        }
         const occurrence = wakes(db).filter(w => w.schedule === s.id && w.state === 'pending' && !w.runNow && !w.bypassPause
           && !w.continuation && !w.approval && !w.place
           && w.due > ctx.now && w.laneVersion === s.laneVersion && w.scheduleRevision === s.scheduleRevision)

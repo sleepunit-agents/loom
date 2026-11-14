@@ -10,7 +10,7 @@ import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
 import { fixture, fixtureSharing } from '../../fixture.js';
 import { signin, hash } from '../../core/signin/index.js';
 import { runtimeStore } from './store.js';
-import { wake } from '../clock/store.js';
+import { wake, wakes } from '../clock/store.js';
 import { START_CONFIRM_MS, clockRuntime } from './clock.js';
 import type { Wake } from '../clock/store.js';
 const cleanups:Array<()=>void|Promise<void>>=[];
@@ -490,4 +490,21 @@ it('rolls back the complete owning acceptance after a late provenance write fail
  expect(f.store.ids('job')).toHaveLength(1);expect(f.store.ids('binding')).toHaveLength(1);
  expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns').get()).toEqual({n:1});
  await settle();
+});
+
+it('uses real scheduled-body provenance for agent-authored six-hour self-rearm suppression',async()=>{
+ const f=await setup();await f.schedule();const job=f.store.ids('job')[0];
+ await f.post(f.runner,'claimJob',{job});const payload=await f.post(f.runner,'takeInput',{job}),body=payload.value.credential;
+ await f.post(f.runner,'reportJob',{job,state:'running'});await settle();
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true});
+ expect(await f.post(body,'acknowledgeClockInput',{through:1})).toMatchObject({ok:true});
+ const clockCall=async(token:string,operation:string,input:unknown,id:string)=>(await fetch(`${f.app.url}/api/clock/${operation}`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({id,input})})).json();
+ const scheduled=await clockCall(body,'scheduleSet',{agent:'art',id:'art/self-rearm',at:'13:17',file:'routines/care.md',note:'schedule'},'body-schedule');
+ expect(scheduled.ok).toBe(true);
+ const occurrence=wakes(f.app.db).find(w=>w.schedule==='art/self-rearm')!,input={agent:'art',file:'routines/care.md',note:'self-rearm',when:`${(occurrence.due-f.clock.now())/1000}s`};
+ const before=wakes(f.app.db).length;
+ expect(await clockCall(body,'in',input,'body-rearm')).toEqual({ok:true,value:{alreadyScheduled:true,schedule:'art/self-rearm',due:occurrence.due}});
+ expect(wakes(f.app.db)).toHaveLength(before);
+ const unbound=f.token('agent:art');
+ expect(await clockCall(unbound,'in',input,'unbound-rearm')).toMatchObject({ok:true,value:{state:'pending'}});
 });
