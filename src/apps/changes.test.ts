@@ -76,3 +76,10 @@ it('evaluates merge rules for the exact current head and rejects a mismatched sn
   expect(service.put(c).waitingOn).toBe('you');
   expect(target).toBe(`${c.id}@${'b'.repeat(40)}`);
 });
+
+it('refuses ambiguous account attribution instead of assigning a copy to the wrong agent', () => {
+  db.insert(agents).values({ id: 'mark', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(agentAccounts).values({ agent: 'mark', service: 'github', login: 'ART-E-FISH' }).run();
+  expect(() => service.put(change())).toThrow('more than one agent');
+  expect(service.list()).toEqual([]);
+});

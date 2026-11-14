@@ -32,7 +32,9 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
     const c = changeSchema.parse(raw), repository = repoId(c.repo).slice(7);
     const project = projectFor(repository);
     // Attribution comes from the household's GitHub account rows, never a branch prefix.
-    const agent = db.select().from(agentAccounts).where(and(eq(agentAccounts.service, 'github'), sql`lower(${agentAccounts.login}) = ${c.author.login.toLowerCase()}`)).get()?.agent ?? null;
+    const accounts = db.select().from(agentAccounts).where(and(eq(agentAccounts.service, 'github'), sql`lower(${agentAccounts.login}) = ${c.author.login.toLowerCase()}`)).all();
+    if (new Set(accounts.map(a => a.agent)).size > 1) throw new Error('GitHub login belongs to more than one agent');
+    const agent = accounts[0]?.agent ?? null;
     const id = `github:${repository}#${c.number}`;
     if (c.id !== id) throw new Error('Pull request identity differs from repository and number');
     if (!c.created || !c.updated) throw new Error('Pull request timestamps are required');
