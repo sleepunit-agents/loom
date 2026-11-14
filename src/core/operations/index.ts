@@ -1,6 +1,6 @@
 import { internalCaller, isInternalCaller, wasInternalCaller, closeInternalCallers } from '../internal.js';
 import { statement } from '../db/index.js';
-import type { OperationReceipt, ReceiptPersistence } from '../data/operation-results.js';
+import type { OperationReceipt, ReceiptPersistence } from './receipts.js';
 import { invalidateBuiltinServices, unregisterBuiltinServices } from '../services.js';
 import { createHash } from 'node:crypto';
 import type { z } from 'zod';
