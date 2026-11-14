@@ -31,14 +31,16 @@ export function managedHolderAuthority(
   configured: readonly HolderWorkerRoute[],
 ) {
   const snapshot = (configured: readonly HolderWorkerRoute[]) => {
-  if (configured.length > 1024) throw failed();
-  const routes = new Map<string, HolderWorkerRoute['transport']['deliver']>();
-  for (const route of Array.from(configured)) {
-    const key = identity(route.binding);
-    if (routes.has(key)) throw failed();
-    routes.set(key, route.transport.deliver.bind(route.transport));
-  }
-  return routes;
+    try {
+      if (configured.length > 1024) throw failed();
+      const routes = new Map<string, HolderWorkerRoute['transport']['deliver']>();
+      for (const route of Array.from(configured)) {
+        const key = identity(route.binding);
+        if (routes.has(key)) throw failed();
+        routes.set(key, route.transport.deliver.bind(route.transport));
+      }
+      return routes;
+    } catch { throw failed(); }
   };
   let routes = snapshot(configured), generation = 0, closed = false;
   let closing: Promise<void> | undefined;
@@ -47,12 +49,8 @@ export function managedHolderAuthority(
   const retire = async () => {
     const abandoned = [...retained];
     retained.clear();
-    for (const abandon of abandoned) {
-      const pending = abandon();
-      draining.add(pending);
-      void pending.then(() => draining.delete(pending), () => draining.delete(pending));
-    }
-    await Promise.allSettled([...draining]);
+    const pending = abandoned.map(abandon => abandon());
+    await Promise.allSettled([...pending, ...draining]);
   };
   const authority: HolderHandoffAuthority = async id => {
     if (closed) return null;
@@ -66,7 +64,12 @@ export function managedHolderAuthority(
       if (abandoned) return;
       abandoned = true; // Consume before IO, even when settlement loses its ack.
       retained.delete(abandon);
-      try { await claim.finish(false); } catch { throw failed(); }
+      const pending = (async () => {
+        try { await claim.finish(false); } catch { throw failed(); }
+      })();
+      draining.add(pending);
+      void pending.then(() => draining.delete(pending), () => draining.delete(pending));
+      await pending;
     };
     try {
       if (closed || original !== generation) throw failed();
@@ -81,7 +84,11 @@ export function managedHolderAuthority(
           if (!live()) return false;
           try { if (await claim.current() !== true) invalid = true; }
           catch { invalid = true; }
-          return live();
+          if (!live()) {
+            try { await abandon(); } catch { /* failed proof remains retired */ }
+            return false;
+          }
+          return true;
         },
         async handTo(bytes: Uint8Array) {
           if (!live() || attempted) throw failed();

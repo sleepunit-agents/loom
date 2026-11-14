@@ -87,9 +87,10 @@ it.each(['claim','current','delivery'] as const)('fences replacement across pend
  const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
  let release!:()=>void;const wait=new Promise<void>(resolve=>{release=resolve;});
  if(phase==='claim')f.tickets.claim.mockImplementationOnce(async()=>{await wait;return f.claim;});
+ const replacement=setup();
  const acquiring=c.authority(randomUUID());
  if(phase==='claim'){
-  await c.replace([]);release();expect(await acquiring).toBeNull();
+  await c.replace([{binding:f.binding,transport:replacement.transport}]);release();expect(await acquiring).toBeNull();
  }else{
   const d=(await acquiring)!;
   if(phase==='current')f.claim.current.mockImplementationOnce(async()=>{await wait;return true;});
@@ -97,11 +98,12 @@ it.each(['claim','current','delivery'] as const)('fences replacement across pend
   const sending=d.handTo(Buffer.from('synthetic'));
   // Drain the authority check so delivery is actually pending in that case.
   await Promise.resolve();
-  await c.replace([]);release();await expect(sending).rejects.toThrow();
+  await c.replace([{binding:f.binding,transport:replacement.transport}]);release();await expect(sending).rejects.toThrow();
   expect(await d.current()).toBe(false);
  }
  expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
  if(phase!=='delivery')expect(f.transport.deliver).not.toHaveBeenCalled();
+ expect(replacement.transport.deliver).not.toHaveBeenCalled();
  await c.close();
 });
 it('keeps acquisition diagnostics private',async()=>{
@@ -170,4 +172,21 @@ it('empty replacement refuses fresh claims and changed routes use only the new t
  const fresh=(await c.authority(randomUUID()))!;await fresh.handTo(Buffer.from('synthetic'));
  expect(other.transport.deliver).toHaveBeenCalledOnce();expect(f.transport.deliver).not.toHaveBeenCalled();
  await c.close();
+});
+it('sanitizes owner configuration diagnostics and preserves existing routes on rejection',async()=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured),d=(await c.authority(randomUUID()))!;
+ const bad=[{get binding():typeof f.binding {throw Error('PRIVATE-CONFIG-SENTINEL');},transport:f.transport}];
+ expect(()=>managedHolderAuthority(f.tickets,bad)).toThrow(/^Secret handoff unavailable$/);
+ await expect(c.replace(bad)).rejects.toThrow(/^Secret handoff unavailable$/);
+ expect(await d.current()).toBe(true);expect(f.claim.finish).not.toHaveBeenCalled();
+ await c.close();
+});
+it.each(['false','reject'] as const)('standalone %s proof abandons once before returning false',async kind=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured),d=(await c.authority(randomUUID()))!;
+ if(kind==='false')f.claim.current.mockResolvedValueOnce(false);
+ else f.claim.current.mockRejectedValueOnce(Error('PRIVATE-PROOF-SENTINEL'));
+ f.claim.finish.mockRejectedValueOnce(Error('PRIVATE-SETTLEMENT-SENTINEL'));
+ expect(await d.current()).toBe(false);expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
+ await expect(d.handTo(Buffer.from('synthetic'))).rejects.toThrow(/^Secret handoff unavailable$/);
+ expect(await d.current()).toBe(false);await c.close();expect(f.claim.finish).toHaveBeenCalledOnce();
 });
