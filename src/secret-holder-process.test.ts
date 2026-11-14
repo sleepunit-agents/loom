@@ -37,8 +37,14 @@ it('forks only the fixed packaged entrypoint with isolated process channels',asy
 });
 it('retains only the original channel and forwards value-free route metadata',async()=>{
   const {child,owner}=setup();child.reply('ready',0);await owner.ready;
-  const replacing=owner.replaceWorkers([]);await turn();
-  expect(child.sent).toEqual([{op:'replace',seq:1,workers:[]}]);
+  const binding={agent:'art',job:'11111111-1111-4111-8111-111111111111',runner:'worker',box:'worker',claimedAt:42,service:'bridge'};
+  const fingerprint=Array(32).fill('AB').join(':');
+  const selected={binding:{...binding},fingerprint,config:{socket:'/private/input.sock',ca:'/private/ca',cert:'/private/cert',key:'/private/key',servername:'worker.test'}};
+  const replacing=owner.replaceWorkers([selected]);
+  selected.binding.claimedAt=99;selected.config.key='PRIVATE-SENTINEL';
+  await turn();
+  expect(child.sent).toEqual([{op:'replace',seq:1,workers:[{binding,fingerprint}]}]);
+  expect(JSON.stringify(child.sent)).not.toMatch(/private|PRIVATE-SENTINEL|config|key/);
   child.reply('replaced',1);await replacing;
   const closing=owner.close();await turn();child.reply('closed',2);child.end();await closing;
 });
