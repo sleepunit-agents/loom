@@ -1195,3 +1195,44 @@ This implements only the fetching half of the pinned `loom-slack` `files.py` and
 storage, delivery-scoped retrieval, fourteen-day retention, generated command
 parity and actual Runtime owner proof remain required before file support is
 complete. No caller-supplied output path is accepted here.
+
+## Private attachment storage seam
+
+`file-store.ts` and migration 005 keep bounded Slack attachment bytes in private
+SQLite tables. No file table is a live record, and the installed owning export
+filter excludes bytes, delivery manifests and source associations from exports
+and backups. Filenames are safe metadata; no output path is accepted. No legacy
+file directory is read. `save` commits a complete batch and its exact delivery
+associations atomically. Repeated scoped file IDs deduplicate identical bytes;
+changed content/name or a changed delivery manifest refuses without overwrite.
+Deduplication is by scoped platform file ID (as in legacy `Files.fetch`), not
+cross-ID content-addressed sharing; distinct file IDs remain independent.
+Deduplication never refreshes the original file age. Descriptors persist only as
+a digest, without the Slack URL.
+
+The save proof also binds the original Runtime delivery timestamp; replaying an
+expired source refuses even after prune/restart, and changing its timestamp on an
+existing delivery refuses. Retention starts at that original delivery time.
+Scope is agent + venue + workspace + channel, with a separate exact delivered
+message association. `read` additionally requires a trusted exact active-body
+Runtime proof, rechecks it before returning an owned buffer, and checks content
+integrity. The proof owns authentication, job/conversation, delivery membership
+and current central policy. Fixtures use an explicitly fake issuer with separate
+revocation facts. **There is no production Runtime issuer or public file read.**
+
+Reads refuse at the fourteen-day boundary even when cleanup has not run. The
+internal transactional `prune` removes expired data and associations, with
+cascading foreign keys; repeated receipt saves do not extend retention. This is
+logical deletion, not forensic erasure of SQLite pages/WAL or external copies.
+The unregistered storage seam does not fetch, schedule cleanup, register a client,
+or put bytes into operation retry receipts. Fetch-once orchestration across
+concurrent intake/restarts, daemon cleanup, actual Runtime access issuance and
+command parity remain required. Caller-owned fetched buffers must be erased by
+the eventual composition after save; returned read buffers belong to that caller.
+
+| Legacy storage behavior | This unit / remaining work |
+| --- | --- |
+| `Files.fetch` private scoped storage and fetch dedup | Atomic scoped byte dedup; actual intake fetch-once orchestration pending |
+| `Files.take` scoped bytes, digest and safe name | Internal delivery/body-proof retrieval with no output path; actual Runtime issuer and generated file command pending |
+| `Files.prune` fourteen-day expiry | Exact expiry on every read plus transactional prune; daemon job pending |
+| Private on-disk file copies | Private `loom.db` BLOBs, excluded from owning export/backup; no legacy file read |

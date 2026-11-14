@@ -254,3 +254,13 @@ it('refuses a preexisting generic answer receipt once its source is sealed',asyn
  record.privateQuestion={thread:f.place,seq:2};f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify(record),ref);
  expect(f.attention.answer(f.viewer,{id:ref,answer:{kind:'yes'}},'old-receipt')).toMatchObject({ok:false,code:'denied'});
 });
+it('preserves a private question retry after filing but still rechecks current independent project authority',async()=>{
+ const f=await setup(),input={id:'filed-question',question},first=await f.comms.ask('art',f.place,input);
+ f.sharing.members.jonathan.owner=false;f.sharing.projects.private={members:['jonathan'],agents:['art']};
+ expect(await f.call('comms.change',{thread:f.place,action:'project',project:'private'})).toMatchObject({ok:true});
+ const before=()=>['attention_asks','comms_messages'].map(table=>f.app.db.prepare(`SELECT * FROM ${table}`).all());
+ const snapshot=before();expect(await f.comms.ask('art',f.place,input)).toEqual(first);expect(before()).toEqual(snapshot);
+ f.sharing.projects.private.members=[];
+ await expect(f.comms.ask('art',f.place,input)).rejects.toThrow('Ask unavailable');
+ expect(before()).toEqual(snapshot);
+});

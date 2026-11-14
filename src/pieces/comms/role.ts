@@ -1,4 +1,12 @@
+import { z } from 'zod';
 export type { StepConversation } from './conversation-steps.js';
+/** Bounded unmanaged question shared by trusted producers; routing is never input. */
+const questionId=z.string().min(1).max(200),questionLine=z.string().min(1).max(4000);
+export const privateQuestionInput=z.object({id:questionId,question:z.object({
+ ask:questionLine,why:questionLine.optional(),if_yes:questionLine.optional(),if_no:questionLine.optional(),
+ href:z.string().max(2000).optional(),refs:z.array(questionId).max(100).optional(),
+ answers:z.enum(['yes-no','words']).default('words'),
+}).strict()}).strict();
 /** Runtime is in-process and holds this capability; tokens never obtain it. */
 export interface Delivery { thread: string; agent: string; member: string; conversation: string; seq: number; generation?: number; text: string; project?: string }
 export type DeliveryReceipt = Omit<Delivery, 'text'>;
@@ -55,7 +63,7 @@ export interface ReplyAnnouncement {
 export interface SpawnThread { conversation: string; text: string; parent?: string; run?: string }
 export interface Comms {
  /** Trusted source only; full Question stays encrypted, Attention receives routing metadata. */
- ask(agent: string, thread: string, input: {id:string; question: Omit<import('../attention/role.js').Question, 'waits_on'>}): Promise<{ref:string;seq:number}>;
+ ask(agent: string, thread: string, input: {id:string; question: Omit<import('../attention/role.js').Question, 'waits_on'>}, binding?: ReadBinding): Promise<{ref:string;seq:number}>;
  /** Assigned runner confirmed this accepted message generation started. */
  confirmStart(agent: string, thread: string, seq: number, generation: number): void;
  /** Runtime proof is checked again inside the encrypted write transaction. */
