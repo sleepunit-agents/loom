@@ -133,3 +133,7 @@ export interface AttentionAnnouncement { key:string; url:string }
 const announcementReaders=new WeakMap<Operations,(member:string)=>AttentionAnnouncement[]>();
 export function registerAttentionAnnouncements(operations:Operations,read:(member:string)=>AttentionAnnouncement[]) { announcementReaders.set(operations,read); }
 export function attentionAnnouncements(operations:Operations,member:string):AttentionAnnouncement[] { return announcementReaders.get(operations)?.(member)??[]; }
+
+/** Canonical metadata identity and validation shared by owning body adapters. */
+export { conversationId as attentionConversationId } from './conversations.js';
+export { digestInput as attentionDigestInput } from './digests.js';
