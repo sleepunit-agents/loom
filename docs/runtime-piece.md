@@ -725,6 +725,9 @@ thread working; assigned runner running/waiting reports confirm its start.
 | Runner finds pending work | runtime.claimableJobs returns assigned job ids only |
 | Runner takes startup input | runtime.takeInput releases a reference plus a central job credential once |
 | Bound body's comms_thread | runtime.readConversation uses the authenticated job proof |
+| Bound private description | runtime.describeConversation derives the thread from authenticated job proof; no routing arguments |
+| Bound private title | runtime.titleConversation preserves a member's title and returns an acknowledgement only |
+| Bound private activity | runtime.conversationActivity records monotonic movement and tokens without extending working state |
 | Bound body's reply | runtime.reply uses Comms encrypted deduplication, returns seq only |
 | Working/done heartbeat and stop | runtime.conversationStatus updates Comms and generic Attention status |
 | Archive/delete ends body | Comms end role stops the bound job and revokes its central body credentials |
@@ -1251,3 +1254,25 @@ source evidence, release that policy to the assigned worker, and connect ongoing
 control/replies. `bodyPolicyExecutionHeld` remains intact. Account selection,
 runner enrollment, process recovery, Codex and the complete runner program remain
 on t-2209. No configured/imported agent becomes executable from this change.
+
+### Bound private Comms controls
+
+`runtime.describeConversation`, `runtime.titleConversation` and
+`runtime.conversationActivity` are available over HTTP and direct calls only.
+They use the original authenticated body proof and current Runtime binding,
+never caller-supplied thread, conversation, member or job arguments. Current
+membership, house, box and live Comms routing must still agree. Imported jobs,
+ended/reset/written-off execution and configured or archived body-policy holds
+refuse these calls. Description is a read and never enters retry receipts;
+title and activity writes retain only acknowledgements there, recheck body authority
+before replaying them, and publish through the registry after commit. Private words
+stay in Comms. Activity is movement, not a working heartbeat or a new turn.
+
+Runtime validates the public inputs; Comms also validates its other direct role
+callers. These small validation declarations remain local to each boundary, at
+the cost of keeping their title and activity limits aligned.
+
+These controls cover existing bound private loom conversations. Authoritative
+conversation lookup for imported/spawned threads, trusted spawn, ordinary
+conversation step writers, terminal notices and the standalone runner remain
+outstanding on t-2209. General Bridges audiences stay held.
