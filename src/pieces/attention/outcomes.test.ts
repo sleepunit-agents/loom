@@ -179,3 +179,22 @@ it('retains a later success for the same id after an unreceipted rejection',asyn
   expect(await client.call('attention.answer',input,'recover-rejected')).toMatchObject({ok:true});
   expect(list().map(item=>item.ok)).toEqual([true,false]);
 });
+
+it('does not let a conflicting-input retry poison repair of the original successful outcome',async()=>{
+  const {app,list,socket}=await setup(),client=await socket();
+  const input={cli:true,title:'Original successful task',goal:'goal',why:'why'};
+  app.db.exec("CREATE TRIGGER reject_conflict_notice BEFORE INSERT ON attention_outcomes BEGIN SELECT RAISE(ABORT, 'Fixture notice failure'); END;");
+  const first=await client.call('tasks.create',input,'repair-conflict');expect(first).toMatchObject({ok:true,value:{result:{ok:true}}});expect(list()).toEqual([]);
+  app.db.exec('DROP TRIGGER reject_conflict_notice');
+  expect(await client.call('tasks.create',{...input,title:'Conflicting new input'},'repair-conflict')).toMatchObject({ok:false,code:'conflict'});
+  expect(list()).toMatchObject([{ok:false}]);
+  expect(await client.call('tasks.create',input,'repair-conflict')).toEqual(first);
+  expect(list().map(record=>record.ok)).toEqual([true,false]);
+  expect(await client.call('tasks.create',input,'repair-conflict')).toEqual(first);expect(list()).toHaveLength(2);
+});
+it('expires unreceipted rejection deduplication at exactly thirty days',async()=>{
+  const {clock,list,socket}=await setup(),client=await socket();const input={id:'absent',answer:{kind:'yes'}};
+  await client.call('attention.answer',input,'rejection-expiry');const first=list()[0];
+  clock.advance(30*86400_000-1);await client.call('attention.answer',input,'rejection-expiry');expect(list()).toEqual([first]);
+  clock.advance(1);await client.call('attention.answer',input,'rejection-expiry');expect(list()).toHaveLength(2);expect(list()[1]).toEqual(first);
+});

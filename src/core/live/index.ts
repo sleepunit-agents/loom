@@ -160,8 +160,10 @@ export class Live {
           c.send({ kind: 'pending', request: op.data.request });
           const result = await this.ops.callAsync('socket', c.viewer, op.data.name, op.data.input, op.data.id, auth.window === true, () => auth.valid());
           if (!auth.valid()) { ws.close(1008, 'Session ended'); return; }
+          // A conflicting-input refusal must not borrow the existing successful
+          // receipt's generation and poison a missing notice's later repair.
           if (auth.window && c.viewer.kind === 'member') {
-            try { this.emitter.emit('windowCall', {viewer:c.viewer,name:op.data.name,id:op.data.id,retryUntil:op.data.id ? this.ops.retryDeadline(c.viewer,op.data.id,op.data.name) : undefined,result}); }
+            try { this.emitter.emit('windowCall', {viewer:c.viewer,name:op.data.name,id:op.data.id,retryUntil:result.ok && op.data.id ? this.ops.retryDeadline(c.viewer,op.data.id,op.data.name) : undefined,result}); }
             catch { /* A failed optional notice cannot change an action's committed result. */ }
           }
           c.send({ kind: 'result', request: op.data.request, result });
