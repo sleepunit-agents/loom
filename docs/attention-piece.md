@@ -263,3 +263,18 @@ Comms encrypts the words and atomically acknowledges only a thread/sequence refe
 | Sealed full question | Open private conversation; scoped `comms.question` reader integration remains |
 | Private browser draft persistence | Deliberately dropped: private words stay in the mounted window, never unencrypted device storage |
 | Private yes/no or mark done through generic Inbox action | Not carried: typed replies use the Comms seam; managed/wait decisions open their owning app |
+
+## Sealed questions in Inbox
+
+Selecting a sealed ask subscribes only to `comms.question` at that exact ref. The owning Comms window/socket reader supplies question, current state, answer reference and `keepUntil`; Attention continues to contain routing metadata only. Inbox requires matching thread, sequence, state and change time before displaying words. Offline, scope loss, navigation and the retention deadline withdraw words and controls; drafts are mounted-window-only and are discarded on withdrawal. Answered history remains wordless after retention, with navigation to the owning private reply.
+
+An explicit check confirms the displayed question; every send checks the exact current scoped snapshot again immediately before calling Comms. Typed answers use `comms.replyToAsk`, boolean answers use `comms.answer`. Both use ephemeral calls, without reconnect replay. The shared Inbox lock prevents concurrent answers; changed questions require a new explicit check. Refused sends retain the mounted draft. Managed/waiting sources continue to use their owning app. Saving is an encrypted Comms acknowledgement, not a claim of body delivery. Home's visual design is unchanged.
+
+| Old surface | New path / choice |
+| --- | --- |
+| Private question details and history in Inbox | Exact-ref scoped `comms.question`; full kept words and current owning answer metadata |
+| Sealed Yes/No | Owning `comms.answer`, preserving the sealed protocol and original route |
+| Sealed typed reply | Owning `comms.replyToAsk`, with mounted-window draft only |
+| Private Done/Dismiss | Deliberately omitted: these do not provide an answer through the sealed protocol |
+
+No new schema, import, command or permission rule is introduced. The existing Comms retention and policy are authoritative. Lasting member action outcomes, notices/source reconciliation, public delivery and Runtime metadata/digest/grading reconciliation remain before t-2205 closes.

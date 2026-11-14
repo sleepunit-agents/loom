@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Inbox reads sealed private questions and their retained history through scoped Comms records, with guarded encrypted replies.
+
 - Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
 
 - Deliver sealed Comms yes/no decisions back to the owning private conversation through staged encrypted message delivery.

@@ -9,6 +9,9 @@ import { FakeClock } from '../core/clock.js';
 import { fixture, fixtureSharing, installFixture } from '../fixture.js';
 import { approvalAskId, taskAskId } from '../pieces/attention/role.js';
 import { installApprovals } from '../pieces/approvals/index.js';
+import { privateQuestionCreator } from '../pieces/comms/private-questions.js';
+import { loadKey } from '../pieces/comms/crypto.js';
+import { attentionRole } from '../pieces/attention/role.js';
 import { TokenDatabase } from '../core/household/tokens.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
@@ -182,13 +185,6 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await a.getByRole('textbox',{name:'Your private reply',exact:true}).fill(privateWords);
     expect(await b.getByRole('textbox',{name:'Your private reply',exact:true}).inputValue()).toBe('');
     expect(await a.evaluate(words=>JSON.stringify(localStorage).includes(words),privateWords)).toBe(false);
-    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
-      await a.setViewportSize({width,height:900});
-      await a.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await a.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await a.screenshot({path:join(shots,`inbox-private-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
     await a.getByRole('button',{name:'Send private reply',exact:true}).click();
     await expect.poll(()=>b.getByRole('button',{name:'Send private reply',exact:true}).count()).toBe(0);
     const privateFact=loom.operations.call('direct',owner,'attention.get',{id:'private-reply'});
@@ -198,6 +194,39 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     expect(messages).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({text:privateWords,ref:'private-reply'})])});
     await b.getByRole('button',{name:'Open private reply',exact:true}).click();
     await expect.poll(()=>new URL(b.url()).pathname).toBe(`/p/comms-preview/thread/${privateThread.replace(/^th:/,'')}`);
+    // Trusted owning Comms producer, using the same encrypted source capability as Runtime.
+    const key=await loadKey(home);
+    const askPrivate=privateQuestionCreator({...loom,clock,key,sharing:()=>fixtureSharing,attention:attentionRole(loom.operations),runtime:{deliver:async()=>{},end:async()=>{}},hold:async f=>f(),closed:()=>false,changed:(t,seq,ref)=>loom.live.changed([{type:'thread',id:t.id},{type:'message',id:`${t.id}:${seq}`},{type:'attention.ask',id:ref}])});
+    const sealedWords='Keep the sealed Inbox plan private?';
+    const sealed=await askPrivate('art',privateThread,{id:'inbox-sealed',question:{ask:sealedWords,why:'Only this member sees the full question.',if_yes:'Continue the private plan.',if_no:'Hold the private plan.',answers:'yes-no'}});
+    for(const page of [a,b]){
+      await page.goto(`${loom.url}/p/inbox-preview/ask/${encodeURIComponent(sealed.ref)}`);
+      await page.getByRole('heading',{name:sealedWords,exact:true}).waitFor();
+      await page.getByRole('button',{name:'Check private question',exact:true}).click();
+      await page.getByRole('textbox',{name:'Your private reply',exact:true}).waitFor();
+    }
+    await a.getByRole('textbox',{name:'Your private reply',exact:true}).fill('Sealed typed Inbox answer');
+    expect(await b.getByRole('textbox',{name:'Your private reply',exact:true}).inputValue()).toBe('');
+    expect(await a.evaluate(()=>JSON.stringify(localStorage).includes('Sealed typed Inbox answer'))).toBe(false);
+    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
+      await a.setViewportSize({width,height:900});
+      await a.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      expect(await a.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await a.screenshot({path:join(shots,`inbox-sealed-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    await a.getByRole('button',{name:'Send private reply',exact:true}).click();
+    await expect.poll(()=>b.getByRole('button',{name:'Yes',exact:true}).count()).toBe(0);
+    await expect.poll(()=>b.getByText(/replied · jonathan/).count()).toBe(1);
+    for(const table of ['attention_asks','attention_digests','core_operations','comms_messages']){
+      const stored=JSON.stringify(loom.db.prepare(`SELECT * FROM ${table}`).all());
+      expect(stored).not.toContain(sealedWords);expect(stored).not.toContain('Sealed typed Inbox answer');
+    }
+    await p.goto(`${loom.url}/p/inbox-preview/ask/${encodeURIComponent(sealed.ref)}`);
+    await p.getByText('This ask is no longer in view',{exact:true}).waitFor();expect(await p.getByText(sealedWords,{exact:true}).count()).toBe(0);
+    clock.advance(14*86400_000);
+    await b.getByText('Words no longer kept',{exact:true}).waitFor();expect(await b.getByText(sealedWords,{exact:true}).count()).toBe(0);
+    await b.getByRole('button',{name:'Open private reply',exact:true}).waitFor();
     await member.close();
   } finally {await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },90_000);
