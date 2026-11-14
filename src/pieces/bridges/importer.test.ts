@@ -329,12 +329,12 @@ it('keeps selected accepted note maps scoped to their source agent without propo
  const f=fixture();
  writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100'},stale:['300']}));
  f.store('shuttle',[['routes','household',{guild:'789'}],
- ['channels','art',{bot:'100',answers:{'300':'work'},extra:{'custom / key':['300'],mapped:{'400':'PRIVATE_MAP_VALUE'}}}],
+ ['channels','art',{bot:'100',answers:{'300':'work'},extra:{'custom / key':['300'],mapped:{'400':1.25},float:1.25,scalar:300}}],
  ['channels','mark',{bot:'200',extra:{'custom / key':['400']}}],
  ['route-offers','art',{doc:{bots:{art:'100',mark:'200'},proposal:['999']}}]]);
  const result=readBridgeImport(f.sources,f.options,h,f.open);
  expect(JSON.parse(result.evidence).noteInventories).toEqual([
-  {source:'accepted:art',agent:'art',noteChannels:{'custom / key':['300'],mapped:['400']}},
+  {source:'accepted:art',agent:'art',noteChannels:{'custom / key':['300'],mapped:['400'],scalar:['300']}},
   {source:'accepted:mark',agent:'mark',noteChannels:{'custom / key':['400']}}]);
  expect(result.expected.routes.every(r=>r.notes.length===0)).toBe(true);
  const {db,close}=openDb(join(f.root,'new'));
@@ -344,4 +344,12 @@ it('keeps selected accepted note maps scoped to their source agent without propo
   expect(importBridges(db,f.sources,f.options,h,f.open).imported).toBe(false);
   expect((db.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as {value:string}).value).toBe(result.evidence);
  }finally{close();}
+});
+
+it('refuses unsafe accepted note members at the original extra path while ignoring numeric map values',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',extra:{mapped:{'300':1.25}}}]]);
+ expect(JSON.parse(readBridgeImport(f.sources,f.options,h,f.open).evidence).noteInventories[0].noteChannels).toEqual({mapped:['300']});
+ const d=new Database(f.sources.stores[0].path);
+ try{d.prepare("UPDATE docs SET doc=? WHERE collection='channels'").run('{"bot":"100","extra":{"arbitrary":[9007199254740993]}}');}finally{d.close();}
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["channels"]["art"]["extra"]["arbitrary"]["0"]');
 });

@@ -60,10 +60,18 @@ const hash = (bytes: Buffer | string) => createHash('sha256').update(bytes).dige
 const keys = (value: string[] | Record<string,unknown> | undefined) => Array.isArray(value) ? value : Object.keys(value ?? {});
 // Pinned loom-discord routing.py CORE_KEYS. Other keys describe context only.
 const coreRouteKeys = new Set(['guild','bots','bot_roles','channels','threads','webhook_peers','peer_turns_each','guests','ignore','only','notify']);
+export const bridgeSourceNoteKey = (key:string):boolean => !coreRouteKeys.has(key) && !key.startsWith('_');
+/** Parse source numeric spellings before JSON can turn a Python float into an int. */
+export function readBridgeSourceNotes(source:string,extra=false):Record<string,string[]> {
+  const raw=bridgeSourceValue(JSON.parse(source,
+    (_key:string,value:unknown,context?:{source?:string}) => typeof value!=='number' ? value
+      : context?.source && /^-?\d+$/.test(context.source) ? value : null)) as Record<string,unknown>;
+  return noteMembership(extra?raw.extra??{}:raw);
+}
 function noteMembership(raw: unknown): Record<string,string[]> {
   const out: Record<string,string[]> = Object.create(null);
   for (const [key,value] of Object.entries(z.record(z.string(),z.unknown()).parse(raw))) {
-    if (coreRouteKeys.has(key) || key.startsWith('_')) continue;
+    if (!bridgeSourceNoteKey(key)) continue;
     const member = (v:unknown,path:PropertyKey[]):string => {
       if (typeof v==='string') return v;
       if (typeof v==='number' && Number.isSafeInteger(v)) return String(v);
@@ -146,9 +154,7 @@ export function projectBridgeDocument(result: LegacyBridgeInventory, name: strin
         }
       } else if (kind === 'routes') {
         const v = routes.parse(raw);
-        const noteChannels = noteMembership(bridgeSourceValue(JSON.parse(source,
-          (_key:string,value:unknown,context?:{source?:string}) => typeof value!=='number' ? value
-            : context?.source && /^-?\d+$/.test(context.source) ? value : null)));
+        const noteChannels = readBridgeSourceNotes(source);
         result.routes.push({source:name,...(Object.keys(noteChannels).length?{noteChannels}:{}),...(v.guild ? {guild:v.guild} : {}),bots:v.bots ?? {},
           botRoles:Object.fromEntries(Object.entries(v.bot_roles ?? {}).map(([agent,roles])=>[agent,list(roles)])),
           channels:([['channels',false],['threads',true]] as const).flatMap(([section,thread])=>Object.entries(v[section] ?? {}).map(([channel,c])=>({

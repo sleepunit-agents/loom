@@ -21,14 +21,14 @@ async function fixture(budgetSource?:'file'|'store',notes=false){
  put(join(old,'household.json'),{v:1,agents:['art'],default:'art',owner:'jonathan'});
  put(join(instance,'shuttle.json'),{agent:{slug:'art'},discord:{token_file:'/never-open'}});
  put(join(instance,'people.json'),{people:{jonathan:{discord:['123']}}});
- put(join(instance,'routes.json'),{guild:'789',bots:{art:'100'},channels:{'300':{primary:'art'}},...(budgetSource==='file'?{peer_turns_each:0,...(notes?{'custom / note':['300'],mapped:{'400':'PRIVATE_IGNORED'}}:{})}:{})});
+ put(join(instance,'routes.json'),{guild:'789',bots:{art:'100'},channels:{'300':{primary:'art'}},...(budgetSource==='file'?{peer_turns_each:0,...(notes?{'custom / note':['300'],mapped:{'400':1.25}}:{})}:{})});
  writeFileSync(join(instance,'credentials'),'do not collect');
  const storePath=join(old,'commons/stores/shuttle.db');mkdirSync(dirname(storePath),{recursive:true});const store=new Database(storePath);
  store.exec('CREATE TABLE docs(collection TEXT,key TEXT,doc TEXT,rev INTEGER,updated TEXT,by TEXT);CREATE TABLE revisions(id INTEGER,collection TEXT,key TEXT,doc TEXT,rev INTEGER,op TEXT,at TEXT,by TEXT)');
  store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('unknown','private','{"raw":9007199254740991.1}','today','owner');
  if(budgetSource==='store'){
   store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('routes','household','{"guild":"789","peer_turns_each":0}','today','owner');
-  store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('channels','art',JSON.stringify({bot:'100',answers:{'300':'work'},...(notes?{extra:{'custom / note':['300'],mapped:{'400':'PRIVATE_IGNORED'}}}:{})}),'today','owner');
+  store.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('channels','art',JSON.stringify({bot:'100',answers:{'300':'work'},...(notes?{extra:{'custom / note':['300'],mapped:{'400':1.25}}}:{})}),'today','owner');
  }
  store.close();
  await createSnapshot(old,snapshot,undefined,{bridges:[instance]});
@@ -160,7 +160,13 @@ for(const origin of ['file','store'] as const)it(`preserves disabled zero budget
 
 for(const origin of ['file','store'] as const)it(`verifies arbitrary note membership from ${origin} without activating live route notes`,async()=>{
  const f=await fixture(origin,true);
+ await expect(runMigrationAll(f.snapshot,f.home,f.plan,{afterPiece:name=>{if(name==='bridges')throw Error('interrupted after note evidence');}})).rejects.toThrow('interrupted after note evidence');
+ const readEvidence=()=>{const d=new Database(join(f.home,'loom.db'));try{return (d.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as {value:string}).value;}finally{d.close();}};
+ const interruptedEvidence=readEvidence();
  expect((await runMigrationAll(f.snapshot,f.home,f.plan)).status).toBe('complete');
+ expect(readEvidence()).toBe(interruptedEvidence);
+ expect((await runMigrationAll(f.snapshot,f.home,f.plan)).status).toBe('complete');
+ expect(readEvidence()).toBe(interruptedEvidence);
  expect((await verifyMigration(f.snapshot,f.home,f.plan)).status).toBe('verified');
  expect((await verifyBridgesMigration(f.snapshot,f.home,f.plan.importers.bridges.options)).status).toBe('verified');
  const d=new Database(join(f.home,'loom.db'));
