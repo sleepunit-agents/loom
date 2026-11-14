@@ -49,6 +49,14 @@ describe('worker command adapter (no child processes in tests)', () => {
     expect((await body.exited).exitCode).toBe(1); expect(f.children[1].input()).toBe('');
     await expect(body.release()).rejects.toThrow('unavailable'); await body.stop();
   });
+  it('kills descendants at leader exit so inherited pipes cannot keep close pending', async () => {
+    const f = fixture(), body = f.executor.start(job, 'image', new AbortController().signal);
+    const child = f.children[0].child; child.emit('spawn'); await body.spawned; await body.release();
+    child.emit('exit', 0, null);
+    expect(f.runtime.kill).toHaveBeenCalledOnce();
+    // Simulates group termination closing inherited stdout/stderr handles.
+    expect((await body.exited).exitCode).toBe(0); await body.stop(); expect(f.runtime.kill).toHaveBeenCalledOnce();
+  });
   it('rejects failed, malformed and oversized build output', async () => {
     for (const output of ['not json', '{}', '{"build":" "}', 'x'.repeat(70_000)]) {
       const f = fixture(), built = f.executor.build(job, new AbortController().signal);

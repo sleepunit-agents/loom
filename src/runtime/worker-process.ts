@@ -40,7 +40,12 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   const ready = new Promise<void>((yes, no) => { spawnResolve = yes; spawnReject = no; });
   void ready.catch(() => {});
   const exited = new Promise<{ exitCode: number; logTail: string }>(yes => { exitResolve = yes; });
-  const kill = () => { runtime.kill(child); };
+  let killed = false;
+  const kill = () => {
+    if (killed || !child.pid) return;
+    killed = true;
+    try { runtime.kill(child); } catch (error) { killed = false; throw error; }
+  };
   signal.addEventListener('abort', kill, { once: true });
   const append = (chunk: Buffer | string) => { logTail = (logTail + chunk.toString()).slice(-16_384); };
   child.stdout.on('data', chunk => {
@@ -61,11 +66,15 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
     spawnResolve();
   });
   child.once('error', () => { spawnReject(new Error('Worker command could not start')); });
+  let leaderExit: number | undefined;
+  // close waits for inherited pipes. Kill descendants at leader exit, otherwise
+  // an orphan holding stdout can keep both close and terminal reporting stuck.
+  child.once('exit', (code) => { leaderExit = code ?? 1; kill(); });
   child.once('close', (code, _signal) => {
     closed = true;
     signal.removeEventListener('abort', kill);
     if (!spawned) spawnReject(new Error('Worker command did not spawn'));
-    exitResolve({ exitCode: code ?? 1, logTail });
+    exitResolve({ exitCode: leaderExit ?? code ?? 1, logTail });
   });
   // Covers cancellation during the injected spawn operation/listener setup.
   if (signal.aborted) kill();
