@@ -375,3 +375,27 @@ it('binds selected document bytes to an effective agent note key and import chec
   expect(()=>readBridgeImport({...f.sources,documents:[]},options,h,f.open)).toThrow('Invalid offline');
  }finally{close();}
 });
+
+it('refuses repeated document imports after persisted evidence is changed or deleted',()=>{
+ const f=fixture();writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100'},work:['300']}));
+ const path=join(f.root,'selected.md');writeFileSync(path,'PRIVATE SELECTED');f.sources.documents=[{name:'bridges-documents/0.md',path}];
+ const options={...f.options,documents:[{path:'bridges-documents/0.md',agent:'art',key:'work'}]};
+ const {db,close}=openDb(join(f.root,'new'));try{
+  importBridges(db,f.sources,options,h,f.open);
+  const original=(db.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as{value:string}).value;
+  const corrupted=JSON.parse(original);corrupted.selectedDocuments[0].content='changed';
+  db.prepare("UPDATE bridges_meta SET value=? WHERE key='legacy-evidence'").run(JSON.stringify(corrupted));
+  expect(()=>importBridges(db,f.sources,options,h,f.open)).toThrow('comparison failed');
+  db.prepare("DELETE FROM bridges_meta WHERE key='legacy-evidence'").run();
+  expect(()=>importBridges(db,f.sources,options,h,f.open)).toThrow('comparison failed');
+  db.prepare("INSERT INTO bridges_meta VALUES ('legacy-evidence',?)").run(original);
+  expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(false);
+ }finally{close();}
+});
+
+it('refuses document attribution to a non-household accepted route owner even with a matching note key',()=>{
+ const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',extra:{work:['300']}}],['channels','fez',{extra:{work:['300']}}]]);
+ expect(JSON.parse(readBridgeImport(f.sources,f.options,h,f.open).evidence).noteInventories).toContainEqual({source:'accepted:fez',agent:'fez',noteChannels:{work:['300']}});
+ const path=join(f.root,'selected.md');writeFileSync(path,'PRIVATE');f.sources.documents=[{name:'bridges-documents/0.md',path}];
+ expect(()=>readBridgeImport(f.sources,{...f.options,documents:[{path:'bridges-documents/0.md',agent:'fez',key:'work'}]},h,f.open)).toThrow('Invalid offline');
+});
