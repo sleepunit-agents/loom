@@ -1,3 +1,4 @@
+import { installOutcomes } from './outcomes.js';
 import { createHash } from 'node:crypto';
 import { registerBuiltinService } from '../../core/services.js';
 import { operation } from './commands.js';
@@ -38,6 +39,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   migrate(db, 'attention', attentionMigrations);
   installHomeRoster(live, sharing);
   installMemberState(db, operations, live, sharing);
+  installOutcomes(db, operations, live, sharing);
   installConversations(db, operations, live, sharing);
   installDigests(db, operations, live, sharing, references);
   installRetention(db, operations, live, sharing);

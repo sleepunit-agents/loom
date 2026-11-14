@@ -87,6 +87,26 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   run(ctx,i){const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');
    comms!.activity(b.job.agent,b.binding.place,i,()=>ctx.changed('thread',b.binding.place));hearJob(db,b.job.id,ctx.now);return {updated:true as const};},
  }));
+ // Capture the original owning route before private IO. A separately valid
+ // binding for the same job cannot authorize completion against its old source.
+ const originalComms=(viewer:Viewer,b:NonNullable<ReturnType<typeof commsBody>>)=>()=>{
+  const now=commsBody(viewer);
+  return !!now&&now.job.id===b.job.id&&now.job.service===b.job.service
+   &&now.binding.id===b.binding.id&&now.binding.place===b.binding.place
+   &&now.binding.agent===b.binding.agent&&now.binding.member===b.binding.member
+   &&now.binding.project===b.binding.project;
+ };
+ const privatePrepared=new WeakMap<object,{value:unknown;valid:()=>boolean}>();
+ const preparePrivate=async(valid:()=>boolean,work:Promise<unknown>)=>{
+  const value=await work;
+  if(!valid())throw new OperationError('denied','Body binding ended');
+  const marker={};privatePrepared.set(marker,{value,valid});return marker;
+ };
+ const finishPrivate=(prepared:unknown)=>{
+  const p=prepared&&typeof prepared==='object'?privatePrepared.get(prepared):undefined;
+  if(p&&!p.valid())throw new OperationError('denied','Body binding ended');
+  return p;
+ };
  const refile=(ctx:Context,m:{thread:string;agent:string;member:string;conversation:string;project?:string})=>{
   const binding=store.read('binding',m.conversation);if(!binding)return;
   // Filing uses the unique original Comms owner, not a spawn transport handle.
@@ -153,8 +173,9 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    if(clockBodies?.bound(viewer))return clockBodies.read(viewer,i.before);
    if(bridges?.bound(viewer))return bridges.read(viewer,i.before);
    const b=commsBody(viewer)!;
-   return comms!.reader({agent:b.job.agent,conversation:b.binding.id,valid:()=>commsBody(viewer)?.job.id===b.job.id}).read({thread:b.binding.place,...i});
-  },run(ctx,_i,prepared){const clockJob=clockBodies?.bound(ctx.viewer);if(clockBodies?.preparedRead(prepared)||clockJob){if(!clockJob||!clockBodies!.currentRead(ctx.viewer,prepared))throw new OperationError('denied','Clock delivery authority ended');hearJob(db,clockJob.id,ctx.now);return prepared;}const job=bridges?.bound(ctx.viewer);if(job){hearJob(db,job.id,ctx.now);return prepared;}const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
+   const valid=originalComms(viewer,b);
+   return preparePrivate(valid,comms!.reader({agent:b.job.agent,conversation:b.binding.id,valid}).read({thread:b.binding.place,...i}));
+  },run(ctx,_i,prepared){const privateRead=finishPrivate(prepared);if(privateRead){const b=commsBody(ctx.viewer)!;hearJob(db,b.job.id,ctx.now);return privateRead.value;}const clockJob=clockBodies?.bound(ctx.viewer);if(clockBodies?.preparedRead(prepared)||clockJob){if(!clockJob||!clockBodies!.currentRead(ctx.viewer,prepared))throw new OperationError('denied','Clock delivery authority ended');hearJob(db,clockJob.id,ctx.now);return prepared;}const job=bridges?.bound(ctx.viewer);if(job){hearJob(db,job.id,ctx.now);return prepared;}const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
  }));
  // Each transcript owns durable reply deduplication. This read-style async operation
  // returns only a sequence acknowledgement, never stores words or credentials.
@@ -162,8 +183,9 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   may:(v,i)=>{const job=bridges?.bound(v);if(job)return (!i.job||i.job===job.id)&&(!i.conversation||i.conversation===job.conversation);const b=commsBody(v);return !!b&&(!i.job||i.job===b.job.id)&&(!i.conversation||i.conversation===b.binding.id);},async prepare(i,{viewer}){
    if(bridges?.bound(viewer))return undefined;
    const b=commsBody(viewer)!;
-   return comms!.bodyPost({agent:b.job.agent,conversation:b.binding.id,valid:()=>commsBody(viewer)?.job.id===b.job.id},b.binding.place,{id:i.id,text:i.text,kind:'reply',run:b.job.id});
-  },run(ctx,i,prepared){const job=bridges?.bound(ctx.viewer);if(job){const result=bridges!.reply(ctx.viewer,i,ctx);hearJob(db,job.id,ctx.now);return result;}const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
+   const valid=originalComms(viewer,b);
+   return preparePrivate(valid,comms!.bodyPost({agent:b.job.agent,conversation:b.binding.id,valid},b.binding.place,{id:i.id,text:i.text,kind:'reply',run:b.job.id}));
+  },run(ctx,i,prepared){const privateReply=finishPrivate(prepared);if(privateReply){const b=commsBody(ctx.viewer)!;hearJob(db,b.job.id,ctx.now);return privateReply.value;}const job=bridges?.bound(ctx.viewer);if(job){const result=bridges!.reply(ctx.viewer,i,ctx);hearJob(db,job.id,ctx.now);return result;}const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
  }));
  // Comms owns encrypted words, retries and the wordless Attention projection.
  // A read-style async operation keeps question text out of generic receipts.
@@ -174,13 +196,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    const source='body-question:'+createHash('sha256').update(JSON.stringify([b.job.id,i.id])).digest('hex');
    // The same job can move to another valid private binding while sealing.
    // Re-proving only its id would authorize a write to the former thread.
-   const valid=()=>{
-    const current=commsBody(viewer);
-    return !!current&&current.job.id===b.job.id&&current.job.service===b.job.service
-     &&current.binding.id===b.binding.id&&current.binding.place===b.binding.place
-     &&current.binding.agent===b.binding.agent&&current.binding.member===b.binding.member
-     &&current.binding.project===b.binding.project;
-   };
+   const valid=originalComms(viewer,b);
    const ack=await comms!.ask(b.job.agent,b.binding.place,{id:source,question:i.question},
     {agent:b.job.agent,conversation:b.binding.id,valid});
    return {ack,valid};
