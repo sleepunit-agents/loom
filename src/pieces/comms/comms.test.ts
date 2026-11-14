@@ -9,7 +9,7 @@ import { startLoom } from '../../foundation.js';
 import { FakeClock, type Sharing, type Viewer } from '../../core/index.js';
 import { installComms } from './index.js';
 import { loadKey, type WordsKey } from './crypto.js';
-import { stagingHold, HeldEffect } from './role.js';
+import { stagingHold, HeldEffect, commsMetadata } from './role.js';
 import type { Attention, Hold, Comms, Delivery, RuntimeDelivery } from './role.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const f of cleanup.splice(0).reverse())await f();});
@@ -1737,4 +1737,62 @@ it('keeps switched harness labels encrypted and drops malformed labels without r
  const denied=await s.call('messages',{thread:place},{kind:'member',id:'other'});expect(denied.ok).toBe(false);
  s.clock.advance(86400000);
  expect(JSON.stringify(await s.call('messages',{thread:place}))).not.toContain('Codex');
+});
+
+it('resolves private conversation ownership as current metadata, independent of a spawn handle',async()=>{
+ let decrypts=0;
+ const s=await setup({key:k=>({...k,async open(blob){decrypts++;return k.open(blob);}})});
+ const place=await s.open();await s.comms.deliver('art',place,1);
+ const before=decrypts,role=commsMetadata(s.app.operations)!;
+ const row=s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string};
+ const original=JSON.parse(row.record),conversation='cv-imported-spawn';
+ s.app.db.prepare("UPDATE comms_threads SET record=json_set(record,'$.conversation',?) WHERE id=?").run(conversation,place);
+ const scope={id:conversation,agent:'art',member:'jonathan'};
+ const route={id:place,conversation,agent:'art',member:'jonathan',project:'pond',archived:null};
+ expect(role.privateThread(member,scope)).toEqual(route);
+ for(const viewer of [{kind:'member',id:'other'},{kind:'agent',id:'art'},{kind:'runner',id:'a'},{kind:'service',id:'runtime'}] as Viewer[])
+  expect(role.privateThread(viewer,scope)).toBeUndefined();
+ for(const wrong of [{...scope,id:'job-h-42'},{...scope,id:original.conversation},{...scope,agent:'mark'},{...scope,member:'other'}])
+  expect(role.privateThread(member,wrong)).toBeUndefined();
+ // Results are detached snapshots; consumers must resolve again after awaits.
+ const first=role.privateThread(member,scope)!;first.id='forged';
+ expect(role.privateThread(member,scope)).toEqual(route);
+ s.app.db.prepare("UPDATE comms_threads SET record=json_set(record,'$.archived',?) WHERE id=?").run(s.clock.now(),place);
+ expect(role.privateThread(member,scope)).toEqual({...route,archived:s.clock.now()});
+ const sharing=s.getSharing();s.setSharing({...sharing,members:{jonathan:{owner:true,agents:[]}}});
+ expect(role.privateThread(member,scope)).toBeUndefined();s.setSharing(sharing);
+ expect(role.privateThread(member,scope)).toMatchObject({id:place});
+ expect(decrypts).toBe(before);
+ expect(Object.keys(role.privateThread(member,scope)!).sort()).toEqual(['agent','archived','conversation','id','member','project']);
+ await s.restart();
+ expect(role.privateThread(member,scope)).toBeUndefined();
+ expect(commsMetadata(s.app.operations)!.privateThread(member,scope)).toEqual({...route,archived:s.clock.now()});
+});
+it.each(['same-audience','other-member','other-agent','tombstone-conversation','tombstone-id','row-member','row-agent','row-project','row-id'] as const)('refuses private thread ownership with %s evidence',async drift=>{
+ const s=await setup(),place=await s.open();await s.comms.deliver('art',place,1);
+ const role=commsMetadata(s.app.operations)!,t=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ const scope={id:t.conversation,agent:'art',member:'jonathan'};
+ expect(role.privateThread(member,scope)).toMatchObject({id:place});
+ if(['same-audience','other-member','other-agent'].includes(drift)){
+  const copy={...t,id:'th:duplicate',...(drift==='other-member'?{member:'other'}:{}),...(drift==='other-agent'?{agent:'mark'}:{})};
+  s.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(copy.id,copy.member,copy.agent,copy.project,JSON.stringify(copy));
+ }else if(drift.startsWith('tombstone')){
+  s.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run(drift==='tombstone-id'?place:'th:deleted',t.member,t.agent,drift==='tombstone-id'?'old-conversation':t.conversation,s.clock.now());
+ }else if(drift==='row-id'){
+  s.app.db.prepare("UPDATE comms_threads SET record=json_set(record,'$.id','th:changed') WHERE id=?").run(place);
+ }else {
+  const field=drift.slice(4);s.app.db.prepare(`UPDATE comms_threads SET ${field}=? WHERE id=?`).run('changed',place);
+ }
+ expect(role.privateThread(member,scope)).toBeUndefined();
+});
+it('drops deleted private conversation ownership without a public operation or stored receipt',async()=>{
+ const s=await setup(),place=await s.open();await s.comms.deliver('art',place,1);
+ const t=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(place) as {record:string}).record);
+ const role=commsMetadata(s.app.operations)!,scope={id:t.conversation,agent:'art',member:'jonathan'};
+ const before=s.app.db.prepare('SELECT * FROM core_operations').all();
+ expect(role.privateThread(member,scope)).toMatchObject({id:place});
+ expect(s.app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
+ expect(s.app.operations.has('comms.privateThread')).toBe(false);
+ expect(await s.call('change',{thread:place,action:'delete'})).toMatchObject({ok:true});
+ expect(role.privateThread(member,scope)).toBeUndefined();
 });

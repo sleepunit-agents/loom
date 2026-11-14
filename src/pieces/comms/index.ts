@@ -38,6 +38,21 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  const writable = (v: Viewer,input: {thread:string}) => see(v,thread(db,input.thread));
  installCommsWork({operations,live,clock,sharing:o.sharing,thread:(viewer,id)=>{const t=thread(db,id);return !closed&&see(viewer,t)?t:undefined;}});
  registerCommsMetadata(operations, {
+  privateThread(viewer, conversation) {
+   if(closed||viewer.kind!=='member'||viewer.id!==conversation.member)return;
+   // Resolve the namespace before checking the audience. Two records for the
+   // same conversation cannot be disambiguated by selecting a desired member.
+   const rows=db.prepare('SELECT id,agent,member,project,record FROM comms_threads').all() as {id:string;agent:string;member:string;project:string|null;record:string}[];
+   const matches=rows.map(row=>({row,t:JSON.parse(row.record) as Thread})).filter(({t})=>t.conversation===conversation.id);
+   if(matches.length!==1)return;
+   const {row,t}=matches[0];
+   if(row.id!==t.id||row.agent!==t.agent||row.member!==t.member||(row.project??undefined)!==t.project
+    ||t.agent!==conversation.agent||t.member!==conversation.member||!see(viewer,t))return;
+   // Tombstones are owning evidence too. A live row cannot revive a deleted
+   // conversation, even under another thread id (older tombstones lack a cv).
+   if(db.prepare('SELECT 1 FROM comms_deleted WHERE conversation=? OR id=?').get(conversation.id,t.id))return;
+   return {id:t.id,conversation:t.conversation,agent:t.agent,member:t.member,...(t.project?{project:t.project}:{}),archived:t.archived};
+  },
   threadProject(viewer, conversation) {
    if (closed || !conversation.member) return null;
    const rows = db.prepare('SELECT record FROM comms_threads WHERE agent=? AND member=?').all(conversation.agent, conversation.member) as {record:string}[];

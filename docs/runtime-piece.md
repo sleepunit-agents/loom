@@ -1276,3 +1276,23 @@ These controls cover existing bound private loom conversations. Authoritative
 conversation lookup for imported/spawned threads, trusted spawn, ordinary
 conversation step writers, terminal notices and the standalone runner remain
 outstanding on t-2209. General Bridges audiences stay held.
+
+
+### Owning Comms thread metadata
+
+`commsMetadata(operations).privateThread(viewer, {id, agent, member})` resolves
+one current Comms thread by its original conversation identity, independently of
+transport place. It returns only thread id, conversation, agent, member, project
+and archive state. Only that member's current ownership can read it. It refuses
+missing/deleted threads, same-conversation ambiguity (including different
+members/agents), conflicting tombstones and disagreement between stored row and
+routing metadata. Archived routes remain metadata; callers must check archive state.
+It decrypts nothing, registers no public operation and confers no execution or
+history authority. Returned facts are snapshots: resolve again after awaits.
+
+Runtime now requires this lookup to agree with its existing explicit Comms route
+at delivery and bound-body checks, including rechecks across private read/reply
+awaits. It still treats binding.place as the route at those call sites. Resolving
+spawn transport handles through every consumer, preserving the original binding
+and member/parent proof, remains on t-2209; this prerequisite does not activate
+imported execution or remove any policy hold.

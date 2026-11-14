@@ -11,7 +11,7 @@ import { controlScope, currentExecution } from './control.js';
 import { z } from 'zod';
 import { operation, OperationError, mayUseThread, mayAct, mayMove, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import type { Foundation } from '../../core/app.js';
-import type { Comms, RuntimeDelivery, DeliveryReceipt } from '../comms/role.js';
+import { commsMetadata, type Comms, type RuntimeDelivery, type DeliveryReceipt } from '../comms/role.js';
 import { runtimeStore } from './store.js';
 import { centralRuntimeCredentials } from './central-credentials.js';
 export const PRIVATE_BRIEF='Read the bound private conversation through runtime.readConversation. Reply through runtime.reply.';
@@ -32,6 +32,8 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
  const available=(m:Routing)=>{
   if(closed||!comms||!mayUseThread({kind:'member',id:m.member},m,sharing()))return false;
   try {
+   const owner=commsMetadata(operations)?.privateThread({kind:'member',id:m.member},{id:m.conversation,agent:m.agent,member:m.member});
+   if(!owner||owner.id!==m.thread||owner.project!==m.project||owner.archived!==null)return false;
    const trace=comms.trace(m.agent,m.thread),description=comms.describe(m.agent,m.thread);
    return trace.conversation===m.conversation&&trace.project===m.project&&trace.archived===null&&description.readers.length===1&&description.readers[0]===m.member;
   } catch{return false;}

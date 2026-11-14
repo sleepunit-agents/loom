@@ -928,7 +928,7 @@ it('derives private description, title and monotonic activity from the authentic
  expect(f.record().title).toBe('Member title');
  for(const table of ['runtime_inputs','core_operations'])expect(JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain('PRIVATE');
 });
-it.each(['imported','reset','writeoff','ended','binding','project','venue','archived','membership','policy','archived-policy','service','box','house','credential','terminal','live-conversation','live-project','live-thread'] as const)('refuses bound Comms controls after %s changes',async drift=>{
+it.each(['imported','reset','writeoff','ended','binding','project','venue','archived','membership','policy','archived-policy','service','box','house','credential','terminal','live-conversation','live-project','live-thread','ambiguous-owner','deleted-owner'] as const)('refuses bound Comms controls after %s changes',async drift=>{
  const f=await commsBodyFixture(drift==='membership'?'pollock':'jonathan'),store=runtimeStore(f.app.db);
  expect(await f.post(f.body,'runtime.describeConversation',{})).toMatchObject({ok:true});
  const viewer=signin(f.app).token(hash(f.body))!.viewer;
@@ -954,6 +954,13 @@ it.each(['imported','reset','writeoff','ended','binding','project','venue','arch
   }
   if(drift==='archived'){const t=f.record();t.archived=f.clock.now();f.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(t),f.thread);}
   if(drift==='live-conversation'||drift==='live-project'){const t=f.record();if(drift==='live-conversation')t.conversation='other-conversation';else t.project='pond';f.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(t),f.thread);}
+  if(drift==='ambiguous-owner'){
+   const t=f.record(),copy={...t,id:'th:duplicate-owner'};
+   f.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(copy.id,copy.member,copy.agent,copy.project??null,JSON.stringify(copy));
+  }
+  if(drift==='deleted-owner'){
+   const t=f.record();f.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('th:deleted-owner',t.member,t.agent,t.conversation,f.clock.now());
+  }
   if(drift==='membership')new HouseholdDatabase(f.app.db).change(f.home,raw=>{(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person==='pollock')!.agents=[];});
   if(drift==='service')store.put('job',{...job,service:'discord'},f.clock.now());
   if(drift==='archived-policy')f.app.db.prepare('INSERT INTO runtime_import_documents (collection,key,record) VALUES (?,?,?)').run('gates','art',JSON.stringify({doc:'{}'}));
@@ -994,4 +1001,18 @@ it('rejects a centrally authenticated service credential for the same private jo
  expect(signin(f.app).body(signin(f.app).token(hash(secret))!.viewer)).toMatchObject({agent:'art',job:f.job,service:'discord'});
  for(const [name,input] of [['describeConversation',{}],['titleConversation',{title:'Service title'}],['conversationActivity',{at:f.clock.now()}]] as const)
   expect(await f.post(secret,`runtime.${name}`,input)).toMatchObject({ok:false,code:'denied'});
+});
+
+it.each(['duplicate','tombstone'] as const)('refuses pending private read/reply after %s ownership evidence appears',async drift=>{
+ const f=await commsBodyFixture(),viewer=signin(f.app).token(hash(f.body))!.viewer;
+ const read=f.app.operations.callAsync('direct',viewer,'runtime.readConversation',{});
+ const reply=f.app.operations.callAsync('direct',viewer,'runtime.reply',{id:'ownership-race',text:'PRIVATE must not escape'});
+ const t=f.record();
+ if(drift==='duplicate'){
+  const copy={...t,id:'th:duplicate-race'};
+  f.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(copy.id,copy.member,copy.agent,copy.project??null,JSON.stringify(copy));
+ }else f.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('th:deleted-race',t.member,t.agent,t.conversation,f.clock.now());
+ expect(await read).toMatchObject({ok:false,code:'denied'});
+ expect(await reply).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.db.prepare("SELECT * FROM comms_messages WHERE id='ownership-race'").all()).toEqual([]);
 });
