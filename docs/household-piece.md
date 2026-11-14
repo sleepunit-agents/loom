@@ -1317,3 +1317,56 @@ is published or deleted by this unit; publication/retention execution, the
 Secrets recovery dependency, usable-home acceptance, local arming, daemon job,
 health/Attention, commands and Setup acceptance remain required. Saved backup
 configuration still reports `awaiting-runner` and never arms itself.
+
+### Encrypted path publication prerequisite
+
+`publishHouseholdPathBundle` in `src/core/household/backup-path.ts` brackets a
+trusted local producer of the actual registered encrypted/drilled bundle. Before
+calling it, and again after its async work, it checks an existing target outside
+the selected home. The target must be empty or carry a regular single-link
+`.loom-backup` marker (any content), belong to this OS user, and not be writable
+by group or others. The marker must also belong to this user. Missing targets,
+symlinks in either path or any ancestor, malformed calendar stamps, existing
+final names and unmarked nonempty directories refuse. Inputs are absolute
+canonical Linux paths; unsupported platforms refuse. Descriptor-pinned traversal
+and ancestor checks detect renamed/replaced paths across the producer await.
+The OS user/filesystem are trusted; this is not hostile same-user isolation.
+
+Only bounded producer output with the native age header and all successful drill
+fields proceeds. Those structural checks are **not proof** of encryption or drill
+provenance: the trusted worker must pass the actual exporter result. Tests also
+compose the real registered exporter, native encryption/drill, publication and
+bounded restore validator with a fake owning Secrets part. This does not prove
+production owning recovery or usable-home/sign-in acceptance.
+
+Files are created exclusively at mode 0600. Publication writes a random private
+pending file, handles short writes, fsyncs and checks its exact size/SHA-256, then
+atomically links it into `loom-household-YYYYMMDD-HHMM.bundle` without replacing
+an existing name. It unlinks only that invocation's temporary name, syncs the
+directory and verifies the final bytes before reporting success. This uses a
+no-clobber hard link instead of overwrite-capable rename. Existing marker,
+unrelated files and older backups are preserved. A failed run may leave a marker,
+a private pending file, or a complete final bundle if failure followed publication;
+it never authorizes pruning. A retry with the same stamp refuses a collision,
+even for identical bytes; the runner must choose a fresh stamp or report failure.
+All held ancestor descriptors receive close attempts, including on error.
+Regression tests inject foreign target/marker ownership before and after export,
+exercise malformed existing paths for both inputs, and corrupt the published
+inode separately from pending-file readback. A final-name collision introduced
+during suspended export refuses before any marker or pending-file write.
+Injected marker/pending creation collisions also refuse without overwriting the
+existing bytes, independently testing exclusive creation.
+
+There is no production caller, public command, deletion, retention execution,
+git publication, RESTORE.md writer, local arming, staging bypass, daemon job or
+new record here. The future worker must call the staging hold, establish local
+arming and serialize runs before this bracket, supply selected trusted sources
+and the real owning Secrets role, and carry required-part/run/health/Attention
+semantics. A complete target still needs accurate RESTORE.md instructions once
+the public usable-home restore exists. Git must preserve the remote main tree,
+verify multipart joins and use the exact lease as keeping-watch.md requires.
+Retention must inventory only verified publications, recheck ownership/execution
+boundaries, and prune whole bundles only after the new publication is durable.
+Those obligations and actual recovered sign-in/token/stopped-daemon stdio
+acceptance remain required before retiring the old backup. Saved settings
+continue to report `awaiting-runner`; no machine is armed by publication.

@@ -1,9 +1,11 @@
 import {useEffect,useRef,useState} from 'react';
 import {callOnce,useRecords,type LiveRecord} from '../../data';
 import {Button,Textarea,Error,Loading} from '../../kit';
+import {ThreadRefs,RefText,RefChip} from './refs';
+import {refBits} from './ref-bits';
 export interface Question extends LiveRecord {
  thread:string;member:string;agent:string;seq:number;state:string;keepUntil:number;
- question:{ask:string;why?:string;if_yes?:string;if_no?:string;answers:'words'|'yes-no'}|null;
+ question:{ask:string;why?:string;if_yes?:string;if_no?:string;refs?:string[];answers:'words'|'yes-no'}|null;
 }
 interface Owner {id:string;member:string;agent:string;archived:number|null}
 /** No stored draft or retained Call: each editor belongs to one live exact source. */
@@ -37,8 +39,13 @@ export function SealedQuestion({thread,seq,refId}:{thread:Owner;seq:number;refId
  };
  if(!current?.question)return <Loading label="Question unavailable or no longer kept"/>;
  const q=current.question;
+ // These words live only in this exact retained question, never the thread index.
+ const refs=[...[q.ask,q.why,q.if_yes,q.if_no].flatMap(text=>text?refBits(text).flatMap(bit=>bit.ref?[bit.ref]:[]):[]),...(q.refs??[])];
  return <section aria-label="Private question" className="grid gap-2">
-  <p>{q.ask}</p>{q.why&&<p>{q.why}</p>}{q.if_yes&&<p>Yes: {q.if_yes}</p>}{q.if_no&&<p>No: {q.if_no}</p>}
+  <ThreadRefs key={identity} thread={thread.id} refs={refs} connected={true}>
+   <p><RefText text={q.ask}/></p>{q.why&&<p><RefText text={q.why}/></p>}{q.if_yes&&<p>Yes: <RefText text={q.if_yes}/></p>}{q.if_no&&<p>No: <RefText text={q.if_no}/></p>}
+   {q.refs?.map(ref=><span key={ref} className="mr-2"><RefChip refId={ref} words={ref}/></span>)}
+  </ThreadRefs>
   {current.state!=='open'?<p>{current.state==='resolved'?'Resolved':'Answered'}</p>:thread.archived!==null?<p>Unarchive this thread to answer.</p>:<fieldset disabled={busy} className="grid gap-2">
    {q.answers!=='words'&&<div className="flex flex-wrap gap-2"><Button disabled={!!draft.trim()} onClick={()=>void send('yes')}>Allow</Button><Button variant="outline" disabled={!!draft.trim()} onClick={()=>void send('no')}>Deny</Button></div>}
    <label className="grid gap-1">Your private reply<Textarea value={draft} maxLength={4000} rows={3} onChange={e=>setDraft(e.target.value)}/></label>

@@ -130,3 +130,5 @@ export function runtimeHouseDestination(app: Foundation, sharing: () => Sharing,
     catch { return false; }
   }});
 }
+
+export { runtimeDiscordHistoryPermit, type DiscordHistoryPlace } from './venue-history.js';

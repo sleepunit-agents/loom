@@ -30,6 +30,8 @@ export interface Wake extends Work {
   vouched?: { by: string; at: number };
 }
 export interface Schedule extends Work {
+  /** Offline eligibility hint only; recovery still needs a fresh owning write. */
+  importRecovery?: 'plain';
   /** Authenticated agent that created this revision; capacity accounting only, never authority. */
   apiOrigin?: string;
   id: string; at: string[]; days: string; by: Viewer; changedAt: number;

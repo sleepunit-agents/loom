@@ -44,3 +44,6 @@ export interface BridgesRole {
    * Inside an operation transaction pass its context, so changes publish only on commit. */
   reply(input: { id: string; incomingId: string; text: string; person?: string }, context?: Pick<Context, 'changed'>): void;
 }
+
+export type { DiscordHistoryPermit } from './discord-history.js';
+export { isDiscordId } from './discord-id.js';

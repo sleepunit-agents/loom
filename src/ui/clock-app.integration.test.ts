@@ -9,7 +9,7 @@ import { filedLocal } from '../pieces/clock/local-filing.js';
 import * as runtimeClock from '../pieces/runtime/clock.js';
 import { runtimeStore } from '../pieces/runtime/store.js';
 import type { Result } from '../core/index.js';
-import { wakes } from '../pieces/clock/store.js';
+import { schedules, wakes } from '../pieces/clock/store.js';
 import { chromium } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
@@ -25,6 +25,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
   const home = mkdtempSync(join(tmpdir(), 'loom-clock-browser-')); fixture(home);
   const source = join(home,'old'); mkdirSync(join(source,'art'),{recursive:true});
   writeFileSync(join(source,'art','spool.jsonl'), JSON.stringify({id:'w-aaaaaa',kind:'wake',for:'-',at:'2026-11-13 07:00:00',created:'2026-11-13 05:00:00',prompt:'Review these exact imported words',note:'Unknown imported review',origin:'agent:art'}));
+  writeFileSync(join(source,'art','schedules.json'),JSON.stringify({daily:{at:'03:47',prompt:'ARCHIVED_SCHEDULE_WORDS',note:'Archived daily',for:'owner'}}));
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
   const runtimeStarts:string[]=[];
   vi.spyOn(runtimeClock,'clockRuntime').mockImplementation((...args)=>{
@@ -181,6 +182,40 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Clock shares changes a
     await expect.poll(()=>a.getByText('mark · Enabled',{exact:true}).count()).toBe(1);
     await b.reload();await expect.poll(()=>b.getByText('mark · Enabled',{exact:true}).count()).toBe(1);
     console.info('Clock browser: ordinary controls complete');
+    // Fresh owner recovery never prefills or reuses archived work or timing.
+    await b.getByRole('button',{name:/^Schedules/}).click();await row(b,'art/daily').click();
+    const recovery=b.getByRole('form',{name:'Recover imported schedule'});
+    await expect.poll(()=>recovery.count()).toBe(1);
+    expect(await b.getByRole('button',{name:'Edit schedule',exact:true}).count()).toBe(0);
+    for(const name of ['New prompt','New note','New times (CT)','New days'])expect(await recovery.getByRole('textbox',{name,exact:true}).inputValue()).toBe('');
+    await recovery.getByRole('textbox',{name:'New prompt',exact:true}).fill('Fresh owner review of the queue.');
+    await recovery.getByRole('textbox',{name:'New note',exact:true}).fill('Recovered daily review');
+    await recovery.getByRole('textbox',{name:'New times (CT)',exact:true}).fill('13:17');
+    await recovery.getByRole('textbox',{name:'New days',exact:true}).fill('Mon-Fri');
+    await recovery.getByRole('button',{name:'Review new schedule',exact:true}).click();
+    expect(schedules(loom.db).find(s=>s.id==='art/daily')).toMatchObject({enabled:false,prompt:'ARCHIVED_SCHEDULE_WORDS'});
+    const recoveryConfirmation=b.getByRole('region',{name:'Confirm schedule recovery'});
+    expect(await recoveryConfirmation.getByText('Fresh owner review of the queue.',{exact:true}).count()).toBe(1);
+    const recoveryShots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/clock-app');mkdirSync(recoveryShots,{recursive:true});
+    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
+      await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      await recoveryConfirmation.scrollIntoViewIfNeeded();
+      await b.screenshot({path:join(recoveryShots,`clock-recovery-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    await b.getByRole('button',{name:'Save my new schedule',exact:true}).click();
+    await expect.poll(()=>schedules(loom.db).find(s=>s.id==='art/daily')?.enabled).toBe(true);
+    const recovered=schedules(loom.db).find(s=>s.id==='art/daily')!;
+    expect(recovered).toMatchObject({by:{kind:'member',id:'jonathan'},prompt:'Fresh owner review of the queue.',note:'Recovered daily review',at:['13:17'],days:'Mon-Fri'});
+    expect(JSON.stringify(recovered)).not.toContain('ARCHIVED');
+    expect(wakes(loom.db).filter(w=>w.schedule==='art/daily')).toHaveLength(1);
+    await a.getByRole('button',{name:/^Schedules/}).click();await row(a,'art/daily').click();
+    await expect.poll(()=>a.getByText('art · Enabled',{exact:true}).count()).toBe(1);
+    expect(await a.getByRole('form',{name:'Recover imported schedule'}).count()).toBe(0);
+    await b.reload();await expect.poll(()=>b.getByText('art · Enabled',{exact:true}).count()).toBe(1);
+    await b.setViewportSize({width:1280,height:900});
+    console.info('Clock browser: fresh owner schedule recovery complete');
+
     // Only eligible owner adoption is offered; preserve saved words and time.
     await b.getByRole('button',{name:/^Wakes/}).click(); await row(b,'Unknown imported review').click();
     await expect.poll(()=>b.getByRole('button',{name:'Count as my work',exact:true}).count()).toBe(1);

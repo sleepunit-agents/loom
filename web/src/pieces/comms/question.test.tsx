@@ -2,8 +2,8 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {createElement as h,useSyncExternalStore,type ReactNode} from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import {act,create} from 'react-test-renderer';
-const f=vi.hoisted(()=>({snapshot:{status:'live',records:[] as unknown[]},listeners:new Set<()=>void>(),once:vi.fn()}));
-vi.mock('../../data',()=>({useRecords:(type:string,scope:string)=>{expect(type).toBe('comms.question');expect(scope).toBe('sealed');return useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshot);},callOnce:f.once}));
+const f=vi.hoisted(()=>({snapshot:{status:'live',records:[] as unknown[]},listeners:new Set<()=>void>(),once:vi.fn(),scopes:[] as string[],cards:new Map<string,unknown[]>()}));
+vi.mock('../../data',()=>({useRecords:(type:string,scope:string)=>{expect(type).toBe('comms.question');expect(scope).toBe('sealed');return useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshot);},callOnce:f.once,useRecordScopes:(_type:string,scopes:string[])=>scopes.map(scope=>{f.scopes.push(scope);return {status:'live',records:f.cards.get(scope)??[]};})}));
 vi.mock('../../kit',()=>Object.fromEntries(['Button','Textarea','Error','Loading'].map(name=>[name,(props:{children?:ReactNode})=>h(name,props,props.children)])));
 import {SealedQuestion} from './question';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
@@ -15,7 +15,7 @@ async function open(){vi.useFakeTimers();vi.setSystemTime(10000);f.once.mockRese
 const editor=()=>tree.root.findByType('Textarea');
 const send=()=>tree.root.findAllByType('Button').find((b:{props:{children:unknown}})=>b.props.children==='Send private reply');
 async function type(text='PRIVATE DRAFT'){await act(async()=>editor().props.onChange({target:{value:text}}));}
-afterEach(async()=>{await act(async()=>tree?.unmount());vi.useRealTimers();});
+afterEach(async()=>{await act(async()=>tree?.unmount());vi.useRealTimers();f.scopes=[];f.cards.clear();});
 it('reads current words and sends only after a fresh exact snapshot check, with ephemeral calls',async()=>{
  await open();await type();f.once.mockImplementation((op:string)=>({result:Promise.resolve({ok:true,value:op==='comms.question'?row:{}})}));
  await act(async()=>{await send().props.onClick();});
@@ -56,4 +56,19 @@ for(const verdict of ['yes','no'])for(const stale of [false,true])it(`checks the
 
 it('renders the current resolved state distinctly and clears drafts on changed deadlines',async()=>{
  await open();await type();await publish([{...row,keepUntil:25000}]);expect(editor().props.value).toBe('');await publish([{...row,state:'resolved'}]);expect(tree.root.findAllByType('Textarea')).toHaveLength(0);expect(JSON.stringify(tree.toJSON())).toContain('Resolved');expect(JSON.stringify(tree.toJSON())).not.toContain('Answered');
+});
+
+const chipRow={...row,question:{ask:'Check t-1',why:'See t-2',if_yes:'Use t-3',if_no:'Close t-4',answers:'words',refs:['t-5','t-1','note:unknown']}};
+function cards(){const refs=['note:unknown','t-1','t-2','t-3','t-4','t-5'],scope=JSON.stringify({thread:thread.id,refs});f.cards.set(scope,[{id:scope,thread:thread.id,cards:Object.fromEntries(refs.map(ref=>[ref,ref.startsWith('t-')?{kind:'task',title:`Current ${ref}`,status:'Open',url:`/p/tasks-preview/task/${ref}`} : null]))}]);return scope;}
+it('admits chips from every sealed question field and explicit refs using the exact bounded scope',async()=>{
+ await open();const scope=cards();await publish([chipRow]);
+ expect(f.scopes).toContain(scope);
+ expect(tree.root.findAllByProps({className:'comms-chip'}).map((b:{props:{children:string}})=>b.props.children)).toEqual(['t-1','t-2','t-3','t-4','t-5','t-1']);
+ expect(JSON.stringify(tree.toJSON())).toContain('note:unknown');
+ await type();expect(f.once).not.toHaveBeenCalled();expect(editor().props.value).toBe('PRIVATE DRAFT');
+});
+for(const boundary of ['offline','missing','member','agent','thread','seq','expired'])it(`withdraws sealed wording chip subscriptions on ${boundary}`,async()=>{
+ await open();cards();await publish([chipRow]);expect(tree.root.findAllByProps({className:'comms-chip'})).toHaveLength(6);f.scopes=[];
+ if(boundary==='offline')await publish([chipRow],'offline');else if(boundary==='missing')await publish([]);else if(boundary==='expired')await act(async()=>{vi.advanceTimersByTime(10000);});else await publish([{...chipRow,[boundary]:boundary==='seq'?3:'other'}]);
+ expect(tree.root.findAllByProps({className:'comms-chip'})).toHaveLength(0);expect(f.scopes).toHaveLength(0);expect(JSON.stringify(tree.toJSON())).not.toContain('Current t-');
 });
