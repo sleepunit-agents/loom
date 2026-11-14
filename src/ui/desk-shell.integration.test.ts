@@ -158,6 +158,8 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
             await expect.poll(()=>page.locator('[data-tile=inbox]').count()).toBe(1);
             await expect.poll(()=>page.locator('.next-status-bar h1').innerText()).toBe('Inbox');
             if(width===390) {
+              await page.getByRole('button',{name:'All apps',exact:true}).click({button:'right'});
+              expect(await page.getByRole('menu').count()).toBe(0);
               const needs=page.locator('.next-status-bar .loom-pbar__needs');
               await needs.click();
               expect(new URL(page.url()).pathname).toBe('/p/inbox-preview');
