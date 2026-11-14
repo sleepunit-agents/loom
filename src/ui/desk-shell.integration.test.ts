@@ -58,10 +58,10 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await b.goto(app.url);
     for (const page of [a,b]) {
       await expect.poll(() => page.locator('html').getAttribute('data-look')).toBe('daylight');
-      expect(await page.locator('html').getAttribute('data-mode')).toBe('light');
-      expect(await page.locator('html').getAttribute('data-sound')).toBe('on');
-      expect(await page.locator('html').getAttribute('data-motion')).toBe('reduce');
-      expect(await page.locator('html').getAttribute('data-contrast')).toBe('more');
+      await expect.poll(() => page.locator('html').getAttribute('data-mode')).toBe('light');
+      await expect.poll(() => page.locator('html').getAttribute('data-sound')).toBe('on');
+      await expect.poll(() => page.locator('html').getAttribute('data-motion')).toBe('reduce');
+      await expect.poll(() => page.locator('html').getAttribute('data-contrast')).toBe('more');
       expect(await page.locator('meta[name=viewport]').getAttribute('content')).not.toContain('user-scalable=no');
     }
     // Ground is the member's live choice, shared across windows like the look.
