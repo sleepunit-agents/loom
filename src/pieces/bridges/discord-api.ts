@@ -59,8 +59,7 @@ export function discordApi(secrets: SecretUse, beforeRead: () => boolean, reques
     return result;
   }
   return {
-    /** Unregistered transport only. No installed Runtime history permit issuer or
-     * public command exists yet; composition must not substitute DM admission. */
+    /** Runtime-issued exact history authority; DM admission is never substituted. */
     async history(input:Venue,query:unknown,permit:DiscordHistoryPermit):Promise<{messages:DiscordHistoryMessage[]}|'drop'|'wait'> {
       const venue=structuredClone(input),parsed=discordHistoryQuery.safeParse(query);
       if(!parsed.success||!setup(venue))return 'wait';
