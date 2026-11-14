@@ -1126,3 +1126,27 @@ Destination checks also require current household agent membership, even when a
 previously resolved token proof remains retained. Daemon shutdown marks a shared
 Foundation admission fence synchronously before awaiting operator/listener drains;
 new and retained destination bindings refuse throughout that interval.
+
+### Durable handoff tickets (not activated)
+
+`secretTickets` admits an opaque UUID only for the original central body proof
+and Runtime destination. A ticket pins the exact grant record, current policy,
+job/service, runner/box and claim, and expires after at most thirty seconds or at
+the grant deadline. Grant replacement or deletion, policy edits/removal and name
+removal permanently revoke outstanding tickets, including revoke-and-restore.
+No public operation accepts or returns tickets, and no holder is started here.
+
+A trusted holder authority may claim once, after the `secret-read` outside-effect
+gate releases it. Staging keeps that effect due until an owner explicitly releases
+it. The durable claim precedes holder IO; a crash, failed acknowledgement or
+missing original proof cannot retry it. Restart preserves ticket rows and loses
+the original in-process body proof, so even an unclaimed ticket cannot resume.
+A retained claim checks the same current Runtime destination, grant, policy,
+expiry and effect before release, and shutdown fails closed. Confirmed worker
+acknowledgement may finish the claim; anything else stays uncertain. This is
+metadata accounting only, with no credential reader or transport callback.
+
+The authenticated holder-to-worker sink, its final release check, the public
+metadata-only get command, usage accounting and complete runner composition
+remain required before connecting this role to the holder channel. Neither a
+caller-selected endpoint nor daemon-local plaintext is an acceptable substitute.

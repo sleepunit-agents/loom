@@ -25,4 +25,29 @@ CREATE TABLE secrets_write_intents (
  UNIQUE(viewer,id), UNIQUE(member,write_id)
 );
 CREATE UNIQUE INDEX secrets_write_unfinished ON secrets_write_intents((1)) WHERE state <> 'complete';
+` }, { number: 6, sql: `
+CREATE TABLE secrets_tickets (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL, grant_id TEXT NOT NULL,
+ grant_record TEXT NOT NULL, policy TEXT NOT NULL, destination TEXT NOT NULL,
+ expires_at INTEGER NOT NULL, state TEXT NOT NULL
+);
+-- An intervening revoke/regrant or policy change must not revive old tickets.
+CREATE TRIGGER secrets_ticket_grant_deleted AFTER DELETE ON secrets_grants BEGIN
+ UPDATE secrets_tickets SET state='revoked' WHERE grant_id=OLD.id AND state IN ('admitted','claimed');
+END;
+CREATE TRIGGER secrets_ticket_grant_changed AFTER UPDATE ON secrets_grants BEGIN
+ UPDATE secrets_tickets SET state='revoked' WHERE grant_id=OLD.id AND state IN ('admitted','claimed');
+END;
+CREATE TRIGGER secrets_ticket_policy_changed AFTER UPDATE ON secrets_meta WHEN NEW.key='policy' BEGIN
+ UPDATE secrets_tickets SET state='revoked' WHERE state IN ('admitted','claimed');
+END;
+CREATE TRIGGER secrets_ticket_policy_deleted AFTER DELETE ON secrets_meta WHEN OLD.key='policy' BEGIN
+ UPDATE secrets_tickets SET state='revoked' WHERE state IN ('admitted','claimed');
+END;
+CREATE TRIGGER secrets_ticket_policy_created AFTER INSERT ON secrets_meta WHEN NEW.key='policy' BEGIN
+ UPDATE secrets_tickets SET state='revoked' WHERE state IN ('admitted','claimed');
+END;
+CREATE TRIGGER secrets_ticket_name_deleted AFTER DELETE ON secrets_names BEGIN
+ UPDATE secrets_tickets SET state='revoked' WHERE name=OLD.id AND state IN ('admitted','claimed');
+END;
 ` }];
