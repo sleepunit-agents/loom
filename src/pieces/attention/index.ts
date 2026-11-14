@@ -10,6 +10,7 @@ import { installRetention } from './retention.js';
 import { installDigests } from './digests.js';
 import type { DigestReferences } from './project-references.js';
 import { installConversations } from './conversations.js';
+import { installMemberState } from './member-state.js';
 const id = z.string().min(1).max(200);
 const scopeFields = { project: id.optional(), agent: id.optional(), member: id.optional() };
 const question = z.object({
@@ -34,6 +35,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding', 'task', 'approval'], 'attention', ['tasks.show', 'approvals.check']);
   migrate(db, 'attention', attentionMigrations);
   installHomeRoster(live, sharing);
+  installMemberState(db, operations, live, sharing);
   installConversations(db, operations, live, sharing);
   installDigests(db, operations, live, sharing, references);
   installRetention(db, operations, live, sharing);
