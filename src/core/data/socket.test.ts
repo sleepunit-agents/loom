@@ -123,3 +123,10 @@ it.each(['revoke','expire'])('blocks buffered result release when authority ends
   expect((await closed)[0]).toBe(4403);
   expect(messages).toEqual([]);
 });
+
+it('serves ordinary generated GraphQL reads on the same authenticated websocket', async () => {
+  const f = await setup(), ws = await f.open();
+  f.client.exec("INSERT INTO members (id,role,joined_at) VALUES ('other','member','2026-11-14T00:00:00Z'); INSERT INTO tasks (id,title,owner_kind,owner,created_by_kind,created_by,created_at,changed_at) VALUES ('private','Secret','member','other','member','other','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z')");
+  const result = await read(ws, () => ws.send(JSON.stringify({ type: 'subscribe', id: 'read', payload: { query: '{ tasks { id title } }' } })));
+  expect(result).toEqual({ type: 'next', id: 'read', payload: { data: { tasks: [{ id: 't-1', title: 'Pump' }] } } });
+});
