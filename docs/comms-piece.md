@@ -1236,7 +1236,16 @@ transaction. No view decrypts history. Bare `repo#N` is deliberately omitted:
 next mode does not read the retired household JSON's default GitHub owner, and
 an unqualified repository is ambiguous. Use `owner/repo#N`.
 
-This unit is the storage prerequisite only. Startup backfill for existing next
-fixture homes, referenced work and note rows, authorized chip cards, reverse From
+Existing next homes now backfill retained message/reply references at Comms
+startup, immediately after the startup sweep. Archived threads are included;
+unowned threads, expired words and other message kinds are skipped. The scan
+decrypts one row at a time and rechecks current ownership, route, retention and
+ciphertext after each await. It never replaces a newer indexed mention. A
+successful scan writes `refs_backfilled` with the current time in `comms_meta`;
+later starts decrypt nothing for references. Failure or shutdown leaves the
+marker absent, so the next start retries safely over any partial indexed rows.
+Shutdown drains the scan before SQLite closes. No view scans history.
+
+Referenced work and note rows, authorized chip cards, reverse From
 links, swipe/undo, final phone layout, imported/spawn privacy and screenshots,
 and the consolidated old-to-new acceptance table still remain on t-2206.
