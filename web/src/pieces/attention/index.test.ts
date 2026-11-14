@@ -220,3 +220,11 @@ it('counts a same-audience approval wait once and retains different/private audi
   expect(listedAsks([{...approval,state:'resolved'},wait])).toHaveLength(2);
   expect([approval,wait]).toHaveLength(2);
 });
+
+it('renders one Needs-you decision for a matching approval wait while direct source navigation stays available',async()=>{
+  const source=ask('source',{source:{kind:'approval',id:'a-12345678'},sourceManaged:true});
+  const wait=ask('wait',{source:{kind:'conversation',id:'cv-one'},waits_on:{approval:'a-12345678'}});
+  f.snapshot={status:'live',records:[source,wait]};
+  await draw(h(InboxApp,{path:'/p/inbox-preview/ask/source'}));
+  expect(tree!.root.findAll(n=>n.props['data-split-row']!==undefined)).toHaveLength(1);expect(buttons('Needs you1')).toHaveLength(1);expect(buttons('Open approval')).toHaveLength(1);
+});
