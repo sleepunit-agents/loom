@@ -23,7 +23,7 @@ it('allows one exact head once and keeps rejected uses in the permanent record',
   expect(service.use(request.id, 'other', 'merge', target).ok).toBe(false);
   expect(service.use(request.id, 'art', 'merge', target.replace(/a{40}$/, 'b'.repeat(40))).ok).toBe(false);
   expect(service.use(request.id, 'art', 'command', target).ok).toBe(false);
-  expect(service.use(request.id, 'art', 'merge', target).ok).toBe(true);
+  expect(service.use(request.id, 'art', 'merge', target)).toMatchObject({ ok: true, approval: { usedAt: at } });
   expect(service.use(request.id, 'art', 'merge', target).ok).toBe(false);
   expect(service.record(request.id).map(r => r.event)).toEqual(['request', 'refused-use', 'allow', 'refused-use', 'refused-use', 'refused-use', 'use', 'refused-use']);
   expect(() => client.prepare('DELETE FROM approval_record').run()).toThrow('permanent record');
@@ -36,7 +36,10 @@ it('expires at the allowance deadline and records denial overriding an older all
   at = '2026-11-14T20:01:00.000Z';
   expect(service.use(first.id, 'art', 'merge', target)).toMatchObject({ ok: false, approval: { state: 'expired' } });
   const older = service.request(proposal()); service.allow(older.id, 'jonathan');
-  const denial = service.request(proposal()); service.deny(denial.id, 'jonathan');
+  const denial = service.request(proposal());
+  expect(service.deny(denial.id, 'jonathan')).toMatchObject({ state: 'denied', decidedBy: 'jonathan', decidedAt: at });
+  expect(service.record(denial.id).at(-1)).toMatchObject({ event: 'deny', note: 'jonathan', at });
+  expect(service.record(older.id).at(-1)).toMatchObject({ event: 'deny', note: `Overridden by ${denial.id}`, at });
   expect(service.get(older.id)).toMatchObject({ state: 'denied', overriddenBy: denial.id });
   expect(service.use(older.id, 'art', 'merge', target).ok).toBe(false);
   expect(() => service.allow(denial.id, 'jonathan')).toThrow('already answered');
@@ -47,7 +50,7 @@ it('runs a proposed setting operation on Allow, with the answer, use and databas
   const apply = () => db.update(tempoSettings).set({ settleSeconds: 60 }).where(eq(tempoSettings.who, 'jonathan')).run();
   service = approvalService(db, new Map([['inbox-minute', () => { apply(); }]]), () => at);
   const proposed = service.request({ ...proposal(), kind: 'setting', target: 'tempo:jonathan', operation: 'inbox-minute', changeSummary: 'Before: 5 seconds. After: 60 seconds.' });
-  expect(service.allow(proposed.id, 'jonathan').state).toBe('used');
+  expect(service.allow(proposed.id, 'jonathan')).toMatchObject({ state: 'used', usedAt: at });
   expect(db.select().from(tempoSettings).get()?.settleSeconds).toBe(60);
   expect(service.record(proposed.id).map(r => r.event)).toEqual(['request', 'allow', 'use']);
   expect(() => service.allow(proposed.id, 'jonathan')).toThrow();
@@ -89,4 +92,15 @@ it('withdraws an allowed request and permanently records refusal of a later spen
   expect(service.withdraw(row.id, 'art').state).toBe('withdrawn');
   expect(service.use(row.id, 'art', 'merge', target).ok).toBe(false);
   expect(service.record(row.id).map(r => r.event)).toEqual(['request', 'allow', 'withdraw', 'refused-use']);
+});
+
+it('requires the exact dangerous-action proposal and performs it only on Allow', () => {
+  service = approvalService(db, new Map([['queue-reset', () => { db.insert(tempoSettings).values({ whoKind: 'person', who: 'jonathan', settleSeconds: 60 }).run(); }]]), () => at);
+  expect(() => service.request({ ...proposal(), kind: 'dangerous', operation: 'queue-reset' })).toThrow('before/after');
+  expect(() => service.request({ ...proposal(), kind: 'dangerous', changeSummary: 'Before: 5. After: 60.' })).toThrow('before/after');
+  const row = service.request({ ...proposal(), kind: 'dangerous', operation: 'queue-reset', changeSummary: 'Before: 5. After: 60.' });
+  expect(db.select().from(tempoSettings).all()).toEqual([]);
+  expect(service.allow(row.id, 'jonathan')).toMatchObject({ kind: 'dangerous', state: 'used', usedAt: at });
+  expect(db.select().from(tempoSettings).get()?.settleSeconds).toBe(60);
+  expect(service.record(row.id).map(r => r.event)).toEqual(['request', 'allow', 'use']);
 });
