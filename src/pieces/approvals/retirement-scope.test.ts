@@ -21,7 +21,8 @@ it.each(['art', 'mark'])('%s remains subject to record scope for every retired p
   for (const type of pieces) {
     const other = agent === 'art' ? 'mark' : 'art';
     expect(maySee(viewer, { type, agent }, sharing), type).toBe(true);
-    for (const scope of [{ agent: other }, { project: 'absent', agent }, { member: 'jonathan', agent }, {}]) {
+    expect(maySee(viewer, { type, project: 'absent', agent }, sharing), type).toBe(true);
+    for (const scope of [{ agent: other }, { project: 'absent', agent: other }, { member: 'jonathan', agent }, {}]) {
       expect(maySee(viewer, { type, ...scope }, sharing), type).toBe(false);
       expect(mayAct(viewer, { type, ...scope }, sharing), type).toBe(false);
     }

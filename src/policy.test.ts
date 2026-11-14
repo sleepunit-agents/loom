@@ -10,14 +10,14 @@ const viewers: Viewer[] = [
 describe('ordered household policy', () => {
   it.each<[string, RecordScope, boolean[]]>([
     ['pond made by Art', { project: 'pond', agent: 'art' }, [true, true, true, false, true, false, false]],
-    ['other made by bot', { project: 'other', agent: 'pond-bot' }, [true, false, true, false, false, false, false]],
+    ['other made by bot', { project: 'other', agent: 'pond-bot' }, [true, true, true, false, true, false, false]],
     ['bot personal', { agent: 'pond-bot' }, [true, true, false, false, true, false, false]],
     ['Art personal', { agent: 'art' }, [true, false, true, false, false, false, false]],
     ['Jonathan private overrides project and agent', { member: 'jonathan', project: 'pond', agent: 'pond-bot' }, [true, false, false, false, false, false, false]],
     ['Household owner sees Pollock private', { member: 'pollock', project: 'other', agent: 'art' }, [true, true, false, false, false, false, false]],
     ['unfiled', {}, [true, false, false, false, false, false, false]],
-    ['unknown project', { project: 'unknown', agent: 'pond-bot' }, [true, false, false, false, false, false, false]],
-    ['empty field is set', { project: '', agent: 'pond-bot' }, [true, false, false, false, false, false, false]],
+    ['unknown project', { project: 'unknown', agent: 'pond-bot' }, [true, true, false, false, true, false, false]],
+    ['empty field is set', { project: '', agent: 'pond-bot' }, [true, true, false, false, true, false, false]],
     ['assigned job', { type: 'runtime.job', runner: 'box' }, [true, false, false, false, false, true, false]],
     ['another job', { type: 'runtime.job', runner: 'elsewhere' }, [true, false, false, false, false, false, false]],
     ['service type', { type: 'secret' }, [true, false, false, false, false, false, true]],
@@ -169,4 +169,27 @@ it('checks current household ownership before private labels without lending it 
   expect(maySee(viewer, record, access)).toBe(false);
   for (const outsider of [{ kind: 'agent', id: 'pond-bot' }, { kind: 'runner', id: 'box' }, { kind: 'service', id: 'keyholder' }] as Viewer[])
     expect(maySee(outsider, record, access)).toBe(false);
+});
+
+it('shares general records through either project or agent, with task project precedence', () => {
+  const access = fixtureSharing(), member: Viewer = { kind: 'member', id: 'pollock' };
+  const record = { type: 'example.record', project: 'other', agent: 'pond-bot' };
+  expect(maySee(member, record, access)).toBe(true);
+  expect(mayAct(member, record, access)).toBe(true);
+  expect(maySee({ kind: 'agent', id: 'pond-bot' }, record, access)).toBe(true);
+  expect(maySee(member, { ...record, type: 'task' }, access)).toBe(false);
+  expect(mayAct(member, { ...record, type: 'task' }, access)).toBe(false);
+  expect(maySee({ kind: 'agent', id: 'pond-bot' }, { ...record, type: 'task' }, access)).toBe(false);
+  expect(maySee(member, { ...record, member: 'jonathan' }, access)).toBe(false);
+  const question = { ...record, type: 'attention.ask', sourceManaged: true, source: {kind:'task',id:'t-1'} };
+  expect(maySee(member, question, access)).toBe(false);
+  expect(maySee({kind:'agent',id:'pond-bot'}, question, access)).toBe(false);
+  expect(maySee(member, {...question,source:{kind:'approval'}}, access)).toBe(true);
+  access.members.pollock.agents = [];
+  expect(maySee(member, record, access)).toBe(false);
+  access.projects.other.members.push('pollock');
+  expect(maySee(member, record, access)).toBe(true);
+  expect(maySee(member, { ...record, type: 'task' }, access)).toBe(true);
+  access.projects.other.members = [];
+  expect(maySee(member, record, access)).toBe(false);
 });

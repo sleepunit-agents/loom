@@ -156,3 +156,17 @@ it('attributes explicit MCP knowledge activity to selected agents despite a glob
     expect(localDb.prepare('SELECT author FROM pages').all()).toEqual([{ author: 'art' }]);
   } finally { localDb.close(); }
 });
+
+it('keeps knowledge without a source provisional through the agent tool', async () => {
+  const home = fixture();
+  const selected = readContinuityHousehold(home, 'art');
+  const call = await connect({ contextDir: selected.contextDir, knowledgeSelection: selected });
+  expect(await call('knowledge_write', { slug: 'uncited', title: 'An unconfirmed fact', domain: 'test', body: 'Needs a source.' }))
+    .toContain('Sourcing: provisional');
+  const db = new Database(selected.knowledgePath, { readonly: true });
+  try {
+    expect(db.prepare("SELECT sourcing, body FROM pages WHERE slug = 'uncited'").get())
+      .toEqual({ sourcing: 'provisional', body: 'Needs a source.' });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM citations').get()).toEqual({ n: 0 });
+  } finally { db.close(); }
+});
