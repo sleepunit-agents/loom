@@ -1,3 +1,5 @@
+import { CLOCK_BRIEF } from './clock-delivery.js';
+import { builtinServices } from '../../core/services.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -77,7 +79,7 @@ it('keeps the wake firing through queue, wrong runner, claim and input; only con
   expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
   expect(wake(f.app.db,id)?.state).toBe('firing');
   expect(f.call('core.releaseEffect',{id:`runtime:input:${job}`}).ok).toBe(true);
-  expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:true,value:{brief:'PRIVATE wake words'}});
+  expect(await f.post(f.runner,'takeInput',{job})).toMatchObject({ok:true,value:{brief:CLOCK_BRIEF}});
   expect(wake(f.app.db,id)?.state).toBe('firing');
   expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});
   await settle();expect(wake(f.app.db,id)).toMatchObject({state:'fired',outcome:job});
@@ -116,8 +118,8 @@ it('waits for the real outcome and closes pending waiters without claiming a sta
 });
 it('never calls a rejected retry definitely unstarted when this wake already has an accepted intent',async()=>{
   const f=await setup(),id=await f.schedule(),original=wake(f.app.db,id)!;
-  const result=await clockRuntime(f.app,f.app.effects!).startBody({viewer:owner,intent:'different-attempt',wake:{...original,prompt:'changed work'}});
-  expect(result).toMatchObject({state:'uncertain'});
+  const result=await f.app.operations.callAsync('direct',{kind:'service',id:'clock'},'runtime.acceptClock',{wake:id,attempt:'different-attempt'},'bad-attempt');
+  expect(result).toMatchObject({ok:false,code:'denied'});
   expect(f.store.ids('job')).toHaveLength(1);
 });
 it('replays explicit placement without re-authorizing a revoked box and rejects changed placement intent',async()=>{
@@ -313,6 +315,7 @@ it('uses the destination reader in installed Clock dispatch and rechecks memberl
  const {clockDestination}=await import('./clock-destination.js');
  const {provenanceStore}=await import('./provenance-store.js');
  const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);
+ access.services=builtinServices(f.app.db);
  const job=f.jobOf(f.call('runtime.startBody',{...f.input,conversation:'cv-clock-lane',project:'pond'}));
  await f.post(f.runner,'claimJob',{job});await f.post(f.runner,'takeInput',{job});await f.post(f.runner,'reportJob',{job,state:'running'});
  const input={agent:'art',project:'pond',place:'lane:daily'};
@@ -329,6 +332,40 @@ it('uses the destination reader in installed Clock dispatch and rechecks memberl
  scheduled.authorship={origin:'art',conversation:'cv-clock-lane',project:'pond',principal:{for:'?',people:[]}};
  f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(scheduled),id);
  f.clock.advance(1000);await settle();
- expect(wake(f.app.db,id)).toMatchObject({state:'held',outcome:expect.stringContaining('conversation delivery')});
+ expect(wake(f.app.db,id)).toMatchObject({state:'firing'});
+ f.clock.advance(START_CONFIRM_MS);await settle();
+ expect(wake(f.app.db,id)).toMatchObject({state:'held',hold:'uncertain'});
  expect(f.store.ids('job')).toEqual([job]);
+});
+
+it('creates a real wake binding and joins only after the authenticated body reads the new input',async()=>{
+ const f=await setup();
+ const initial=f.call('clock.in',{agent:'art',prompt:'First lane input',note:'lane',place:'lane:daily',when:'1s'});
+ expect(initial.ok).toBe(true);f.clock.advance(1000);await settle();
+ const job=f.store.ids('job')[0];expect(job).toBeTruthy();
+ expect(await f.post(f.runner,'claimJob',{job})).toMatchObject({ok:true});
+ const payload=await f.post(f.runner,'takeInput',{job});
+ expect(payload).toMatchObject({ok:true,value:{brief:CLOCK_BRIEF,credential:expect.any(String),conversation:expect.any(String)}});
+ const body=payload.value.credential;
+ expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'}]}});
+ const cv=payload.value.conversation;
+ expect(f.store.read('binding',cv)).toMatchObject({venue:'wake',place:'lane:daily',job});
+ const filed=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${body}`},body:JSON.stringify({id:'body-chain',input:{agent:'art',prompt:'Joined lane input',note:'chain',place:'lane:daily',when:'1s'}})})).json();
+ expect(filed.ok).toBe(true);
+ expect(wake(f.app.db,filed.value.id)?.authorship).toMatchObject({origin:'art',conversation:cv,principal:{for:'owner'}});
+ f.clock.advance(1000);await settle();
+ expect(f.store.ids('job')).toEqual([job]);expect(wake(f.app.db,filed.value.id)?.state).toBe('firing');
+ expect(await f.post(f.runner,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(f.member,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'},{text:'Joined lane input'}]}});
+ await settle();expect(wake(f.app.db,filed.value.id)).toMatchObject({state:'fired',outcome:job});
+ expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns').get()).toEqual({n:2});
+ expect(JSON.stringify(f.app.db.prepare('SELECT result FROM core_operations WHERE name LIKE \"runtime.%\"').all())).not.toContain('Joined lane input');
+ // The permanent sender history survives consumption and restart. A copied viewer gets none.
+ await f.restart();
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true,value:{messages:[{text:'First lane input'},{text:'Joined lane input'}]}});
+ const box=f.store.read('box','a')!;
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=box;f.store.put('box',{...b,revokedAt:f.clock.now()},f.clock.now());})();
+ expect(await f.post(body,'readConversation',{})).toMatchObject({ok:false,code:'denied'});
 });

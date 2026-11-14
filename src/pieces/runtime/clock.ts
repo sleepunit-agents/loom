@@ -1,3 +1,4 @@
+import type { ClockBodies } from './clock-delivery.js';
 /** Clock waits for the assigned runner's confirmation, outside any transaction. */
 import type { Foundation } from '../../core/app.js';
 import type { OutsideEffects } from '../../core/effects.js';
@@ -8,42 +9,42 @@ import { configuredHouse } from './builds.js';
 import { startJobId } from './start.js';
 import { clockRoute, type ClockDestinationReader } from '../clock/role.js';
 export const START_CONFIRM_MS = 60_000;
-export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'status'>, destination?: ClockDestinationReader): Runtime {
+export function clockRuntime(app: Foundation, effects: Pick<OutsideEffects,'status'>, destination?: ClockDestinationReader, delivery?: ClockBodies): Runtime {
   const store=runtimeStore(app.db), waiting=new Set<(result:StartResult)=>void>();
   let closed=false;
   app.onClose(()=>{closed=true;for(const finish of [...waiting]) finish({state:'uncertain',reason:'Runtime closed before start confirmation'});});
-  return {async startBody({wake,viewer}) {
+  return {async startBody({wake,viewer,intent}) {
     if(closed) return {state:'uncertain',reason:'Runtime is closed'};
-    const existing=()=>store.read('job',startJobId(viewer,wake.agent,{kind:'wake',id:wake.id}));
+    const existing=()=>{const job=delivery?delivery.job(wake.id):startJobId(viewer,wake.agent,{kind:'wake',id:wake.id});return job?store.read('job',job):undefined;};
     const hold=(reason:string):StartResult=>({state:existing()?'uncertain':'held',reason});
     // A matching, current Runtime destination is necessary for lane reuse. The
     // startBody path cannot feed an existing conversation; never silently turn a
     // verified join into a second body or forward arbitrary caller places.
     const route=clockRoute(wake,destination);
-    if(route.kind==='join') return hold('This wake needs conversation delivery; starting another body is unsafe');
+    if(!delivery && route.kind==='join') return hold('This wake needs conversation delivery; starting another body is unsafe');
     if(!configuredHouse(store.read('settings',wake.agent))) return hold('An owner must configure the agent house before dispatch');
     // These old runner features require their own trusted inputs; never pretend
     // a path is a prompt or confer approval/continuation authority from text.
     if(!wake.prompt || wake.file || wake.laneVersion || wake.continuation || wake.slot || wake.approval || wake.prompt.includes('<!-- house: local -->'))
       return hold('This wake requires a runtime feature that is not installed');
-    const answer=runtimeRole(app.operations).startBody(viewer,{
+    const answer=delivery ? app.operations.call('direct',{kind:'service',id:'clock'},'runtime.acceptClock',{wake:wake.id,attempt:intent},`runtime:clock:${wake.id}:${intent}`) : runtimeRole(app.operations).startBody(viewer,{
       agent:wake.agent,project:wake.project,member:wake.member,title:'Scheduled work',brief:wake.prompt,
       model:wake.model,source:{kind:'wake',id:wake.id},
     },`runtime:wake:${wake.id}`);
     if(!answer.ok) return existing()
       ? {state:'uncertain',reason:'This wake already has an accepted start intent; reconcile it before retrying'}
       : {state:'not-started',reason:answer.message};
-    const {job}=answer.value as {job:string};
+    const {job,source,joined}=answer.value as {job:string;source?:string;joined?:boolean};
     return new Promise<StartResult>(resolve=>{
       let settled=false;
       let unobserve=()=>{}, cancel=()=>{};
       const finish=(result:StartResult)=>{if(settled)return;settled=true;unobserve();cancel();waiting.delete(finish);resolve(result);};
       const check=()=>{
         const current=store.read('job',job);
-        if(current?.state==='running' || current?.state==='waiting') finish({state:'started',body:job});
+        if((current?.state==='running' || current?.state==='waiting') && (!joined || !!source && delivery?.consumed(source))) finish({state:'started',body:job});
         // A terminal report may arrive before this waiter sees running. Without
         // persisted start confirmation it is unsafe to infer a definite failure.
-        else if(!current || !['queued','starting'].includes(current.state)) finish({state:'uncertain',reason:'Runner ended without an observed start confirmation'});
+        else if(!current || !['queued','starting','running','waiting'].includes(current.state)) finish({state:'uncertain',reason:'Runner ended without an observed start confirmation'});
       };
       waiting.add(finish);
       unobserve=app.live.observe(changes=>{if(changes.some(c=>c.type==='runtime.job'&&c.id===job))check();});

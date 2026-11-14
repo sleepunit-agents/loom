@@ -1,3 +1,4 @@
+import { installDispatchSource } from './dispatch-source.js';
 import { saveLocalReceipt } from './local-receipt.js';
 import { filing, replacementAuthorship, runAuthorship } from './authorship.js';
 import type { ClockProvenanceReader } from '../runtime/role.js';
@@ -72,8 +73,8 @@ export interface ClockOptions {
 }
 /** Install on the new side only. The composition root must close jobs before its database. */
 export function installClock(db: Db, operations: Operations, live: Live, sharing: () => Sharing, options: ClockOptions = {}) {
-  registerBuiltinService(operations, 'clock', ['wake', 'schedule', 'clock', 'approval'], 'clock',
-    ['approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check']);
+  registerBuiltinService(operations, 'clock', ['wake', 'schedule', 'clock', 'approval', 'runtime.job'], 'clock',
+    ['runtime.acceptClock', 'approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check']);
   migrate(db, 'clock', schema);
   installPrivateExport(db);
   installLocalFiling(db, operations, sharing);
@@ -87,6 +88,11 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
   const readSee=(ctx:Context,w:Work,type='wake')=>(!w.member||ctx.window)&&see(ctx.viewer,w,type);
   const act = (v: Viewer, w: Work, household = false) => mayAct(v, scope(w), sharing(), household ? 'household' : 'act');
   const create = (v: Viewer, w: Work) => mayCreate(v, scope(w), sharing()) && (v.kind !== 'member' || mayAct(v, scope(w), sharing(), 'give-work'));
+  installDispatchSource(operations,(id,attempt)=>{
+    const w=wake(db,id);
+    return !closed && w?.state==='firing' && w.attempt===attempt && !w.member
+      && create(w.by,w) && create({kind:'agent',id:w.agent},w) ? structuredClone(w) : undefined;
+  });
   const prepareFiling = (v: Viewer, w: Work) => filing(v, w, sharing(), options.provenance);
   const mayFile = (v: Viewer, w: Work) => {
     const filed = prepareFiling(v, w);

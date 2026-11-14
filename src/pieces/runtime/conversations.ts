@@ -1,3 +1,4 @@
+import type { ClockBodies } from './clock-delivery.js';
 import { bodyPolicyExecutionHeld } from './policy-store.js';
 import type { BridgeBodies } from './bridges.js';
 import { hearJob } from './heartbeat.js';
@@ -29,6 +30,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
  const {db,operations,live}=app,store=runtimeStore(db);
  let comms:Comms|undefined,closed=false,accepting=false;
  let bridges:BridgeBodies|undefined;
+ let clockBodies:ClockBodies|undefined;
  const available=(m:Routing)=>{
   if(closed||!comms||!mayUseThread({kind:'member',id:m.member},m,sharing()))return false;
   try {
@@ -145,11 +147,12 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   may:v=>v.kind==='runner',run(ctx){return {jobs:store.ids('job').filter(id=>{const job=store.read('job',id)!,box=store.read('box',job.box);return box?.revokedAt===undefined&&!!box&&job.state==='queued'&&mayAct(ctx.viewer,controlScope(store,job,sharing()),sharing(),'report-job');})};},
  }));
  operations.register(operation({name:'runtime.readConversation',doors:['http','direct'],input:z.object({before:z.number().int().positive().optional()}).strict(),output:z.unknown(),
-  may:v=>!!commsBody(v)||!!bridges?.bound(v),async prepare(i,{viewer}){
+  may:v=>!!commsBody(v)||!!bridges?.bound(v)||!!clockBodies?.bound(v),async prepare(i,{viewer}){
+   if(clockBodies?.bound(viewer))return clockBodies.read(viewer,i.before);
    if(bridges?.bound(viewer))return bridges.read(viewer,i.before);
    const b=commsBody(viewer)!;
    return comms!.reader({agent:b.job.agent,conversation:b.binding.id,valid:()=>commsBody(viewer)?.job.id===b.job.id}).read({thread:b.binding.place,...i});
-  },run(ctx,_i,prepared){const job=bridges?.bound(ctx.viewer);if(job){hearJob(db,job.id,ctx.now);return prepared;}const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
+  },run(ctx,_i,prepared){const clockJob=clockBodies?.bound(ctx.viewer);if(clockJob){hearJob(db,clockJob.id,ctx.now);return prepared;}const job=bridges?.bound(ctx.viewer);if(job){hearJob(db,job.id,ctx.now);return prepared;}const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');hearJob(db,b.job.id,ctx.now);return prepared;},
  }));
  // Each transcript owns durable reply deduplication. This read-style async operation
  // returns only a sequence acknowledgement, never stores words or credentials.
@@ -251,10 +254,11 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
  };
  // Capacity uses only an owning live binding. A public startBody conversation
  // string or a copied Viewer cannot create a separate share. No principal is issued.
- const capacityConversation=(viewer:Viewer)=>bound(viewer)?.binding.id ?? bridges?.bound(viewer)?.conversation;
+ const capacityConversation=(viewer:Viewer)=>bound(viewer)?.binding.id ?? bridges?.bound(viewer)?.conversation ?? clockBodies?.bound(viewer)?.conversation;
  const clockProvenance:ClockProvenanceReader=viewer=>{
   // Unlike capacity, principal issuance requires owning sender history as well
   // as the current source binding. Never infer a requester from a job string.
+  const clockProof=clockBodies?.clockProvenance(viewer);if(clockProof)return clockProof;
   const job=bound(viewer)?.job ?? bridges?.bound(viewer);
   if(!job?.conversation||!job.member)return;
   const source=provenanceStore(db).read(job.conversation);
@@ -265,7 +269,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    ...(job.project?{project:job.project}:{}),...(service?{service}:{}),
    principal:principalFromHistory(source.history,owners)};
  };
- return {delivery,privateStart,refile,approvalCaller,capacityConversation,clockProvenance,connectBridges(role:BridgeBodies){bridges=role;},connect(role:Comms){comms=role;confirmed();terminalStatus();failedStarts();void comms.reconcileDeliveries();},
+ return {connectClock(role:ClockBodies){clockBodies=role;},delivery,privateStart,refile,approvalCaller,capacityConversation,clockProvenance,connectBridges(role:BridgeBodies){bridges=role;},connect(role:Comms){comms=role;confirmed();terminalStatus();failedStarts();void comms.reconcileDeliveries();},
   validInput(jobId:string){const job=store.read('job',jobId),b=job?.conversation?store.read('binding',job.conversation):undefined;return !!job&&!!b&&b.job===job.id&&b.member===job.member&&!!job.member&&available({thread:b.place,agent:job.agent,member:job.member,conversation:b.id,project:b.project,seq:1});},
   async close(){closed=true;unobserve();await notices;},
  };

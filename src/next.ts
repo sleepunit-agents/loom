@@ -1,3 +1,4 @@
+import { clockDelivery } from './pieces/runtime/clock-delivery.js';
 import { installAsyncSecretValuesFromFile, type SecretRetryKeyFiles } from './pieces/secrets/retry-key.js';
 import type { AsyncSecretMutations } from './pieces/secrets/async-values.js';
 import { startSecretReconciliation } from './pieces/secrets/reconciliation.js';
@@ -224,8 +225,10 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('core.touched')) installTouched(app.operations, mindTouchResolver(sources));
   mindTransports.set(app, sources);
   const effects = installEffects(app, sharing, !!options.staging);
+  const clockBodies=clockDelivery(app,sharing,effects,v=>signin(app).agent(v));
+  conversations.connectClock(clockBodies);
   if (!app.operations.has('clock.list')) {
-    const jobs = installClock(app.db, app.operations, app.live, sharing, { provenance: conversations.clockProvenance, caller: conversations.approvalCaller, capacityConversation: conversations.capacityConversation, runtime: clockRuntime(app, effects, clockDestination(app, sharing)), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
+    const jobs = installClock(app.db, app.operations, app.live, sharing, { provenance: conversations.clockProvenance, caller: conversations.approvalCaller, capacityConversation: conversations.capacityConversation, runtime: clockRuntime(app, effects, clockDestination(app, sharing), clockBodies), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
   if (options.bridges && !bridgeDaemons.has(app)) {
@@ -272,7 +275,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     app.onClose(()=>{void conversations.close();void comms.close();});
   }
   if (!app.operations.has('runtime.takeInput')) installRunnerInput(app.db, app.operations, sharing, effects,
-    {valid:id=>conversations.validInput(id)||bridgeBodies.valid(id),issue:(agent,job)=>signin(app).issueBody(agent,job)});
+    {valid:id=>conversations.validInput(id)||bridgeBodies.valid(id)||clockBodies.valid(id),issue:(agent,job)=>signin(app).issueBody(agent,job)});
   if (options.secretAuthority && !secretAuthorities.has(app)) {
     const current = () => new SharingDatabase(app.db, options.home).sharing();
     secretAuthorities.set(app, await listenHolderAuthority(options.secretAuthority, member =>

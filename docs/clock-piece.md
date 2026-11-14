@@ -1164,3 +1164,37 @@ Conversation joining therefore remains unfinished until that delivery is merged.
 | Old surface | New authorization boundary |
 | --- | --- |
 | `house_may_join`, `wake_place`, persisted `places.json` | `clockRoute` plus Runtime's current exact destination witness; never imported place strings or caller-selected bodies. Actual feed/resume remains held. |
+
+### Public prompt conversation delivery
+
+The next-mode Clock bridge now calls direct-only `runtime.acceptClock` as the
+Clock service. It supplies only the wake id and committed attempt; Clock's
+in-process owning reader supplies the current firing row and rechecks policy.
+Saved `by` remains attribution and Clock's existing intent/outcome policy input;
+it is never Runtime's execution caller. The service receives only an exact
+cross-piece operation and `runtime.job` type, with no generic service creation
+exception in central policy.
+
+For public prompt work Runtime atomically creates the job, wake binding, input
+and monotonic sender history. A vacant lane place can be bound by this producer;
+unproved work cannot replace an occupied lane. Runtime preserves the original
+credential service separately from the dispatching Clock service. Runner input
+issues the existing central body credential for this owning binding. The body
+reads scheduled words through `runtime.readConversation`; runner credentials,
+member tokens and unbound agent tokens cannot read that inbox. Current house,
+box, binding, agent/project policy and body-policy holds are rechecked.
+
+A wake filed by that authenticated body can join the exact current lane through
+`clockRoute` and Runtime's destination witness. It queues words on the existing
+job, rather than starting a second body. Each input has a permanent source
+receipt. Joined delivery stays firing until the authenticated body reads it;
+queue acceptance and an already-running job do not count as delivery. Input
+reads pass the central staging gate before words leave the process. A timeout
+or interrupted read remains uncertain. This is cooperative conversation input:
+it does not claim a native transport interrupt/resume mechanism.
+
+This slice does not support private, file, local, lane-version, approval, slot
+or continuation inputs. Those still hold. The old-to-new feed/resume obligation
+above is only satisfied for a running body reading its bound scheduled inbox;
+transport-triggered resume, terminal-lane reuse, private delivery and remaining
+features remain work under t-2201. No real data or installed pieces change.
