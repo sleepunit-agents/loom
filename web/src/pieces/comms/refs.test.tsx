@@ -66,3 +66,10 @@ it('adding refs keeps the reader and its local state mounted',async()=>{
  await act(async()=>tree.update(render(Array.from({length:121},(_,i)=>`t-${i}`))));
  expect(mount).toHaveBeenCalledTimes(1);expect(unmount).not.toHaveBeenCalled();
 });
+
+it('accepts only bounded Comms reader routes for exact conversation ids',()=>{
+ const card={kind:'conversation',title:'Earlier thread',status:'Archived',url:'/p/comms-preview/thread/earlier-1'};
+ expect(cardFor('cv-012345abcdef',card)).toEqual(card);
+ for(const ref of ['cv-other','cv-012345abcdeg','t-1'])expect(cardFor(ref,card)).toBeUndefined();
+ for(const url of ['https://evil.example','/p/comms-preview/thread/../secrets','/p/comms-preview/thread/one?secret=yes','/p/comms-preview/thread/one/extra'])expect(cardFor('cv-012345abcdef',{...card,url})).toBeUndefined();
+});

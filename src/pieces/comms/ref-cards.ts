@@ -1,13 +1,15 @@
 /** Cards are projections of the owning pieces under the original window viewer. */
 import {z} from 'zod';
 import {operation,type Operations,type Live,type Viewer} from '../../core/index.js';
+import {ownedConversation} from './from.js';
+import type {Db, Sharing} from '../../core/index.js';
 import {tasksRole} from '../tasks/role.js';
-export interface RefCard {kind:'task'|'pr';title:string;status:string;tone?:'bad'|'warn'|'ok';url:string}
+export interface RefCard {kind:'task'|'pr'|'conversation';title:string;status:string;tone?:'bad'|'warn'|'ok';url:string}
 const request=z.object({thread:z.string().min(1).max(200),refs:z.array(z.string().min(1).max(200)).max(60)}).strict();
 const task=z.object({result:z.object({ok:z.literal(true),task:z.object({id:z.string(),title:z.string(),status:z.enum(['open','in_progress','closed']),closeReason:z.string().optional()})})});
 const change=z.object({id:z.string(),title:z.string(),status:z.string(),state:z.enum(['open','merged','closed']),page:z.string()});
 const forge=/^github:([A-Za-z0-9._-]{1,100})\/([A-Za-z0-9._-]{1,100})#([1-9][0-9]{0,9})$/;
-export function installRefCards(o:{operations:Operations;live:Live;thread(viewer:Viewer,id:string):{conversation:string}|undefined}) {
+export function installRefCards(o:{db:Db;sharing():Sharing;operations:Operations;live:Live;thread(viewer:Viewer,id:string):{conversation:string}|undefined}) {
  const read=(viewer:Viewer,input:z.infer<typeof request>)=>{
   const thread=o.thread(viewer,input.thread);if(!thread)return;
   const cards:Record<string,RefCard|null>=Object.create(null);
@@ -20,6 +22,9 @@ export function installRefCards(o:{operations:Operations;live:Live;thread(viewer
     const parsed=task.safeParse(answer.value);if(!parsed.success||parsed.data.result.task.id!==ref)continue;
     const t=parsed.data.result.task;
     cards[ref]={kind:'task',title:t.title.slice(0,200),status:t.status==='closed'?(t.closeReason==='cancelled'?'Cancelled':'Done'):t.status==='in_progress'?'In progress':'Open',...(t.status==='closed'?{tone:'ok' as const}:{}),url:`/p/tasks-preview/task/${ref}`};
+   } else if(/^cv-[0-9a-f]{12}$/.test(ref)) {
+    const t=ownedConversation(o.db,o.sharing(),viewer,ref);
+    if(t)cards[ref]={kind:'conversation',title:(t.title??`New thread with ${t.agent}`).slice(0,200),status:t.archived!==null?'Archived':t.working?'Working':'Open',url:`/p/comms-preview/thread/${t.id.slice(3)}`};
    } else {
     const m=forge.exec(ref);if(!m||[m[1],m[2]].some(s=>s==='.'||s==='..'))continue;
     const canonical=ref.toLowerCase();

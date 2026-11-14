@@ -14,6 +14,17 @@ import { installComms } from './index.js';
 import { loadKey } from './crypto.js';
 const cleanup: (()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
+/** Only transport shape is needed; expectations narrow individual payloads. */
+interface Frame {kind:string;[key:string]:unknown}
+async function cardWindow(url:string,scope?:string){
+ const ws=new WebSocket(url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan'}});
+ const queue:Frame[]=[],waiters:((v:Frame)=>void)[]=[];
+ ws.on('message',raw=>{const v=JSON.parse(raw.toString()) as Frame,next=waiters.shift();if(next)next(v);else queue.push(v);});
+ const next=()=>queue.length?Promise.resolve(queue.shift()!):new Promise<Frame>(r=>waiters.push(r));
+ await once(ws,'open');cleanup.push(async()=>{if(ws.readyState===WebSocket.CLOSED)return;const done=once(ws,'close');ws.terminate();await done;});
+ ws.send(JSON.stringify({kind:'subscribe',type:'comms.refCards',...(scope?{scope}:{})}));return {next};
+}
+
 async function setup() {
  const home=mkdtempSync(join(tmpdir(),'comms-ref-cards-'));cleanup.push(()=>rmSync(home,{recursive:true,force:true}));
  const key=await loadKey(home), clock=new FakeClock();
@@ -77,18 +88,13 @@ it('deduplicates 60 refs and refuses mismatched owning ids or arbitrary navigati
 });
 it('updates two exact-scope windows and clears on access loss, regrant and deletion',async()=>{
  const s=await setup();s.task('t-1');
- const scope=JSON.stringify({thread:s.thread,refs:['t-1']});
- async function window(scope?:string){
-  const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live',{headers:{'x-member':'jonathan'}});
-  const queue:any[]=[],waiters:((v:any)=>void)[]=[];
-  ws.on('message',raw=>{const v=JSON.parse(raw.toString()),next=waiters.shift();if(next)next(v);else queue.push(v);});
-  const next=()=>queue.length?Promise.resolve(queue.shift()):new Promise<any>(r=>waiters.push(r));
-  await once(ws,'open');cleanup.push(async()=>{if(ws.readyState===WebSocket.CLOSED)return;const done=once(ws,'close');ws.terminate();await done;});
-  ws.send(JSON.stringify({kind:'subscribe',type:'comms.refCards',...(scope?{scope}:{})}));return {next};
- }
+ const scope=JSON.stringify({thread:s.thread,refs:['t-1',s.conversation]});
+ const window=(scope?:string)=>cardWindow(s.app.url,scope);
  expect(await (await window()).next()).toMatchObject({kind:'set',records:[]});
  const a=await window(scope),b=await window(scope);
  for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'set',records:[{cards:{'t-1':{status:'Open'}}}]});
+ expect(await s.call('change',{thread:s.thread,action:'title',title:'Live conversation title'})).toMatchObject({ok:true});
+ for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{[s.conversation]:{kind:'conversation',title:'Live conversation title'}}}});
  s.app.operations.call('direct',{kind:'member',id:'other'},'tasks.close',{id:'t-1',actor:'art',at:new Date(s.clock.now()).toISOString()},'close');
  for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{'t-1':{status:'Done'}}}});
  s.sharing.members.jonathan.agents=[];s.app.live.refreshAccess();
@@ -112,4 +118,56 @@ it('answers all 60 distinct references and treats hostile dictionary keys as pla
   const unknown=await s.call('refCards',{thread:s.thread,refs:['__proto__','constructor','prototype']});
   expect(unknown.ok).toBe(true);if(unknown.ok)expect(JSON.stringify(unknown.value)).toContain('"__proto__":null');
  }finally{spy.mockRestore();}
+});
+
+it('conversation cards expose only consistent original-member metadata without decrypting',async()=>{
+ const s=await setup();await s.comms.referencesReady;
+ const other=await s.call('open',{agent:'art',id:'bbbbbbbbbbbbbbbb',text:'Other member words'},{kind:'member',id:'other'});
+ if(!other.ok)throw new Error('other open');
+ await s.comms.deliver('art',(other.value as {thread:string}).thread,1);
+ const opened=vi.spyOn(s.key,'open');
+ const result=()=>s.call('refCards',{thread:s.thread,refs:[s.conversation,'cv-000000000000']});
+ expect(await result()).toMatchObject({ok:true,value:{cards:{[s.conversation]:{kind:'conversation',title:'New thread with art',status:'Open',url:`/p/comms-preview/thread/${s.thread.slice(3)}`},'cv-000000000000':null}}});
+ expect(await s.call('change',{thread:s.thread,action:'title',title:'PRIVATE current title'})).toMatchObject({ok:true});
+ expect(await s.call('change',{thread:s.thread,action:'archive'})).toMatchObject({ok:true});
+ expect(await result()).toMatchObject({ok:true,value:{cards:{[s.conversation]:{title:'PRIVATE current title',status:'Archived'}}}});
+ // Another owner can use their own thread but cannot resolve this one's title.
+ expect(await s.call('refCards',{thread:(other.value as {thread:string}).thread,refs:[s.conversation]},{kind:'member',id:'other'})).toMatchObject({ok:true,value:{cards:{[s.conversation]:null}}});
+ expect(opened).not.toHaveBeenCalled();
+});
+for(const damage of ['ambiguous','relational','tombstone'] as const)it(`conversation cards refuse ${damage} target routing`,async()=>{
+ const s=await setup();await s.comms.referencesReady;
+ const t=JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(s.thread) as {record:string}).record);
+ // Keep the source valid; damage only a separate referenced target.
+ const target={...t,id:'th:target',conversation:'cv-012345abcdef',title:'HIDDEN target title'};
+ s.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(target.id,target.member,target.agent,null,JSON.stringify(target));
+ if(damage==='ambiguous')s.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run('th:duplicate',target.member,target.agent,null,JSON.stringify({...target,id:'th:duplicate'}));
+ if(damage==='relational')s.app.db.prepare('UPDATE comms_threads SET member=? WHERE id=?').run('other',target.id);
+ if(damage==='tombstone')s.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run(target.id,target.member,target.agent,target.conversation,0);
+ const result=await s.call('refCards',{thread:s.thread,refs:[target.conversation]});
+ expect(result).toMatchObject({ok:true,value:{cards:{[target.conversation]:null}}});expect(JSON.stringify(result)).not.toContain('HIDDEN');
+});
+
+it('live target lifecycle and target-only ownership changes withdraw metadata in two windows',async()=>{
+ const s=await setup();await s.comms.referencesReady;
+ s.sharing.members.jonathan.agents.push('mark');
+ const opened=await s.call('open',{agent:'mark',id:'cccccccccccccccc',text:'Target private words'});
+ if(!opened.ok)throw new Error('target open');const target=(opened.value as {thread:string}).thread;
+ await s.comms.deliver('mark',target,1);
+ const row=()=>JSON.parse((s.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(target) as {record:string}).record);
+ const cv=row().conversation as string,scope=JSON.stringify({thread:s.thread,refs:[cv]});
+ const window=()=>cardWindow(s.app.url,scope);
+ const a=await window(),b=await window();
+ for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'set',records:[{cards:{[cv]:{status:'Open'}}}]});
+ const working=(state:boolean)=>s.comms.status('mark',target,state?'working':'done');
+ working(true);for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{[cv]:{status:'Working'}}}});
+ working(false);for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{[cv]:{status:'Open'}}}});
+ expect(await s.call('change',{thread:target,action:'archive'})).toMatchObject({ok:true});
+ for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{[cv]:{status:'Archived'}}}});
+ s.sharing.members.jonathan.agents=['art'];s.app.live.refreshAccess();
+ for(const w of [a,b]){const result=await w.next();expect(result).toMatchObject({kind:'set',records:[{cards:{[cv]:null}}]});expect(JSON.stringify(result)).not.toContain(target);expect(JSON.stringify(result)).not.toContain('New thread with mark');}
+ s.sharing.members.jonathan.agents.push('mark');s.app.live.refreshAccess();
+ for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'set',records:[{cards:{[cv]:{status:'Archived'}}}]});
+ expect(await s.call('change',{thread:target,action:'delete'})).toMatchObject({ok:true});
+ for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'put',record:{cards:{[cv]:null}}});
 });
