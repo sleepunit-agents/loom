@@ -246,6 +246,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
 
   // The cited reply superseded the earlier pending start. Exercise failure and
   // retry against a fresh accepted member message, rather than that stale start.
+  const priorStartNotes=await b.getByText("Art couldn't start at first.",{exact:true}).count();
   const failedStart=await loom.operations.callAsync('socket',{kind:'member',id:'jonathan'},'comms.send',{thread:place,id:'retryafterciteda',text:'A fresh queued start after the cited reply'},'fixture-after-citation',true);
   expect(failedStart.ok).toBe(true);if(!failedStart.ok)throw new Error('start fixture failed');
   const failedSeq=(failedStart.value as {seq:number}).seq;
@@ -260,7 +261,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(1);
   comms.status('art',place,'working');
   await expect.poll(()=>b.getByLabel('Start retry').count()).toBe(0);
-  await expect.poll(()=>b.getByText("Art couldn't start at first.",{exact:true}).count()).toBe(1);
+  await expect.poll(()=>b.getByText("Art couldn't start at first.",{exact:true}).count()).toBe(priorStartNotes+1);
   // Move the first message outside the live hundred, then load it as an earlier page.
   // Only the browser crosses its deadline: no server sweep can update that cached page.
   comms.status('art',place,'done');clock.advance(firstAt+14*86400000-1000-clock.now());
