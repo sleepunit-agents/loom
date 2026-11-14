@@ -7,6 +7,7 @@ import { Decrypter, Encrypter, identityToRecipient } from 'age-encryption';
 import type { Db } from '../db/index.js';
 import { exportDatabaseImage } from '../db/export-image.js';
 import { captureHouseholdContinuity, type ContinuitySources } from './backup-continuity.js';
+import { selectRegisteredContinuity } from './backup-selection.js';
 import type { PortableFile } from './backup-files.js';
 import { validBackupRecipient } from './backup-schema.js';
 
@@ -27,6 +28,8 @@ export interface HouseholdBundleInput {
   db: Db;
   home: string;
   continuity: ContinuitySources;
+  /** Bind explicit handles to registration in the captured app image. */
+  registeredAgents?: true;
   /** Exact optional imported cookie-key file. null records deliberate absence.
    * Next sign-in CSRF key is already in the filtered app rows. Borrowed. */
   cookieKey: Buffer | null;
@@ -65,13 +68,22 @@ export async function encryptHouseholdBundle(input: HouseholdBundleInput, budget
     // Pin the borrowed key and role before the first asynchronous boundary.
     const cookieKey = input.cookieKey === null ? null : own(Buffer.from(input.cookieKey)), secrets = input.secrets;
     const identity = input.drillIdentity;
+    const home = input.home, db = input.db, registered = input.registeredAgents;
+    const sources: ContinuitySources = { agents: input.continuity.agents.map(item => ({ ...item })),
+      knowledge: input.continuity.knowledge, people: input.continuity.people };
     const drillRecipient = await identityToRecipient(identity);
     if (recipients.includes(drillRecipient)) throw Error();
     const encrypt = new Encrypter();
     for (const recipient of new Set([...recipients, drillRecipient])) encrypt.addRecipient(recipient);
-    const app = exportDatabaseImage(input.db); own(app.bytes);
+    const app = exportDatabaseImage(db); own(app.bytes);
     if (app.bytes.length > budget.appBytes) throw Error();
-    const continuity = captureHouseholdContinuity(input.home, input.continuity);
+    let selected = sources;
+    if (registered) {
+      const captured = new Database(app.bytes);
+      try { selected = selectRegisteredContinuity(captured, home, sources); }
+      finally { captured.close(); }
+    }
+    const continuity = captureHouseholdContinuity(home, selected);
     for (const file of [...continuity.databases, ...continuity.files]) own(file.bytes);
     const file = (path: string, bytes: Buffer): PortableFile => ({ path, bytes, sha256: sha256(bytes) });
     const files = [file('loom.db', app.bytes), ...continuity.databases, ...continuity.files, ...(cookieKey ? [file('ui-cookie.key', cookieKey)] : [])];
