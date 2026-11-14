@@ -19,9 +19,10 @@ async function commandChannels(mutateAfterStart=false) {
  await f.authority.close();
  const central=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(central.close);
  const marker=join(f.home,'consumer-status');
- // Real consumer reads ONLY fd3, requires EOF and records only a boolean result.
+ // Real consumer reads ONLY fd3 and records consumption only for the expected value.
+ // Closing fd3 on refusal can reach EOF before SIGKILL; that must not create a marker.
  // It holds alive after consumption so delivery can acknowledge before exit.
- const script="const fs=require('node:fs');const chunks=[];fs.createReadStream(null,{fd:3}).on('data',b=>chunks.push(b)).on('end',()=>{const ok=Buffer.concat(chunks).toString()==='synthetic-command-value';fs.writeFileSync(process.argv[1],ok?'accepted':'wrong');setTimeout(()=>process.exit(ok?0:1),200);});";
+ const script="const fs=require('node:fs');const chunks=[];fs.createReadStream(null,{fd:3}).on('data',b=>chunks.push(b)).on('end',()=>{const ok=Buffer.concat(chunks).toString()==='synthetic-command-value';if(ok)fs.writeFileSync(process.argv[1],'accepted');setTimeout(()=>process.exit(ok?0:1),200);});";
  let local=true;
  const config={command:process.execPath,args:['-e',script,marker],cwd:f.home,env:{},
   input:{...f.server,socket:join(f.home,'command-input.sock')},holderFingerprint:f.fingerprint('holder'),

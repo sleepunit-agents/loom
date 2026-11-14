@@ -137,3 +137,7 @@ const metadataRoles = new WeakMap<Operations, CommsMetadata>();
 export function registerCommsMetadata(operations: Operations, role: CommsMetadata): void { metadataRoles.set(operations, role); }
 /** Late lookup permits independent piece installation; absence never opens a store. */
 export function commsMetadata(operations: Operations): CommsMetadata | undefined { return metadataRoles.get(operations); }
+
+const announcementReaders=new WeakMap<Operations,(member:string)=>ReplyAnnouncement[]>();
+export function registerReplyAnnouncements(operations:Operations,read:(member:string)=>ReplyAnnouncement[]) { announcementReaders.set(operations,read); }
+export function replyAnnouncements(operations:Operations,member:string):ReplyAnnouncement[] { return announcementReaders.get(operations)?.(member)??[]; }

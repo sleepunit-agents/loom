@@ -8,8 +8,8 @@ import type { ReactElement } from 'react';
 type Node = { children: Array<Node|string>; props: Record<string, any> };
 import type { Ask } from './model';
 import type { Call, CallState, Result, Snapshot } from '../../data';
-const f = vi.hoisted(() => ({ snapshot: {records:[] as Ask[],status:'live'} as Snapshot<Ask>, listeners:new Set<()=>void>(), call:vi.fn(), markRead:vi.fn(), identity:{records:[{id:'jonathan',member:'jonathan'}],status:'live'} as Snapshot<any>, marks:{records:[],status:'live'} as Snapshot<any> }));
-vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>type==='household.preferences'?f.identity:type==='attention.readMark'?f.marks:f.snapshot),call:(op:string,input:unknown)=>op==='attention.markRead'?f.markRead(op,input):f.call(op,input)}));
+const f = vi.hoisted(() => ({ snapshot: {records:[] as Ask[],status:'live'} as Snapshot<Ask>, listeners:new Set<()=>void>(), call:vi.fn(), privateCall:vi.fn(), markRead:vi.fn(), identity:{records:[{id:'jonathan',member:'jonathan'}],status:'live'} as Snapshot<any>, marks:{records:[],status:'live'} as Snapshot<any> }));
+vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>type==='household.preferences'?f.identity:type==='attention.readMark'?f.marks:f.snapshot),callOnce:(op:string,input:unknown)=>f.privateCall(op,input),call:(op:string,input:unknown)=>op==='attention.markRead'?f.markRead(op,input):f.call(op,input)}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import InboxApp, { AskReader } from './index';
 import { inFolder, matches, listedAsks, decisionLink, safeHref } from './model';
@@ -28,7 +28,7 @@ const words=(n:Node|string):string=>typeof n==='string'?n:(n.children??[]).map(w
 const buttons=(label:string)=>tree!.root.findAllByType('button').filter((b:Node)=>words(b)===label);
 const click=async(label:string)=>act(async()=>{buttons(label)[0].props.onClick({preventDefault(){}});});
 async function publish(snapshot:Snapshot<Ask>) { await act(async()=>{f.snapshot=snapshot;f.listeners.forEach(fn=>fn());}); }
-beforeEach(()=>{f.markRead.mockReset().mockReturnValue({result:Promise.resolve({ok:true})});f.identity={records:[{id:'jonathan',member:'jonathan'}],status:'live'};f.marks={records:[],status:'live'};f.call.mockReset();f.listeners.clear();f.snapshot={records:[ask()],status:'live'};});
+beforeEach(()=>{f.markRead.mockReset().mockReturnValue({result:Promise.resolve({ok:true})});f.identity={records:[{id:'jonathan',member:'jonathan'}],status:'live'};f.marks={records:[],status:'live'};f.call.mockReset();f.privateCall.mockReset();f.listeners.clear();f.snapshot={records:[ask()],status:'live'};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
 it('shows central needs, agent folders, answered history, full details and search, and clears the reader on scope loss',async()=>{
   const go=vi.fn();
@@ -258,4 +258,103 @@ it('files self-cleared asks as searchable FYI, separate from human answers and n
   expect(text()).toContain('Review the release?');
   expect(buttons('Yes')).toHaveLength(0);
   expect(f.call).not.toHaveBeenCalled();
+});
+
+it('acknowledges Clock notices through a fresh central check and navigates canonically',async()=>{
+  const record=ask('clock:w-1:failed',{sourceManaged:true,source:{kind:'piece',id:'clock'},href:'/p/clock-preview',answers:undefined});
+  const shown=request<Ask>(),fresh=request<Ask>(),write=request<Ask>(),go=vi.fn();
+  f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call).mockReturnValueOnce(write.call);
+  await draw(h(AskReader,{ask:record,snapshot:{records:[record],status:'live'},go}));
+  await shown.finish({ok:true,value:record});
+  expect(buttons('Yes')).toHaveLength(0);expect(buttons('Dismiss')).toHaveLength(0);expect(tree!.root.findAllByType('textarea')).toHaveLength(0);
+  expect(text()).toContain('does not retry or cancel');
+  await click('Open Clock');expect(go).toHaveBeenCalledWith('/p/clock-preview');
+  await click('Acknowledge');expect(f.call).toHaveBeenLastCalledWith('attention.get',{id:record.id});
+  await fresh.finish({ok:true,value:record});
+  expect(f.call).toHaveBeenLastCalledWith('attention.answer',{id:record.id,answer:{kind:'done'}});
+  await write.finish({ok:true,value:{...record,state:'answered'}});expect(text()).toContain('Alert acknowledged');
+});
+it('keeps Clock alerts discoverable and acknowledged notices in FYI, without turning Secrets decisions into notices',async()=>{
+  const alert=ask('alert',{sourceManaged:true,source:{kind:'piece',id:'clock'}}),ack={...alert,id:'ack',state:'answered' as const};
+  const secret=ask('secret',{sourceManaged:true,source:{kind:'piece',id:'secrets'}});
+  expect(inFolder(alert,'alerts')).toBe(true);expect(inFolder(alert,'needs')).toBe(true);
+  expect(inFolder(ack,'alerts')).toBe(false);expect(inFolder(ack,'answered')).toBe(false);expect(inFolder(ack,'fyi')).toBe(true);
+  expect(inFolder(secret,'alerts')).toBe(false);expect(inFolder({...secret,state:'answered'},'answered')).toBe(true);
+  expect(decisionLink({...alert,href:'javascript:alert(1)'})).toEqual({path:'/p/clock-preview',label:'Open Clock'});
+  f.snapshot={records:[alert,ack,secret],status:'live'};
+  await draw(h(InboxApp,{}));await click('Alerts1');
+  expect(tree!.root.findAllByProps({'data-split-row':''})).toHaveLength(1);
+  await click('FYI1');expect(text()).toContain('Acknowledged');
+});
+
+it('automatically confirms a Clock alert opened from its folder despite its source navigation link',async()=>{
+  const record=ask('clock-alert',{sourceManaged:true,source:{kind:'piece',id:'clock'},ask:'Clock needs review'}),shown=request<Ask>();
+  f.snapshot={records:[record],status:'live'};f.call.mockReturnValueOnce(shown.call);
+  await draw(h(InboxApp,{}));await click('Alerts1');
+  await act(async()=>tree!.root.findAllByProps({'data-split-row':''})[0].props.onClick());
+  expect(f.call).toHaveBeenCalledExactlyOnceWith('attention.get',{id:record.id});
+  await shown.finish({ok:true,value:record});
+  expect(buttons('Acknowledge')).toHaveLength(1);expect(buttons('Check again')).toHaveLength(0);
+});
+
+const privateAsk=()=>ask('private',{member:'jonathan',source:{kind:'conversation',id:'cv-private'},answers:'yes-no'});
+it('sends private words only through Comms after fresh checks, keeps refused words and clears an acknowledged draft',async()=>{
+  const record=privateAsk(),shown=request<Ask>(),fresh=request<Ask>(),write=request<unknown>();
+  const snapshot:Snapshot<Ask>={records:[record],status:'live'};
+  f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call);f.privateCall.mockReturnValueOnce(write.call);
+  await draw(h(AskReader,{ask:record,snapshot,go:vi.fn()}));await shown.finish({ok:true,value:record});
+  for(const label of ['Yes','No','Mark done','Dismiss'])expect(buttons(label)).toHaveLength(0);
+  const edit=async(value:string)=>act(async()=>tree!.root.findByType('textarea').props.onChange({target:{value}}));
+  expect(tree!.root.findByType('textarea').props.maxLength).toBe(4000);
+  await edit('x'.repeat(4001));expect(buttons('Send private reply')[0].props.disabled).toBe(true);await click('Send private reply');expect(f.call).toHaveBeenCalledTimes(1);
+  await edit('Private answer');await click('Send private reply');await click('Send private reply');
+  expect(f.privateCall).not.toHaveBeenCalled();await fresh.finish({ok:true,value:record});
+  expect(f.privateCall).toHaveBeenCalledExactlyOnceWith('comms.replyToAsk',{ref:'private',text:'Private answer'});
+  expect(f.call.mock.calls.every(([op])=>op==='attention.get')).toBe(true);
+  await write.finish({ok:false,code:'unavailable',message:'Connection closed'});
+  const checked=request<Ask>(),next=request<Ask>(),saved=request<unknown>();
+  f.call.mockReturnValueOnce(checked.call).mockReturnValueOnce(next.call);f.privateCall.mockReturnValueOnce(saved.call);
+  await click('Check again');await checked.finish({ok:true,value:record});
+  expect(tree!.root.findByType('textarea').props.value).toBe('Private answer');
+  await click('Send private reply');await next.finish({ok:true,value:record});await saved.finish({ok:true,value:{thread:'th:one',seq:2}});
+  expect(text()).toContain('Private reply saved in Comms');
+  const last=request<Ask>();f.call.mockReturnValueOnce(last.call);await click('Check again');await last.finish({ok:true,value:record});
+  expect(tree!.root.findByType('textarea').props.value).toBe('');
+});
+it.each(['offline','changed','unmounted'] as const)('does not send private words after %s during fresh check',async(mode)=>{
+  const record=privateAsk(),shown=request<Ask>(),fresh=request<Ask>();f.snapshot={records:[record],status:'live'};
+  f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call);
+  await draw(h(InboxApp,{path:'/p/inbox-preview/ask/private'}));await shown.finish({ok:true,value:record});
+  await act(async()=>tree!.root.findByType('textarea').props.onChange({target:{value:'Keep here'}}));await click('Send private reply');
+  if(mode==='unmounted'){await act(async()=>tree!.unmount());tree=undefined;}
+  else await publish(mode==='offline'?{records:[],status:'offline'}:{records:[{...record,source:{kind:'conversation',id:'cv-changed'}}],status:'live'});
+  await fresh.finish({ok:true,value:record});expect(f.privateCall).not.toHaveBeenCalled();
+});
+it('never persists private drafts and drops them on leaving the reader; managed and waiting private asks keep their owning actions',async()=>{
+  const storage={getItem:vi.fn(),setItem:vi.fn(),removeItem:vi.fn()};vi.stubGlobal('localStorage',storage);
+  try{
+    const record=privateAsk(),shown=request<Ask>();f.snapshot={records:[record],status:'live'};f.call.mockReturnValueOnce(shown.call);
+    const element=h(InboxApp,{path:'/p/inbox-preview/ask/private'});
+    await draw(element);await shown.finish({ok:true,value:record});
+    await act(async()=>tree!.root.findByType('textarea').props.onChange({target:{value:'Secret draft'}}));
+    expect(storage.setItem).not.toHaveBeenCalled();expect(storage.getItem).not.toHaveBeenCalled();
+    await act(async()=>tree!.unmount());tree=undefined;
+    const again=request<Ask>();f.call.mockReturnValueOnce(again.call);await draw(element);await again.finish({ok:true,value:record});
+    expect(tree!.root.findByType('textarea').props.value).toBe('');
+    for(const extra of [{sourceManaged:true as const},{waits_on:{task:'t-1'}}]){
+      await act(async()=>tree!.update(h(AskReader,{ask:{...record,...extra},snapshot:{records:[record],status:'live'},go:vi.fn()})));
+      expect(buttons('Send private reply')).toHaveLength(0);
+    }
+  }finally{vi.unstubAllGlobals();}
+});
+
+it('routes sealed questions to their owning encrypted reader and opens reference-only reply history',async()=>{
+  const sealed={...privateAsk(),privateQuestion:{thread:'th:abc',seq:2}},go=vi.fn();
+  await draw(h(AskReader,{ask:sealed,snapshot:{records:[sealed],status:'live'},go}));
+  expect(buttons('Send private reply')).toHaveLength(0);expect(f.call).not.toHaveBeenCalled();
+  await click('Open private conversation');expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
+  const answered={...privateAsk(),state:'answered' as const,answer:{kind:'replied',reply:{thread:'th:abc',seq:3},by:{kind:'member',id:'jonathan'},at:3}};
+  await act(async()=>tree!.update(h(AskReader,{ask:answered,snapshot:{records:[answered],status:'live'},go})));
+  await click('Open private reply');expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
+  expect(text()).not.toContain('Private answer');
 });

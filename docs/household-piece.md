@@ -741,11 +741,11 @@ Inbox keys. Invalid, external and credential-bearing URLs fall back to Home. An
 existing loom window is navigated and focused; if it closed, another window or a
 new one is used. No private response or push payload is added to a cache.
 
-This is the display/tap part of the old worker contract only. Imported push rows
-do not yet trigger new-side delivery: test sending, daemon dispatch, per-member eligibility revalidation,
-deduplication, rate limits and staging are still pending. The old SessionStore
+This is the display/tap part of the old worker contract only. Imported push rows use the new-side device resolver. Deliberate tests and routine
+daemon dispatch, per-member eligibility revalidation, deduplication, rate limits
+and staging are implemented in the sections below. The old SessionStore
 and push watcher are never called. No migration or live rollout is needed for
-this worker change; finish those remaining operations before the final move.
+this worker change; verify the full notification flow before the final move.
 
 
 ### Next notification devices
@@ -790,13 +790,13 @@ No schema, importer or old-side change is needed.
 | `/push/subscribe` | `notifications.subscribe`, trusted cookie proof, explicit/quiet registration |
 | `/push/unsubscribe` | `notifications.unsubscribe`, own-member removal only |
 | Profile's notification device list / `push-remove` | `notifications.read`, `notifications.devices`, `notifications.remove`; Account live device list and confirmed removal |
-| `push-test` | `notifications.test` queues a staged own-device test; Account button pending |
-| legacy push watch | Pending daemon job; never call SessionStore/watch from next |
+| `push-test` | `notifications.test` queues a staged own-device test; Account button and private Live outcomes implemented |
+| legacy push watch | Routine daemon implemented below; never call SessionStore/watch from next |
 
 These are page operations; no previous notification CLI needs replacing. The
 Account controls and browser subscription API are implemented below. The staged
 test-send backend is implemented at the end of this page; its Account control
-and routine daemon dispatch remain part of t-2203 before the final move.
+and routine daemon dispatch are implemented below.
 
 
 ### Account notification controls
@@ -819,8 +819,8 @@ mutation lock with passkey/session changes. CI extends the single two-window
 Account acceptance using a fake browser Push API with real cookie/socket operations,
 Live updates and six notification-focused images. It does not contact a push host.
 
-The Account test-send control queues an exact device request and shows member-private Live outcomes. Routine dispatch remains pending. Registering
-a device alone does not send notifications. The existing worker display/tap behavior is unchanged.
+The Account test-send control queues an exact device request and shows member-private Live outcomes. Routine dispatch is implemented below. Registering
+a device alone does not announce an existing backlog. The existing worker display/tap behavior is unchanged.
 
 Quiet reconciliation intentionally runs automatically, rather than asking for a
 click to restore an already-enabled browser. This is a narrow exception to the
@@ -863,8 +863,8 @@ remove a re-enabled or reassigned device. Other service responses are failed;
 transport errors are uncertain. Errors and stored results contain no external
 diagnostics. The next device is resolved afresh after every awaited send.
 
-This replaces the backend of Profile's `push-test` action. Its Account button
-and Live status UI remain pending, as does routine announcement dispatch. There
+This replaces the backend of Profile's `push-test` action. Its Account button,
+Live status UI and routine announcement dispatch are implemented below. There
 is no new notification CLI, no old SessionStore/watch call and no secret migration.
 
 ### Account test notifications
@@ -879,3 +879,50 @@ private outcomes; offline or inactive screens disable sending. No subscription,
 endpoint or key is rendered. The existing CI-only two-window Account acceptance uses
 an injected fake transport with real cookie/socket/backend/Live and captures the six
 notification-focused screenshots. No new CLI or backend operation is introduced.
+
+### Routine notification daemon
+
+The new daemon samples current Inbox asks through Attention's metadata-only role
+and unread, not-in-front replies through the real Comms role every minute. Missed minutes after a sleep or clock jump coalesce into one current sample;
+the daemon never replays elapsed admission periods. Both
+roles apply current central member policy; no service grant or credential is
+created. Source words are never copied into the job records or payload. The
+worker still displays a fixed loom title and empty body; taps open the exact
+Inbox ask or private Comms thread on the new side.
+
+The first sample seeds the existing candidates without sending a backlog.
+Thereafter the daemon admits at most five candidate/member pairs per rolling
+minute; excess candidates stay unmarked until a later sample. Each pair is
+deduplicated durably, including when there are no devices, so subscribing later
+does not deliver old work. This deliberately makes the old per-member expansion
+explicit and preserves its global five-per-minute limit. Imported old push-watch
+markers remain evidence in the household envelope; the new-side baseline owns
+its new candidate keys and never resumes the old watch or imports its timer.
+
+Admission records the exact current devices and their binding hashes in new
+`notifications_announcements` and `notifications_announcement_attempts` tables.
+Each device attempt has a stable `notifications:announcement:` effect id and
+passes the common staging gate immediately before IO. A release resumes only
+that attempt. Startup resumes held/queued work, while interrupted effects become
+uncertain and are never automatically resent. No new operation or CLI is needed
+for this daemon job; the existing core release operation controls staging.
+
+Before each send, including after every preceding awaited send, the daemon
+re-reads the current candidate, member policy, subscription validator, member
+binding, registration generation and VAPID pair. Withdrawn candidates and changed
+devices cancel rather than being silently rebound. A 404/410 removes only the
+unchanged exact device; other responses fail and transport errors are uncertain.
+Errors contain no service diagnostics. A daemon-clock absolute fifteen-second
+abort deadline bounds each request, and close stops admission and drains IO
+before SQLite closes. Sent means service acceptance, not device delivery.
+
+The old watch's process lease and SessionStore timer are retired: next mode has
+one owned in-process daemon. Existing deliberate test sends use the same exact
+binding resolver and abortable transport. Tests use startLoom, synthetic data,
+the fake clock and fake transport; there is no real push or host change. Account
+screens and their existing CI screenshots are unchanged by this backend unit.
+
+The routine cadence and deliberate test-drain schedulers remain separate small
+lifecycles: only the routine scheduler coalesces minute samples. They share the
+credential-sensitive transport/deadline/result/cleanup lifecycle. Their distinct
+close, queued-work and restart behavior is covered by tests.

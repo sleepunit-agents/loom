@@ -1,3 +1,4 @@
+import { registerReplyAnnouncements } from './role.js';
 import { createHash, createHmac } from 'node:crypto';
 import { z } from 'zod';
 import { migrate, operation, OperationError, mayUseThread, maySee, type Db, type Operations, type Live, type Sharing, type Viewer, type Clock, type Context, type LiveRecord } from '../../core/index.js';
@@ -8,6 +9,7 @@ import { installConversationSteps, type StepConversation } from './conversation-
 import { threadActivity } from './thread-activity.js';
 import { spawnCreator } from './spawn.js';
 import { privateQuestionCreator } from './private-questions.js';
+import { installQuestionRead } from './question-read.js';
 import { installPrivateReplies } from './private-replies.js';
 import { installCommsWork } from './work.js';
 import { about, aboutPointer, aboutIdentity, attachedText } from './about.js';
@@ -303,6 +305,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   const value=answer.value as {thread:string;seq:number};
   const t=thread(db,value.thread); if(t)void deliver(t.agent,t.id,value.seq);
  }
+ installQuestionRead({...o,closed:()=>closed});
  installPrivateReplies({...o,closed:()=>closed,changed:touched,after:sendAfter});
  operations.register(operation({name:'comms.open',doors:['socket'],windowOnly:true,write:true,inputHash:value=>key.hash(`comms-operation\0${value}`),
   input:z.object({agent:id,id:clientId,text,project:id.optional(),about:about.optional()}),output:ack,
@@ -558,16 +561,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
  sweep();
  void reconcileEnds();
  void reconcileDeliveries();
- return {ask:privateQuestionCreator({...o,closed:()=>closed,changed:(t,seq,ref)=>{armSweep();live.changed([{type:'thread',id:t.id},{type:'message',id:messageId(t.id,seq)},{type:'attention.ask',id:ref}]);}}),confirmStart(agent,place,seq,generation) {
-   const t=requireAgent(agent,place);
-   const row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message' AND sender=?").get(place,seq,t.member) as MessageRow|undefined;
-   if(closed||t.archived!==null||!row||!see({kind:'member',id:t.member},t)||(JSON.parse(row.record).generation??0)!==generation||!row.words||row.at+days*day<=clock.now())return;
-   if((t.startedThrough??0)>=seq)return;
-   t.working=true;t.workingSince=t.workingSince??clock.now();t.workingBeat=clock.now();t.startedThrough=seq;
-   saveThread(db,t);touched(t);progressChanged(t);
-  },bodyPost:(binding,place,message)=>post(binding.agent,place,message,false,binding),post,startNotice,deliver,reconcileEnds,reconcileDeliveries,conversationWriter:conversationSteps.writer,
-  spawn:spawnCreator({db,clock,key,sharing:o.sharing,conversation:o.conversation,closed:()=>closed,hashText,changed:(t,seqs)=>{touched(t);live.changed(seqs.map(seq=>({type:'message',id:messageId(t.id,seq)})));progressChanged(t);}}),
-  announcements(member) {
+ function announcements(member:string) {
    if(closed)return [];
    // Read routing facts only: no ciphertext is selected or decrypted for push.
    return agentThreads(member).flatMap(t=>{
@@ -581,7 +575,18 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
      title:t.title?`${name} replied`:`${name} replied in a new thread`,body:t.title??'',
      url:`/p/comms-preview/thread/${t.id.replace(/^th:/,'')}`}];
    });
-  },
+  }
+ registerReplyAnnouncements(operations,announcements);
+ return {ask:privateQuestionCreator({...o,closed:()=>closed,changed:(t,seq,ref)=>{armSweep();live.changed([{type:'thread',id:t.id},{type:'message',id:messageId(t.id,seq)},{type:'attention.ask',id:ref}]);}}),confirmStart(agent,place,seq,generation) {
+   const t=requireAgent(agent,place);
+   const row=db.prepare("SELECT * FROM comms_messages WHERE thread=? AND seq=? AND kind='message' AND sender=?").get(place,seq,t.member) as MessageRow|undefined;
+   if(closed||t.archived!==null||!row||!see({kind:'member',id:t.member},t)||(JSON.parse(row.record).generation??0)!==generation||!row.words||row.at+days*day<=clock.now())return;
+   if((t.startedThrough??0)>=seq)return;
+   t.working=true;t.workingSince=t.workingSince??clock.now();t.workingBeat=clock.now();t.startedThrough=seq;
+   saveThread(db,t);touched(t);progressChanged(t);
+  },bodyPost:(binding,place,message)=>post(binding.agent,place,message,false,binding),post,startNotice,deliver,reconcileEnds,reconcileDeliveries,conversationWriter:conversationSteps.writer,
+  spawn:spawnCreator({db,clock,key,sharing:o.sharing,conversation:o.conversation,closed:()=>closed,hashText,changed:(t,seqs)=>{touched(t);live.changed(seqs.map(seq=>({type:'message',id:messageId(t.id,seq)})));progressChanged(t);}}),
+  announcements,
   activityCards:threadActivity({db,clock,key,days,decode,available(agent,place){
    const t=requireAgent(agent,place);
    if(closed||t.archived!==null||!see({kind:'member',id:t.member},t))return fail('denied','Thread unavailable');

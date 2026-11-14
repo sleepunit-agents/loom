@@ -11,7 +11,7 @@ import type { StartResult } from './dependencies/runtime.js';
 import type { Wake } from './store.js';
 const owner: Viewer = { kind: 'member', id: 'jonathan' };
 const agent: Viewer = { kind: 'agent', id: 'art' };
-const sharing = () => ({ members: { jonathan: { owner: true, agents: ['art'] }, guest: { owner: false, agents: ['art'] } }, projects: {}, services: {} });
+const sharing = () => ({ members: { jonathan: { owner: true, agents: ['art'] }, guest: { owner: false, agents: ['art'] } }, projects: {'PRIVATE-PROJECT':{members:['jonathan'],agents:['art']}}, services: {} });
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const close of closes.splice(0)) await close(); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
 async function setup(home = mkdtempSync(join(tmpdir(), 'clock-notices-')), next: boolean | 'preinstalled' = false, runtime?: { startBody(): Promise<StartResult> }) {

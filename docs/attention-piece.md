@@ -41,9 +41,9 @@ Schema 4 adds folded days and checked findings. `attention.fold({conversation})`
 
 ## Completion and final move
 
-The Inbox preview is registered at `/p/inbox-preview` on the kit and reads only `attention.ask` through `useRecords`. It has Needs you, alphabetical agent folders, search, answered/resolved history and a full question reader. Opening a row starts `attention.get`; direct links and invalidated checks offer Check again. It shows answer controls only after that read confirms the ask is open, then repeats that read immediately before `attention.answer`. Connection loss, scope loss, a changed live set or leaving the reader invalidates a pending check. A shared guard above reader navigation permits only one pending check/write, including after closing or switching the reader. One pending call retains its operation id through reconnects; failures are inline and a rejected words answer retains its draft while the reader stays open. Done and Dismiss wait while a words draft is unsent. Drafts are local component state, not saved across closing or reloading.
+The Inbox preview is registered at `/p/inbox-preview` on the kit and reads only `attention.ask` through `useRecords`. It has Needs you, alphabetical agent folders, search, answered/resolved history and a full question reader. Opening a row starts `attention.get`; direct links and invalidated checks offer Check again. It shows answer controls only after that read confirms the ask is open, then repeats that read immediately before `attention.answer`. Connection loss, scope loss, a changed live set or leaving the reader invalidates a pending check. A shared guard above reader navigation permits only one pending check/write, including after closing or switching the reader. One pending call retains its operation id through reconnects; failures are inline and a rejected words answer retains its draft while the reader stays open. Done and Dismiss wait while a words draft is unsent. Public drafts persist per member and ask on the device (see below); private drafts remain in the reader only.
 
-Approval/task source asks and `waits_on` decisions open the owning preview app rather than recording an ineffective central yes. Member-private asks show no central answer controls: replies must stay encrypted in Comms. Ordinary public asks accept a words reply in either answer mode, alongside yes/no for yes-no asks and done/dismiss. An unsent words draft disables the alternate answers; a refused write keeps that draft while the reader stays open. Private reply words are refused by the daemon before storing an answer or retry receipt, regardless of answer mode. Source-managed asks retain their declared answer mode. This bounded preview **records** an answer; it does not deliver a message or start a body. Runtime delivery and private encrypted replies remain required before final move. The UI states this limitation. The current live type includes every visible ask, including all answered history; there is no second archive cache or legacy Inbox read.
+Approval/task source asks and `waits_on` decisions open the owning preview app rather than recording an ineffective central yes. Member-private conversation asks offer a typed encrypted Comms reply; sealed questions open their owning Comms thread until the scoped question reader is connected. Other private and managed decisions retain their owning actions. Ordinary public asks accept a words reply in either answer mode, alongside yes/no for yes-no asks and done/dismiss. An unsent words draft disables the alternate answers; a refused write keeps that draft while the reader stays open. Private reply words are refused by the daemon before storing an answer or retry receipt, regardless of answer mode. Source-managed asks retain their declared answer mode. This bounded preview **records** an answer; it does not deliver a message or start a body. Public Runtime delivery and the scoped sealed-question reader remain required before final move. The UI states this limitation. The current live type includes every visible ask, including all answered history; there is no second archive cache or legacy Inbox read.
 
 The single Inbox browser test brings a disposable next-mode loom and fake clock, proves two-window first-answer propagation and private/project filtering, and captures 390/1280/1920 screenshots in Neon Noir and Daylight under `artifacts/attention-inbox`, uploaded by the ordinary CI shard artifact. No browser suite runs on loom's machine.
 
@@ -55,7 +55,7 @@ The single Inbox browser test brings a disposable next-mode loom and fake clock,
 | Done / Dismiss / words / Yes / No | `attention.answer`; source-owned decisions link to their owning app |
 | Conversation reply delivery | Pending runtime composition; preview labels answers as recorded, never delivered |
 | Private question/reply wording | Remains in Comms; Inbox uses only opaque central metadata |
-| Read/unread marks, local persistent reply drafts, FYI/error folders and bulk actions | Not added to this preview: central asks have no read-mark or notice model; final composition must reconcile owning-piece notices before the old Inbox is retired |
+| Read/unread marks, persistent public reply drafts, FYI/error folders and bulk actions | Member read facts, per-member device drafts, resolved FYI and Clock Alerts are implemented below. Remaining notice emitters and meaningful action outcomes still need reconciliation; bulk actions are deferred until that inventory is complete |
 
 Home has a bounded preview below; final delivery and production role composition remain. The mapping above covers installed operations and the bounded preview, not a completed replacement of every old conversation route or job.
 
@@ -232,3 +232,34 @@ Inbox files resolved asks in FYI, separate from human Answered history. FYI rows
 | Seven-day answered/FYI view | Complete visible central history | Deliberately retain searchable history rather than hide it after a week |
 
 This completes resolution-history classification only. Piece-emitted notices, action-error outcomes, public delivery, private Inbox replies and the Runtime/grading audit still remain before retiring the old Inbox.
+
+### Clock operational alerts
+
+Only source-managed `piece/clock` asks are notices. The Alerts folder selects their open records; Needs you and Home retain the same open-record count. Acknowledge sends the existing `attention.answer` done fact after the same live/display/immediate checks as other answers. The installed Clock source hook is a no-op: acknowledgement cannot retry, cancel or otherwise change scheduled work. Acknowledged notices appear in FYI, rather than human decision history. Open Clock uses the canonical internal `/p/clock-preview` route, independent of the external-reference URL filter. Secrets and other registered sources retain their declared decision mode. No schema, permissions, new health store or source ingestion is introduced.
+
+Old Inbox audit against `src/ui/handler.ts:inboxItems`:
+
+| Old input | New owning surface / status |
+| --- | --- |
+| Clock retry/give-up/capacity alerts | Clock source-managed Attention records; Alerts, Acknowledge and Open Clock in this unit |
+| Piece manifest `notices` | Generic manifest aggregation is retired with the old side; each emitting piece owns its new records. This unit establishes Clock only, not parity for every emitter. |
+| Piece manifest `answered` | Owning decision/history records, including Approvals History and Tasks state; central human answers remain Answered. No copying piece history into another store. |
+| Resolved central asks | FYI resolution history already merged |
+| Backup failure and recovery FYI | Still an owning Household/backup inventory gap (see `docs/household-piece.md`); not claimed implemented or replaced by Clock |
+| Per-member meaningful action outcomes (`done`) | Still outstanding. The old handler records non-secret success/error messages per reader; merely displaying a transient call result does not satisfy Jonathan's recorded meaningful-toast FYI requirement. No blanket retirement or completion claim. |
+| Runtime lifecycle notices | Owning Runtime integration audit still required; Clock capacity notices cover scheduled work only |
+
+These gaps remain part of the final old-to-new reconciliation before closing t-2205. No old-store reads or compatibility adapter are added.
+
+## Typed private Inbox replies
+
+A member-private conversation ask accepts up to 4000 typed characters through the existing window/socket-only `comms.replyToAsk({ref,text})`. Display confirmation and an immediate fresh `attention.get` use the same navigation, connection and shared pending-write guard as public answers. There are no private Yes/No, Done or Dismiss controls. Source-managed and waiting decisions keep their owning actions. Private drafts stay in component state, survive a refused send while the reader stays mounted, and disappear on navigation/reload. They never use the public device draft store. Private sends use `callOnce`: disconnect does not queue or replay their words. A refusal retains the draft for an explicit new check and send; Comms owns identical-reply deduplication and changed-word conflicts.
+
+Comms encrypts the words and atomically acknowledges only a thread/sequence reference in Attention. The receipt links to the owning thread; saving the reply is not a claim that a body received it. Sealed questions route to their owning encrypted Comms thread, and do not offer a blind typed editor against Attention's wordless placeholder. The exact scoped question read/state/retention seam from Comms PR1188 must be connected in a subsequent unit when merged. This unit changes no permissions, migrations, backend sources or Home styling.
+
+| Old private reply behavior | New path |
+| --- | --- |
+| Private conversation Inbox words reply | Guarded typed editor -> `comms.replyToAsk`; encrypted Comms words and reference-only Attention receipt |
+| Sealed full question | Open private conversation; scoped `comms.question` reader integration remains |
+| Private browser draft persistence | Deliberately dropped: private words stay in the mounted window, never unencrypted device storage |
+| Private yes/no or mark done through generic Inbox action | Not carried: typed replies use the Comms seam; managed/wait decisions open their owning app |

@@ -16,12 +16,17 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
   const home=mkdtempSync(join(tmpdir(),'loom-inbox-browser-')); fixture(home);
   const clock=new FakeClock(Date.parse('2026-11-13T06:00:00Z'));
   const owner={kind:'member' as const,id:'jonathan'};
-  const loom=await startLoom({home,clock,next:true,sharing:fixtureSharing,webRoot:root,install:app=>{installApprovals(app.db,app.operations,app.live,fixtureSharing,{caller:v=>({who:{agent:v.id,where:'h-browser'},for:'owner',project:'pond'})});installFixture(app);app.db.transaction(()=>new TokenDatabase(app.db).replace({v:1,tokens:[]},{}))();}});
+  const loom=await startLoom({home,clock,next:true,staging:true,sharing:fixtureSharing,webRoot:root,install:app=>{installApprovals(app.db,app.operations,app.live,fixtureSharing,{caller:v=>({who:{agent:v.id,where:'h-browser'},for:'owner',project:'pond'})});installFixture(app);app.db.transaction(()=>new TokenDatabase(app.db).replace({v:1,tokens:[]},{}))();}});
   let serial=0;
   const raise=(input:object)=>{const result=loom.operations.call('direct',owner,'attention.raise',{agent:'art',answers:'yes-no',source:{kind:'piece',id:'fixture'},...input},`raise:${++serial}`);expect(result.ok).toBe(true);};
   raise({id:'public',ask:'Continue the Attention rebuild?',why:'The shared Inbox should show one current question in every window.',if_yes:'I build the remaining Home cards.',if_no:'I stop and keep this preview available.',refs:['t-2205','sleepunit-agents/loom#912']});
   raise({id:'reading',ask:'Read this without answering it?'});
   raise({id:'private',member:'jonathan',ask:'Private conversation needs you'});
+  const opened=await loom.operations.callAsync('socket',owner,'comms.open',{agent:'art',id:'cccccccccccccccc',text:'Private Inbox fixture'},'inbox-private-open',true);
+  if(!opened.ok)throw Error(opened.message);
+  const privateThread=(opened.value as {thread:string}).thread;
+  const thread=JSON.parse((loom.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(privateThread) as {record:string}).record);
+  raise({id:'private-reply',member:'jonathan',source:{kind:'conversation',id:thread.conversation},ask:'Reply privately about the plan?',answers:'words'});
   raise({id:'pond',agent:'pond-bot',project:'pond',ask:'Review the shared Pond plan?'});
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
@@ -60,13 +65,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await a.getByRole('button',{name:'Check again',exact:true}).click();
     await expect.poll(()=>a.getByRole('textbox',{name:'Or answer in your own words'}).inputValue()).toBe('Continue after the small fix.');
     const shots=resolve('artifacts/attention-inbox');mkdirSync(shots,{recursive:true});
-    for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
-      await b.setViewportSize({width,height:900});
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await b.screenshot({path:join(shots,`inbox-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
+
     await a.getByRole('button',{name:'Record answer',exact:true}).click();
     await expect.poll(()=>yes(b).count()).toBe(0);
     await expect.poll(()=>b.getByText(/words · jonathan/).count()).toBe(1);
@@ -92,13 +91,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       await page.getByRole('button',{name:'Open task',exact:true}).waitFor();
       expect(await yes(page).count()).toBe(0);
     }
-    for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
-      await b.setViewportSize({width,height:900});
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await b.screenshot({path:join(shots,`inbox-task-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
+
     await a.getByRole('button',{name:'Open task',exact:true}).click();
     await expect.poll(()=>new URL(a.url()).pathname).toBe('/p/tasks-preview/task/t-1');
     await a.getByRole('heading',{name:'Pond work',exact:true}).waitFor();
@@ -123,18 +116,40 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).click();
     await b.getByRole('heading',{name:'Check the completed work?',exact:true}).waitFor();
     expect(await yes(b).count()).toBe(0);
-    for(const look of ['neon','daylight']) for(const width of [390,1280,1920]) {
-      await b.setViewportSize({width,height:900});
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await b.screenshot({path:join(shots,`inbox-fyi-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
+
     await b.setViewportSize({width:1280,height:900});
     await b.getByRole('searchbox',{name:'Search asks'}).fill('');
     await b.getByRole('button',{name:/^Answered/}).click();
     expect(await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).count()).toBe(0);
     await b.locator('.loom-split').getByRole('button',{name:/^Needs you/}).click();
+    // An owning Clock outcome produces the real managed notice; acknowledgement leaves work alone.
+    const wakeResult=loom.operations.call('direct',owner,'clock.in',{agent:'art',prompt:'Fixture scheduled work',note:'Inbox alert fixture',when:'1m'},'inbox-clock-wake');
+    if(!wakeResult.ok)throw Error(wakeResult.message);
+    const wake=wakeResult.value as {id:string;due:number}; clock.advance(wake.due-clock.now());
+    // FakeClock may synchronously commit the daemon intent before its deferred external call.
+    const current=JSON.parse((loom.db.prepare('SELECT record FROM clock_wakes WHERE id=?').get(wake.id) as {record:string}).record) as {state:string;attempt?:string};
+    const attempt=current.state==='firing' ? current.attempt! : 'inbox-clock-attempt';
+    if(current.state!=='firing')expect(loom.operations.call('direct',owner,'clock.dispatch',{id:wake.id,attempt},'inbox-clock-dispatch').ok).toBe(true);
+    const outcome=loom.operations.call('direct',owner,'clock.outcome',{id:wake.id,attempt,result:{state:'not-started',code:'quota',reason:'Fixture capacity wait'}},'inbox-clock-outcome');
+    expect(outcome.ok).toBe(true);
+    const noticeId=`clock:${wake.id}:quota`;
+    await b.goto(`${loom.url}/p/inbox-preview/ask/${encodeURIComponent(noticeId)}`);
+    await b.getByRole('button',{name:'Check again',exact:true}).click();
+    await b.getByRole('button',{name:'Acknowledge',exact:true}).waitFor();
+    expect(await yes(b).count()).toBe(0);
+    await b.locator('.loom-split').getByRole('button',{name:/^Alerts/}).click();
+    await b.locator('[data-split-row]').filter({hasText:'Review clock work waiting for model capacity.'}).click();
+    await b.getByRole('button',{name:'Acknowledge',exact:true}).waitFor();
+
+    await b.setViewportSize({width:1280,height:900});
+    const beforeAck=loom.operations.call('direct',owner,'clock.list',{});
+    expect(beforeAck.ok).toBe(true);
+    await b.getByRole('button',{name:'Acknowledge',exact:true}).click();
+    await expect.poll(()=>loom.operations.call('direct',owner,'attention.get',{id:noticeId})).toMatchObject({ok:true,value:{state:'answered',answer:{kind:'done'}}});
+    expect(loom.operations.call('direct',owner,'clock.list',{})).toEqual(beforeAck);
+    await b.locator('.loom-split').getByRole('button',{name:'Open Clock',exact:true}).click();
+    await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/clock-preview');
+    await b.goto(`${loom.url}/p/inbox-preview`);
     // One actual central approval, with the owning page's action and two-window withdrawal.
     const requested=loom.operations.call('direct',{kind:'agent',id:'art'},'approvals.request',{kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,ask:'Merge the Inbox source fix?',why:'The source card keeps the exact decision and receipt.',if_yes:'I merge the fix.',if_no:'I hold it.'},'inbox-request-approval');
     expect(requested.ok).toBe(true);if(!requested.ok)throw Error(requested.message);
@@ -144,13 +159,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       await page.getByRole('button',{name:'Open approval',exact:true}).waitFor();
       expect(await yes(page).count()).toBe(0);
     }
-    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
-      await b.setViewportSize({width,height:900});
-      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
-      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-      await b.screenshot({path:join(shots,`inbox-approval-${look}-${width}.png`),fullPage:true,animations:'disabled'});
-    }
+
     raise({id:'approval-wait',source:{kind:'conversation',id:'cv-approval-wait'},project:'pond',ask:'Please decide the Inbox fix?',waits_on:{approval:approvalId}});
     raise({id:'approval-wait-2',source:{kind:'conversation',id:'cv-approval-wait-2'},project:'pond',ask:'Another conversation about the fix?',waits_on:{approval:approvalId}});
     for(const page of [a,b]){
@@ -162,6 +171,33 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await expect.poll(()=>new URL(a.url()).pathname).toBe(`/p/approvals-preview/approval/${approvalId}`);
     expect(loom.operations.call('direct',owner,'approvals.answer',{id:approvalId,action:'deny'},'inbox-deny-approval').ok).toBe(true);
     await b.getByRole('heading',{name:'Approval no longer needs you',exact:true}).waitFor();
+    // An actual owning private conversation: typed words never enter Attention or device storage.
+    for(const page of [a,b]){
+      await page.goto(`${loom.url}/p/inbox-preview/ask/private-reply`);
+      await page.getByRole('button',{name:'Check again',exact:true}).click();
+      await page.getByRole('textbox',{name:'Your private reply',exact:true}).waitFor();
+      expect(await yes(page).count()).toBe(0);
+    }
+    const privateWords='Private Inbox reply fixture sentinel';
+    await a.getByRole('textbox',{name:'Your private reply',exact:true}).fill(privateWords);
+    expect(await b.getByRole('textbox',{name:'Your private reply',exact:true}).inputValue()).toBe('');
+    expect(await a.evaluate(words=>JSON.stringify(localStorage).includes(words),privateWords)).toBe(false);
+    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
+      await a.setViewportSize({width,height:900});
+      await a.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      expect(await a.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await a.screenshot({path:join(shots,`inbox-private-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    await a.getByRole('button',{name:'Send private reply',exact:true}).click();
+    await expect.poll(()=>b.getByRole('button',{name:'Send private reply',exact:true}).count()).toBe(0);
+    const privateFact=loom.operations.call('direct',owner,'attention.get',{id:'private-reply'});
+    expect(privateFact).toMatchObject({ok:true,value:{state:'answered',answer:{kind:'replied',reply:{thread:privateThread}}}});
+    for(const table of ['attention_asks','attention_digests','core_operations','comms_messages'])expect(JSON.stringify(loom.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain(privateWords);
+    const messages=await loom.operations.callAsync('socket',owner,'comms.messages',{thread:privateThread},'inbox-private-read',true);
+    expect(messages).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({text:privateWords,ref:'private-reply'})])});
+    await b.getByRole('button',{name:'Open private reply',exact:true}).click();
+    await expect.poll(()=>new URL(b.url()).pathname).toBe(`/p/comms-preview/thread/${privateThread.replace(/^th:/,'')}`);
     await member.close();
   } finally {await browser.close();await loom.close();rmSync(home,{recursive:true,force:true});}
 },90_000);

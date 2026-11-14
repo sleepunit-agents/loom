@@ -4,15 +4,20 @@ export interface Ask extends LiveRecord {
   agent?: string; project?: string; member?: string;
   ask: string; why?: string; if_yes?: string; if_no?: string; href?: string; refs?: string[];
   answers?: 'yes-no' | 'words'; sourceManaged?: true;
+  privateQuestion?: {thread:string;seq:number};
   waits_on?: { approval: string } | { task: string };
   source: { kind: 'conversation' | 'approval' | 'task' | 'piece'; id: string };
   state: 'open' | 'answered' | 'resolved'; createdAt: number; changedAt: number;
-  answer?: { kind: string; text?: string; by: { kind: string; id: string }; at: number };
+  answer?: { kind: string; text?: string; reply?: {thread:string;seq:number}; by: { kind: string; id: string }; at: number };
   resolution?: string;
 }
 export type Answer = { kind: 'yes' | 'no' | 'done' | 'dismiss' } | { kind: 'words'; text: string };
+// Clock alone registers operational notices; other managed sources can own decisions.
+export function isNotice(ask: Ask) {
+  return ask.sourceManaged === true && ask.source.kind === 'piece' && ask.source.id === 'clock';
+}
 export function inFolder(ask: Ask, folder: string) {
-  return folder === 'fyi' ? ask.state === 'resolved' : folder === 'answered' ? ask.state === 'answered' : ask.state === 'open' && (!folder.startsWith('agent:') || ask.agent === folder.slice(6));
+  return folder === 'alerts' ? isNotice(ask) && ask.state === 'open' : folder === 'fyi' ? ask.state === 'resolved' || isNotice(ask) && ask.state === 'answered' : folder === 'answered' ? ask.state === 'answered' && !isNotice(ask) : ask.state === 'open' && (!folder.startsWith('agent:') || ask.agent === folder.slice(6));
 }
 export function matches(ask: Ask, query: string) {
   const text = [ask.ask, ask.why, ask.agent, ask.project, ask.id, ask.resolution, ...(ask.refs ?? [])].join(' ').toLowerCase();
@@ -20,10 +25,12 @@ export function matches(ask: Ask, query: string) {
 }
 /** A central answer cannot apply another piece's decision. Its app owns that action. */
 export function decisionLink(ask: Ask): { path: string; label: string } | undefined {
+  if (isNotice(ask)) return { path: '/p/clock-preview', label: 'Open Clock' };
   const approval = ask.waits_on && 'approval' in ask.waits_on ? ask.waits_on.approval : ask.source.kind === 'approval' ? ask.source.id : undefined;
   if (approval) return { path: `/p/approvals-preview/approval/${encodeURIComponent(approval)}`, label: 'Open approval' };
   const task = ask.waits_on && 'task' in ask.waits_on ? ask.waits_on.task : ask.source.kind === 'task' ? ask.source.id : undefined;
   if (task !== undefined) return { path: `/p/tasks-preview/task/${taskSegment(task)}`, label: 'Open task' };
+  if (ask.member && ask.privateQuestion) return {path:commsThreadPath(ask.privateQuestion.thread),label:'Open private conversation'};
 }
 export function safeHref(href?: string) {
   if (!href) return undefined;
@@ -47,3 +54,5 @@ export function listedAsks(records: readonly Ask[]): Ask[] {
     return true;
   });
 }
+
+export const commsThreadPath = (thread:string) => `/p/comms-preview/thread/${encodeURIComponent(thread.replace(/^th:/,''))}`;

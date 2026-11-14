@@ -1,13 +1,13 @@
 import { canHost } from './boxes.js';
 import { configuredHouse, sameHouse } from './builds.js';
-import { mayUseThread, mayAct, type Viewer, type Sharing } from '../../core/index.js';
+import { mayUseThread, mayRunPrivateWork, mayAct, type Viewer, type Sharing } from '../../core/index.js';
 import type { RuntimeRecords } from './records.js';
 import type { runtimeStore } from './store.js';
 /** Derive control proof from runtime-owned linkage, never caller input. */
 export function controlScope(store:ReturnType<typeof runtimeStore>, job:RuntimeRecords['job'], sharing:Sharing) {
  const binding=job.conversation?store.read('binding',job.conversation):undefined;
- const privateControl=currentExecution(store,job,sharing)&&!!job.member&&!!binding&&(binding.venue==='loom'||binding.venue.startsWith('bridge:'))&&binding.job===job.id&&binding.member===job.member&&binding.agent===job.agent
-  &&mayUseThread({kind:'member',id:job.member},{member:job.member,agent:job.agent},sharing);
+ const privateControl=currentExecution(store,job,sharing)&&!!job.member&&!!binding&&(binding.venue==='loom'||binding.venue==='wake'||binding.venue.startsWith('bridge:'))&&binding.job===job.id&&binding.member===job.member&&binding.agent===job.agent&&binding.project===job.project
+  &&(binding.venue==='wake' ? mayRunPrivateWork(job,sharing) : mayUseThread({kind:'member',id:job.member},{member:job.member,agent:job.agent},sharing));
  return {...job,type:'runtime.job',privateControl};
 }
 

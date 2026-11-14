@@ -1132,3 +1132,66 @@ order through record IDs, and cover connection reassignment. The operation and
 client share a closed status response schema. Fixtures exercise the real
 HTTP operation, empty setup, staging composition, permission denials and closed
 response shapes. No old files or programs are read on the next runtime path.
+
+## Internal Slack first-DM transport
+
+`slack-open.ts` supplies unregistered `slackOpen(...).open()` IO for the pinned
+legacy Slack `test_a_message_to_one_person_is_one_dm` contract's open step.
+It checks fresh same-workspace human eligibility with `users.info`, then calls
+[`conversations.open`](https://docs.slack.dev/reference/methods/conversations.open/)
+with exactly one `users` ID and `return_im=true`. Only a D-prefixed IM whose
+returned user matches that recipient is accepted; no shared/group conversation
+or raw platform fields are returned. Existing DMs use the same uncached path.
+
+A trusted recipient role binds agent, venue, workspace and user. Its `current()`
+must include authenticated bot setup, credential generation and current Runtime
+authority to contact that person. Tests provide an explicit fake owning role;
+there is no installed Runtime issuer, public operation, command or daemon wiring.
+People links and platform eligibility confer no recipient authority.
+
+Every request reacquires the service's SecretUse and rechecks the exact recipient,
+lifetime and dynamic composition gate after acquisition, immediately before IO,
+and after the response. Opening a DM is an outside effect even without words.
+Responses are bounded to 1 MiB, readers are cancelled, redirects are refused and
+each request has a 15-second deadline. Failures and late revocations return only
+fixed uncertainty, with no local retry or cached channel/token. An uncertain open
+may have created a DM; this transport cannot assert rollback or delivery.
+
+Runtime recipient authorization and attribution, a durable staged open/post
+workflow with uncertain-send handling, and generated send command parity remain
+required on t-2210. No message is posted, no inbound message is fabricated, and
+no existing reply path is widened by this internal transport.
+
+## Internal Slack file fetch
+
+`slack-files.ts` is an unregistered transport for the first five attachments of
+one delivered Slack message. An explicit fake `SlackFilesPermit` supplies exact
+agent, connection, workspace, channel, delivery and immutable file descriptors in
+fixtures. There is no installed Runtime issuer or public operation. Current
+setup, credential generation and delivered-message authority belong to that
+issuer; staging remains a separate composition gate. Checks repeat after holder
+acquisition, headers, every body read and before returning the batch.
+
+Each request acquires the Bridges service credential anew and sends it only to
+literal `https://files.slack.com/` URLs, with no credentials, port, fragment,
+backslash, whitespace or redirect. Literal/encoded dot path segments and nested
+path escapes refuse before URL normalization. HTML/XHTML response MIME types refuse. Declared
+and actual bodies are bounded to 25 MiB per file; a fifteen-second deadline covers
+both headers and streaming, cancels readers and never retries. Names retain the
+old safe eighty-character basename convention. Failures return fixed text,
+without platform words, paths or credentials. Failed batches erase their owned
+completed buffers and return no partial result.
+
+| Legacy Slack files behavior | Replacement / remaining work |
+| --- | --- |
+| `Files.fetch`, `test_at_most_five_a_message` | Internal first-five batch, service credential per file, exact Slack HTTPS origin and bounded download |
+| `test_never_sends_the_token_anywhere_but_slacks_file_host`, size/page/id/name cases | URL preflight, no redirects, MIME rejection, 25 MiB streaming cap, safe names and file-id validation |
+| `Files.take`, body `runtime file`, `send --file --out` | Pending Runtime delivery/body authorization and private storage/retrieval; transport returns bytes only to its trusted caller |
+| Fetch-once and fourteen-day prune | Pending durable storage, dedup and daemon retention job; no cache or storage is claimed by this unit |
+| Shadow fetches nothing | Separate current staging gate, rechecked around IO; no adapter is registered |
+
+This implements only the fetching half of the pinned `loom-slack` `files.py` and
+`test_files.py` contract. No files are fetched during intake yet. Secure private
+storage, delivery-scoped retrieval, fourteen-day retention, generated command
+parity and actual Runtime owner proof remain required before file support is
+complete. No caller-supplied output path is accepted here.
