@@ -1321,3 +1321,9 @@ policy holds, body credentials and input/delivery receipts. It does not enable
 spawn acceptance, private body reads/replies, standalone execution or trusted
 spawn creation. Those remaining consumers and original member/parent proof stay
 on t-2209; no metadata refile may be used as execution authority.
+
+The spawn-filing tests prove hold preservation by exact job/policy record equality
+through restart. Their access denials encounter multiple fences together; the
+bound-body drift matrix separately isolates reset, write-off and policy enforcement.
+This keeps the filing fixture faithful to held imported spawn metadata without
+using it to claim individual-fence enforcement or spawned execution readiness.
