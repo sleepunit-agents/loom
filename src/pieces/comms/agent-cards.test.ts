@@ -48,6 +48,7 @@ it('uses the real household profile and owning Agents roster, never project-only
 });
 it('withdraws target agent and at cards independently of source access in two windows',async()=>{
  const s=await setup(),scope=JSON.stringify({thread:s.thread,refs:['agent:mark','at:mark']});
+ s.sharing.members.jonathan.owner=true;
  interface Frame{kind:string;[key:string]:unknown}
  async function window(){
   const ws=new WebSocket(s.app.url.replace('http:','ws:')+'/live'),queue:Frame[]=[],waiters:((v:Frame)=>void)[]=[];
@@ -57,7 +58,9 @@ it('withdraws target agent and at cards independently of source access in two wi
  }
  const a=await window(),b=await window();
  for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'set',records:[{cards:{'agent:mark':{kind:'agent'},'at:mark':{kind:'agent'}}}]});
- s.sharing.members.jonathan.agents=['art'];s.app.live.refreshAccess();
+ s.sharing.members.jonathan.agents=['art'];
+ expect(s.app.operations.call('direct',s.viewer,'household.profile',{agent:'mark'})).toEqual({ok:true,value:{agent:'mark'}});
+ s.app.live.refreshAccess();
  for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'set',records:[{cards:{'agent:mark':null,'at:mark':null}}]});
  s.sharing.members.jonathan.agents.push('mark');s.app.live.refreshAccess();
  for(const w of [a,b])expect(await w.next()).toMatchObject({kind:'set',records:[{cards:{'agent:mark':{kind:'agent'},'at:mark':{kind:'agent'}}}]});
