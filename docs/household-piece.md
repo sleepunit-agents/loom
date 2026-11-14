@@ -842,7 +842,9 @@ delivery claim. The request and retry receipt commit together. A new
 fingerprint, time and status, never subscription bytes or VAPID secrets.
 
 The daemon uses the same member resolver and subscription validator as device
-registration. Each request binds the exact device and imported VAPID pair at
+registration. Each accepted registration gets a unique generation, including same-second
+remove/re-enable with identical subscription bytes. Each request binds that
+exact device and imported VAPID pair at
 submission and resolves them again before sending. Every attempt claims its
 stable `notifications:test:<id>` effect outside the operation transaction.
 Staging holds it for `core.releaseEffect`; startup resumes held/queued work,

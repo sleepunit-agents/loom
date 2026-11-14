@@ -92,3 +92,23 @@ it('a real cookie socket queues and follows private content-free Live status; an
  f.s.tokens.change(tokens=>tokens.push({role:'owner',member:'pollock',label:'other',sha256:hash('other'),created:new Date(f.clock.now()).toISOString()}));
  const other=await socket({authorization:'Bearer other'});other.send(JSON.stringify({kind:'subscribe',type:'notifications.test'}));expect(JSON.parse(String((await once(other,'message'))[0])).records).toEqual([]);
 });
+
+it('resumes a committed queued request before any effect exists',async()=>{
+ const f=await setup();await f.queue();expect(f.app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
+ await f.restart();await f.advance();expect(f.send).not.toHaveBeenCalled();f.release();await vi.waitFor(()=>expect(f.requests()[0].state).toBe('sent'));expect(f.send).toHaveBeenCalledOnce();
+});
+it('same-second unregister and reenable of identical bytes survives a late 410',async()=>{
+ const f=await setup(false),register=()=>f.app.operations.callAsync('socket',f.viewer(),'notifications.subscribe',{sub:sub()},`register-${++serial}`,true);let serial=0;
+ expect(await register()).toMatchObject({ok:true});const before=f.s.sessions.read().push!.subs![sub().endpoint];
+ let reject!:(e:unknown)=>void;f.send.mockImplementationOnce(()=>new Promise((_r,no)=>{reject=no;}));await f.queue();f.clock.advance(0);expect(f.send).toHaveBeenCalledOnce();
+ expect(await f.app.operations.callAsync('socket',f.viewer(),'notifications.unsubscribe',{sub:sub()},'unregister',true)).toMatchObject({ok:true});expect(await register()).toMatchObject({ok:true});
+ const after=f.s.sessions.read().push!.subs![sub().endpoint];expect(after.at).toBe(before.at);expect(after.sub).toEqual(before.sub);expect(after).not.toEqual(before);
+ reject({statusCode:410});await vi.waitFor(()=>expect(f.requests()[0].state).toBe('gone'));expect(f.s.sessions.read().push!.subs![sub().endpoint]).toEqual(after);
+});
+it('transport deadline releases shutdown and queued requests never start during close',async()=>{
+ const f=await setup(false);f.seed('second');
+ f.send.mockImplementation((_sub,_payload,options)=>new Promise((_yes,no)=>{f.clock.at(f.clock.now()+(options?.timeout??60_000),()=>no(new Error('transport timed out PRIVATE')));}));
+ await f.queue();f.clock.advance(1);await f.queue(deviceRef(sub('second').endpoint),'second');expect(f.send).toHaveBeenCalledOnce();
+ let closed=false;const closing=f.app.close().then(()=>{closed=true;});f.clock.advance(14_998);await Promise.resolve();expect(closed).toBe(false);f.clock.advance(1);await closing;
+ expect(closed).toBe(true);expect(f.send).toHaveBeenCalledOnce();
+});

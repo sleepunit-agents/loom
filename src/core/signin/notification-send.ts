@@ -8,7 +8,7 @@ import { operation, OperationError } from '../operations/index.js';
 import { SharingDatabase } from '../household/sharing.js';
 import { mayAct, maySee, type Viewer } from '../../policy.js';
 import { hash, signin } from './index.js';
-import { deviceRef, notificationMember, subscription } from './notifications.js';
+import { deviceRef, notificationMember, notificationBrowserAllowed, subscription } from './notifications.js';
 
 export interface NotificationSendOptions {
   /** Trusted composition/test seam only, never operation input. */
@@ -80,7 +80,7 @@ export function installNotificationSending(app:Foundation,effects:OutsideEffects
   }
   app.operations.register(operation({name:'notifications.test',write:true,windowOnly:true,doors:['socket'],recheckPolicy:true,
     input:z.object({ref:z.string().regex(/^[0-9a-f]{64}$/)}).strict(),output:z.object({id:z.string(),state:z.literal('queued')}).strict(),
-    may:v=>{if(!allowed(v))return false;try{s.notificationBrowser(v);return true;}catch{return false;}},
+    may:v=>notificationBrowserAllowed(s,v,sharing.sharing()),
     run:(ctx,i)=>{
       const t=target(ctx.viewer.id,i.ref);if(!t)throw new OperationError('not-found','No matching notification device');
       if(rows().filter(r=>r.member===ctx.viewer.id&&r.state==='queued').length>=20)throw new OperationError('conflict','Too many pending test notifications');

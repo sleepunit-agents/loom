@@ -1,10 +1,11 @@
 /** Notification devices belong to members, independently of short-lived sessions. */
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import webpush from 'web-push';
 import type { Foundation } from '../app.js';
 import { operation, OperationError } from '../operations/index.js';
 import { SharingDatabase } from '../household/sharing.js';
-import { mayAct, maySee, type Viewer } from '../../policy.js';
+import { mayAct, maySee, type Viewer, type Sharing } from '../../policy.js';
 import type { SessionFile } from '../../ui/sessions.js';
 import { hash, signin, type Signin } from './index.js';
 
@@ -41,10 +42,16 @@ export function notificationMember(s:Signin,d:Device,f:SessionFile):string|undef
   return owners.size===1 ? [...owners][0] : undefined;
 }
 
+/** Trusted browser proof plus the central own-member policy. */
+export function notificationBrowserAllowed(s:Signin,v:Viewer,sharing:Sharing):boolean {
+  if(!mayAct(v,{member:v.id},sharing))return false;
+  try{s.notificationBrowser(v);return true;}catch{return false;}
+}
+
 export function installNotifications(app:Foundation) {
   const s=signin(app),sharing=new SharingDatabase(app.db,'');
   const allowed=(v:Viewer)=>mayAct(v,{member:v.id},sharing.sharing());
-  const browser=(v:Viewer)=>{if(!allowed(v))return false;try{s.notificationBrowser(v);return true;}catch{return false;}};
+  const browser=(v:Viewer)=>notificationBrowserAllowed(s,v,sharing.sharing());
   function read(id:string) {
     const f=s.sessions.read();
     return {member:id,devices:Object.entries(f.push?.subs??{}).filter(([,d])=>notificationMember(s,d,f)===id).map(([ep,d])=>({ref:deviceRef(ep),session:sessionRef(d.session),at:d.at,...(d.seenAt!==undefined?{seenAt:d.seenAt}:{}),...(d.device?{device:d.device}:{})})).sort((a,b)=>(b.seenAt??b.at)-(a.seenAt??a.at))};
@@ -66,7 +73,8 @@ export function installNotifications(app:Foundation) {
       const subs=f.push.subs??={},was=subs[i.sub.endpoint],same=was&&notificationMember(s,was,f)===ctx.viewer.id;
       // Quiet registration cannot take another member's device (shared tablet).
       if(was&&!same&&i.again)throw new OperationError('denied','Turn notifications on explicitly for this member');
-      subs[i.sub.endpoint]={sub:i.sub,session:proof.session,token:proof.token,member:ctx.viewer.id,at:same?was.at:s.now(),...(same&&i.again?{seenAt:s.now()}:{}),...(proof.device?{device:proof.device}:{})};
+      const registered:Device & {generation:string}={generation:randomUUID(),sub:i.sub,session:proof.session,token:proof.token,member:ctx.viewer.id,at:same?was.at:s.now(),...(same&&i.again?{seenAt:s.now()}:{}),...(proof.device?{device:proof.device}:{})};
+      subs[i.sub.endpoint]=registered;
       f.push.subs=subs;
       // Unresolved imports remain evidence, not active device capacity.
       const all=Object.entries(subs).filter(([,d])=>notificationMember(s,d,f)!==undefined).sort((a,b)=>(b[1].seenAt??b[1].at)-(a[1].seenAt??a[1].at));
