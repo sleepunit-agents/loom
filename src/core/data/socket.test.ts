@@ -130,3 +130,18 @@ it('serves ordinary generated GraphQL reads on the same authenticated websocket'
   const result = await read(ws, () => ws.send(JSON.stringify({ type: 'subscribe', id: 'read', payload: { query: '{ tasks { id title } }' } })));
   expect(result).toEqual({ type: 'next', id: 'read', payload: { data: { tasks: [{ id: 't-1', title: 'Pump' }] } } });
 });
+
+it('supplies only the upgrade viewer to context fields for both reads and live reruns', async () => {
+  const f = await setup(), ws = await f.open(undefined,{viewer:{kind:'member',id:'owner'}});
+  let suffix = 'first';
+  const { GraphQLString } = await import('graphql/index.js');
+  f.setSchema(() => new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{
+    caller:{type:GraphQLString,resolve:(_source,_args,context)=>`${context.viewer.id}:${suffix}`},
+  }})}));
+  const live = {...selection,id:'context',payload:{...selection.payload,variables:{query:'{ caller }',viewer:{kind:'member',id:'owner'}}}};
+  expect((await read(ws,()=>ws.send(JSON.stringify(live)))).payload.data.observe.patches[0].value).toEqual({caller:'sam:first'});
+  suffix='second';
+  expect((await read(ws,()=>f.live.changed())).payload.data.observe.patches).toEqual([{path:['caller'],removed:false,value:'sam:second'}]);
+  const ordinary = {type:'subscribe',id:'read-context',payload:{query:'{ caller }',variables:{viewer:{kind:'member',id:'owner'}}}};
+  expect((await read(ws,()=>ws.send(JSON.stringify(ordinary))))).toMatchObject({payload:{data:{caller:'sam:second'}}});
+});
