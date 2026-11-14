@@ -3,18 +3,22 @@ import type { State } from './model.js';
 import type { ApprovalNotice, Ask } from '../attention/role.js';
 import { approvalNoticeRecord } from '../attention/approval-notices.js';
 import { repoOf, hostOf } from './targets.js';
-/** Pre-identity JSON rows have no event key. A content/occurrence key preserves
- * identical legacy events without borrowing their shifting storage positions.
- * New events always have random permanent ids, even within the same second.
- */
-export function noticeEntries(s: State) {
+/** Assign once in the owning write/import transaction. Original source fields
+ * are retained; later source removal cannot renumber surviving events. */
+export function identifyNotices(s:State): void {
   const occurrences=new Map<string,number>();
-  return s.notices.flatMap(n=>{
-    if(n.member || !/^[a-z][a-z0-9-]{0,63}$/.test(n.agent) || !Number.isFinite(Date.parse(n.at))
-      || !(n.kind==='merge' && repoOf(n.target) || n.kind==='host' && hostOf(n.target)))return [];
+  for(const n of s.notices) {
+    if(n.id!==undefined)continue;
     const digest=createHash('sha256').update(JSON.stringify([n.at,n.agent,n.kind,n.target,n.what,n.for??null]),'utf16le').digest('hex');
     const occurrence=occurrences.get(digest)??0;occurrences.set(digest,occurrence+1);
-    return [{id:n.id??`legacy:${digest}:${occurrence}`,notice:n}];
+    n.id=`legacy:${digest}:${occurrence}`;
+  }
+}
+export function noticeEntries(s: State) {
+  return s.notices.flatMap(n=>{
+    if(!n.id || n.member || !/^[a-z][a-z0-9-]{0,63}$/.test(n.agent) || !Number.isFinite(Date.parse(n.at))
+      || !(n.kind==='merge' && repoOf(n.target) || n.kind==='host' && hostOf(n.target)))return [];
+    return [{id:n.id,notice:n}];
   });
 }
 export function noticeSnapshot(s:State): ApprovalNotice[] {

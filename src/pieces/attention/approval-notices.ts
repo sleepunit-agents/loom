@@ -31,8 +31,16 @@ export function approvalNoticeFiling(db: Db): Pick<ApprovalAskFiling,'syncNotice
     for(const row of db.prepare('SELECT id,record FROM attention_asks').all() as {id:string;record:string}[]) {
       const old=JSON.parse(row.record) as Ask;
       if(!old.sourceManaged || old.source.kind!=='piece' || old.source.id!=='approvals-notices' || records.has(row.id))continue;
+      const read=db.prepare('SELECT 1 FROM attention_read_marks WHERE ask=? LIMIT 1').get(row.id);
+      // Read facts reference this row. Keep a hidden word-free tombstone rather
+      // than deleting/reassigning those facts or failing the next owning write.
+      if(read && old.ask==='Reported step no longer retained' && old.resolution==='Continue in Approvals')continue;
       dirty=true;
-      if(apply){db.prepare('DELETE FROM attention_asks WHERE id=?').run(row.id);ctx.changed('attention.ask',row.id);}
+      if(apply){
+        if(read)db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify({...old,ask:'Reported step no longer retained',resolution:'Continue in Approvals'}),row.id);
+        else db.prepare('DELETE FROM attention_asks WHERE id=?').run(row.id);
+        ctx.changed('attention.ask',row.id);
+      }
     }
     return dirty;
   };

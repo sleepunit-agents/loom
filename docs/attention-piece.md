@@ -350,13 +350,16 @@ records a source claim; it does not prove execution. FYIs never count as
 needs-you, accept answers, spend approvals or deliver replies.
 
 New events receive permanent random ids, independent of numeric storage rows
-and registry retry receipts. Pre-identity imported events use a deterministic
-content/occurrence key (identical legacy events remain distinct). Prepending
+and registry retry receipts. Pre-identity imported events receive a deterministic
+content/occurrence key once in the owning write transaction (identical legacy
+events remain distinct); this key is persisted before filing and never
+recomputed after source removal. Prepending
 and bounded trimming cannot shift retained identities. The existing importer
 keeps original notices losslessly and leaves the source untouched; startup
 uses the same owning snapshot capability to file offline/imported facts.
 Owning writes and projections publish atomically; conflicts roll back both.
-Removed source events leave the FYI view, preserving existing read facts.
+Removed source events leave the FYI view, preserving existing read facts
+through a hidden fixed-word tombstone when a read fact references the row.
 No real import or live cutover is part of this change.
 
 Only validated merge/host notices are projected. Unknown/malformed legacy

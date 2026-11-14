@@ -1,5 +1,5 @@
 import { registerExportFilter, privateExportCopy, type Db } from '../../core/index.js';
-import { noticeEntries } from './notices.js';
+import { identifyNotices, noticeEntries } from './notices.js';
 import { empty, type State, type Approval, type Rule, type Standing } from './model.js';
 export const ruleId = (r: Rule | Standing) => 'id' in r ? r.id : `${r.person ? `grant:${r.person}:` : 'rule:'}${r.kind}:${r.scope}`;
 export function load(db: Db): State {
@@ -11,6 +11,7 @@ export function load(db: Db): State {
 /** Registry and offline importer own the transaction. Receipt history is never trimmed. */
 export function persist(db: Db, s: State, now: number): {type:string;id:string}[] {
   const changes: {type:string;id:string}[] = [];
+  identifyNotices(s);
   const oldNotices=new Map(noticeEntries(load(db)).map(({id,notice})=>[id,JSON.stringify(notice)]));
   for(const {id,notice} of noticeEntries(s)) {
     if(oldNotices.get(id)!==JSON.stringify(notice))changes.push({type:'approval.notice',id});

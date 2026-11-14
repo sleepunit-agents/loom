@@ -57,7 +57,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
     return {id:a.id,active:stateOf(a,ctx.now)==='pending',...audience,ask:words.title,
       ...(a.why?{why:a.why}:{}),...(words.if_yes??a.if_yes?{if_yes:words.if_yes??a.if_yes}:{}),...(words.if_no??a.if_no?{if_no:words.if_no??a.if_no}:{}),answers:'yes-no' as const};
   }));
-    return check ? !!(notices || asks) : undefined;
+    return check ? !!(notices || asks || s.notices.some(n=>!n.id)) : undefined;
   };
   attentionConnections.set(operations, source=>{
     if (filing) return;
@@ -77,7 +77,7 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
       const name = check?'approvals.attentionPending':'approvals.reconcileAttention';
       operations.register(operation({name,write:!check,doors:['direct'],input:z.object({}).strict(),output:z.unknown(),
         may:v=>v.kind==='service' && v.id==='approvals' && mayAct(v,{type:'approval'},sharing(),'act',name),
-        run(ctx){return file(ctx,load(db),check) ?? false;}}));
+        run(ctx){const s=load(db);if(check)return file(ctx,s,true) ?? false;flush(s,ctx);return true;}}));
     }
   });
   const flush = (s: State, ctx: Context) => { for (const change of persist(db,s,ctx.now)) ctx.changed(change.type,change.id); file(ctx,s); };

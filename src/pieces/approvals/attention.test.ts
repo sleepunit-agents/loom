@@ -11,6 +11,7 @@ import { approvalAskId } from '../attention/role.js';
 import { installApprovals } from './index.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
 import { load, persist } from './store.js';
+import type { Ask } from '../attention/role.js';
 import type { Approval } from './model.js';
 const dirs:string[]=[],closes:Array<()=>Promise<void>>=[];
 afterEach(async()=>{for(const close of closes.splice(0))await close();for(const d of dirs.splice(0))rmSync(d,{recursive:true,force:true});});
@@ -193,14 +194,14 @@ it('files each tell event atomically as fixed scoped FYI, with permanent per-mem
   expect(s.call('approvals.set-rule',{kind:'merge',scope:'github:acme/*',tier:'tell'}).ok).toBe(true);
   const input={kind:'merge',target:card().target,what:'Do not copy these source words'};
   const first=s.call('approvals.tell',input,agent,'tell-first');expect(first.ok).toBe(true);
-  const entries=()=>s.app.db.prepare("SELECT record FROM attention_asks WHERE id LIKE 'approval-notice:%'").all().map((r:any)=>JSON.parse(r.record));
+  const entries=()=>s.app.db.prepare("SELECT record FROM attention_asks WHERE id LIKE 'approval-notice:%'").all().map(r=>JSON.parse((r as {record:string}).record) as Ask);
   const original=entries()[0];expect(original).toMatchObject({agent:'art',state:'resolved',ask:'Merge reported in Approvals',source:{kind:'piece',id:'approvals-notices'}});
   expect(JSON.stringify(original)).not.toContain(input.what);expect(JSON.stringify(original)).not.toContain(input.target);
   expect(s.call('attention.get',{id:original.id},pollock).ok).toBe(false);
   expect(s.call('attention.markRead',{id:original.id}).ok).toBe(true);
   expect(s.call('approvals.tell',input,agent,'tell-first')).toEqual(first);expect(entries()).toHaveLength(1);
   expect(s.call('approvals.tell',input,agent,'tell-second').ok).toBe(true);expect(entries()).toHaveLength(2);
-  expect(entries().find((n:any)=>n.id===original.id)).toEqual(original);
+  expect(entries().find(n=>n.id===original.id)).toEqual(original);
   expect(s.call('attention.answer',{id:original.id,answer:{kind:'yes'}}).ok).toBe(false);
   expect(s.call('attention.resolve',{id:original.id,reason:'replace'}).ok).toBe(false);
   expect(s.call('attention.raise',{id:'approval-notice:future',agent:'art',ask:'fake',source:{kind:'piece',id:'approvals-notices'}},agent).ok).toBe(false);
@@ -232,4 +233,49 @@ it('rolls back the owning tell when its permanent projection conflicts',async()=
   const prior=load(s.app.db).notices;
   expect(s.call('approvals.tell',{kind:'merge',target:card().target,what:'Will roll back'},{kind:'agent',id:'art'})).toMatchObject({ok:false,code:'conflict'});
   expect(load(s.app.db).notices).toEqual(prior);
+});
+
+it('excludes private/unknown source notices and removes trimmed FYIs without reassigning read marks',async()=>{
+  const s=await setup(),agent:Viewer={kind:'agent',id:'art'};
+  expect(s.call('approvals.set-rule',{kind:'merge',scope:'github:acme/*',tier:'tell'}).ok).toBe(true);
+  const input={kind:'merge',target:card().target,what:'Public source'};
+  expect(s.call('approvals.tell',input,agent).ok).toBe(true);
+  const first=s.types.get('attention.ask')!.ids().find(id=>id.startsWith('approval-notice:'))!;
+  expect(s.call('attention.markRead',{id:first}).ok).toBe(true);
+  for(let i=0;i<50;i++){const r=s.call('approvals.tell',input,agent);expect(r,JSON.stringify(r)).toMatchObject({ok:true});}
+  expect(s.types.get('approval.notice')!.ids()).toHaveLength(50);
+  expect(s.types.get('attention.ask')!.ids().filter(id=>id.startsWith('approval-notice:')&&s.types.get('attention.ask')!.read(id,owner))).toHaveLength(50);
+  expect(s.call('attention.get',{id:first}).ok).toBe(false);
+  expect(s.app.db.prepare('SELECT count(*) AS n FROM attention_read_marks').get()).toEqual({n:1});
+  const state=load(s.app.db);state.notices.unshift({...state.notices[0],id:'private-notice',member:'pollock',what:'Private words'}, {...state.notices[0],id:'unknown-notice',kind:'secret-output',what:'One-time output'});
+  s.app.db.transaction(()=>persist(s.app.db,state,s.app.operations.clock.now()))();expect(s.reconcile().ok).toBe(true);
+  const rows=s.types.get('approval.notice')!.ids().map(id=>s.types.get('approval.notice')!.read(id,owner));
+  expect(JSON.stringify(rows)).not.toContain('Private words');expect(JSON.stringify(rows)).not.toContain('One-time output');
+  const fyis=s.types.get('attention.ask')!.ids().map(id=>s.types.get('attention.ask')!.read(id,owner));
+  expect(JSON.stringify(fyis)).not.toContain('Private words');expect(JSON.stringify(fyis)).not.toContain('One-time output');
+});
+
+it('persists legacy identities before filing, retaining the second duplicate after the first is removed',async()=>{
+  const s=await setup(),n={at:'2026-11-13T00:00:00Z',agent:'art',kind:'merge',target:card().target,what:'Same legacy event'};
+  // Exercise an actual pre-identity database, without persist assigning ids first.
+  for(let i=0;i<2;i++)s.app.db.prepare('INSERT INTO approvals_notices VALUES (?,?)').run(i,JSON.stringify(n));
+  expect(s.reconcile().ok).toBe(true);
+  const initial=load(s.app.db).notices;expect(initial[0].id).toBeTruthy();expect(initial[1].id).not.toBe(initial[0].id);
+  const {approvalNoticeId}=await import('../attention/approval-notices.js');
+  const first=approvalNoticeId(initial[0].id!),second=approvalNoticeId(initial[1].id!);
+  expect(s.call('attention.markRead',{id:first}).ok).toBe(true);
+  const state=load(s.app.db);state.notices.shift();state.notices.unshift({...n,id:'explicit-identical'});
+  s.app.db.transaction(()=>persist(s.app.db,state,s.app.operations.clock.now()))();expect(s.reconcile().ok).toBe(true);
+  expect(s.call('attention.get',{id:first}).ok).toBe(false);expect(s.call('attention.get',{id:second}).ok).toBe(true);
+  const mark=s.app.db.prepare('SELECT ask FROM attention_read_marks').all();expect(mark).toEqual([{ask:first}]);
+  expect(s.call('approvals.attentionPending',{}, {kind:'service',id:'approvals'})).toMatchObject({ok:true,value:false});
+});
+
+it('files valid owning host notices with fixed FYI text and no target or source-word copying',async()=>{
+  const s=await setup();const state=load(s.app.db);
+  state.notices=[{at:'2026-11-13T00:00:00Z',agent:'art',kind:'host',target:'restart:fixture.service',what:'Source-only host wording'}];
+  s.app.db.transaction(()=>persist(s.app.db,state,s.app.operations.clock.now()))();expect(s.reconcile().ok).toBe(true);
+  const id=s.types.get('attention.ask')!.ids().find(id=>id.startsWith('approval-notice:'))!;
+  const result=s.call('attention.get',{id});expect(result).toMatchObject({ok:true,value:{ask:'Host step reported in Approvals',state:'resolved',agent:'art'}});
+  expect(JSON.stringify(result)).not.toContain('fixture.service');expect(JSON.stringify(result)).not.toContain('Source-only host wording');
 });

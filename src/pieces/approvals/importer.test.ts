@@ -23,7 +23,7 @@ function setup(){
 }
 it('preserves every authority collection and maps conversation scope without title guessing',()=>{
   const a=setup();importApprovals(a.db,a.source,now,{projects:{[receipt.conversation]:'pond'}});
-  expect(load(a.db)).toEqual({approvals:[{...receipt,agent:'art',project:'pond'}],rules:[rule],grants:[{...rule,person:'loren'}],standing:[standing],notices:[notice],audit:[audit]});
+  expect(load(a.db)).toEqual({approvals:[{...receipt,agent:'art',project:'pond'}],rules:[rule],grants:[{...rule,person:'loren'}],standing:[standing],notices:[{...notice,id:expect.stringMatching(/^legacy:/)}],audit:[audit]});
   const b=setup();importApprovals(b.db,b.source,now);expect(load(b.db).approvals[0]).not.toHaveProperty('project');
 });
 it.each(['grants','standing'])('refuses explicit null %s before schema creation',field=>{

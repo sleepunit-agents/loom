@@ -154,6 +154,31 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.getByRole('button',{name:/^Answered/}).click();
     expect(await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).count()).toBe(0);
     await b.locator('.loom-split').getByRole('button',{name:/^Needs you/}).click();
+    // A real tell event files a stable FYI across both windows and opens its owner.
+    expect(loom.operations.call('direct',owner,'approvals.set-rule',{kind:'merge',scope:'github:acme/*',tier:'tell'},'inbox-notice-rule').ok).toBe(true);
+    expect(loom.operations.call('direct',{kind:'agent',id:'art'},'approvals.tell',{kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,what:'Reported fixture page fix'},'inbox-approval-notice').ok).toBe(true);
+    await Promise.all([a.goto(`${loom.url}/p/inbox-preview`),b.goto(`${loom.url}/p/inbox-preview`)]);
+    for(const page of [a,b])await page.getByRole('button',{name:/^FYI/}).click();
+    const noticeRow=(page:typeof a)=>page.locator('[data-split-row]').filter({hasText:'Merge reported in Approvals'});
+    await expect.poll(()=>noticeRow(b).getAttribute('data-unread')).toBe('true');
+    await noticeRow(a).click();
+    await expect.poll(()=>noticeRow(b).getAttribute('data-unread')).toBe(null);
+    await a.getByRole('button',{name:'Open Approvals',exact:true}).click();
+    await expect.poll(()=>a.locator('[data-split-row]').filter({hasText:'Reported fixture page fix'}).count()).toBe(1);
+    expect(new URL(a.url()).pathname).toBe('/p/approvals-preview/notices');
+    await noticeRow(b).click();
+    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]) {
+      await b.setViewportSize({width,height:900});
+      await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      await b.screenshot({path:join(shots,`inbox-approval-notice-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+      await a.setViewportSize({width,height:900});
+      await a.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
+      await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
+      await a.screenshot({path:join(shots,`approvals-reported-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+    }
+    await b.setViewportSize({width:1280,height:900});
+    await b.goto(`${loom.url}/p/inbox-preview`);
     // An owning Clock outcome produces the real managed notice; acknowledgement leaves work alone.
     const wakeResult=loom.operations.call('direct',owner,'clock.in',{agent:'art',prompt:'Fixture scheduled work',note:'Inbox alert fixture',when:'1m'},'inbox-clock-wake');
     if(!wakeResult.ok)throw Error(wakeResult.message);
