@@ -1,7 +1,7 @@
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -17,6 +17,7 @@ afterEach(async () => { for (const close of closes.splice(0).reverse()) await cl
 const owner: Viewer = { kind: 'member', id: 'jonathan' }, art: Viewer = { kind: 'agent', id: 'art' };
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'profile-')); fixture(home);
+  mkdirSync(join(home, 'agents', 'art'), { recursive: true }); writeFileSync(join(home, 'agents', 'art', 'IDENTITY.md'), '# Art\nPrivate creed, never its profile.\n');
   const clock = new FakeClock(), app = await startLoom({ home, next: true, clock, install: installFixture, stdout: () => {}, authenticate: () => ({ viewer: owner, valid: () => true }) });
   closes.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
   const db = new HouseholdDatabase(app.db);
@@ -37,7 +38,7 @@ it('preserves owner-only edit/request and scoped read across every door, without
   expect(call(owner, 'setProfile', { agent: 'art', text: '  Owner\n words.  ' })).toEqual({ ok: true, value: { agent: 'art', description: 'Owner words.' } });
   expect(db.document()).toEqual({ ...before, about: { art: 'Owner words.', mark: 'Other.' } });
   expect(call(owner, 'setProfile', { agent: 'art', text: 'x'.repeat(601) })).toMatchObject({ code: 'invalid' });
-  expect(call(owner, 'setProfile', { agent: 'unknown', text: 'No' })).toMatchObject({ code: 'not-found' });
+  expect(call(owner, 'setProfile', { agent: 'unknown', text: 'No' })).toMatchObject({ code: 'denied' });
   expect(call(owner, 'setProfile', { agent: 'art', text: '' })).toEqual({ ok: true, value: { agent: 'art' } });
   expect(call({ kind: 'member', id: 'pollock' }, 'profile', { agent: 'pond-bot' })).toEqual({ ok: true, value: { agent: 'pond-bot' } });
   expect(call({ kind: 'member', id: 'pollock' }, 'profile', { agent: 'art' })).toMatchObject({ code: 'denied' });
@@ -81,11 +82,11 @@ it('projects safe scoped Live records and schedules expiry without a poller', as
   const type = types.get('household.profile')!;
   call(owner, 'requestProfile', { agent: 'art' });
   const record = type.read('art', art)!;
-  expect(record).toEqual({ id: 'art', agent: 'art', requestedAt: new Date(clock.now()).toISOString() });
+  expect(record).toEqual({ id: 'art', agent: 'art', canEdit: false, requestedAt: new Date(clock.now()).toISOString() });
   expect(type.expires!(record)).toBe(clock.now() + 24 * 3_600_000);
   expect(type.read('art', { kind: 'agent', id: 'mark' })).toBeUndefined();
   expect(type.read('unknown', owner)).toBeUndefined();
-  clock.advance(24 * 3_600_000); expect(type.read('art', art)).toEqual({ id: 'art', agent: 'art' });
+  clock.advance(24 * 3_600_000); expect(type.read('art', art)).toEqual({ id: 'art', agent: 'art', canEdit: false });
   db.change(home, raw => { (raw.members as Array<{ person: string; agents: string[] }>).find(m => m.person === 'pollock')!.agents = []; });
   expect(type.read('pond-bot', { kind: 'member', id: 'pollock' })).toBeUndefined();
 });
@@ -106,5 +107,22 @@ it('keeps a scoped Live subscription isolated from other agents and refreshes re
   expect(call(owner, 'requestProfile', { agent: 'art' }).ok).toBe(true);
   expect(await next()).toMatchObject({ kind: 'put', record: { id: 'art', requestedAt: new Date(clock.now()).toISOString() } });
   clock.advance(24 * 3_600_000);
-  expect(await next()).toEqual({ kind: 'put', type: 'household.profile', scope: 'art', record: { id: 'art', agent: 'art', description: 'Art only.' } });
+  expect(await next()).toEqual({ kind: 'put', type: 'household.profile', scope: 'art', record: { id: 'art', agent: 'art', description: 'Art only.', canEdit: true } });
+});
+
+it('lets scoped agent owners edit/request only their own profiles and never changes a creed', async () => {
+  const { home, call, db } = await setup(), member: Viewer = { kind: 'member', id: 'pollock' };
+  const path = join(home, 'agents', 'art', 'IDENTITY.md'), creed = readFileSync(path);
+  for (const role of ['member', 'owner']) {
+    db.change(home, raw => { (raw.members as Array<{ person: string; role: string }>).find(m => m.person === 'pollock')!.role = role; });
+    expect(call(member, 'setProfile', { agent: 'pond-bot', text: 'Scoped owner words.' })).toMatchObject({ ok: true });
+    expect(call(member, 'requestProfile', { agent: 'pond-bot' })).toMatchObject({ ok: true });
+    expect(call({ kind: 'agent', id: 'pond-bot' }, 'describeSelf', { text: 'I help on Pond.' })).toMatchObject({ ok: true });
+    for (const operation of ['setProfile', 'requestProfile']) expect(call(member, operation, { agent: 'art', ...(operation === 'setProfile' ? { text: 'No' } : {}) })).toMatchObject({ code: 'denied' });
+  }
+  call(owner, 'setProfile', { agent: 'art', text: 'Owner profile.' });
+  call(owner, 'requestProfile', { agent: 'art' });
+  expect(call(art, 'describeSelf', { text: 'Agent reply.' })).toMatchObject({ ok: true });
+  call(owner, 'setProfile', { agent: 'art', text: '' });
+  expect(readFileSync(path)).toEqual(creed);
 });

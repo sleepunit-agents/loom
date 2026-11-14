@@ -12,7 +12,7 @@ const agent = z.string().regex(AGENT_NAME);
 export function installHouseholdProfiles(app: Foundation, home: string) {
   const store = new HouseholdDatabase(app.db), sharing = new SharingDatabase(app.db, home);
   const known = (id: string) => !!store.household(home)?.agents.includes(id);
-  const owner = (v: Viewer) => mayAct(v, {}, sharing.sharing(), 'household');
+  const setup = (v: Viewer, i: { agent: string }) => mayAct(v, { agent: i.agent, type: 'household.profile' }, sharing.sharing(), 'agent-setup');
   function read(id: string) {
     if (!known(id)) throw new OperationError('not-found', 'Unknown household agent');
     const raw = store.document()!, text = object(raw.about)[id], at = object(raw.aboutAsk)[id];
@@ -39,10 +39,10 @@ export function installHouseholdProfiles(app: Foundation, home: string) {
     may: (v, i) => maySee(v, { agent: i.agent, type: 'household.profile' }, sharing.sharing()), run: (_ctx, i) => read(i.agent),
   }));
   app.operations.register(operation({ name: 'household.setProfile', write: true,
-    input: z.object({ agent, text: z.string().transform(normalize).pipe(z.string().max(600)) }).strict(), may: owner,
+    input: z.object({ agent, text: z.string().transform(normalize).pipe(z.string().max(600)) }).strict(), may: (v, i) => setup(v, i),
     run: (ctx, i) => { const result = change(i.agent, i.text); ctx.changed('household.profile', i.agent); return result; },
   }));
-  app.operations.register(operation({ name: 'household.requestProfile', write: true, input: z.object({ agent }).strict(), may: owner,
+  app.operations.register(operation({ name: 'household.requestProfile', write: true, input: z.object({ agent }).strict(), may: (v, i) => setup(v, i),
     run: (ctx, i) => { const result = change(i.agent, undefined, true); ctx.changed('household.profile', i.agent); return result; },
   }));
   app.operations.register(operation({ name: 'household.describeSelf', write: true,
@@ -55,7 +55,7 @@ export function installHouseholdProfiles(app: Foundation, home: string) {
     },
   }));
   app.live.register({ name: 'household.profile', ids: scope => scope === undefined ? store.household(home)?.agents ?? [] : [scope],
-    read: (id, v) => known(id) && maySee(v, { agent: id, type: 'household.profile' }, sharing.sharing()) ? { id, ...read(id) } : undefined,
+    read: (id, v) => known(id) && maySee(v, { agent: id, type: 'household.profile' }, sharing.sharing()) ? { id, ...read(id), canEdit: setup(v, { agent: id }) } : undefined,
     inScope: (r, scope) => scope === undefined || r.id === scope,
     expires: r => typeof r.requestedAt === 'string' ? Date.parse(r.requestedAt) + ABOUT_ASK_MS : undefined,
   });

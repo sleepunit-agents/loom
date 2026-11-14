@@ -56,7 +56,7 @@ and [next-signin.md](next-signin.md). API operations are posted to
 | `add-agent` | `household.addAgent` covers registration only; `household.bootstrapAgent` creates context/creed/rules; Setup selects first-token creation and shows an explicit next-mode harness snippet. Appearance remains **pending** |
 | `create-token`, `revoke-token` on agent Setup | `token.create` / `token.revoke` in `/p/setup-preview`; single-send mint and confirmed optional passkey/device cascade; newly created agent selected for deliberate first-token mint |
 | `face-set`, `mark-set` | **Pending** appearance operations/records and Setup controls |
-| `about-set`, `about-ask` | `household.setProfile` / `household.requestProfile`, generated `loom-household` bindings and owner Setup controls; `household.describeSelf` answers once as the authenticated agent. Explicit offline `describe_self` still refuses app access |
+| `about-set`, `about-ask` | `household.setProfile` / `household.requestProfile`, generated `loom-household` bindings and agent-owner Setup controls; `household.describeSelf` answers once as the authenticated agent. Explicit offline `describe_self` still refuses app access |
 | `identity-set`, `identity-section-set`, `identity-section-add` | **Pending** Setup/identity behavior reconciliation; no next page editor. The household spec describes Setup identity as read-only |
 | `backup-set`, Setup health/backup status | **Pending** next backup settings/status integration; no new-side invocation of the old backup program |
 | `person-add` | `mind.personAdd`; People screen handles the new-side form |

@@ -670,9 +670,9 @@ project the imported `about` description and an unexpired `aboutAsk` timestamp,
 without returning the household envelope or reading an identity file. Only callers
 who can see that agent through central policy can read its profile.
 
-Household owners use `household.setProfile({agent,text})` to set/clear a description
+An agent’s owners use `household.setProfile({agent,text})` to set/clear a description
 (up to 600 normalized characters), or `household.requestProfile({agent})` to ask
-for one. Both have Setup controls. The authenticated agent answers with
+for one. Both have Setup controls, available to scoped owners for their agents even without household administration. Central policy’s agent-setup action supplies this authority. The authenticated agent answers with
 `household.describeSelf({text})`: no agent selector, at most 300 characters and
 two sentences, only once during the next 24 hours. Blank replies refuse without
 consuming the request. Owner edits close an open request. Future or expired imported

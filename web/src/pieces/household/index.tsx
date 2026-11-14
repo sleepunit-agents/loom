@@ -5,7 +5,7 @@ import AccessAdmin from './access';
 import BootstrapAgent, { createdFromChange } from './bootstrap';
 import { accountInput, memberInput, mutation, idle, frozen, type Household, type Project } from './model';
 const noop = () => () => {};
-interface Profile extends LiveRecord { id: string; agent: string; description?: string; requestedAt?: string }
+interface Profile extends LiveRecord { id: string; agent: string; description?: string; requestedAt?: string; canEdit: boolean }
 function CheckList({ name, choices, selected = [] }: { name: string; choices: string[]; selected?: string[] }) {
   return <div className="grid gap-2">{choices.map(id => <label key={id} className="flex items-center gap-2"><input type="checkbox" name={name} value={id} defaultChecked={selected.includes(id)} />{id}</label>)}</div>;
 }
@@ -15,33 +15,37 @@ export default function SetupApp({ go = () => {}, active = true }: { path?: stri
   const held = useSyncExternalStore(mutation.subscribe, mutation.getSnapshot);
   const state = useSyncExternalStore(held.request?.subscribe ?? noop, held.request?.getSnapshot ?? (() => idle));
   const h = feed.records[0], enabled = active && feed.status === 'live' && !!h && !frozen(state);
-  const submit = (label: string, operation: string, input: (form: FormData) => unknown) => (event: FormEvent<HTMLFormElement>) => {
+  const submit = (label: string, operation: string, input: (form: FormData) => unknown, available = enabled) => (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const active = mutation.getSnapshot().request;
-    if (!enabled || active && frozen(active.getSnapshot())) return;
+    if (!available || active && frozen(active.getSnapshot())) return;
     const data = input(new FormData(event.currentTarget));
     mutation.set(call(operation, data), label);
     event.currentTarget.querySelectorAll<HTMLInputElement>('input[data-confirm]').forEach(input => { input.checked = false; });
   };
-  const form = (label: string, operation: string, input: (data: FormData) => unknown, children: ReactNode, available = true) => <form aria-label={label} onSubmit={submit(label, operation, input)} className="grid gap-3 rounded-xl border p-4"><fieldset disabled={!enabled || !available} className="grid min-w-0 gap-3">{children}<Button type="submit" variant="outline">{label}</Button></fieldset></form>;
+  const form = (label: string, operation: string, input: (data: FormData) => unknown, children: ReactNode, available = true, writable = enabled) => <form aria-label={label} onSubmit={submit(label, operation, input, available && writable)} className="grid gap-3 rounded-xl border p-4"><fieldset disabled={!writable || !available} className="grid min-w-0 gap-3">{children}<Button type="submit" variant="outline">{label}</Button></fieldset></form>;
+  const ownProfileChange = profiles.records.some(p => p.canEdit && (held.label === `Save description for ${p.agent}` || held.label === `Ask ${p.agent} for a description`));
+  const showChange = !!h && feed.status !== 'denied' || profiles.status === 'live' && ownProfileChange;
+  const canRetry = active && (feed.status === 'live' && !!h || profiles.status === 'live' && ownProfileChange);
   const link = (label: string, path: string) => <Button variant="outline" onClick={() => go(path)}>{label}</Button>;
   return <AppFrame title="Household setup" where="Setup" go={go}>
     <div className="grid min-w-0 gap-6 overflow-auto p-4 sm:p-6">
-      <p>Manage the household’s members, agent ownership and project access.</p>
-      {feed.status === 'loading' ? <Loading label="Opening household…" /> : feed.status === 'denied' ? <Error text="Household setup is only available to household owners." /> : !h ? <Empty title="Household setup is unavailable" text="Sign in as a household owner and check the connection." /> : <>
+      <p>Manage agent profiles and household access.</p>
+        {showChange && held.request && <section aria-label="Last setup change" className="grid gap-2" aria-live="polite"><p>{held.label}</p>{state.pending ? <Loading label={state.status === 'offline' ? 'Waiting for connection…' : 'Saving…'} /> : state.result?.ok ? <p role="status">Saved</p> : state.result && <><Error title="Couldn’t save" text={`${state.result.code}: ${state.result.message}`} />{state.result.code === 'unavailable' && <><p>The result is uncertain. Retry this change before making another.</p><Button disabled={!canRetry} onClick={() => { if (canRetry) held.request?.retry?.(); }}>Retry this change</Button></>}</>}</section>}
+      {profiles.status === 'live' && profiles.records.length > 0 && <section aria-label="Agent profiles" className="grid gap-4"><h2 className="text-xl font-semibold">Agent profiles</h2>{profiles.records.map(profile => <article key={profile.agent} className="grid gap-2"><h3 className="font-semibold">{profile.agent}</h3><p>{profile.description ?? 'No profile description.'}</p>
+        {profile.requestedAt && <p>A description has been requested. The agent has 24 hours to answer once; saving your own words closes the request.</p>}
+        {profile.canEdit && <>
+          {form(`Save description for ${profile.agent}`, 'household.setProfile', data => ({ agent: profile.agent, text: data.get('text') }), <label key={profile.description ?? ''} className="grid gap-1">Profile description<Input name="text" defaultValue={profile.description ?? ''} maxLength={600} /><span className="text-sm text-muted-foreground">Your words about this agent, visible to people who can see it. This does not edit its creed. Leave empty to clear.</span></label>, true, active && !frozen(state))}
+          {form(`Ask ${profile.agent} for a description`, 'household.requestProfile', () => ({ agent: profile.agent }), <p>Let this agent write one or two sentences about itself. This request expires after 24 hours.</p>, true, active && !frozen(state))}
+        </>}
+      </article>)}</section>}
+      {feed.status === 'loading' ? <Loading label="Opening household…" /> : feed.status === 'denied' ? <Error text="Household access administration requires a household owner." /> : !h ? <Empty title="Household administration is unavailable" text="Sign in as a household owner and check the connection." /> : <>
         {feed.status !== 'live' && <Error text="Connection lost. Changes are disabled until the household reconnects." />}
-        {held.request && <section aria-label="Last setup change" className="grid gap-2" aria-live="polite"><p>{held.label}</p>{state.pending ? <Loading label={state.status === 'offline' ? 'Waiting for connection…' : 'Saving…'} /> : state.result?.ok ? <p role="status">Saved</p> : state.result && <><Error title="Couldn’t save" text={`${state.result.code}: ${state.result.message}`} />{state.result.code === 'unavailable' && <><p>The result is uncertain. Retry this change before making another.</p><Button disabled={!active || feed.status !== 'live'} onClick={() => { if (active) held.request?.retry?.(); }}>Retry this change</Button></>}</>}</section>}
+
         <BootstrapAgent enabled={enabled && active} />
         <AccessAdmin active={active} firstAgent={createdFromChange(held.label, state)?.agent} />
         <section className="grid gap-3"><h2 className="text-xl font-semibold">Agents</h2><p>Default agent: {h.defaultAgent}</p>
-          {h.agents.map(agent => { const profile = profiles.records.find(p => p.agent === agent); return <section key={agent} className="grid min-w-0 gap-2"><h3 className="font-semibold">{agent}</h3>
-            {profiles.status === 'live' && profile ? <>
-              <p>{profile?.description ?? 'No profile description.'}</p>
-              {profile?.requestedAt && <p>A description has been requested. The agent has 24 hours to answer once; saving your own words closes the request.</p>}
-              {form(`Save description for ${agent}`, 'household.setProfile', data => ({ agent, text: data.get('text') }), <label key={profile?.description ?? ''} className="grid gap-1">Profile description<Input name="text" defaultValue={profile?.description ?? ''} maxLength={600} /><span className="text-sm text-muted-foreground">Your words about this agent, visible to people who can see it. This does not edit its creed. Leave empty to clear.</span></label>)}
-              {form(`Ask ${agent} for a description`, 'household.requestProfile', () => ({ agent }), <p>Let this agent write one or two sentences about itself. This request expires after 24 hours.</p>)}
-            </> : <p>Profile descriptions are unavailable until connected.</p>}
-            {form(`Save accounts for ${agent}`, 'household.setAgentAccounts', data => accountInput(data, agent), <label key={(h.agentAccounts[agent]?.github ?? []).join(',')} className="grid gap-1">GitHub accounts<Input name="github" defaultValue={(h.agentAccounts[agent]?.github ?? []).join(', ')} maxLength={4000} /><span className="text-sm text-muted-foreground">Comma-separated logins used for attribution. These do not grant access.</span></label>)}</section>; })}
+          {h.agents.map(agent => <section key={agent} className="grid min-w-0 gap-2"><h3 className="font-semibold">{agent}</h3>            {form(`Save accounts for ${agent}`, 'household.setAgentAccounts', data => accountInput(data, agent), <label key={(h.agentAccounts[agent]?.github ?? []).join(',')} className="grid gap-1">GitHub accounts<Input name="github" defaultValue={(h.agentAccounts[agent]?.github ?? []).join(', ')} maxLength={4000} /><span className="text-sm text-muted-foreground">Comma-separated logins used for attribution. These do not grant access.</span></label>)}</section>)}
           {form('Register existing agent', 'household.addAgent', data => ({ agent: data.get('agent') }), <><p>Register a context already prepared in the household’s agents directory.</p><label className="grid gap-1">Agent name<Input name="agent" required pattern="[a-z][a-z0-9-]*" maxLength={40} /></label><p className="text-sm text-muted-foreground">This does not create an identity or a first token.</p></>)}
         </section>
         <section className="grid gap-4"><h2 className="text-xl font-semibold">Members</h2><p>Household owners manage every agent and membership. Scoped members keep their recorded role. At least one household owner must remain.</p>
