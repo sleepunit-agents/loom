@@ -6,12 +6,13 @@ import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
 import { dataAuthentication } from './authentication.js';
 import type { DataDatabase } from './database.js';
+import { composeDataQueries, type DataQueryExtensions } from './composition.js';
 
 /** Authenticated GraphQL HTTP door on the shared connection. Authentication is
  * supplied by the composition's session/token resolver, never a request viewer.
  * No credential, session, plumbing or service-only table enters this schema.
  */
-export function dataHttp(db: DataDatabase, authenticate: (request: Request) => Authentication | undefined = dataAuthentication(db), publicOrigin?: string) {
+export function dataHttp(db: DataDatabase, authenticate: (request: Request) => Authentication | undefined = dataAuthentication(db), publicOrigin?: string, extensions: DataQueryExtensions = {}) {
   const app = new Hono();
   app.use('*', bodyLimit({ maxSize: 1024 * 1024 }));
   app.use('*', async (c, next) => { await next(); c.header('cache-control', 'no-store'); });
@@ -33,8 +34,9 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     // Outside programs are never treated as installed services. Runner reads
     // will get a separate safe projection rather than inheriting member reads.
     if (auth.viewer.kind === 'service' || auth.viewer.kind === 'runner') return c.json({ errors: [{ message: 'Caller has no data projection' }] }, 403);
-    const schema = dataQueries(db.$client, { tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents'], visibility: taskVisibility(auth.viewer) });
+    const schema = composeDataQueries(dataQueries(db.$client, { tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents'], visibility: taskVisibility(auth.viewer) }), extensions);
     const yoga = createYoga({ schema, graphqlEndpoint: '/graphql', graphiql: false, logging: false,
+      context: () => ({ viewer: Object.freeze({ ...auth!.viewer }) }),
       cors: false, batching: false,
       plugins: [{ onExecute() { if (!auth!.valid()) throw new Error('Authentication ended'); } }],
     });

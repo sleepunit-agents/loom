@@ -143,3 +143,22 @@ same rows over actual HTTP; it does not touch a home or installed state.
 Remaining on t-2235: other outside table projections, file-backed Memory roots,
 comment counts, websocket deltas and normalized Tasks client, deleting replaced
 interim reads/tables, and configurable database providers.
+
+## Typed query extensions
+
+The fourth argument of `dataHttp(db, authenticate?, publicOrigin?, extensions?)`
+accepts `{ queryFields: [knowledge.fields, people.fields] }`. Each entry is a
+`GraphQLFieldConfigMap<unknown, DataQueryContext>`; import `DataQueryContext`
+from `src/core/data/composition.ts`. This is the composition seam for Memory's
+file-backed roots. It adds them to the generated Query in the same schema and
+HTTP door, without a second endpoint or tables copying file contents. Duplicate
+names, including a generated field name, are rejected rather than overridden.
+
+Resolvers receive `context.viewer` from the authenticated server binding. Request
+variables and GraphQL extensions cannot choose it. Each extension owns its current
+visibility and file retention checks; adding a root does not grant access to its
+source. The door's existing admission and buffered-release checks apply to the
+whole operation, including async extension results. The default composition adds
+no extension roots, and this hook does not expose additional tables or provide
+column projection, decryption, subscriptions or file watchers. The application
+composition supplies adapter factories and closes their resources at shutdown.
