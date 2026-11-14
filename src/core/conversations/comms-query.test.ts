@@ -3,7 +3,7 @@ import { eq, sql, type SQL } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { createDataSchema } from '../data/database.js';
-import { agents, conversations, household, members, messages } from '../data/schema.js';
+import { agents, conversations, household, members, messages, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { CommsQueries, commsQueryFields } from './comms-query.js';
 const clients: Database.Database[] = [];
@@ -57,11 +57,15 @@ it('loads latest message metadata without ciphertext, pages older sequences and 
   f.revoke(); expect(f.service.messages(alice, f.thread.id)).toEqual([]); expect(f.service.refs(alice, f.thread.id)).toEqual([]); expect(f.service.thread(alice, f.thread.id)).toBeNull();
 });
 it('withholds words across decryption-time changes to policy, scope, ciphertext, identity, retention or existence', async () => {
-  for (const change of ['policy', 'role', 'scope', 'ciphertext', 'sender', 'kind', 'timestamp', 'deadline', 'household', 'expiry', 'delete'] as const) {
+  for (const change of ['policy', 'role', 'scope', 'conversation', 'ciphertext', 'sender', 'kind', 'timestamp', 'deadline', 'household', 'expiry', 'delete'] as const) {
     const f = await fixture(), row = f.service.messages(owner, f.thread.id, undefined, 1)[0];
     f.onOpen(() => {
       if (change === 'role') f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'owner')).run();
       if (change === 'policy') f.revoke();
+      if (change === 'conversation') {
+        const other = f.comms.threads.conversations.open({ agent: 'art', member: 'alice', venue: 'loom', place: 'th:replacement', label: 'Replacement' });
+        f.db.update(threads).set({ conversation: other.id }).where(eq(threads.id, f.thread.id)).run();
+      }
       if (change === 'scope') f.db.update(conversations).set({ member: 'bob' }).where(eq(conversations.id, f.thread.conversation)).run();
       if (change === 'ciphertext') f.db.update(messages).set({ words: Buffer.from('Changed') }).run();
       if (change === 'sender') f.db.update(messages).set({ sender: 'bob' }).run();
