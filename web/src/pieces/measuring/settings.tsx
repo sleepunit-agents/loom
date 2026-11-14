@@ -1,4 +1,5 @@
 import { useRef, useState, type FormEvent } from 'react';
+import { readMeasuringChange } from '../../../../src/core/measuring/change';
 import { Button, Input } from '../../kit';
 
 export interface MeasuringSettings {
@@ -81,4 +82,12 @@ function Proposal({ current, propose }: {
     {result === 'sent' && <p role="status">Approval requested. Settings change only when the request is allowed.</p>}
     {result === 'failed' && <p role="alert">Could not request approval. Settings have not been changed here. Try again.</p>}
   </form>;
+}
+
+/** Bind as shared Approvals renderChange; parsing is never an Allow decision. */
+export function renderMeasuringChange(approval: {
+  kind: string; target: string; details: string; changeSummary: string | null;
+}) {
+  const change = readMeasuringChange(approval);
+  return change ? <MeasuringChange {...change} /> : null;
 }

@@ -20,8 +20,16 @@ requests can be retried. Errors are displayed without transport details.
 The server remains responsible for validating all values and authenticating
 the current household owner; hiding a form is not authorization.
 
-Inside the resulting approval card, pass `MeasuringChange` the validated
-persisted before/after from its details. The shared Approvals presentation
+The shared `approval-view` tile and `ApprovalCard` both accept
+`renderChange={renderMeasuringChange}` imported from the Measuring settings
+module. The callback validates kind/target, strict persisted before/after and
+the exact change summary using the same pure validator as the settings service
+(`src/core/measuring/change.ts`). Malformed or unrelated changes return null.
+The generic Approvals view never parses Measuring internals. Parsing for display
+does not authorize or execute the persisted operation; that remains server work.
+The callback is only invoked for a current, visible approval in a live snapshot.
+
+Alternatively, pass `MeasuringChange` validated persisted before/after. The shared Approvals presentation
 owns Allow/Deny, current access checks, stale-card failures and the result.
 Do not show this component for an unvalidated arbitrary details object.
 After the outer approval transaction commits, reload Measuring; await its
@@ -32,3 +40,7 @@ This unit implements presentation only. The shared root must mount the form
 in the owner flow and the change card in Approvals; it must not add a visible
 Measuring tile to a never-configured household. Request/operation/job dispatch
 instrumentation and generated timing reads remain separate integration work.
+
+Actual entry composition is still pending with the shared view owner. Adding the
+callback prop does not mount a tile or inline card by itself, and the reachability
+check must remain enabled until the real generated-read registration supplies it.
