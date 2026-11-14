@@ -99,7 +99,10 @@ it('rolls job, input and receipt back together on both later writes and announce
     f.app.db.exec('DROP TRIGGER abort_write');
   }
   const job = f.jobOf(f.call({}, undefined, 'runtime_inputs'));
-  expect(changed).toHaveBeenCalledExactlyOnceWith([{ type: 'runtime.job', id: job }]);
+  expect(changed.mock.calls).toEqual([
+    [[{ type: 'runtime.job', id: job }]],
+    [[{ type: 'conversation', id: 'runtime-spawns' }]],
+  ]);
 });
 it('rejects identity, authority and lifecycle injection and bounds request payloads', async () => {
   const f = await setup();
