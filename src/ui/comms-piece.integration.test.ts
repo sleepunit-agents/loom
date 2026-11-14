@@ -113,6 +113,14 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   expect(await b.getByLabel('Start retry').locator('time').getAttribute('datetime')).toBe(retryAt);
   expect(await b.getByLabel('Start retry').textContent()).toContain('CT');
   expect(await b.getByLabel('Start retry').textContent()).not.toContain('private fixture host reason');
+  // Imported-format encoding and comms-prefixed ids stay on the legacy reader.
+  const legacyRef='comms:'+'f'.repeat(64),legacy=await comms.post('art',place,{id:legacyRef,kind:'ask',ref:legacyRef,text:'Legacy imported question'});
+  loom.db.prepare('UPDATE comms_messages SET words=?,record=? WHERE thread=? AND seq=?').run(await key.seal(JSON.stringify({ask:'Legacy imported question',answers:'yes-no'})),JSON.stringify({encoding:'ask',ref:legacyRef}),place,legacy.seq);
+  loom.live.changed([{type:'message',id:`${place}/${legacy.seq}`}]);
+  for(const page of [a,b])await expect.poll(()=>page.getByText('Legacy imported question',{exact:true}).count()).toBe(1);
+  expect(await b.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(0);
+  await b.getByRole('button',{name:'Allow',exact:true}).click();
+  for(const page of [a,b])await expect.poll(()=>page.getByRole('button',{name:'Allow',exact:true}).count()).toBe(0);
   const shots=process.env.LOOM_TEST_SHOTS??resolve('artifacts/comms-app');mkdirSync(shots,{recursive:true});
   const capture=async(prefix:string,split=false)=>{for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){await b.setViewportSize({width,height:900});await b.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);if(split)await expect.poll(()=>b.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');if(prefix==='comms-menu'||prefix==='comms-hold'){await b.getByRole('button',{name:'Actions for New thread with art',exact:true}).click();await expect.poll(()=>b.getByRole('menuitem',{name:prefix==='comms-hold'?'Unpin':'Pin',exact:true}).count()).toBe(1);}if(prefix==='comms-list'||prefix==='comms-menu'){expect(await row(b).locator('.comms-agent-letter').textContent()).toBe('A');expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}await b.screenshot({path:join(shots,`${prefix}-${look}-${width}.png`),fullPage:true,animations:'disabled'});if(prefix==='comms-menu'||prefix==='comms-hold')await b.keyboard.press('Escape');}};
   await capture('comms',true);

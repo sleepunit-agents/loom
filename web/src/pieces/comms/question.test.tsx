@@ -39,3 +39,17 @@ it('coalesces double clicks and caps private replies at 4000 characters',async()
  await open();await type('x'.repeat(4001));expect(send().props.disabled).toBe(true);await act(async()=>{send().props.onClick();});expect(f.once).not.toHaveBeenCalled();
  await type();let resolve!:(v:unknown)=>void;f.once.mockReturnValue({result:new Promise(r=>{resolve=r;})});await act(async()=>{send().props.onClick();send().props.onClick();});expect(f.once).toHaveBeenCalledTimes(1);await act(async()=>{resolve({ok:false,message:'Changed'});});
 });
+
+it('expires a question received after mount at its actual deadline',async()=>{
+ await open();await publish([]);await act(async()=>{vi.advanceTimersByTime(5000);});await publish([row]);await type();await act(async()=>{vi.advanceTimersByTime(5000);});expect(tree.root.findAllByType('Textarea')).toHaveLength(0);expect(JSON.stringify(tree.toJSON())).not.toContain('PRIVATE DRAFT');
+});
+for(const cycle of ['connection','archive'])it(`invalidates a pending send across a restored ${cycle} boundary`,async()=>{
+ await open();await type();let resolve!:(v:unknown)=>void;f.once.mockReturnValue({result:new Promise(r=>{resolve=r;})});await act(async()=>{send().props.onClick();});
+ if(cycle==='connection'){await publish([row],'offline');await publish([row]);}else{await act(async()=>tree.update(h(SealedQuestion,{thread:{...thread,archived:1},seq:2,refId:'sealed'})));await act(async()=>tree.update(h(SealedQuestion,{thread,seq:2,refId:'sealed'})));}
+ expect(editor().props.value).toBe('');await act(async()=>{resolve({ok:true,value:row});});expect(f.once).toHaveBeenCalledTimes(1);
+});
+for(const verdict of ['yes','no'])for(const stale of [false,true])it(`checks the displayed yes/no question before ${verdict} (stale ${stale})`,async()=>{
+ await open();const boolean={...row,question:{...row.question,answers:'yes-no'}};await publish([boolean]);f.once.mockImplementation((op:string)=>({result:Promise.resolve({ok:true,value:op==='comms.question'?{...boolean,...(stale?{state:'answered'}:{})}:{}})}));
+ const button=tree.root.findAllByType('Button').find((b:{props:{children:unknown}})=>b.props.children===(verdict==='yes'?'Allow':'Deny'));await act(async()=>{await button.props.onClick();});
+ expect(f.once.mock.calls).toEqual(stale?[['comms.question',{ref:'sealed'}]]:[['comms.question',{ref:'sealed'}],['comms.answer',{thread:thread.id,ref:'sealed',verdict}]]);
+});

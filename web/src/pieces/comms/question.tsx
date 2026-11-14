@@ -15,21 +15,23 @@ export function SealedQuestion({thread,seq,refId}:{thread:Owner;seq:number;refId
  const identity=JSON.stringify(current);
  const draft=draftState.identity===identity?draftState.text:'';
  const setDraft=(text:string)=>setDraftState({identity,text});
- const live=useRef({current,identity,archived:thread.archived});live.current={current,identity,archived:thread.archived};
+ const boundary=JSON.stringify([identity,feed.status,thread.archived]);
+ const generation=useRef({boundary,value:0});if(generation.current.boundary!==boundary)generation.current={boundary,value:generation.current.value+1};
+ const live=useRef({current,identity,archived:thread.archived,generation:generation.current.value});live.current={current,identity,archived:thread.archived,generation:generation.current.value};
  const mounted=useRef(true),sending=useRef(false);
- useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;live.current={current:undefined,identity:'',archived:null};};},[]);
+ useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;live.current={current:undefined,identity:'',archived:null,generation:-1};};},[]);
  useEffect(()=>{setDraft('');setError('');},[identity,feed.status,thread.archived]);
- useEffect(()=>{if(!current)return;const timer=setTimeout(()=>setNow(Date.now()),Math.min(2147483647,Math.max(1,current.keepUntil-now)));return()=>clearTimeout(timer);},[current,now]);
+ useEffect(()=>{if(!current)return;const timer=setTimeout(()=>setNow(Date.now()),Math.min(2147483647,Math.max(1,current.keepUntil-Date.now())));return()=>clearTimeout(timer);},[current,now]);
  const send=async(verdict?:'yes'|'no')=>{
   const source=live.current,words=draft.trim();
   if(source.identity!==identity||sending.current||!source.current?.question||source.current.state!=='open'||source.archived!==null||source.current.keepUntil<=Date.now()||(!verdict&&(!words||draft.length>4000)))return;
   sending.current=true;setBusy(true);setError('');
   try{
    const checked=await callOnce<Question>('comms.question',{ref:refId}).result;
-   if(!mounted.current||live.current.identity!==source.identity||live.current.archived!==null)return;
+   if(!mounted.current||live.current.generation!==source.generation||live.current.identity!==source.identity||live.current.archived!==null)return;
    if(!checked.ok||JSON.stringify(checked.value)!==source.identity||checked.value.keepUntil<=Date.now()) {setError('Question changed. Check the current question before answering.');return;}
    const result=await callOnce(verdict?'comms.answer':'comms.replyToAsk',verdict?{thread:thread.id,ref:refId,verdict}:{ref:refId,text:words}).result;
-   if(!mounted.current||live.current.identity!==source.identity)return;
+   if(!mounted.current||live.current.generation!==source.generation||live.current.identity!==source.identity)return;
    if(result.ok)setDraft('');else setError(result.message);
   }finally{sending.current=false;if(mounted.current)setBusy(false);}
  };
