@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Check Clock lane reuse against current Runtime destination metadata; hold verified joins until conversation delivery can feed the existing body safely.
+- File spawned private Comms threads through unique owning metadata while preserving Runtime transport handles and execution holds.
+
 - Preserve private ordinary schedule scope and bind body schedule controls and cancellation, including command receipt replay, to fresh Runtime conversation proof and current policy.
 - Resolve unique member-private Comms ownership as metadata and refuse ambiguous or deleted Runtime routes.
 

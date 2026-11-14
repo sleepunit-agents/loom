@@ -896,7 +896,7 @@ async function commsBodyFixture(member='jonathan'){
  const body=value<{credential:string}>(await f.post(f.runner,'runtime.takeInput',{job})).credential;
  value(await f.post(f.runner,'runtime.reportJob',{job,state:'running'}));
  const record=()=>JSON.parse((f.app.db.prepare('SELECT record FROM comms_threads WHERE id=?').get(thread) as {record:string}).record);
- return {...f,thread,job,body,record};
+ return {...f,get app(){return f.app;},thread,job,body,record};
 }
 it('derives private description, title and monotonic activity from the authenticated body only',async()=>{
  const f=await commsBodyFixture();
@@ -1052,4 +1052,76 @@ it.each(['duplicate','tombstone'] as const)('refuses delivery acceptance and rec
  await expect(role.delivery.deliver({...route,text:'PRIVATE replay'})).rejects.toThrow();
  expect(runtimeStore(f.app.db).ids('job')).toHaveLength(1);
  for(const table of ['runtime_inputs','runtime_jobs','runtime_bindings','runtime_deliveries','core_operations'])expect(JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain('PRIVATE');
+});
+
+async function spawnFilingFixture(place='job-h-1862',withJob=true){
+ const f=await commsBodyFixture(),store=runtimeStore(f.app.db),conversation=store.read('job',f.job)!.conversation!;
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...job}=store.read('job',f.job)!;
+  store.put('job',{...job,imported:{history:'discard'}},f.clock.now());
+  const {changedAt:__,job:___,...binding}=store.read('binding',conversation)!;
+  store.put('binding',{...binding,venue:'spawn',place,...(withJob?{job:f.job}:{})},f.clock.now());
+ })();
+ return {...f,get app(){return f.app;},conversation};
+}
+it.each([
+ ['job-h-1862',true],['sp-0123456789abcdef01234567',true],['job-h-1862',false],
+] as const)('files the unique owning thread while preserving spawn transport %s (job %s)',async(place,withJob)=>{
+ const f=await spawnFilingFixture(place,withJob),store=runtimeStore(f.app.db);
+ const binding=store.read('binding',f.conversation)!,job=store.read('job',f.job)!;
+ const receipts=f.app.db.prepare('SELECT * FROM runtime_deliveries').all(),inputs=f.app.db.prepare('SELECT * FROM runtime_inputs').all();
+ const seen:unknown[]=[];const stop=f.app.live.observe(changes=>seen.push(...changes));cleanups.push(stop);
+ value(await f.socket('comms.change',{thread:f.thread,action:'project',project:'pond'}));
+ expect(store.read('binding',f.conversation)).toEqual({...binding,project:'pond'});
+ expect(store.read('job',f.job)).toEqual(withJob?{...job,project:'pond'}:job);
+ expect(f.record().project).toBe('pond');
+ expect(seen).toContainEqual({type:'runtime.binding',id:f.conversation});
+ if(withJob)expect(seen).toContainEqual({type:'runtime.job',id:f.job});
+ // Metadata filing never reconciles an imported job into execution authority.
+ for(const [name,input] of [['readConversation',{}],['reply',{id:'imported-filing-reply',text:'PRIVATE must stay held'}],['describeConversation',{}],['conversationStatus',{state:'working'}]] as const)
+  expect(await f.post(f.body,`runtime.${name}`,input)).toMatchObject({ok:false});
+ expect(await f.post(f.runner,'runtime.jobControl',{job:f.job})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(f.runner,'runtime.takeInput',{job:f.job})).toMatchObject({ok:false});
+ expect(f.app.db.prepare('SELECT * FROM runtime_deliveries').all()).toEqual(receipts);
+ expect(f.app.db.prepare('SELECT * FROM runtime_inputs').all()).toEqual(inputs);
+ expect(store.ids('job')).toEqual([f.job]);
+ await f.restart();
+ expect(runtimeStore(f.app.db).read('binding',f.conversation)).toEqual({...binding,project:'pond'});
+ value(await f.socket('comms.change',{thread:f.thread,action:'project',project:null}));
+ const after=runtimeStore(f.app.db);
+ expect(after.read('binding',f.conversation)).toEqual(binding);
+ expect(after.read('job',f.job)).toEqual(job);
+ expect(f.record().project).toBeUndefined();
+});
+it.each(['duplicate','deleted','missing','member','agent','binding-project','job-project','job-member','job-conversation','missing-job','venue','loom-place'] as const)('refuses %s evidence before filing a spawn owner',async drift=>{
+ const f=await spawnFilingFixture(),store=runtimeStore(f.app.db),t=f.record();
+ f.app.db.transaction(()=>{
+  if(drift==='duplicate'){
+   const copy={...t,id:'th:ambiguous-filing'};
+   f.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(copy.id,copy.member,copy.agent,copy.project??null,JSON.stringify(copy));
+  }
+  if(drift==='deleted')f.app.db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?)').run('th:deleted-filing',t.member,t.agent,t.conversation,f.clock.now());
+  if(drift==='missing')f.app.db.prepare('DELETE FROM comms_threads WHERE id=?').run(f.thread);
+  if(['member','agent','binding-project','missing-job','venue','loom-place'].includes(drift)){
+   const {changedAt:_,...b}=store.read('binding',f.conversation)!;
+   store.put('binding',{...b,...(drift==='member'?{member:'pollock'}:drift==='agent'?{agent:'mark'}:drift==='binding-project'?{project:'pond'}:drift==='missing-job'?{job:'missing-job'}:drift==='venue'?{venue:'bridge:discord'}:{venue:'loom'})},f.clock.now());
+  }
+  if(drift.startsWith('job-')){
+   const {changedAt:_,...job}=store.read('job',f.job)!;
+   store.put('job',{...job,...(drift==='job-project'?{project:'pond'}:drift==='job-member'?{member:'pollock'}:{conversation:'other-conversation'})},f.clock.now());
+  }
+ })();
+ const snapshot=()=>['comms_threads','runtime_jobs','runtime_bindings','runtime_inputs','runtime_deliveries','core_operations'].map(table=>f.app.db.prepare(`SELECT * FROM ${table}`).all());
+ const before=snapshot(),seen:unknown[]=[];const stop=f.app.live.observe(changes=>seen.push(...changes));cleanups.push(stop);
+ expect(await f.socket('comms.change',{thread:f.thread,action:'project',project:'pond'})).toMatchObject({ok:false});
+ expect(snapshot()).toEqual(before);expect(seen).toEqual([]);
+});
+it('rolls back spawn project filing across Comms, binding, job, receipt and live publication',async()=>{
+ const f=await spawnFilingFixture(),store=runtimeStore(f.app.db),binding=store.read('binding',f.conversation),job=store.read('job',f.job),thread=f.record();
+ const receipts=f.app.db.prepare('SELECT * FROM core_operations').all();
+ const seen:unknown[]=[];const stop=f.app.live.observe(changes=>seen.push(...changes));cleanups.push(stop);
+ f.app.db.exec("CREATE TRIGGER reject_spawn_filing BEFORE UPDATE ON runtime_bindings BEGIN SELECT RAISE(ABORT,'interrupted'); END");
+ expect(await f.socket('comms.change',{thread:f.thread,action:'project',project:'pond'})).toMatchObject({ok:false});
+ expect(store.read('binding',f.conversation)).toEqual(binding);expect(store.read('job',f.job)).toEqual(job);expect(f.record()).toEqual(thread);
+ expect(f.app.db.prepare('SELECT * FROM core_operations').all()).toEqual(receipts);expect(seen).toEqual([]);
 });
