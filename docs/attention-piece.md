@@ -255,11 +255,26 @@ These gaps remain part of the final old-to-new reconciliation before closing t-2
 
 A member-private conversation ask accepts up to 4000 typed characters through the existing window/socket-only `comms.replyToAsk({ref,text})`. Display confirmation and an immediate fresh `attention.get` use the same navigation, connection and shared pending-write guard as public answers. There are no private Yes/No, Done or Dismiss controls. Source-managed and waiting decisions keep their owning actions. Private drafts stay in component state, survive a refused send while the reader stays mounted, and disappear on navigation/reload. They never use the public device draft store. Private sends use `callOnce`: disconnect does not queue or replay their words. A refusal retains the draft for an explicit new check and send; Comms owns identical-reply deduplication and changed-word conflicts.
 
-Comms encrypts the words and atomically acknowledges only a thread/sequence reference in Attention. The receipt links to the owning thread; saving the reply is not a claim that a body received it. Sealed questions route to their owning encrypted Comms thread, and do not offer a blind typed editor against Attention's wordless placeholder. The exact scoped question read/state/retention seam from Comms PR1188 must be connected in a subsequent unit when merged. This unit changes no permissions, migrations, backend sources or Home styling.
+Comms encrypts the words and atomically acknowledges only a thread/sequence reference in Attention. The receipt links to the owning thread; saving the reply is not a claim that a body received it. Sealed questions use the exact scoped Comms reader described below; they never offer a blind editor against Attention's wordless placeholder. The owning encrypted thread remains available for reply history. This unit changes no permissions, migrations, backend sources or Home styling.
 
 | Old private reply behavior | New path |
 | --- | --- |
 | Private conversation Inbox words reply | Guarded typed editor -> `comms.replyToAsk`; encrypted Comms words and reference-only Attention receipt |
-| Sealed full question | Open private conversation; scoped `comms.question` reader integration remains |
+| Sealed full question | Scoped `comms.question` Inbox reader, with owning private conversation navigation |
 | Private browser draft persistence | Deliberately dropped: private words stay in the mounted window, never unencrypted device storage |
 | Private yes/no or mark done through generic Inbox action | Not carried: typed replies use the Comms seam; managed/wait decisions open their owning app |
+
+## Sealed questions in Inbox
+
+Selecting a sealed ask subscribes only to `comms.question` at that exact ref. The owning Comms window/socket reader supplies question, current state, answer reference and `keepUntil`; Attention continues to contain routing metadata only. Inbox requires matching thread, sequence, state and change time before displaying words. Offline, scope loss, navigation and the retention deadline withdraw words and controls; drafts are mounted-window-only and are discarded on withdrawal. Answered history remains wordless after retention, with navigation to the owning private reply.
+
+An explicit check confirms the displayed question; every send checks the exact current scoped snapshot again immediately before calling Comms. Typed answers use `comms.replyToAsk`, boolean answers use `comms.answer`. Both use ephemeral calls, without reconnect replay. The shared Inbox lock prevents concurrent answers; changed questions require a new explicit check. Refused sends retain the mounted draft. Managed/waiting sources continue to use their owning app. Saving is an encrypted Comms acknowledgement, not a claim of body delivery. Home's visual design is unchanged.
+
+| Old surface | New path / choice |
+| --- | --- |
+| Private question details and history in Inbox | Exact-ref scoped `comms.question`; full kept words and current owning answer metadata |
+| Sealed Yes/No | Owning `comms.answer`, preserving the sealed protocol and original route |
+| Sealed typed reply | Owning `comms.replyToAsk`, with mounted-window draft only |
+| Private Done/Dismiss | Deliberately omitted: these do not provide an answer through the sealed protocol |
+
+No new schema, import, command or permission rule is introduced. The existing Comms retention and policy are authoritative. Lasting member action outcomes, notices/source reconciliation, public delivery and Runtime metadata/digest/grading reconciliation remain before t-2205 closes.

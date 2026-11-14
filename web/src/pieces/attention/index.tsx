@@ -1,4 +1,5 @@
 import { stamp } from './time';
+import { SealedQuestionReader } from './sealed-question';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { call, callOnce, useRecords, type Call, type CallState, type Snapshot, type LiveRecord } from '../../data';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, Textarea } from '../../kit';
@@ -104,7 +105,7 @@ function PersistentReader({ member, ...props }: Parameters<typeof AskReader>[0] 
   return <AskReader {...props} replyDraft={replyDraft} />;
 }
 function InboxReader(props: Parameters<typeof AskReader>[0] & { member: string }) {
-  return props.ask.member ? <AskReader {...props} /> : <PersistentReader {...props} />;
+  return props.ask.member && props.ask.privateQuestion && props.guard ? <SealedQuestionReader ask={props.ask} guard={props.guard} go={props.go} /> : props.ask.member ? <AskReader {...props} /> : <PersistentReader {...props} />;
 }
 interface ReadMark extends LiveRecord { ask: string; member: string; readAt: number }
 interface MemberPreferences extends LiveRecord { member: string }
