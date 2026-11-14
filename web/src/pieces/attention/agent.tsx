@@ -32,7 +32,7 @@ export default function AgentApp({ path = '/p/agents-preview', go = p => locatio
     {title:'Home',meta:'Current work, Clock and questions for all your agents',href:'/p/home-preview'},
     ...(profile?.canEdit?[{title:'Edit profile in Setup',meta:'Description and description requests',href:'/p/setup-preview'}]:[]),
   ]:[];
-  return <div className="desk-home h-full w-full min-w-0 overflow-auto"><div className="desk-home-content"><AppFrame title={agent?.name??'Your agents'} where="Agents" go={go}
+  return <div className="desk-home h-full w-full min-w-0 max-w-full overflow-auto [overflow-wrap:anywhere]"><div className="desk-home-content"><AppFrame title={agent?.name??'Your agents'} where="Agents" go={go}
     actions={id?<Button variant="outline" onClick={()=>go('/p/agents-preview')}>All your agents</Button>:undefined}>
     {unavailable??(agent?<div className="desk-home-agents"><article className="desk-home-card grid min-w-0 gap-5" aria-label={`${agent.name} agent window`}>
       <header className="desk-home-identity"><AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state,!!open.length)} size={96}/><h2 className="text-2xl font-semibold">{agent.name}</h2><p>{open.length?`${open.length} needs you`:status?.state??'No status reported'}</p></header>

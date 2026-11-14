@@ -102,6 +102,13 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     for(const page of [a,b])await expect.poll(()=>page.getByText('Keeps the household moving.',{exact:true}).count()).toBe(1);
     expect(app.operations.call('direct',{kind:'member',id:'owner'},'household.setProfile',{agent:'art',text:'Keeps the household moving and the desk readable.'},'desk-profile').ok).toBe(true);
     for(const page of [a,b])await expect.poll(()=>page.getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
+    const longDescription='https://example.invalid/'+ 'x'.repeat(550);
+    expect(app.operations.call('direct',{kind:'member',id:'owner'},'household.setProfile',{agent:'art',text:longDescription},'desk-profile-long').ok).toBe(true);
+    await expect.poll(()=>b.getByText(longDescription,{exact:true}).count()).toBe(1);
+    await b.setViewportSize({width:390,height:900});
+    await expect.poll(()=>b.locator('.desk-home').evaluate(el=>el.scrollWidth-el.clientWidth)).toBeLessThanOrEqual(1);
+    expect(app.operations.call('direct',{kind:'member',id:'owner'},'household.setProfile',{agent:'art',text:'Keeps the household moving and the desk readable.'},'desk-profile-restore').ok).toBe(true);
+    await b.setViewportSize({width:1280,height:900});
     await reference.goto(old.base+'/a/art?t=*art');
     await reference.locator('.loom-agentwin').getByRole('button',{name:'Write one',exact:true}).click();
     await reference.getByLabel("art's description",{exact:true}).fill('Keeps the household moving and the desk readable.');
