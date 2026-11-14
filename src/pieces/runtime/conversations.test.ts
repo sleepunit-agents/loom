@@ -904,6 +904,9 @@ it('derives private description, title and monotonic activity from the authentic
  expect(description.readers).toEqual(['jonathan']);
  expect(description.brief.join(' ')).toContain(runtimeStore(f.app.db).read('job',f.job)!.conversation);
  expect(JSON.stringify(description)).not.toContain('PRIVATE inbound');
+ const descriptionViewer=signin(f.app).token(hash(f.body))!.viewer;
+ expect(f.app.operations.call('direct',descriptionViewer,'runtime.describeConversation',{},'description-receipt')).toMatchObject({ok:true});
+ expect(f.app.db.prepare("SELECT * FROM core_operations WHERE name='runtime.describeConversation'").all()).toEqual([]);
  for(const secret of [f.owner,f.runner,f.unbound,f.token(`agent:mark@${f.job}`)]){
   for(const [name,input] of [['describeConversation',{}],['titleConversation',{title:'Forbidden'}],['conversationActivity',{at:f.clock.now()}]] as const)
    expect(await f.post(secret,`runtime.${name}`,input)).toMatchObject({ok:false});
@@ -925,9 +928,12 @@ it('derives private description, title and monotonic activity from the authentic
  expect(f.record().title).toBe('Member title');
  for(const table of ['runtime_inputs','core_operations'])expect(JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all())).not.toContain('PRIVATE');
 });
-it.each(['imported','reset','writeoff','ended','binding','project','venue','archived','membership','policy','box','house','credential','terminal'] as const)('refuses bound Comms controls after %s changes',async drift=>{
+it.each(['imported','reset','writeoff','ended','binding','project','venue','archived','membership','policy','archived-policy','service','box','house','credential','terminal'] as const)('refuses bound Comms controls after %s changes',async drift=>{
  const f=await commsBodyFixture(drift==='membership'?'pollock':'jonathan'),store=runtimeStore(f.app.db);
  expect(await f.post(f.body,'runtime.describeConversation',{})).toMatchObject({ok:true});
+ const viewer=signin(f.app).token(hash(f.body))!.viewer;
+ const writes=[['titleConversation',{title:'Before drift'},'title-before-drift'],['conversationActivity',{at:f.clock.now(),tokens:1},'activity-before-drift']] as const;
+ for(const [name,input,id] of writes)expect(f.app.operations.call('direct',viewer,`runtime.${name}`,input,id)).toMatchObject({ok:true});
  f.app.db.transaction(()=>{
   const {changedAt:_,...job}=store.read('job',f.job)!;
   if(drift==='imported')store.put('job',{...job,imported:{history:'discard'}},f.clock.now());
@@ -941,13 +947,43 @@ it.each(['imported','reset','writeoff','ended','binding','project','venue','arch
   }
   if(drift==='archived'){const t=f.record();t.archived=f.clock.now();f.app.db.prepare('UPDATE comms_threads SET record=? WHERE id=?').run(JSON.stringify(t),f.thread);}
   if(drift==='membership')new HouseholdDatabase(f.app.db).change(f.home,raw=>{(raw.members as Array<{person:string;agents:string[]}>).find(m=>m.person==='pollock')!.agents=[];});
+  if(drift==='service')store.put('job',{...job,service:'discord'},f.clock.now());
+  if(drift==='archived-policy')f.app.db.prepare('INSERT INTO runtime_import_documents (collection,key,record) VALUES (?,?,?)').run('gates','art',JSON.stringify({doc:'{}'}));
   if(drift==='policy')f.app.db.prepare('INSERT INTO runtime_body_policy (agent,record) VALUES (?,?)').run('art','{}');
   if(drift==='box'){const {changedAt:__,...box}=store.read('box','a')!;store.put('box',{...box,revokedAt:f.clock.now()},f.clock.now());}
   if(drift==='house'){const {changedAt:__,...settings}=store.read('settings','art')!;store.put('settings',{...settings,house:{repo:'/changed',houseFile:'house.json'}},f.clock.now());}
   if(drift==='credential')signin(f.app).tokens.change(ts=>ts.splice(ts.findIndex(t=>t.sha256===hash(f.body)),1));
  })();
  const before=f.record();
+ for(const [name,input,id] of writes)expect(f.app.operations.call('direct',viewer,`runtime.${name}`,input,id)).toMatchObject({ok:false});
  for(const [name,input] of [['describeConversation',{}],['titleConversation',{title:'Forbidden title'}],['conversationActivity',{at:f.clock.now(),tokens:99}]] as const)
   expect(await f.post(f.body,`runtime.${name}`,input)).toMatchObject({ok:false});
  expect(f.record()).toEqual(before);
+});
+
+it('queues bound Comms publication until commit and replays acknowledgements without overwriting newer values',async()=>{
+ const f=await commsBodyFixture(),viewer=signin(f.app).token(hash(f.body))!.viewer;
+ const seen:unknown[]=[];const stop=f.app.live.observe(changes=>seen.push(...changes));cleanups.push(stop);
+ for(const [name,input] of [['titleConversation',{title:'Rolled back'}],['conversationActivity',{at:f.clock.now(),tokens:9}]] as const){
+  const before=f.record();seen.length=0;
+  f.app.db.exec(`CREATE TRIGGER reject_receipt BEFORE INSERT ON core_operations WHEN NEW.name='runtime.${name}' BEGIN SELECT RAISE(ABORT,'interrupted'); END`);
+  expect(f.app.operations.call('direct',viewer,`runtime.${name}`,input,`rollback-${name}`)).toMatchObject({ok:false});
+  expect(f.record()).toEqual(before);expect(seen).toEqual([]);
+  f.app.db.exec('DROP TRIGGER reject_receipt');
+  const result=f.app.operations.call('direct',viewer,`runtime.${name}`,input,`commit-${name}`);
+  expect(result).toMatchObject({ok:true});expect(seen).toEqual([{type:'thread',id:f.thread}]);
+  seen.length=0;
+  expect(f.app.operations.call('direct',{...viewer},`runtime.${name}`,input,`forged-${name}`)).toMatchObject({ok:false,code:'denied'});
+  if(name==='titleConversation')value(await f.socket('comms.change',{thread:f.thread,action:'title',title:'Member replacement'}));
+  else {f.clock.advance(1);value(f.app.operations.call('direct',viewer,`runtime.${name}`,{at:f.clock.now(),tokens:20},'new-activity'));}
+  const newer=f.record();seen.length=0;
+  expect(f.app.operations.call('direct',viewer,`runtime.${name}`,input,`commit-${name}`)).toEqual(result);
+  expect(f.record()).toEqual(newer);expect(seen).toEqual([]);
+ }
+});
+it('rejects a centrally authenticated service credential for the same private job with different service provenance',async()=>{
+ const f=await commsBodyFixture(),secret=f.token(`agent:art/discord@${f.job}`);
+ expect(signin(f.app).body(signin(f.app).token(hash(secret))!.viewer)).toMatchObject({agent:'art',job:f.job,service:'discord'});
+ for(const [name,input] of [['describeConversation',{}],['titleConversation',{title:'Service title'}],['conversationActivity',{at:f.clock.now()}]] as const)
+  expect(await f.post(secret,`runtime.${name}`,input)).toMatchObject({ok:false,code:'denied'});
 });

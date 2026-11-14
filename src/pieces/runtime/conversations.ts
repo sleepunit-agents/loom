@@ -71,17 +71,17 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
   run(ctx){const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');
    return comms!.describe(b.job.agent,b.binding.place);},
  }));
- operations.register(operation({name:'runtime.titleConversation',doors:['http','direct'],write:true,
+ operations.register(operation({name:'runtime.titleConversation',doors:['http','direct'],write:true,recheckPolicy:true,
   input:z.object({title:z.string().min(1).max(60).refine(s=>!!s.trim()&&!/[\r\n]/.test(s))}).strict(),
   output:z.object({updated:z.literal(true)}),may:v=>!!commsBody(v),
   run(ctx,i){const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');
-   comms!.title(b.job.agent,b.binding.place,i.title);return {updated:true as const};},
+   comms!.title(b.job.agent,b.binding.place,i.title,()=>ctx.changed('thread',b.binding.place));return {updated:true as const};},
  }));
- operations.register(operation({name:'runtime.conversationActivity',doors:['http','direct'],write:true,
+ operations.register(operation({name:'runtime.conversationActivity',doors:['http','direct'],write:true,recheckPolicy:true,
   input:z.object({at:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),tokens:z.number().int().min(0).max(1e12).optional()}).strict(),
   output:z.object({updated:z.literal(true)}),may:v=>!!commsBody(v),
   run(ctx,i){const b=commsBody(ctx.viewer);if(!b)throw new OperationError('denied','Body binding ended');
-   comms!.activity(b.job.agent,b.binding.place,i);hearJob(db,b.job.id,ctx.now);return {updated:true as const};},
+   comms!.activity(b.job.agent,b.binding.place,i,()=>ctx.changed('thread',b.binding.place));hearJob(db,b.job.id,ctx.now);return {updated:true as const};},
  }));
  const refile=(ctx:Context,m:{thread:string;agent:string;member:string;conversation:string;project?:string})=>{
   const binding=store.read('binding',m.conversation);if(!binding)return;

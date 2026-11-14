@@ -1264,7 +1264,8 @@ never caller-supplied thread, conversation, member or job arguments. Current
 membership, house, box and live Comms routing must still agree. Imported jobs,
 ended/reset/written-off execution and configured or archived body-policy holds
 refuse these calls. Description is a read and never enters retry receipts;
-title and activity writes retain only acknowledgements there. Private words
+title and activity writes retain only acknowledgements there, recheck body authority
+before replaying them, and publish through the registry after commit. Private words
 stay in Comms. Activity is movement, not a working heartbeat or a new turn.
 
 These controls cover existing bound private loom conversations. Authoritative
