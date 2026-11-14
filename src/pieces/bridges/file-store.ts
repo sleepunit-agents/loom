@@ -44,7 +44,7 @@ export function bridgeFileStore(db:Db, now:()=>number) {
         if(new Set(files.map(f=>f.id)).size!==files.length||fetched.length!==files.length)throw held();
         const manifest=hash(JSON.stringify(files));
         const current=()=>permit.current()&&permit.deliveredAt===deliveredAt&&scopeKey(permit)===scope&&permit.delivery===delivery
-          &&hash(JSON.stringify(permit.files.slice(0,SLACK_FILES_PER_MESSAGE)))===manifest;
+          &&hash(JSON.stringify(z.array(descriptor).max(SLACK_FILES_PER_MESSAGE).parse(permit.files.slice(0,SLACK_FILES_PER_MESSAGE))))===manifest;
         if(!current())throw held();
         db.transaction(()=>{
           const at=tick(now);

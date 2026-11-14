@@ -34,6 +34,12 @@ async function fixture(home=mkdtempSync(join(tmpdir(),'bridge-files-')),at=1000)
   return {app,home,clock,store,facts,permit,read,batch,close,body,records};
 }
 describe('private attachment storage (fake owning Runtime permits)',()=>{
+  it('normalizes descriptor property order consistently for manifest and current checks',async()=>{
+    const f=await fixture(),d=f.permit.files[0];
+    f.store.save({...f.permit,files:[{name:d.name,url:d.url,size:d.size,id:d.id}]},f.batch());
+    expect(f.store.read(f.read).bytes.toString()).toBe('data');
+    f.store.save(f.permit,f.batch());expect(f.app.db.prepare('SELECT count(*) n FROM bridges_files').get()).toEqual({n:1});
+  });
   it('uses original delivery age on a delayed initial save and refuses timestamp changes',async()=>{
     const f=await fixture();f.clock.advance(500);f.store.save(f.permit,f.batch());
     expect(f.app.db.prepare('SELECT created FROM bridges_files').get()).toEqual({created:1000});
