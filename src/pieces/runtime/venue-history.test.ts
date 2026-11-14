@@ -116,14 +116,15 @@ it('refuses an otherwise current service body whose job and credential agree',as
  expect(runtimeSlackDescribePermit(f.app,viewer,slackPlace)).toBeUndefined();
 });
 it('pins the original route even when the replacement is independently valid',async()=>{
- const f=await running();
+ const f=await running(),slack=runtimeSlackDescribePermit(f.app,f.viewer,slackPlace)!;
  value(await f.socket('comms.change',{thread:f.thread,action:'project',project:'other'}));
  expect(await f.post(f.body,'runtime.readConversation',{})).toMatchObject({ok:true});
  expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)?.current()).toBe(true);
+ expect(runtimeSlackDescribePermit(f.app,f.viewer,slackPlace)?.current()).toBe(true);expect(slack.current()).toBe(false);
  expect(f.permit.current()).toBe(false);
 });
 it('pins the transport place independently of an unchanged current principal and conversation',async()=>{
- const f=await running(),next='th:replacement-place',store=runtimeStore(f.app.db),job=store.read('job',f.job)!;
+ const f=await running(),slack=runtimeSlackDescribePermit(f.app,f.viewer,slackPlace)!,next='th:replacement-place',store=runtimeStore(f.app.db),job=store.read('job',f.job)!;
  f.app.db.transaction(()=>{
   // Coherent owning metadata replacement: keep exactly one live thread for the
   // same conversation and member. No copied viewer or hypothetical role proof.
@@ -133,6 +134,7 @@ it('pins the transport place independently of an unchanged current principal and
  })();
  expect(await f.post(f.body,'runtime.describeConversation',{})).toMatchObject({ok:true});
  expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)?.current()).toBe(true);
+ expect(runtimeSlackDescribePermit(f.app,f.viewer,slackPlace)?.current()).toBe(true);expect(slack.current()).toBe(false);
  expect(f.permit.current()).toBe(false);
 });
 it('revokes an issued permit and refuses new issuance for an otherwise current waiting body',async()=>{
