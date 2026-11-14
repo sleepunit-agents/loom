@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Reconcile Clock documentation with merged prompt/file execution, provenance, control and recovery work; retain explicit gaps before cutover.
+
 - Clock owner vouch records fresh owner authorship so eligible imported prompts can reach the native worker after current authority checks.
 
 - Clock native workers can opt into a bounded idle wait and resume later prompts in the same worker lifetime after fresh owning checks.
