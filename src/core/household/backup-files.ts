@@ -30,7 +30,7 @@ const missing = (e: unknown) => (e as NodeJS.ErrnoException).code === 'ENOENT';
  */
 export function capturePortableFiles(home: string, selection: readonly ContextFileSelection[]): PortableFile[] {
   const out: PortableFile[] = [], held: number[] = [];
-  let total = 0;
+  let total = 0, failed = false;
   const directory = (parent: number | undefined, leaf: string, optional = false): number | undefined => {
     try {
       const fd = openSync(parent === undefined ? leaf : `/proc/self/fd/${parent}/${leaf}`,
@@ -93,9 +93,16 @@ export function capturePortableFiles(home: string, selection: readonly ContextFi
         }
       }
     }
-    return out;
   } catch {
-    for (const captured of out) captured.bytes.fill(0);
-    throw new Error('Portable household file capture failed');
-  } finally { for (const fd of held.reverse()) closeSync(fd); }
+    failed = true;
+  } finally {
+    // Cleanup is part of success: a close error must neither bypass the wipe
+    // nor prevent attempts to close the other independently held descriptors.
+    for (const fd of held.reverse()) {
+      try { closeSync(fd); } catch { failed = true; }
+    }
+    if (failed) for (const captured of out) captured.bytes.fill(0);
+  }
+  if (failed) throw new Error('Portable household file capture failed');
+  return out;
 }

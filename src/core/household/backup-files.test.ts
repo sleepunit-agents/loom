@@ -1,6 +1,8 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs';
 vi.mock('node:fs', async original => ({ ...await original<typeof fs>() }));
+vi.mock('node:child_process', async original => ({ ...await original<typeof import('node:child_process')>() }));
+vi.mock('better-sqlite3', () => ({ default: vi.fn(() => { throw Error('No database may open during file capture'); }) }));
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -127,4 +129,56 @@ it('refuses unsupported platforms and unsafe home components before any file ope
     expect(() => capturePortableFiles(path, [])).toThrow(failure);
   vi.stubGlobal('process', { platform: 'darwin' });
   expect(() => capturePortableFiles(home, [])).toThrow(failure); expect(open).not.toHaveBeenCalled();
+});
+it('attempts every remaining directory close, fails generically and wipes captured plaintext if closing fails', () => {
+  const { home } = fixture(); const close = fs.closeSync, read = fs.readSync, captured: Buffer[] = [], closed: number[] = [];
+  let injected = false;
+  vi.spyOn(fs, 'readSync').mockImplementation((...args: Parameters<typeof fs.readSync>) => { captured.push(args[1] as Buffer); return Reflect.apply(read, fs, args); });
+  vi.spyOn(fs, 'closeSync').mockImplementation(fd => {
+    const directory = fs.fstatSync(fd).isDirectory(); close(fd); closed.push(fd);
+    if (directory && !injected) { injected = true; throw Error('PRIVATE CLOSE DIAGNOSTIC'); }
+  });
+  expect(() => capturePortableFiles(home, [{ agent: 'art', noteHashes: [] }])).toThrow(failure);
+  expect(injected).toBe(true); expect(closed.length).toBeGreaterThan(4);
+  expect(captured).toHaveLength(1); expect(captured[0].every(byte => byte === 0)).toBe(true);
+  for (const fd of closed) expect(() => fs.fstatSync(fd)).toThrow();
+});
+it('refuses a nonregular source before reading it', () => {
+  const { home, agent } = fixture(); fs.unlinkSync(join(agent, 'IDENTITY.md')); fs.mkdirSync(join(agent, 'IDENTITY.md'));
+  const read = vi.spyOn(fs, 'readSync');
+  expect(() => capturePortableFiles(home, [{ agent: 'art', noteHashes: [] }])).toThrow(failure); expect(read).not.toHaveBeenCalled();
+});
+it('bounds file count even when aggregate bytes are small', () => {
+  const { home, agent } = fixture();
+  for (let i = 0; i < 4096; i++) put(agent, `roles/r${i}.md`, '');
+  const alloc = Buffer.alloc, allocated: Buffer[] = [];
+  vi.spyOn(Buffer, 'alloc').mockImplementation((...args: Parameters<typeof Buffer.alloc>) => { const bytes = Reflect.apply(alloc, Buffer, args); allocated.push(bytes); return bytes; });
+  expect(() => capturePortableFiles(home, [{ agent: 'art', noteHashes: [] }])).toThrow(failure);
+  expect(allocated).toHaveLength(4096); expect(allocated[0].every(byte => byte === 0)).toBe(true);
+});
+it('detects a same-length rewrite with an independently changed timestamp', () => {
+  const { home, agent } = fixture(), path = join(agent, 'IDENTITY.md'); const read = fs.readSync;
+  vi.spyOn(fs, 'readSync').mockImplementation((...args: Parameters<typeof fs.readSync>) => {
+    const count = Reflect.apply(read, fs, args); fs.writeFileSync(path, 'OTHER'); fs.utimesSync(path, 1, 1); return count;
+  });
+  expect(() => capturePortableFiles(home, [{ agent: 'art', noteHashes: [] }])).toThrow(failure);
+});
+it('opens only allowlisted files, without write flags, writes, databases or processes', async () => {
+  const { home, agent } = fixture(); put(agent, 'audit.key', 'AUDIT'); put(home, 'household.json', 'OLD');
+  put(agent, 'comms.db', 'PRIVATE'); put(agent, 'backup/drill.key', 'DRILL');
+  const open = fs.openSync, opened: string[] = [];
+  vi.spyOn(fs, 'openSync').mockImplementation((...args: Parameters<typeof fs.openSync>) => {
+    const flags = args[1]; expect(typeof flags).toBe('number');
+    expect(Number(flags) & (fs.constants.O_WRONLY | fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_APPEND)).toBe(0);
+    const fd = Reflect.apply(open, fs, args); if (fs.fstatSync(fd).isFile()) opened.push(fs.realpathSync(`/proc/self/fd/${fd}`)); return fd;
+  });
+  const blocked = () => { throw Error('FORBIDDEN IO'); };
+  const writes = ['writeFileSync','appendFileSync','writeSync','mkdirSync','renameSync','unlinkSync','rmSync','copyFileSync','chmodSync','truncateSync'] as const;
+  for (const method of writes) vi.spyOn(fs, method).mockImplementation(blocked);
+  const processes = await import('node:child_process');
+  for (const method of ['spawn','spawnSync','exec','execSync','execFile','execFileSync','fork'] as const) vi.spyOn(processes, method).mockImplementation(blocked);
+  const Database = (await import('better-sqlite3')).default;
+
+  const capture = capturePortableFiles(home, [{ agent: 'art', noteHashes: [] }]);
+  expect(capture.map(f => f.bytes.toString())).toEqual(['CREED']); expect(opened).toEqual([join(agent, 'IDENTITY.md')]); expect(Database).not.toHaveBeenCalled();
 });
