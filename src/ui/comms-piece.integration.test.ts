@@ -563,7 +563,11 @@ async function proveNextComms(browser:Browser,webRoot:string) {
    expect(JSON.stringify(value(await post(input.credential,'runtime.readConversation',{})))).toContain(`${inbound} follow-up`);
    expect(value<{jobs:string[]}>(await post(runner,'runtime.claimableJobs',{})).jobs).toEqual([]);
    if(kind==='filed') {
-    const sealed=value<{ref:string}>(await post(input.credential,'runtime.askQuestion',{id:'inline-question',question:{ask:'Which fixture should I check next?',why:'Your answer stays in this private thread.',answers:'words'}}));
+    const cited=value<{result:{id:string}}>(await socket(a,'tasks.create',{title:'Sealed question work',agent:'art',actor:'art',at:new Date(clock.now()).toISOString()})).result.id;
+    const sealed=value<{ref:string}>(await post(input.credential,'runtime.askQuestion',{id:'inline-question',question:{ask:'Which fixture should I check next?',why:`Your answer stays in this private thread. Check ${cited}.`,if_yes:`Inspect ${cited}`,if_no:`Leave ${cited}`,refs:[cited,'note:unavailable'],answers:'words'}}));
+    const questionChip=(page:Page)=>page.getByRole('region',{name:'Private question',exact:true}).getByRole('button',{name:`Task ${cited}: Sealed question work, Open`,exact:true});
+    for(const page of [a,b])await expect.poll(()=>questionChip(page).count()).toBe(4);
+    expect(await b.getByRole('region',{name:'Private question',exact:true}).getByText('note:unavailable',{exact:true}).count()).toBe(1);
     for(const page of [a,b])await expect.poll(()=>page.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(1);
     await b.getByRole('textbox',{name:'Your private reply',exact:true}).fill('An unsaved private answer');
     expect(await b.evaluate(()=>JSON.stringify(localStorage))).not.toContain('An unsaved private answer');
@@ -590,7 +594,22 @@ async function proveNextComms(browser:Browser,webRoot:string) {
      await b.getByLabel('Thread messages',{exact:true}).evaluate(el=>{const q=el.querySelector('[aria-label="Private question"]')!;el.scrollTop+=q.getBoundingClientRect().top-el.getBoundingClientRect().top-16;el.dispatchEvent(new Event('scroll'));});
      expect(await b.getByText('Which fixture should I check next?',{exact:true}).evaluate(el=>{const q=el.getBoundingClientRect(),reader=el.closest('[aria-label="Thread messages"]')!.getBoundingClientRect();return q.top>=reader.top&&q.bottom<=reader.bottom;})).toBe(true);
      await b.screenshot({path:join(shots,`comms-next-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+     await questionChip(b).first().scrollIntoViewIfNeeded();
+     await b.evaluate(()=>new Promise<void>(resolve=>requestAnimationFrame(()=>requestAnimationFrame(()=>resolve()))));
+     await questionChip(b).first().click();
+     const card=b.getByRole('dialog',{name:'Task: Sealed question work',exact:true});
+     await expect.poll(()=>card.getByRole('link',{name:'Open',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
+     expect(await card.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;})).toBe(true);
+     await b.screenshot({path:join(shots,`comms-question-chips-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+     expect(await card.isVisible()).toBe(true);await b.keyboard.press('Escape');
     }
+    // Nested question batches retain the desk's navigation capability.
+    await questionChip(a).first().click();
+    await a.getByRole('dialog',{name:'Task: Sealed question work',exact:true}).getByRole('link',{name:'Open',exact:true}).click();
+    await expect.poll(()=>new URL(a.url()).pathname).toBe(`/p/tasks-preview/task/${cited}`);
+    expect(JSON.parse(new URL(a.url()).searchParams.get('paths')??'{}').comms).toBe(`/p/comms-preview/thread/${thread.slice(3)}`);
+    await a.goto(`${app.url}/p/comms-preview/thread/${thread.slice(3)}`);
+    await expect.poll(()=>questionChip(a).count()).toBe(4);
     await b.getByRole('button',{name:'Send private reply',exact:true}).click();
     for(const page of [a,b]){await expect.poll(()=>page.getByRole('textbox',{name:'Your private reply',exact:true}).count()).toBe(0);await expect.poll(()=>page.getByText('An unsaved private answer',{exact:true}).count()).toBe(1);}
     expect(await socket(a,'attention.get',{id:sealed.ref})).toMatchObject({ok:true,value:{state:'answered'}});
