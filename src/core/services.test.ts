@@ -104,14 +104,14 @@ it('registers the own types and exact namespace operations for every in-repo ins
     example: ['example.record'], runtime: ['runtime.box', 'runtime.job', 'runtime.settings', 'runtime.binding'],
     secrets: ['secret.name', 'secret.grant', 'secret.request', 'secret.policy', 'secret.change'],
     bridges: ['bridges.venue', 'bridges.route', 'bridges.link', 'bridges.send'],
-    clock: ['wake', 'schedule', 'clock', 'approval'], mind: ['knowledge'], sharing: ['household.project', 'household.sharing'],
+    clock: ['wake', 'schedule', 'clock', 'approval', 'runtime.job'], mind: ['knowledge'], sharing: ['household.project', 'household.sharing'],
   };
   const snapshot = sharing();
   expect(Object.keys(snapshot.services).sort()).toEqual(Object.keys(types).sort());
   for (const [id, ownTypes] of Object.entries(types)) {
     expect(snapshot.services[id].types).toEqual(ownTypes);
     const namespace = id === 'sharing' ? 'household' : id;
-    const ownOperations = app.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(namespace + '.') || id==='attention' && ['tasks.show','approvals.check'].includes(name) || id==='clock' && ['approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check'].includes(name));
+    const ownOperations = app.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(namespace + '.') || id==='attention' && ['tasks.show','approvals.check'].includes(name) || id==='clock' && ['runtime.acceptClock','approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check'].includes(name));
     expect(ownOperations.length).toBeGreaterThan(0);
     expect(snapshot.services[id].operations).toEqual(ownOperations);
     for (const type of ownTypes) expect(maySee({ kind: 'service', id }, { type }, snapshot)).toBe(true);

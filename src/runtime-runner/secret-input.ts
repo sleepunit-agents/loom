@@ -1,5 +1,6 @@
 /** Worker-owned pending credential inputs. Not registered in the daemon or
- * composed into standalone runner startup. No pending proof survives restart. */
+ * publicly activated. secret-command owns real dedicated command startup;
+ * trusted admission transport remains separate. No proof survives restart. */
 import { randomUUID } from 'node:crypto';
 import type { Writable } from 'node:stream';
 

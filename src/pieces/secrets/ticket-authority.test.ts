@@ -2,6 +2,7 @@ import {routedHolderAuthority} from './holder-routing.js';
 import {listenHolderHandoff,localHolderHandoff} from './holder-handoff.js';
 import {Writable} from 'node:stream';
 import {workerSecretInputs} from '../../runtime-runner/secret-input.js';
+import {ticketAuthorityFixture} from '../../runtime-runner/ticket-authority.fixture.js';
 import {listenWorkerSecretInput,workerSecretTransport} from '../../runtime-runner/secret-transport.js';
 import {afterEach,expect,it,vi} from 'vitest';
 import {mkdtempSync,mkdirSync,existsSync,rmSync,chmodSync,readFileSync,writeFileSync} from 'node:fs';
@@ -24,43 +25,7 @@ import {connect as tlsConnect} from 'node:tls';
 import {listenTicketAuthority,remoteTicketAuthority,remoteWorkerTicketProof} from './ticket-authority.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.useRealTimers();for(const close of closes.splice(0).reverse())await close();vi.restoreAllMocks();});
-async function setup(service?:string) {
- const home=mkdtempSync(join(tmpdir(),'runtime-secret-destination-'));closes.push(()=>rmSync(home,{recursive:true,force:true}));fixture(home);
- const clock=new FakeClock(),app=await startLoom({home,next:true,staging:true,clock,stdout(){}});closes.push(app.close);
- const auth=signin(app),store=runtimeStore(app.db),id=randomUUID(),house={repo:'/synthetic/art',houseFile:'house/house.json'};
- app.db.transaction(()=>{
-  auth.tokens.replace({v:1,tokens:[]},{});
-  for(const box of ['worker','other'])store.put('box',{id:box,name:box,owner:'jonathan',local:false,mayHost:'*',lentTo:[],facts:[],labels:[],alwaysOn:false,reportOnly:false,createdAt:clock.now()},clock.now());
-  store.put('settings',{id:'art',agent:'art',boxes:['worker'],house},clock.now());
-  store.put('job',{id,agent:'art',box:'worker',runner:'worker',title:'fixture',state:'running',createdAt:clock.now(),claimedAt:clock.now(),made:house,...(service?{service}:{})},clock.now());
- })();
- const token=service?'synthetic-service-body':app.db.transaction(()=>auth.issueBody('art',id))();
- if(service)auth.tokens.change(tokens=>tokens.push({role:`agent:art/${service}@${id}`,sha256:hash(token),label:'synthetic',created:new Date(clock.now()).toISOString()}));
- const viewer=auth.token(hash(token))!.viewer,sharing=()=>new SharingDatabase(app.db,home).sharing();
- const job=(set:Partial<RuntimeRecords['job']>)=>app.db.transaction(()=>{const {changedAt:_,...before}=store.read('job',id)!;store.put('job',{...before,...set},clock.now());})();
- const box=(set:Partial<RuntimeRecords['box']>)=>app.db.transaction(()=>{const {changedAt:_,...before}=store.read('box','worker')!;store.put('box',{...before,...set},clock.now());})();
- const owner:Viewer={kind:'member',id:'jonathan'}; let seq=0;
- const call=(op:string,input:unknown)=>{const result=app.operations.call('direct',owner,op,input,`ticket-test-${++seq}`);expect(result.ok,JSON.stringify(result)).toBe(true);return result;};
- call('secrets.describe',{name:'API',description:''});
- const scope={house:id,...(service?{service}:{})};
- const grant={agent:'art',kind:'secret',target:'API',scope,expiresAt:clock.now()+60_000};
- call('secrets.grant',grant);
- const tickets=secretTickets(app,sharing,app.effects!);
- const admit=()=>tickets.admit(viewer,'API');
- const release=(ticket:string)=>call('core.releaseEffect',{id:`secrets:handoff:${ticket}`});
- const claim=()=>{const ticket=admit();expect(tickets.claim(ticket.id)).toBeNull();release(ticket.id);const c=tickets.claim(ticket.id);expect(c).not.toBeNull();return {ticket,c:c!};};
- const fixtures=fileURLToPath(new URL('./fixtures/lifecycle-tls/',import.meta.url));
- for(const name of ['ca.pem','holder.pem','holder.key','daemon.pem','daemon.key','stranger.pem','stranger.key'])writeFileSync(join(home,name),readFileSync(join(fixtures,name)),{mode:0o600});
- const common={socket:join(home,'tickets.sock'),ca:join(home,'ca.pem')};
- const server={...common,cert:join(home,'daemon.pem'),key:join(home,'daemon.key')};
- const config={...common,cert:join(home,'holder.pem'),key:join(home,'holder.key'),servername:'daemon.test'};
- const fingerprint=(name:string)=>new X509Certificate(readFileSync(join(home,`${name}.pem`))).fingerprint256;
- const authority=await listenTicketAuthority(server,fingerprint('holder'),tickets);closes.push(authority.close);
- const remote=remoteTicketAuthority(config,fingerprint('daemon'));closes.push(remote.close);
- const admitted=()=>{const ticket=admit();expect(tickets.claim(ticket.id)).toBeNull();release(ticket.id);return ticket;};
- const state=(ticket:string)=>app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(ticket);
- return {home,app,clock,id,viewer,job,call,tickets,admit,release,grant,server,config,fingerprint,authority,remote,admitted,state};
-}
+const setup=(service?:string)=>ticketAuthorityFixture(closes,service);
 async function fakeAuthority(f:Awaited<ReturnType<typeof setup>>,handler:(req:IncomingMessage,res:ServerResponse)=>void) {
  await f.authority.close();
  const server=https.createServer({ca:readFileSync(f.server.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),

@@ -8,7 +8,7 @@ interface Summaries { member:string; agents:string[]; summaries:Summary[] }
 export const threadPath=(id:string)=>`/p/comms-preview/thread/${encodeURIComponent(id.replace(/^th:/,''))}`;
 /** Refresh from policy-filtered thread changes; never subscribe to whole message feeds on Home. */
 export function useHomeComms() {
- const threads=useRecords<LiveRecord>('thread');
+ const threads=useRecords<LiveRecord & {agent:string; archived:number|null; working?:boolean; unread:boolean; last:number; title:string|null}>('thread');
  const [reading,setReading]=useState<{source:typeof threads;value:Summaries}>();
  useEffect(()=>{
   if(threads.status!=='live'){setReading(undefined);return;}
@@ -21,7 +21,7 @@ export function useHomeComms() {
   globalThis.window?.addEventListener('focus',focus);globalThis.document?.addEventListener('visibilitychange',visible);
   return()=>{active=false;globalThis.window?.removeEventListener('focus',focus);globalThis.document?.removeEventListener('visibilitychange',visible);};
  },[threads]);
- return threads.status==='live'&&reading?.source===threads?reading.value:undefined;
+ return { reading: threads.status==='live'&&reading?.source===threads?reading.value:undefined, threads: threads.status==='live'?threads.records.filter(t=>t.archived===null):[], status:threads.status };
 }
 export function HomeConversations({agent,name,reading,go}:{agent:string;name:string;reading?:Summaries;go(path:string):void}) {
  const summary=reading?.summaries.find(s=>s.agent===agent);

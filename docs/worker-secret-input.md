@@ -26,8 +26,8 @@ and each body to 64 KiB. Only the holder and original worker input see values;
 responses are empty and diagnostics are generic. It does not serialize pending
 proofs, reconstruct them on restart, or expose a daemon operation.
 
-This is an unactivated component. Standalone worker startup does not yet create
-pending requests or compose this transport with `secretTickets`,
+This is an unactivated component. No installed standalone worker composes
+this transport with `secretTickets`,
 `remoteTicketAuthority` and `listenHolderHandoff`. That composition must preserve
 both the original central claim and the original worker request, bind the pending
 id to its ticket, select configured transport from owning assignment, finish
@@ -86,7 +86,7 @@ or uncertain on every missing/failed response. No success settlement is inferred
 from socket writes. The real TLS tests demonstrate source failure and local
 cancellation retiring the claim, and a lost worker acknowledgement retiring it
 uncertain even when the original stream received bytes. Trusted admission,
-standalone runner-owned input creation, daemon completion, production capacity
+installed standalone composition, production capacity
 and staging/value-free accounting remain prerequisites to activation.
 
 
@@ -113,3 +113,38 @@ worker admission transport and standalone runner-owned dedicated input creation
 remain prerequisites, along with production tombstone lifecycle/capacity and
 staging/value-free accounting evidence. Existing legacy `admit`/claim components
 remain unactivated and retain their prior holder-owned settlement behavior.
+
+### Real dedicated command startup (unactivated)
+
+`runtime-runner/secret-command.ts` starts an owner-configured executable with a
+dedicated fd3 pipe; stdin, stdout and stderr are disconnected. This is a command
+consumer protocol: read fd3 to EOF once, then exit. It does not feed credentials
+to Claude prompt stdin or assume Claude supports this protocol. The original
+process pipe, exact assignment, synchronous owning proof and deadline are
+registered before the pending handle is returned. A pinned worker listener is
+started for that registry. One delivery closes fd3; the registry erases its
+borrowed buffer only after the pipe write settles. Command output is discarded.
+
+The owner retains the returned original pending handle and passes it to trusted
+admission. `bindTicket` consumes one admission reply and creates exactly one
+`remoteWorkerTicketProof` for the original ticket/pending pair, using endpoints
+and pins snapshotted from owner configuration before startup awaits. Delivery
+without that proof fails closed. Invalid binding burns the startup; rebinding
+cannot replace a retained proof. The original synchronous current proof must
+include policy, grants, job and local request replacement. It is checked after
+remote authority and immediately before the original pipe write.
+
+Cancellation, process error/exit, expiry and close retire the original pending
+input and proof, destroy the pipe, kill and drain the owned process, and close
+the listener. `completed` reports only a zero process exit after a pipe write
+while the original proof is current; it never settles a central claim or proves
+holder acknowledgement. Early process exit can make delivery uncertain even
+after the pipe accepted bytes. The original daemon completion remains separate.
+
+Real subprocess tests compose this startup with central admission and the pinned
+holder channels, including cancellation while the original central current
+response is delayed. These tests call admission directly as trusted test code.
+There is still no trusted worker admission transport, installed standalone/daemon
+startup composition, public typed-command operation, or public secret get.
+Production tombstone capacity/lifecycle and staging/value-free accounting remain
+required before activation. No real credential consumer is configured here.

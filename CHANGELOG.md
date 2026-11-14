@@ -14,13 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Inbox now separates self-cleared asks into searchable FYI history, keeping human answers in Answered.
 
+- New desk: make request and form ids without `crypto.randomUUID`, which browsers withhold on plain HTTP, so the desk works on a home network address.
 - Classify already owned Runtime spawn threads in Comms through original member metadata, preserving independent transport and execution holds.
 
 - New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.
 - New desk: Comms owns a live portrait and moves it once into the permanently shown companion rail.
 - Preserve the original member supplied by trusted spawn conversation metadata and refuse conflicting parents or retry owners.
 
-- Check Clock lane reuse against current Runtime destination metadata; hold verified joins until conversation delivery can feed the existing body safely.
+- Check Clock lane reuse against current Runtime destination metadata and deliver public prompts through owning conversations, with service dispatch, authenticated read acknowledgements and staging holds.
 - File spawned private Comms threads through unique owning metadata while preserving Runtime transport handles and execution holds.
 
 - Preserve private ordinary schedule scope and bind body schedule controls and cancellation, including command receipt replay, to fresh Runtime conversation proof and current policy.
