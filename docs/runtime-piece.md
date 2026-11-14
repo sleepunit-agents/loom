@@ -768,7 +768,10 @@ The complete question stays encrypted in Comms, with a metadata-only Attention
 projection. `{ref, seq}` is the only acknowledgement. Retry ids are namespaced
 by the authenticated job and question id, so retries preserve the original
 question and answered state across restart, and a replacement job cannot reuse
-its predecessor's question identity. This does not create an approval or task
+its predecessor's question identity. An authorized thread filing change does not
+recreate the existing question's immutable Attention scope or answered state;
+retries return its original receipt only after current membership, project
+creation policy and original body capability checks. This does not create an approval or task
 decision, enable spawn access, or remove any runner execution hold. Window-only
 question reading and rendering remain owned by Comms and Inbox.
 

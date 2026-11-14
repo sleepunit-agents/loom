@@ -1303,3 +1303,23 @@ it('withholds a former-thread question acknowledgement if the same job moves aft
  expect(f.app.db.prepare("SELECT thread FROM comms_messages WHERE kind='ask'").all()).toEqual([{thread:f.thread}]);
  expect(await f.post(f.body,'runtime.describeConversation',{})).toMatchObject({ok:true});
 });
+
+it('preserves the original private question receipt and answered projection after authorized project filing and restart',async()=>{
+ const f=await commsBodyFixture(),input={id:'question-before-filing',question:{ask:'PRIVATE FILING QUESTION'}};
+ const first=value<{ref:string;seq:number}>(await f.post(f.body,'runtime.askQuestion',input));
+ value(await f.socket('comms.replyToAsk',{ref:first.ref,text:'PRIVATE FILING ANSWER'}));
+ const projection=value(await f.socket('attention.get',{id:first.ref}));
+ const ciphertext=f.app.db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(f.thread,first.seq);
+ value(await f.socket('comms.change',{thread:f.thread,action:'project',project:'pond'}));
+ const job=runtimeStore(f.app.db).read('job',f.job)!;
+ expect(job.project).toBe('pond');expect(runtimeStore(f.app.db).read('binding',job.conversation!)!.project).toBe('pond');
+ expect(await f.post(f.body,'runtime.askQuestion',input)).toEqual({ok:true,value:first});
+ expect(value(await f.socket('attention.get',{id:first.ref}))).toEqual(projection);
+ await f.restart();
+ expect(await f.post(f.body,'runtime.askQuestion',input)).toEqual({ok:true,value:first});
+ expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq=?').get(f.thread,first.seq)).toEqual(ciphertext);
+ expect(value(await f.socket('attention.get',{id:first.ref}))).toEqual(projection);
+ expect(await f.post(f.body,'runtime.askQuestion',{...input,question:{ask:'Changed after filing'}})).toMatchObject({ok:false,code:'conflict'});
+ value(await f.socket('comms.change',{thread:f.thread,action:'archive'}));
+ expect(await f.post(f.body,'runtime.askQuestion',input)).toMatchObject({ok:false});
+});
