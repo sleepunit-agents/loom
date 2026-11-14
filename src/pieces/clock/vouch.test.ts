@@ -64,7 +64,7 @@ it('adopts unknown imports with the actual owner and retains words, deadline, ar
   const result = s.call('clock.vouch',input,owner,receipt);
   expect(result).toEqual({ok:true,value:{done:[ids[0]],gone:[]}});
   const adopted = wake(s.app.db,ids[0])!;
-  expect(adopted).toEqual({...before,by:owner,state:'pending',hold:undefined,outcome:'Owner vouched for unknown imported work',vouched:{by:'jonathan',at:s.clock.now()}});
+  expect(adopted).toEqual({...before,authorship:{principal:{for:'owner',people:['jonathan']}},by:owner,state:'pending',hold:undefined,outcome:'Owner vouched for unknown imported work',vouched:{by:'jonathan',at:s.clock.now()}});
   expect(s.call('clock.vouch',input,owner,receipt)).toEqual(result);
   expect(s.app.db.prepare('SELECT * FROM clock_events').all()).toHaveLength(1);
   await s.restart(); expect(wake(s.app.db,ids[0])).toEqual(adopted);
@@ -588,4 +588,14 @@ it('keeps Deny suppression on project work across restart and later scope change
   s.change(ids[0],{project:'other'});
   expect(s.call('clock.askVouch',{target:`art:${ids[0]}`}).ok).toBe(false);
   expect(cards(s)).toHaveLength(1);
+});
+
+it('replaces stale authorship with the deciding owner without restoring archived execution hints',async()=>{
+ const s=await setup(),id=ids[0],before=wake(s.app.db,id)!;
+ const legacy={...before.legacy,authorship:{principal:{for:'amelia',people:['amelia']},conversation:'archived-conversation',service:'archived-service'}};
+ s.change(id,{authorship:{origin:'old-agent',conversation:'old-conversation',service:'old-service',principal:{for:'?',people:['amelia']}},legacy});
+ s.value('clock.vouch',{target:`art:${id}`});
+ const adopted=wake(s.app.db,id)!;
+ expect(adopted.authorship).toEqual({principal:{for:'owner',people:['jonathan']}});
+ expect(adopted.legacy).toEqual(legacy);
 });

@@ -14,6 +14,8 @@ import {signin,hash} from '../core/signin/index.js';
 import {currentExecution} from '../pieces/runtime/control.js';
 import {hearJob} from '../pieces/runtime/heartbeat.js';
 import {provenanceStore} from '../pieces/runtime/provenance-store.js';
+import {importClock} from '../pieces/clock/importer.js';
+import {wake as readWake} from '../pieces/clock/store.js';
 import {runtimeStore} from '../pieces/runtime/store.js';
 import {runClockWorker} from './clock-worker-entry.js';
 import {startClockWorker,type ClockWorkerConfig} from './clock-worker.js';
@@ -23,10 +25,16 @@ const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
 const owner:Viewer={kind:'member',id:'jonathan'};
 const settle=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
-async function setup(staging=false,privateInput=false,unknownRoot=false,file?:string){
+async function setup(staging=false,privateInput=false,unknownRoot=false,file?:string,adoption?:'direct'|'card'){
  const home=mkdtempSync(join(tmpdir(),'clock-native-'));fixture(home);closes.push(()=>rmSync(home,{recursive:true,force:true}));
  const access=structuredClone(fixtureSharing());
- const clock=new FakeClock(),app=await startLoom({home,clock,next:true,staging,sharing:()=>access,stdout(){}});closes.push(app.close);access.services=builtinServices(app.db);
+ const clock=new FakeClock();
+ const source=join(home,'legacy-clock');
+ if(adoption){mkdirSync(join(source,'art'),{recursive:true});writeFileSync(join(source,'art/spool.jsonl'),JSON.stringify({
+  id:'w-abcdef',kind:'wake',for:'-',at:'2026-11-11 18:00:01',created:'2026-11-11 18:00:00',
+  prompt:'ONLY CURRENT SCHEDULED WORDS',note:'fixture',origin:'agent:art'}));}
+ const app=await startLoom({home,clock,next:true,staging,sharing:()=>access,stdout(){},
+  ...(adoption?{install(app:Parameters<NonNullable<Parameters<typeof startLoom>[0]['install']>>[0]){importClock(app.db,source,clock.now());}}:{})});closes.push(app.close);access.services=builtinServices(app.db);
  const storage=runtimeStore(app.db),store={...storage,put:(kind:Parameters<typeof storage.put>[0],value:Parameters<typeof storage.put>[1]&{changedAt?:number},at:number)=>{const {changedAt:_,...record}=value;return app.db.transaction(()=>storage.put(kind,record,at))();}};let n=0;
  const call=(name:string,input:unknown,viewer=owner)=>app.operations.call('direct',viewer,name,input,`fixture-${++n}`);
  app.db.transaction(()=>signin(app).tokens.replace({v:1,tokens:[]},{}))();
@@ -37,8 +45,16 @@ async function setup(staging=false,privateInput=false,unknownRoot=false,file?:st
  signin(app).tokens.change(ts=>ts.push({role:'runner:a',label:'fixture runner',sha256:hash(runner),created:new Date(clock.now()).toISOString()}));
  const post=async(token:string,name:string,input={})=>(await fetch(`${app.url}/api/runtime/${name}`,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({input,id:`http-${++n}`})})).json();
  const work={agent:'art',...(file?{file}:{prompt:'ONLY CURRENT SCHEDULED WORDS'}),note:'fixture',place:'lane:native',when:'1s'};
- const scheduled=privateInput?await app.operations.callAsync('socket',owner,'clock.in',{...work,member:'jonathan',project:'pond'},`private-${++n}`,true):call('clock.in',work,unknownRoot?{kind:'agent',id:'art'}:owner);
+ const scheduled=adoption?{ok:true,value:{id:'w-abcdef'}}:privateInput?await app.operations.callAsync('socket',owner,'clock.in',{...work,member:'jonathan',project:'pond'},`private-${++n}`,true):call('clock.in',work,unknownRoot?{kind:'agent',id:'art'}:owner);
  expect(scheduled).toMatchObject({ok:true});const wake=(scheduled as {ok:true;value:{id:string}}).value.id;
+ if(adoption){
+  const target=`art:${wake}`;
+  if(adoption==='card'){
+   const requested=call('clock.askVouch',{target});expect(requested).toMatchObject({ok:true});
+   if(!requested.ok)throw new Error('vouch request failed');
+   expect(call('approvals.answer',{id:(requested.value as {id:string}).id,action:'allow'})).toMatchObject({ok:true});
+  }else expect(call('clock.vouch',{target})).toMatchObject({ok:true});
+ }
  clock.advance(1000);await settle();const job=store.ids('job')[0];expect(job).toBeTruthy();
  expect(await post(runner,'claimJob',{job})).toMatchObject({ok:true});
  if(staging){expect(await post(runner,'takeInput',{job})).toMatchObject({ok:false});expect(call('core.releaseEffect',{id:`runtime:input:${job}`}).ok).toBe(true);}
@@ -889,4 +905,20 @@ it('a successful resumed turn opens a new idle window beyond the first deadline'
  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${third}`)).toEqual({consumed:null});
  await finishToIdle(f);f.clock.advance(4000);expect(await worker.completed).toBe(true);
  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${third}`)).toEqual({consumed:expect.any(Number)});
+});
+
+it.each(['direct','card'] as const)('fresh owner %s adoption supplies current authorship to actual native execution',async adoption=>{
+ const f=await setup(false,false,false,undefined,adoption);
+ const adopted=readWake(f.app.db,f.wake)!;
+ expect(adopted.legacy).toMatchObject({for:'-',origin:'agent:art'});
+ const signals=new EventEmitter(),input=new PassThrough();
+ const result=runClockWorker({input,args:[],signals,stderr(){}},{clock:f.clock,launch:f.launch});
+ input.end(JSON.stringify(f.config));
+ // Await completion or spawn: a refused admission must fail promptly, not hang the test.
+ await Promise.race([f.ready,result]);expect(f.calls).toHaveLength(1);
+ expect(f.calls[0].input).toBe('LOCAL OWNER RULES\nONLY CURRENT SCHEDULED WORDS');
+ expect(f.consumed().consumed).toBeNull();f.finish();expect(await result).toBe(0);
+ expect(f.consumed().consumed).not.toBeNull();
+ expect(adopted.authorship).toEqual({principal:{for:'owner',people:['jonathan']}});
+ expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(1);
 });
