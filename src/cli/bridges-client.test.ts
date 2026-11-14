@@ -34,7 +34,7 @@ it('generates help and registry metadata for setup writes and terminal send disp
   const app = await setup();
   const offered = app.operations.offered('http').filter(o => o.name.startsWith('bridges.'));
   expect(offered.map(o => o.cli)).toEqual(bridgeCommands);
-  expect(offered.filter(o => o.name !== 'bridges.status').every(o => o.write && o.cli?.write)).toBe(true);
+  expect(offered.filter(o => !['bridges.status','bridges.discordHistory'].includes(o.name)).every(o => o.write && o.cli?.write)).toBe(true);
   const help = await app.run(['--help']); expect(help.code).toBe(0);
   for (const command of bridgeCommands) expect(help.stdout).toContain(command.name);
 });

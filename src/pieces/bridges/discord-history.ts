@@ -31,3 +31,8 @@ export function discordHistoryMessages(raw:unknown,channel:string,workspace:stri
       text:m.content+(m.attachments??[]).map(a=>` [attachment: ${a.filename} ${a.url}]`).join('')};
   }).sort((a,b)=>BigInt(a.id)<BigInt(b.id)?-1:1);
 }
+
+/** Closed public/client shape; no permits, raw payloads or policy labels. */
+export const discordHistoryResult = z.object({messages:z.array(z.object({
+  id:snowflake,at:z.iso.datetime(),user:snowflake,bot:z.boolean(),type:z.number().int(),webhook:snowflake.optional(),text:z.string(),
+}).strict()).max(100)}).strict();
