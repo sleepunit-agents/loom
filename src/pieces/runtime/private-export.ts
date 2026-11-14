@@ -35,6 +35,9 @@ export function privateRuntimeExport(db: Db,snapshot?:ExportSnapshot):{jobs:Set<
   for(const row of records('runtime_clock_turns'))if(jobs.has(String(row.job))||conversations.has(String(row.conversation))){
    jobs.add(String(row.job));conversations.add(String(row.conversation));sources.add(String(row.id));
   }
+  for(const row of records('runtime_public_continuations'))if(jobs.has(String(row.job))||jobs.has(String(row.original_job))){
+   jobs.add(String(row.job));jobs.add(String(row.original_job));
+  }
   changed=before!==jobs.size+conversations.size+sources.size;
  }
  const ids=new Set([...jobs,...conversations,...sources]);

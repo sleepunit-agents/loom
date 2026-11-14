@@ -1,3 +1,4 @@
+import {publicAncestors,PUBLIC_GENERATIONS,type PublicContinuation} from './public-continuation.js';
 import { runtimeDestination } from './destination.js';
 import { installPublicInputs } from './public-inputs.js';
 import { installPublicMetadata } from './public-metadata.js';
@@ -48,12 +49,23 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     return !!source && sourceRecord(source,record.attempt)===row.record && source.agent===job.agent
       && source.member===job.member && source.project===job.project && source.authorship?.service===job.service;
   };
-  const valid=(jobId:string)=>{
+  const rootFor=(jobId:string)=>{
+    const root=publicAncestors(db,jobId)?.at(-1);
+    return root?db.prepare('SELECT * FROM runtime_clock_turns WHERE job=? ORDER BY seq LIMIT 1').get(root) as Turn|undefined:undefined;
+  };
+  const valid=(jobId:string,terminal=false,seen=new Set<string>()):boolean=>{
+    if(seen.has(jobId)||seen.size>=PUBLIC_GENERATIONS)return false;
+    seen.add(jobId);
     const job=store.read('job',jobId),binding=job?.conversation?store.read('binding',job.conversation):undefined;
-    const root=job?.conversation?db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(job.conversation) as Turn|undefined:undefined;
+    const root=rootFor(jobId);
+    const link=db.prepare('SELECT * FROM runtime_public_continuations WHERE job=?').get(jobId) as PublicContinuation|undefined;
+    const original=link&&store.read('job',link.original_job);
+    if(link&&(!original||readDestination(original)!==link.original_destination||!valid(original.id,true,seen)
+      ||!['done','failed'].includes(original.state)||original.endedAt===undefined
+      ||!job||readDestination(job)!==link.destination))return false;
     return !!root&&!!job&&currentSource(root,job)
       &&!isClosing(app)&&!job.imported&&!job.principalReset&&!job.writtenOff
-      &&job.endedAt===undefined&&!bodyPolicyExecutionHeld(db,job.agent)&&!!binding&&binding.venue==='wake'
+      &&(terminal?(['running','waiting'].includes(job.state)&&job.endedAt===undefined||['done','failed'].includes(job.state)&&job.endedAt!==undefined):job.endedAt===undefined)&&!bodyPolicyExecutionHeld(db,job.agent)&&!!binding&&binding.venue==='wake'
       &&binding.job===job.id&&binding.agent===job.agent&&binding.member===job.member&&binding.project===job.project
       &&provenanceStore(db).read(binding.id)?.agent===job.agent&&currentExecution(store,job,sharing())
       &&(job.member===undefined ? mayCreate({kind:'agent',id:job.agent},{type:'wake',agent:job.agent,project:job.project},sharing()) : mayRunPrivateWork(job,sharing()));
@@ -213,16 +225,16 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     const p=provenanceStore(db).read(job.conversation);if(!p)return;
     return {agent:job.agent,member:job.member,conversation:job.conversation,project:job.project,service:job.service,principal:principalForWork(p.history,owners())};
   };
-  const publicJob=(jobId:string)=>{
-    if(!valid(jobId))return;
+  const publicJob=(jobId:string,terminal=false)=>{
+    if(!valid(jobId,terminal))return;
     const job=store.read('job',jobId);
-    const root=db.prepare('SELECT * FROM runtime_clock_turns WHERE job=? ORDER BY seq LIMIT 1').get(jobId) as Turn|undefined;
-    return job&&root&&!withdrawn(root)&&job.member===undefined&&job.service===undefined&&['running','waiting'].includes(job.state)?job:undefined;
+    const root=rootFor(jobId);
+    return job&&root&&!withdrawn(root)&&job.member===undefined&&job.service===undefined&&(terminal?['running','waiting','done','failed']:['running','waiting']).includes(job.state)?job:undefined;
   };
-  const publicInputs=installPublicInputs(app,sharing,effects,v=>{const job=bound(v);return job&&publicJob(job.id);},publicJob);
+  const publicInputs=installPublicInputs(app,sharing,effects,v=>{const job=bound(v);return job&&publicJob(job.id);},publicJob,CLOCK_BRIEF);
   installPublicMetadata(app,v=>{
     const job=bound(v);if(!job?.conversation)return;
-    const root=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(job.conversation) as Turn|undefined;
+    const root=rootFor(job.id);
     return root&&!withdrawn(root)?job:undefined;
   },publicInputs);
   return {valid,bound,read,clockProvenance,
@@ -231,8 +243,12 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     // payload prepared for the original claim. This proof ends at takeInput;
     // it is not native launch authority after the payload leaves Runtime.
     inputCurrent(jobId:string){
-      const root=db.prepare('SELECT * FROM runtime_clock_turns WHERE job=? ORDER BY seq LIMIT 1').get(jobId) as Turn|undefined;
-      if(!root)return ()=>true;
+      const root=rootFor(jobId);
+      if(!root){
+        const job=store.read('job',jobId),binding=job?.conversation?store.read('binding',job.conversation):undefined;
+        const linked=db.prepare('SELECT job FROM runtime_public_continuations WHERE job=?').get(jobId);
+        return ()=>!linked&&binding?.venue!=='wake';
+      }
       const job=store.read('job',jobId),original=job&&readDestination(job);
       return ()=>{
         const current=store.read('job',jobId);
