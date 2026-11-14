@@ -271,12 +271,12 @@ it('projects each joined scheduled source exactly once in source order across ov
 });
 it('native Clock completion uses the same atomic accepted-input metadata path',async()=>{
  const f=await setup(),execution=await f.post(f.body,'beginClockExecution',{});expect(execution).toMatchObject({ok:true});
- expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual([]);
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual([]);f.clock.advance(321);
  const name='mayCreate',original=policy[name];vi.spyOn(policy,name).mockImplementation((v,r,s,...rest)=>r.type==='attention.conversation'?false:original(v,r,s,...rest));
  expect(await f.post(f.body,'completeClockExecution',{execution:execution.value.execution},'native-metadata')).toMatchObject({ok:false});
  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns').get()).toEqual({consumed:null});vi.restoreAllMocks();
  expect(await f.post(f.body,'completeClockExecution',{execution:execution.value.execution},'native-metadata')).toMatchObject({ok:true});
- expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(1);
+ const accepted=f.app.db.prepare('SELECT record FROM attention_turns').all() as {record:string}[];expect(accepted).toHaveLength(1);expect(JSON.parse(accepted[0].record).at).toBe(new Date(f.clock.now()).toISOString());
  expect(await f.post(f.body,'completeClockExecution',{execution:execution.value.execution},'native-metadata')).toMatchObject({ok:true});
  expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(1);
  f.clock.advance(1000);const reply=await f.post(f.body,'recordTurn',{kind:'reply',outcome:'answered'});expect(reply).toMatchObject({ok:true});expect(reply.value).not.toHaveProperty('latency_ms');
