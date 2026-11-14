@@ -36,6 +36,56 @@ reverting means restarting the old server on the untouched old home. Context and
 commons stores and other key files must be copied as part of the overall move;
 they are not app tables and are not imported here.
 
+## First run and the old in-place conversion
+
+Start a brand-new household with `loom serve --next --home NEW_HOME`.
+First sign-in initializes the household's OS owner, publishes the complete neutral
+`assistant` context and prints a short-lived sign-in link. It creates no agent
+bearer token. After signing in, Setup can create named agents with their own
+creed/rules, deliberately mint a first token, and show the explicit next-mode MCP
+configuration. An initialized or imported household is never re-scaffolded on
+restart; edited identity files and deliberately missing preference files survive.
+
+The commons needs no conversion for a fresh household. Knowledge and the People
+directory use `HOME/commons/knowledge.db` and `HOME/commons/people.db`;
+relationships use each agent's private `memories.db`. Empty stores are created by
+their normal writers. There is no old combined card or agent knowledge database
+to move or split, and no requirement to populate stores merely to sign in.
+
+The old `household init AGENT` moved `HOME/AGENT` into `HOME/agents/AGENT`,
+left a compatibility symlink, and moved existing knowledge. The old
+`household commons` moved knowledge and split combined person cards. Those
+**in-place conversion commands are retired on the new side**, rather than being
+run implicitly or routed through a remote API. They mutate portable continuity
+files and require a stopped source; a daemon API client cannot safely rearrange
+another machine's source directory. The temporary symlink was for the old harness
+path during the earlier phased rollout. Next stdio instead selects an explicit
+home/agent or standalone context, so that compatibility path is unnecessary.
+
+This disposition does not retire standalone operation:
+`loom mcp --next --context-dir CONTEXT` still uses that portable context without
+an app database. It also does not claim that the household importer promotes an
+unsplit standalone context into a shared household. That importer accepts the
+existing household file format; it neither moves contexts nor changes which
+person fields are shared. Existing households carry their already-split commons
+and agent contexts through the final coordinated move alongside the app import.
+An unsplit standalone source stays standalone; no automatic conversion or guessed
+merge of several knowledge stores is offered. The old executable retains its
+existing commands until the coordinated retirement of the old side.
+
+| Old first-run action | New-side choice |
+| --- | --- |
+| Initialize a new household | `serve --next` first sign-in, then Setup |
+| Move an existing standalone context and leave a symlink | Retired; explicit standalone stdio remains supported |
+| Implicitly move knowledge or split combined People cards | Retired; fresh stores already have the separate layout; no automatic standalone promotion |
+| Import an existing household's app records | Explicit `migrate household`; continuity files are separate move inputs |
+
+This is a command disposition, with no change to record scope, member authority,
+source data or migration behavior. Startup/retry and stopped-default-MCP witnesses
+are in `src/core/signin/operator.test.ts`; agent creation/configuration witnesses
+are in `src/core/household/bootstrap.test.ts`; standalone and multi-agent stdio
+acceptance is in `src/continuity/stdio.test.ts`.
+
 ## Old-to-new mapping
 
 | Old state | New rows |
