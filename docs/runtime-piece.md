@@ -1592,15 +1592,51 @@ their words and questions remain with their owning consumers.
 Retry fingerprints include the original job, claim, house, route and scope; a
 replacement body cannot replay another body's receipt under a shared agent id.
 The writer rechecks current credential, job, source, binding, scope, box and
-policy authority, and refuses a withdrawn root source. It never launches or
-releases work. Actionable `needs_owner` is explicitly unavailable until public
-answer delivery has its own owning consumer; omitted/null `needs_owner` writes
-an ordinary summary. This preparatory adapter does not claim to deliver Inbox
-answers, record incoming Clock words, grade outcomes, enable external bound
-execution, or replace the unfinished public metadata paths for Bridges/spawns.
+policy authority, and refuses a withdrawn root source. It never launches work. Public `needs_owner` without `waits_on` now uses the
+owning answer inbox below; omitted/null `needs_owner` writes an ordinary
+summary. Managed decisions remain with their owning source. Incoming Clock
+metadata, grading, external bound execution and Bridges/spawn metadata remain
+unfinished.
 The importer remains unchanged.
 
 | Old body operation | New operation | Remaining |
 | --- | --- | --- |
 | public Clock own conversation turn | `runtime.recordTurn` derives current owning route, run and sender; Attention stores metadata | incoming source metadata and Bridges/spawn adapters |
-| public Clock conversation digest | `runtime.writeDigest` maps the Runtime binding to Attention's canonical conversation | actionable questions and owning public answer delivery; grading |
+| public Clock conversation digest | `runtime.writeDigest` maps the Runtime binding to Attention's canonical conversation | terminal-body answer continuation; grading |
+
+### Public answers for an active original Clock body
+
+`runtime.writeDigest` captures normalized public question identity and the exact
+asking job, claim, house, binding and scope in Runtime's own tables. Attention's
+synchronous conversation-answer hook commits the member's answer and Runtime's
+input in one transaction. A failed consumer rolls both back, including retry
+receipts. A typed conversation/source label is insufficient: Runtime requires
+its saved question and destination. Managed `waits_on` decisions remain held.
+
+An actual member's Yes/No becomes the original question plus its matching
+outcome line; words remain verbatim, with a 40000-character limit. Done/dismiss
+acknowledge without sending work. Agent, project and destination come from the
+asking body; sender and timestamp come from the member's authenticated answer.
+Current central give-work policy is checked before enqueueing. Project members
+who can answer the ask may choose Done/dismiss without owning the agent, since
+those acknowledgements enqueue nothing. Text never
+executes an approval, grants access, launches a job or calls another piece.
+
+The bound body reads `runtime.readPublicInputs({})` and accepts released inputs
+with `runtime.acknowledgePublicInputs({through:seq})`. Reads require actual
+current public nonservice Clock body credentials and the original destination.
+New words cross the central OutsideEffects gate, so staging requires release.
+Reads retain pending inputs until acknowledgement; retry receipts contain only
+job/acknowledgement metadata. The new owning records and release effects follow
+Runtime's filtered-export correlation rules, including a job later made private.
+
+This unit supports running/waiting original destinations only. If the asking
+job ends or its original claim/house/route changes, answering fails and the ask
+stays open. Starting a continuation after a terminal body, public incoming
+metadata, bridge/spawn answer consumers and native bound execution remain on
+the Runtime rebuild task. No importer, old store or live home is changed.
+
+| Legacy public action | New owning path | Remaining |
+| --- | --- | --- |
+| Inbox reply to a public Clock question | Attention answer transaction → Runtime owning inbox → bound body read/ack | continuation after terminal job; bridge/spawn consumers |
+| public answer staging hold | central body-start effect at the words boundary | native external bound execution |

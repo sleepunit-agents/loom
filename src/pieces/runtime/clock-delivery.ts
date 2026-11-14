@@ -1,3 +1,5 @@
+import { runtimeDestination } from './destination.js';
+import { installPublicInputs } from './public-inputs.js';
 import { installPublicMetadata } from './public-metadata.js';
 import { rememberClockReceipt } from './private-export.js';
 import { installClockExecution } from './clock-execution.js';
@@ -20,7 +22,7 @@ import { bodyPolicyExecutionHeld } from './policy-store.js';
 import type { Wake } from '../clock/role.js';
 import type { RuntimeRecords } from './records.js';
 import type { ClockProvenanceReader } from './role.js';
-export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation. Acknowledge through runtime.acknowledgeClockInput only after accepting the actual words for execution; reading a filename is not execution. Native workers use runtime.beginClockExecution and its owning current/completion protocol. New inputs may arrive in this conversation.';
+export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation. Acknowledge through runtime.acknowledgeClockInput only after accepting the actual words for execution; reading a filename is not execution. Native workers use runtime.beginClockExecution and its owning current/completion protocol. Read public Inbox answers through runtime.readPublicInputs and acknowledge them through runtime.acknowledgePublicInputs. New inputs may arrive in this conversation.';
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,40);
 const id=z.string().min(1).max(200);
 interface Turn {seq:number;id:string;conversation:string;job:string;record:string;released:number|null;consumed:number|null}
@@ -37,14 +39,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   // Pin the owning route and claim, not mutable progress/heartbeat metadata.
   // A replacement that is independently valid cannot authorize prepared words
   // captured for the previous destination across the operation's async boundary.
-  const readDestination=(job:RuntimeRecords['job'])=>{
-    const binding=job.conversation?store.read('binding',job.conversation):undefined;
-    return JSON.stringify({job:job.id,agent:job.agent,member:job.member,project:job.project,
-      service:job.service,conversation:job.conversation,runner:job.runner,box:job.box,
-      claimedAt:job.claimedAt,made:job.made,
-      binding:binding&&{id:binding.id,agent:binding.agent,member:binding.member,
-        project:binding.project,venue:binding.venue,place:binding.place,job:binding.job}});
-  };
+  const readDestination=(job:RuntimeRecords['job'])=>runtimeDestination(db,job);
   const owners=()=>Object.entries(sharing().members).filter(([,m])=>m.owner).map(([id])=>id);
   const withdrawn=(row:Turn)=>clockDispatchWithdrawn(operations,row.id.slice('clock:'.length),(JSON.parse(row.record) as {attempt:string}).attempt);
   const currentSource=(row:Turn,job:RuntimeRecords['job'])=>{
@@ -218,11 +213,18 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     const p=provenanceStore(db).read(job.conversation);if(!p)return;
     return {agent:job.agent,member:job.member,conversation:job.conversation,project:job.project,service:job.service,principal:principalForWork(p.history,owners())};
   };
+  const publicJob=(jobId:string)=>{
+    if(!valid(jobId))return;
+    const job=store.read('job',jobId);
+    const root=db.prepare('SELECT * FROM runtime_clock_turns WHERE job=? ORDER BY seq LIMIT 1').get(jobId) as Turn|undefined;
+    return job&&root&&!withdrawn(root)&&job.member===undefined&&job.service===undefined&&['running','waiting'].includes(job.state)?job:undefined;
+  };
+  const publicInputs=installPublicInputs(app,sharing,effects,v=>{const job=bound(v);return job&&publicJob(job.id);},publicJob);
   installPublicMetadata(app,v=>{
     const job=bound(v);if(!job?.conversation)return;
     const root=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(job.conversation) as Turn|undefined;
     return root&&!withdrawn(root)?job:undefined;
-  });
+  },publicInputs);
   return {valid,bound,read,clockProvenance,
     // The existing runner input boundary needs owning Clock authority for
     // public jobs too. A generic replacement destination cannot authorize a

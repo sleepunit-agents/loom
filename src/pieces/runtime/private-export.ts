@@ -47,7 +47,7 @@ export function privateRuntimeExport(db: Db,snapshot?:ExportSnapshot):{jobs:Set<
   }
   return !!value&&typeof value==='object'&&Object.entries(value).some(([k,v])=>reference(v,k));
  };
- const effect=(id:string)=>[...jobs].some(job=>id===`runtime:input:${job}`||id.startsWith(`runtime:clock-read:${job}:`))
+ const effect=(id:string)=>[...jobs].some(job=>id===`runtime:input:${job}`||id.startsWith(`runtime:clock-read:${job}:`)||id.startsWith(`runtime:public-read:${job}:`))
   ||[...sources].some(source=>id===`runtime:clock-native:${source}`);
  return {jobs,excludes(table:string,row:Record<string,unknown>){
   if(table==='core_effects')return effect(String(row.id));

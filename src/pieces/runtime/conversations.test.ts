@@ -77,6 +77,8 @@ it('runs private conversation input/reply/status through actual next auth, socke
  expect(provenanceStore(f.app.db).read(conversation)?.history.owners).toEqual(['jonathan']);
  expect(await f.socket('comms.messages',{thread})).toMatchObject({ok:true});
  for(const secret of [f.runner,f.owner,f.unbound,f.token('agent:art@another')])expect(await f.post(secret,'runtime.readConversation',{})).toMatchObject({ok:false});
+ expect(await f.post(body,'runtime.readPublicInputs',{})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(body,'runtime.acknowledgePublicInputs',{through:1})).toMatchObject({ok:false,code:'denied'});
  const wrongAgent=f.token(`agent:mark@${job}`);
  expect(await f.post(wrongAgent,'runtime.readConversation',{})).toMatchObject({ok:false,code:'denied'});
  expect(await f.post(wrongAgent,'runtime.reply',{id:'wrong-agent-reply',conversation:runtimeStore(f.app.db).read('job',job)!.conversation,text:'forged Mark reply'})).toMatchObject({ok:false,code:'denied'});
