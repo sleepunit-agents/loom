@@ -516,7 +516,7 @@ it('new generation watchdog still kills a resumed child on source withdrawal',as
 });
 
 it.each([100,101])('drains oldest sources beyond the history window and stops after 100 turns (queued=%s)',async total=>{
- const f=await setup();
+ const f=await setup();f.config.idleMs=30_000;
  const joined=await f.joinInput({prompt:'ORDERED 1'});
  // Persisted backlog fixture: ordinary filing capacity limits a current
  // conversation before 100 pending inputs. Clone one real admitted source to
@@ -537,7 +537,7 @@ it.each([100,101])('drains oldest sources beyond the history window and stops af
  expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns WHERE job=? AND consumed IS NOT NULL').get(f.job)).toEqual({n:100});
  if(total===101){
   expect(f.calls.some(c=>c.input.endsWith('ORDERED 100'))).toBe(false);
-  expect(await f.attempt()).toBe(true);expect(f.calls).toHaveLength(101);
+  f.config.idleMs=0;expect(await f.attempt()).toBe(true);expect(f.calls).toHaveLength(101);
   expect(f.calls[100].args).toContain('--session-id');expect(f.calls[100].args).not.toContain('--resume');
  }
 },20_000);
@@ -720,4 +720,77 @@ it('a stalled idle probe expires without resuming from a late reply',async()=>{
 });
 it.each([-1,30_001,1.5,'3000',null])('rejects invalid owner idle wait %s before release',async idleMs=>{
  const f=await setup();expect(()=>f.start({...f.config,idleMs:idleMs as number})).toThrow();expect(f.calls).toHaveLength(0);
+});
+
+// Record wire ids at the HTTP seam; they remain Runtime ids, never native handles.
+function captureExecution(){
+ const original=globalThis.fetch;let execution:string|undefined;
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+  const response=await original(...args);
+  if(String(args[0]).endsWith('/api/runtime/beginClockExecution')){
+   const body=await response.clone().json();if(body.ok)execution=body.value.execution;
+  }
+  return response;
+ });
+ return ()=>{expect(execution).toBeTruthy();return execution!;};
+}
+it('idle probes require the completed phase and cannot destroy an active execution',async()=>{
+ const f=await setup(),execution=captureExecution(),worker=f.start({...f.config,idleMs:3000});await f.ready;
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:execution()})).toMatchObject({ok:false,code:'denied'});
+ await finishToIdle(f);
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:execution()})).toMatchObject({ok:true,value:{current:true,more:false,ttl:5000}});
+ // A late foreground watchdog likewise cannot destroy the completed proof.
+ expect(await f.post(f.config.credential,'currentClockExecution',{execution:execution()})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:execution()})).toMatchObject({ok:true});
+ f.clock.advance(3000);expect(await worker.completed).toBe(true);
+});
+it('idle probes never extend expiry or authorize cross-startup native history',async()=>{
+ const f=await setup(),execution=captureExecution(),worker=f.start({...f.config,idleMs:3000});await f.ready;await finishToIdle(f);
+ const previous=execution(),at=vi.spyOn(f.clock,'at');
+ f.clock.advance(1000);
+ await vi.waitFor(()=>expect(at).toHaveBeenCalledWith(f.clock.now()+1000,expect.any(Function)));at.mockRestore();
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:previous})).toMatchObject({ok:true});
+ f.clock.advance(2000);expect(await worker.completed).toBe(true);
+ const joined=await f.joinInput();
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:previous})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(f.config.credential,'beginClockExecution',{previous})).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.effects!.status(`runtime:clock-native:clock:${joined}`)).toBeUndefined();
+ expect(await f.attempt()).toBe(true);expect(f.calls).toHaveLength(2);
+ expect(f.calls[1].args).toContain('--session-id');expect(f.calls[1].args).not.toContain('--resume');
+});
+it('standalone file completion does not retain idle join authority',async()=>{
+ const f=await setup(false,false,false,'native.md'),execution=captureExecution();writeFileSync(join(f.home,'native.md'),'FILE WORDS');
+ const worker=f.start({...f.config,idleMs:3000});await f.ready;f.finish();expect(await worker.completed).toBe(true);
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:execution()})).toMatchObject({ok:false,code:'denied'});
+ expect(f.calls).toHaveLength(1);
+});
+it('idle request timeout also honors the earlier original idle deadline',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:3000});await f.ready;await finishToIdle(f);
+ const held=holdResponse('idleClockExecution');
+ try{f.clock.advance(1000);await held.ready;f.clock.advance(2000);
+  expect(await worker.completed).toBe(false);held.release();await settle();expect(f.calls).toHaveLength(1);
+ }finally{held.release();}
+});
+
+it('idle probes recheck earlier joined sources retained in native history',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:4000});await f.ready;
+ const earlier=await f.joinInput();f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+ await f.joinInput();f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(3));
+ await finishToIdle(f);
+ f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.withdrawn',json('true')) WHERE id=?").run(earlier);
+ f.clock.advance(1000);expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(3);
+});
+it('an unsupported idle arrival gets no native effect or child',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:4000});await f.ready;await finishToIdle(f);
+ const joined=await f.joinInput({model:'other'});
+ expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(1);
+ expect(f.app.effects!.status(`runtime:clock-native:clock:${joined}`)).toBeUndefined();
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+});
+it('executable signal drains a sleeping idle worker without another fake-clock tick',async()=>{
+ const f=await setup(),input=new PassThrough(),signals=new EventEmitter(),stderr=vi.fn();
+ const completed=runClockWorker({input,args:[],signals,stderr},{clock:f.clock,launch:f.launch});
+ input.end(JSON.stringify({...f.config,idleMs:30_000}));await f.ready;await finishToIdle(f);
+ signals.emit('SIGTERM');expect(await completed).toBe(1);expect(f.calls).toHaveLength(1);
+ expect(signals.listenerCount('SIGTERM')).toBe(0);expect(signals.listenerCount('SIGINT')).toBe(0);
 });
