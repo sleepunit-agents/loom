@@ -19,6 +19,7 @@ async function setup() {
  const home=mkdtempSync(join(tmpdir(),'loom-handoff-'));closes.push(()=>rmSync(home,{recursive:true,force:true}));
  const daemonHome=join(home,'daemon');fixture(daemonHome);
  const app=await startLoom({home:daemonHome,next:true,staging:true,host:'127.0.0.1',port:0,clock:new FakeClock(),stdout(){}});closes.push(()=>app.close());
+ for(const op of ['secrets.houseGet','secrets.get','secrets.handTo'])expect(app.operations.has(op)).toBe(false);
  const fixtures=fileURLToPath(new URL('./fixtures/holder-tls/',import.meta.url));
  for(const name of ['ca.pem','holder.pem','holder.key','daemon.pem','daemon.key','stranger.pem','stranger.key'])writeFileSync(join(home,name),readFileSync(join(fixtures,name)),{mode:0o600});
  const common={socket:join(home,'handoff.sock'),ca:join(home,'ca.pem')};
@@ -87,10 +88,7 @@ it('drains pending source work on holder close and fences late release; client c
 });
 it('rejects malformed success responses without retaining or returning holder output',async()=>{
  const f=await setup();await f.holder.close();
- const server=https.createServer({ca:readFileSync(f.config.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),requestCert:true,rejectUnauthorized:true},(_req,res)=>{res.writeHead(200,{'content-type':'application/octet-stream'});res.end('HANDOFF-SECRET-SENTINEL');});
- await new Promise<void>(resolve=>server.listen(f.server.socket,resolve));
- const {chmodSync}=await import('node:fs');chmodSync(f.server.socket,0o600);
- closes.push(()=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());}));
+ await fakeHolder(f,(_req,res)=>{res.writeHead(200,{'content-type':'application/octet-stream'});res.end('HANDOFF-SECRET-SENTINEL');});
  await expect(f.client.handTo(f.id)).rejects.toThrow(/^Secret handoff unavailable$/);
 });
 it('drains an already-started runner transfer before erasing its borrowed buffer',async()=>{
@@ -130,10 +128,7 @@ function rawPeer(f: Awaited<ReturnType<typeof setup>>, partial=false) {
 }
 it('wrong CA-valid holder pin sends no ticket to the HTTP handler',async()=>{
  const f=await setup();await f.holder.close();const received=vi.fn((_req:IncomingMessage,res:ServerResponse)=>{res.writeHead(204,{'content-length':0});res.end();});
- const server=https.createServer({ca:readFileSync(f.config.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),requestCert:true,rejectUnauthorized:true},received);
- await new Promise<void>(resolve=>server.listen(f.server.socket,resolve));
- const {chmodSync}=await import('node:fs');chmodSync(f.server.socket,0o600);
- closes.push(()=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());}));
+ await fakeHolder(f,received);
  const client=localHolderHandoff(f.config,f.fingerprint('daemon'));closes.push(client.close);
  await expect(client.handTo(f.id)).rejects.toThrow(/^Secret handoff unavailable$/);
  expect(received).not.toHaveBeenCalled();
@@ -187,13 +182,29 @@ it.each(['authority','source','transfer'])('holder deadline fences late %s settl
 });
 it('client has its own absolute deadline against a holder with no response deadline',async()=>{
  const f=await setup();await f.holder.close();const entered=deferred<void>();
- const server=https.createServer({ca:readFileSync(f.config.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),requestCert:true,rejectUnauthorized:true},()=>{entered.resolve();});
- await new Promise<void>(resolve=>server.listen(f.server.socket,resolve));
- const {chmodSync}=await import('node:fs');chmodSync(f.server.socket,0o600);
- closes.push(()=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());}));
+ await fakeHolder(f,()=>{entered.resolve();});
  vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});
  try {
   const pending=expect(f.client.handTo(f.id)).rejects.toThrow(/^Secret handoff unavailable$/);
   await entered.promise;await vi.advanceTimersByTimeAsync(5000);await pending;
  }finally{vi.useRealTimers();}
 });
+
+it('holder deadline retains the connection budget across partial headers and authority',async()=>{
+ const f=await setup(),entered=deferred<void>(),release=deferred<void>();
+ f.authority.mockImplementationOnce(async()=>{entered.resolve();await release.promise;return f.destination;});
+ vi.useFakeTimers({toFake:['setTimeout','clearTimeout']});const raw=rawPeer(f,true);
+ try {
+  await new Promise<void>(resolve=>raw.peer.once('secureConnect',resolve));
+  await vi.advanceTimersByTimeAsync(3000);raw.peer.write('\r\n');await entered.promise;
+  await vi.advanceTimersByTimeAsync(2000);await vi.waitFor(()=>expect(raw.closed()).toBe(true));
+  release.resolve();await f.holder.close();expect(f.read).not.toHaveBeenCalled();expect(f.handTo).not.toHaveBeenCalled();
+ }finally{release.resolve();raw.peer.destroy();vi.useRealTimers();}
+});
+
+async function fakeHolder(f:Awaited<ReturnType<typeof setup>>,handler:(req:IncomingMessage,res:ServerResponse)=>void) {
+ const server=https.createServer({ca:readFileSync(f.config.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),requestCert:true,rejectUnauthorized:true},handler);
+ await new Promise<void>(resolve=>server.listen(f.server.socket,resolve));
+ const {chmodSync}=await import('node:fs');chmodSync(f.server.socket,0o600);
+ closes.push(()=>new Promise<void>(resolve=>{server.closeAllConnections();server.close(()=>resolve());}));
+}

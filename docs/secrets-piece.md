@@ -1097,3 +1097,7 @@ house granted-get path, without exposing the old plaintext HTTP/CLI response.
 The public granted-get command and operation remain unavailable until the complete
 trusted runner path and value-free accounting are present. No installed config,
 real holder, home, credential or host step changes here.
+Private TLS/configuration/key reads use a fixed limit-plus-one scratch buffer,
+refuse growth or metadata changes during the read, and erase scratch bytes on
+both success and failure. The shared helper preserves the separate 128 KiB
+ciphertext limit; it never reads a growing file to EOF without a bound.
