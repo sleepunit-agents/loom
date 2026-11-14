@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Next Comms adds a window-only live backend for authorized task and GitHub chip cards; browser chips and other reference kinds remain unfinished.
+
 - Next Comms: Tasks and Changes resolve reverse From links through Comms for the original viewer, with private labels hidden from other owners and on disconnect.
 
 - Clock native workers can resolve standalone scheduled files in their own checkout, with exact source checks and native-only acknowledgement.

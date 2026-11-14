@@ -10,6 +10,29 @@ runtime role. `web/src/pieces/comms` renders records through the shared data
 client and kit. The importer is an offline command, not a second running data
 path. Neither running piece nor browser reads the old stores.
 
+## Task and GitHub chip-card backend checkpoint
+
+`comms.refCards` is a window-only socket read of `{thread, refs}` (at most 60
+references, each at most 200 characters). Its matching Live record uses that
+exact JSON object as its scope and enumerates nothing without it. Both paths
+first require the original still-owning thread member. Cards are derived from
+`tasks.show` and `changes.show` with that original viewer; there are no message
+reads, decrypts, imported-index requirements, or old-store reads.
+
+Task cards report the owning task's current title and stored state. Tracked
+GitHub cards report the owning Change's current title/state. Only an installed
+Changes operation's explicit not-found yields an unknown reference's exact
+GitHub issues URL; denied, unavailable, malformed and mismatched results yield
+null. Local destinations are fixed Tasks/Changes reader routes, never a URL
+supplied by either piece. Changes beyond its recent feed window remain readable
+through its owning `show`, as in the Changes reader. Updates follow task,
+change, thread, approval/rule and sharing/access notifications.
+
+This checkpoint is a backend building block. Browser chip presentation and the
+approval, conversation, note, knowledge, project, person and agent card kinds
+remain unfinished. Unsupported references answer null and remain plain words.
+The existing reference index and Work consumer are unchanged.
+
 ## Runtime integration checkpoint
 
 Reconciled against main `628a7d7` after [#1043](https://github.com/sleepunit-agents/loom/pull/1043)
