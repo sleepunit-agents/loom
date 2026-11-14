@@ -528,7 +528,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     },
   }));
   // Intent and outcome use the registry too: all state and live changes commit together.
-  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && !privateLocal(get(i.id)) && v.kind===get(i.id).by.kind && v.id===get(i.id).by.id && dispatchable(get(i.id))
+  register('dispatch', idInput.extend({ attempt: text }), true, (v, i) => !!wake(db, i.id) && !privateLocal(get(i.id)) && (get(i.id).member===undefined ? create(v,get(i.id)) : v.kind===get(i.id).by.kind && v.id===get(i.id).by.id && dispatchable(get(i.id)))
     && (!get(i.id).deadman || deadmanAgents.has(get(i.id).agent)), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'pending' || w.due > ctx.now) return null;
     if (paused(db, w.agent) && !w.bypassPause) { w.state = 'held'; w.hold = 'paused'; saveWake(ctx, w); return null; }
@@ -541,7 +541,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     }
     return w;
   }, true);
-  register('outcome', idInput.extend({ attempt: text, result: startResult }), true, (v, i) => !!wake(db, i.id) && v.kind===get(i.id).by.kind && v.id===get(i.id).by.id && dispatchable(get(i.id)), (ctx, i) => {
+  register('outcome', idInput.extend({ attempt: text, result: startResult }), true, (v, i) => !!wake(db, i.id) && (get(i.id).member===undefined ? act(v,get(i.id)) : v.kind===get(i.id).by.kind && v.id===get(i.id).by.id && dispatchable(get(i.id))), (ctx, i) => {
     const w = get(i.id); if (w.state !== 'firing' || w.attempt !== i.attempt) return null;
     const r = i.result;
     let eventKind: string | undefined;
@@ -623,7 +623,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
           current=wake(db,w.id)!;
           if(current.attempt!==attempt) return undefined;
           if(privateLocal(current)) throw new OperationError('denied','Private local delivery is not composed');
-          if(!dispatchable(current)) throw new OperationError('denied','Dispatch policy changed');
+          if(!(current.member===undefined ? create(current.by,current) : dispatchable(current))) throw new OperationError('denied','Dispatch policy changed');
           checkStandingWake(db,operations,current);
         }
         catch { holdDenied(wake(db,w.id)!); return undefined; }
