@@ -181,6 +181,10 @@ it('shares general records through either project or agent, with task project pr
   expect(mayAct(member, { ...record, type: 'task' }, access)).toBe(false);
   expect(maySee({ kind: 'agent', id: 'pond-bot' }, { ...record, type: 'task' }, access)).toBe(false);
   expect(maySee(member, { ...record, member: 'jonathan' }, access)).toBe(false);
+  const question = { ...record, type: 'attention.ask', sourceManaged: true, source: {kind:'task',id:'t-1'} };
+  expect(maySee(member, question, access)).toBe(false);
+  expect(maySee({kind:'agent',id:'pond-bot'}, question, access)).toBe(false);
+  expect(maySee(member, {...question,source:{kind:'approval'}}, access)).toBe(true);
   access.members.pollock.agents = [];
   expect(maySee(member, record, access)).toBe(false);
   access.projects.other.members.push('pollock');
