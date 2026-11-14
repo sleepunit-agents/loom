@@ -84,9 +84,9 @@ function Rules() {
   </div>;
 }
 function Notices({query}:{query:string}) {
-  const {records,status}=useRecords<import('../../data').LiveRecord & {agent:string;at:string;kind:string;target:string;what:string}>('approval.notice');
-  const shown=records.filter(n=>`${n.what} ${n.target} ${n.agent}`.toLowerCase().includes(query.trim().toLowerCase()));
-  return <div className="p-5"><h1>Reported steps</h1>{status==='loading'?<Loading label="Opening notices…"/>:status!=='live'?<Error text="Waiting for connection."/>:<List label="Approval notices">{shown.map(n=><Row key={n.id} title={n.what} meta={n.target} status={`${n.agent} · ${n.kind} · ${n.at}`}/>)}</List>}</div>;
+  const {records,status}=useRecords<import('../../data').LiveRecord & {agent:string;at:string;kind:string;target:string;what:string;for?:string}>('approval.notice');
+  const shown=records.filter(n=>`${n.what} ${n.target} ${n.agent}`.toLowerCase().includes(query.trim().toLowerCase())).sort((a,b)=>b.at.localeCompare(a.at)||a.id.localeCompare(b.id));
+  return <div className="p-5"><h1>Reported steps</h1>{status==='loading'?<Loading label="Opening notices…"/>:status!=='live'?<Error text="Waiting for connection."/>:<List label="Approval notices">{shown.map(n=><Row key={n.id} title={n.what} meta={n.target} status={`${n.agent} · ${n.kind}${n.for && n.for!=='owner' ? ` · for ${n.for}` : ''} · ${n.at}`}/>)}</List>}</div>;
 }
 export default function ApprovalsApp({ path: shellPath, go }: { path?: string; go?: (path:string)=>void } = {}) {
   const [localPath,setLocalPath] = useState(() => typeof location === 'undefined' ? '/p/approvals-preview' : location.pathname);
