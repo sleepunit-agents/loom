@@ -1,6 +1,5 @@
-import { dataHttp } from './core/data/http.js';
+import { nextData } from './next-data.js';
 import { dataDatabase } from './core/data/database.js';
-import { dataAuthentication } from './core/data/authentication.js';
 import { installDiscordHistory, type HistoryAccess } from './pieces/bridges/history-operation.js';
 import { discordApi } from './pieces/bridges/discord-api.js';
 import { runtimeDiscordHistoryPermit } from './pieces/runtime/role.js';
@@ -360,8 +359,8 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   // The generated door uses the SAME connection and fresh shared credentials.
   // Existing homes are deliberately not bootstrapped or migrated here.
   const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
-  const data = dataHttp(sharedData, dataAuthentication(sharedData, () => app.operations.clock.now()), relyingParty(process.env)?.origin);
-  routes.all('/graphql', c => data.fetch(c.req.raw));
+  const data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin);
+  routes.all('/graphql', c => data.http.fetch(c.req.raw));
   routes.route('/', signinRoutes(app));
   routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
   routes.all('/mcp', async c => {
@@ -421,6 +420,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   let port = options.port ?? 0;
   const close = async () => {
     detaches.forEach(detach => detach());
+    await data.close();
     for (const socket of sockets) socket.destroy();
     await Promise.all(servers.map(http => {
       http.closeAllConnections();
@@ -439,7 +439,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
       });
       http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
-      servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin));
+      servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin), data.attach(http));
       await new Promise<void>((ok, no) => { http.once('error', no); http.listen(port,host,ok); });
       const address = http.address();
       if (!address || typeof address === 'string') throw new Error('no next address');
