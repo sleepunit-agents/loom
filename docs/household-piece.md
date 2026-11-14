@@ -992,3 +992,26 @@ controls with screenshot evidence. Never reuse `backup.ts`, the old detached
 The final move must explicitly arm the new runner and demonstrate a successful
 encrypted restore drill before old backup retirement. Configuration alone
 satisfies none of those execution or retirement checks.
+
+
+### Encrypted database image prerequisite
+
+`src/core/household/backup-image.ts` adds `encryptDatabaseImage`: a caller supplies
+independent native X25519 age owner recipients and a dedicated drill identity.
+It encrypts the filtered reconstructed database image, decrypts the actual
+ciphertext with that identity, compares every plaintext byte with the captured
+image and opens the result for SQLite integrity/foreign-key checks. It never
+starts a restored daemon. The returned report explicitly says `database-only`;
+only ciphertext and table metadata leave the helper. Owned plaintext buffers
+are zeroed on success and failure (this does not promise elimination of copies
+inside SQLite, the crypto library or JavaScript). Errors are generic.
+
+There is no key generation or discovery, filesystem IO, public restore command,
+runner, arming or publication. At least one owner key must be distinct from the
+drill key; using the drill recipient in the owner list is refused. This helper
+supports native age recipients only: configured SSH recipients must fail closed
+at future execution until their encryption backend is implemented. Context and
+artwork files, independent Secrets holder values/identities/historical keys,
+and the full household bundle/recovery boundary remain pending. This encrypted
+database drill alone is not complete backup or retirement evidence. Existing
+configuration still reports `awaiting-runner`, with no scheduled backup.
