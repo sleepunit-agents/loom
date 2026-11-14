@@ -24,7 +24,8 @@ application's instrumentation. These wrappers currently produce individual
 spans; they do not install automatic HTTP/SQLite instrumentation or propagate
 parent tracing context.
 
-The shared model adapter implements `TimingStore.add` atomically: add `count`
+`src/core/measuring/store.ts` supplies the shared model adapter. It implements
+`TimingStore.add` atomically: add `count`
 and `total_ms`, take the maximum `slowest_ms`, and set `typical_ms` to the
 arithmetic mean (`total_ms/count`). Its key is `(day, kind, name)`. These are
 the page's real columns, not a JSON document or a separate monitoring database.
@@ -52,8 +53,8 @@ exported. Turning off must replace the instance with the off instance; an
 unapproved request must never be allowed to call the internal factory with
 enabled settings.
 
-Still required by the Measuring page: the shared model tables and atomic
-adapter; owner-only settings changes through the normal approval mechanism;
+Still required by the Measuring page: owner-only settings changes through the
+normal approval mechanism;
 owners and agents reading daily rows through the one query endpoint; wiring
 the wrappers to its actual request, operation and job boundaries. Those
 integration points depend on the concrete model and endpoint work in t-2235.
