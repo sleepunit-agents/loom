@@ -132,7 +132,9 @@ it('disables test actions offline or inactive and retains final outcomes after a
   }
   for(const state of ['queued','sent','gone','failed','uncertain','cancelled']){
     await act(async()=>{f.tests={status:'live',records:[{id:state,member:'jonathan',ref:'removed-device',at:1760000000000,state}]};tree.update(h(Account));});
-    const rendered=JSON.stringify(tree.toJSON());expect(rendered).toContain('removed-device');expect(rendered).toContain(new Date(1760000000000).toLocaleString());
+    const rendered=JSON.stringify(tree.toJSON());expect(rendered).toContain('removed-device');
+    const history=tree.root.findByProps({'aria-label':'Test notification attempts'}).findAllByProps({role:'status'}).map((node:{children:unknown[]})=>node.children.join('')).join(' ');
+    expect(history).toContain(new Date(1760000000000).toLocaleString());
     const meanings:Record<string,string>={queued:'Queued for a test attempt',sent:'Accepted by the push service. Device delivery is not confirmed.',gone:'Device is no longer available.',failed:'The push service refused this attempt.',uncertain:'The outcome is unknown. This attempt will not be sent again automatically.',cancelled:'Cancelled because the device or access changed.'};
     expect(rendered).toContain(meanings[state]);
   }
