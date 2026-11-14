@@ -33,7 +33,7 @@ import { clockVouchApplication } from './pieces/clock/role.js';
 import { installClock } from './pieces/clock/index.js';
 import { clockVouchFiling } from './pieces/clock/dependencies/filing.js';
 import { clockAnswers } from './pieces/clock/dependencies/answers.js';
-import { installTasks } from './pieces/tasks/index.js';
+import { installTasks, connectTaskAttention } from './pieces/tasks/index.js';
 import { Bridges } from './pieces/bridges/engine.js';
 import { venueAdapters } from './pieces/bridges/adapters.js';
 import { personFor, setupRevision } from './pieces/bridges/store.js';
@@ -135,6 +135,18 @@ export async function installNext(app: Foundation, options: NextOptions) {
   const secretAttention = (!app.operations.has('secrets.list') || options.secretWrites) && attentionSources ? secretGrantAttention(attentionSources, app.operations) : undefined;
   if (!app.operations.has('secrets.list')) installSecrets(app.db, app.operations, app.live, sharing, secretAttention);
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
+  if (attentionSources) connectTaskAttention(app.operations, () => attentionSources.tasks());
+  if (app.operations.has('tasks.reconcileAttention')) {
+    const reconcile = () => app.operations.call('direct', {kind:'service',id:'tasks'}, 'tasks.reconcileAttention', {}, `task-filing:${randomUUID()}`);
+    const initial = reconcile();
+    if (!initial.ok) console.warn(`Task filing failed (${initial.code})`);
+    app.onClose(app.live.observe(changes => {
+      if (changes.some(c=>c.type==='core.access')) {
+        const result = reconcile();
+        if (!result.ok) console.warn(`Task filing failed (${result.code})`);
+      }
+    }));
+  }
   if (!app.operations.has('bridges.putVenues')) installBridges(app, sharing);
   const conversations=conversationRuntime(app,sharing,v=>signin(app).agent(v));
   const bridgeBodies=bridgeRuntime(app,sharing,v=>signin(app).agent(v));

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- File owner-assigned Tasks in the shared Inbox with their original project/agent audience and source-owned decisions.
+
 - Add unregistered one-use Secrets handoff tickets with durable claims, exact grant/Runtime fences and staging holds; real worker delivery remains disabled.
 
 - Add member-private Inbox read facts without answering asks or copying draft words.

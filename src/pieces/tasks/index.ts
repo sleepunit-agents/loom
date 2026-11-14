@@ -5,6 +5,7 @@ import { apply, type Command, type StoreState, type Result, type Task } from './
 import { load, persist, type ScopedTask } from './store.js';
 import { schema } from './schema/001.js';
 import { taskCommands } from './commands.js';
+import type { TaskAskFiling } from '../attention/role.js';
 import { cliBefore, cliAfter } from './binding.js';
 export const verbs = taskCommands.map(c => c.name);
 const reads = new Set(taskCommands.filter(c => !c.write).map(c => c.name));
@@ -54,9 +55,29 @@ function permitted(db: Db, viewer: Viewer, verb: string, input: Record<string, u
   // Collection reads filter by maySee; services also need an operation grant.
   return true;
 }
+const attentionConnections = new WeakMap<Operations, (source: () => TaskAskFiling) => void>();
+/** Trusted composition, including registries whose Tasks installer ran before Attention. */
+export function connectTaskAttention(operations: Operations, source: () => TaskAskFiling): void {
+  const connect = attentionConnections.get(operations);
+  if (!connect) throw new Error('Tasks is not installed');
+  connect(source);
+}
 export function installTasks(db: Db, operations: Operations, live: Live, sharing: () => Sharing) {
+  let filing: TaskAskFiling | undefined;
   registerBuiltinService(operations, 'tasks', ['task']);
   migrate(db, 'tasks', schema);
+  const file = (ctx: import('../../core/index.js').Context, state: StoreState) => filing?.sync(ctx, (state.tasks as ScopedTask[])
+    .filter(t => t.status !== 'closed' && !!t.assignee && Object.hasOwn(sharing().members,t.assignee) && sharing().members[t.assignee].owner)
+    .map(t => ({id:t.id, ask:t.ask || t.title, ...(t.why ? {why:t.why}:{}), ...(t.ifYes ? {if_yes:t.ifYes}:{}), ...(t.ifNo ? {if_no:t.ifNo}:{}),
+      ...(t.answers ? {answers:t.answers}:{}), ...(t.agent !== undefined ? {agent:t.agent}:{}), ...(t.project !== undefined ? {project:t.project}:{}),
+      refs:[t.id], href:`/p/tasks-preview/task/${encodeURIComponent(t.id)}`})));
+  attentionConnections.set(operations, source => {
+    if (filing) return;
+    filing = source();
+    operations.register(operation({name:'tasks.reconcileAttention',write:true,doors:['direct'],input:z.object({}).strict(),output:z.null(),
+    may:v=>v.kind==='service' && v.id==='tasks' && mayAct(v,{type:'task'},sharing(),'act','tasks.reconcileAttention'),
+    run(ctx) { file(ctx,load(db)); return null; }}));
+  });
   const visible = (state: StoreState, viewer: Viewer): StoreState => {
     const tasks = state.tasks.filter(t => maySee(viewer, scope(t), sharing()));
     const ids = new Set(tasks.map(t => t.id));
@@ -95,6 +116,7 @@ export function installTasks(db: Db, operations: Operations, live: Live, sharing
         }
         if (verb === 'import' && Array.isArray(input.tasks)) for (const raw of input.tasks) if (raw && typeof raw === 'object') { const t = get(state, raw.id); if (t) Object.assign(t, scopeFields(raw)); }
         for (const id of persist(db, state, ctx.now)) ctx.changed('task', id);
+        file(ctx,state);
       }
       // Ready must respect blockers even when a blocker is outside the caller's projects.
       if (verb === 'ready') {
