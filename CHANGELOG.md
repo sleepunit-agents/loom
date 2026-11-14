@@ -1266,6 +1266,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Add an explicit external Claude worker for unbound next-mode jobs, with authenticated stop/history polling and no automatic retry after uncertain execution.
 
+- Require durable, wordless attempt receipts for the external Claude worker; preserve uncertain actions across restarts and add read-only receipt inspection.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
