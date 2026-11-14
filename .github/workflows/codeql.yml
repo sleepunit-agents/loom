@@ -1,8 +1,11 @@
 name: CodeQL (nightly)
-# Code scanning runs once a night and on request, not on every pull request and push: on 2026-11-14 its
+# Code scanning runs on pull requests to main, once a night and on request, not on work headed to next: on 2026-11-14 its
 # three Analyze jobs were the largest single user of CI runners while twenty pull requests waited.
 # A finding shows up the next morning under Security > Code scanning.
 on:
+  # Anything headed to main is scanned before it lands: that is the release gate.
+  pull_request:
+    branches: [main]
   schedule:
     - cron: '17 9 * * *'
   workflow_dispatch:

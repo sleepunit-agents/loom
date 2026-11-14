@@ -27,6 +27,35 @@ function fixture() {
 
 const checkpoint = { session: 'session', sequence: 1, resumeUrl: 'wss://gateway.discord.gg/' };
 
+it('preserves arrival order for receipts retained in the same millisecond', () => {
+  const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
+  const ids = ['z', '2', '10', 'a'];
+  for (const id of ids) spool.retain('slack', id, f.input);
+  const seen: string[] = [];
+  spool.drain('slack', id => { seen.push(id); });
+  expect(seen).toEqual(ids);
+  spool.close();
+});
+
+it('commits held writes while retaining original bytes, bounds examined rows and skips past held rows', () => {
+  const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
+  spool.retain('slack', 'one', f.input);
+  spool.retain('slack', 'two', f.input);
+  const seen: string[] = [];
+  expect(spool.drain('slack', id => {
+    seen.push(id);
+    f.db.insert(bridgeIncoming).values({ id: 'held', connection: 'slack', channel: 'c', isDm: false,
+      user: 'u', text: 'held', postedAt: f.now(), receivedAt: f.now(), state: 'held' }).run();
+    return false;
+  }, 1)).toBe(0);
+  expect(seen).toEqual(['one']);
+  expect(f.db.select().from(bridgeIncoming).all()).toHaveLength(3);
+  expect(f.rows()).toHaveLength(2);
+  expect(spool.drain('slack', id => id !== 'one')).toBe(1);
+  expect(f.rows().map(r => r.id)).toEqual(['one']);
+  spool.close();
+});
+
 it('commits Discord raw bytes with the resume cursor, and rolls both back on failure', () => {
   const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
   spool.retain('discord', 'one', f.input, checkpoint);
