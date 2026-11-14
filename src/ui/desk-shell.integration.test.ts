@@ -298,10 +298,10 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await page.getByRole('button',{name:'All apps',exact:true}).first().click();
               await expect.poll(()=>page.getByRole('dialog').getByRole('region',{name:'Work',exact:true}).count()).toBe(1);
               await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('system');
-              expect(await page.locator('.loom-lsec').count()).toBe(1);
-              expect(await page.locator('.loom-lsec__name').innerText()).toBe('System');
+              await expect.poll(()=>page.locator('.loom-lsec').count()).toBe(1);
+              await expect.poll(()=>page.locator('.loom-lsec__name').textContent()).toBe('System');
               await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('passkey');
-              expect(await page.locator('.loom-lapp').count()).toBe(1);
+              await expect.poll(()=>page.locator('.loom-lapp').count()).toBe(1);
               // Enter on the account shortcut must activate it, never the search's first result.
               await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('inbox');
               await page.getByRole('button',{name:'Open your account',exact:true}).focus();
@@ -320,7 +320,7 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
             await page.getByRole('button',{name:'All apps',exact:true}).first().click();
             await expect.poll(()=>page.getByRole('textbox',{name:'Find an app',exact:true}).evaluate(el=>el===document.activeElement)).toBe(true);
             await page.getByRole('textbox',{name:'Find an app',exact:true}).fill('inbox');
-            expect(await page.locator('.loom-lapp').count()).toBe(1);
+            await expect.poll(()=>page.locator('.loom-lapp').count()).toBe(1);
             await page.keyboard.press('Escape');
             await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
             await page.getByRole('button',{name:'All apps',exact:true}).first().click();

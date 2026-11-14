@@ -199,7 +199,7 @@ Slot registration and cleanup carry source tokens; stale cleanup cannot remove a
 
 ### Launcher groups and account shortcut
 
-The registered inventory is grouped in the old desk's order: Work, People & agents, Library, System, Look & feel, Pieces. Empty groups disappear; unknown registrations stay in Work. No app is duplicated across groups. Section names and profile/passkey/sign-out aliases participate in search. Enter chooses a title prefix, then an alias, then the first result. Arrow keys continue to measure the displayed tiles. Enter on the account shortcut or Close activates that control.
+The registered inventory is grouped in the old desk's order: Work, People & agents, Library, System, Look & feel, Pieces. Empty groups disappear; unknown registrations stay in Work. Within a group the registration order stays unchanged. No app is duplicated across groups. Section names and profile/passkey/sign-out aliases participate in search. Enter chooses a title prefix, then an alias, then the first result. Arrow keys continue to measure the displayed tiles. Enter on the account shortcut or Close activates that control.
 
 | Old launcher behavior | New desk |
 |---|---|
