@@ -98,9 +98,29 @@ describe('shared-schema secret requests and grants', () => {
     expect(f.service.request({ ...f.input, id: 'q-allowed' }).state).toBe('revoked');
     expect(f.service.grantFor('github-token', 'art')).toBeUndefined();
   });
+  it.each(['allow', 'deny', 'cancel'] as const)('rolls back %s if Inbox resolution fails', action => {
+    const f = fixture(); f.service.request(f.input);
+    f.client.exec("CREATE TRIGGER fail_resolution BEFORE UPDATE ON inbox BEGIN SELECT RAISE(ABORT, 'resolution failed'); END");
+    expect(() => action === 'cancel' ? f.service.cancel(f.input.id) : f.service.answer(f.input.id, 'jonathan', action === 'allow', true)).toThrow('resolution failed');
+    expect(f.db.select().from(secretRequests).get()).toMatchObject({ state: 'pending', answeredAt: null, answeredBy: null, always: false });
+    expect(f.db.select().from(secretGrants).all()).toHaveLength(0);
+    expect(f.db.select().from(secretRules).all()).toHaveLength(0);
+    expect(f.db.select().from(secretRuleAgents).all()).toHaveLength(0);
+    expect(f.db.select().from(inbox).all().every(i => i.state === 'waiting')).toBe(true);
+  });
+  it.each(['allowed', 'denied', 'cancelled', 'revoked'] as const)('preserves %s on request replay', state => {
+    const f = fixture(); f.service.request(f.input);
+    if (state === 'cancelled') f.service.cancel(f.input.id);
+    else { f.service.answer(f.input.id, 'jonathan', state !== 'denied'); if (state === 'revoked') f.service.revoke(f.input.id); }
+    const before = f.db.select().from(secretRequests).get();
+    expect(before?.state).toBe(state);
+    expect(f.service.request(f.input)).toEqual(before);
+    expect(f.db.select().from(secretGrants).all()).toHaveLength(state === 'allowed' ? 1 : 0);
+    expect(f.db.select().from(inbox).all()).toHaveLength(2);
+  });
   it('rolls request creation back if owner inbox insertion fails', () => {
     const f = fixture();
-    f.client.exec("CREATE TRIGGER fail_mail BEFORE INSERT ON inbox BEGIN SELECT RAISE(ABORT, 'mail failed'); END");
+    f.client.exec("CREATE TRIGGER fail_mail BEFORE INSERT ON inbox WHEN NEW.[to] = 'owner2' BEGIN SELECT RAISE(ABORT, 'mail failed'); END");
     expect(() => f.service.request(f.input)).toThrow('mail failed');
     expect(f.db.select().from(secretRequests).all()).toHaveLength(0);
     expect(f.db.select().from(inbox).all()).toHaveLength(0);
