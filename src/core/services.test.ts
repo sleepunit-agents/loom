@@ -100,7 +100,7 @@ it('registers the own types and exact namespace operations for every in-repo ins
   app.onClose(installMindKnowledge(app.operations, app.live, { path: join(home, 'absent.db'), sharing }).close);
   const types = {
     changes: ['change', 'change-sync'], tasks: ['task'], approvals: ['approval', 'approval-rule'],
-    attention: ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding'],
+    attention: ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding', 'task', 'approval'],
     example: ['example.record'], runtime: ['runtime.box', 'runtime.job', 'runtime.settings', 'runtime.binding'],
     secrets: ['secret.name', 'secret.grant', 'secret.request', 'secret.policy', 'secret.change'],
     bridges: ['bridges.venue', 'bridges.route', 'bridges.link', 'bridges.send'],
@@ -111,7 +111,7 @@ it('registers the own types and exact namespace operations for every in-repo ins
   for (const [id, ownTypes] of Object.entries(types)) {
     expect(snapshot.services[id].types).toEqual(ownTypes);
     const namespace = id === 'sharing' ? 'household' : id;
-    const ownOperations = app.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(namespace + '.') || id==='clock' && ['approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check'].includes(name));
+    const ownOperations = app.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(namespace + '.') || id==='attention' && ['tasks.show','approvals.check'].includes(name) || id==='clock' && ['approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check'].includes(name));
     expect(ownOperations.length).toBeGreaterThan(0);
     expect(snapshot.services[id].operations).toEqual(ownOperations);
     for (const type of ownTypes) expect(maySee({ kind: 'service', id }, { type }, snapshot)).toBe(true);

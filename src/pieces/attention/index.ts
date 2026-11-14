@@ -31,7 +31,7 @@ const scoped = (type: string, record: RecordScope): RecordScope => ({ type, ...r
 const installedSources = new WeakMap<Operations, AttentionSources>();
 export const attentionSources = (operations: Operations): AttentionSources | undefined => installedSources.get(operations);
 export function installAttention(db: Db, operations: Operations, live: Live, sharing: () => Sharing, references: DigestReferences = {}, waits: AttentionWaits = {}) {
-  registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding']);
+  registerBuiltinService(operations, 'attention', ['attention.ask', 'attention.agent', 'attention.conversation', 'attention.turn', 'attention.digest', 'attention.day', 'attention.finding', 'task', 'approval'], 'attention', ['tasks.show', 'approvals.check']);
   migrate(db, 'attention', attentionMigrations);
   installHomeRoster(live, sharing);
   installConversations(db, operations, live, sharing);
@@ -57,6 +57,15 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       if (old) return old;
       const record: Ask = { ...input, state: 'open', createdAt: ctx.now, changedAt: ctx.now };
       saveAsk(record); ctx.changed('attention.ask', record.id); return record;
+    },
+  }));
+  operations.register(operation({ name: 'attention.pendingWaits', input: z.object({}).strict(), output: z.array(z.string()),
+    may: viewer => viewer.kind !== 'service' || mayAct(viewer, { type: 'attention.ask' }, sharing(), 'act', 'attention.pendingWaits'),
+    run(ctx) {
+      return (db.prepare('SELECT record FROM attention_asks ORDER BY id').all() as { record: string }[])
+        .map(row => JSON.parse(row.record) as Ask)
+        .filter(ask => ask.state === 'open' && !ask.sourceManaged && !!ask.waits_on && maySee(ctx.viewer, scoped('attention.ask', ask), sharing()))
+        .map(ask => ask.id);
     },
   }));
   operations.register(operation({ name: 'attention.get', input: z.object({ id }), output: z.unknown(),

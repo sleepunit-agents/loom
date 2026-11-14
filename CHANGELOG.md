@@ -12,9 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- Fit the Comms composer to its actual next-mode tile and fold Work when the reader is narrow. Exercise ordinary, filed and attached Comms delivery through real next-mode page sessions, Runner claims and bound-body replies in the two-window browser proof.
+- Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 
 - Keep ordinary one-off Clock work filed by authenticated private bodies member-private, with original steering evidence and acknowledgements that omit words.
+- Add a pinned metadata-only holder handoff channel with fresh destination checks, buffer erasure and drained shutdown; runner ticket admission and production activation remain separate.
 - Bind authenticated HOUSE request/status metadata in the typed Secrets client, with exact-job assertions, stable retries and value-free JSON acknowledgements.
 - Add worker-local Claude turns with exact tool denies and original-binding native history isolation; daemon policy execution remains held.
 
@@ -76,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Apply next-mode Runtime owner reset and silent-work write-off cards against durable original snapshots, with atomic body/session fencing and central credential revocation.
 
+- Fit the Comms composer to its actual next-mode tile and fold Work when the reader is narrow. Exercise ordinary, filed and attached Comms delivery through real next-mode page sessions, Runner claims and bound-body replies in the two-window browser proof.
 - Comms thread rows pin on a stationary touch or pen long press, without opening the thread; scrolling and cancelled holds leave it unchanged.
 - Reduce first-page JavaScript while keeping app screens loaded on demand.
 
