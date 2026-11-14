@@ -1,7 +1,7 @@
 import { rememberClockReceipt } from './private-export.js';
 import { installClockExecution } from './clock-execution.js';
 import type { Context } from '../../core/index.js';
-import { supportedClockPrompt } from './clock-input.js';
+import { supportedClockInput } from './clock-input.js';
 /** Clock's owning handoff. Only ids cross the service operation; never a saved Viewer. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -23,7 +23,12 @@ export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,40);
 const id=z.string().min(1).max(200);
 interface Turn {seq:number;id:string;conversation:string;job:string;record:string;released:number|null;consumed:number|null}
-const sourceRecord=(wake:Wake,attempt:string)=>JSON.stringify({text:wake.prompt,member:wake.member,project:wake.project,agent:wake.agent,service:wake.authorship?.service,authorship:wake.authorship,by:wake.by,attempt});
+const sourceRecord=(wake:Wake,attempt:string)=>JSON.stringify({text:wake.prompt,member:wake.member,project:wake.project,agent:wake.agent,service:wake.authorship?.service,authorship:wake.authorship,by:wake.by,attempt,file:wake.file});
+const turnInput=(row:Turn):{file:string}|{text:string}=>{
+  const record=JSON.parse(row.record) as {file?:string;text:string};
+  return record.file!==undefined?{file:record.file}:{text:record.text};
+};
+const hasFile=(row:Turn)=>'file' in turnInput(row);
 interface Proof {agent:string;job?:string;service?:string;valid():boolean}
 export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:OutsideEffects,proof:(v:Viewer)=>Proof|undefined) {
   const {db,operations}=app,store=runtimeStore(db),destination=clockDestination(app,sharing);
@@ -64,7 +69,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
   };
   const source=(wake:string,attempt:string)=>{
     const w=clockDispatchSource(operations,wake,attempt);
-    if(!w||!supportedClockPrompt(w))return;
+    if(!w||!supportedClockInput(w))return;
     if(bodyPolicyExecutionHeld(db,w.agent))return;
     return w;
   };
@@ -82,6 +87,8 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       const route=clockRoute(w,destination);
       let job:string,conversation:string;
       if(route.kind==='join'){
+        const root=db.prepare('SELECT record FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(route.destination.conversation) as {record:string}|undefined;
+        if(w.file||root&&JSON.parse(root.record).file)throw new OperationError('denied','File input requires a standalone native worker');
         if(!route.destination.current())throw new OperationError('denied','Clock destination changed');
         conversation=route.destination.conversation;
         const binding=store.read('binding',conversation)!;
@@ -108,10 +115,11 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       return {job,source:key,joined:route.kind==='join'};
     },
   }));
-  const read=(v:Viewer,before?:number)=>{
+  const read=(v:Viewer,before?:number,native=false)=>{
     const job=bound(v);if(!job)throw new OperationError('denied','Clock body binding ended');
     const originalDestination=readDestination(job);
     const rows=(db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<? ORDER BY seq DESC LIMIT 100').all(job.conversation,before??Number.MAX_SAFE_INTEGER) as Turn[]).filter(row=>!withdrawn(row));
+    if(!native&&rows.some(hasFile))throw new OperationError('denied','File input requires the native worker');
     const currentSources=()=>rows.every(row=>currentSource(row,job));
     if(!currentSources())throw new OperationError('denied','Clock delivery authority ended');
     // Central staging hold runs at the words boundary, including later joined turns.
@@ -125,14 +133,15 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     })();
     if(rows.some(r=>r.released===null))effects.finish(`runtime:clock-read:${job.id}:${rows[0]?.seq}`);
     app.live.changed([{type:'runtime.job',id:job.id}]);
-    const value={conversation:job.conversation,messages:[...rows].reverse().map(r=>({seq:r.seq,id:r.id,kind:'wake',text:(JSON.parse(r.record) as {text:string}).text}))};
+    const value={conversation:job.conversation,messages:[...rows].reverse().map(r=>({seq:r.seq,id:r.id,kind:'wake',...(turnInput(r))}))};
     reads.set(value,{job:job.id,destination:originalDestination,rows});
     return value;
   };
-  const acknowledge=(ctx:Context,through:number)=>{
+  const acknowledge=(ctx:Context,through:number,native=false)=>{
       const job=bound(ctx.viewer);if(!job)throw new OperationError('denied','Clock body binding ended');
       const all=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? AND seq<=?').all(job.conversation,through) as Turn[];
       const rows=all.filter(row=>!withdrawn(row));
+      if(!native&&rows.some(hasFile))throw new OperationError('denied','File acknowledgement requires the native worker');
       if(!rows.every(row=>currentSource(row,job)))throw new OperationError('denied','Clock delivery authority ended');
       if(!rows.some(row=>row.seq===through)||rows.some(row=>row.released===null))throw new OperationError('conflict','Input has not been released to this body');
       for(const row of rows)db.prepare('UPDATE runtime_clock_turns SET consumed=COALESCE(consumed,?) WHERE id=?').run(ctx.now,row.id);
@@ -155,7 +164,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     // Model selection and compiled central body policy remain held by this
     // first native consumer. No silent model substitution or policy bypass.
     if(!job||job.model!==undefined||job.account!==undefined||job.claimedAt===undefined||!job.made)throw new OperationError('denied','Native scheduled input unavailable');
-    const value=read(viewer),snapshot=reads.get(value)!;
+    const value=read(viewer,undefined,true),snapshot=reads.get(value)!;
     const row=[...snapshot.rows].reverse().find(row=>row.consumed===null);
     // Do not skip an older unconsumed source outside the bounded read window.
     const first=db.prepare('SELECT seq FROM runtime_clock_turns WHERE conversation=? AND consumed IS NULL ORDER BY seq LIMIT 1').get(job.conversation) as {seq:number}|undefined;
@@ -174,12 +183,12 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     const nativeSource=(row:Turn)=>{
       const attempt=(JSON.parse(row.record) as {attempt:string}).attempt;
       const source=clockDispatchSource(operations,row.id.slice('clock:'.length),attempt,true);
-      return !!source&&known(source.authorship?.principal)&&source.model===undefined&&supportedClockPrompt(source);
+      return !!source&&known(source.authorship?.principal)&&source.model===undefined&&supportedClockInput(source);
     };
     if(!originalSteering||!nativeSource(root)||!nativeSource(row))throw new OperationError('denied','Native scheduled source is unsupported');
     return {job:job.id,assignment:{runner:job.runner,box:job.box,claimedAt:job.claimedAt,house:job.made},
       binding:{agent:job.agent,conversation:job.conversation!,venue:'wake' as const,place:binding.place},
-      message:{seq:row.seq,id:row.id,kind:'wake' as const,text:(JSON.parse(row.record) as {text:string}).text},
+      message:{seq:row.seq,id:row.id,kind:'wake' as const,...(turnInput(row))},
       current(caller:Viewer){
         const callerJob=bound(caller);
         const live=db.prepare('SELECT * FROM runtime_clock_turns WHERE id=?').get(row.id) as Turn|undefined;
@@ -188,7 +197,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
           &&steering()===originalSteering&&nativeSource(root)&&nativeSource(row)&&currentRead(viewer,value)&&!withdrawn(root)&&!withdrawn(row)
           &&identity(liveRoot)===rootKey&&identity(live)===rowKey&&live?.consumed===null;
       },
-      acknowledge(ctx:Context){acknowledge(ctx,row.seq);},
+      acknowledge(ctx:Context){acknowledge(ctx,row.seq,true);},
     };
   });
   const clockProvenance:ClockProvenanceReader=v=>{
