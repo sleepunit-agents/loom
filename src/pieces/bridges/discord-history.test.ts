@@ -68,8 +68,8 @@ it('rechecks the permit after metadata and history response streaming before ret
  const f=fixture();f.request.mockResolvedValueOnce(Response.json({id:'300',guild_id:'1',type:0})).mockImplementationOnce(async()=>{f.revoke();return Response.json([msg()]);});
  expect(await f.api.history(venue,{channel:'300',kind:'channel'},f.permit)).toBe('wait');expect(f.request).toHaveBeenCalledTimes(2);
 });
-it.each([{id:'301',guild_id:'1',type:0},{id:'300',type:0},{id:'300',guild_id:'2',type:0},{id:'300',guild_id:'1',type:1},{id:'300',guild_id:'1',type:11}])('refuses wrong fresh place evidence %j without reading history',async channel=>{
- const f=fixture();f.request.mockResolvedValueOnce(Response.json(channel));expect(['wait','drop']).toContain(await f.api.history(venue,{channel:'300',kind:'channel'},f.permit));expect(f.request).toHaveBeenCalledTimes(1);
+it.each([[{id:'301',guild_id:'1',type:0},'wait'],[{id:'300',type:0},'wait'],[{id:'300',guild_id:'2',type:0},'drop'],[{id:'300',guild_id:'1',type:1},'drop'],[{id:'300',guild_id:'1',type:11},'drop'],[{id:'300',guild_id:'1'},'wait'],[{id:'300',guild_id:'1',type:'0'},'wait']])('refuses wrong fresh place evidence %j without reading history',async(channel,expected)=>{
+ const f=fixture();f.request.mockResolvedValueOnce(Response.json(channel));expect(await f.api.history(venue,{channel:'300',kind:'channel'},f.permit)).toBe(expected);expect(f.request).toHaveBeenCalledTimes(1);
 });
 it.each([[{...msg(),channel_id:'301'}],[{...msg(),guild_id:'2'}],[{...msg(),id:'01'}],[{...msg(),author:{id:'200',bot:'yes'}}],[msg(),msg()],{},'PRIVATE TEST-TOKEN'])('fails closed on malformed or misbound history %j',async messages=>{
  const f=fixture();f.request.mockResolvedValueOnce(Response.json({id:'300',guild_id:'1',type:0})).mockResolvedValueOnce(Response.json(messages));
@@ -119,4 +119,18 @@ it('bounds history response materialization and cancels the oversized body',asyn
  const f=fixture(),cancel=vi.fn();let pulls=0;
  f.request.mockResolvedValueOnce(Response.json({id:'300',guild_id:'1',type:0})).mockResolvedValueOnce(new Response(new ReadableStream({pull(controller){pulls++;controller.enqueue(new Uint8Array(600_000));},cancel})));
  expect(await f.api.history(venue,{channel:'300',kind:'channel'},f.permit)).toBe('wait');expect(cancel).toHaveBeenCalledOnce();expect(pulls).toBeLessThanOrEqual(3);
+});
+it.each(['headers','body'])('expires stalled history %s at the request deadline',async phase=>{
+ vi.useFakeTimers();const timeout=vi.spyOn(AbortSignal,'timeout').mockImplementation(ms=>{const controller=new AbortController();setTimeout(()=>controller.abort(Error('PRIVATE')),ms);return controller.signal;});
+ try{
+  const f=fixture(),cancel=vi.fn(async()=>{});let done=false;
+  f.request.mockResolvedValueOnce(Response.json({id:'300',guild_id:'1',type:0})).mockImplementationOnce(async(_url,init)=>{
+   const stalled=new Promise<never>((_resolve,reject)=>{init!.signal!.addEventListener('abort',()=>reject(Error('PRIVATE TEST-TOKEN')),{once:true});});
+   return phase==='headers'?stalled:{ok:true,body:{getReader:()=>({read:()=>stalled,cancel})}} as unknown as Response;
+  });
+  const waiting=f.api.history(venue,{channel:'300',kind:'channel'},f.permit).then(value=>{done=true;return value;});
+  await vi.advanceTimersByTimeAsync(14_999);expect(done).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);expect(await waiting).toBe('wait');expect(timeout).toHaveBeenCalledWith(15_000);
+  if(phase==='body')expect(cancel).toHaveBeenCalledOnce();
+ }finally{timeout.mockRestore();vi.useRealTimers();}
 });

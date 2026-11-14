@@ -67,7 +67,7 @@ export function discordApi(secrets: SecretUse, beforeRead: () => boolean, reques
         const channel=await read(venue,`channels/${q.channel}`,false,current);
         if(!current())return 'wait';
         if(channel==='refused')return 'drop';
-        if(!object(channel)||channel.id!==q.channel||!snowflake(channel.guild_id))return 'wait';
+        if(!object(channel)||channel.id!==q.channel||!snowflake(channel.guild_id)||!Number.isInteger(channel.type))return 'wait';
         if(channel.guild_id!==venue.workspace)return 'drop';
         if(!(q.kind==='thread'?[10,11,12]:[0,5]).includes(channel.type as number))return 'drop';
         const raw=await read(venue,`channels/${q.channel}/messages?${q.after===undefined?'':`after=${q.after}&`}limit=${limit}`,true,current);
