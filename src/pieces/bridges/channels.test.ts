@@ -58,7 +58,7 @@ describe('authenticated bridge channel metadata', () => {
   });
   it('clears Slack evidence on missing/contradictory flags and id mismatch', () => {
     const cache = new BridgeChannels(), writer = cache.bind('c', { platform: 'slack', workspace: 'team' });
-    for (const bad of [{ id: 'channel' }, { ...slack('im'), is_channel: true }, slack('unknown'), { ...slack('im'), id: 'other' }, { ...slack('im'), context_team_id: 'other' }]) {
+    for (const bad of [{ id: 'channel' }, { id: 'channel', is_im: 'true' }, { ...slack('im'), is_channel: true }, slack('unknown'), { ...slack('im'), id: 'other' }, { ...slack('im'), context_team_id: 'other' }]) {
       writer.put('channel', slack('im'));
       expect(() => writer.put('channel', bad)).toThrow();
       expect(cache.slack('c', 'channel')).toBeUndefined();
