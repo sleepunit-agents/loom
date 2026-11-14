@@ -73,3 +73,20 @@ it('expires a stalled request on the configured deadline', async () => {
     expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
 });
+it('keeps the deadline active while consuming the response body', async () => {
+  vi.useFakeTimers();
+  try {
+    let reading!: () => void;
+    const started = new Promise<void>(yes => { reading = yes; });
+    const fetcher: typeof fetch = async (_url, init) => new Response(new ReadableStream({
+      start(stream) { init!.signal!.addEventListener('abort', () => stream.error(new Error('deadline')), { once: true }); },
+      pull() { reading(); },
+    }));
+    const control = httpWorkerControl({ url: 'https://loom.example', token: 'secret', signal: new AbortController().signal, fetch: fetcher, timeoutMs: 100 });
+    const pending = expect(control.next()).rejects.toThrow('Worker next failed');
+    await started;
+    await vi.advanceTimersByTimeAsync(100);
+    await pending;
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
