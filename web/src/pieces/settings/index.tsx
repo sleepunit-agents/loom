@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent } from 'react';
-import { call, newId, useRecords, type Call } from '../../data';
+import { call, useRecords, type Call } from '../../data';
+import { newId } from '../../data/id';
 import { settingsWrites } from './writes';
 import { Split, List, Row, Empty, Error, Loading, Button, Input, Textarea } from '../../kit';
 import { revokeInput, warnings, type SettingsAccess, type SecretName, type Grant, type Request, type Policy, type Use, type Change, grantLabel, missingNames, automaticRequest, grantScopeLabel } from './model';

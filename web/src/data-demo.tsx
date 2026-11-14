@@ -1,7 +1,8 @@
 /** Unlinked reference screen. The example piece is installed only in fixture homes. */
 import { useState, useSyncExternalStore } from 'react';
 import { AppFrame, List, Row, Empty, Loading, Error } from './kit/app';
-import { call, newId, useRecords, type Call, type LiveRecord } from './data';
+import { call, useRecords, type Call, type LiveRecord } from './data';
+import { newId } from './data/id';
 interface Example extends LiveRecord { title: string }
 function Answer({ call: request }: { call: Call }) {
   const state = useSyncExternalStore(request.subscribe, request.getSnapshot);

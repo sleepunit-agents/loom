@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { useRecords, call, newId, type Call } from '../../data';
+import { useRecords, call, type Call } from '../../data';
+import { newId } from '../../data/id';
 import { Split, List, Row, Empty, Error, Loading, Button } from '../../kit';
 import { bridgeEffects, sendStatus, type VenueRecord, type RouteRecord, type SendRecord, type EffectRecord } from './model';
 
