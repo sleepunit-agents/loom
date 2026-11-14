@@ -32,8 +32,9 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app p
     await expect.poll(()=>a.locator('[data-split-row]').filter({hasText:'Pond work'}).count()).toBe(1);
     await a.locator('[data-split-row]').filter({hasText:'Pond work'}).click();
     const dockButton=a.getByRole('button',{name:'Open Live example',exact:true});
-    const account=await a.getByRole('button',{name:'Sign out',exact:true}).boundingBox();const dock=await dockButton.boundingBox();
-    expect(dock!.y+dock!.height).toBeLessThanOrEqual(account!.y);
+    const dock=await dockButton.boundingBox();
+    expect(dock!.y+dock!.height).toBeLessThanOrEqual(a.viewportSize()!.height);
+    expect(await a.getByRole('button',{name:'Sign out',exact:true}).count()).toBe(0);
     await dockButton.click();
     await expect.poll(()=>a.locator('[data-tile]').count()).toBe(2);
     const tasks=await a.locator('[data-tile=tasks]').boundingBox();const example=await a.locator('[data-tile=example]').boundingBox();
