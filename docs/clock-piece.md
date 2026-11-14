@@ -1425,3 +1425,27 @@ Comms or bridge binding independently authorizes the same body by the time the
 read completes. A different consumer cannot return a prepared Clock payload
 without its original Clock validation. Fixtures retarget to a real, separately
 authorized Comms thread and revoke policy during preparation and at the gate.
+
+
+### Private dispatched Clock copies in export
+
+Runtime registers its own required export filter. A private Clock turn excludes
+its entire Runtime job/conversation chain, copied words, results, provenance,
+source receipts and matching Runtime effects/operation receipts. The original
+turn's private scope still excludes the chain after a current job or binding
+summary changes. Clock continues to own exclusions for its own tables.
+
+Sign-in consumes excluded Runtime job identities through composition. Its token
+owner excludes the whole digest group (including duplicate roles), usage rows
+and sessions, and removes those digests from the ordered token envelope. Public
+Clock records and unrelated credentials remain. Core permits owning pieces to
+redact text encodings in exported rows while preserving schema, row identities
+and SQLite storage classes; it never edits the source database.
+
+Synthetic signed-window filing, normal runner claim/input/report, consumption,
+withdrawal, cleared summaries and daemon restart are covered. A reconstructed
+image is reopened through next mode under staging: private job/input/credential
+history is absent and cannot issue native execution. This covers dispatched
+private Clock copies; it does not certify the remaining file, continuation,
+local/approval, import recovery or full cutover work described above. No real
+store, import, installed piece or running host changes are part of this unit.

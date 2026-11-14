@@ -1,6 +1,14 @@
 import { migrate, type Db } from './index.js';
 type ExportRow=Record<string,unknown>;
 type ExportFilter=(table:string,row:ExportRow)=>boolean;
+type TextRedactor=(table:string,row:Readonly<ExportRow>)=>Record<string,string>;
+const redactors=new WeakMap<Db,Map<string,TextRedactor>>();
+/** Owning text encodings may remove private entries without altering schema,
+ * identities or SQLite storage classes. Input rows are never mutated. */
+export function registerExportTextRedactor(db:Db,piece:string,redact:TextRedactor){
+ registerExportFilter(db,piece,()=>true);
+ let held=redactors.get(db);if(!held){held=new Map();redactors.set(db,held);}held.set(piece,redact);
+}
 const filters=new WeakMap<Db,Map<string,ExportFilter>>();
 export interface SqliteRow { types: string[]; rowid?: bigint }
 /** SQLite values include a numeric storage class and sometimes an implicit
@@ -59,9 +67,18 @@ export function exportDatabase(db:Db, captureSqlite = false) {
    const captured=captureSqlite?sqliteExportRows(db,t.name):undefined;
    const input=captured?.rows??db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all() as ExportRow[];
    const sqlite:SqliteRow[]=[];
-   const rows=input.filter((row,i)=>{
+   const rows=input.flatMap((row,i)=>{
     const keep=(t.name!=='core_migrations'||row.piece!=='comms') && [...filters.get(db)?.values()??[]].every(filter=>filter(t.name,row));
-    if(keep&&captured)sqlite.push(captured.sqlite[i]);return keep;
+    if(!keep)return [];
+    let output={...row};
+    for(const redact of redactors.get(db)?.values()??[]){
+     const patch=redact(t.name,Object.freeze({...output}));
+     for(const [key,value] of Object.entries(patch)){
+      if(typeof output[key]!=='string'||typeof value!=='string')throw Error('Export redaction must preserve text storage');
+      output[key]=value;
+     }
+    }
+    if(captured)sqlite.push(captured.sqlite[i]);return [output];
    });
    return {...t,rows,...(captured?{sqlite,rowid:captured.rowid}:{})};
   });

@@ -1,12 +1,13 @@
+import { TokenDatabase } from '../../core/household/tokens.js';
 import { CLOCK_BRIEF } from './clock-delivery.js';
 import { builtinServices } from '../../core/services.js';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { startLoom } from '../../foundation.js';
-import { FakeClock, type Viewer, type Sharing } from '../../core/index.js';
+import { FakeClock, exportDatabase, exportDatabaseImage, openDb, type Viewer, type Sharing } from '../../core/index.js';
 import { fixture, fixtureSharing } from '../../fixture.js';
 import { signin, hash } from '../../core/signin/index.js';
 import { runtimeStore } from './store.js';
@@ -851,4 +852,71 @@ it.each(['before-input','final-release'] as const)('denies public Clock input af
  expect(signin(f.app).tokens.document()).toEqual(credentials);
  expect(f.app.effects!.status(`runtime:input:${job}`)).toBe(pending?'done':undefined);
  expect(f.app.db.prepare('SELECT released,consumed FROM runtime_clock_turns').get()).toEqual({released:null,consumed:null});
+});
+
+it.each(['original','cleared-summary','withdrawn','restarted'])('excludes a dispatched private Clock prompt and its Runtime correlations while retaining public delivery (%s)',async(mode)=>{
+ const f=await setup();
+ const privateWords='UNEXPORTABLE_CLOCK_WORDS',publicWords='PUBLIC_CLOCK_WORDS';
+ const file=async(privateWork:boolean)=>{
+  const result=await f.app.operations.callAsync('socket',owner,'clock.in',{
+   agent:'art',prompt:privateWork?privateWords:publicWords,note:'export fixture',when:'1s',
+   place:privateWork?'lane:private-export':'lane:public-export',...(privateWork?{member:'jonathan',project:'pond'}:{})
+  },privateWork?'private-export':'public-export',true);
+  expect(result).toMatchObject({ok:true});const id=(result as {ok:true;value:{id:string}}).value.id;
+  f.clock.advance(1000);await settle();
+  const turn=f.app.db.prepare('SELECT job,conversation FROM runtime_clock_turns WHERE id=?').get(`clock:${id}`) as {job:string;conversation:string};
+  expect(turn).toBeTruthy();expect(await f.post(f.runner,'claimJob',{job:turn.job})).toMatchObject({ok:true});
+  const input=await f.post(f.runner,'takeInput',{job:turn.job});expect(input).toMatchObject({ok:true});
+  expect(await f.post(f.runner,'reportJob',{job:turn.job,state:'running'})).toMatchObject({ok:true});
+  return {id,...turn,credential:input.value.credential as string};
+ };
+ const secret=await file(true),publicTurn=await file(false);
+ // A Sign-in session may retain the digest; it must not outlive exclusion.
+ f.app.db.prepare('INSERT INTO household_sessions VALUES (?,?)').run('synthetic-body-session',JSON.stringify({secret:hash(secret.credential),issuedAt:f.clock.now()}));
+ // Seed downstream copies of actual private identities, including a retained
+ // result after consumption and a read/native effect with a wordless receipt.
+ f.app.db.prepare('INSERT INTO runtime_results VALUES (?,?)').run(secret.job,JSON.stringify({text:'PRIVATE_RESULT_COPY'}));
+ for(const id of [`runtime:clock-read:${secret.job}:1`,`runtime:clock-native:clock:${secret.id}`]){
+  f.app.db.prepare('INSERT INTO core_effects VALUES (?,?,?,?)').run(id,'body-start','Synthetic held copy','due');
+  expect(f.call('core.releaseEffect',{id}).ok).toBe(true);
+ }
+ f.app.db.prepare('UPDATE runtime_clock_turns SET consumed=1,released=1 WHERE job=?').run(secret.job);
+ if(mode==='cleared-summary'){
+  f.app.db.prepare("UPDATE runtime_jobs SET record=json_remove(record,'$.member','$.project') WHERE id=?").run(secret.job);
+  f.app.db.prepare("UPDATE runtime_bindings SET record=json_remove(record,'$.member','$.project') WHERE id=?").run(secret.conversation);
+ }
+ if(mode==='withdrawn')expect(await f.app.operations.callAsync('socket',owner,'clock.cancel',{id:secret.id},'withdraw-private',true)).toMatchObject({ok:true});
+ if(mode==='restarted')await f.restart();
+ const before=f.app.db.prepare('SELECT * FROM runtime_clock_turns').all();
+ const tables=exportDatabase(f.app.db),text=JSON.stringify(tables);
+ expect(text).toContain(publicWords);expect(text).not.toContain(privateWords);
+ for(const table of tables.filter(t=>t.name.startsWith('runtime_')||['core_operations','core_effects'].includes(t.name))){
+  const saved=JSON.stringify(table.rows);
+  expect(saved,table.name).not.toContain(secret.id);expect(saved,table.name).not.toContain(secret.job);expect(saved,table.name).not.toContain(secret.conversation);
+ }
+ for(const name of ['runtime_clock_turns','runtime_jobs','runtime_bindings','runtime_provenance','runtime_provenance_sources']){
+  expect(tables.find(t=>t.name===name)!.rows.length,name).toBeGreaterThan(0);
+ }
+ expect(text).toContain(publicTurn.job);
+ // Token rows, ordered envelope and session copies are the Sign-in owner's
+ // responsibility. Public and runner logins remain consistent after restore.
+ for(const id of [secret.id,secret.job,secret.conversation])expect(text.includes(id),`private identity ${id}`).toBe(false);
+ expect(text.includes('PRIVATE_RESULT_COPY')).toBe(false);
+ const image=exportDatabaseImage(f.app.db);
+ expect(image.bytes.includes(Buffer.from(privateWords))).toBe(false);
+ const restoredHome=mkdtempSync(join(tmpdir(),'clock-export-restore-'));fixture(restoredHome);
+ cleanups.push(()=>rmSync(restoredHome,{recursive:true,force:true}));
+ const path=join(restoredHome,'loom.db');writeFileSync(path,image.bytes);image.bytes.fill(0);
+ const raw=openDb(restoredHome);expect(()=>exportDatabase(raw.db)).toThrow('installed privacy filter');raw.close();
+ const restoredClock=new FakeClock(),restored=await startLoom({home:restoredHome,clock:restoredClock,next:true,staging:true,stdout(){}});
+ cleanups.push(restored.close);restoredClock.advance(1000);await settle();
+ expect(restored.db.prepare('SELECT * FROM runtime_clock_turns WHERE job=?').all(secret.job)).toEqual([]);
+ expect(runtimeStore(restored.db).read('job',secret.job)).toBeUndefined();
+ expect(signin(restored).token(hash(secret.credential))).toBeUndefined();
+ expect(signin(restored).token(hash(publicTurn.credential))).toMatchObject({viewer:{kind:'agent',id:'art'}});
+ expect(signin(restored).token(hash(f.runner))).toMatchObject({viewer:{kind:'runner',id:'a'}});
+ expect(new TokenDatabase(restored.db).document()!.tokens.some(t=>t.role.endsWith(`@${publicTurn.job}`))).toBe(true);
+ const denied=await fetch(`${restored.url}/api/runtime/beginClockExecution`,{method:'POST',headers:{authorization:`Bearer ${secret.credential}`,'content-type':'application/json'},body:JSON.stringify({input:{},id:'restored-native'})});
+ expect(denied.ok).toBe(false);
+ expect(f.app.db.prepare('SELECT * FROM runtime_clock_turns').all()).toEqual(before);
 });

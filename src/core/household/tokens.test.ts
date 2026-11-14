@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
+import { exportDatabaseImage } from '../db/export-image.js';
 import { openDb } from '../db/index.js';
 import { migrateHouseholdTables } from './schema.js';
 import { HouseholdRows } from './rows.js';
@@ -171,4 +172,15 @@ it('keeps replacement inside the caller import transaction, including other conc
   expect(f.store.records(digest('old'))).toEqual([]);
   expect(members.get('jonathan')).toEqual({ person: 'jonathan', role: 'owner' });
   expect(receipts.get('household')).toEqual({ checksums: ['synthetic'], compared: true });
+});
+
+it('excludes whole private digest groups, repairs duplicate envelope positions and retains unrelated roles on restore',()=>{
+ const f=fixture(),privateToken=record('private','agent:art@private-job'),publicToken=record('public','agent:art@public-job');
+ f.db.transaction(()=>f.store.replace({v:1,extra:'kept',tokens:[publicToken,privateToken,{...privateToken,role:'owner'},publicToken]}, {[privateToken.sha256]:'private use',[publicToken.sha256]:'public use'}))();
+ const source=f.store.document();f.store.installExportExclusions(t=>t.role==='agent:art@private-job');
+ const restored=new Database(exportDatabaseImage(f.db).bytes);cleanups.push(()=>restored.close());
+ const store=new TokenDatabase(restored);
+ expect(store.document()).toEqual({v:1,extra:'kept',tokens:[publicToken,publicToken]});
+ expect(store.records(privateToken.sha256)).toEqual([]);expect(store.used()).toEqual({[publicToken.sha256]:'public use'});
+ expect(f.store.document()).toEqual(source);
 });
