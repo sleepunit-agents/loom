@@ -21,7 +21,7 @@ function fixture(admit?: AdmitInbox) {
     db.insert(inbox).values({ id, toKind: 'person', to, source: 'notice', fromKind: 'unknown', words: id, at, changedAt: at, state: 'waiting' }).run();
     service.changed();
   };
-  return { db, clock, service, batches, add, who };
+  return { client, db, clock, service, batches, add, who };
 }
 it('waits until arrivals settle and admits all waiting items once per recipient', () => {
   const { service, clock, batches, add } = fixture();
@@ -71,4 +71,40 @@ it('uses recipient settings, resets settling on content changes, and avoids reen
   db.update(inbox).set({ words: 'Changed without a new timestamp' }).where(eq(inbox.id, 'a')).run(); service.changed();
   clock.advance(1_999); expect(calls).toBe(0);
   clock.advance(1); expect(calls).toBe(1);
+});
+
+it.each(['accepted', 'refused', 'throws'] as const)('stops the current scan when %s admission closes the inbox', outcome => {
+  const offered: string[] = [];
+  const { client, service, clock, add } = fixture(who => {
+    offered.push(who.id);
+    service.close();
+    client.close();
+    service.changed();
+    if (outcome === 'throws') throw new Error('Shutdown');
+    return outcome === 'accepted';
+  });
+  add('a'); add('b', 'other');
+  expect(() => clock.advance(5_000)).not.toThrow();
+  expect(offered).toEqual(['jonathan']);
+  service.changed(); clock.advance(60_000);
+  expect(offered).toEqual(['jonathan']);
+});
+
+it('stops before reading inbox groups when an expiry notification closes the inbox', () => {
+  const { client, db, service, clock, add, who } = fixture();
+  add('a');
+  service.volume.set(who, 'a', 'mute', new Date(clock.now() + 1_000).toISOString());
+  service.close();
+  const replacement = new SettledInbox(db, clock, () => { throw new Error('Closed inbox admitted'); }, () => {
+    replacement.close();
+    // Root shutdown may close the shared connection in this callback.
+    clientClosed = true;
+    client.close();
+  });
+  let clientClosed = false;
+  // The fixture owns the original connection cleanup; closing it twice is safe.
+  cleanup.push(() => replacement.close());
+  replacement.changed();
+  expect(() => clock.advance(1_000)).not.toThrow();
+  expect(clientClosed).toBe(true);
 });
