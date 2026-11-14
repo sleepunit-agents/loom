@@ -17,13 +17,15 @@ export interface ProcessRuntime {
   kill(child: ChildProcessWithoutNullStreams): void;
 }
 const native: ProcessRuntime = {
-  spawn: plan => spawn(plan.command, [...plan.args], { cwd: plan.cwd, env: { ...plan.env },
-    shell: false, detached: process.platform !== 'win32', stdio: 'pipe' }),
+  spawn: plan => {
+    if (process.platform === 'win32') throw new Error('Worker process groups require POSIX (use WSL on Windows)');
+    return spawn(plan.command, [...plan.args], { cwd: plan.cwd, env: { ...plan.env },
+      shell: false, detached: true, stdio: 'pipe' });
+  },
   kill: child => {
     if (!child.pid) return;
     try {
-      if (process.platform === 'win32') child.kill('SIGKILL');
-      else process.kill(-child.pid, 'SIGKILL');
+      process.kill(-child.pid, 'SIGKILL');
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
   },
 };

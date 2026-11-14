@@ -66,6 +66,15 @@ describe('worker work plane', () => {
       expect(f.executor.start).toHaveBeenCalledOnce();
     }
   });
+  it('waits for an in-flight running heartbeat and suppresses finish if authority is rejected', async () => {
+    const f = fixture(), beat = deferred<boolean>(), run = f.run(); await flush();
+    f.built.resolve('image'); f.spawned.resolve(); await flush();
+    vi.mocked(f.control.heartbeat).mockReturnValue(beat.promise); f.pulse();
+    f.exited.resolve({ exitCode: 0, logTail: 'done' }); await flush();
+    expect(f.control.finish).not.toHaveBeenCalled();
+    beat.resolve(false); expect(await run).toBe('abandoned');
+    expect(f.control.finish).not.toHaveBeenCalled(); expect(f.body.stop).toHaveBeenCalled();
+  });
   it('does not turn an uncertain running acknowledgement into a failed start', async () => {
     const f = fixture(); vi.mocked(f.control.started).mockRejectedValue(new Error('reply lost'));
     const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve();
