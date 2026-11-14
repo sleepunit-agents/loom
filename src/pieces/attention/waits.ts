@@ -1,7 +1,7 @@
 /** Wait facts come from owning read roles under the operation's original viewer. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { mayAct, maySee, operation as coreOperation, OperationError, type Db, type Operations, type Sharing, type Viewer } from '../../core/index.js';
+import { mayAct, maySee, operation as coreOperation, OperationError, type Db, type Operations, type Sharing, type Viewer, type Context } from '../../core/index.js';
 import { operation } from './commands.js';
 import type { Ask } from './role.js';
 
@@ -19,6 +19,15 @@ const approvalReasons: Readonly<Record<string, string>> = {
   denied: 'the approval was denied', expired: 'the approval was allowed, and expired unused',
   withdrawn: 'the approval was withdrawn unanswered (asked again with an up-to-date list)',
 };
+/** Shared with the single resolve operation; background work never bypasses it. */
+export function canResolveAsk(ask: Ask, viewer: Viewer, sharing: Sharing): boolean {
+  return !ask.privateQuestion && !ask.sourceManaged && mayAct(viewer, { type: 'attention.ask', ...ask }, sharing, 'act', 'attention.resolve');
+}
+export function resolveAsk(ctx: Context, ask: Ask, reason: string, save: (ask: Ask) => void): Ask {
+  if (ask.state !== 'open') return ask;
+  ask.state = 'resolved'; ask.changedAt = ctx.now; ask.resolution = reason;
+  save(ask); ctx.changed('attention.ask', ask.id); return ask;
+}
 export function installWaitChecks(db: Db, operations: Operations, sharing: () => Sharing, waits: AttentionWaits) {
   const read = (id: string): Ask | undefined => {
     const row = db.prepare('SELECT record FROM attention_asks WHERE id=?').get(id) as {record: string} | undefined;
@@ -46,7 +55,7 @@ export function installWaitChecks(db: Db, operations: Operations, sharing: () =>
         .map(row => JSON.parse(row.record) as Ask)
         .filter(ask => ask.state === 'open' && !ask.sourceManaged && !!ask.waits_on && maySee(ctx.viewer, { type: 'attention.ask', ...ask }, held));
       const eligible = pending.filter(ask => !ask.privateQuestion && mayAct(ctx.viewer, { type: 'attention.ask', ...ask }, held, 'act', 'attention.checkWait')
-        && mayAct(ctx.viewer, { type: 'attention.ask', ...ask }, held, 'act', 'attention.resolve'));
+        && canResolveAsk(ask, ctx.viewer, held));
       // No cross-operation cache: all facts and policy share this transaction.
       let facts: AttentionWaits;
       try { facts = waits.batch?.(eligible, ctx.viewer) ?? {}; } catch { return { pending: pending.length, resolved: 0 }; }
@@ -55,8 +64,7 @@ export function installWaitChecks(db: Db, operations: Operations, sharing: () =>
       for (const ask of eligible) {
         const reason = reasonFor(ask, ctx.viewer, facts);
         if (!reason) continue;
-        ask.state = 'resolved'; ask.changedAt = ctx.now; ask.resolution = reason;
-        save.run(JSON.stringify(ask), ask.id); ctx.changed('attention.ask', ask.id); resolved++;
+        resolveAsk(ctx, ask, reason, record => { save.run(JSON.stringify(record), record.id); }); resolved++;
       }
       return { pending: pending.length, resolved };
     },

@@ -144,6 +144,7 @@ it.each([10, 1000])('checks %i task waits with a constant number of operation ca
   clock.advance(0);
   const names = calls.mock.calls.map(c => c[2]);
   expect(names.filter(name => name === 'tasks.readMany')).toHaveLength(1);
+  expect(calls.mock.calls.find(args => args[2] === 'tasks.readMany')?.[1]).toEqual(service);
   expect(names).not.toContain('tasks.show');
   // Retention, sweep, one Tasks batch, then the empty follow-up woken by live changes.
   expect(names).toEqual(['attention.retain', 'attention.sweepWaits', 'tasks.readMany', 'attention.sweepWaits']);
@@ -202,4 +203,18 @@ it('rolls back all sweep updates, receipts and publication on a later failure, t
   expect(sweep()).toEqual(answer);
   expect(batch.mock.calls.filter(args => args[2] === 'tasks.readMany')).toHaveLength(0);
   expect(changed).toHaveBeenCalledTimes(1);
+});
+
+it('excludes source-managed and private-question asks even with otherwise eligible public scopes and terminal tasks', async () => {
+  const { app, call, raise, read, close } = await setup();
+  raise('managed-exclusion', { task: 't-1' }); raise('private-exclusion', { task: 't-1' }); close();
+  const readRow = app.db.prepare('SELECT record FROM attention_asks WHERE id=?');
+  const put = app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?');
+  for (const [id, extra] of [['managed-exclusion', { sourceManaged: true }], ['private-exclusion', { privateQuestion: { thread: 'fixture', seq: 1 } }]] as const) {
+    const row = readRow.get(id) as { record: string };
+    put.run(JSON.stringify({ ...JSON.parse(row.record), ...extra }), id);
+  }
+  expect(call('attention.sweepWaits', {}, service)).toMatchObject({ value: { resolved: 0 } });
+  expect(read('managed-exclusion')).toMatchObject({ value: { state: 'open' } });
+  expect(read('private-exclusion')).toMatchObject({ value: { state: 'open' } });
 });
