@@ -1264,3 +1264,8 @@ Tests use an explicitly fake owning permit; actual Secrets service-grant and
 buffer-erasure fixtures do not claim actual Runtime authority. The old fresh
 membership-cache optimization becomes fresh platform reads here; the same
 all-human requirement is retained. Describe support is still incomplete.
+
+Describe fixtures independently refuse initially mismatched agent, venue and
+workspace before acquiring credentials. They also revoke each owning fact,
+staging or a captured proof field after the credential callback completes but
+before SecretUse returns, proving no subsequent membership read is issued.

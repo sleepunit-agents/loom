@@ -98,6 +98,24 @@ describe('unregistered Slack describe evidence',()=>{
     const late=fixture('dm');late.request.mockImplementationOnce(async()=>{late.facts[fact]=false;return Response.json({ok:true,user:human('U1')});});
     await expect(late.api().describe()).rejects.toThrow('Bridge describe unavailable');
   });
+  it.each(['agent','venue','workspace'] as const)('rejects initially mismatched %s before credentials',async field=>{
+    const f=fixture();Object.assign(f.permit,{[field]:field==='workspace'?'T2':'other'});
+    await expect(f.api().describe()).rejects.toThrow('Bridge describe unavailable');expect(f.use).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
+  });
+  it.each(['authenticated','setup','credential','policy','lifetime'] as const)('observes %s revocation after callback completion before SecretUse resolves',async fact=>{
+    const f=fixture(),original=f.use.getMockImplementation()!;
+    f.use.mockImplementationOnce(async(name,cb)=>{const result=await original(name,cb);f.facts[fact]=false;return result;});
+    await expect(f.api().describe()).rejects.toThrow('Bridge describe unavailable');
+    expect(f.use).toHaveBeenCalledOnce();expect(f.request).toHaveBeenCalledOnce();
+    expect(String(f.request.mock.calls[0][0])).toBe('https://slack.com/api/conversations.info');
+  });
+  it('observes staging and proof-field changes after the credential callback finishes',async()=>{
+    for(const action of ['staging','scope']){
+      const f=fixture(),original=f.use.getMockImplementation()!;
+      f.use.mockImplementationOnce(async(name,cb)=>{const result=await original(name,cb);if(action==='staging')f.hold();else Object.assign(f.permit,{place:'G2'});return result;});
+      await expect(f.api().describe()).rejects.toThrow('Bridge describe unavailable');expect(f.use).toHaveBeenCalledOnce();expect(f.request).toHaveBeenCalledOnce();
+    }
+  });
   it.each(['agent','venue','workspace','kind','place'] as const)('rejects mid-call proof field mutation %s even if current remains true',async field=>{
     const f=fixture('dm');const api=f.api();f.request.mockImplementationOnce(async()=>{
       Object.assign(f.permit,{[field]:'other'});return Response.json({ok:true,user:human('U1')});
