@@ -25,7 +25,8 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | System clock and status glyphs | Member-private `household.time` carries server minutes and database timezone; desktop shows connection and working-agent glyphs. Phone retains its device status bar |
 | Boxes/backup status glyphs, piece-stat ticker items | Runtime enrollment count with unknown health; policy-filtered Tasks/Clock/Bridges/Changes records supply live counts. Backup has no new-side source and stays absent |
 | Phone Home accordion | Under 1024px, more than four owned agents keep one full card (working open thread, ask, unread, first). Other agents use kit rows in alphabetical order, navigating to first unread/latest open thread, else Comms. Full readers/composers are unmounted, never CSS-hidden. Four or fewer retain full cards; desktop keeps all cards |
-| Last steps, per-app parity | Follow-up slices before owner acceptance; no invented tape steps |
+| Last three tape steps | Shared `activity.window:recent` live projection, per owned agent, linked to the existing Activity reader; unavailable/truncated sources are explicit |
+| Per-app parity | Account actions stay in Your account; remaining composition follows owner testing |
 
 Every unavailable live feed drops its old content immediately. Roster loss removes cards; directory failure uses canonical roster names; status, ask and thread failures show unavailable words instead of stale values. Rail navigation is read-only. Approval and private ask actions stay in the owning reader.
 
@@ -228,3 +229,24 @@ sign-out search aliases. This removes the provisional duplicate passkey handler
 and its overlap with app content and the phone dock. The gate still checks
 `/auth/session`, installs the CSRF meta value and requires sign-in before mounting
 the desk; its passkey login flow is unchanged. No backend or session policy changes.
+
+### Last steps on Home
+
+Home subscribes once to Activity's existing `recent` live window and shows the
+latest three entries for each expanded owned agent, with title, summary, reported
+time in CT and location. Each opens that exact entry and day in Activity with the
+agent filter. Phone accordion rows remain compact; only the full card has steps.
+There is no new backend, importer, command, retained tape cache or message reader.
+Activity owns access filtering, expiry, deduplication and source notifications.
+
+The old desk read three raw tape episodes from a rolling 72 hours. The new desk
+uses Activity's current three calendar days and its deduplicated episodes/digests.
+This deliberately avoids a second tape query or different visibility rules. A
+partial source is labelled; a disconnected or denied feed withdraws all words at
+once. The recent window's global bound can omit a quiet agent, so truncation is
+explicit rather than claiming complete per-agent history. On current main the
+Activity Conversations role is not composed; Home shows its visible episodes and
+says some activity is unavailable until the owning piece connects that role.
+The SAME five-agent evidence scenario now includes a dedicated Last steps board
+at every width/look and real fixture episode updates across both next windows.
+No real import or host step is part of this slice.

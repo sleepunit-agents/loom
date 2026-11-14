@@ -29,7 +29,7 @@ function request<T>() {
   const call:Call<T>={id:'request',result:new Promise(r=>{resolve=r;}),getSnapshot:()=>state,subscribe:fn=>{listeners.add(fn);return()=>{listeners.delete(fn);};}};
   return {call,finish:async(result:Result<T>)=>act(async()=>{state={pending:false,status:'done',result};resolve(result);listeners.forEach(fn=>fn());})};
 }
-beforeEach(()=>{f.call.mockReset();f.once.mockReset();f.once.mockReturnValue({result:new Promise(()=>{})});f.listeners.clear();f.snapshots={'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'thread':live([]),'household.agentDisplay':live([]),'person':live([]),'runtime.job':live([]),'wake':live([]),'clock':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
+beforeEach(()=>{f.call.mockReset();f.once.mockReset();f.once.mockReturnValue({result:new Promise(()=>{})});f.listeners.clear();f.snapshots={'activity.window':live([]),'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'thread':live([]),'household.agentDisplay':live([]),'person':live([]),'runtime.job':live([]),'wake':live([]),'clock':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
 it('keeps idle owned cards alphabetical by display name and id, without deriving agents from asks or work',async()=>{
   f.snapshots['attention.ask']=live([ask('foreign',{agent:'other'})]);
@@ -266,4 +266,18 @@ it('shows and counts a represented source approval once through the actual Home 
   f.snapshots['attention.ask']=live([approval,wait,{...wait,id:'another-wait',createdAt:2,ask:'Another copy of this approval'}]);await draw();
   expect(text()).toContain('Question wait');expect(text()).not.toContain('Question approval');expect(text()).not.toContain('Another copy of this approval');
   expect(tree!.root.findAllByType('h2').map(words)).toContain('Needs you · 1');
+});
+
+it('shows each owned agent’s latest three Activity entries with exact reader navigation and clears lost sources',async()=>{
+ const entry=(id:string,agent='art',at='2026-11-13T18:00:00Z')=>({id,agent,at,day:'2026-11-13',hour:12,title:`Step ${id}`,line:'What landed',venue:'terminal',where:'Terminal',what:'work'});
+ const window={id:'recent',to:'2026-11-13',days:['2026-11-13'],entries:[entry('old','art','2026-11-13T15:00:00Z'),entry('private','other'),entry('z'),entry('b'),entry('a'),entry('mark','mark')],conversations:'available',episodes:'available',truncated:false,expires:1};
+ f.snapshots['activity.window']=live([window]);const go=await draw();
+ const steps=tree!.root.findByProps({'aria-label':'Art recent steps'});
+ const rows=steps.findAllByType('button');expect(rows.map((r:Node)=>words(r))).toEqual(['Step aWhat landed11/13/2026, 12:00:00 PM CT · Terminal','Step bWhat landed11/13/2026, 12:00:00 PM CT · Terminal','Step zWhat landed11/13/2026, 12:00:00 PM CT · Terminal']);
+ expect(text()).not.toContain('Step old');expect(text()).not.toContain('Step private');expect(text()).toContain('Step mark');
+ await act(async()=>rows[0].props.onClick());expect(go).toHaveBeenLastCalledWith('/p/activity-preview/?who=art&e=a&day=2026-11-13');
+ await publish('activity.window',live([{...window,entries:[],conversations:'unavailable',truncated:true}]));
+ expect(text()).not.toContain('Step a');expect(text()).toContain('Some activity is unavailable.');expect(text()).toContain('Showing the available recent activity.');expect(text()).not.toContain('No recent steps.');
+ await publish('activity.window',live([{...window,entries:[]}]));expect(text()).toContain('No recent steps.');
+ for(const status of ['offline','denied','loading'] as const){await publish('activity.window',{status,records:[window]});expect(text()).not.toContain('Step a');expect(text()).toContain(status==='loading'?'Opening activity':'Activity unavailable.');}
 });
