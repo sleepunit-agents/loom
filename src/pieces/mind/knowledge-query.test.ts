@@ -55,8 +55,27 @@ it('keeps absent files absent and hides source failures from callers without vis
  expect(await f.query('{ memoryKnowledge { total pages { title } } }')).toMatchObject({data:{memoryKnowledge:{total:0,pages:[]}}});
  expect(existsSync(path)).toBe(false);
  const broken=join(home(),'broken.db');writeFileSync(broken,'not a database');const bad=fixture(broken);
- expect(await bad.query('{ memoryKnowledge { total } }',{viewer:{kind:'member',id:'member'}})).toMatchObject({data:{memoryKnowledge:null}});
+ const denied=await bad.query('{ memoryKnowledge { total } }',{viewer:{kind:'member',id:'member'}});
+ expect(denied).toMatchObject({data:{memoryKnowledge:null}});expect(denied.errors).toBeUndefined();
  const result=await bad.query('{ memoryKnowledge { total } }');
  expect(result.errors?.[0].message).toBe('Knowledge is unavailable');
  expect(JSON.stringify(result)).not.toContain(broken);
+});
+it('matches complete backlink targets and keeps an uncited page provisional in query output',async()=>{
+ const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
+ await store.writePage({slug:'hose',title:'The hose',domain:'pond',body:'Uncited fictional fact',sourcing:'provisional'});
+ await store.writePage({slug:'prefix',title:'Prefix only',domain:'pond',body:'knowledge:hose-adapter /knowledge/hose-adapter [[hose-adapter]]'});
+ await store.writePage({slug:'wiki',title:'Wiki alias',domain:'pond',body:'[[hose|the pump hose]]'});
+ await store.writePage({slug:'exact',title:'Exact reference',domain:'pond',body:'knowledge:hose and /knowledge/hose?from=pond'});
+ const f=fixture(path),result=await f.query('{ memoryKnowledgePage(slug:"hose") { sourcing citedBy { slug } } }');
+ expect(result.errors).toBeUndefined();
+ expect(result.data).toEqual({memoryKnowledgePage:{sourcing:'provisional',citedBy:[{slug:'exact'},{slug:'wiki'}]}});
+});
+it('selects the newest ten prior versions without changing the current page',async()=>{
+ const path=join(home(),'knowledge.db'),store=new SqliteKnowledgeBackend({dbPath:path});closes.push(()=>store.close());
+ for(let i=0;i<13;i++)await store.writePage({slug:'hose',title:'Hose',domain:'pond',body:`Version ${i}`,mode:'replace'});
+ const f=fixture(path),result=await f.query('{ memoryKnowledgePage(slug:"hose") { body history { body op replacedAt } } }');
+ expect(result.errors).toBeUndefined();
+ expect(result.data).toEqual({memoryKnowledgePage:{body:'Version 12',history:Array.from({length:10},(_,i)=>({body:`Version ${11-i}`,op:'write-replace',replacedAt:expect.any(String)}))}});
+ expect(await f.query('{ memoryKnowledgePage(slug:"hose") { history { body } } }',{viewer:{kind:'member',id:'member'}})).toEqual({data:{memoryKnowledgePage:null}});
 });

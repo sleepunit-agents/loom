@@ -54,8 +54,11 @@ export function knowledgeView(db: Database | undefined, nowMs: number, open?: st
             .map((c) => ({ claim: c.claim, kind: c.source_kind, excerpt: c.excerpt, retrievedAt: c.retrieved_at, createdAt: c.created, ...(c.source_locator ? { locator: c.source_locator } : {}), ...(c.source_locator && /^https?:\/\//.test(c.source_locator) ? { href: c.source_locator } : {}) }));
         } catch { /* no citations table */ }
         const esc = (x: string) => x.replace(/[\\%_]/g, (c) => `\\${c}`);
-        const citedBy = db.prepare("SELECT slug, title FROM pages WHERE status = 'active' AND slug != ? AND (body LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\') ORDER BY title, slug")
-          .all(r.slug, `%[[${esc(r.slug)}]]%`, `%knowledge:${esc(r.slug)}%`, `%/knowledge/${esc(r.slug)}%`) as Array<{ slug: string; title: string }>;
+        const target = r.slug.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const refers = new RegExp(`\\[\\[${target}(?:\\|[^\\]]*)?\\]\\]|(?:knowledge:|/knowledge/)${target}(?![\\w/.-])`);
+        const citedBy = (db.prepare("SELECT slug, title, body FROM pages WHERE status = 'active' AND slug != ? AND (body LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\') ORDER BY title, slug")
+          .all(r.slug, `%[[${esc(r.slug)}%`, `%knowledge:${esc(r.slug)}%`, `%/knowledge/${esc(r.slug)}%`) as Array<{ slug: string; title: string; body: string }>)
+          .filter(page => refers.test(page.body)).map(({slug,title}) => ({slug,title}));
         const checked = last.get(r.id);
         out.open = { ...line(r), body: r.body ?? '', ...(r.sourcing ? { sourcing: r.sourcing } : {}), sources, citedBy, ...(checked ? { checked } : {}) };
       }

@@ -22,10 +22,8 @@ const summary = new GraphQLObjectType({ name:'MemoryKnowledgeSummary', fields:su
 const citation = new GraphQLObjectType({ name:'MemoryKnowledgeCitation', fields:{ claim:requiredText,kind:requiredText,locator:text,href:text,excerpt:requiredText,retrievedAt:requiredText,createdAt:requiredText } });
 const reference = new GraphQLObjectType({ name:'MemoryKnowledgeReference', fields:{ slug:requiredText,title:requiredText } });
 const check = new GraphQLObjectType({ name:'MemoryKnowledgeCheck', fields:{ at:requiredText,outcome:requiredText,by:text } });
-const page = new GraphQLObjectType({ name:'MemoryKnowledgePage', fields:{
- ...summaryFields,body:requiredText,sourcing:text,
- sources:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(citation)))},
- citedBy:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(reference)))},checked:{type:check},
+const revision = new GraphQLObjectType({ name:'MemoryKnowledgeRevision', fields:{
+ id:{type:new GraphQLNonNull(GraphQLInt)},slug:requiredText,body:requiredText,op:requiredText,replacedAt:requiredText,actor:text,
 } });
 const overview = new GraphQLObjectType({ name:'MemoryKnowledge',fields:{
  total:{type:new GraphQLNonNull(GraphQLInt)}, checkDays:{type:new GraphQLNonNull(GraphQLInt)},recentDays:{type:new GraphQLNonNull(GraphQLInt)},
@@ -46,6 +44,18 @@ export function knowledgeQueryFields(options: { path?:string; sharing():Sharing;
   try{return knowledgeView(db,options.now(),slug,slug!==undefined);}
   catch{throw new GraphQLError('Knowledge is unavailable');}
  };
+ const page = new GraphQLObjectType< {slug:string},MemoryQueryContext>({ name:'MemoryKnowledgePage', fields:{
+  ...summaryFields,body:requiredText,sourcing:text,
+  sources:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(citation)))},
+  citedBy:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(reference)))},checked:{type:check},
+  history:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(revision))),resolve:(source,_args,context)=>{
+   if(!allowed(context))return [];
+   try{return db?.prepare(`SELECT r.id,r.slug,r.body,r.op,r.replaced_at AS replacedAt,r.actor
+    FROM page_revisions r JOIN pages p ON p.id=r.page_id
+    WHERE p.slug=? AND p.status='active' ORDER BY r.id DESC LIMIT 10`).all(source.slug)??[];}
+   catch{throw new GraphQLError('Knowledge history is unavailable');}
+  }},
+ } });
  return {
   fields:{
    memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>allowed(context)?read():null},
