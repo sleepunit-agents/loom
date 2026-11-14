@@ -113,4 +113,47 @@ describe('generated SQL reads', () => {
     expect(a.data).toEqual({ tasks: [] });
     expect(b.data?.tasks).toHaveLength(3);
   });
+  it('preserves columns and parameters inside SQL visibility subqueries at root and connected tables', async () => {
+    const { client, statements } = fixture();
+    const schema = dataQueries(client, {
+      tables: ['tasks', 'projects'],
+      visibility: {
+        // No task id is a project id. Rewriting projects.id to tasks.id
+        // would turn this deny-all policy into an allow-all policy.
+        tasks: fields => sql`${fields.id} in (select ${projects.id} from ${projects} where ${projects.name} = ${'Pond'})`,
+        projects: () => sql`true`,
+      },
+    });
+    const root = await graphql({ schema, source: '{ tasks { id } }' });
+    expect(root.errors).toBeUndefined();
+    expect(root.data).toEqual({ tasks: [] });
+    const nested = await graphql({ schema, source: '{ projects(where: {id: {eq: "pond"}}) { tasksByProject { id } } }' });
+    expect(nested.errors).toBeUndefined();
+    expect(nested.data).toEqual({ projects: [{ tasksByProject: [] }] });
+    expect(statements).toHaveLength(2);
+    expect(statements[0]).toContain('select "projects"."id" from "projects"');
+    expect(statements[1]).toContain('select "projects"."id" from "projects"');
+  });
+
+  it('rejects unsupported nested relation aliases including fragments before querying', async () => {
+    const { client, statements } = fixture();
+    const schema = dataQueries(client, {
+      tables: ['tasks', 'taskComments'],
+      visibility: { tasks: () => sql`true`, taskComments: () => sql`true` },
+    });
+    for (const source of [
+      '{ tasks { first: taskCommentsByTask(where: {seq: {eq: 1}}) { text } second: taskCommentsByTask(where: {seq: {eq: 2}}) { text } } }',
+      'query { tasks { ...Comments } } fragment Comments on TasksSelectItem { first: taskCommentsByTask { text } }',
+      '{ tasks { ... on TasksSelectItem { first: taskCommentsByTask { text } } } }',
+    ]) {
+      const result = await graphql({ schema, source });
+      expect(result.errors?.[0].message).toContain('Nested relation aliases');
+    }
+    expect(statements).toHaveLength(0);
+    const valid = await graphql({ schema, source: '{ selected: tasksSingle(where: {id: {eq: "a"}}) { key: id taskCommentsByTask(where: {seq: {eq: 2}}) { body: text } } }' });
+    expect(valid.errors).toBeUndefined();
+    expect(valid.data).toEqual({ selected: { key: 'a', taskCommentsByTask: [{ body: 'excluded-comment' }] } });
+    expect(statements).toHaveLength(1);
+  });
+
 });

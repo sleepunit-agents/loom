@@ -1,8 +1,9 @@
 import type Database from 'better-sqlite3';
-import { and, createTableRelationsHelpers, getOperators, getTableName, is, Relations, type AnyColumn, SQL } from 'drizzle-orm';
+import { and, createTableRelationsHelpers, getOperators, getTableName, is, Relations, type AnyColumn, SQL, sql } from 'drizzle-orm';
 import type { AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { buildSchema } from 'drizzle-graphql';
+import { GraphQLError, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
 import { schema, tables } from './schema.js';
 
 type TableName = keyof typeof tables;
@@ -73,7 +74,11 @@ export function dataQueries(client: Database.Database, options: {
         // an unconstrained query through Drizzle's optional-where semantics.
         if (!is(allowed, SQL)) throw new Error(`SQL visibility required for ${name}`);
         const requested = typeof config.where === 'function' ? config.where(fields, operators) : config.where;
-        return and(allowed, requested);
+        // Drizzle recursively rewrites ALL Column chunks in a where SQL to
+        // this relation alias, including unrelated columns inside subqueries.
+        // A SQLWrapper defers rendering past that rewrite. fields are already
+        // aliased by the relational builder; inner subquery tables stay intact.
+        return and(sql`${{ getSQL: () => allowed }}`, requested);
       },
       with: config.with && Object.fromEntries(Object.entries(config.with).map(([key, nested]) => {
         if (!nested) return [key, nested];
@@ -96,5 +101,37 @@ export function dataQueries(client: Database.Database, options: {
     query.findMany = ((config: ReadConfig = {}) => many(constrain(name, config))) as typeof query.findMany;
     query.findFirst = ((config: ReadConfig = {}) => first(constrain(name, config))) as typeof query.findFirst;
   }
-  return buildSchema(db, { mutations: false, relationsDepthLimit: depth }).schema;
+  const generated = buildSchema(db, { mutations: false, relationsDepthLimit: depth }).schema;
+  for (const field of Object.values(generated.getQueryType()!.getFields())) {
+    const resolve = field.resolve!;
+    field.resolve = (source, args, context, info) => {
+      rejectRelationAliases(info);
+      return resolve(source, args, context, info);
+    };
+  }
+  return generated;
+}
+
+/** drizzle-graphql 0.8.5 conflates relation aliases, using only one alias's
+ * arguments. Refuse that unsupported shape instead of returning the wrong
+ * rows. Root aliases and scalar aliases remain supported. Inspect fragments
+ * too, before any SQL for this root field. */
+function rejectRelationAliases(info: GraphQLResolveInfo) {
+  const visited = new Set<string>();
+  function check(set: SelectionSetNode | undefined) {
+    for (const selection of set?.selections ?? []) {
+      if (selection.kind === Kind.FIELD) {
+        if (selection.selectionSet && selection.alias && selection.alias.value !== selection.name.value) {
+          throw new GraphQLError('Nested relation aliases are not supported; use the relation field name');
+        }
+        check(selection.selectionSet);
+      } else if (selection.kind === Kind.INLINE_FRAGMENT) {
+        check(selection.selectionSet);
+      } else if (!visited.has(selection.name.value)) {
+        visited.add(selection.name.value);
+        check(info.fragments[selection.name.value]?.selectionSet);
+      }
+    }
+  }
+  for (const node of info.fieldNodes) check(node.selectionSet);
 }

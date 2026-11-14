@@ -93,3 +93,12 @@ changing sharing facts in SQL. Default relation depth is 2; supported depths are
 Still to connect: central household/project/private visibility predicates,
 authenticated GraphQL transport, Tasks `commentCount`, delta subscriptions,
 normalized client cache, Tasks tile replacement and configurable database provider.
+
+Pinned-library limits: drizzle-graphql 0.8.5 conflates differently aliased nested
+relation requests, so this module rejects nested relation aliases before SQL,
+including aliases inside fragments. Root and scalar aliases work. Use canonical
+relation field names; the transport/client integration must retain this guard
+until its generator can implement independent aliases. The module wraps visibility
+SQL in a deferred SQLWrapper: Drizzle's relational alias rewrite must not change
+unrelated table columns inside policy subqueries. Tests cover the otherwise
+permissive rewrite at both root and connected tables.
