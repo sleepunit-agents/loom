@@ -21,6 +21,7 @@ import { fixture } from '../../fixture.js';
 import { signin, hash } from '../../core/signin/index.js';
 import { runtimeStore } from './store.js';
 const realConversationRuntime=conversationModule.conversationRuntime;
+const realLoadKey=commsCrypto.loadKey;
 const value=<T>(r:Result):T=>{expect(r.ok).toBe(true);return (r as {ok:true;value:T}).value;};
 const cleanups:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{try{for(const f of cleanups.splice(0).reverse())await f();}finally{vi.restoreAllMocks();}});
@@ -90,11 +91,27 @@ it('runs private conversation input/reply/status through actual next auth, socke
  }
 });
 it('holds both Comms dispatch and runner input under staging and survives restart without a second job',async()=>{
- const f=await setup(true),thread=await f.open();
+ // Opening a thread acknowledges the encrypted write, before background
+ // delivery finishes decrypting it and reaches the staging gate. Hold that
+ // exact boundary so a fast HTTP round trip cannot accidentally hide the race.
+ let releaseDecrypt:()=>void=()=>{},entered:()=>void=()=>{};
+ const decrypting=new Promise<void>(resolve=>{entered=resolve;});
+ const decryptGate=new Promise<void>(resolve=>{releaseDecrypt=resolve;});
+ vi.spyOn(commsCrypto,'loadKey').mockImplementation(async home=>{
+  const key=await realLoadKey(home);
+  return {...key,async open(blob){entered();await decryptGate;return key.open(blob);}};
+ });
+ const f=await setup(true);
+ try {
+ const thread=await f.open();await decrypting;
  expect(value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs).toEqual([]);
- const rows=f.app.db.prepare('SELECT id FROM core_effects').all() as {id:string}[];
- expect(rows.some(r=>r.id.startsWith('comms-deliver:'))).toBe(true);
- const release=rows.find(r=>r.id.startsWith('comms-deliver:'))!.id;
+ const release=`comms-deliver:${thread}:1`;
+ const heldDelivery=()=>f.app.db.prepare("SELECT id FROM core_effects WHERE id=? AND state='due'").get(release) as {id:string}|undefined;
+ expect(heldDelivery()).toBeUndefined();
+ releaseDecrypt();
+ // Observe the durable effect we intend to release, rather than treating an
+ // unrelated runner read as a barrier for asynchronous Comms decryption.
+ await expect.poll(heldDelivery).toEqual({id:release});
  expect(await f.post(f.owner,'core.releaseEffect',{id:release})).toMatchObject({ok:true});
  await f.restart();
  let jobs:string[]=[];for(let i=0;i<15&&!jobs.length;i++)jobs=value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs;
@@ -106,6 +123,7 @@ it('holds both Comms dispatch and runner input under staging and survives restar
  expect(await f.post(f.runner,'runtime.takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
  expect(runtimeStore(f.app.db).ids('job')).toEqual([job]);
  expect(runtimeStore(f.app.db).ids('binding')).toHaveLength(1);expect(thread).toMatch(/^th:/);
+ } finally {releaseDecrypt();}
 });
 
 it('keeps authenticated job proof across restart, fences revoked bodies and never releases input twice',async()=>{
@@ -168,7 +186,8 @@ it('rolls back job, binding, acceptance and nested receipts if either final writ
 it('resumes a staging-held archive end without restarting and revokes its body credential',async()=>{
  const f=await setup(true),thread=await f.open();
  await f.post(f.runner,'runtime.claimableJobs',{});
- const delivery=(f.app.db.prepare("SELECT id FROM core_effects WHERE id LIKE 'comms-deliver:%'").get() as {id:string}).id;
+ const delivery=`comms-deliver:${thread}:1`;
+ await expect.poll(()=>f.app.db.prepare("SELECT id FROM core_effects WHERE id=? AND state='due'").get(delivery)).toEqual({id:delivery});
  await f.post(f.owner,'core.releaseEffect',{id:delivery});
  let jobs:string[]=[];for(let i=0;i<15&&!jobs.length;i++)jobs=value<{jobs:string[]}>(await f.post(f.runner,'runtime.claimableJobs',{})).jobs;
  const job=jobs[0];await f.post(f.runner,'runtime.claimJob',{job});await f.post(f.runner,'runtime.takeInput',{job});
@@ -472,8 +491,9 @@ it('keeps service restrictions without a job or after execution loses its bindin
 it('removes archived conversation authority while staging retains a live job and credential',async()=>{
  const f=await setup(true),thread=await f.open();
  await f.post(f.runner,'runtime.claimableJobs',{});
- const effect=(prefix:string)=>(f.app.db.prepare('SELECT id FROM core_effects WHERE id LIKE ?').get(prefix+'%') as {id:string}).id;
- expect(await f.post(f.owner,'core.releaseEffect',{id:effect('comms-deliver:')})).toMatchObject({ok:true});
+ const delivery=`comms-deliver:${thread}:1`;
+ await expect.poll(()=>f.app.db.prepare("SELECT id FROM core_effects WHERE id=? AND state='due'").get(delivery)).toEqual({id:delivery});
+ expect(await f.post(f.owner,'core.releaseEffect',{id:delivery})).toMatchObject({ok:true});
  const job=await f.queued();
  expect(await f.post(f.runner,'runtime.claimJob',{job})).toMatchObject({ok:true});
  expect(await f.post(f.runner,'runtime.takeInput',{job})).toMatchObject({ok:false,code:'conflict'});
