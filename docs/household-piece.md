@@ -1208,3 +1208,46 @@ provide a public restore command or prove restored-daemon/sign-in/stdio behavior
 The owning Secrets recovery role is still unavailable on main. Those acceptance
 steps, publication/retention and the production runner remain required; saved
 backup settings still do not schedule or arm anything.
+
+### Quarantined restore destination
+
+`stageHouseholdRestore` in `src/core/household/backup-destination.ts` decrypts
+and reuses the complete validator before touching a destination. It materializes
+exact app, continuity, portable documents, optional imported cookie and opaque
+Secrets recovery bytes. This internal Linux-only entry point requires an absent
+destination under an existing OS-user-owned mode-0700 parent. An existing empty
+directory also refuses: this choice avoids replacing or merging with any home.
+The basename must have the reserved `.loom-restore-` prefix and a nonempty suffix.
+App/daemon/household-stdio startup refuses that namespace, including symlink
+aliases, even if a crash leaves only the newly created empty directory before
+the blocker can be created. Future activation must also leave this namespace.
+Every ancestor is opened without following links and pinned through procfs;
+directories are 0700 and exclusively created files are 0600. File writes handle
+short writes and fsync each file; directory entries are synced from children to
+parent. Final ancestor identity checks refuse a renamed/replaced destination.
+The OS user and filesystem are trusted; this is not isolation from another
+process running as the same user or a guarantee against subsequent mutation.
+
+A durable `.restore-pending` blocker precedes any app bytes. The app database
+opener, next operator-home preparation and household stdio metadata reader refuse
+any blocker entry (including a symlink or directory), before opening app state.
+Failures retain private blocked partial candidates and return a generic error;
+the function never deletes or replaces any existing path. A failed candidate
+cannot be retried in place. Decrypted memory is wiped by the scoped consumer on
+all exits; the explicitly restored private files intentionally remain on disk.
+
+Successful materialization returns `awaiting-secrets-restore`, still blocked.
+There is no blocker remover, publication/activation operation or public restore
+command yet. `secrets/recovery.age` is an opaque recovery input, not a restored
+holder. The owning Secrets restore boundary, its isolated acceptance witness,
+actual restored sign-in and stopped-daemon stdio acceptance must precede future
+activation. Neither this writer nor a saved backup configuration arms a machine.
+Power loss may leave an incomplete candidate but cannot make it a complete
+accepted recovery: neither the reserved staging name nor the durable blocker
+is removed by this unit.
+
+| Old restore action | New internal unit / remaining work |
+| --- | --- |
+| Extract tar paths into a destination | Validated envelope; descriptor-pinned exclusive Linux writer into an absent home |
+| Start a restored household | Refused while `.restore-pending` exists; owning Secrets recovery and restored-home acceptance still pending |
+| Overwrite or merge an existing home | Dropped: always refuse, including an empty existing destination |

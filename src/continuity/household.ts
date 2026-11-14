@@ -8,6 +8,7 @@ import { realpathSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { HouseholdDatabase } from '../core/household/document.js';
 import { agentDir, commonsDir, commonsKnowledgePath, type Household } from '../household.js';
+import { assertHomeReady } from '../core/home-state.js';
 
 export interface ContinuityHousehold {
   household: Household;
@@ -25,6 +26,7 @@ export interface ContinuityHousehold {
  * Missing/uninitialised/damaged app metadata is an error, never a fallback.
  */
 export function readContinuityHousehold(home: string, agent?: string): ContinuityHousehold {
+  assertHomeReady(home);
   const canonicalHome = realpathSync(home);
   const db = new Database(join(canonicalHome, 'loom.db'), { readonly: true, fileMustExist: true, timeout: 0 });
   let household: Household;

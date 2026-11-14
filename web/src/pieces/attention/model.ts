@@ -25,6 +25,7 @@ export function matches(ask: Ask, query: string) {
 }
 /** A central answer cannot apply another piece's decision. Its app owns that action. */
 export function decisionLink(ask: Ask): { path: string; label: string } | undefined {
+  if (ask.sourceManaged && ask.source.kind === 'piece' && ask.source.id === 'approvals-notices') return {path:'/p/approvals-preview/notices',label:'Open Approvals'};
   if (isNotice(ask)) return { path: '/p/clock-preview', label: 'Open Clock' };
   const approval = ask.waits_on && 'approval' in ask.waits_on ? ask.waits_on.approval : ask.source.kind === 'approval' ? ask.source.id : undefined;
   if (approval) return { path: `/p/approvals-preview/approval/${encodeURIComponent(approval)}`, label: 'Open approval' };

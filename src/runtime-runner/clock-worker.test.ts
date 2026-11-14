@@ -17,7 +17,7 @@ import {provenanceStore} from '../pieces/runtime/provenance-store.js';
 import {runtimeStore} from '../pieces/runtime/store.js';
 import {runClockWorker} from './clock-worker-entry.js';
 import {startClockWorker,type ClockWorkerConfig} from './clock-worker.js';
-import type {SpawnClaude} from './session.js';
+import {ClaudeWorkerSession,type SpawnClaude} from './session.js';
 import * as preparation from './clock-input.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
@@ -516,7 +516,7 @@ it('new generation watchdog still kills a resumed child on source withdrawal',as
 });
 
 it.each([100,101])('drains oldest sources beyond the history window and stops after 100 turns (queued=%s)',async total=>{
- const f=await setup();
+ const f=await setup();f.config.idleMs=30_000;
  const joined=await f.joinInput({prompt:'ORDERED 1'});
  // Persisted backlog fixture: ordinary filing capacity limits a current
  // conversation before 100 pending inputs. Clone one real admitted source to
@@ -537,7 +537,7 @@ it.each([100,101])('drains oldest sources beyond the history window and stops af
  expect(f.app.db.prepare('SELECT count(*) AS n FROM runtime_clock_turns WHERE job=? AND consumed IS NOT NULL').get(f.job)).toEqual({n:100});
  if(total===101){
   expect(f.calls.some(c=>c.input.endsWith('ORDERED 100'))).toBe(false);
-  expect(await f.attempt()).toBe(true);expect(f.calls).toHaveLength(101);
+  f.config.idleMs=0;expect(await f.attempt()).toBe(true);expect(f.calls).toHaveLength(101);
   expect(f.calls[100].args).toContain('--session-id');expect(f.calls[100].args).not.toContain('--resume');
  }
 },20_000);
@@ -666,4 +666,227 @@ it.each(['words','model','authority'] as const)('retained owning Clock source %s
   expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${earlier}`)).toEqual({consumed:expect.any(Number)});
   expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${third}`)).toEqual({consumed:null});
  }
+});
+
+// Completion must have reached the worker and armed its next idle tick before
+// advancing the fake clock; a persisted ACK alone doesn't prove that boundary.
+async function finishToIdle(f:Awaited<ReturnType<typeof setup>>){
+ const at=vi.spyOn(f.clock,'at');
+ f.finish();
+ await vi.waitFor(()=>expect(at).toHaveBeenCalledWith(f.clock.now()+1000,expect.any(Function)));
+ at.mockRestore();
+}
+it.each([false,true])('executable worker resumes an arrival after an empty-queue completion (private=%s)',async privateInput=>{
+ const f=await setup(false,privateInput),input=new PassThrough(),signals=new EventEmitter(),stderr=vi.fn();
+ const completed=runClockWorker({input,args:[],signals,stderr},{clock:f.clock,launch:f.launch});
+ input.end(JSON.stringify({...f.config,idleMs:4000}));await f.ready;
+ await finishToIdle(f);expect(f.consumed().consumed).not.toBeNull();
+ const joined=await f.joinInput();
+ await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+ expect(f.calls[1].args).toContain('--resume');
+ expect(f.calls[1].args[f.calls[1].args.indexOf('--resume')+1]).toBe(f.calls[0].args[f.calls[0].args.indexOf('--session-id')+1]);
+ expect(f.calls[1].input).toBe('LOCAL OWNER RULES\nLATER JOINED WORDS');
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+ await finishToIdle(f);f.clock.advance(4000);
+ expect(await completed).toBe(0);expect(stderr).not.toHaveBeenCalled();
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:expect.any(Number)});
+});
+it('empty idle wait expires successfully without launching or retrying another child',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:3000});await f.ready;
+ await finishToIdle(f);f.clock.advance(3000);
+ expect(await worker.completed).toBe(true);expect(f.calls).toHaveLength(1);
+ expect(await f.start().completed).toBe(false);expect(f.calls).toHaveLength(1);
+});
+it.each(['revokePolicy','stopJob','cancelRequest','close'] as const)('owner %s ends an idle wait promptly',async action=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:30_000});await f.ready;
+ await finishToIdle(f);await worker[action]();
+ expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(1);
+});
+it.each(['withdraw','credential','claim','model','policy'] as const)('idle probe rechecks original owning %s before retaining native history',async kind=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:30_000});await f.ready;await finishToIdle(f);
+ if(kind==='withdraw')f.withdraw();
+ if(kind==='credential')signin(f.app).tokens.change(ts=>ts.splice(0,ts.length));
+ if(kind==='claim'){const job=f.store.read('job',f.job)!;f.store.put('job',{...job,claimedAt:job.claimedAt!+1},f.clock.now());}
+ if(kind==='model'){const job=f.store.read('job',f.job)!;f.store.put('job',{...job,model:'other'},f.clock.now());}
+ if(kind==='policy')expect(f.call('runtime.configureBodyPolicy',{agent:'art',revision:0,gates:{people:{}},policy:{deny:['Bash']}}).ok).toBe(true);
+ f.clock.advance(1000);expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(1);
+});
+it('a stalled idle probe expires without resuming from a late reply',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:30_000});await f.ready;await finishToIdle(f);
+ const held=holdResponse('idleClockExecution'),fetches=vi.spyOn(globalThis,'fetch');
+ try{f.clock.advance(1000);await held.ready;f.clock.advance(3000);await settle();
+  expect(fetches.mock.calls.filter(([url])=>String(url).endsWith('/api/runtime/idleClockExecution'))).toHaveLength(1);
+  expect(held.count).toBe(1);f.clock.advance(2000);
+  expect(await worker.completed).toBe(false);held.release();await settle();expect(f.calls).toHaveLength(1);
+ }finally{held.release();}
+});
+it.each([-1,30_001,1.5,'3000',null])('rejects invalid owner idle wait %s before release',async idleMs=>{
+ const f=await setup();expect(()=>f.start({...f.config,idleMs:idleMs as number})).toThrow();expect(f.calls).toHaveLength(0);
+});
+
+// Record wire ids at the HTTP seam; they remain Runtime ids, never native handles.
+function captureExecution(){
+ const original=globalThis.fetch;let execution:string|undefined;
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+  const response=await original(...args);
+  if(String(args[0]).endsWith('/api/runtime/beginClockExecution')){
+   const body=await response.clone().json();if(body.ok)execution=body.value.execution;
+  }
+  return response;
+ });
+ return ()=>{expect(execution).toBeTruthy();return execution!;};
+}
+it('idle probes require the completed phase and cannot destroy an active execution',async()=>{
+ const f=await setup(),execution=captureExecution(),worker=f.start({...f.config,idleMs:3000});await f.ready;
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:execution()})).toMatchObject({ok:false,code:'denied'});
+ await finishToIdle(f);
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:execution()})).toMatchObject({ok:true,value:{current:true,more:false,ttl:5000}});
+ // A late foreground watchdog likewise cannot destroy the completed proof.
+ expect(await f.post(f.config.credential,'currentClockExecution',{execution:execution()})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:execution()})).toMatchObject({ok:true});
+ f.clock.advance(3000);expect(await worker.completed).toBe(true);
+});
+it('idle probes never extend expiry or authorize cross-startup native history',async()=>{
+ const f=await setup(),execution=captureExecution(),worker=f.start({...f.config,idleMs:3000});await f.ready;await finishToIdle(f);
+ const previous=execution(),at=vi.spyOn(f.clock,'at');
+ f.clock.advance(1000);
+ await vi.waitFor(()=>expect(at).toHaveBeenCalledWith(f.clock.now()+1000,expect.any(Function)));at.mockRestore();
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:previous})).toMatchObject({ok:true});
+ f.clock.advance(2000);expect(await worker.completed).toBe(true);
+ const joined=await f.joinInput();
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:previous})).toMatchObject({ok:false,code:'denied'});
+ expect(await f.post(f.config.credential,'beginClockExecution',{previous})).toMatchObject({ok:false,code:'denied'});
+ expect(f.app.effects!.status(`runtime:clock-native:clock:${joined}`)).toBeUndefined();
+ expect(await f.attempt()).toBe(true);expect(f.calls).toHaveLength(2);
+ expect(f.calls[1].args).toContain('--session-id');expect(f.calls[1].args).not.toContain('--resume');
+});
+it('standalone file completion does not retain idle join authority',async()=>{
+ const f=await setup(false,false,false,'native.md'),execution=captureExecution();writeFileSync(join(f.home,'native.md'),'FILE WORDS');
+ const worker=f.start({...f.config,idleMs:3000});await f.ready;f.finish();expect(await worker.completed).toBe(true);
+ expect(await f.post(f.config.credential,'idleClockExecution',{execution:execution()})).toMatchObject({ok:false,code:'denied'});
+ expect(f.calls).toHaveLength(1);
+});
+it('idle request timeout also honors the earlier original idle deadline',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:3000});await f.ready;await finishToIdle(f);
+ const held=holdResponse('idleClockExecution');
+ try{f.clock.advance(1000);await held.ready;f.clock.advance(2000);
+  expect(await worker.completed).toBe(false);held.release();await settle();expect(f.calls).toHaveLength(1);
+ }finally{held.release();}
+});
+
+it('idle probes recheck earlier joined sources retained in native history',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:4000});await f.ready;
+ const earlier=await f.joinInput();f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+ await f.joinInput();f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(3));
+ await finishToIdle(f);
+ f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.withdrawn',json('true')) WHERE id=?").run(earlier);
+ f.clock.advance(1000);expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(3);
+});
+it('an unsupported idle arrival gets no native effect or child',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:4000});await f.ready;await finishToIdle(f);
+ const joined=await f.joinInput({model:'other'});
+ expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(1);
+ expect(f.app.effects!.status(`runtime:clock-native:clock:${joined}`)).toBeUndefined();
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
+});
+it('executable signal drains a sleeping idle worker without another fake-clock tick',async()=>{
+ const f=await setup(),input=new PassThrough(),signals=new EventEmitter(),stderr=vi.fn();
+ const completed=runClockWorker({input,args:[],signals,stderr},{clock:f.clock,launch:f.launch});
+ input.end(JSON.stringify({...f.config,idleMs:30_000}));await f.ready;await finishToIdle(f);
+ signals.emit('SIGTERM');expect(await completed).toBe(1);expect(f.calls).toHaveLength(1);
+ expect(signals.listenerCount('SIGTERM')).toBe(0);expect(signals.listenerCount('SIGINT')).toBe(0);
+});
+
+it.each(['expire','signal','arrival','failure'] as const)('executable owns a real referenced idle handle until %s',async ending=>{
+ const f=await setup(),input=new PassThrough(),signals=new EventEmitter(),stderr=vi.fn();
+ const intervals=vi.spyOn(globalThis,'setInterval'),clear=vi.spyOn(globalThis,'clearInterval');
+ const completed=runClockWorker({input,args:[],signals,stderr},{clock:f.clock,launch:f.launch});
+ input.end(JSON.stringify({...f.config,idleMs:3000}));await f.ready;await finishToIdle(f);
+ const index=intervals.mock.calls.findIndex(([fn,ms])=>ms===30_000);
+ expect(index).toBeGreaterThanOrEqual(0);
+ const handle=intervals.mock.results[index].value as NodeJS.Timeout;
+ // The actual Node handle is referenced, even though injected Clock timers
+ // need no OS handle and production Clock timers deliberately unref.
+ expect(handle.hasRef()).toBe(true);expect(clear).not.toHaveBeenCalledWith(handle);
+ if(ending==='signal')signals.emit('SIGTERM');
+ else if(ending==='failure'){f.withdraw();f.clock.advance(1000);}
+ else if(ending==='arrival'){
+  await f.joinInput();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+  expect(clear).toHaveBeenCalledWith(handle);signals.emit('SIGTERM');
+ }else f.clock.advance(3000);
+ expect(await completed).toBe(ending==='expire'?0:1);
+ expect(clear).toHaveBeenCalledWith(handle);expect(f.calls).toHaveLength(ending==='arrival'?2:1);
+});
+
+// A conservative lower advertised lifetime makes the worker's boundary fast
+// without advancing 30 minutes of live watchdog requests. Actual server proof
+// clipping at 30 minutes is separately exercised by the protocol fixture.
+function lowerExecutionLifetime(){
+ const original=globalThis.fetch;
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+  const response=await original(...args);
+  if(String(args[0]).endsWith('/api/runtime/beginClockExecution')){
+   const body=await response.clone().json();
+   if(body.ok)return new Response(JSON.stringify({...body,value:{...body.value,lifetime:1500}}),{status:response.status,headers:response.headers});
+  }
+  return response;
+ });
+}
+it('worker discards idle history at the admission lifetime before the first normal probe tick',async()=>{
+ const f=await setup();lowerExecutionLifetime();const worker=f.start({...f.config,idleMs:30_000});await f.ready;
+ f.clock.advance(1000);const at=vi.spyOn(f.clock,'at'),intervals=vi.spyOn(globalThis,'setInterval'),close=vi.spyOn(ClaudeWorkerSession.prototype,'close');f.finish();
+ await vi.waitFor(()=>expect(intervals).toHaveBeenCalledWith(expect.any(Function),30_000));
+ expect(at).toHaveBeenCalledWith(f.clock.now()+500,expect.any(Function));at.mockRestore();
+ f.clock.advance(500);await settle();expect(close).toHaveBeenCalled();
+ expect(await worker.completed).toBe(true);expect(f.calls).toHaveLength(1);
+ const joined=await f.joinInput();expect(await f.attempt()).toBe(true);
+ expect(f.calls).toHaveLength(2);expect(f.calls[1].args).not.toContain('--resume');
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:expect.any(Number)});
+});
+it('the admission lifetime fences native history while a completion response is stalled',async()=>{
+ const f=await setup();lowerExecutionLifetime();const worker=f.start({...f.config,idleMs:30_000});await f.ready;
+ f.clock.advance(1000);const held=holdResponse('completeClockExecution'),close=vi.spyOn(ClaudeWorkerSession.prototype,'close');
+ try{f.finish();await held.ready;f.clock.advance(500);await settle();expect(close).toHaveBeenCalled();
+  expect(await worker.completed).toBe(false);held.release();await settle();expect(f.calls).toHaveLength(1);
+ }finally{held.release();}
+});
+
+it.each([false,true])('a successfully decoded idle reply crossing its deadline stays uncertain (more=%s)',async more=>{
+ const f=await setup(),original=globalThis.fetch,now=f.clock.now();
+ const readClock=vi.spyOn(f.clock,'now');
+ vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+  const response=await original(...args);
+  if(String(args[0]).endsWith('/api/runtime/idleClockExecution')){
+   const body=await response.clone().json();expect(body).toMatchObject({ok:true,value:{more}});
+   // Simulate time spent decoding a successful response without delivering the
+   // overdue timer callback. This is the deadline edge a held socket misses.
+   readClock.mockReturnValue(now+3001);
+   return new Response(JSON.stringify(body),{status:response.status,headers:response.headers});
+  }
+  return response;
+ });
+ const worker=f.start({...f.config,idleMs:3000});await f.ready;await finishToIdle(f);
+ try{
+  if(more)await f.joinInput();else f.clock.advance(1000);
+  expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(1);
+ }finally{readClock.mockRestore();}
+});
+async function emptyIdleTick(f:Awaited<ReturnType<typeof setup>>){
+ const at=vi.spyOn(f.clock,'at');f.clock.advance(1000);
+ await vi.waitFor(()=>expect(at).toHaveBeenCalledWith(f.clock.now()+1000,expect.any(Function)));at.mockRestore();
+}
+it('a successful resumed turn opens a new idle window beyond the first deadline',async()=>{
+ const f=await setup(),worker=f.start({...f.config,idleMs:4000});await f.ready;
+ await finishToIdle(f);const firstDeadline=f.clock.now()+4000;
+ await emptyIdleTick(f);await emptyIdleTick(f);
+ await f.joinInput();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+ await finishToIdle(f);const secondDeadline=f.clock.now()+4000;
+ await emptyIdleTick(f);
+ const third=await f.joinInput();expect(f.clock.now()).toBeGreaterThan(firstDeadline);expect(f.clock.now()).toBeLessThan(secondDeadline);
+ await vi.waitFor(()=>expect(f.calls).toHaveLength(3));
+ expect(f.calls[2].args).toContain('--resume');
+ expect(f.calls[2].args[f.calls[2].args.indexOf('--resume')+1]).toBe(f.calls[0].args[f.calls[0].args.indexOf('--session-id')+1]);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${third}`)).toEqual({consumed:null});
+ await finishToIdle(f);f.clock.advance(4000);expect(await worker.completed).toBe(true);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${third}`)).toEqual({consumed:expect.any(Number)});
 });

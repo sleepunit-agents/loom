@@ -9,6 +9,7 @@ import { signin, hash } from './index.js';
 import { HouseholdRows } from '../household/rows.js';
 import { publishBootstrapContext } from '../household/bootstrap.js';
 import { HouseholdDatabase } from '../household/document.js';
+import { assertHomeReady } from '../home-state.js';
 export const operatorRequest = z.strictObject({
   request: z.literal('link'), member: z.string().min(1).max(200),
   label: z.string().max(200).default('Local sign-in'), ttl: z.number().int().min(1).max(900).default(300),
@@ -20,6 +21,7 @@ function owned(path: string, mode: number | undefined, directory: boolean) {
 }
 export function checkOperatorHome(home: string) { owned(home, 0o700, true); }
 export function prepareOperatorHome(home: string) {
+  assertHomeReady(home);
   mkdirSync(home, { recursive: true, mode: 0o700 });
   const st = lstatSync(home);
   if (process.getuid === undefined || !st.isDirectory() || st.uid !== process.getuid()) throw new Error('Operator home must belong to this OS user');
