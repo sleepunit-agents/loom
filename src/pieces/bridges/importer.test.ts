@@ -410,3 +410,56 @@ it.each(['','x'.repeat(201)])('preserves source note-key vocabulary in selected 
   expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(false);
  }finally{close();}
 });
+
+it('resolves every configured brief against effective accepted membership, preserving file order and exact bytes',async()=>{
+ const {selectChannelBriefs}=await import('./import-briefs.js');
+ const f=fixture();
+ writeFileSync(f.sources.files[0].path,'{"agent":{"slug":"art"},"discord":{"token_file":"not-read"},"channel_notes":{"10":"ten","2":"two","z":"same","a":"same"}}');
+ // File membership is stale: accepted per-agent extras are authoritative.
+ writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100'},'10':['wrong']}));
+ f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',answers:{'300':'work'},threads:{'500':{parent:'300'}},extra:{'10':['300'],'2':['500'],z:['300','500'],a:[]}}]]);
+ const keys=['10','2','z','a'];const content='\ufeffPRIVATE $text\r\nUnicode 🐟';
+ f.sources.documents=keys.map((key,i)=>{const path=join(f.root,`${i}.md`);writeFileSync(path,content+key);return {name:`bridges-documents/${i}.md`,path};});
+ const documents=keys.map((key,i)=>({path:`bridges-documents/${i}.md`,agent:'art',key,brief:i<2?i===0?'ten':'two':'same'}));
+ const options={...f.options,documents:documents.toReversed()};
+ const result=readBridgeImport(f.sources,options,h,f.open),evidence=JSON.parse(result.evidence);
+ const resolved=evidence.configuredBriefs[0];
+ expect(resolved).toMatchObject({agent:'art',source:'instance/shuttle.json',routeSource:'accepted:art'});
+ expect(resolved.briefs.map((b:{key:string})=>b.key)).toEqual(keys);
+ expect(selectChannelBriefs(resolved.briefs,'500','300').map(b=>b.key)).toEqual(['10','2','z']);
+ expect(selectChannelBriefs(resolved.briefs,'500','unknown').map(b=>b.key)).toEqual(['2','z']);
+ expect(evidence.selectedDocuments.find((d:{key:string})=>d.key==='10').content).toBe(content+'10');
+ expect(result.expected.routes.every(r=>r.notes.length===0)).toBe(true);
+ const {db,close}=openDb(join(f.root,'new'));try{
+  expect(()=>importBridges(db,f.sources,options,h,f.open,{interrupt:()=>{throw Error('interrupt resolved');}})).toThrow('interrupt resolved');
+  expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridges_meta'").get()).toBeUndefined();
+  expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(true);
+  expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(false);
+  const corrupted=JSON.parse(result.evidence);corrupted.configuredBriefs[0].briefs.reverse();
+  db.prepare("UPDATE bridges_meta SET value=? WHERE key='legacy-evidence'").run(JSON.stringify(corrupted));
+  expect(()=>importBridges(db,f.sources,options,h,f.open)).toThrow('comparison failed');
+ }finally{close();}
+});
+
+it('refuses unresolved, wrong-name, ambiguous, wrong-agent and stale-source configured brief mappings even for empty membership',()=>{
+ const f=fixture();writeFileSync(f.sources.files[0].path,JSON.stringify({agent:{slug:'art'},discord:{token_file:'not-read'},channel_notes:{work:'required'}}));
+ writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100'},work:[]}));
+ const path=join(f.root,'doc.md');writeFileSync(path,'PRIVATE');f.sources.documents=[{name:'bridges-documents/0.md',path}];
+ const document={path:'bridges-documents/0.md',agent:'art',key:'work',brief:'required'};
+ for(const documents of [[],[{...document,brief:undefined}],[{...document,brief:'wrong'}],[{...document,agent:'mark'}]])expect(()=>readBridgeImport(f.sources,{...f.options,documents},h,f.open)).toThrow('Invalid offline');
+ expect(readBridgeImport(f.sources,{...f.options,documents:[document]},h,f.open)).toBeDefined();
+ const second=join(f.root,'second.md');writeFileSync(second,'other');f.sources.documents.push({name:'bridges-documents/1.md',path:second});
+ expect(()=>readBridgeImport(f.sources,{...f.options,documents:[document,{...document,path:'bridges-documents/1.md'}]},h,f.open)).toThrow('Invalid offline');
+ f.sources.documents.pop();
+ f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',extra:{other:[]}}]]);
+ expect(()=>readBridgeImport(f.sources,{...f.options,documents:[document]},h,f.open)).toThrow('Invalid offline');
+});
+
+it.each(['','x'.repeat(201)])('resolves literal configured keys and brief names without path or slug normalization (%j)',key=>{
+ const f=fixture(),brief=key;
+ writeFileSync(f.sources.files[0].path,JSON.stringify({agent:{slug:'art'},discord:{token_file:'never'},channel_notes:{[key]:brief}}));
+ writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100'},[key]:[]}));
+ const path=join(f.root,'literal.md');writeFileSync(path,'EXACT');f.sources.documents=[{name:'bridges-documents/0.md',path}];
+ const options={...f.options,documents:[{path:'bridges-documents/0.md',agent:'art',key,brief}]};
+ expect(JSON.parse(readBridgeImport(f.sources,options,h,f.open).evidence).configuredBriefs[0].briefs).toEqual([{key,brief,path:'bridges-documents/0.md',sha256:expect.any(String),channels:[]}]);
+});

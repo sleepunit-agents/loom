@@ -1384,3 +1384,35 @@ unresolved configured brief, and connect actual Runtime brief composition with
 restrictions and positive channel/thread fixtures. Live route `notes` remains
 empty. No daemon reads old paths and no activation or snapshot deletion is
 licensed by successful capture.
+
+## Offline configured channel briefs
+
+For each explicitly selected shuttle instance, every `channel_notes` entry now
+requires exactly one selected document mapping with matching `agent`, `key` and
+literal `brief` name, for example
+`documents: [{path: "bridges-documents/0.md", agent: "art", key: "work", brief: "discord-work"}]`.
+A name is evidence, never a path to open. Empty membership still requires its
+configured document. Unnamed document mappings remain membership-only captures;
+they cannot satisfy a configured name. Wrong names, ambiguous mappings, missing
+keys in the effective accepted route source and missing documents refuse the
+whole offline import. Accepted per-agent membership takes precedence over stale
+file membership. Each mapping still names one individually selected snapshot
+file; shared content for two keys must be explicitly captured twice.
+
+Private `configuredBriefs` evidence links each instance and its effective route
+source to ordered key/name/document/digest/membership entries. It preserves JSON
+file insertion order, including integer-like keys, escaped names and Python's
+duplicate-key order behavior. Offline `selectChannelBriefs` selects direct **or**
+parent membership once per key, preserving that order, as shuttle's
+`render_brief` did. Discord describe's parent-only, sorted membership helper
+remains separate. Exact captured words, BOM, line endings and template markers
+stay in private `selectedDocuments`; no template is rendered here. Import repeat
+and both independent verifiers compare the full private resolution evidence.
+
+This completes offline configured channel-note name resolution and selection,
+not every legacy brief or live Runtime composition. Live route `notes` remains
+empty. Runtime must still consume this resolved content with the appropriate
+slots, guest floor, restrictions and peer/pair context, with positive channel and
+thread fixtures. Other required guest/peer/base/Slack brief families, escalation
+and final move inventory remain in the disposition ledger. No legacy path may
+be followed at runtime; no activation or real import is authorized by this unit.
