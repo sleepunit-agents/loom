@@ -9,6 +9,7 @@ import type { Sharing, Viewer } from '../../core/index.js';
 import { runtimeHouseDestination, type HouseDestination } from '../runtime/role.js';
 import { grantId } from './grant-id.js';
 import { secretName } from './input.js';
+import { authenticatedHolderDispatch, type localHolderHandoff } from './holder-handoff.js';
 import { readSecretPolicy, requestDecision } from './policy.js';
 import type { Grant } from './role.js';
 
@@ -37,6 +38,7 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
   // Bounded non-expiring tombstones: this unactivated role fails closed after
   // 1024 bound admissions in one lifetime rather than permitting request reuse.
   const usedPending = new Set<string>();
+  const retireProof = (id:string) => {proofs.delete(id);pending.delete(id);claimed.delete(id);daemonOwned.delete(id);};
   const read = (id: string) => app.db.prepare('SELECT * FROM secrets_tickets WHERE id=?').get(id) as Ticket | undefined;
   const policy = () => (app.db.prepare("SELECT value FROM secrets_meta WHERE key='policy'").get() as {value:string}|undefined)?.value ?? '';
   function valid(t: Ticket, d: HouseDestination, state: Ticket['state']) {
@@ -54,7 +56,7 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
         if (app.db.inTransaction || isClosing(app) || !secretName.safeParse(name).success) throw failed();
         for (const [id, d] of proofs) {
           const t = read(id);
-          if (!t || !['admitted','claimed'].includes(t.state) || !valid(t,d,t.state)) {claimed.get(id)?.finish(false);proofs.delete(id);daemonOwned.delete(id);}
+          if (!t || !['admitted','claimed'].includes(t.state) || !valid(t,d,t.state)) {claimed.get(id)?.finish(false);retireProof(id);}
         }
         if (proofs.size >= 1024 || usedPending.size >= 1024) throw failed();
         const d = runtimeHouseDestination(app,sharing,viewer);
@@ -113,7 +115,7 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
           finish(acknowledged: boolean) {
             if (app.db.inTransaction) throw failed();
             if (settled) return;
-            settled = true; proofs.delete(id); pending.delete(id); claimed.delete(id); daemonOwned.delete(id);
+            settled = true; retireProof(id);
             try {
               const fresh = read(id);
               const certain = acknowledged === true && !!fresh && valid(fresh,d,'claimed')
@@ -142,9 +144,9 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
      * No retry, including after a lost response or settlement error.
      */
     admitHandoff(viewer:Viewer,name:string,request:Readonly<{id:string;binding:SecretInputBinding}>,
-      holder:{handTo(id:string):Promise<void>}) {
+      holder:ReturnType<typeof localHolderHandoff>) {
       if(!request)throw failed();
-      const deliver=holder.handTo.bind(holder);
+      const deliver=authenticatedHolderDispatch(holder);
       const admitted=tickets.admit(viewer,name,request);
       daemonOwned.add(admitted.id);
       let attempted=false;
@@ -172,7 +174,7 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
               try {
                 if(original)original.finish(false);
                 else {
-                  proofs.delete(admitted.id);pending.delete(admitted.id);daemonOwned.delete(admitted.id);
+                  retireProof(admitted.id);
                   app.db.prepare("UPDATE secrets_tickets SET state='uncertain' WHERE id=? AND state='admitted'").run(admitted.id);
                 }
               }catch { /* consumed; no reconstruction or retry */ }

@@ -12,6 +12,15 @@ import type { SecretValueSource } from './service.js';
 
 const ticket = z.uuid();
 const failed = () => new Error('Secret handoff unavailable');
+// Runtime provenance, not a structural callback or a caller-supplied marker.
+const dispatchers = new WeakMap<object, (id:string)=>Promise<void>>();
+/** Extract only the original pinned client operation. Lookalikes, wrappers and
+ * replaced methods cannot supply an authenticated acknowledgement capability. */
+export function authenticatedHolderDispatch(client:unknown):(id:string)=>Promise<void> {
+  const dispatch=client!==null&&typeof client==='object'?dispatchers.get(client):undefined;
+  if(!dispatch)throw failed();
+  return dispatch;
+}
 /** Trusted holder-side destination, NEVER supplied by a registry caller. Resolve
  * an opaque ticket against fresh central authority: exact body, job, assigned
  * runner, grant, policy, staging release and ticket lifetime. current must fence
@@ -41,7 +50,7 @@ export function localHolderHandoff(config: LocalHolderConfig, holderFingerprint:
   if (!isAbsolute(config.socket) || !config.servername) throw failed();
   let closed = false;
   const requests = new Set<ClientRequest>();
-  return {
+  const client = Object.freeze({
     async handTo(id: string): Promise<void> {
       try {
         if (closed) throw failed();
@@ -75,7 +84,9 @@ export function localHolderHandoff(config: LocalHolderConfig, holderFingerprint:
       closed = true;
       await Promise.all([...requests].map(req => new Promise<void>(resolve => { req.once('close', resolve); req.destroy(); })));
     },
-  };
+  });
+  dispatchers.set(client,client.handTo);
+  return client;
 }
 
 /** Real mutual-TLS local command channel, intended to live in the holder

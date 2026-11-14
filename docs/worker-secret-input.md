@@ -96,7 +96,9 @@ and staging/value-free accounting remain prerequisites to activation.
 returns the original central ticket metadata plus a one-use `dispatch()` closure.
 Retain that closure separately from the worker's original pending input. Supply
 an owner-configured pinned `localHolderHandoff` client, never a caller's endpoint
-or callback. The holder claims once through the existing authenticated authority;
+or callback. Runtime provenance accepts only the original frozen client minted by
+`localHolderHandoff`; copied clients, wrappers and structural lookalikes are
+rejected before admission. The holder claims once through the existing authenticated authority;
 the daemon retains that exact original claim for completion. For these admissions
 the holder can only abandon, not settle success. The dispatch closure alone
 settles success after the complete authenticated empty holder acknowledgement and
