@@ -59,6 +59,15 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       saveAsk(record); ctx.changed('attention.ask', record.id); return record;
     },
   }));
+  operations.register(operation({ name: 'attention.pendingWaits', input: z.object({}).strict(), output: z.array(z.string()),
+    may: viewer => viewer.kind !== 'service' || mayAct(viewer, { type: 'attention.ask' }, sharing(), 'act', 'attention.pendingWaits'),
+    run(ctx) {
+      return (db.prepare('SELECT record FROM attention_asks ORDER BY id').all() as { record: string }[])
+        .map(row => JSON.parse(row.record) as Ask)
+        .filter(ask => ask.state === 'open' && !ask.sourceManaged && !!ask.waits_on && maySee(ctx.viewer, scoped('attention.ask', ask), sharing()))
+        .map(ask => ask.id);
+    },
+  }));
   operations.register(operation({ name: 'attention.get', input: z.object({ id }), output: z.unknown(),
     may: (viewer, input) => { const r = readAsk(input.id); return !!r && maySee(viewer, scoped('attention.ask', r), sharing()); },
     run: (_ctx, input) => readAsk(input.id),

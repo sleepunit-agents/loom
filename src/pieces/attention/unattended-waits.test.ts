@@ -13,12 +13,12 @@ const owner: Viewer = { kind: 'member', id: 'jonathan' }, service: Viewer = { ki
 async function setup() {
   const home = mkdtempSync(join(tmpdir(), 'unattended-waits-')); fixture(home);
   const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  const grants = { taskType: true, taskRead: true, approvalType: true, approvalRead: true };
+  const grants = { taskType: true, taskRead: true, approvalType: true, approvalRead: true, inventoryRead: true, askType: true };
   let database: SharingDatabase;
   const app = await startLoom({ home, next: true, staging: true, clock, stdout: () => {}, install: app => { database = new SharingDatabase(app.db, home); }, sharing: () => {
     const snapshot = database.sharing();
     const attention = snapshot.services.attention;
-    if (attention) snapshot.services = { ...snapshot.services, attention: { types: attention.types.filter(type => (type !== 'task' || grants.taskType) && (type !== 'approval' || grants.approvalType)), operations: attention.operations.filter(op => (op !== 'tasks.show' || grants.taskRead) && (op !== 'approvals.check' || grants.approvalRead)) } };
+    if (attention) snapshot.services = { ...snapshot.services, attention: { types: attention.types.filter(type => (type !== 'attention.ask' || grants.askType) && (type !== 'task' || grants.taskType) && (type !== 'approval' || grants.approvalType)), operations: attention.operations.filter(op => (op !== 'attention.pendingWaits' || grants.inventoryRead) && (op !== 'tasks.show' || grants.taskRead) && (op !== 'approvals.check' || grants.approvalRead)) } };
     return snapshot;
   } });
   cleanups.push(async () => { await app.close(); rmSync(home, { recursive: true, force: true }); });
@@ -96,4 +96,16 @@ it('installs one sweep and cancels it before database shutdown', async () => {
     const count = calls.mock.calls.length; clock.advance(120_000); expect(calls).toHaveBeenCalledTimes(count); return closeDb();
   });
   await app.close();
+});
+
+it.each(['inventoryRead', 'askType'] as const)('holds all unattended work when %s is revoked, then recovers', async grant => {
+  const { clock, grants, raise, read, close, call } = await setup();
+  raise('public', { task: 't-1' }); raise('private', { task: 't-1' }, { member: 'jonathan' }); close();
+  expect(call('attention.pendingWaits', {}, service)).toMatchObject({ value: ['public'] });
+  grants[grant] = false;
+  expect(call('attention.pendingWaits', {}, service)).toMatchObject({ code: 'denied' });
+  clock.advance(0); expect(read('public')).toMatchObject({ value: { state: 'open' } });
+  grants[grant] = true; clock.advance(60_000);
+  expect(read('public')).toMatchObject({ value: { state: 'resolved' } });
+  expect(read('private')).toMatchObject({ value: { state: 'open' } });
 });
