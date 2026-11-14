@@ -131,3 +131,9 @@ it.each(['device','member','reassigned','keys','generation','vapid'] as const)('
  expect(f.app.db.prepare("SELECT record FROM attention_asks WHERE id='question'").get()).toBeDefined();
  done({});await f.settle();expect(f.send).toHaveBeenCalledOnce();expect(f.attempts().map(a=>a.state).sort()).toEqual(['cancelled','sent']);
 });
+it('rolls back the whole admission sample on a failed write and retries without crashing the daemon',async()=>{
+ const f=await setup(false);f.raise('one');f.raise('two');
+ f.app.db.exec("CREATE TEMP TRIGGER fail_admission BEFORE INSERT ON notifications_announcement_attempts BEGIN SELECT RAISE(ABORT,'PRIVATE diagnostics'); END");
+ await f.tick();expect(f.items()).toEqual([]);expect(f.attempts()).toEqual([]);expect(f.send).not.toHaveBeenCalled();
+ f.app.db.exec('DROP TRIGGER fail_admission');await f.tick();expect(f.send).toHaveBeenCalledTimes(2);expect(f.items()).toHaveLength(2);
+});

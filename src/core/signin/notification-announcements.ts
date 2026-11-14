@@ -85,7 +85,8 @@ export function installNotificationAnnouncements(app:Foundation,effects:OutsideE
   }
   function tick(){
     if(!active())return;
-    try{admit();schedule();}finally{nextTick=clock.at(clock.now()+minute,tick);}
+    try{admit();schedule();}catch{/* No partial admission or diagnostic leakage; retry the next sample. */}
+    finally{nextTick=clock.at(clock.now()+minute,tick);}
   }
   const unrelease=effects.onReleased(id=>{if(id.startsWith('notifications:announcement:'))schedule();});
   let nextTick:(()=>void)|undefined;
