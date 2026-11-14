@@ -11,7 +11,7 @@ export function meetsNeed(facts: readonly string[], need: string): boolean {
   const [key, ...value] = need.split(':');
   return facts.some(fact => {
     const [candidate, ...actual] = fact.split(':');
-    return candidate === key && (!value.length || actual.join(':').toLowerCase().includes(value.join(':').toLowerCase()));
+    return candidate === key && (!value.length || actual.join(':').toLowerCase() === value.join(':').toLowerCase());
   });
 }
 
