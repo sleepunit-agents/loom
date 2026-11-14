@@ -12,3 +12,13 @@
 .desk-agent-rail button:focus-visible{outline:2px solid var(--v-blue);outline-offset:2px}
 /* The shell already reserves a 64px strip below 1280. Keep it useful without squeezing text. */
 @container rail (max-width:100px){.desk-agent-rail{padding-left:5px}.desk-rail-card{padding:7px 0;border:0;background:none}.desk-rail-agent{justify-content:center}.desk-rail-agent>span:last-child,.desk-rail-work,.desk-rail-ask,.desk-rail-thread{display:none}.desk-rail-needs{padding:6px;font-size:10px}.desk-rail-needs>span:nth-child(2){display:none}.desk-rail-kicker{letter-spacing:0;font-size:9px}}
+
+.desk-rail-row{min-width:0;border-bottom:1px solid var(--v-border);padding:7px 4px}
+.desk-rail-row>button{display:flex;align-items:center;gap:8px;width:100%;min-width:0;text-align:left}
+.desk-rail-row strong{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 13px var(--font-display)}
+.desk-rail-dot{flex:none;width:6px;height:6px;border-radius:50%;background:var(--v-text-3)}
+.desk-rail-dot[data-state=working]{background:var(--v-blue)}
+.desk-rail-dot[data-state=waiting]{background:var(--v-yellow)}
+.desk-rail-badge{font:600 9px var(--loom-font-data,monospace);color:var(--v-yellow)}
+.desk-rail-unread{font:11px var(--loom-font-data,monospace);color:var(--v-blue)}
+@container rail (max-width:100px){.desk-rail-row strong,.desk-rail-dot,.desk-rail-badge,.desk-rail-unread{display:none}.desk-rail-row>button{justify-content:center}}

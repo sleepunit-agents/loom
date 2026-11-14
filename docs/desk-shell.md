@@ -12,7 +12,8 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | Clicking a rail agent | First unread open thread, else latest open thread, else Comms; asks open the exact Inbox reader |
 | Reply counts and first reply words | Current thread feed offers unread **flags**; show unread thread counts explicitly. Reply-word previews await an owning metadata role; do not decrypt whole message feeds for a rail |
 | Per-agent face sheets / colours | Live `household.agentDisplay` projects database colours and drawn face shapes/eyes; existing lazy Face shows reported state. Imported pixel sheets now travel with the offline household import and are served from the new database; no old file lookup or invented sprite |
-| Per-device dock/rail hide modes, rail accordion and Comms companion portal | Follow-up desk slice; the existing 64px rail reservation under 1280 remains a compact agent strip |
+| Rail accordion | Measures full cards before paint; on overflow keeps one open, working thread then ask then unread then first, while the rest become compact lines in alphabetical order. Comms selection priority comes with the companion slice |
+| Per-device dock/rail hide modes and Comms companion portal | Follow-up desk slice; the existing 64px rail reservation under 1280 remains a compact agent strip |
 | Grouped launcher sections and account tile | Flat registration inventory for now; no old Shell discovery or fabricated live stats |
 | Home Needs you band and full questions, clock, runtime jobs, reported work | Existing live Home content in desk-coloured cut cards; desktop cards scroll within the available height; phone cards grow |
 | Depth / Contours / Wash | Existing lazy ground components, selected by member `household.preferences`; Appearance offers all three |
@@ -126,3 +127,15 @@ The backup glyph stays absent because no new-side backup record or owning role
 exists; neither backup results nor their age can be inferred from the clock or
 old files. These are deliberate honest gaps, not claims of operational parity.
 No schema, operation, importer, generated command or permission change is needed.
+
+### Rail overflow
+
+Full cards remain when they fit. A layout effect measures the rail before paint;
+on overflow the other agents fold to one line with face, name, status dot, ASK
+and unread-thread count. One full card stays open: working private thread first,
+then open ask, then unread thread, then first agent. Alphabetical order stays
+fixed. Lines open the same first unread/latest thread as the full cards.
+Changes to authorized content or available width/height retry full cards.
+No message words are fetched. Lost feeds clear their facts and priority.
+Comms' selected companion priority and portal, and device hide modes, remain
+the next slice; this measurement change does not alter shell/tiling geometry.

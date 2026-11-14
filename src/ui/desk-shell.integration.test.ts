@@ -176,6 +176,11 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               const rail=await page.locator('.next-rail').boundingBox(),tile=await page.locator('[data-tile=inbox]').boundingBox();
               expect(Math.round(rail!.width)).toBe(width>=1440?320:296);expect(tile!.x+tile!.width).toBeLessThanOrEqual(rail!.x-9);
               expect(await page.locator('.next-rail button').allTextContents()).toContain('Asks youOK to run the backup now? ›');
+              // The real rail measures overflow and retries full cards when its room returns.
+              await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.height='120px');
+              await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe('true');
+              await page.locator('.next-rail').evaluate(el=>(el as HTMLElement).style.removeProperty('height'));
+              await expect.poll(()=>page.locator('.desk-agent-rail').getAttribute('data-fold')).toBe(null);
             }
           }
           if(surface==='launcher') {
