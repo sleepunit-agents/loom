@@ -2,10 +2,11 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { startLoom } from '../../foundation.js';
+import { createFoundation, startLoom } from '../../foundation.js';
 import { FakeClock, type Viewer, type Context, type Result } from '../../core/index.js';
 import { fixture, fixtureSharing } from '../../fixture.js';
 import * as crypto from './crypto.js';
+import { append, thread } from './store.js';
 import { attentionRole } from '../attention/role.js';
 const loadKey=crypto.loadKey,owner:Viewer={kind:'member',id:'jonathan'};
 const cleanup:Array<()=>Promise<void>>=[];
@@ -33,7 +34,8 @@ it('seals a private answer and atomically acknowledges only its reference in Att
  const f=await setup(),batches:Array<Array<{type:string;id:string}>>=[];
  const stop=f.app.live.observe(changes=>batches.push(changes));
  const words='PRIVATE typed answer sentinel';
- const answer=value<{thread:string;seq:number}>(await f.call('comms.replyToAsk',{ref:f.ref,text:words}));stop();
+ const answer=value<{thread:string;seq:number}>(await f.call('comms.replyToAsk',{ref:f.ref,text:words},owner,true,'keyed-reply'));stop();
+ expect((f.app.db.prepare("SELECT input_hash FROM core_operations WHERE id='keyed-reply'").get() as {input_hash:string}).input_hash).toBe(f.key.hash(`comms-operation\0${JSON.stringify({ref:f.ref,text:words})}`));
  expect(answer.thread).toBe(f.t.id);expect(f.messages()).toHaveLength(1);
  expect(f.getAsk()).toMatchObject({state:'answered',answer:{kind:'replied',reply:answer,by:owner}});
  expect(batches.some(batch=>batch.some(c=>c.type==='attention.ask'&&c.id===f.ref)&&batch.some(c=>c.type==='message'&&c.id===`${answer.thread}/${answer.seq}`))).toBe(true);
@@ -131,4 +133,54 @@ it('rejects malformed and oversized words before encryption, and never resurrect
  f.clock.advance(14*86400_000);seal.mockClear();expect((f.messages()[0] as {words:unknown}).words).toBeNull();
  expect(await f.call('comms.replyToAsk',input)).toEqual(first);expect(seal).not.toHaveBeenCalled();
  expect((f.messages()[0] as {words:unknown}).words).toBeNull();
+});
+
+it('rechecks current ownership before replaying a successful operation receipt',async()=>{
+ const f=await setup(),input={ref:f.ref,text:'Original authorized answer'};
+ expect(await f.call('comms.replyToAsk',input,owner,true,'revoked-replay')).toMatchObject({ok:true});
+ f.held.members.jonathan.agents=[];
+ expect(await f.call('comms.replyToAsk',input,owner,true,'revoked-replay')).toMatchObject({ok:false,code:'denied'});
+ expect(f.messages()).toHaveLength(1);
+});
+it('refuses zero or ambiguous conversation threads, including a duplicate created during encryption',async()=>{
+ for(const when of ['zero','before','during'] as const){
+  const f=await setup(),original=f.getAsk();
+  if(when==='zero')f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify({...original,source:{kind:'conversation',id:'missing-conversation'}}),f.ref);
+  const duplicate=()=>{const t={...thread(f.app.db,f.t.id)!,id:'th:duplicate'};f.app.db.prepare('INSERT INTO comms_threads VALUES (?,?,?,?,?)').run(t.id,t.member,t.agent,t.project??null,JSON.stringify(t));};
+  if(when==='before')duplicate();
+  const seal=f.key.seal;let release!:()=>void,ready!:()=>void;
+  const gate=new Promise<void>(r=>release=r),entered=new Promise<void>(r=>ready=r);
+  if(when==='during')vi.spyOn(f.key,'seal').mockImplementation(async text=>{ready();await gate;return seal(text);});
+  const pending=f.call('comms.replyToAsk',{ref:f.ref,text:'No ambiguous routing'});
+  if(when==='during'){await entered;duplicate();release();}
+  expect(await pending).toMatchObject({ok:false,code:'denied'});expect(f.messages()).toEqual([]);
+  expect(f.getAsk()).toMatchObject({state:'open'});vi.restoreAllMocks();
+ }
+});
+it('keeps a managed conversation ask without a wait on its owning source protocol',async()=>{
+ const f=await setup(),a=f.getAsk();
+ f.app.db.prepare('UPDATE attention_asks SET record=? WHERE id=?').run(JSON.stringify({...a,sourceManaged:true}),f.ref);
+ expect(await f.call('comms.replyToAsk',{ref:f.ref,text:'Cannot answer managed source'})).toMatchObject({ok:false,code:'conflict'});
+ expect(f.messages()).toEqual([]);expect(f.getAsk()).toMatchObject({state:'open'});
+});
+it('checks the capability database identity and current central answer authority independently',async()=>{
+ const f=await setup(),otherHome=mkdtempSync(join(tmpdir(),'private-reply-other-')),other=createFoundation({home:otherHome}),changes:unknown[]=[];
+ const input={id:f.ref,conversation:f.t.conversation,agent:'art',member:owner.id,thread:f.t.id,seq:2};
+ const ctx={db:f.app.db,viewer:owner,now:f.clock.now(),changed:(...change:unknown[])=>changes.push(change)} as Context;
+ try {
+  expect(f.app.db.transaction(()=>f.attention.privateReply({...ctx,db:other.db},input))()).toMatchObject({ok:false,code:'unavailable'});
+  const saved=f.held.members.jonathan;delete f.held.members.jonathan;
+  expect(f.app.db.transaction(()=>f.attention.privateReply(ctx,input))()).toMatchObject({ok:false,code:'denied'});
+  f.held.members.jonathan=saved;expect(f.getAsk()).toMatchObject({state:'open'});expect(changes).toEqual([]);
+ }finally{other.close();rmSync(otherHome,{recursive:true,force:true});}
+});
+it('preserves ordinary public word answers and legacy private boolean answers',async()=>{
+ const f=await setup();
+ expect(f.attention.raise(owner,{id:'public-words',agent:'art',source:{kind:'piece',id:'fixture'},ask:'Public fixture question',answers:'words'},'public-raise')).toMatchObject({ok:true});
+ expect(f.attention.answer(owner,{id:'public-words',answer:{kind:'words',text:'Public answer'}},'public-answer')).toMatchObject({ok:true,value:{answer:{kind:'words',text:'Public answer'}}});
+ const ref='legacy-boolean';expect(f.attention.raise(owner,{id:ref,agent:'art',member:owner.id,source:{kind:'conversation',id:f.t.conversation},ask:'Opaque legacy question'},'legacy-raise')).toMatchObject({ok:true});
+ const words=await f.key.seal(JSON.stringify({text:'Legacy question',ref}));
+ f.app.db.transaction(()=>append(f.app.db,thread(f.app.db,f.t.id)!,{id:ref,kind:'ask',at:f.clock.now(),sender:'art',words,hash:f.key.hash(ref),record:JSON.stringify({ref})}))();
+ expect(await f.call('comms.answer',{thread:f.t.id,ref,verdict:'yes'})).toMatchObject({ok:true});
+ expect(f.attention.get(owner,{id:ref})).toMatchObject({ok:true,value:{answer:{kind:'yes',by:owner}}});
 });
