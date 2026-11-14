@@ -22,13 +22,14 @@ export function cardFor(ref:string,value:unknown):Card|undefined{
 const Navigate=createContext<((path:string)=>void)|undefined>(undefined);
 /** Only rendered retained text contributes refs. Live owns refresh/reconnect; no card cache. */
 export function ThreadRefs({thread,refs,connected,children,go}:{thread:string;refs:string[];connected:boolean;children:ReactNode;go?:(path:string)=>void}){
+ const parentGo=useContext(Navigate);
  const batches=refBatches(refs,thread),scopes=batches.map(refs=>JSON.stringify({thread,refs}));
  const feeds=useRecordScopes<CardsRow>('comms.refCards',scopes),cards=new Map<string,Card>();
  if(connected)for(let i=0;i<scopes.length;i++){
   const feed=feeds[i],row=feed?.status==='live'?feed.records.find(r=>r.id===scopes[i]&&r.thread===thread):undefined;
   if(row?.cards&&typeof row.cards==='object')for(const ref of batches[i]){const c=cardFor(ref,Object.hasOwn(row.cards,ref)?row.cards[ref]:undefined);if(c)cards.set(ref,c);}
  }
- return <Navigate.Provider value={go}><Cards.Provider value={cards}>{children}</Cards.Provider></Navigate.Provider>;
+ return <Navigate.Provider value={go??parentGo}><Cards.Provider value={cards}>{children}</Cards.Provider></Navigate.Provider>;
 }
 function CardPopup({card,at,close}:{card:Card;at:HTMLElement;close():void}){
  const go=useContext(Navigate);
