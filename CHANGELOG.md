@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Prune expired private Bridges attachments on next-mode startup and hourly, including staging and disconnected setups.
 - Add native-age encryption and an actual encrypted restore drill for filtered next-database images; full household file coverage and backup execution remain pending.
 - Add bounded, descriptor-pinned capture of allowlisted context documents and referenced note attachments for a future household bundle; full backup execution remains pending.
+- Add explicit continuity database snapshots with captured-notes attachment pairing for the future household bundle; encrypted full restore and execution remain pending.
 
 - Deliver sealed Comms yes/no decisions back to the owning private conversation through staged encrypted message delivery.
 - Add a filtered next-database image exporter with an independent SQLite reconstruction drill; complete encrypted household backups and execution remain pending.
