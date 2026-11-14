@@ -147,3 +147,9 @@ it('supports WITHOUT ROWID and a shadowed rowid alias, but refuses when all alia
   db.exec('CREATE TABLE opaque(rowid TEXT,_rowid_ TEXT,oid TEXT)');
   expect(() => exportDatabaseImage(db)).toThrow('cannot capture table identity');
 });
+it('preserves the exact integer storage class and large high water of AUTOINCREMENT sequences', () => {
+  const db = database(); db.exec('CREATE TABLE data(id INTEGER PRIMARY KEY AUTOINCREMENT); INSERT INTO data VALUES (1); UPDATE sqlite_sequence SET seq=9007199254740993');
+  const restored = new Database(exportDatabaseImage(db).bytes); close.push(() => restored.close());
+  expect(restored.prepare('SELECT seq,typeof(seq) AS kind FROM sqlite_sequence').safeIntegers().get()).toEqual({ seq: 9007199254740993n, kind: 'integer' });
+  expect(restored.prepare('INSERT INTO data DEFAULT VALUES').run().lastInsertRowid).toBe(9007199254740994);
+});

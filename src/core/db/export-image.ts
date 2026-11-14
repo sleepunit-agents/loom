@@ -28,7 +28,7 @@ function digest(rows: Row[], sqlite?: SqliteRow[]) {
 }
 function sequences(db: Db, names: Set<string>): Row[] {
   if (!db.prepare("SELECT 1 FROM sqlite_master WHERE name='sqlite_sequence'").get()) return [];
-  return (db.prepare('SELECT name,seq FROM sqlite_sequence ORDER BY name').all() as Row[]).filter(row => names.has(String(row.name)));
+  return (db.prepare('SELECT name,seq FROM sqlite_sequence ORDER BY name').safeIntegers().all() as Row[]).filter(row => names.has(String(row.name)));
 }
 export interface DatabaseImage {
   /** Sensitive plaintext, for encryption by the owning backup worker only. */

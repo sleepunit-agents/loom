@@ -967,7 +967,8 @@ counts, digests, schema and sequences. Missing filters, filtered dangling
 foreign keys, views, virtual tables and integer values outside JavaScript's
 exact range or rowid tables shadowing all three implicit identity aliases refuse
 instead of returning an apparently successful image. Large implicit rowids are
-captured as exact integers even though ordinary exported data remains JS numbers.
+captured as exact integers, as are sequence high-water values, even though
+ordinary exported data remains JS numbers.
 The current schema needs no view or virtual-table restore policy.
 
 The returned Buffer is sensitive plaintext, intended only for a future offline
