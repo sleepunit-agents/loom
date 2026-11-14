@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Keep ordinary one-off Clock work filed by authenticated private bodies member-private, with original steering evidence and acknowledgements that omit words.
+
 - Reserve one-off Clock capacity: at most forty API-created wakes per agent and twenty per proven conversation, with unbound bodies sharing one bucket.
 - Add an internal Runtime role for current authenticated Clock conversation provenance, retaining private scope and sender history.
 - Match imported private spawn bindings to Comms by conversation ownership, preserving job and spawn handles independently of thread ids.

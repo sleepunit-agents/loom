@@ -618,6 +618,10 @@ it('gives Clock capacity only to a current owning conversation, never copied pro
  const first=value<{id:string}>(await f.post(body,'clock.in',{...input,conversation:'forged',apiCapacity:{origin:'other',bucket:'forged'}}));
  const bucket=wakes(f.app.db).find(w=>w.id===first.id)!.apiCapacity!.bucket;
  expect(bucket).toMatch(/^[a-f0-9]{64}$/);expect(bucket).not.toBe(conversation);
+ expect(first).toEqual({id:first.id,due:f.clock.now()+3600_000,state:'pending',private:true});
+ expect(wakes(f.app.db).find(w=>w.id===first.id)).toMatchObject({member:'jonathan',authorship:{origin:'art',conversation,member:'jonathan',principal:{for:'owner',people:[]}}});
+ expect(JSON.stringify(await f.post(body,'clock.list',{}))).not.toContain('Ordinary future work');
+ expect(JSON.stringify(exportDatabase(f.app.db))).not.toContain(first.id);
  const viewer=signin(f.app).token(hash(body))!.viewer;
  const copy=value<{id:string}>(f.app.operations.call('direct',{...viewer},'clock.in',input,'capacity-copy'));
  expect(wakes(f.app.db).find(w=>w.id===copy.id)?.apiCapacity).toEqual({origin:'art'});
