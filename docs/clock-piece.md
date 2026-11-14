@@ -53,8 +53,8 @@ currently refuses instead of flattening thread scope; supporting it together
 with conversation-bound mutation remains the next unit; local approval Caller
 semantics remain independent. No mutation/join or delivery authority is added here.
 
-Remaining work: conversation-bound mutation/join, original schedule principal
-narrowing, agent-authored self-rearm eligibility, continuation issuer/handle/
+Remaining work: conversation-bound mutation/join, scope-preserving private body
+schedule control and household lane authorship, agent-authored self-rearm eligibility, continuation issuer/handle/
 deadline/place validation, real service-identity dispatch and private delivery,
 and other imported provenance recovery or explicit deliberate drops. These are
 gaps, not deliberate drops. Archived strings and caller-supplied handles cannot
@@ -1059,8 +1059,9 @@ Private member scope survives even when the principal is unknown or names a
 different person. This is internal metadata: no public operation, record, Live
 feed or export is added. Consumers must preserve scope and still check central
 policy. Ordinary one-off filing now consumes this role and persists original
-evidence as described above. Clock mutation/join, schedule principal persistence/
-narrowing and self-rearm still do not consume it and remain unfinished. Local approval
+evidence as described above. Ordinary schedules now save and narrow principal as described below. Clock
+mutation/join, private body schedule control, household lane authorship and
+agent-authored self-rearm remain unfinished. Local approval
 semantics and actual private delivery are unchanged.
 
 

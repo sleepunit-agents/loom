@@ -124,3 +124,11 @@ it('copies saved narrowed authorship into the next occurrence created by dispatc
  expect(next).toBeDefined();expect(next!.authorship).toEqual(saved);
  expect(next!.authorship!.principal).toEqual({for:'pollock',people:['jonathan','pollock']});
 });
+
+it('run-now adds a newly participating owner without changing the saved schedule steering',async()=>{
+ const f=await setup();expect(f.call('scheduleSet',input,person).ok).toBe(true);
+ const saved=schedules(f.app.db)[0];expect(saved.authorship!.principal.people).toEqual(['pollock']);
+ expect(f.call('scheduleRun',{id:input.id}).ok).toBe(true);
+ expect(wakes(f.app.db).find(w=>w.runNow)?.authorship!.principal).toEqual({for:'pollock',people:['jonathan','pollock']});
+ expect(schedules(f.app.db)[0]).toEqual(saved);
+});
