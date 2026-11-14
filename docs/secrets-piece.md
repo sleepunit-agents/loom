@@ -1060,3 +1060,40 @@ public operations expose no expiry, request list or secret value.
 
 Granted-get, trusted Runtime sinks, and typed granted-get remain required on
 t-2208. No value-read endpoint or credential delivery is introduced here.
+
+### Holder-side handoff command channel (not activated)
+
+`holder-handoff.ts` provides a separate private mutual-TLS Unix command socket.
+The daemon client sends only an opaque UUID ticket to `POST /v1/handoff/:id`;
+the response is an empty 204 after the trusted runner transport settles. The
+holder process reads its own value and passes its owned bytes directly to that
+transport. No value-read callback or plaintext response exists on this channel.
+Both peers pin exact dedicated certificate fingerprints; the client checks its
+pin during TLS authentication before sending the ticket. Metadata, error bodies
+and arbitrary provider diagnostics never become a command result.
+
+The holder's trusted `HolderHandoffAuthority` resolves the ticket to a secret
+name and an authenticated runner destination. It must validate the current
+central body, exact job and assigned runner, live grant, policy, staging release,
+and ticket lifetime. A destination's `current` check runs before source access
+and again after it; its `handTo` transport must fence the same assignment at
+final runner release. These are trusted process roles, never caller-supplied
+URLs, paths, names or callbacks. A daemon-local service value reader is not a
+runner destination.
+
+This primitive does not admit tickets, implement one-use receipts, register
+`secrets.houseGet`, or install a listener in `startPersistentHolder`. Runtime's
+real authenticated destination transport and the daemon's ticket admission,
+revocation and staging protocol must be composed before activation. Those remain
+required on t-2208; an in-process fixture destination is not production delivery.
+Uncertain handoffs are never automatically retried: destroying the local request
+cannot undo a runner transfer that already began. The owning ticket protocol must
+prove any retry safe. Holder shutdown fences pending reads, drains started source
+and runner work before returning, and erases the borrowed buffer only after the
+runner transport has settled. Client shutdown destroys and drains pending requests.
+
+Old-to-new mapping: this adds the local metadata command transport for the old
+house granted-get path, without exposing the old plaintext HTTP/CLI response.
+The public granted-get command and operation remain unavailable until the complete
+trusted runner path and value-free accounting are present. No installed config,
+real holder, home, credential or host step changes here.

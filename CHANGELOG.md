@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add a pinned metadata-only holder handoff channel with fresh destination checks, buffer erasure and drained shutdown; runner ticket admission and production activation remain separate.
+
 - Bind authenticated HOUSE request/status metadata in the typed Secrets client, with exact-job assertions, stable retries and value-free JSON acknowledgements.
 
 - Reserve one-off Clock capacity: at most forty API-created wakes per agent and twenty per proven conversation, with unbound bodies sharing one bucket.
