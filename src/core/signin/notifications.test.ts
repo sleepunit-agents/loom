@@ -77,11 +77,13 @@ it('resolves imported member-less devices from original token bindings, refuses 
   const f=await setup();f.s.tokens.change(ts=>ts.push({role:'owner',label:'legacy',sha256:hash('legacy'),created:'2026-01-01'}));
   const old=f.s.createSession(hash('legacy'));
   f.s.sessions.change(file=>{file.push={vapid:{publicKey:'imported-public',privateKey:'imported-private'},subs:{[sub().endpoint]:{sub:sub(),session:hash(old),at:7},[sub('orphan').endpoint]:{sub:sub('orphan'),session:'gone',at:8}}};});
+  const browser=await f.socket(f.cookie);expect(await browser('key')).toEqual({ok:true,value:{publicKey:'imported-public'}});expect(f.s.sessions.read().push!.vapid).toEqual({publicKey:'imported-public',privateKey:'imported-private'});
   expect(f.read().devices).toHaveLength(1);
+  f.s.end(old);expect(f.s.sessions.read().push!.subs![sub().endpoint].token).toBe(hash('legacy'));expect(f.read().devices).toHaveLength(1);
   // Membership changes pin revoked/unbound tokens before changing first owner.
   f.app.db.transaction(()=>{changeHouseholdMember(f.app.db,'','pollock','*');changeHouseholdMember(f.app.db,'','jonathan',['art']);})();
   expect(f.read().devices).toHaveLength(1);expect(f.read(other).devices).toEqual([]);
-  f.s.sessions.change(file=>{const d=file.push!.subs![sub().endpoint];d.token=hash('legacy');delete file.sessions[hash(old)];});f.s.tokens.change(ts=>{ts.find(t=>t.sha256===hash('legacy'))!.revoked='2026-01-01';});expect(f.read().devices).toHaveLength(1);
+  f.s.tokens.change(ts=>{ts.find(t=>t.sha256===hash('legacy'))!.revoked='2026-01-01';});expect(f.read().devices).toHaveLength(1);
   f.s.tokens.change(ts=>ts.push({role:'owner',member:'pollock',label:'conflict',sha256:hash('legacy'),created:'2026-01-01'}));expect(f.read().devices).toEqual([]);expect(f.read(other).devices).toEqual([]);
 });
 it('bounds devices at twenty and tombstones at one hundred; rollback includes keys, device, receipt and live changes',async()=>{
@@ -91,4 +93,19 @@ it('bounds devices at twenty and tombstones at one hundred; rollback includes ke
   expect(await a('subscribe',{sub:sub()},'retry')).toMatchObject({ok:true});expect(await a('subscribe',{sub:sub()},'retry')).toMatchObject({ok:true});expect(f.read().devices).toHaveLength(1);
   for(let i=0;i<21;i++){f.clock.advance(1000);await a('subscribe',{sub:sub('cap-'+i)});}expect(f.read().devices).toHaveLength(20);expect(f.s.sessions.read().push!.subs![sub('cap-0').endpoint]).toBeUndefined();
   f.s.sessions.change(file=>{file.push!.removed=Array.from({length:100},(_,i)=>hash('old-'+i));});const target=f.read().devices[0].ref;expect(f.call('remove',{ref:target})).toMatchObject({ok:true});expect(f.s.sessions.read().push!.removed).toHaveLength(100);expect(f.s.sessions.read().push!.removed).not.toContain(hash('old-0'));stop();
+});
+
+it('rolls back first VAPID creation when its receipt fails and retries with a stable imported/generated pair',async()=>{
+  const f=await setup(),a=await f.socket(f.cookie),before=f.s.sessions.read();
+  f.app.db.exec("CREATE TEMP TRIGGER fail_key_receipt BEFORE INSERT ON core_operations WHEN NEW.id='key-retry' BEGIN SELECT RAISE(ABORT,'fixture'); END");
+  expect(await a('key',{},'key-retry')).toMatchObject({ok:false,code:'unavailable'});expect(f.s.sessions.read()).toEqual(before);expect(f.app.db.prepare("SELECT * FROM core_operations WHERE id='key-retry'").get()).toBeUndefined();
+  f.app.db.exec('DROP TRIGGER fail_key_receipt');const key=await a('key',{},'key-retry');expect(key).toMatchObject({ok:true});const pair=f.s.sessions.read().push!.vapid;expect(await a('key',{},'key-retry')).toEqual(key);expect(f.s.sessions.read().push!.vapid).toEqual(pair);
+});
+it('refreshes another member’s actual Live window after reassignment and household cap eviction',async()=>{
+  const f=await setup(),a=await f.socket(f.cookie),b=await f.socket(f.otherCookie);await a('subscribe',{sub:sub()});
+  const ws=new WebSocket(f.app.url.replace('http:','ws:')+'/live',{headers:{authorization:'Bearer jonathan'}});cleanup.push(()=>ws.terminate());await once(ws,'open');ws.send(JSON.stringify({kind:'subscribe',type:'notifications.devices'}));expect(JSON.parse(String((await once(ws,'message'))[0])).records[0].devices).toHaveLength(1);
+  const reassigned=once(ws,'message');expect(await b('subscribe',{sub:sub()})).toMatchObject({ok:true});expect(JSON.parse(String((await reassigned)[0])).record.devices).toEqual([]);
+  f.s.sessions.change(file=>{const subs=file.push!.subs!;for(const ep of Object.keys(subs))delete subs[ep];subs[sub().endpoint]={sub:sub(),member:'jonathan',session:hash(f.cookie),token:hash('jonathan'),at:0};for(let i=0;i<19;i++){const x=sub('other-'+i);subs[x.endpoint]={sub:x,member:'pollock',session:hash(f.otherCookie),token:hash('pollock'),at:f.s.now()};}});
+  const repopulated=once(ws,'message');f.app.live.changed([{type:'notifications.devices',id:'jonathan'}]);expect(JSON.parse(String((await repopulated)[0])).record.devices).toHaveLength(1);
+  const evicted=once(ws,'message');expect(await b('subscribe',{sub:sub('newest')})).toMatchObject({ok:true});expect(JSON.parse(String((await evicted)[0])).record.devices).toEqual([]);
 });

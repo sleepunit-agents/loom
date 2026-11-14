@@ -1,4 +1,4 @@
-import { installNotifications } from './notifications.js';
+import { installNotifications, retainNotificationTokens } from './notifications.js';
 /** Next-mode credentials. Only loom.db is consulted; no legacy file activation. */
 import { installAccount } from './account.js';
 import { installAccessAdmin } from './admin.js';
@@ -162,6 +162,7 @@ export class Signin {
     if (this.token(secret)?.viewer.kind!=='member') throw new Error('Sign-in refused');
     const id=random(), now=this.now();
     this.sessions.change(f=>{
+      retainNotificationTokens(f);
       f.sessions[hash(id)]={issuedAt:now,secret,...meta,...(/HeadlessChrome\b/.test(meta.device ?? '')?{agent:true as const}:{})};
       const rank=(s:typeof f.sessions[string])=>!this.token(s.secret) || now>=s.issuedAt+(s.agent?HOURS:MONTH)?0:s.agent||/^HeadlessChrome\b/.test(s.device ?? '')?1:2;
       const all=Object.entries(f.sessions).sort((a,b)=>rank(a[1])-rank(b[1])||a[1].issuedAt-b[1].issuedAt);
@@ -173,7 +174,7 @@ export class Signin {
     const secure=!!('encrypted' in req.socket && req.socket.encrypted) || !!(process.env.LOOM_PUBLIC_URL?.startsWith('https://'));
     return `loom_ui=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${id?MONTH:0}${secure?'; Secure':''}`;
   }
-  end(id: string) { this.sessions.change(f=>{delete f.sessions[hash(id)];}); queueMicrotask(() => this.app.live.changed([{type:'core.access',id:'credentials'}])); }
+  end(id: string) { this.sessions.change(f=>{retainNotificationTokens(f);delete f.sessions[hash(id)];}); queueMicrotask(() => this.app.live.changed([{type:'core.access',id:'credentials'}])); }
   link(member: string, label?: string, agent?: boolean, signedInAt?: number, ttl=300) {
     const h=this.household(); if (!h?.members.some(m=>m.person===member)) throw new OperationError('invalid','Unknown member');
     const code=random();

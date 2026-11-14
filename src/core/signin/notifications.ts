@@ -21,6 +21,14 @@ const deviceRef=(endpoint:string)=>hash(`notification-device:${endpoint}`);
 const sessionRef=(id:string)=>hash(`account-session:${id}`);
 const info=z.object({ref,session:ref,at:z.number(),seenAt:z.number().optional(),device:z.string().optional()}).strict();
 
+/** Preserve old imported ancestry before ordinary session housekeeping removes it. */
+export function retainNotificationTokens(file:SessionFile) {
+  for(const d of Object.values(file.push?.subs??{})) {
+    const token=file.sessions[d.session]?.secret;
+    if(!d.token && token)d.token=token;
+  }
+}
+
 export function installNotifications(app:Foundation) {
   const s=signin(app),sharing=new SharingDatabase(app.db,'');
   const allowed=(v:Viewer)=>mayAct(v,{member:v.id},sharing.sharing());
@@ -39,7 +47,8 @@ export function installNotifications(app:Foundation) {
     const f=s.sessions.read();
     return {member:id,devices:Object.entries(f.push?.subs??{}).filter(([,d])=>member(d,f)===id).map(([ep,d])=>({ref:deviceRef(ep),session:sessionRef(d.session),at:d.at,...(d.seenAt!==undefined?{seenAt:d.seenAt}:{}),...(d.device?{device:d.device}:{})})).sort((a,b)=>(b.seenAt??b.at)-(a.seenAt??a.at))};
   }
-  const changed=(ctx:{viewer:Viewer;changed(type:string,id:string):void})=>ctx.changed('notifications.devices',ctx.viewer.id);
+  // Reassignment and the household cap can affect another member's devices.
+  const changed=(ctx:{changed(type:string,id:string):void})=>{for(const id of Object.keys(sharing.sharing().members))ctx.changed('notifications.devices',id);};
   app.operations.register(operation({name:'notifications.read',input:z.object({}).strict(),output:z.object({member:z.string(),devices:z.array(info)}).strict(),may:allowed,run:ctx=>read(ctx.viewer.id)}));
   app.operations.register(operation({name:'notifications.key',write:true,windowOnly:true,doors:['socket'],input:z.object({}).strict(),output:z.object({publicKey:z.string()}).strict(),may:browser,run:()=>{
     return s.sessions.change(f=>{f.push??={};f.push.vapid??=webpush.generateVAPIDKeys();return {publicKey:f.push.vapid.publicKey};});
