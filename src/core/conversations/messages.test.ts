@@ -139,3 +139,51 @@ it('never holds a transaction across crypto and rejects reads deleted while decr
   release();
   expect(await pending).toBeNull();
 });
+
+it('prepares encryption without effects and commits messages, questions and answers inside the caller transaction', async () => {
+  const { db, client, key, service, thread } = await fixture();
+  let seals = 0;
+  const checked = new CommsMessages(db, { ...key, seal: async value => {
+    expect(client.inTransaction).toBe(false);
+    seals++;
+    return key.seal(value);
+  } }, service.now);
+  const commitMessage = await checked.prepareSend({ thread: thread.id, sender: 'jonathan', kind: 'message', clientId: 'prepared', words: 'Private t-12' });
+  const commitQuestion = await checked.prepareAsk(thread.id, 'art', 'prepared-ask', { words: 'Private question?', answers: 'words' });
+  expect(db.select().from(messages).all()).toHaveLength(0);
+  expect(db.select().from(inbox).all()).toHaveLength(0);
+  expect(db.select().from(threadRefs).all()).toHaveLength(0);
+  // A later operation error must roll back every effect, including mail/refs.
+  expect(() => db.transaction(() => { commitMessage(); commitQuestion(); throw new Error('operation rejected'); })).toThrow('operation rejected');
+  expect(db.select().from(messages).all()).toHaveLength(0);
+  expect(db.select().from(inbox).all()).toHaveLength(0);
+  expect(db.select().from(threadRefs).all()).toHaveLength(0);
+  const question = db.transaction(() => { commitMessage(); return commitQuestion(); });
+  const commitAnswer = await checked.prepareAnswer(question.inboxItem!, 'jonathan', 'words', 'Private answer');
+  expect(service.threads.conversations.item(question.inboxItem!).state).toBe('waiting');
+  expect(db.select().from(messages).all()).toHaveLength(2);
+  expect(() => db.transaction(() => { commitAnswer(); throw new Error('receipt rejected'); })).toThrow('receipt rejected');
+  expect(service.threads.conversations.item(question.inboxItem!).state).toBe('waiting');
+  expect(db.select().from(messages).all()).toHaveLength(2);
+  db.transaction(() => commitAnswer());
+  expect(service.threads.conversations.item(question.inboxItem!).state).toBe('answered');
+  expect(seals).toBe(3);
+  expect(commitMessage().seq).toBe(1);
+  expect(commitQuestion().seq).toBe(2);
+  expect(commitAnswer().answer).toBe('words');
+  expect(db.select().from(messages).all()).toHaveLength(3);
+});
+
+it('rechecks source state when a prepared commit is delayed or retried after deletion', async () => {
+  const { service, thread } = await fixture();
+  const input = { thread: thread.id, sender: 'jonathan', kind: 'message' as const, clientId: 'old', words: 'Private' };
+  await service.send(input);
+  const retry = await service.prepareSend(input);
+  const ask = await service.ask(thread.id, 'art', 'old-ask', { words: 'Go?', answers: 'yes-no' });
+  const askRetry = await service.prepareAsk(thread.id, 'art', 'old-ask', { words: 'Go?', answers: 'yes-no' });
+  const answer = await service.prepareAnswer(ask.inboxItem!, 'jonathan', 'yes');
+  service.delete(thread.id);
+  expect(retry).toThrow('Thread not found');
+  expect(askRetry).toThrow('Thread not found');
+  expect(answer).toThrow('Not a private question');
+});
