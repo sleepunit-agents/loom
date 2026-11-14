@@ -1216,3 +1216,33 @@ drains replacements before closing ticket authority and persistent storage.
 No operation or file watcher receives this control, and it cannot add handoff to
 a process started without handoff configuration. This is a holder lifecycle seam;
 the production Runtime owning runner still must drive the selections.
+
+## Runtime control of dedicated secret consumers
+
+`loom-secret-worker <owner-config.json>` owns one already-assigned job's
+fd3-to-EOF command, separately from `loom-claude-worker`. Its owner file contains
+`url`, `tokenFile`, `job` and `selection` (the private worker's explicit `policy`,
+`grants` and one `jobs` selection). The job includes its original full binding,
+secret `name`, `expiresAt` and command/TLS `config`; the grant includes its
+original binding, name and expiry. All paths, arguments, environment, peer
+endpoints and certificate pins come from this local owner file. No operation or
+model response supplies them; the child inherits only the selected environment
+and has no stdin, stdout or stderr channel. Only fd3 carries the value.
+
+The worker composes the existing original local policy/grant/job/request owner,
+Signin/Runtime admission, pinned ticket proof and dedicated command. Both Claude
+and secret workers now reuse `connectWorkerControl`: an authenticated initial
+Runtime check, bounded scheduled checks, sticky stop/history loss and a fresh
+check begun after completion. Control loss kills the original command and drains
+its listener, including after delivery. Equal metadata cannot revive it. Command
+success and daemon delivery are distinct booleans; the executable returns zero
+only when both succeed and never prints a value, command output or API result.
+SIGINT/SIGTERM close its owned command, including startup still in flight.
+
+This is an explicit external worker entry point, never started by `loom serve`.
+It neither claims/takes/finishes a Runtime job nor installs owner configuration.
+Source orchestration still must drive daemon/holder route selection and worker
+replacement, and reconcile Runtime completion without a credential or diagnostic
+in a stored result. Claude's prompt protocol still cannot consume fd3 credentials;
+its existing credential-input refusal stays in place. Production activation,
+public/granted get and final owner-present move remain unfinished.
