@@ -170,6 +170,9 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await a.getByRole('region',{name:'Inbox tile',exact:true}).getByRole('button',{name:'Open Approvals',exact:true}).click();
     await expect.poll(()=>a.locator('[data-split-row]').filter({hasText:'Reported fixture page fix'}).count()).toBe(1);
     expect(new URL(a.url()).pathname).toBe('/p/approvals-preview/notices');
+    // Capture the owning app alone after proving cross-app navigation above.
+    await a.goto(`${loom.url}/p/approvals-preview/notices`);
+    await expect.poll(()=>a.getByRole('group',{name:'Approval notices'}).count()).toBe(1);
     await noticeRow(b).click();
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]) {
       await b.setViewportSize({width,height:900});
