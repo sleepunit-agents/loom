@@ -73,7 +73,7 @@ it.each(['grant','job','token'] as const)('persistent handoff denies original %s
  }
  await expect(f.admission.dispatch()).rejects.toThrow();expect(f.received).toEqual([]);
 });
-it.each(['duplicate','overlap','dot-alias','parent-alias','symlink-alias','authority-directory','worker-directory','tls','unknown','listener'] as const)('preflights %s failure without committing holder storage/key history',async kind=>{
+it.each(['duplicate','overlap','dot-alias','parent-alias','symlink-alias','authority-directory','worker-directory','authority-socket-alias','worker-socket-alias','worker-socket-file','worker-socket-mode','tls','unknown','listener'] as const)('preflights %s failure without committing holder storage/key history',async kind=>{
  const f=await setup();
  if(kind==='duplicate')f.config.handoff.workers.push({...f.config.handoff.workers[0]});
  if(kind==='overlap')f.config.handoff.listen.socket=f.config.mutation.socket;
@@ -85,6 +85,12 @@ it.each(['duplicate','overlap','dot-alias','parent-alias','symlink-alias','autho
   const endpoint=kind==='authority-directory'?f.config.handoff.authority:f.config.handoff.workers[0].config;
   endpoint.socket=join(directory,'endpoint.sock');
  }
+ if(kind==='authority-socket-alias'||kind==='worker-socket-alias'){
+  const selected=kind==='authority-socket-alias'?f.config.handoff.authority:f.config.handoff.workers[0].config;
+  const alias=join(f.home,'alias.sock');symlinkSync(selected.socket,alias);selected.socket=alias;
+ }
+ if(kind==='worker-socket-file'){const selected=f.config.handoff.workers[0].config;selected.socket=join(f.home,'file.sock');writeFileSync(selected.socket,'occupied',{mode:0o600});}
+ if(kind==='worker-socket-mode')chmodSync(f.config.handoff.workers[0].config.socket,0o666);
  if(kind==='tls')f.config.handoff.workers[0].config.key=join(f.home,'missing-key');
  if(kind==='unknown')Object.assign(f.config.handoff,{extra:true});
  if(kind==='listener')writeFileSync(f.config.handoff.listen.socket,'occupied',{mode:0o600});

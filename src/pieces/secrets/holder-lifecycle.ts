@@ -1,8 +1,8 @@
 /** Persistent separate holder composition. This module never opens loom.db. */
 import { z } from 'zod';
 import { isAbsolute, dirname, resolve } from 'node:path';
-import { realpathSync } from 'node:fs';
-import { privateBytes, listenLocalHolder, tlsMaterial, assertPrivateDirectory } from './local-holder.js';
+import { realpathSync, lstatSync } from 'node:fs';
+import { privateBytes, listenLocalHolder, tlsMaterial, assertPrivateDirectory, privateSocket } from './local-holder.js';
 import { openHolderStore, type HolderStore } from './holder-store.js';
 import { listenHolderMutations } from './holder-mutations.js';
 import { holderTls, certificateFingerprint, remoteHolderAuthority } from './holder-authority.js';
@@ -49,6 +49,10 @@ export async function startPersistentHolder(file:string) {
       assertPrivateDirectory(dirname(endpoint.socket));
       if(endpoint.socket!==resolve(endpoint.socket)
         ||dirname(endpoint.socket)!==realpathSync(dirname(endpoint.socket)))throw Error();
+      // Outbound sockets may not be bound yet. Existing selections must be
+      // private real sockets, never final symlinks, regular files or public IO.
+      try {lstatSync(endpoint.socket);privateSocket(endpoint.socket);}
+      catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
     }
     if(new Set(endpoints.map(e=>e.socket)).size!==endpoints.length)throw Error();
     // Validate every peer and TLS material before the first listener or store.
