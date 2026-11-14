@@ -1,6 +1,7 @@
 /** Trusted history transport data. Runtime owns caller/reader and author policy. */
 import { z } from 'zod';
-const snowflake = z.string().regex(/^[1-9]\d{0,19}$/).pipe(z.string().refine(id => BigInt(id) <= 18446744073709551615n));
+import { isDiscordId } from './discord-id.js';
+const snowflake = z.string().refine(isDiscordId);
 export const discordHistoryQuery = z.object({channel:snowflake,kind:z.enum(['channel','thread']),after:snowflake.optional(),limit:z.number().int().min(1).max(100).optional()}).strict();
 /** A trusted owning role must issue a current, exact-place permit. This is not a
  * stored grant, a public input or an admission decision made by Bridges. */
@@ -14,7 +15,7 @@ export interface DiscordHistoryPermit {
 const message = z.object({id:snowflake,channel_id:snowflake,guild_id:snowflake.optional(),type:z.number().int(),
   author:z.object({id:snowflake,bot:z.boolean().optional()}),webhook_id:snowflake.optional(),
   content:z.string().max(100_000),timestamp:z.unknown().optional(),
-  attachments:z.array(z.object({filename:z.string(),url:z.string().url()})).nullish(),
+  attachments:z.array(z.object({filename:z.string(),url:z.string().url()})).optional(),
 });
 export interface DiscordHistoryMessage {id:string;at:string;user:string;bot:boolean;type:number;webhook?:string;text:string}
 /** Preserve all source classes, including own/bot/system messages. Runtime must

@@ -71,7 +71,7 @@ it('rechecks the permit after metadata and history response streaming before ret
 it.each([[{id:'301',guild_id:'1',type:0},'wait'],[{id:'300',type:0},'wait'],[{id:'300',guild_id:'2',type:0},'drop'],[{id:'300',guild_id:'1',type:1},'drop'],[{id:'300',guild_id:'1',type:11},'drop'],[{id:'300',guild_id:'1'},'wait'],[{id:'300',guild_id:'1',type:'0'},'wait']])('refuses wrong fresh place evidence %j without reading history',async(channel,expected)=>{
  const f=fixture();f.request.mockResolvedValueOnce(Response.json(channel));expect(await f.api.history(venue,{channel:'300',kind:'channel'},f.permit)).toBe(expected);expect(f.request).toHaveBeenCalledTimes(1);
 });
-it.each([[{...msg(),channel_id:'301'}],[{...msg(),guild_id:'2'}],[{...msg(),id:'01'}],[{...msg(),author:{id:'200',bot:'yes'}}],[msg(),msg()],{},'PRIVATE TEST-TOKEN'])('fails closed on malformed or misbound history %j',async messages=>{
+it.each([[{...msg(),attachments:null}],[{...msg(),channel_id:'301'}],[{...msg(),guild_id:'2'}],[{...msg(),id:'01'}],[{...msg(),author:{id:'200',bot:'yes'}}],[msg(),msg()],{},'PRIVATE TEST-TOKEN'])('fails closed on malformed or misbound history %j',async messages=>{
  const f=fixture();f.request.mockResolvedValueOnce(Response.json({id:'300',guild_id:'1',type:0})).mockResolvedValueOnce(Response.json(messages));
  expect(await f.api.history(venue,{channel:'300',kind:'channel',limit:100},f.permit)).toBe('wait');
 });
@@ -155,4 +155,10 @@ it.each(['revoke','hold'] as const)('stops body consumption when %s happens at a
   expect(await f.api.history(venue,{channel:'300',kind:'channel'},f.permit)).toBe('wait');
   expect(cancel).toHaveBeenCalledOnce();expect(read).toHaveBeenCalledTimes(phase==='headers'?0:1);expect(getReader).toHaveBeenCalledTimes(phase==='headers'?0:1);
  }
+});
+
+it.each(['1','18446744073709551615'])('accepts exact endpoint snowflake cursor %s',async after=>{
+ const f=fixture();f.request.mockResolvedValueOnce(Response.json({id:'300',guild_id:'1',type:0})).mockResolvedValueOnce(Response.json([]));
+ expect(await f.api.history(venue,{channel:'300',kind:'channel',after},f.permit)).toEqual({messages:[]});
+ expect(String(f.request.mock.calls[1][0])).toBe(`https://discord.com/api/v10/channels/300/messages?after=${after}&limit=100`);
 });

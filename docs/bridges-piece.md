@@ -1034,3 +1034,8 @@ request deadline and 1 MiB response limit; ambiguous/malformed results wait.
 This ports the transport part of legacy loom-discord `5d197bac` read; the
 permission/identity half stays with Runtime. All test permits are explicit fakes;
 Secrets registration/grants/erasure use the actual installed next role.
+
+History response choice: the old Python reader treated null attachments as an
+empty list. The new REST transport refuses a supplied non-array attachment field
+(including null) as malformed evidence; an omitted field still means no
+attachments. This stricter source validation changes no reader authority.

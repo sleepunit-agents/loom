@@ -1,4 +1,5 @@
 /** Fresh Discord REST evidence. No admission, receipt storage or registration. */
+import { isDiscordId as snowflake } from './discord-id.js';
 import type { SecretUse } from '../secrets/role.js';
 import type { Venue } from './model.js';
 import type { DiscordChannel } from './discord.js';
@@ -6,7 +7,6 @@ import { discordHistoryQuery, discordHistoryMessages, type DiscordHistoryPermit,
 
 type Json = Record<string, unknown>;
 const object = (x: unknown): x is Json => !!x && typeof x === 'object' && !Array.isArray(x);
-const snowflake = (x: unknown): x is string => typeof x === 'string' && /^[1-9]\d{0,19}$/.test(x) && BigInt(x) <= 18446744073709551615n;
 const setup = (v: Venue) => v.enabled && v.platform === 'discord' && snowflake(v.bot) && snowflake(v.workspace);
 class Refused extends Error {}
 export interface DiscordPlace { channel: string; user: string; dm: boolean }
