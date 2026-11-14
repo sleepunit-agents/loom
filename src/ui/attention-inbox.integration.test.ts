@@ -131,7 +131,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
       await b.screenshot({path:join(shots,`inbox-approval-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
-    raise({id:'approval-wait',project:'pond',ask:'Please decide the Inbox fix?',waits_on:{approval:approvalId}});
+    raise({id:'approval-wait',source:{kind:'conversation',id:'cv-approval-wait'},project:'pond',ask:'Please decide the Inbox fix?',waits_on:{approval:approvalId}});
     for(const page of [a,b]){
       await expect.poll(()=>page.locator('[data-split-row]').filter({hasText:'Please decide the Inbox fix?'}).count()).toBe(1);
       await expect.poll(()=>page.locator('[data-split-row]').filter({hasText:'Merge the Inbox source fix?'}).count()).toBe(0);

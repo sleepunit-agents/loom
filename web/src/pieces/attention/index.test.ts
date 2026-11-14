@@ -216,7 +216,7 @@ it('counts a same-audience approval wait once and retains different/private audi
   const approval=ask('source',{source:{kind:'approval',id:'a-12345678'},sourceManaged:true,project:'pond'});
   const wait=ask('wait',{source:{kind:'conversation',id:'cv-one'},project:'pond',waits_on:{approval:'a-12345678'}});
   expect(listedAsks([approval,wait])).toEqual([wait]);
-  for(const changed of [{agent:'mark'},{project:'other'},{member:'jonathan'},{state:'resolved' as const},{sourceManaged:true}])expect(listedAsks([approval,{...wait,...changed}])).toHaveLength(2);
+  for(const changed of [{agent:'mark'},{project:'other'},{member:'jonathan'},{state:'resolved' as const},{sourceManaged:true},{source:{kind:'piece' as const,id:'fixture'}}])expect(listedAsks([approval,{...wait,...changed}])).toHaveLength(2);
   expect(listedAsks([{...approval,state:'resolved'},wait])).toHaveLength(2);
   expect([approval,wait]).toHaveLength(2);
 });

@@ -1,4 +1,4 @@
-import type { ApprovalAskFiling } from '../attention/role.js';
+import type { Ask, ApprovalAskFiling } from '../attention/role.js';
 import type { Context } from '../../core/index.js';
 import { localOwner, sameLocalCaller } from './local-authority.js';
 import { groupVouch } from './group-vouch.js';
@@ -26,9 +26,9 @@ export interface ApprovalOptions {
   projects?(): Project[] | undefined;
   localAgent?: string | (()=>string);
 }
-const attentionConnections = new WeakMap<Operations, (source: () => ApprovalAskFiling) => void>();
+const attentionConnections = new WeakMap<Operations, (source: (current: (ask: Ask) => boolean) => ApprovalAskFiling) => void>();
 /** Trusted composition, including already installed registry instances. */
-export function connectApprovalAttention(operations: Operations, source: () => ApprovalAskFiling): void {
+export function connectApprovalAttention(operations: Operations, source: (current: (ask: Ask) => boolean) => ApprovalAskFiling): void {
   const connect = attentionConnections.get(operations);
   if (!connect) throw new Error('Approvals is not installed');
   connect(source);
@@ -56,7 +56,17 @@ export function installApprovals(db: Db, operations: Operations, live: Live, sha
   }));
   attentionConnections.set(operations, source=>{
     if (filing) return;
-    filing = source();
+    filing = source(ask=>{
+      const a=readApproval(db,ask.source.id);if(!a)return false;
+      const audience=scope(a);
+      if (!(['agent','project','member'] as const).every(k=>ask[k]===audience[k])) return false;
+      const pending=stateOf(a,operations.clock.now())==='pending';
+      if (ask.state!==(pending?'open':'resolved')) return false;
+      if (!pending) return ask.ask==='Approval no longer needs you';
+      if (a.member) return ask.ask==='Private approval needs you' && ['why','if_yes','if_no','href','refs','answers'].every(k=>ask[k as keyof Ask]===undefined);
+      const words=cardWords(a);
+      return ask.ask===words.title && ask.why===(a.why||undefined) && ask.if_yes===((words.if_yes??a.if_yes)||undefined) && ask.if_no===((words.if_no??a.if_no)||undefined);
+    });
     for (const check of [true,false]) {
       const name = check?'approvals.attentionPending':'approvals.reconcileAttention';
       operations.register(operation({name,write:!check,doors:['direct'],input:z.object({}).strict(),output:z.unknown(),

@@ -145,3 +145,22 @@ it('uses fixed owning promises for an applied owner action despite conflicting s
   const s=await setup();s.seed(card({kind:'principal-reset',target:'art:cv-0123456789ab',if_yes:'Misleading supplied promise',if_no:'Another supplied promise'}));
   expect(s.ask()).toMatchObject({ok:true,value:{ask:'Count this conversation as your work from now on?',if_yes:'I count this conversation as your work from now on.',if_no:'I leave the conversation unchanged.'}});
 });
+
+it('hides stale source projections when startup reconciliation is denied after stopped source changes',async()=>{
+  const first=await setup();first.seed(card({project:'pond'}));expect(first.ask(undefined,pollock).ok).toBe(true);
+  await first.app.close();closes.pop();
+  const Database=(await import('better-sqlite3')).default,db=new Database(join(first.home,'loom.db'));
+  db.prepare('UPDATE approvals_approvals SET record=? WHERE id=?').run(JSON.stringify(card({member:'jonathan',project:'other',ask:'New private wording',why:'New private reason'})),'a-12345678');db.close();
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  try{
+    const s=await setup(first.home,true);expect(warn.mock.calls).toEqual([['Approval filing failed (denied)']]);
+    for(const v of [owner,pollock]){
+      expect(s.ask(undefined,v).ok).toBe(false);
+      expect(s.types.get('attention.ask')!.read(approvalAskId('a-12345678'),v)).toBeUndefined();
+    }
+    expect(s.app.db.prepare('SELECT record FROM attention_asks WHERE id=?').get(approvalAskId('a-12345678'))).not.toEqual(expect.objectContaining({record:expect.stringContaining('New private')}));
+    // An authorized owning answer can reconcile even while the background service is held.
+    expect((await s.app.operations.callAsync('socket',owner,'approvals.answer',{id:'a-12345678',action:'deny'},randomUUID(),true)).ok).toBe(true);
+    expect(s.ask()).toMatchObject({ok:true,value:{state:'resolved',member:'jonathan',project:'other'}});
+  }finally{warn.mockRestore();}
+});

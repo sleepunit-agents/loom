@@ -47,6 +47,11 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   };
   const saveAsk = (record: Ask) => db.prepare('INSERT INTO attention_asks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record').run(record.id, JSON.stringify(record));
   let tasksRegistered = false, approvalsRegistered = false;
+  let approvalCurrent: ((ask: Ask) => boolean) | undefined;
+  const sourceCurrent = (record: Ask | AgentStatus) => {
+    if (!('sourceManaged' in record) || !record.sourceManaged || record.source.kind !== 'approval') return true;
+    try { return approvalCurrent?.(record) === true; } catch { return false; }
+  };
   registerPrivateReplies(operations, (ctx, raw) => {
     if (ctx.db !== db || !db.inTransaction) return failure('unavailable', 'Private reply needs its enclosing transaction');
     const parsed = z.object({id, conversation: id, agent: id, member: id, thread: id, seq: z.number().int().positive()}).strict().safeParse(raw);
@@ -95,7 +100,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     },
   }));
   operations.register(operation({ name: 'attention.get', input: z.object({ id }), output: z.unknown(),
-    may: (viewer, input) => { const r = readAsk(input.id); return !!r && maySee(viewer, scoped('attention.ask', r), sharing()); },
+    may: (viewer, input) => { const r = readAsk(input.id); return !!r && sourceCurrent(r) && maySee(viewer, scoped('attention.ask', r), sharing()); },
     run: (_ctx, input) => readAsk(input.id),
   }));
   operations.register(operation({ name: 'attention.answer', write: true, input: z.object({ id, answer, requireOwnership: z.literal(true).optional() }), output: z.unknown(),
@@ -153,14 +158,15 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
       const row = db.prepare(`SELECT record FROM ${table} WHERE id=?`).get(key) as { record: string } | undefined;
       if (!row) return;
       const record = JSON.parse(row.record) as Ask | AgentStatus;
-      if (!maySee(viewer, scoped(name, record), sharing())) return;
+      if (!sourceCurrent(record) || !maySee(viewer, scoped(name, record), sharing())) return;
       return record as unknown as LiveRecord;
     },
     inScope: () => true,
   });
-  const role: AttentionSources = { approvals() {
+  const role: AttentionSources = { approvals(current) {
     if (approvalsRegistered) throw new Error('Duplicate approval filing');
     approvalsRegistered = true;
+    approvalCurrent = current;
     return approvalFiling(db);
   }, tasks() {
     if (tasksRegistered) throw new Error('Duplicate task filing');

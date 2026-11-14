@@ -175,7 +175,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
       } catch { return undefined; } // Unreadable metadata must preserve the asking fallback.
     },
   });
-  if (attentionSources) connectApprovalAttention(app.operations, () => attentionSources.approvals());
+  if (attentionSources) connectApprovalAttention(app.operations, current => attentionSources.approvals(current));
   // Keep the small owning-service compare/write sequences explicit: neither
   // source can accidentally borrow the other's identity or operation names.
   if (app.operations.has('approvals.reconcileAttention')) {

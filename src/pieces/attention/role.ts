@@ -99,7 +99,7 @@ export interface ApprovalAskFiling {
 }
 export interface AttentionSources {
   /** Approval decisions stay in their owning window operation. */
-  approvals(): ApprovalAskFiling;
+  approvals(current: (ask: Ask) => boolean): ApprovalAskFiling;
   /** Task decisions remain in Tasks; this never creates an answer capability. */
   tasks(): TaskAskFiling;
   register(name: string, answer: (ctx: Context, ask: Ask) => void): HouseholdAskSource;
