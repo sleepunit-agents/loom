@@ -86,3 +86,17 @@ it('fences destinations synchronously when async shutdown begins, while SQLite r
  expect(f.app.db.open).toBe(true);expect(bound.current()).toBe(false);expect(f.read()).toBeUndefined();
  await pending;
 });
+it.each(['house','settings'])('refuses absent current %s without a fallback destination',async missing=>{
+ const f=await setup(),bound=f.read()!;
+ f.app.db.transaction(()=>{
+  if(missing==='settings')f.app.db.prepare('DELETE FROM runtime_settings WHERE id=?').run('art');
+  else {const {changedAt:_,house:__,...before}=f.store.read('settings','art')!;f.store.put('settings',before,f.clock.now());}
+ })();
+ expect(bound.current()).toBe(false);expect(f.read()).toBeUndefined();
+});
+it.each(['agent:art','agent:mark@JOB','agent:art/slack@JOB'])('refuses a changed live central role %s on original proof',async role=>{
+ const f=await setup(),bound=f.read()!;
+ f.auth.tokens.change(tokens=>{tokens.find(t=>t.sha256===hash(f.token))!.role=role.replace('JOB',f.id);});
+ expect(f.auth.token(hash(f.token))).toBeDefined();
+ expect(bound.current()).toBe(false);expect(f.read()).toBeUndefined();
+});
