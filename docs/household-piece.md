@@ -879,3 +879,44 @@ private outcomes; offline or inactive screens disable sending. No subscription,
 endpoint or key is rendered. The existing CI-only two-window Account acceptance uses
 an injected fake transport with real cookie/socket/backend/Live and captures the six
 notification-focused screenshots. No new CLI or backend operation is introduced.
+
+### Routine notification daemon
+
+The new daemon samples current Inbox asks through Attention's metadata-only role
+and unread, not-in-front replies through the real Comms role every minute. Both
+roles apply current central member policy; no service grant or credential is
+created. Source words are never copied into the job records or payload. The
+worker still displays a fixed loom title and empty body; taps open the exact
+Inbox ask or private Comms thread on the new side.
+
+The first sample seeds the existing candidates without sending a backlog.
+Thereafter the daemon admits at most five candidate/member pairs per rolling
+minute; excess candidates stay unmarked until a later sample. Each pair is
+deduplicated durably, including when there are no devices, so subscribing later
+does not deliver old work. This deliberately makes the old per-member expansion
+explicit and preserves its global five-per-minute limit. Imported old push-watch
+markers remain evidence in the household envelope; the new-side baseline owns
+its new candidate keys and never resumes the old watch or imports its timer.
+
+Admission records the exact current devices and their binding hashes in new
+`notifications_announcements` and `notifications_announcement_attempts` tables.
+Each device attempt has a stable `notifications:announcement:` effect id and
+passes the common staging gate immediately before IO. A release resumes only
+that attempt. Startup resumes held/queued work, while interrupted effects become
+uncertain and are never automatically resent. No new operation or CLI is needed
+for this daemon job; the existing core release operation controls staging.
+
+Before each send, including after every preceding awaited send, the daemon
+re-reads the current candidate, member policy, subscription validator, member
+binding, registration generation and VAPID pair. Withdrawn candidates and changed
+devices cancel rather than being silently rebound. A 404/410 removes only the
+unchanged exact device; other responses fail and transport errors are uncertain.
+Errors contain no service diagnostics. A daemon-clock absolute fifteen-second
+abort deadline bounds each request, and close stops admission and drains IO
+before SQLite closes. Sent means service acceptance, not device delivery.
+
+The old watch's process lease and SessionStore timer are retired: next mode has
+one owned in-process daemon. Existing deliberate test sends use the same exact
+binding resolver and abortable transport. Tests use startLoom, synthetic data,
+the fake clock and fake transport; there is no real push or host change. Account
+screens and their existing CI screenshots are unchanged by this backend unit.

@@ -8,7 +8,7 @@ import { operation, OperationError } from '../operations/index.js';
 import { SharingDatabase } from '../household/sharing.js';
 import { mayAct, maySee, type Viewer } from '../../policy.js';
 import { hash, signin } from './index.js';
-import { deviceRef, notificationMember, notificationBrowserAllowed, subscription } from './notifications.js';
+import { notificationTarget, notificationBrowserAllowed } from './notifications.js';
 
 export interface NotificationSendOptions {
   /** Trusted composition/test seam only, never operation input. */
@@ -27,17 +27,7 @@ export function installNotificationSending(app:Foundation,effects:OutsideEffects
   const rows=()=>app.db.prepare('SELECT * FROM notifications_tests ORDER BY at,id').all() as Request[];
   const publish=(id:string)=>app.live.changed([{type:'notifications.test',id}]);
   const finish=(r:Request,state:State)=>{app.db.prepare('UPDATE notifications_tests SET state=? WHERE id=?').run(state,r.id);publish(r.id);};
-  function target(member:string,ref:string){
-    if(!allowed({kind:'member',id:member}))return;
-    const f=s.sessions.read();
-    const hit=Object.entries(f.push?.subs??{}).find(([ep,d])=>deviceRef(ep)===ref&&notificationMember(s,d,f)===member);
-    if(!hit||f.push?.removed?.includes(hash(hit[0])))return;
-    const parsed=subscription.safeParse(hit[1].sub);
-    if(!parsed.success||parsed.data.endpoint!==hit[0]||!f.push?.vapid)return;
-    const {publicKey,privateKey}=f.push.vapid;
-    if(!publicKey||!privateKey)return;
-    return {sub:parsed.data,vapid:{publicKey,privateKey},binding:hash(JSON.stringify([member,hit[0],hit[1],f.push.vapid]))};
-  }
+  const target=(member:string,ref:string)=>notificationTarget(s,sharing.sharing(),member,ref);
   let stopped=false,running:Promise<void>|undefined,again=false,cancel:(()=>void)|undefined;
   const active=()=>!stopped&&!isClosing(app);
   function schedule(){
