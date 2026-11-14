@@ -1203,3 +1203,16 @@ composition with a persistent holder and a worker input using the original
 remote worker proof. Staging still prevents dispatch before the holder reads.
 This does not install configuration or enable public/granted get; production
 worker orchestration and final owner-present activation remain move work.
+
+
+The returned source-only `startPersistentHolder` handle also exposes
+`replaceWorkers(selected)`. It snapshots and validates every new binding, pin,
+TLS file and private socket selection against the fixed daemon/read/mutation/
+handoff endpoints before constructing clients or retiring the current routes.
+An invalid selection leaves the original routes available. An empty selection
+removes them all; an equal selection still retires original outstanding claims.
+Replacement closes retired worker clients after route retirement, and shutdown
+drains replacements before closing ticket authority and persistent storage.
+No operation or file watcher receives this control, and it cannot add handoff to
+a process started without handoff configuration. This is a holder lifecycle seam;
+the production Runtime owning runner still must drive the selections.

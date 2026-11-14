@@ -20,6 +20,7 @@ import {localHolderMutations} from './holder-mutations.js';
 import {localHolderHandoff} from './holder-handoff.js';
 import * as storage from './holder-store.js';
 import * as authority from './ticket-authority.js';
+import * as workerTransport from '../../runtime-runner/secret-transport.js';
 const closes:Array<()=>unknown>=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of closes.splice(0).reverse())await close();});
 async function setup(staging=false) {
@@ -185,4 +186,127 @@ it('failed startup drains an original authenticated mutation authority await bef
   expect(existsSync(join(f.config.directory,'holder.db'))).toBe(false);
  }finally {respond();reply.mockRestore();expect(await starting).toEqual(Error('Persistent secret holder could not start'));}
  expect(clientClose).toHaveBeenCalledOnce();expect(stopped).toBe(true);
+});
+
+it('owner replacement installs a fresh pinned route without restarting persistent storage',async()=>{
+ const f=await setup();const selected=f.config.handoff.workers.map(w=>({...w,config:{...w.config},binding:{...w.binding}}));
+ f.config.handoff.workers=[];f.save();const holder=await f.start();await f.put();
+ await holder.replaceWorkers(selected);
+ // Owner input is a snapshot, never a retained mutable endpoint or assignment.
+ selected[0].config.socket='/missing';selected[0].binding.claimedAt++;
+ const id=await f.admit();await f.admission.dispatch();
+ expect(f.received).toEqual(['SYNTHETIC-PERSISTENT-HANDOFF']);
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(id)).toEqual({state:'released'});
+});
+it.each(['empty','equal'] as const)('owner %s replacement fences a held original source read',async kind=>{
+ const f=await setup(),actual=storage.openHolderStore;let entered!:()=>void,resume!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{resume=r;});
+ vi.spyOn(storage,'openHolderStore').mockImplementation(async(...args)=>{
+  const store=await actual(...args);return {...store,async read(name:string){const bytes=await store.read(name);entered();await hold;return bytes;}};
+ });
+ const transport=workerTransport.workerSecretTransport;let admitted:string|undefined;
+ vi.spyOn(workerTransport,'workerSecretTransport').mockImplementation((...args)=>{
+  const client=transport(...args),close=client.close;return {...client,async close(){
+   if(admitted)expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(admitted)).toEqual({state:'uncertain'});
+   await close();
+  }};
+ });
+ const holder=await f.start();await f.put();const id=await f.admit();admitted=id;const delivery=f.admission.dispatch().catch(e=>e);await ready;
+ try {
+  await holder.replaceWorkers(kind==='empty'?[]:f.config.handoff.workers);
+  expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(id)).toEqual({state:'uncertain'});
+ }finally{resume();}
+ expect(await delivery).toBeInstanceOf(Error);expect(f.received).toEqual([]);
+});
+it.each(['duplicate','reserved','alias','directory','file','symlink','tls','pin','unknown'] as const)('invalid dynamic %s selection leaves original routes usable',async kind=>{
+ const f=await setup(),holder=await f.start();await f.put();
+ const selected=f.config.handoff.workers.map(w=>({...w,config:{...w.config},binding:{...w.binding}}));
+ const w=selected[0];
+ if(kind==='duplicate')selected.push({...w});
+ if(kind==='reserved')w.config.socket=f.config.read.socket;
+ if(kind==='alias')w.config.socket=f.home+'/./input.sock';
+ if(kind==='directory'){mkdirSync(join(f.home,'public'),{mode:0o755});chmodSync(join(f.home,'public'),0o755);w.config.socket=join(f.home,'public','input.sock');}
+ if(kind==='file'){w.config.socket=join(f.home,'file.sock');writeFileSync(w.config.socket,'occupied',{mode:0o600});}
+ if(kind==='symlink'){w.config.socket=join(f.home,'alias.sock');symlinkSync(f.config.handoff.workers[0].config.socket,w.config.socket);}
+ if(kind==='tls')w.config.key=join(f.home,'missing-key');
+ if(kind==='pin')w.fingerprint='bad-pin';
+ if(kind==='unknown')Object.assign(w,{extra:true});
+ await expect(holder.replaceWorkers(selected)).rejects.toThrow(/^Persistent secret holder routes unavailable$/);
+ await f.admit();await f.admission.dispatch();expect(f.received).toEqual(['SYNTHETIC-PERSISTENT-HANDOFF']);
+});
+it('closed persistent holder cannot install routes or reopen clients',async()=>{
+ const f=await setup(),holder=await f.start();await holder.close();
+ await expect(holder.replaceWorkers(f.config.handoff.workers)).rejects.toThrow(/^Persistent secret holder routes unavailable$/);
+});
+it('persistent startup without handoff never gains a handoff listener by owner replacement',async()=>{
+ const f=await setup();const {handoff:_,...config}=f.config;writeFileSync(f.file,JSON.stringify(config),{mode:0o600});
+ const holder=await f.start();await expect(holder.replaceWorkers(f.config.handoff.workers)).rejects.toThrow();
+ expect(existsSync(f.config.handoff.listen.socket)).toBe(false);
+});
+
+it('shutdown drains concurrent replacement settlement before closing original authority or storage',async()=>{
+ const f=await setup(),actual=storage.openHolderStore,minted=vi.spyOn(authority,'remoteTicketAuthority');
+ let readEntered!:()=>void,readResume!:()=>void,settleEntered!:()=>void,settleResume!:()=>void;
+ const reading=new Promise<void>(r=>{readEntered=r;}),readHold=new Promise<void>(r=>{readResume=r;});
+ const settling=new Promise<void>(r=>{settleEntered=r;}),settleHold=new Promise<void>(r=>{settleResume=r;});
+ const closed=vi.fn();
+ vi.spyOn(storage,'openHolderStore').mockImplementation(async(...args)=>{
+  const store=await actual(...args);return {...store,async read(name:string){const bytes=await store.read(name);readEntered();await readHold;return bytes;},close(){closed();store.close();}};
+ });
+ const end=ServerResponse.prototype.end;
+ vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
+  if(this.req.url?.endsWith('/uncertain')){settleEntered();void settleHold.then(()=>end.apply(this,args));return this;}
+  return end.apply(this,args);
+ });
+ const holder=await f.start(),clientClose=vi.spyOn(minted.mock.results[0].value as ReturnType<typeof authority.remoteTicketAuthority>,'close');
+ await f.put();await f.admit();const delivery=f.admission.dispatch().catch(e=>e);await reading;
+ const first=holder.replaceWorkers([]);await settling;
+ const second=holder.replaceWorkers(f.config.handoff.workers);
+ let drained=false;const closing=holder.close().then(()=>{drained=true;});
+ try {
+  readResume();await delivery;await new Promise<void>(r=>setImmediate(r));
+  expect(drained).toBe(false);expect(closed).not.toHaveBeenCalled();expect(clientClose).not.toHaveBeenCalled();
+ }finally{readResume();settleResume();await Promise.all([first,second,closing]);}
+ expect(closed).toHaveBeenCalledOnce();expect(clientClose).toHaveBeenCalledOnce();expect(f.received).toEqual([]);
+});
+
+it('closes only retired clients at replacement and current clients at shutdown',async()=>{
+ const f=await setup(),actual=workerTransport.workerSecretTransport,clients:Array<ReturnType<typeof actual>>=[];
+ vi.spyOn(workerTransport,'workerSecretTransport').mockImplementation((...args)=>{const client=actual(...args);vi.spyOn(client,'close');clients.push(client);return client;});
+ const holder=await f.start();await holder.replaceWorkers(f.config.handoff.workers);
+ expect(clients).toHaveLength(2);expect(clients[0].close).toHaveBeenCalledOnce();expect(clients[1].close).not.toHaveBeenCalled();
+ await holder.close();expect(clients[0].close).toHaveBeenCalledOnce();expect(clients[1].close).toHaveBeenCalledOnce();
+});
+it('failed later client construction drains partial clients while keeping the original route',async()=>{
+ const f=await setup(),holder=await f.start(),actual=workerTransport.workerSecretTransport;
+ const partial:Array<ReturnType<typeof actual>>=[];
+ const spy=vi.spyOn(workerTransport,'workerSecretTransport').mockImplementation((...args)=>{
+  if(partial.length)throw Error('synthetic construction failure');
+  const client=actual(...args);vi.spyOn(client,'close');partial.push(client);return client;
+ });
+ const first=f.config.handoff.workers[0],second={...first,binding:{...first.binding,job:randomUUID()},config:{...first.config,socket:join(f.home,'second-worker.sock')}};
+ await expect(holder.replaceWorkers([first,second])).rejects.toThrow(/^Persistent secret holder routes unavailable$/);
+ expect(partial[0].close).toHaveBeenCalledOnce();spy.mockRestore();
+ await f.put();await f.admit();await f.admission.dispatch();expect(f.received).toEqual(['SYNTHETIC-PERSISTENT-HANDOFF']);
+});
+it('shutdown waits for retired client close across concurrent replacements',async()=>{
+ const f=await setup(),actual=workerTransport.workerSecretTransport,open=storage.openHolderStore;
+ let entered!:()=>void,resume!:()=>void;const ready=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{resume=r;});
+ let first=true;const closed=vi.fn(),minted=vi.spyOn(authority,'remoteTicketAuthority');
+ vi.spyOn(storage,'openHolderStore').mockImplementation(async(...args)=>{const store=await open(...args);return {...store,close(){closed();store.close();}};});
+ vi.spyOn(workerTransport,'workerSecretTransport').mockImplementation((...args)=>{
+  const client=actual(...args);if(first){first=false;const close=client.close;client.close=async()=>{entered();await hold;await close();};}return client;
+ });
+ const holder=await f.start(),clientClose=vi.spyOn(minted.mock.results[0].value as ReturnType<typeof authority.remoteTicketAuthority>,'close');
+ const replacing=holder.replaceWorkers(f.config.handoff.workers);await ready;
+ await holder.replaceWorkers([]);let drained=false;const closing=holder.close().then(()=>{drained=true;});
+ try {await new Promise<void>(r=>setImmediate(r));expect(drained).toBe(false);expect(closed).not.toHaveBeenCalled();expect(clientClose).not.toHaveBeenCalled();}
+ finally{resume();await Promise.all([replacing,closing]);}
+ expect(closed).toHaveBeenCalledOnce();expect(clientClose).toHaveBeenCalledOnce();
+});
+it('preflights a later invalid route before constructing even the first new client',async()=>{
+ const f=await setup(),holder=await f.start(),construct=vi.spyOn(workerTransport,'workerSecretTransport');
+ const first=f.config.handoff.workers[0],second={...first,binding:{...first.binding,job:randomUUID()},config:{...first.config,key:join(f.home,'missing-key'),socket:join(f.home,'second-worker.sock')}};
+ await expect(holder.replaceWorkers([first,second])).rejects.toThrow();expect(construct).not.toHaveBeenCalled();
+ await f.put();await f.admit();await f.admission.dispatch();expect(f.received).toEqual(['SYNTHETIC-PERSISTENT-HANDOFF']);
 });
