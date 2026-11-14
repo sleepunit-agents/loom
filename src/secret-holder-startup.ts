@@ -12,7 +12,9 @@ import { remoteTicketAuthority } from './pieces/secrets/ticket-authority.js';
 import { secretInputBindingSchema } from './pieces/secrets/worker-binding.js';
 import { workerSecretTransport } from './runtime-runner/secret-transport.js';
 const clientTls=holderTls.extend({servername:z.hostname()});
+const ownerPeer=z.object({config:clientTls,fingerprint:certificateFingerprint}).strict();
 const handoffSchema=z.object({listen:holderTls,authority:clientTls,
+  ownerPeers:z.array(ownerPeer).max(1024).optional(),
   workers:z.array(z.object({binding:secretInputBindingSchema,config:clientTls,fingerprint:certificateFingerprint}).strict()).max(1024)}).strict();
 export type PersistentHolderWorkers=z.infer<typeof handoffSchema>['workers'];
 const path=z.string().refine(isAbsolute);
@@ -20,7 +22,7 @@ const configSchema=z.object({read:holderTls,mutation:holderTls,authority:holderT
   directory:path,identity:path,fingerprintKey:path,previousIdentities:z.array(path).max(31).optional(),
   previousFingerprintKeys:z.array(path).max(31).optional(),daemonFingerprint:certificateFingerprint,handoff:handoffSchema.optional()}).strict();
 
-export async function startPersistentHolder(file:string) {
+export async function startPersistentHolder(file:string,owned=false) {
   let bytes:Buffer|undefined;
   let store:Awaited<ReturnType<typeof openHolderStore>>|undefined;
   let reader:Awaited<ReturnType<typeof listenLocalHolder>>|undefined;
@@ -45,9 +47,11 @@ export async function startPersistentHolder(file:string) {
   try {
     bytes=privateBytes(file);
     const config=configSchema.parse(JSON.parse(bytes.toString('utf8')));
+    if(owned&&(!config.handoff?.ownerPeers?.length||config.handoff.workers.length))throw Error();
+    if(!owned&&config.handoff?.ownerPeers)throw Error();
     const reserved=[config.read,config.mutation,config.authority,
       ...(config.handoff?[config.handoff.listen,config.handoff.authority]:[])];
-    const preflight=(workers:PersistentHolderWorkers)=>{
+    const preflight=(workers:readonly z.infer<typeof ownerPeer>[])=>{
     const endpoints=[...reserved,...workers.map(w=>w.config)];
     // Reject lexical and filesystem aliases before comparing selections. A
     // not-yet-bound socket may be absent; its private parent must already exist.
@@ -66,7 +70,9 @@ export async function startPersistentHolder(file:string) {
       const material=tlsMaterial(endpoint);for(const bytes of Object.values(material))bytes.fill(0);
     }
     };
-    preflight(config.handoff?.workers??[]);
+    preflight([...(config.handoff?.workers??[]),...(config.handoff?.ownerPeers??[])]);
+    const peers=config.handoff?.ownerPeers??[];
+    if(new Set(peers.map(p=>p.fingerprint)).size!==peers.length)throw Error();
     const select=(workers:PersistentHolderWorkers)=>{
       const start=transports.length;
       try {return workers.map(w=>{
@@ -81,7 +87,7 @@ export async function startPersistentHolder(file:string) {
     };
     if(config.handoff) {
       tickets=remoteTicketAuthority(config.handoff.authority,config.daemonFingerprint);
-      routes=managedHolderAuthority(tickets,select(config.handoff.workers));
+      routes=managedHolderAuthority(tickets,select(config.handoff.workers),{owned});
     }
     const authority=remoteHolderAuthority(config.authority,config.daemonFingerprint);
     // Bind every fallible listener before committing key history. Until the
@@ -98,7 +104,16 @@ export async function startPersistentHolder(file:string) {
     store=await openHolderStore(config.directory,config.identity,config.fingerprintKey,
       {identities:config.previousIdentities,fingerprintKeys:config.previousFingerprintKeys});
     available=true;
-    return Object.freeze({
+    const handle={
+      /** Inherited owner channel selects only preflighted local peers. A
+       * binding is routing metadata, never a replacement for ticket authority. */
+      replaceOwnedWorkers(selected:readonly {binding:z.infer<typeof secretInputBindingSchema>;fingerprint:string}[]):Promise<void> {
+        if(!owned)return Promise.reject(new Error('Persistent secret holder routes unavailable'));
+        try {return handle.replaceWorkers(selected.map(w=>{
+          const peer=peers.find(p=>p.fingerprint===w.fingerprint);if(!peer)throw Error();
+          return {...peer,binding:w.binding};
+        }));}catch {return Promise.reject(new Error('Persistent secret holder routes unavailable'));}
+      },
       /** Private owner lifecycle capability, never exposed by an operation or
        * file watcher. Equal selections retire original outstanding claims too.
        * This does not mint Runtime assignments, grants or worker proofs. */
@@ -124,7 +139,8 @@ export async function startPersistentHolder(file:string) {
         }catch {return Promise.reject(new Error('Persistent secret holder routes unavailable'));}
       },
       close(){return closing??=cleanup();},
-    });
+    };
+    return Object.freeze(handle);
   } catch {
     try {await cleanup();} catch { /* Keep startup errors private. */ }
     throw new Error('Persistent secret holder could not start');
