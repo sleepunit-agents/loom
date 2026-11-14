@@ -1,5 +1,5 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,existsSync,chmodSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,readFileSync,writeFileSync,rmSync,existsSync,chmodSync,readdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -48,6 +48,7 @@ it('composes persistent holder and actual current database authority across rest
   const s=await setup(),clock=new FakeClock();
   let app=await startLoom({home:s.appHome,next:true,staging:true,clock,secretAuthority:s.authority,stdout:()=>{}});
   let holder=await startPersistentHolder(s.file);
+  expect(readdirSync(s.home).filter(name=>name.endsWith('.sock')).sort()).toEqual(['authority.sock','mutation.sock','read.sock']);
   closes.push(async()=>{await holder.close();await app.close();});
   const api=localHolderMutations(s.client),source=localSecretSource({...s.client,socket:s.config.read.socket});
   const who={member:'jonathan',writeId:randomUUID()},value='PERSISTENT-LIFECYCLE-SENTINEL';
