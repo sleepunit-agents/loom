@@ -10,6 +10,7 @@ import type {RuntimeRecords} from './records.js';
 import {runtimeDestination} from './destination.js';
 import {provenanceStore} from './provenance-store.js';
 import {hearJob} from './heartbeat.js';
+import {recordPublicIncoming} from './public-incoming.js';
 type Job=RuntimeRecords['job'];
 interface Input {seq:number;id:string;conversation:string;job:string;record:string;destination:string;released:number|null;consumed:number|null}
 interface Question {id:string;conversation:string;job:string;destination:string;question:string}
@@ -100,7 +101,13 @@ export function installPublicInputs(app:Foundation,sharing:()=>Sharing,effects:O
   run(ctx,i){const job=bound(ctx.viewer)!;
    const rows=db.prepare('SELECT * FROM runtime_public_inputs WHERE job=? AND seq<=?').all(job.id,i.through) as Input[];
    if(!rows.some(r=>r.seq===i.through)||rows.some(r=>r.released===null||r.destination!==destination(job)||r.conversation!==job.conversation))throw new OperationError('conflict','Public input has not been released to this destination');
-   for(const row of rows)db.prepare('UPDATE runtime_public_inputs SET consumed=COALESCE(consumed,?) WHERE id=?').run(ctx.now,row.id);
+   for(const row of rows){
+    if(row.consumed===null){
+     const record=JSON.parse(row.record) as {from:{kind:'person';slug:string}};
+     recordPublicIncoming(app,ctx,job,{id:row.id,kind:'message',from:record.from});
+    }
+    db.prepare('UPDATE runtime_public_inputs SET consumed=COALESCE(consumed,?) WHERE id=?').run(ctx.now,row.id);
+   }
    provenanceStore(db).consumed(job.conversation!,rows.map(row=>row.id));
    hearJob(db,job.id,ctx.now);ctx.changed('runtime.job',job.id);return {job:job.id,acknowledged:true as const};
   },

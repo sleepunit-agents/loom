@@ -140,6 +140,8 @@ it('refuses metadata when service exclusion is the only hold on an otherwise cur
  f.put('job',{...f.store.read('job',f.job)!,service:'restricted'});
  const body=f.token(`agent:art/restricted@${f.job}`);
  expect(await f.post(body,'readConversation',{})).toMatchObject({ok:true});
+ const serviceRead=await f.post(body,'readConversation',{});
+ expect(await f.post(body,'acknowledgeClockInput',{through:serviceRead.value.messages[0].seq})).toMatchObject({ok:true});
  expect(await f.post(body,'recordTurn',turn)).toMatchObject({ok:false,code:'denied'});
  expect(await f.post(body,'writeDigest',{digest})).toMatchObject({ok:false,code:'denied'});
  expect(f.app.db.prepare('SELECT * FROM attention_conversations').all()).toEqual([]);
@@ -215,4 +217,67 @@ it('derives each turn timestamp from the current foundation clock',async()=>{
  f.clock.advance(1234);const second=new Date(f.clock.now()).toISOString();expect(second).not.toBe(first);
  expect(await f.post(f.body,'recordTurn',turn)).toMatchObject({ok:true});
  expect(f.call('attention.turns',{conversation:f.canonical})).toMatchObject({ok:true,value:[{at:first},{at:second}]});
+});
+
+it('records accepted scheduled input once at ACK time, without projecting queued or merely read words',async()=>{
+ const f=await setup(false,'pond');
+ const turns=()=>f.call('attention.turns',{conversation:f.canonical});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual([]);
+ const read=await f.post(f.body,'readConversation',{});expect(read).toMatchObject({ok:true});
+ const through=read.value.messages[0].seq;
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual([]);
+ f.clock.advance(567);
+ const ack=await f.post(f.body,'acknowledgeClockInput',{through},'incoming-ack');expect(ack).toMatchObject({ok:true});
+ expect(turns()).toMatchObject({ok:true,value:[{seq:1,agent:'art',project:'pond',kind:'wake',from:{kind:'schedule'},venue:'runtime-clock',place:f.conversation,at:new Date(f.clock.now()).toISOString()}]});
+ expect(await f.post(f.body,'acknowledgeClockInput',{through},'incoming-ack')).toEqual(ack);
+ f.clock.advance(1000);
+ expect(await f.post(f.body,'acknowledgeClockInput',{through})).toMatchObject({ok:true});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(1);
+ expect(JSON.stringify(f.app.db.prepare('SELECT * FROM attention_turns').all())).not.toContain('SCHEDULED WORDS');
+ const reply=await f.post(f.body,'recordTurn',{kind:'reply',outcome:'answered'});expect(reply).toMatchObject({ok:true});expect(reply.value).not.toHaveProperty('latency_ms');
+});
+it.each(['create','update','sql'] as const)('rolls back scheduled acceptance and nested metadata receipts on %s failure',async failure=>{
+ const f=await setup();
+ if(failure==='update')expect(await f.post(f.body,'recordTurn',turn)).toMatchObject({ok:true});
+ const before=f.app.db.prepare('SELECT * FROM attention_turns').all();
+ const read=await f.post(f.body,'readConversation',{});expect(read).toMatchObject({ok:true});
+ const through=read.value.messages[0].seq;
+ if(failure==='sql')f.app.db.exec("CREATE TRIGGER fail_incoming BEFORE UPDATE OF consumed ON runtime_clock_turns BEGIN SELECT RAISE(ABORT,'fixture ACK failure'); END");
+ else {const name=failure==='create'?'mayCreate':'mayAct',original=policy[name];vi.spyOn(policy,name).mockImplementation((v,r,s,...rest)=>r.type==='attention.conversation'?false:original(v,r,s,...rest));}
+ expect(await f.post(f.body,'acknowledgeClockInput',{through},'rollback-incoming')).toMatchObject({ok:false});
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns').get()).toEqual({consumed:null});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual(before);
+ expect(f.app.db.prepare("SELECT * FROM core_operations WHERE id LIKE 'runtime-incoming:%'").all()).toEqual([]);
+ if(failure==='sql')f.app.db.exec('DROP TRIGGER fail_incoming');else vi.restoreAllMocks();
+ expect(await f.post(f.body,'acknowledgeClockInput',{through},'rollback-incoming')).toMatchObject({ok:true});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(before.length+1);
+});
+it('keeps private Clock accepted input out of public Attention metadata',async()=>{
+ const f=await setup(true),read=await f.post(f.body,'readConversation',{});expect(read).toMatchObject({ok:true});
+ expect(await f.post(f.body,'acknowledgeClockInput',{through:read.value.messages[0].seq})).toMatchObject({ok:true});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual([]);
+});
+it('projects each joined scheduled source exactly once in source order across overlapping ACKs',async()=>{
+ const f=await setup();
+ const joined=await (await fetch(`${f.app.url}/api/clock/in`,{method:'POST',headers:{authorization:`Bearer ${f.body}`,'content-type':'application/json'},body:JSON.stringify({input:{agent:'art',prompt:'JOINED SECRET WORDS',note:'joined',place:f.store.read('binding',f.conversation)!.place,when:'1s'},id:'join-metadata'})})).json();
+ expect(joined).toMatchObject({ok:true});
+ f.clock.advance(1000);for(let i=0;i<12;i++)await Promise.resolve();
+ expect(f.store.ids('job')).toEqual([f.job]);
+ const read=await f.post(f.body,'readConversation',{});expect(read).toMatchObject({ok:true});expect(read.value.messages).toHaveLength(2);
+ for(const through of read.value.messages.map((m:{seq:number})=>m.seq))expect(await f.post(f.body,'acknowledgeClockInput',{through})).toMatchObject({ok:true});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(2);
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns').all()).toEqual([{consumed:f.clock.now()},{consumed:f.clock.now()}]);
+ expect(JSON.stringify(f.app.db.prepare('SELECT * FROM attention_turns').all())).not.toContain('SECRET WORDS');
+});
+it('native Clock completion uses the same atomic accepted-input metadata path',async()=>{
+ const f=await setup(),execution=await f.post(f.body,'beginClockExecution',{});expect(execution).toMatchObject({ok:true});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toEqual([]);f.clock.advance(321);
+ const name='mayCreate',original=policy[name];vi.spyOn(policy,name).mockImplementation((v,r,s,...rest)=>r.type==='attention.conversation'?false:original(v,r,s,...rest));
+ expect(await f.post(f.body,'completeClockExecution',{execution:execution.value.execution},'native-metadata')).toMatchObject({ok:false});
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns').get()).toEqual({consumed:null});vi.restoreAllMocks();
+ expect(await f.post(f.body,'completeClockExecution',{execution:execution.value.execution},'native-metadata')).toMatchObject({ok:true});
+ const accepted=f.app.db.prepare('SELECT record FROM attention_turns').all() as {record:string}[];expect(accepted).toHaveLength(1);expect(JSON.parse(accepted[0].record).at).toBe(new Date(f.clock.now()).toISOString());
+ expect(await f.post(f.body,'completeClockExecution',{execution:execution.value.execution},'native-metadata')).toMatchObject({ok:true});
+ expect(f.app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(1);
+ f.clock.advance(1000);const reply=await f.post(f.body,'recordTurn',{kind:'reply',outcome:'answered'});expect(reply).toMatchObject({ok:true});expect(reply.value).not.toHaveProperty('latency_ms');
 });
