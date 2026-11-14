@@ -211,6 +211,15 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
   await expect.poll(()=>b.getByRole('region',{name:'Work in this thread'}).textContent()).toContain('Blocked');
   const badge=b.getByRole('region',{name:'Work in this thread'}).locator('[data-tone="bad"]');
   expect(await badge.evaluate(el=>getComputedStyle(el).color!==getComputedStyle(el.parentElement!).color)).toBe(true);
+  // Cited work has no made-here claim; notes stay unlinked and unknown forge
+  // pointers use only the owning Changes feed's canonical GitHub destination.
+  await comms.post('art',place,{id:'cited-work-fixture',kind:'reply',text:`See ${blockerId}, acme/untracked#93 and note:pond/plan.`});
+  const workRegion=b.getByRole('region',{name:'Work in this thread'});
+  await expect.poll(()=>workRegion.getByRole('link',{name:'Blocking fixture work'}).count()).toBe(1);
+  expect(await workRegion.getByRole('link',{name:'Blocking fixture work'}).locator('..').textContent()).not.toContain('Made here');
+  expect(await workRegion.getByRole('link',{name:'acme/untracked#93'}).getAttribute('href')).toBe('https://github.com/acme/untracked/issues/93');
+  expect(await workRegion.locator('code').textContent()).toBe('pond/plan');
+  expect(await workRegion.getByRole('link',{name:'pond/plan'}).count()).toBe(0);
   await capture('comms-work',true);
   // At desktop widths the region is visible beside the message column without a toggle.
   expect(await b.getByRole('button',{name:/^Work/}).count()).toBe(0);

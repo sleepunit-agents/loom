@@ -193,3 +193,57 @@ it('retains word-free refs across the actual Comms expiry sweep',async()=>{
  expect(s.app.db.prepare('SELECT words FROM comms_messages WHERE thread=? AND kind=?').all(s.thread,'message').every((r:unknown)=>(r as {words:unknown}).words===null)).toBe(true);
  expect(s.app.db.prepare('SELECT ref FROM comms_refs WHERE thread=?').all(s.thread)).toEqual([{ref:'t-911'}]);
 });
+
+it('resolves cited work with the original viewer and leaves notes as pointers without opening their contents',async()=>{
+ const s=await setup();
+ s.task('t-12','cv-000000000000');s.task('t-13','cv-000000000000','hidden');s.task('t-14');
+ replaceChanges(s.app.db,[change({project:'pond',agent:'art',conflicts:true}),change({id:'github:secret/app#4',repo:'github:secret/app',number:4,page:'c/github/secret/app/4',project:'hidden',agent:'art',title:'HIDDEN TITLE'})]);
+ await s.call('send',{thread:s.thread,id:'eeeeeeeeeeeeeeee',text:'PLANTED t-12 t-13 acme/app#3 secret/app#4 new/repo#5 note:pond/plan'});
+ const result=await s.call('work',{thread:s.thread});expect(result.ok).toBe(true);if(!result.ok)return;
+ const items=(result.value as {items:Record<string,unknown>[]}).items;
+ expect(items[0]).toMatchObject({ref:'github:acme/app#3',status:'Conflicts',tone:'bad',url:'/p/changes-preview/change/github%3Aacme%2Fapp%233'});
+ expect(items).toContainEqual(expect.objectContaining({ref:'t-12',url:'/p/tasks-preview/task/t-12'}));
+ expect(items.find(i=>i.ref==='t-12')).not.toHaveProperty('made');
+ expect(items.find(i=>i.ref==='github:acme/app#3')).not.toHaveProperty('made');
+ expect(items).toContainEqual(expect.objectContaining({ref:'t-14',made:true}));
+ expect(items).toContainEqual({ref:'note:pond/plan',title:'pond/plan',status:'Note',from:'notes'});
+ expect(items).toContainEqual(expect.objectContaining({ref:'github:new/repo#5',status:'Not tracked',url:'https://github.com/new/repo/issues/5'}));
+ expect(JSON.stringify(result)).not.toMatch(/HIDDEN TITLE|secret\/app|Work t-13|PLANTED/);
+ s.sharing.projects.pond.members=[];
+ const hidden=await s.call('work',{thread:s.thread});expect(JSON.stringify(hidden)).not.toMatch(/Work t-12|Work t-14|A change/);
+});
+
+it('refreshes live cited rows on appended references, owning-piece edits without decrypting old messages',async()=>{
+ const s=await setup();s.task('t-12','cv-000000000000');
+ const a=await socket(s);expect(await a.next()).toMatchObject({kind:'set',records:[{items:[]}]});
+ await s.comms.post('art',s.thread,{id:'cited-reply',kind:'reply',text:'t-12 note:pond/plan'});
+ expect(await a.next()).toMatchObject({kind:'put',record:{items:expect.arrayContaining([{ref:'note:pond/plan',title:'pond/plan',status:'Note',from:'notes'},expect.objectContaining({ref:'t-12'})])}});
+ // Simulate already swept words: only owning-piece rows and the word-free
+ // index are needed for subsequent work reads and subscription refreshes.
+ s.app.db.prepare('UPDATE comms_messages SET words=NULL WHERE thread=?').run(s.thread);
+ expect(s.app.operations.call('direct',{kind:'member',id:'other'},'tasks.close',{id:'t-12',actor:'art',at:new Date(s.clock.now()).toISOString()},'close-cited')).toMatchObject({ok:true});
+ expect(await a.next()).toMatchObject({kind:'put',record:{items:expect.arrayContaining([expect.objectContaining({ref:'t-12',status:'Done'})])}});
+ expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:expect.arrayContaining([expect.objectContaining({ref:'t-12',status:'Done'})])}});
+});
+
+it('prefers a whole made-here task over a cited Change with the same imported ref',async()=>{
+ const s=await setup();s.task('github:acme/app#3');replaceChanges(s.app.db,[change({project:'pond',agent:'art'})]);
+ await s.comms.post('art',s.thread,{id:'citation',kind:'reply',text:'acme/app#3'});
+ expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{ref:'github:acme/app#3',title:'Work github:acme/app#3',made:true,from:'tasks',status:'Open',url:'/p/tasks-preview/task/~github%3Aacme%2Fapp%233'}]}});
+});
+
+it.each([
+ {href:'javascript:alert(1)'},
+ {href:'https://github.com.evil/acme/app/issues/3'},
+ {href:'https://github.com/acme/app/issues/3?next=evil'},
+ {href:'https://github.com/acme/app/issues/4'},
+ {page:'../../evil'},
+ {page:'c/github/acme/app/4'},
+ {page:'c/github/acme/app/3',href:'https://github.com/acme/app/issues/3'},
+ {page:'c/github/acme/app/3',unknown:'PRIVATE'},
+])('fails a malformed Changes feed alone: %j',async pointer=>{
+ const s=await setup();s.task('t-1');
+ const original=s.app.operations.call.bind(s.app.operations);
+ const spy=vi.spyOn(s.app.operations,'call').mockImplementation((door,viewer,name,input,id,window)=>name==='changes.thread-feed'?{ok:true,value:{items:[{title:'Unsafe',ref:'github:acme/app#3',status:'Not tracked',...pointer}]}}:original(door,viewer,name,input,id,window));
+ try {expect(await s.call('work',{thread:s.thread})).toMatchObject({ok:true,value:{items:[{ref:'t-1'}],failed:['Changes']}});}finally{spy.mockRestore();}
+});
