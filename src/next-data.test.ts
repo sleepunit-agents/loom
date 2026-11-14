@@ -7,6 +7,7 @@ import { WebSocket } from 'ws';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { nextData } from './next-data.js';
+import * as s from './core/data/schema.js';
 
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -52,7 +53,7 @@ async function setup() {
     return ws;
   }
   const post = (headers: Record<string,string>) => data.http.request('/graphql', {method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify({query})});
-  return {client,clock,pending,data,url,bind,open,post};
+  return {client,db,clock,pending,data,url,bind,open,post};
 }
 async function read(ws: WebSocket, action: () => void) {
   const received = once(ws,'message'); action(); return JSON.parse(String((await received)[0]));
@@ -126,4 +127,109 @@ it('mounts all five HTTP projection tables with current visibility on the socket
   f.data.writes.run(()=>f.client.exec("DELETE FROM project_members WHERE member='sam'"));
   const patches = JSON.parse(String((await message)[0])).payload.data.observe.patches;
   for (const table of ['tasks','taskComments','taskLinks','projects','agents']) expect(patches.some((p: {path:string[];removed:boolean})=>p.path[0]===table&&p.removed)).toBe(true);
+});
+
+const emptyProjection = (value: Record<string, unknown>) => Object.fromEntries(Object.keys(value).map(key=>[key,[]]));
+const workQuery = `{ approvals { id approvalRecordByApproval { note } } approvalRecord { approval }
+  approvalNotices { id } approvalRules { scope } changeSync { failed }
+  changes { id changeChecksByChange { name } changePeopleByChange { login } changeTasksByChange { task } }
+  changeChecks { change } changePeople { change } changeTasks { change task } }`;
+async function workSetup() {
+  const f = await setup(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(s.members).values({id:'lee',role:'member',joinedAt:at}).run();
+  f.db.insert(s.agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
+  f.db.insert(s.memberAgents).values({member:'sam',agent:'art'}).run();
+  for (const [id,member] of [['shared',null],['private','lee']] as const) {
+    f.db.insert(s.approvals).values({id,kind:'command',target:id,what:id,why:id,agent:'art',project:'pond',member,askedFrom:'test',actingFor:'unknown',state:'pending',minutes:5,ask:id,ifYes:'yes',ifNo:'no',details:id,askedAt:at}).run();
+    f.db.insert(s.approvalRecord).values({seq:id==='shared'?1:2,approval:id,agent:'art',at,event:'request',note:id}).run();
+  }
+  f.db.insert(s.changes).values({id:'change',repository:'house/test',number:1,title:'Shared',body:'',url:'',state:'open',draft:false,authorLogin:'art',project:'pond',agent:'art',branch:'work',headCommit:'a'.repeat(40),baseBranch:'next',checks:'running',review:'required',mergeable:'unknown',waitingOn:'ci',openedAt:at,updatedAt:at}).run();
+  f.db.insert(s.changeChecks).values({change:'change',name:'Tests',state:'running'}).run();
+  f.db.insert(s.changePeople).values({change:'change',login:'reviewer',role:'reviewer'}).run();
+  f.db.insert(s.tasks).values({id:'private-task',title:'Private',ownerKind:'member',owner:'lee',createdByKind:'member',createdBy:'lee',createdAt:at,changedAt:at}).run();
+  f.db.insert(s.changeTasks).values(['pump','private-task'].map(task=>({change:'change',task}))).run();
+  f.db.insert(s.approvalNotices).values({id:'notice',agent:'art',kind:'command',target:'test',what:'Done',at}).run();
+  f.db.insert(s.approvalRules).values({kind:'command',scope:'*',person:'',tier:'ask',setBy:'owner',setAt:at}).run();
+  f.db.insert(s.changeSync).values({failed:false}).run();
+  const postWork = (source=workQuery, credential=token) => f.data.http.request('/graphql',{method:'POST',headers:{authorization:`Bearer ${credential}`,'content-type':'application/json'},body:JSON.stringify({query:source})});
+  const observeWork = (ws: WebSocket, source=workQuery) => read(ws,()=>ws.send(JSON.stringify({...selection,payload:{...selection.payload,variables:{query:source}}})));
+  return {...f,at,postWork,observeWork};
+}
+it('mounts Work roots and children on the real shared HTTP and socket with identical privacy', async () => {
+  const f = await workSetup(), ws = await f.open();
+  const http = await (await f.postWork()).json();
+  expect(http.errors).toBeUndefined();
+  const expected = {approvals:[{id:'shared',approvalRecordByApproval:[{note:'shared'}]}],approvalRecord:[{approval:'shared'}],
+    approvalNotices:[{id:'notice'}],approvalRules:[],changeSync:[],changes:[{id:'change',changeChecksByChange:[{name:'Tests'}],changePeopleByChange:[{login:'reviewer'}],changeTasksByChange:[{task:'pump'}]}],
+    changeChecks:[{change:'change'}],changePeople:[{change:'change'}],changeTasks:[{change:'change',task:'pump'}]};
+  expect(http.data).toEqual(expected);
+  expect((await f.observeWork(ws)).payload.data.observe.patches[0].value).toEqual(expected);
+  const changed = await read(ws,()=>{ f.data.writes.run(()=>f.client.exec("DELETE FROM project_members WHERE member='sam'; DELETE FROM member_agents WHERE member='sam'")); });
+  for (const field of ['approvals','approvalRecord','approvalNotices','changes','changeChecks','changePeople','changeTasks'])
+    expect(changed.payload.data.observe.patches).toContainEqual(expect.objectContaining({path:[field,0],removed:true}));
+  expect((await (await f.postWork()).json()).data).toEqual(emptyProjection(expected));
+});
+it('reads owner-private Work only for a current household owner, then withdraws it on demotion', async () => {
+  const f = await workSetup(), ownerToken='o'.repeat(64);
+  f.db.insert(s.tokens).values({fingerprint:hash(ownerToken),label:'Owner',kind:'owner',member:'owner',createdAt:f.at}).run();
+  const ws = await f.open(f.url,{authorization:`Bearer ${ownerToken}`});
+  const first = (await f.observeWork(ws)).payload.data.observe.patches[0].value;
+  expect(first.approvals.map((row:{id:string})=>row.id).sort()).toEqual(['private','shared']);
+  expect(first.approvalRules).toEqual([{scope:'*'}]); expect(first.changeSync).toEqual([{failed:false}]);
+  expect(first.changeTasks).toHaveLength(2);
+  expect((await (await f.postWork(workQuery,ownerToken)).json()).data).toEqual(first);
+  const changed = await read(ws,()=>{f.data.writes.run(()=>f.client.exec("UPDATE members SET role='member' WHERE id='owner'"));});
+  for (const field of Object.keys(first)) expect(changed.payload.data.observe.patches.some((p:{path:string[];removed:boolean})=>p.path[0]===field&&p.removed)).toBe(true);
+  expect((await (await f.postWork(workQuery,ownerToken)).json()).data).toEqual(emptyProjection(first));
+});
+it('keeps credential and operation plumbing outside both Work schemas', async () => {
+  const f = await workSetup(), ws = await f.open();
+  for (const field of ['tokens','sessions','signinLinks','passkeys','notificationDevices','operationResults']) {
+    const query=`{ ${field} { __typename } }`;
+    expect((await (await f.postWork(query)).json()).errors).toBeDefined();
+    const result = await f.observeWork(ws,query);
+    expect(result.payload.errors).toBeDefined();
+    expect(result.payload.data?.observe).toBeUndefined();
+  }
+});
+
+it('gives an agent its shared Work without disclosing member-private approvals and closes on token revocation', async () => {
+  const f = await workSetup(), agentToken='a'.repeat(64);
+  f.db.insert(s.tokens).values({fingerprint:hash(agentToken),label:'Art body',kind:'agent',agent:'art',createdAt:f.at}).run();
+  f.db.insert(s.projectAgents).values({project:'pond',agent:'art'}).run();
+  const ws = await f.open(f.url,{authorization:`Bearer ${agentToken}`});
+  const first = (await f.observeWork(ws)).payload.data.observe.patches[0].value;
+  expect(first.approvals.map((row:{id:string})=>row.id)).toEqual(['shared']);
+  expect(first.approvalRecord).toEqual([{approval:'shared'}]);
+  expect(first.changeTasks).toEqual([{change:'change',task:'pump'}]);
+  expect(first.approvalRules).toEqual([]); expect(first.changeSync).toEqual([]);
+  expect((await (await f.postWork(workQuery,agentToken)).json()).data).toEqual(first);
+  const closed = once(ws,'close');
+  f.data.writes.run(()=>f.client.prepare('UPDATE tokens SET revoked_at=? WHERE fingerprint=?').run(f.at,hash(agentToken)));
+  expect((await closed)[0]).toBe(4403);
+  expect((await f.postWork(workQuery,agentToken)).status).toBe(401);
+});
+
+it('keeps project and agent-owner Work grants independent on retained root reads', async () => {
+  const f = await workSetup(), ws = await f.open();
+  await f.observeWork(ws);
+  // Keep project membership while deleting agent ownership. Shared work must
+  // remain visible, including current HTTP reads, without a reconnect.
+  const projectUpdate = await read(ws,()=>{f.data.writes.run(()=>f.client.exec("DELETE FROM member_agents WHERE member='sam'"));});
+  expect(projectUpdate.payload.data.observe.patches).toContainEqual(expect.objectContaining({path:['approvalNotices',0],removed:true}));
+  const project = (await (await f.postWork()).json()).data;
+  expect(project.approvals.map((row:{id:string})=>row.id)).toEqual(['shared']);
+  expect(project.changes.map((row:{id:string})=>row.id)).toEqual(['change']);
+  // Switch to agent ownership alone in one committed update. Work is still
+  // visible, but project-only task links disappear from the retained watch.
+  const agent = await read(ws,()=>{f.data.writes.run(()=>{
+    f.client.exec("INSERT INTO member_agents(member,agent) VALUES ('sam','art'); DELETE FROM project_members WHERE member='sam'");
+  });});
+  expect(agent.payload.data.observe.patches).toContainEqual(expect.objectContaining({path:['changeTasks',0],removed:true}));
+  const owned = (await (await f.postWork()).json()).data;
+  expect(owned.approvals.map((row:{id:string})=>row.id)).toEqual(['shared']);
+  expect(owned.changes.map((row:{id:string})=>row.id)).toEqual(['change']);
+  expect(owned.changeTasks).toEqual([]);
+  const withdrawn = await read(ws,()=>{f.data.writes.run(()=>f.client.exec("DELETE FROM member_agents WHERE member='sam'"));});
+  expect(withdrawn.payload.data.observe.patches).toContainEqual(expect.objectContaining({path:['changes',0],removed:true}));
 });

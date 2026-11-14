@@ -1,5 +1,6 @@
 /** Shared-data transport composition. No schema creation or legacy credentials. */
 import type { IncomingMessage } from 'node:http';
+import type { Viewer } from './policy.js';
 import type { Clock } from './core/clock.js';
 import type { DataDatabase } from './core/data/database.js';
 import { dataAuthentication } from './core/data/authentication.js';
@@ -8,11 +9,20 @@ import { DataLive } from './core/data/live.js';
 import { dataQueries } from './core/data/queries.js';
 import { dataSocket } from './core/data/socket.js';
 import { taskVisibility } from './core/data/visibility.js';
+import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
 
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string) {
   const authenticate = dataAuthentication(db, () => clock.now());
   const live = new DataLive();
+  // One explicit read projection for both outside doors. Credentials, receipt
+  // plumbing and unrelated domains stay outside the generated schema.
+  const schema = (viewer: Viewer) => dataQueries(db.$client, {
+    tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents',
+      'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
+      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync'],
+    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer) },
+  });
   const socket = dataSocket({ live, clock, originAllowed,
     authenticate(request) {
       const headers = new Headers();
@@ -24,15 +34,12 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       // the authentication authority or provide an alternate credential store.
       return authenticate(new Request('http://localhost/graphql', { headers }));
     },
-    schema: viewer => dataQueries(db.$client, {
-      tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents'],
-      visibility: taskVisibility(viewer),
-    }),
+    schema,
   });
   const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => live.changed() });
   let closing: Promise<void> | undefined;
   return {
-    http: dataHttp(db, authenticate, publicOrigin),
+    http: dataHttp(db, authenticate, publicOrigin, schema),
     attach: socket.attach,
     writes,
     close() { return closing ??= (async () => { await socket.close(); live.close(); })(); },
