@@ -223,3 +223,33 @@ it('rejects a separately valid replacement claim after preparation instead of re
  expect(JSON.stringify(result)).not.toContain('Yes, to:');
  expect(f.app.db.prepare('SELECT consumed FROM runtime_public_inputs').get()).toEqual({consumed:null});
 });
+it.each(['claim','house','binding','scope'] as const)('refuses fresh acknowledgements and prior receipt replay after an independently valid %s change',async drift=>{
+ const f=await setup(),first=await f.ask();
+ expect(await f.post(f.owner,'attention.answer',{id:first,answer:{kind:'yes'}})).toMatchObject({ok:true});
+ const initial=await f.post(f.body,'readPublicInputs',{}),through=initial.value.messages[0].seq;
+ expect(await f.post(f.body,'acknowledgePublicInputs',{through},'original-ack')).toMatchObject({ok:true});
+ const second=await f.ask();expect(await f.post(f.owner,'attention.answer',{id:second,answer:{kind:'no'}})).toMatchObject({ok:true});
+ const pending=await f.post(f.body,'readPublicInputs',{});expect(pending).toMatchObject({ok:true});
+ const job=f.store.read('job',f.job)!,binding=f.store.read('binding',job.conversation!)!;
+ if(drift==='claim')f.put('job',{...job,claimedAt:job.claimedAt!+1});
+ if(drift==='binding')f.put('binding',{...binding,place:'lane:changed-ack'});
+ if(drift==='house'){
+  f.put('job',{...job,made:{...job.made!,repo:'/changed-ack'}});
+  const {changedAt:_,...settings}=f.store.read('settings','art')!;
+  f.app.db.transaction(()=>f.store.put('settings',{...settings,house:{repo:'/changed-ack',houseFile:'house/house.json'}},f.clock.now()))();
+ }
+ if(drift==='scope'){
+  f.put('job',{...job,project:'pond'});f.put('binding',{...binding,project:'pond'});
+  f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.project','pond')").run();
+  const rows=f.app.db.prepare('SELECT id,record FROM runtime_clock_turns').all() as {id:string;record:string}[];
+  for(const row of rows){const s=JSON.parse(row.record),record={text:s.text,member:s.member,project:'pond',agent:s.agent,service:s.service,authorship:s.authorship,by:s.by,attempt:s.attempt,file:s.file};f.app.db.prepare('UPDATE runtime_clock_turns SET record=? WHERE id=?').run(JSON.stringify(record),row.id);}
+ }
+ // The replacement remains independently current: only the old release and
+ // retry generation are forbidden, rather than all owning body operations.
+ expect(await f.post(f.body,'readConversation',{})).toMatchObject({ok:true});
+ const before=f.app.db.prepare('SELECT id,released,consumed FROM runtime_public_inputs ORDER BY seq').all();
+ expect(await f.post(f.body,'acknowledgePublicInputs',{through:pending.value.messages[0].seq},'replacement-ack')).toMatchObject({ok:false,code:'conflict'});
+ expect(await f.post(f.body,'acknowledgePublicInputs',{through},'original-ack')).toMatchObject({ok:false,code:'conflict'});
+ expect(f.app.db.prepare('SELECT id,released,consumed FROM runtime_public_inputs ORDER BY seq').all()).toEqual(before);
+ expect(f.app.db.prepare("SELECT * FROM core_operations WHERE id='replacement-ack'").all()).toEqual([]);
+});
