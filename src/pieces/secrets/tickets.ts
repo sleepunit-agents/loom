@@ -101,7 +101,8 @@ export function secretTickets(app: Foundation, sharing: () => Sharing, effects: 
             settled = true; proofs.delete(id);
             try {
               const fresh = read(id);
-              const certain = acknowledged === true && !!fresh && valid(fresh,d,'claimed');
+              const certain = acknowledged === true && !!fresh && valid(fresh,d,'claimed')
+                && effects.status(effect(id)) === 'started';
               app.db.prepare("UPDATE secrets_tickets SET state=? WHERE id=? AND state='claimed'")
                 .run(certain ? 'released' : 'uncertain',id);
               effects.finish(effect(id),certain);

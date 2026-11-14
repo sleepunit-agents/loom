@@ -136,3 +136,28 @@ it('rejects claiming and settling inside a rollbackable metadata transaction',as
  expect(c.current()).toBe(true);c.finish(false);
  expect(f.app.db.prepare('SELECT state FROM secrets_tickets').get()).toEqual({state:'uncertain'});
 });
+it('refuses a moved grant and a retained grant whose secret name no longer exists',async()=>{
+ const f=await setup();
+ const row=f.app.db.prepare('SELECT id,record FROM secrets_grants').get() as {id:string;record:string};
+ f.app.db.prepare('UPDATE secrets_grants SET record=? WHERE id=?').run(JSON.stringify({...JSON.parse(row.record),movedTo:'q-synthetic'}),row.id);
+ expect(f.admit).toThrow('Secret handoff unavailable');
+ f.app.db.prepare('UPDATE secrets_grants SET record=? WHERE id=?').run(row.record,row.id);
+ expect(f.admit()).toMatchObject({id:expect.any(String)});
+ f.app.db.prepare("DELETE FROM secrets_names WHERE id='API'").run();
+ expect(f.app.db.prepare('SELECT record FROM secrets_grants').get()).toEqual({record:row.record});
+ expect(f.admit).toThrow('Secret handoff unavailable');
+});
+it('fences a retained claim and its final acknowledgement when its outside effect becomes uncertain',async()=>{
+ const f=await setup(),{ticket,c}=f.claim();
+ f.app.effects!.finish(`secrets:handoff:${ticket.id}`,false);
+ expect(c.destination.current()).toBe(true);expect(c.current()).toBe(false);c.finish(true);
+ expect(f.app.db.prepare('SELECT state FROM secrets_tickets').get()).toEqual({state:'uncertain'});
+ expect(f.app.effects!.status(`secrets:handoff:${ticket.id}`)).toBe('uncertain');
+});
+it('requires exact grant service even when the house and agent match',async()=>{
+ const f=await setup('slack'),{expiresAt:_,...revoke}=f.grant;
+ f.call('secrets.revoke',revoke);
+ f.call('secrets.grant',{...f.grant,scope:{house:f.id,service:'discord'}});
+ expect(f.admit).toThrow('Secret handoff unavailable');
+ f.call('secrets.grant',f.grant);expect(f.admit()).toMatchObject({id:expect.any(String)});
+});
