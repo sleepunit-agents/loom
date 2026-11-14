@@ -10,6 +10,7 @@ on:
       - 'web/src/pieces/attention/agent-face*'
       - 'src/core/household/display*'
       - 'web/src/pieces/attention/rail*'
+      - 'web/src/pieces/attention/desk-signals*'
       - 'web/src/pieces/attention/home*'
       - 'web/src/apps.ts'
       - 'src/next*'

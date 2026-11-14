@@ -64,3 +64,19 @@
 [data-contrast=more] .next-tile::after{box-shadow:inset 0 0 0 2px var(--v-text)}
 :root[data-look] .next-dock-bar{position:relative;pointer-events:auto;padding-bottom:max(40px,env(safe-area-inset-bottom))}
 :root[data-look] .next-dock-bar::before{left:calc(50% - 220px);right:calc(50% - 220px)}
+
+/* Hidden furniture reserves only its strip; temporary reveals overlay the same app boxes. */
+.next-rail[data-mode]:not([data-mode=always]){z-index:30;background:var(--v-canvas);border:1px solid var(--v-border);box-shadow:0 8px 32px #0005;transition:transform .26s,opacity .26s}
+.next-rail[data-mode]:not([data-mode=always]):not([data-peek]){transform:translateX(calc(100% + 24px));opacity:0;visibility:hidden;pointer-events:none}
+.next-rail-edge,.next-dock-edge{z-index:29;display:grid;place-items:center;background:var(--v-structure);color:var(--v-text-2);border:1px solid var(--v-border);touch-action:none}
+.next-rail-edge{position:absolute;right:0;top:0;bottom:0;width:14px}
+.next-rail-edge[data-mode=auto]{width:8px;right:-24px}
+.next-dock-edge{position:fixed;bottom:0;left:25%;width:50%;height:14px}
+.next-dock-edge[data-mode=auto]{height:8px}
+.next-rail-edge[data-mode=auto]>span,.next-dock-edge[data-mode=auto]>span{visibility:hidden}
+.next-rail-edge[data-attention]::after,.next-dock-edge[data-attention]::after{content:"";position:absolute;width:6px;height:6px;border-radius:50%;background:var(--v-yellow);box-shadow:0 0 8px var(--v-yellow)}
+.next-rail-edge:focus-visible,.next-dock-edge:focus-visible{outline:2px solid var(--v-blue);outline-offset:-2px}
+:root[data-look] [data-shell=desk]:not([data-dock-mode=always]) .next-dock-bar{position:fixed;z-index:30;bottom:0;left:0;right:0;transition:transform .26s,opacity .26s}
+[data-shell=desk]:not([data-dock-mode=always]) .next-dock-bar:not([data-peek]){transform:translateY(100%);opacity:0;visibility:hidden;pointer-events:none}
+@media(prefers-reduced-motion:reduce){.next-rail,.next-dock-bar{transition:none!important}}
+[data-motion=reduce] .next-rail,[data-motion=reduce] .next-dock-bar{transition:none!important}

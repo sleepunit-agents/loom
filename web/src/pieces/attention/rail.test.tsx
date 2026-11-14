@@ -6,19 +6,21 @@ import type { Snapshot } from '../../data';
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>()}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])}));
 import Rail from './rail';
+import DeskSignals from './desk-signals';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 const live=(records:object[])=>({records,status:'live' as const});
 const text=()=>JSON.stringify(tree.toJSON());
 async function publish(type:string,status:Snapshot['status'],records=f.snapshots[type].records){await act(async()=>{f.snapshots[type]={status,records};f.listeners.forEach(fn=>fn());});}
-beforeEach(()=>{f.listeners.clear();f.snapshots={
+let events:EventTarget;
+beforeEach(()=>{events=new EventTarget();vi.stubGlobal('addEventListener',events.addEventListener.bind(events));vi.stubGlobal('removeEventListener',events.removeEventListener.bind(events));f.listeners.clear();f.snapshots={
  'attention.ownedAgent':live([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),
  'household.agentDisplay':live([]),
  'person':live([]),'attention.ask':live([{id:'first',ask:'Proceed with backup?',agent:'art',state:'open',createdAt:1}]),
  'attention.agent':live([{id:'report',agent:'art',state:'working',work:'Checking the backup',changedAt:1}]),
  'thread':live([{id:'th:abc',agent:'art',title:'Unread conversation',unread:true,last:1,archived:null},{id:'th:recent',agent:'art',title:'Newest read thread',unread:false,last:2,archived:null}]),
 };});
-afterEach(async()=>{await act(async()=>tree?.unmount());});
+afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();});
 it('keeps only the owned roster alphabetical, opens the first unread thread and reads full asks in Inbox',async()=>{
  const go=vi.fn();await act(async()=>{tree=create(h(Rail,{go}));});
  expect(tree.root.findAllByType('section').map((n:any)=>n.props['data-agent'])).toEqual(['art','mark']);
@@ -64,4 +66,17 @@ it('folds measured overflow, keeps talking before asks/unread, and unfolds when 
   element.scrollHeight=80;await publish('attention.ownedAgent','live',[{id:'art',name:'Art'}]);
   expect(tree.root.findByProps({className:'desk-agent-rail'}).props['data-fold']).toBeUndefined();
  } finally {await act(async()=>tree.unmount());vi.unstubAllGlobals();}
+});
+
+it('reports only live attention and opens alphabetical agents by shortcut while typing',async()=>{
+ const go=vi.fn(),onAttention=vi.fn();await act(async()=>{tree=create(h(DeskSignals,{go,onAttention}));});
+ expect(onAttention).toHaveBeenLastCalledWith(true);
+ const press=(code:string)=>{const event=new Event('keydown',{cancelable:true});Object.assign(event,{code,ctrlKey:true,shiftKey:true});return event;};
+ const first=press('Digit1');await act(async()=>{events.dispatchEvent(first);});
+ expect(first.defaultPrevented).toBe(true);expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
+ await publish('thread','offline');await publish('attention.ask','denied');
+ expect(onAttention).toHaveBeenLastCalledWith(false);
+ await act(async()=>{events.dispatchEvent(press('Digit1'));});expect(go).toHaveBeenLastCalledWith('/p/comms-preview');
+ await publish('attention.ownedAgent','offline');go.mockClear();
+ await act(async()=>{events.dispatchEvent(press('Digit1'));});expect(go).not.toHaveBeenCalled();
 });

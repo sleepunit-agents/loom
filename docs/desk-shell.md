@@ -13,7 +13,8 @@ The new side (`loom serve --next`) reuses loom's three looks and existing visual
 | Reply counts and first reply words | Current thread feed offers unread **flags**; show unread thread counts explicitly. Reply-word previews await an owning metadata role; do not decrypt whole message feeds for a rail |
 | Per-agent face sheets / colours | Live `household.agentDisplay` projects database colours and drawn face shapes/eyes; existing lazy Face shows reported state. Imported pixel sheets now travel with the offline household import and are served from the new database; no old file lookup or invented sprite |
 | Rail accordion | Measures full cards before paint; on overflow keeps one open, working thread then ask then unread then first, while the rest become compact lines in alphabetical order. Comms selection priority comes with the companion slice |
-| Per-device dock/rail hide modes and Comms companion portal | Follow-up desk slice; the existing 64px rail reservation under 1280 remains a compact agent strip |
+| Per-device dock/rail hide modes | Always show / Minimize to strip / Auto-hide; browser-local next-only keys, overlay reveals, live ask/unread dot, keyboard agent shortcuts. Below 1280 the rail is a 14px strip |
+| Comms companion portal | Follow-up desk slice |
 | Grouped launcher sections and account tile | Flat registration inventory for now; no old Shell discovery or fabricated live stats |
 | Home Needs you band and full questions, clock, runtime jobs, reported work | Existing live Home content in desk-coloured cut cards; desktop cards scroll within the available height; phone cards grow |
 | Depth / Contours / Wash | Existing lazy ground components, selected by member `household.preferences`; Appearance offers all three |
@@ -137,5 +138,31 @@ then open ask, then unread thread, then first agent. Alphabetical order stays
 fixed. Lines open the same first unread/latest thread as the full cards.
 Changes to authorized content or available width/height retry full cards.
 No message words are fetched. Lost feeds clear their facts and priority.
-Comms' selected companion priority and portal, and device hide modes, remain
-the next slice; this measurement change does not alter shell/tiling geometry.
+Comms' selected companion priority and portal remain the next slice.
+Device hide choices below preserve the tiling algorithm.
+
+
+### Device hide choices
+
+Right-click the rail, its strip/edge, or the dock ground/Home/All apps keys.
+Always show reserves room. Minimize to strip keeps a 14px rail strip; clicking
+reveals the rail over the apps. Auto-hide reserves no rail room and reveals
+from its edge on pointer entry or touch. Leaving an auto overlay, Escape or a
+press outside dismisses it. A hidden dock returns its room to the desktop.
+Temporary reveals never reflow tiles. Hidden controls are inert; edge buttons
+remain keyboard accessible. Reduced motion disables the slide.
+
+`loom-next-rail` and `loom-next-dock` are browser-local choices, shared only
+between next windows on that device, never member settings or the old desk's
+keys. This intentionally drops migration of old hide settings: both sides
+remain independent. Storage refusal still permits the current window's choice.
+Below 1280 the desktop rail is a strip regardless of Always show. Phone dock
+stays visible, preserving the existing phone navigation. Attention's record-only desk signals supply
+the strip/edge's ask/unread glow from authorized feeds, clearing unavailable
+facts. Ctrl+Shift+1…9 opens the corresponding alphabetical agent's first unread,
+else latest thread, else Comms, including while typing. Companion/portal remains
+follow-up; no tiling algorithm, operation, importer, client or schema is added.
+
+Desk signals render no hidden cards. Their small registered surface keeps the
+dock glow and agent shortcuts alive on Home as well as Work; the rail mounts
+only while apps are visible. No Home composition or reader is duplicated.

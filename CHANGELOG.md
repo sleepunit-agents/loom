@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Reconcile public Attention waits without an open member page, using explicit public Tasks/Approvals read grants and the daemon clock.
 - Clear private Comms working state from committed terminal Runtime jobs and recover missed completion notifications at startup.
 
+- Give the new desk device-local rail and dock hide modes, overlay edge reveals and agent keyboard shortcuts.
+
 - Fold overflowing agent-rail cards into compact lines, retaining the agent with current work or a question and retrying full cards when room returns.
 
 - Show live new-side piece counts and a Boxes enrollment glyph in the desk bar, with unavailable sources and unknown health stated explicitly.
