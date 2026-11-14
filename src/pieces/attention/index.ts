@@ -4,7 +4,7 @@ import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import { approvalFiling } from './approval-filing.js';
-import { taskAskId, registerPrivateReplies, type Ask, type AgentStatus, type AttentionSources, type TaskAskFiling } from './role.js';
+import { taskAskId, registerPrivateQuestions, registerPrivateReplies, type Ask, type AgentStatus, type AttentionSources, type TaskAskFiling } from './role.js';
 import { installWaitChecks, type AttentionWaits } from './waits.js';
 import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
@@ -52,6 +52,24 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     if (!('sourceManaged' in record) || !record.sourceManaged || record.source.kind !== 'approval') return true;
     try { return approvalCurrent?.(record) === true; } catch { return false; }
   };
+  registerPrivateQuestions(operations, (ctx, raw) => {
+    if (ctx.db !== db || !db.inTransaction) return failure('unavailable', 'Private question needs its enclosing transaction');
+    const parsed = z.object({id:z.string().regex(/^comms:[0-9a-f]{64}$/), conversation:id, agent:id, member:id, thread:id,
+      seq:z.number().int().positive(), project:id.optional(), answers:z.enum(['yes-no','words'])}).strict().safeParse(raw);
+    if (!parsed.success) return failure('invalid', 'Invalid private question reference');
+    const input=parsed.data;
+    const record: Ask = {id:input.id, agent:input.agent, member:input.member, ...(input.project?{project:input.project}:{}),
+      source:{kind:'conversation',id:input.conversation}, ask:'Reply in your private conversation', answers:input.answers,
+      privateQuestion:{thread:input.thread,seq:input.seq}, state:'open',createdAt:ctx.now,changedAt:ctx.now};
+    if(ctx.viewer.kind!=='member'||ctx.viewer.id!==input.member || !mayCreate(ctx.viewer,scoped('attention.ask',record),sharing(),'attention.raise'))
+      return failure('denied','Ask unavailable');
+    const old=readAsk(input.id);
+    if(old) {
+      const stable=(a:Ask)=>[a.id,a.agent,a.member,a.project,a.source,a.answers,a.privateQuestion];
+      return JSON.stringify(stable(old))===JSON.stringify(stable(record)) ? {ok:true,value:{id:old.id}} : failure('conflict','Private question identity changed');
+    }
+    saveAsk(record);ctx.changed('attention.ask',record.id);return {ok:true,value:{id:record.id}};
+  });
   registerPrivateReplies(operations, (ctx, raw) => {
     if (ctx.db !== db || !db.inTransaction) return failure('unavailable', 'Private reply needs its enclosing transaction');
     const parsed = z.object({id, conversation: id, agent: id, member: id, thread: id, seq: z.number().int().positive()}).strict().safeParse(raw);
@@ -79,7 +97,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
   operations.register(operation({ name: 'attention.raise', write: true, input: question, output: z.unknown(),
     may: (viewer, input) => {
       const old = readAsk(input.id);
-      if (input.id.startsWith('task:') || input.id.startsWith('approval:') || input.source.kind === 'approval' && approvalsRegistered || (old ? managed(old) : input.source.kind === 'task' && tasksRegistered || input.source.kind === 'piece' && sources.has(input.source.id))) return false;
+      if (input.id.startsWith('comms:') || input.id.startsWith('task:') || input.id.startsWith('approval:') || input.source.kind === 'approval' && approvalsRegistered || (old ? managed(old) : input.source.kind === 'task' && tasksRegistered || input.source.kind === 'piece' && sources.has(input.source.id))) return false;
       return old ? mayAct(viewer, scoped('attention.ask', old), sharing(), 'act', 'attention.raise') : mayCreate(viewer, scoped('attention.ask', input), sharing(), 'attention.raise');
     },
     run(ctx, input) {
@@ -130,7 +148,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
     },
   }));
   operations.register(operation({ name: 'attention.resolve', write: true, input: z.object({ id, reason: z.string().min(1) }), output: z.unknown(),
-    may: (viewer, input) => { const r = readAsk(input.id); return !!r && !managed(r) && mayAct(viewer, scoped('attention.ask', r), sharing(), 'act', 'attention.resolve'); },
+    may: (viewer, input) => { const r = readAsk(input.id); return !!r && !r.privateQuestion && !managed(r) && mayAct(viewer, scoped('attention.ask', r), sharing(), 'act', 'attention.resolve'); },
     run(ctx, input) {
       const record = readAsk(input.id)!;
       if (record.state !== 'open') return record;
@@ -221,6 +239,7 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
         check(ctx);
         // Parsing blocks scope injection even from an accidentally miswired caller.
         const parsed = question.parse({ ...input, source: { kind: 'piece', id: name } });
+        if (parsed.id.startsWith('comms:')) throw new OperationError('conflict', 'Ask belongs to another source');
         if (parsed.project !== undefined || parsed.agent !== undefined || parsed.member !== undefined || parsed.waits_on !== undefined) throw new OperationError('invalid', 'Source asks must be household asks');
         const old = readAsk(parsed.id);
         if (old) {

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 - Deliver stored public household lane prompts through Runtime’s scheduled inbox, with runner confirmation, authenticated reads and staging holds.
+- Add next-mode Bridges status JSON for Discord and Slack with configured agents, intake holds and explicit staging mode.
 
 - Tests: give each test 20 s on CI instead of 5 s, after unrelated tests timed out on loaded shared runners and left main without a deployable build.
 - New desk: make request and form ids without `crypto.randomUUID`, which browsers withhold on plain HTTP, so the desk works on a home network address.

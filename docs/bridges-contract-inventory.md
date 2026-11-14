@@ -23,7 +23,7 @@ next-mode roles, SQLite, routing, normalizers and engine are real.
 | Old entry point | Current replacement / outstanding behavior | Legacy source |
 | --- | --- | --- |
 | Discord/Slack `run`, shuttle venue adapters | Next daemon lifecycle with service credentials, durable Discord session/sequence and Slack ACK after raw receipt, normalizers and engine; #1096. No subprocess adapter. | Both `bin/loom-*`, shuttle adapters |
-| Discord/Slack `status` | Metadata live records and Bridges screen exist; retained command output/exit parity remains pending. Shadow-line count retires with shadow mode. | Both dispatchers/status |
+| Discord/Slack `status [--json]` | Generated `loom-bridges status '{"platform":"discord"}'` (or `slack`) calls read-only `bridges.status`. Retains JSON `mode`, sorted unique configured `agents`, and intake `held`, exit 0; client fixtures cover success, refusal/unavailable exit 1 and usage exit 2. Shadow-line count retires with shadow mode. The old human text line is replaced by the generated JSON output; staging is explicit instead of reporting live/shadow. | Both dispatchers/status; `src/cli/bridges-client.test.ts` |
 | Both `send --agent --place`, stdin text | Bound body `runtime.reply` queues a durable staged outbox; actual split posting/uncertainty proven for household DMs in #1104. Arbitrary place/proactive sends and retained command parity remain pending. | Both `test/test_send.py` |
 | Slack `send --place dm:U…` before intake | Pending Runtime recipient authorization and Bridges `conversations.open` transport. Existing reply requires a delivered incoming receipt. | Slack `test/test_presence.py` |
 | Both `send --describe` | Authenticated channel/member evidence exists internally, but no Runtime-authorized describe operation or legacy output parity. | Discord presence, Slack describe tests |
@@ -129,8 +129,8 @@ stay private evidence. Unprojectable channel/parent IDs also block default routi
 
 Webhook-peer, notify, peer budgets and channel-note references are retained evidence
 pending explicit dispositions in this inventory; not active configuration. Obsolete
-raw identity/session disposition also remains required. Retained command output/exit
-fixtures and final move inventory are not complete. No owner decision, deployment,
+raw identity/session disposition also remains required. Status JSON output/exit fixtures are retained; send/read/describe/presence command
+parity and final move inventory are not complete. No owner decision, deployment,
 real import or workspace contact is implied by the code or this inventory.
 
 Before closing t-2210, replace every pending matrix/command row with merged positive
