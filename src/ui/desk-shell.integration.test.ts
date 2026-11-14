@@ -429,6 +429,8 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
             expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
             await reference.goto(old.base+'/a/art'+(width<1024?'':'?t=*art'));
             await expect.poll(()=>reference.locator('.loom-agentwin').count()).toBe(1);
+            await expect.poll(()=>reference.locator('.loom-agentwin').getByText('Shipped the desk look',{exact:true}).count()).toBe(1);
+            await expect.poll(()=>page.getByRole('group',{name:'art recent steps',exact:true}).getByRole('button').count()).toBe(3);
           }
           await page.evaluate(()=>document.fonts.ready);await reference.evaluate(()=>document.fonts.ready);
           if(surface==='home'&&width===390) {
