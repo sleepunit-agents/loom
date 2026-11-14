@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountBoxes, jobs } from '../core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountBoxes, jobs, jobNeeds, boxFacts } from '../core/data/schema.js';
 import { Dispatcher } from './dispatcher.js';
 const opened: Database.Database[] = [];
 afterEach(() => { for (const db of opened.splice(0)) db.close(); });
@@ -111,4 +111,41 @@ it('holds the same transaction across placement reads and claim', () => {
   const observed = vi.spyOn(runtime.jobs, 'claim').mockImplementation((...args) => { expect(f.client.inTransaction).toBe(true); return claim(...args); });
   expect(runtime.next('first')?.id).toBe(f.job.id);
   expect(observed).toHaveBeenCalledOnce();
+});
+it('forwards required capabilities and bypasses an ineligible preferred worker', () => {
+  const f = fixture();
+  f.db.insert(jobNeeds).values({ job: f.job.id, need: 'gpu:5090' }).run();
+  f.db.insert(boxFacts).values({ box: 'second', fact: 'gpu:5090', fromOwner: false }).run();
+  expect(f.runtime.next('first')).toBeUndefined();
+  expect(f.runtime.next('second')?.id).toBe(f.job.id);
+});
+it('revocation rejects all phase reports for an already assigned worker', () => {
+  const f = fixture(); f.runtime.next('first');
+  f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'first')).run();
+  expect(() => f.runtime.started('first', f.job.id, 'image')).toThrow('Machine not available');
+  expect(() => f.runtime.heartbeat('first', f.job.id, 'starting')).toThrow('Machine not available');
+  expect(() => f.runtime.finish('first', f.job.id, 1, 'stop')).toThrow('Machine not available');
+  expect(f.runtime.jobs.get(f.job.id).state).toBe('starting');
+});
+it('keeps the trusted dispatch import graph free of process and credential I/O', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { dirname, resolve } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const { init, parse } = await import('es-module-lexer');
+  await init;
+  const seen = new Set<string>();
+  const walk = async (path: string): Promise<void> => {
+    if (seen.has(path)) return; seen.add(path);
+    const source = await readFile(path, 'utf8');
+    expect(source).not.toMatch(/\b(?:require|eval|fetch)\s*\(|\bprocess\s*\.\s*(?:env|getBuiltinModule|loadEnvFile|binding)\b/);
+    for (const entry of parse(source)[0]) {
+      if (entry.typeOnly) continue;
+      expect(entry.type).toBe('static');
+      const name = entry.specifier!;
+      if (name.startsWith('.')) await walk(resolve(dirname(path), name.replace(/\.js$/, '.ts')));
+      else expect(['drizzle-orm', 'drizzle-orm/sqlite-core', 'node:crypto']).toContain(name);
+    }
+  };
+  await walk(fileURLToPath(new URL('./dispatcher.ts', import.meta.url)));
+  expect(seen.size).toBeGreaterThan(1);
 });
