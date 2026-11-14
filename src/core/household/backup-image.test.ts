@@ -22,7 +22,10 @@ it('encrypts only filtered fresh pages; independent owner and drill can restore 
   const db=source(), original=db.serialize(), k=await keys();
   const result=await encryptDatabaseImage(db,[k.recipient,k.recipient],k.drill);
   expect(db.serialize()).toEqual(original);
-  expect(result).toMatchObject({coverage:'database-only',drill:{database:true}});
+  expect(Object.keys(result).sort()).toEqual(['bytes','coverage','drill','tables']);
+  expect(result.coverage).toBe('database-only'); expect(result.drill).toEqual({database:true});
+  expect(result.tables).toHaveLength(3);
+  for(const table of result.tables) expect(table).toEqual({name:expect.any(String),rows:expect.any(Number),sha256:expect.stringMatching(/^[0-9a-f]{64}$/)});
   expect(result.bytes.toString('ascii',0,21)).toBe('age-encryption.org/v1');
   for (const word of ['SURVIVING_WORDS','FILTERED_WORDS','COMMS_SECRET',k.owner,k.drill]) expect(result.bytes.includes(Buffer.from(word))).toBe(false);
   for (const identity of [k.owner,k.drill]) {

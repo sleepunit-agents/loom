@@ -775,7 +775,7 @@ describe('criterion 9: one decrypt path', () => {
     // may name the review key or import the audit module; keep the allowlist exact.
     const library = all.filter((f) => /from\s+['"]age-encryption['"]|import\(\s*['"]age-encryption['"]|require\(\s*['"]age-encryption['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
     expect(library).toEqual(['comms.ts', 'core/household/backup-image.ts', 'core/household/backup-schema.ts', 'pieces/comms/crypto.ts', 'pieces/secrets/age-source.ts', 'pieces/secrets/holder-store.ts']);
-    expect(code(join(srcDir, 'core/household/backup-image.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js|node:fs|node:child_process/);
+    expect(code(join(srcDir, 'core/household/backup-image.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js|node:fs|node:child_process|node:crypto|\bgenerate[A-Z]\w*\b/);
     const backup = code(join(srcDir, 'core/household/backup-schema.ts'));
     expect(backup).toMatch(/import\s*{\s*Encrypter\s*}\s*from\s+['"]age-encryption['"]/);
     expect(backup).not.toMatch(/\b(?:Decrypter|decrypt|encrypt|addIdentity|generateIdentity|generateHybridIdentity|generateX25519Identity|identityToRecipient|setPassphrase|REVIEW_KEY)\b|review\.key|audit\.js/);
