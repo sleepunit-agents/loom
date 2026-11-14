@@ -90,6 +90,15 @@ Clock join route before each successful completion. Completion returns only a
 execution authority. Each source still needs its own durable native effect,
 preparation, new current read, watchdog, post-output read and completion. Only the
 oldest pending source executes; no retry follows an uncertain attempt or ACK.
+For resume, admission also receives the previous successful Runtime execution id
+(not a native session id). Runtime retains that completed input only when more
+work is queued, requires the original current credential and completed source,
+and spends its predecessor link when issuing a successor. The in-memory chain is
+bounded to 100 turns, counts every retained source against the global 1024-source
+bound, and disappears at daemon close/expiry. Every current check also revalidates
+the exact source identity, consumption, grants, supported input and non-withdrawal
+of all earlier inputs whose native history the worker retains. A late watchdog
+request for a completed phase cannot delete its pending successor proof.
 Native admission selects the oldest pending source independently of the generic
 100-row conversation-history window, so a larger persisted backlog can drain.
 The worker stops on an empty queue, any failure, or after 100 turns. The bounded

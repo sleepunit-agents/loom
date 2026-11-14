@@ -196,13 +196,18 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       job:job.id,assignment:{runner:job.runner,box:job.box,claimedAt:job.claimedAt,house:job.made},
       binding:{agent:job.agent,conversation:job.conversation!,venue:'wake' as const,place:binding.place},
       message:{seq:row.seq,id:row.id,kind:'wake' as const,...(turnInput(row))},
-      current(caller:Viewer){
+      retainedCurrent(){
+        const live=db.prepare('SELECT * FROM runtime_clock_turns WHERE id=?').get(row.id) as Turn|undefined;
+        return !!live&&live.consumed!==null&&identity(live)===rowKey
+          &&currentSource(row,job)&&nativeSource(row)&&!withdrawn(row);
+      },
+      current(caller:Viewer,completed=false){
         const callerJob=bound(caller);
         const live=db.prepare('SELECT * FROM runtime_clock_turns WHERE id=?').get(row.id) as Turn|undefined;
         const liveRoot=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(job.conversation) as Turn|undefined;
         return callerJob?.id===job.id&&callerJob.model===undefined&&callerJob.account===undefined
           &&steering()===originalSteering&&nativeSource(root)&&nativeSource(row)&&currentRead(viewer,value)&&!withdrawn(root)&&!withdrawn(row)
-          &&identity(liveRoot)===rootKey&&identity(live)===rowKey&&live?.consumed===null;
+          &&identity(liveRoot)===rootKey&&identity(live)===rowKey&&!!live&&(completed?live.consumed!==null:live.consumed===null);
       },
       acknowledge(ctx:Context){acknowledge(ctx,row.seq,true);},
     };

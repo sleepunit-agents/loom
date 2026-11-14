@@ -63,10 +63,10 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
   };
   const completed=(async()=>{
     try {
-      let historyKey:string|undefined;
+      let historyKey:string|undefined,previous:string|undefined;
       for(let turn=0;turn<100;turn++){
         const generationId=++generation;
-        const started=clock.now(),input=begin.parse(await call('beginClockExecution',{}));
+        const started=clock.now(),input=begin.parse(await call('beginClockExecution',previous?{previous}:{}));
         if(input.job!==config.job||JSON.stringify(input.binding)!==JSON.stringify(config.binding)||JSON.stringify(input.assignment)!==JSON.stringify(config.assignment))throw fail();
         // Equality witness only: each source still requires its own admission.
         // Retained local history must not outlive original steering/root/claim.
@@ -108,6 +108,7 @@ export function startClockWorker(raw:ClockWorkerConfig,host:{clock?:Clock;launch
         // Only this in-memory session retains native history. No idle polling,
         // serialized resume handle, restart reuse or retry of uncertain work.
         void output;if(!receipt.more)return true;
+        previous=input.execution;
       }
       return false;
     }catch {return false;}

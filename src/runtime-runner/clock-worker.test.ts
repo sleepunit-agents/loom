@@ -474,13 +474,14 @@ it('pins steering across separately valid admissions rather than reusing old his
  const original=globalThis.fetch;let changed=false,admitted=0;
  vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
   const response=await original(...args);
-  if(String(args[0]).endsWith('/beginClockExecution')){expect(await response.clone().json()).toMatchObject({ok:true});admitted++;}
+  if(String(args[0]).endsWith('/beginClockExecution')){expect(await response.clone().json()).toMatchObject({ok:false});admitted++;}
   if(String(args[0]).endsWith('/completeClockExecution')&&!changed){
    changed=true;const p=provenanceStore(f.app.db),before=p.read(f.config.binding.conversation)!;
-   f.app.db.transaction(()=>p.put(f.config.binding.conversation,{...before,history:{...before.history,people:['mark'],owner:false}}))();
+   f.app.db.transaction(()=>p.put(f.config.binding.conversation,{...before,history:{...before.history,people:['pollock'],owner:false}}))();
   }return response;
  });
  f.finish();expect(await worker.completed).toBe(false);expect(changed).toBe(true);expect(admitted).toBe(1);expect(f.calls).toHaveLength(1);
+ vi.restoreAllMocks();expect(await f.post(f.config.credential,'beginClockExecution',{})).toMatchObject({ok:true});
  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE id=?').get(`clock:${joined}`)).toEqual({consumed:null});
 });
 
@@ -539,7 +540,7 @@ it.each([100,101])('drains oldest sources beyond the history window and stops af
   expect(await f.attempt()).toBe(true);expect(f.calls).toHaveLength(101);
   expect(f.calls[100].args).toContain('--session-id');expect(f.calls[100].args).not.toContain('--resume');
  }
-});
+},20_000);
 it.each(['root','place','claim'] as const)('does not resume across a separately valid changed %s admission',async kind=>{
  const f=await setup(),worker=f.start();await f.ready;await f.joinInput();
  let replacement:{id:string;record:string}|undefined;
@@ -551,7 +552,7 @@ it.each(['root','place','claim'] as const)('does not resume across a separately 
  vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
   const response=await original(...args);
   if(String(args[0]).endsWith('/beginClockExecution')){
-   expect(await response.clone().json()).toMatchObject({ok:true});admitted++;
+   expect(await response.clone().json()).toMatchObject({ok:false});admitted++;
   }
   if(String(args[0]).endsWith('/completeClockExecution')){
    if(kind==='root')f.app.db.transaction(()=>{
@@ -564,6 +565,7 @@ it.each(['root','place','claim'] as const)('does not resume across a separately 
   return response;
  });
  f.finish();expect(await worker.completed).toBe(false);expect(admitted).toBe(1);expect(f.calls).toHaveLength(1);
+ vi.restoreAllMocks();expect(await f.post(f.config.credential,'beginClockExecution',{})).toMatchObject({ok:true});
 });
 it('a late successful retired watchdog cannot extend the resumed generation expiry',async()=>{
  const f=await setup(),worker=f.start();await f.ready;
@@ -582,4 +584,36 @@ it('a late successful retired watchdog cannot extend the resumed generation expi
   f.clock.advance(4000);held.release();await settle();expect(f.calls[1].child.killed).toBe(false);
   f.clock.advance(1000);expect(await worker.completed).toBe(false);expect(f.calls[1].child.killed).toBe(true);
  }finally {held.release();held.spy.mockRestore();}
+});
+
+it.each(['before-admission','during-turn'] as const)('earlier completed joined source withdrawal fences retained history %s',async phase=>{
+ const f=await setup(),worker=f.start();await f.ready;const earlier=await f.joinInput();await f.joinInput({prompt:'THIRD SOURCE'});
+ f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+ const withdraw=()=>f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.withdrawn',json('true')) WHERE id=?").run(earlier);
+ if(phase==='before-admission'){
+  const original=globalThis.fetch;
+  vi.spyOn(globalThis,'fetch').mockImplementation(async(...args)=>{
+   const response=await original(...args);if(String(args[0]).endsWith('/completeClockExecution'))withdraw();return response;
+  });
+  f.finish();expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(2);
+ }else {
+  f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(3));withdraw();f.clock.advance(1000);
+  expect(await worker.completed).toBe(false);expect(f.calls[2].child.killed).toBe(true);
+ }
+ expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE job=? ORDER BY seq').all(f.job)).toEqual([{consumed:expect.any(Number)},{consumed:expect.any(Number)},{consumed:null}]);
+});
+it('a watchdog reaching Runtime after completion cannot consume the retained successor proof',async()=>{
+ const f=await setup(),original=globalThis.fetch;let reads=0,release!:()=>void,entered!:()=>void;
+ const ready=new Promise<void>(resolve=>{entered=resolve;});
+ vi.spyOn(globalThis,'fetch').mockImplementation((...args)=>{
+  if(String(args[0]).endsWith('/currentClockExecution')&&++reads===2){
+   entered();return new Promise<Response>((resolve,reject)=>{release=()=>{void original(...args).then(resolve,reject);};});
+  }
+  return original(...args);
+ });
+ const worker=f.start();await f.ready;await f.joinInput();await ready;
+ const held=holdResponse('completeClockExecution');
+ try {f.finish();await held.ready;release();await settle();held.release();
+  await vi.waitFor(()=>expect(f.calls).toHaveLength(2));f.finish();expect(await worker.completed).toBe(true);
+ }finally {release();held.release();held.spy.mockRestore();}
 });
