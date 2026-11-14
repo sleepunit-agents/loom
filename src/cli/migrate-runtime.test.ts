@@ -26,7 +26,7 @@ const bytes=(root:string):unknown=>Object.fromEntries(readdirSync(root).sort().m
   try{return[name,readFileSync(join(root,name)).toString('base64')];}
   catch(e){if((e as NodeJS.ErrnoException).code!=='EISDIR')throw e;return[name,bytes(join(root,name))];}
 }));
-async function fixture(deleted: boolean | 'household'=false) {
+async function fixture(deleted: boolean | 'household' | 'orphan'=false) {
   const root=mkdtempSync(join(tmpdir(),'migration-runtime-'));roots.push(root);
   const old=join(root,'old'),state=join(root,'state'),data=join(root,'data'),snapshot=join(root,'snapshot'),home=join(root,'new');
   mkdirSync(join(old,'commons','stores'),{recursive:true});mkdirSync(state);mkdirSync(join(data,'delivery','conversations'),{recursive:true});mkdirSync(join(data,'runs'));
@@ -46,7 +46,7 @@ async function fixture(deleted: boolean | 'household'=false) {
     comms.exec('CREATE TABLE comms_messages(thread,seq,at,kind,sender,id,hash,text,card_json,run,delivered,step); CREATE TABLE comms_asks(thread,ref,approval,raised,seen,words,answer_json); CREATE TABLE conversation_steps(seq,conversation,at,run,id,tool,state,words)');comms.close();
     const db=new Database(join(old,'household.db'));
     db.exec('CREATE TABLE comms_threads(id,agent,member,conversation,title,titled_by,project,pinned,archived,opened,last,read_seq,first_id,first_hash,stop,working_since); CREATE TABLE comms_deleted(id,member,agent,channel,conversation,at)');
-    db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?,?)').run('kehvhuwzdm','jonathan','art',1,null,'2026-11-13T00:00:00Z');db.close();
+    if(deleted!=='orphan')db.prepare('INSERT INTO comms_deleted VALUES (?,?,?,?,?,?)').run('kehvhuwzdm','jonathan','art',1,null,'2026-11-13T00:00:00Z');db.close();
     writeFileSync(join(data,'delivery','conversations','cv-abcdef123456.json'),JSON.stringify({conversation:'cv-abcdef123456',agent:'art',venue:'loom',place:'th:kehvhuwzdm',msgs:[{text:'PRIVATE DELETED WORDS'}]}));
   }
   const shaped: {conversation:string;venue:string;place:string;thread?:string}[]=[];
@@ -177,10 +177,10 @@ it('never probes omitted runtime defaults and refuses supplied empty roots',asyn
   expect(prepareMigrationPlan(emptySnapshot).plan.importers.runtime.paths).toContain('runtime-data');
 });
 
-it('reports archive-only deleted bindings through standalone and all import, resume and independent verification',async()=>{
- const f=await fixture(true);f.options.conversations['cv-abcdef123456']={} as typeof f.options.conversations['cv-abcdef123456'];
+it.each(['deleted','missing'] as const)('reports archive-only %s bindings through standalone and all import, resume and independent verification',async reason=>{
+ const f=await fixture(reason==='deleted'?true:'orphan');f.options.conversations['cv-abcdef123456']={} as typeof f.options.conversations['cv-abcdef123456'];
  f.plan.importers.runtime.options=f.options;const before=bytes(f.snapshot);
- const skipped=[{id:'cv-abcdef123456',reason:'skipped: owning Comms thread deleted'}];
+ const skipped=[{id:'cv-abcdef123456',reason:`skipped: owning Comms thread ${reason}`}];
  await expect(runMigrationAll(f.snapshot,f.home,f.plan,{afterPiece:name=>{if(name==='runtime')throw Error('death after commit');}})).rejects.toThrow('death after commit');
  for(let i=0;i<2;i++) {
   const report=await runMigrationAll(f.snapshot,f.home,f.plan);

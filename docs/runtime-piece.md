@@ -945,7 +945,7 @@ The standalone mapping file is the Runtime options object, not the whole plan.
 | `services`, `serviceState`, `remotes`, `builds`, `logins` workflow metadata | Exact state archive; lifecycle/enrollment operations must reconcile these before execution |
 | `models`, `modelChoices`, `quotaHolds`, `accountSalt`, box account/usage reports | Exact state archive; account/model operations and migration into their eventual records remain part of the full rebuild |
 | `seq`, `pendingRevokes`, `writeOffAsks`, unknown future state fields | Exact state archive; no reset of sequence, loss of retry metadata, or manufactured owner approval |
-| `delivery/conversations/*.json` | Same conversation/agent/venue/place and explicit audience in `runtime_bindings`, except deleted Comms bindings below; no old body/job/home/run-key pointer is activated |
+| `delivery/conversations/*.json` | Same conversation/agent/venue/place and explicit audience in `runtime_bindings`, except archive-only Comms bindings below; no old body/job/home/run-key pointer is activated |
 | Old conversation principal history / signed reset / queued words | Exact private source archive; imported live provenance is unknown, never a new owner attestation; delivery reconciliation must consume the actual source before release |
 | `repos/<agent>.git` in the data root | Excluded by named `runtime-rebuildable-repo-mirror` rule: source-created remote mirrors, rebuilt with `clone --mirror` / `fetch --prune`, mounted read-only into houses; no house worktree or delivery state is excluded |
 | `delivery/seen/*.json`, `slots/*.age`, `*.home.age`, notices/fallbacks/continuation-policy, discarding/files, principal key/wake handovers | Exact private byte archive streamed into bounded BLOB parts; these queues, dedup receipts and sealed sessions can be only copies, and no signed handover becomes executable authority |
@@ -954,7 +954,7 @@ The standalone mapping file is the Runtime options object, not the whole plan.
 | `.git`, `node_modules`, lock/SQLite coordination files, special files and out-of-root aliases | Existing collector exclusions, recorded in the snapshot manifest; committed SQLite WAL contents use the backup API |
 | `LOOM_RUNTIME_KEYS_DIR` (default `~/.local/state/loom-runtime/keys`), per-house native-history mounts, runner-local harness logins | Separately inventory on the workers before the final move; old bearer keys are not new credentials and host history is not silently adopted |
 
-### Deleted and private Comms bindings
+### Deleted, missing and private Comms bindings
 
 Both `loom` and `spawn` conversations are private Comms threads. Their mapping
 must name the owning member, checked against exactly one copied `household.db`
@@ -963,8 +963,8 @@ must also match the thread id; `th:<id>` accepts either the table's full
 `th:<id>` or bare `<id>`. For `spawn`, the place is its own `job-h-<n>` or
 `sp-<24 hex>` handle, preserved exactly; it need not equal the thread id.
 Other venues retain their original places, including free-text wake labels with spaces.
-A missing owning thread still refuses unless `comms_deleted` proves that exact
-thread and agent were deleted; a non-null tombstone conversation must also match.
+A tombstone in `comms_deleted` must prove that exact thread and agent were
+deleted; a non-null tombstone conversation must also match.
 Conflicting live/deleted evidence refuses.
 
 For a source-proven deleted thread, retain its explicit conversation mapping
@@ -974,6 +974,15 @@ provenance. Standalone import and `all` reports list only the conversation id an
 `skipped: owning Comms thread deleted`, including on repeat imports. Independent
 verification expects those live tables to exclude the deleted binding and still
 compares its exact archived bytes. This disposition never restores the thread.
+When a `loom` venue or `th:` place has neither a matching owning thread nor a
+matching tombstone, an explicit `{}` mapping also retains only the private
+archive and creates no binding or provenance. Its id-only report reason is
+`skipped: owning Comms thread missing`, including after interruption and on
+repeat imports. Explicit member or project mappings still refuse without an
+owning thread; a missing spawn handle owner alone does not qualify. No owner,
+thread or execution authority is invented. Independent verification checks both
+the excluded live rows and exact archived bytes for this disposition too.
+
 Snapshot inventory refusals name an unlisted relative path, including accidental
 SQLite `-wal`/`-shm` sidecars; discovery and verification open snapshot SQLite
 without creating those files.

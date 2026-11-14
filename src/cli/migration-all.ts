@@ -12,7 +12,7 @@ import { SecretsImportRefusal } from '../pieces/secrets/importer.js';
 import type { IOStreams } from './io.js';
 
 const receiptName = '.migration-all.json', pendingName = '.migration-all.pending';
-const runtimeSkippedSchema=z.array(z.object({id:z.string().regex(/^cv-[0-9a-f]{12}$/),reason:z.literal('skipped: owning Comms thread deleted')}).strict());
+const runtimeSkippedSchema=z.array(z.object({id:z.string().regex(/^cv-[0-9a-f]{12}$/),reason:z.enum(['skipped: owning Comms thread deleted','skipped: owning Comms thread missing'])}).strict());
 const receiptSchema = z.object({ version: z.literal(1), checksum: z.string().regex(/^[a-f0-9]{64}$/), plan: z.unknown(), now: z.number().int().nonnegative(), runtimeSkipped:runtimeSkippedSchema.optional(), completed: z.array(z.string()).refine(v => new Set(v).size === v.length) }).strict();
 type Receipt = { runtimeSkipped?: z.infer<typeof runtimeSkippedSchema>; version: 1; checksum: string; plan: MigrationPlan; now: number; completed: string[] };
 function canonical(path: string): string {
