@@ -18,14 +18,15 @@ export function clockDestination(app: Foundation, sharing:()=>Sharing): ClockDes
       if(matches.length!==1)return;
       const binding=matches[0],job=binding.job?store.read('job',binding.job):undefined;
       if(binding.member!==input.member||binding.project!==input.project||!job||job.agent!==input.agent
-        ||job.member!==input.member||job.project!==input.project||job.conversation!==binding.id
+        ||job.member!==input.member||job.project!==input.project||job.service!==input.service||job.conversation!==binding.id
+        ||job.runner!==job.box||job.claimedAt===undefined
         ||job.imported||job.principalReset||job.writtenOff||job.endedAt!==undefined
         ||!['running','waiting'].includes(job.state)||!currentExecution(store,job,sharing())
         ||provenanceStore(app.db).read(binding.id)?.agent!==input.agent)return;
       const viewer={kind:'agent' as const,id:input.agent},access=sharing();
       if(input.member===undefined ? !mayCreate(viewer,{type:'wake',agent:input.agent,project:input.project},access)
         : !mayFilePrivateWork(viewer,{type:'wake',...input,privateControl:true},access))return;
-      return {agent:binding.agent,member:binding.member,project:binding.project,conversation:binding.id,place:binding.place,job:job.id};
+      return {agent:binding.agent,member:binding.member,project:binding.project,conversation:binding.id,place:binding.place,service:job.service,job:job.id};
     };
     let before:ReturnType<typeof resolve>;
     try{before=resolve();}catch{return;}

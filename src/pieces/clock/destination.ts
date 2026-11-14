@@ -5,10 +5,11 @@ import type { Wake } from './store.js';
 export interface ClockDestination extends Scope {
   agent: string;
   conversation: string;
+  service?: string;
   place: string;
   current(): boolean;
 }
-export type ClockDestinationReader = (scope: Scope & {agent:string;place:string}) => ClockDestination | undefined;
+export type ClockDestinationReader = (scope: Scope & {agent:string;place:string;service?:string}) => ClockDestination | undefined;
 export type ClockRoute = {kind:'fresh';place:string} | {kind:'join';destination:ClockDestination};
 export function clockRoute(wake: Wake, resolve?: ClockDestinationReader): ClockRoute {
   const fresh:ClockRoute={kind:'fresh',place:`wake:${wake.id}`};
@@ -20,9 +21,9 @@ export function clockRoute(wake: Wake, resolve?: ClockDestinationReader): ClockR
   const original=wake.authorship;
   if(!place?.startsWith('lane:') || original?.origin!==wake.agent || !original.conversation
     || original.member!==wake.member || original.project!==wake.project) return fresh;
-  const destination=resolve?.({agent:wake.agent,member:wake.member,project:wake.project,place});
+  const destination=resolve?.({agent:wake.agent,member:wake.member,project:wake.project,place,service:original.service});
   return destination && destination.agent===wake.agent && destination.member===wake.member
-    && destination.project===wake.project && destination.place===place
+    && destination.project===wake.project && destination.service===original.service && destination.place===place
     && destination.conversation===original.conversation && destination.current()
     ? {kind:'join',destination} : fresh;
 }

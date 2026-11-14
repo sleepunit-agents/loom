@@ -7,7 +7,7 @@ const witness:ClockDestination={agent:'art',member:'jonathan',project:'pond',con
 it('joins only the exact current owning lane destination; principal does not widen routing',()=>{
  const reader=vi.fn(()=>witness);
  expect(clockRoute(work,reader)).toEqual({kind:'join',destination:witness});
- expect(reader).toHaveBeenCalledWith({agent:'art',member:'jonathan',project:'pond',place:'lane:art/daily'});
+ expect(reader).toHaveBeenCalledWith({agent:'art',member:'jonathan',project:'pond',place:'lane:art/daily',service:undefined});
  expect(clockRoute({...work,place:witness.place},reader).kind).toBe('join');
  expect(clockRoute({...work,schedule:undefined,file:'routines/daily.md'},()=>({...witness,place:'lane:daily'})).kind).toBe('join');
 });
@@ -23,7 +23,13 @@ it.each([
 });
 it.each([
  undefined,{...witness,agent:'mark'},{...witness,member:'pollock'},{...witness,project:undefined},
- {...witness,conversation:'cv-elsewhere'},{...witness,place:'lane:other'},{...witness,current:()=>false},
+ {...witness,conversation:'cv-elsewhere'},{...witness,place:'lane:other'},{...witness,current:()=>false},{...witness,service:'slack'},
 ])('requires a live independent destination witness %j',destination=>{
  expect(clockRoute(work,()=>destination)).toEqual({kind:'fresh',place:'wake:w-test'});
+});
+
+it('retains the originating credential service independently of conversation scope',()=>{
+ const restricted={...work,authorship:{...work.authorship!,service:'slack'}};
+ expect(clockRoute(restricted,()=>witness).kind).toBe('fresh');
+ expect(clockRoute(restricted,()=>({...witness,service:'slack'})).kind).toBe('join');
 });

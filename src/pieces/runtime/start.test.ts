@@ -238,7 +238,7 @@ it('issues Clock lane witnesses from current Runtime bindings, never Comms/bridg
  expect(witness.current()).toBe(true);
  for(const change of [{state:'done' as const},{endedAt:f.clock.now()},{imported:{history:'unknown' as const}},
   {principalReset:{approval:'a-reset',by:'jonathan',at:f.clock.now()}},{writtenOff:{approval:'a-off',by:'jonathan',at:f.clock.now()}},
-  {agent:'mark'},{member:'jonathan'},{project:'pond'},{conversation:'cv-elsewhere'}]){
+  {agent:'mark'},{member:'jonathan'},{project:'pond'},{conversation:'cv-elsewhere'},{service:'slack'},{runner:'b'},{claimedAt:undefined}]){
   f.app.db.transaction(()=>{const {changedAt:_,...j}=before;f.store.put('job',{...j,...change},f.clock.now());})();
   expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
  }
@@ -302,4 +302,27 @@ it('rechecks independent private member/project access, hosting, policy and shut
  f.app.db.prepare('DELETE FROM runtime_body_policy WHERE agent=?').run('art');
  expect(witness.current()).toBe(true);
  await f.app.close();expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+});
+it('uses the destination reader in installed Clock dispatch and rechecks memberless project policy',async()=>{
+ const {clockDestination}=await import('./clock-destination.js');
+ const {provenanceStore}=await import('./provenance-store.js');
+ const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);
+ const job=f.jobOf(f.call('runtime.startBody',{...f.input,conversation:'cv-clock-lane',project:'pond'}));
+ await f.post(f.runner,'claimJob',{job});await f.post(f.runner,'takeInput',{job});await f.post(f.runner,'reportJob',{job,state:'running'});
+ const input={agent:'art',project:'pond',place:'lane:daily'};
+ f.app.db.transaction(()=>{
+  f.store.put('binding',{id:'cv-clock-lane',...input,venue:'wake',job},f.clock.now());
+  provenanceStore(f.app.db).note('cv-clock-lane','art',{key:'clock-source',sender:{kind:'unknown'},at:f.clock.now()},['jonathan']);
+ })();
+ const read=clockDestination(f.app,()=>access),witness=read(input)!;expect(witness.current()).toBe(true);
+ access.projects.pond.agents=[];expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();access.projects.pond.agents=['art'];
+ const result=f.call('clock.in',{...input,prompt:'PRIVATE scheduled join',note:'join',when:'1s'});expect(result.ok).toBe(true);
+ const id=(result as {ok:true;value:{id:string}}).value.id,scheduled=wake(f.app.db,id)!;
+ // The delivery producer is not installed yet: seed only owning routing metadata
+ // in this fixture. The real Clock daemon and next composition then run normally.
+ scheduled.authorship={origin:'art',conversation:'cv-clock-lane',project:'pond',principal:{for:'?',people:[]}};
+ f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(scheduled),id);
+ f.clock.advance(1000);await settle();
+ expect(wake(f.app.db,id)).toMatchObject({state:'held',outcome:expect.stringContaining('conversation delivery')});
+ expect(f.store.ids('job')).toEqual([job]);
 });

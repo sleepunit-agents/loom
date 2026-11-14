@@ -1141,13 +1141,13 @@ six-hour suppression and imported recovery remain unfinished.
 
 `clockRoute` considers reuse only inside the Clock lane namespace. Original
 agent and verified conversation must match Runtime's current destination, with
-agent, member and project matching independently. A principal of owner, saved
+agent, member, project and credential service matching independently. A principal of owner, saved
 Viewer, capacity bucket or archived delivery never waives this comparison.
 Unproved work gets its own `wake:<id>` route. Paths retain the existing exact
 string semantics; no host file is read.
 
 The internal Runtime destination reader checks an exact `wake` binding, its
-current running/waiting job, house and box, sender-history store and current
+current running/waiting job, exact claimed runner/box, house, sender-history store and current
 central filing policy. Imported, reset, written-off, ended or policy-held work
 cannot issue the witness. Comms and bridge bindings are separate destinations.
 The witness contains routing metadata only and rechecks the binding on use; it
