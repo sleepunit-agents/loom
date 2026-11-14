@@ -25,7 +25,7 @@ async function setup() {
   return { app, home, clock, access, call, type: types.get('attention.readMark')! };
 }
 it('marks only the authenticated member, leaves the ask open, and publishes once across fresh/retried writes', async () => {
-  const { app, clock, call, type } = await setup();
+  const { app, clock, call, type, access } = await setup();
   const changed = vi.spyOn(app.live, 'changed');
   const first = call('markRead', { id: 'ask' }, alice, 'first');
   expect(first).toMatchObject({ value: { ask: 'ask', member: 'alice', readAt: clock.now() } });
@@ -39,6 +39,10 @@ it('marks only the authenticated member, leaves the ask open, and publishes once
   expect(type.read(id, bob)).toBeUndefined();
   expect(call('markRead', { id: 'ask' }, bob)).toMatchObject({ value: { member: 'bob' } });
   expect(type.ids(undefined)).toHaveLength(2);
+  const bobMark = type.ids(undefined).find(key => type.read(key, bob) !== undefined)!;
+  expect(type.read(bobMark, alice)).toBeUndefined(); // Household owner still cannot read Bob's fact.
+  access.members.bob.owner = true;
+  expect(type.read(id, bob)).toBeUndefined(); // A second owner cannot read Alice's fact either.
 });
 it('rejects forged membership and nonmembers; revocation hides held marks without widening ask scope', async () => {
   const { call, type, access } = await setup();
