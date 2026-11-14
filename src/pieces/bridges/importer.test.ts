@@ -225,3 +225,15 @@ for(const [label,household,part,path] of [
  const f=fixture();f.store('shuttle',[['routes','household',household],['channels','art',part]]);
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(`Invalid offline Bridges configuration inventory: shuttle.db at $${path}`);
 });
+
+for(const kind of ['runtime','shuttle'] as const)it(`reports malformed ${kind} store JSON safely through the owning projection`,()=>{
+ const f=fixture();f.store(kind,[[kind==='runtime'?'gates':'people','art',{}]]);
+ const store=new Database(f.sources.stores[0].path);store.prepare('UPDATE docs SET doc=?').run('PRIVATE_BAD_JSON');store.close();
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow(`Invalid offline Bridges configuration inventory: ${kind}.db at $["docs"]["${kind==='runtime'?'gates':'people'}"]["art"]["doc"]`);
+});
+it('reports malformed revision JSON without original words and still closes the source',()=>{
+ const f=fixture();f.store('runtime',[['gates','art',{}]]);
+ const store=new Database(f.sources.stores[0].path);store.prepare('INSERT INTO revisions VALUES (1,?,?,?,?,?,?,?)').run('gates','art','PRIVATE_BAD_JSON',1,'put','today','owner');store.close();
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('Invalid offline Bridges configuration inventory: runtime.db at $["revisions"]["1"]["doc"]');
+ const reopened=f.open(f.sources.stores[0].path);expect(reopened.open).toBe(true);reopened.close();
+});

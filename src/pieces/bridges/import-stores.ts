@@ -4,6 +4,7 @@ import { lstatSync } from 'node:fs';
 import { basename } from 'node:path';
 import type Database from 'better-sqlite3';
 import { fileDigest } from '../../core/migration-files.js';
+import { BridgeSourceError } from './import-source.js';
 
 export interface BridgeStoreFile {
   /** Snapshot-relative name. The caller must confine path with snapshotPath. */
@@ -24,7 +25,10 @@ const positive = (value: unknown): number => {
   if (typeof value !== 'bigint' || value < 1n || value > BigInt(Number.MAX_SAFE_INTEGER)) throw Error();
   return Number(value);
 };
-const json = (value: unknown): string => { const raw = text(value); JSON.parse(raw); return raw; };
+const json = (value: unknown, kind: BridgeStoreFile['kind'], path: PropertyKey[]): string => {
+  try { const raw = text(value); JSON.parse(raw); return raw; }
+  catch { throw new BridgeSourceError(kind === 'runtime' ? 'runtime-store' : 'shuttle-store', path); }
+};
 const columns = {
   docs: ['collection','key','doc','rev','updated','by'],
   revisions: ['id','collection','key','doc','rev','op','at','by'],
@@ -65,8 +69,8 @@ export function readBridgeStoreInventory(files: readonly BridgeStoreFile[], open
           if (total > 8n*1024n*1024n || count > 10000n) throw Error();
           const docs = db.prepare('SELECT collection,key,doc,rev,updated,by FROM docs ORDER BY collection,key').safeIntegers().all() as Record<string,unknown>[];
           const revs = db.prepare('SELECT id,collection,key,doc,rev,op,at,by FROM revisions ORDER BY id').safeIntegers().all() as Record<string,unknown>[];
-          const documents = docs.map(r=>({collection:text(r.collection),key:text(r.key),doc:json(r.doc),rev:positive(r.rev),updated:text(r.updated),by:text(r.by)}));
-          const revisions = revs.map(r=>({id:positive(r.id),collection:text(r.collection),key:text(r.key),doc:r.doc === null ? null : json(r.doc),rev:positive(r.rev),op:text(r.op),at:text(r.at),by:text(r.by)}));
+          const documents = docs.map(r=>({collection:text(r.collection),key:text(r.key),doc:json(r.doc,file.kind,['docs',text(r.collection),text(r.key),'doc']),rev:positive(r.rev),updated:text(r.updated),by:text(r.by)}));
+          const revisions = revs.map(r=>({id:positive(r.id),collection:text(r.collection),key:text(r.key),doc:r.doc === null ? null : json(r.doc,file.kind,['revisions',String(r.id),'doc']),rev:positive(r.rev),op:text(r.op),at:text(r.at),by:text(r.by)}));
           if (new Set(documents.map(r=>JSON.stringify([r.collection,r.key]))).size !== documents.length
             || new Set(revisions.map(r=>r.id)).size !== revisions.length) throw Error();
           return [documents,revisions] as const;
@@ -77,5 +81,5 @@ export function readBridgeStoreInventory(files: readonly BridgeStoreFile[], open
       stores.push({name:file.name,kind:file.kind,...before,documents,revisions});
     }
     return {stores,checksum:digest(JSON.stringify(stores))};
-  } catch { throw Error('Invalid offline Bridges store inventory'); }
+  } catch (error) { if (error instanceof BridgeSourceError) throw error; throw Error('Invalid offline Bridges store inventory'); }
 }
