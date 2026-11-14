@@ -103,3 +103,9 @@ it('namespaces caller ids to their original thread rather than impersonating a s
  const nested=await f.comms.ask('art',other,{id:r.ref,question});expect(nested.ref).not.toBe(r.ref);
  expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{privateQuestion:{thread:f.place}}});
 });
+
+it('keeps the default answer mode consistent in sealed words and Attention metadata',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'default-mode',question:{ask:'Private default question'}});
+ expect(f.attention.get(f.viewer,{id:r.ref})).toMatchObject({ok:true,value:{answers:'words'}});
+ expect(await f.call('comms.messages',{thread:f.place})).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:{ask:'Private default question',answers:'words'}})])});
+});

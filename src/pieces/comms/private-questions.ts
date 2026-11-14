@@ -8,7 +8,7 @@ import { append, thread, type Thread } from './store.js';
 const id=z.string().min(1).max(200);
 const line=z.string().min(1).max(4000);
 const input=z.object({id,question:z.object({ask:line,why:line.optional(),if_yes:line.optional(),if_no:line.optional(),
- href:z.string().max(2000).optional(),refs:z.array(id).max(100).optional(),answers:z.enum(['yes-no','words']).optional()}).strict()}).strict();
+ href:z.string().max(2000).optional(),refs:z.array(id).max(100).optional(),answers:z.enum(['yes-no','words']).default('words')}).strict()}).strict();
 export function privateQuestionCreator(o:Options & {closed():boolean; changed(t:Thread,seq:number,ref:string):void}):Comms['ask'] {
  return async(agent,place,raw)=>{
   const parsed=input.parse(raw);
