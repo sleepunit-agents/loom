@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-- File owner-assigned Tasks in the shared Inbox with their original project/agent audience and source-owned decisions.
+- Add an unregistered pinned metadata ticket authority channel for the separate Secrets holder; worker delivery and public get remain unavailable.
 
 - Add unregistered one-use Secrets handoff tickets with durable claims, exact grant/Runtime fences and staging holds; real worker delivery remains disabled.
 
@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Keep ordinary one-off Clock work filed by authenticated private bodies member-private, with original steering evidence and acknowledgements that omit words.
 - Clock schedules retain original steering across replacement and run-now; private schedule receipts keep their window check after removal.
+- Capture original household lane steering through edits, reassignment and occurrences, keeping historical unknowns and internal evidence out of lane lists.
 - Add a pinned metadata-only holder handoff channel with fresh destination checks, buffer erasure and drained shutdown; runner ticket admission and production activation remain separate.
 - Add a trusted Runtime destination metadata binding for future Secrets tickets, with fresh job, runner, box and claim checks.
 - Bind authenticated HOUSE request/status metadata in the typed Secrets client, with exact-job assertions, stable retries and value-free JSON acknowledgements.
@@ -61,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 
 - Show live Inbox read indicators and retain member-scoped device reply drafts through navigation, reload and failed sends.
+- File owner-assigned Tasks in the shared Inbox with their original project/agent audience and source-owned decisions.
 
 - Clock links local-work requests to private chat; its browser proof now files through a real Runtime-bound body before owner review and scheduling.
 
@@ -1197,6 +1199,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add row-backed agent profile descriptions to Setup, with owner edits/requests, scoped Live records and once-only authenticated agent replies.
 
 - Add Account and Setup device sign-in links that inherit the source browser’s original sign-in time.
+
+- Let the next-side service worker show content-free push notifications and open their signed-in destinations.
 
 ## [0.16.1] - 2026-10-25
 
