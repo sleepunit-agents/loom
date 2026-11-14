@@ -71,9 +71,7 @@ it('keeps device through logout, expiry and sign-in; remote removal blocks quiet
   // Replaying the old receipt cannot delete a later explicit re-enable.
   expect(f.call('remove',{ref:first.ref},owner,'remove')).toMatchObject({ok:true});expect(f.read().devices).toHaveLength(1);
   expect(await b('unsubscribe',{sub:sub()})).toEqual({ok:true,value:{removed:true}});expect(f.read().devices).toEqual([]);
-// This case creates/evicts 55 real database sessions. Its lifecycle assertions
-  // use fake time; concurrent CI shard wall time is not the behavior under test.
-},20_000);
+});
 it('requires explicit shared-device reassignment, resets ownership time and keeps other member private',async()=>{
   const f=await setup(),a=await f.socket(f.cookie),b=await f.socket(f.otherCookie);await a('subscribe',{sub:sub()});f.clock.advance(10_000);
   expect(await b('subscribe',{sub:sub(),again:true})).toMatchObject({ok:false,code:'denied'});expect(f.read().devices).toHaveLength(1);
