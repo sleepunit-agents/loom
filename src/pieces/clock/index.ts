@@ -380,6 +380,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
         if (!(e instanceof OperationError) || e.code !== 'invalid') throw e;
         gone.push(id); continue;
       }
+      // This decision is new steering evidence, never recovered archive authority.
+      w.authorship = filedWork(ctx.viewer, {agent:w.agent,project:w.project,member:w.member,note:''}).authorship;
       w.by = ctx.viewer; w.state = 'pending'; delete w.hold;
       w.outcome = 'Owner vouched for unknown imported work';
       w.vouched = { by: ctx.viewer.id, at: ctx.now };

@@ -871,8 +871,14 @@ rows are reported as gone without preventing other eligible rows on the card.
 
 The decision preserves ids, words, deadline, failures and the inert archive, stamps
 `vouched` with the actual owner/time, and records a vouch event. The wake becomes
-pending under that owner's current authority. Pause, revocation, staging and the
-default held runtime still apply. No archived capability is restored or spent.
+pending under that owner's current authority. Adoption now records fresh filing
+authorship from the authenticated deciding owner and current scope, replacing
+any previous authorship rather than reading archived principal, conversation or
+service hints. Both direct owner vouch and an owner Allow use this same path.
+This lets an otherwise supported imported prompt pass the native consumer's
+known-steering check after normal runner claim/input and fresh native admission;
+a saved owner Viewer alone is insufficient. No existing adopted rows are
+backfilled. Pause, revocation, staging and unsupported capabilities still apply. No archived capability is restored or spent.
 
 Next mode composes `clockVouchApplication` into newly installed Approvals. Its
 owner Allow calls Clock synchronously on the same foundation transaction; Clock
