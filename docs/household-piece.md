@@ -733,7 +733,7 @@ generated command is added for a capability that specifically requires a browser
 The new-side service worker can display push notifications and handle taps. It
 shows a fixed `loom` title and an empty body, even if a payload contains a thread
 title or message words. This deliberately uses less lock-screen detail than the
-old worker: current Comms candidates include a private thread title. The signed-in
+old worker: current Comms candidate bodies include a private thread title. The signed-in
 page shows the detail after a tap. Tags retain notification replacement behavior.
 
 A tap opens the payload's same-origin URL, including next Comms thread routes or
