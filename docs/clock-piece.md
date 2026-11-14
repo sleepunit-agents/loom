@@ -31,6 +31,22 @@ schedule capacity (#1112) and shared/API/conversation one-off capacity (#1116)
 are merged too. `next.ts` already wires Runtime's `capacityConversation` callback;
 that callback issues only a capacity bucket, never a principal or mutation right.
 
+Ordinary `at`/`in`/`park` filing now consumes Runtime's `clockProvenance`
+through its own trusted Clock option. New one-offs retain original principal,
+conversation, agent, member, project and credential service separately from capacity
+and saved Viewer attribution. Bound private filings always carry the thread's
+member and project, including unknown or other-person steering; conflicting scope
+or another target agent is refused. The central policy permits only private filing
+by the proved own body, not a read or a household action. For these private filings, tokens receive only
+id/state/due (and the parked-on id), never words or provenance. The member's signed
+window remains the only ordinary private read path. Exports omit these rows and
+retry/event copies, as for private local wakes; this is not a restorable backup.
+Private one-offs remain permission-held before dispatch, without member impersonation.
+Unbound/copy-only calls are unknown, never owner by inference. Existing stored work
+is not backfilled. Schedule creation/replacement/run must consume this evidence and
+narrow the original principal together in the following unit; local approval Caller
+semantics remain independent. No mutation/join or delivery authority is added here.
+
 Remaining work: conversation-bound mutation/join, original schedule principal
 narrowing, agent-authored self-rearm eligibility, continuation issuer/handle/
 deadline/place validation, real service-identity dispatch and private delivery,
@@ -1036,6 +1052,7 @@ It retains member, project and credential service separately from principal.
 Private member scope survives even when the principal is unknown or names a
 different person. This is internal metadata: no public operation, record, Live
 feed or export is added. Consumers must preserve scope and still check central
-policy. Clock mutation/join, principal persistence/narrowing and self-rearm do
-not consume this new role yet and remain unfinished above. Local approval
+policy. Ordinary one-off filing now consumes this role and persists original
+evidence as described above. Clock mutation/join, schedule principal persistence/
+narrowing and self-rearm still do not consume it and remain unfinished. Local approval
 semantics and actual private delivery are unchanged.

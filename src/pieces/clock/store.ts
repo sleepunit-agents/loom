@@ -1,6 +1,8 @@
 import { registerExportFilter, privateExportCopy, type Db, type Scope, type Viewer, type Context } from '../../core/index.js';
 export type WakeState = 'pending' | 'parked' | 'firing' | 'held' | 'fired' | 'cancelled' | 'failed';
 export interface Work extends Scope {
+  /** Original filing evidence, independent of capacity and saved Viewer attribution. */
+  authorship?: import('./authorship.js').Authorship;
   agent: string; prompt?: string; file?: string; note: string; model?: string;
   continuation?: string; slot?: string; approval?: string; place?: string;
   /** Identifies lane work superseded while a runtime start was in flight. */
