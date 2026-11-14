@@ -18,11 +18,12 @@ const owner:Viewer={kind:'member',id:'jonathan'}, pollock:Viewer={kind:'member',
 const card=(extra:Partial<Approval>={}):Approval=>({id:'a-12345678',kind:'merge',target:`github:acme/app#12@${'a'.repeat(40)}`,what:'Review a fix',why:'It repairs the page',ask:'Merge the fix?',if_yes:'I merge it',if_no:'I hold it',who:{agent:'art',where:'h-1'},for:'owner',minutes:30,at:'2026-11-13T00:00:00Z',state:'pending',...extra});
 async function setup(home?:string, denied=false) {
   if(!home){home=mkdtempSync(join(tmpdir(),'approval-attention-'));dirs.push(home);fixture(home);}
-  const types=new Map<string,RecordType>();
+  const types=new Map<string,RecordType>(), startupChanges:unknown[]=[];
   let coreDb:import('../../core/index.js').Db;
   const access=()=>{const held=new SharingDatabase(coreDb,home!).sharing();return denied?{...held,services:{...held.services,approvals:{...held.services.approvals,operations:[]}}}:held;};
   const app=await startLoom({home,next:true,staging:true,clock:new FakeClock(1_800_000_000_000),stdout:()=>{},sharing:access,install:a=>{
     coreDb=a.db;
+    a.live.observe(changes=>{if(changes.some(c=>c.type==='attention.ask'))startupChanges.push(changes);});
     const register=a.live.register.bind(a.live);a.live.register=t=>{types.set(t.name,t);register(t);};
     installApprovals(a.db,a.operations,a.live,access,{caller:v=>({who:{agent:v.id,where:'h-test'},for:'owner',project:'pond'})});
   }});closes.push(app.close);
@@ -34,7 +35,7 @@ async function setup(home?:string, denied=false) {
   const reconcile=()=>call('approvals.reconcileAttention',{}, {kind:'service',id:'approvals'});
   const seed=(a=card())=>{expect(call('fixture.approval',a).ok).toBe(true);expect(reconcile().ok).toBe(true);return a.id;};
   const ask=(id='a-12345678',v=owner)=>call('attention.get',{id:approvalAskId(id)},v);
-  return {app,call,home,types,reconcile,seed,ask};
+  return {app,call,home,types,reconcile,seed,ask,startupChanges};
 }
 it('files pending exact-scoped approval cards, preserving principal wording and owning decisions',async()=>{
   const s=await setup(),id=s.seed(card({project:'pond',for:'loren'}));
@@ -122,4 +123,25 @@ it('holds startup reconciliation on actual service denial, without altering owni
     expect(s.call('approvals.answer',{id:'a-12345678',action:'deny'}).ok).toBe(true);
     expect(s.ask()).toMatchObject({ok:true,value:{state:'resolved'}});
   }finally{warn.mockRestore();}
+});
+
+it('reopens an already-current home without a write receipt or Attention publication',async()=>{
+  const s=await setup();s.seed();const before=s.app.db.prepare('SELECT * FROM core_operations').all();
+  await s.app.close();closes.pop();
+  const again=await setup(s.home);
+  expect(again.app.db.prepare('SELECT * FROM core_operations').all()).toEqual(before);
+  expect(again.startupChanges).toEqual([]);expect(again.ask()).toMatchObject({ok:true,value:{state:'open'}});
+});
+it('moves an already-resolved projection to a later audience without restoring private or stale words',async()=>{
+  const s=await setup();s.seed(card({state:'denied',project:'other'}));
+  // An inactive card never filed has no projection: file while pending first.
+  s.seed(card({project:'other'}));s.seed(card({state:'denied',project:'other'}));
+  expect(s.ask(undefined,pollock).ok).toBe(false);
+  s.seed(card({state:'denied',project:'pond',agent:'pond-bot'}));
+  expect(s.ask(undefined,pollock)).toMatchObject({ok:true,value:{state:'resolved',ask:'Approval no longer needs you',project:'pond',agent:'pond-bot'}});
+  s.seed(card({state:'denied',project:'other',agent:'art'}));expect(s.ask(undefined,pollock).ok).toBe(false);
+});
+it('uses fixed owning promises for an applied owner action despite conflicting source words',async()=>{
+  const s=await setup();s.seed(card({kind:'principal-reset',target:'art:cv-0123456789ab',if_yes:'Misleading supplied promise',if_no:'Another supplied promise'}));
+  expect(s.ask()).toMatchObject({ok:true,value:{ask:'Count this conversation as your work from now on?',if_yes:'I count this conversation as your work from now on.',if_no:'I leave the conversation unchanged.'}});
 });

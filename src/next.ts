@@ -176,6 +176,8 @@ export async function installNext(app: Foundation, options: NextOptions) {
     },
   });
   if (attentionSources) connectApprovalAttention(app.operations, () => attentionSources.approvals());
+  // Keep the small owning-service compare/write sequences explicit: neither
+  // source can accidentally borrow the other's identity or operation names.
   if (app.operations.has('approvals.reconcileAttention')) {
     const reconcile = () => {
       const pending = app.operations.call('direct', {kind:'service',id:'approvals'}, 'approvals.attentionPending', {});
