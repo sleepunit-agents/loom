@@ -10,7 +10,7 @@ import { schema } from './schema/001.js';
 import { grantId } from './grant-id.js';
 import { installSecretCommands } from './command-operations.js';
 export { grantId } from './grant-id.js';
-import type { GrantContext, Grant, GrantRequest, Grants, Resource, SecretName } from './role.js';
+import type { Grant, GrantRequest, Grants, SecretName } from './role.js';
 
 import { readSecretPolicy, requestDecision, secretPolicy, withAlways } from './policy.js';
 import { secretName as name, secretAgent as agent, requestReason } from './input.js';
