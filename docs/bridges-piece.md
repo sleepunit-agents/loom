@@ -870,14 +870,11 @@ lexemes stay in their original strings. Source mutation around the read refuses.
 Failures are sanitized. Parent confinement and completed-backup consistency belong
 to the snapshot caller; this reader is not a live-WAL reader.
 
-Still required before claiming a complete Bridges importer: collect both stores
-and explicit external instance roots; resolve each agent's authoritative sources
-against pinned Runtime/shuttle contracts, preserving/refusing ambiguity and missing
-moved-gates sources; compare every archived document/revision independently from
-the destination; explicitly map Slack bundle metadata and separate secret references
-without opening the bundle; implement the owning import transaction, checksum,
-repeat/different-source guards, rollback, registry, plan discovery/options and both
-verification paths. Neither source inventory is registered with migrate-all yet.
+The completed-snapshot importer below now collects these stores and explicit
+external roots, resolves authoritative sources, retains exact private evidence,
+and owns the atomic import and both source-derived verification paths. The
+inventory readers are used by the registered Bridges migration; they never run
+as daemon adapters or apply legacy authority themselves.
 
 ## Completed-snapshot importer
 
@@ -895,12 +892,27 @@ triples plus an empty connections mapping. Review that plan's Bridges options:
 {"instances":[{"shuttle":"bridges/0/shuttle.json","people":"bridges/0/people.json","routes":"bridges/0/routes.json"}],"connections":[{"agent":"art","platform":"discord","workspace":"789","bot":"100","tokenSecret":"art-discord"}]}
 ```
 
-Every configured agent/platform requires one connection mapping. Discord bot and
-guild must match resolved source routes. Slack requires explicit workspace and bot
-metadata and separate tokenSecret/appSecret names; secrets_env/SLACK_BOTS is a
-whole bundle reference, never a source of invented split secret names. No bundle
-is opened. The importer installs every venue **disabled**, with no adapter started.
-The owner reviews setup before enabling it in the final move.
+Every configured **local instance** agent/platform requires one connection mapping.
+Bots merely named in routes/settings do not prove a local instance exists. With
+explicit instance roots, only their agents require mappings; off-machine bots
+remain source evidence. An explicit complete mapping may additionally select a
+household bot with accepted source routes. Store-only snapshots require mappings
+for declared household bots. Unknown agents never become household agents.
+Discord bot and guild must match resolved source routes. A complete Slack mapping
+requires explicit workspace, bot-user metadata and distinct tokenSecret/appSecret
+names. secrets_env/SLACK_BOTS is a whole bundle reference, never a source of
+invented split secret names. No bundle is opened.
+
+For a local Slack section with only a bundle reference, use
+`{"agent":"art","platform":"slack","workspace":"TWORK","setupIncomplete":true}`.
+The workspace must occur in that instance's `slack.workspaces`. Omit bot,
+tokenSecret and appSecret entirely. This creates **no runnable venue**; the
+workspace, bundle reference and incomplete reason remain in private import
+evidence (`bridges_meta` / `legacy-evidence`, `incomplete`). The completed snapshot
+and mapping are the setup-repair inputs. No owner needs to create secrets to
+complete migration. Every created venue is **disabled**, with no adapter started.
+Incomplete Slack setup does not appear as a fabricated connection on the screen.
+The owner reviews setup before enabling anything in the final move.
 
 `loom migrate all --snapshot <snapshot> --home <stopped-new-home> --plan <plan>`
 includes Bridges. For a separately imported matching household use
@@ -919,7 +931,15 @@ all agents' channels parts only when routes_for completeness permits it; otherwi
 they use the instance file. Offers affect completeness only; their flags never
 become accepted rules. Contradictory people, person/agent platform identities,
 channel primaries, threads, connection filters or per-agent channel flags refuse.
-People readers remain person slugs. Gates, proposals and restrictions remain
+People readers remain person slugs. Unknown members/accounts and routes whose
+primary or readers cannot be projected remain private evidence (`retained`);
+the importer creates no member, grant, link or audience-widened route for them.
+Thread routes also retain their parent's unprojectable audience rather than
+dropping its restrictions. Every unprojectable channel (or affected thread's
+parent) is also added to the imported Discord connection's ignore list: a missing
+route alone must not permit explicit-mention routing after enabling a connection.
+Repair that source audience before removing the block. Identities without a projectable workspace remain
+private evidence. Gates, proposals and restrictions remain
 Runtime-owned; private source evidence never grants or executes them.
 
 Channel-note file references, webhook-peer maps, notification settings, peer budgets,
@@ -930,3 +950,49 @@ t-2210; this importer does not claim that work complete. Source JSON inventory i
 whitelisted configuration plus byte digests; exact source files remain in the
 completed snapshot. Stored documents and revisions retain exact JSON strings,
 including numeric lexemes, privately in bridges_meta and never live records.
+
+
+### Household mapping procedure (one Art root, Art/Mark/Fez routes, work Slack)
+
+The coordinator performs these steps offline on a completed snapshot, without
+reading credential values or contacting Discord or the work Slack workspace:
+
+1. Supply exactly the existing `~/Art/bridge` root to snapshot's repeatable
+   `--bridges` option. Do not invent Mark or Fez roots. Preserve the discovered
+   `instances` triple under `bridges/0`; include both platform settings and both
+   completed store backups in the plan's paths. A Runtime store also requires
+   the Runtime collector's explicit state/data roots and its own mappings.
+2. Read `bridges/0/shuttle.json`: `agent.slug` supplies `art`;
+   `discord.token_file` supplies the existing **secret name** `discord-token`.
+   Do not open that file. Read the selected routes: workspace is `guild`, bot is
+   `bots.art`. When accepted shuttle `routes/household` and `channels/<agent>`
+   parts are complete, use their assembled guild/bot instead of a stale file;
+   inconsistent claims refuse. No discovery API is necessary.
+3. Add only Art's Discord complete mapping. Mark and Fez route bot IDs are
+   evidence of peers/off-machine setup, not requests for local connections.
+   The existence of `mark-discord-token` does not create a local Mark instance.
+   Fez need not be a household agent for this archive to pass.
+4. Read the single key of Art's `slack.workspaces` for workspace (the `T…` ID).
+   Its value is a display name, not an ID. `slack.secrets_env` supplies only
+   the retained bundle reference `slack-onterris.env`. With no split names and
+   no offline bot-user metadata, add the incomplete mapping below. Do not
+   derive a bot from the bundle, guess secret names, or request new secrets.
+   For a future complete setup, bot is the authenticated Slack **U… bot user**,
+   not the B… bot ID; tokenSecret/appSecret must name separately established
+   bot/app credentials. That setup is outside this import.
+5. Put these connections in the discovered plan options, preserving `instances`:
+
+```json
+{"connections":[
+  {"agent":"art","platform":"discord","workspace":"<routes.guild>","bot":"<routes.bots.art>","tokenSecret":"discord-token"},
+  {"agent":"art","platform":"slack","workspace":"<single slack.workspaces key>","setupIncomplete":true}
+]}
+```
+
+Run plan validation, all, and independent verify with that same reviewed plan.
+For standalone import/verify the mapping file contains the full options object
+(`instances` plus `connections`), not this connections-only illustration. Verify
+that only Art's disabled Discord venue exists and Slack's incomplete evidence
+names the workspace and bundle. The synthetic household rehearsal exercises
+plan, all and both verifiers, including evidence tampering. Imports start no
+adapters, make no venue calls, and do not enable or change the work workspace.
