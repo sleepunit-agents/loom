@@ -8,6 +8,8 @@ import {runtimeHouseDestination} from './pieces/runtime/role.js';
 import {ticketAuthorityFixture} from './runtime-runner/ticket-authority.fixture.js';
 import {startAdmittedSecretCommand} from './runtime-runner/admitted-secret-command.js';
 import {workerSecretTransport} from './runtime-runner/secret-transport.js';
+import * as handoff from './pieces/secrets/holder-handoff.js';
+import * as localHolder from './pieces/secrets/local-holder.js';
 import {listenHolderHandoff} from './pieces/secrets/holder-handoff.js';
 import {routedHolderAuthority} from './pieces/secrets/holder-routing.js';
 import {workerAdmission} from './pieces/secrets/worker-admission.js';
@@ -25,7 +27,9 @@ async function setup(service?:string) {
  return {...f,config,start,holderSocket,admissionSocket};
 }
 test.each([true,false])('actual daemon startup shares original admission and authority with fd3 (staging=%s)',async(staging)=>{
- const f=await setup('bridge');const app=await f.start(f.config,staging);closes.push(app.close);
+ const f=await setup('bridge');const started=f.start(f.config,staging);
+ f.config.holder.config.socket=join(f.home,'mutated-holder.sock');
+ const app=await started;closes.push(app.close);
  const viewer=signin(app).token(f.tokenDigest)!.viewer;
  const destination=runtimeHouseDestination(app,()=>new SharingDatabase(app.db,f.home).sharing(),viewer)!;
  const {agent,job,runner,box,claimedAt,service}=destination;
@@ -55,9 +59,13 @@ test('startup rejects stale and non-body credentials without opening either list
  const app=await f.start();closes.push(app.close);
 });
 test('partial admission startup failure drains the already listening authority and releases the home',async()=>{
- const f=await setup();
+ const f=await setup();const mint=vi.spyOn(handoff,'localHolderHandoff');
  await expect(f.start({...f.config,admission:{...f.config.admission,socket:join(f.home,'missing','admission.sock')}})).rejects.toThrow('Secret worker startup unavailable');
  expect(existsSync(f.server.socket)).toBe(false);
+ const original=mint.mock.results[0].value as ReturnType<typeof handoff.localHolderHandoff>;
+ const socketCheck=vi.spyOn(localHolder,'privateSocket');
+ await expect(original.handTo('55555555-5555-4555-8555-555555555555')).rejects.toThrow('Secret handoff unavailable');
+ expect(socketCheck).not.toHaveBeenCalled();socketCheck.mockRestore();
  const app=await f.start();closes.push(app.close);
 });
 test('daemon close retires an admitted original ticket before closing SQLite and removes listeners',async()=>{
@@ -98,5 +106,30 @@ test('duplicate worker pins and holder/worker pin collision fail startup with no
  const f=await setup();
  await expect(f.start({...f.config,workers:[...f.config.workers,...f.config.workers]})).rejects.toThrow('Secret worker startup unavailable');
  await expect(f.start({...f.config,workers:[{...f.config.workers[0],fingerprint:f.fingerprint('holder')}]})).rejects.toThrow('Secret worker startup unavailable');
+ expect(existsSync(f.server.socket)).toBe(false);expect(existsSync(f.admissionSocket)).toBe(false);
+});
+test('shutdown drains a real active dispatch before SQLite closes and closes the original minted holder',async()=>{
+ const f=await setup();const mint=vi.spyOn(handoff,'localHolderHandoff');
+ const app=await f.start(f.config,false);closes.push(app.close);
+ const original=mint.mock.results[0].value as ReturnType<typeof handoff.localHolderHandoff>;
+ const viewer=signin(app).token(f.tokenDigest)!.viewer;
+ const destination=runtimeHouseDestination(app,()=>new SharingDatabase(app.db,f.home).sharing(),viewer)!;
+ const {agent,job,runner,box,claimedAt}=destination,binding={agent,job,runner,box,claimedAt};
+ const input=join(f.home,'active-input.sock'),transport=workerSecretTransport({...f.config.holder.config,socket:input,cert:join(f.home,'holder.pem'),key:join(f.home,'holder.key'),servername:'daemon.test'},f.fingerprint('daemon'));closes.push(transport.close);
+ let entered!:()=>void,resume!:()=>void;const ready=new Promise<void>(r=>{entered=r;}),held=new Promise<void>(r=>{resume=r;});
+ const source=vi.fn(async()=>{entered();await held;return Buffer.from('synthetic-held-value');});
+ const holder=await listenHolderHandoff({...f.server,socket:f.holderSocket,cert:join(f.home,'holder.pem'),key:join(f.home,'holder.key')},{read:source},f.fingerprint('daemon'),routedHolderAuthority(f.remote,[{binding,transport}]));closes.push(holder.close);
+ const command=await startAdmittedSecretCommand({command:process.execPath,args:['-e',"require('node:fs').createReadStream(null,{fd:3}).resume();"],cwd:f.home,env:{},input:{...f.server,socket:input},holderFingerprint:f.fingerprint('holder'),authority:{...f.server,servername:'daemon.test'},daemonFingerprint:f.fingerprint('daemon'),admission:{...f.server,socket:f.admissionSocket,servername:'daemon.test'}},{name:'API',binding,current:()=>destination.current(),expiresAt:Date.now()+20_000});closes.push(command.close);
+ await ready;const closeDb=vi.spyOn(app.db,'close');let state:unknown;
+ closeDb.mockImplementationOnce(()=>{state=app.db.prepare('SELECT state FROM secrets_tickets').get();closeDb.mockRestore();app.db.close();});
+ let done=false;const closing=app.close().then(()=>{done=true;});
+ try {
+  await new Promise<void>(resolve=>setImmediate(resolve));
+  expect(done).toBe(false);expect(closeDb).not.toHaveBeenCalled();
+ }finally {resume();await closing;}
+ expect(await command.delivery).toBe(false);expect(await command.completed).toBe(false);expect(state).toEqual({state:'uncertain'});
+ const socketCheck=vi.spyOn(localHolder,'privateSocket');
+ await expect(original.handTo('66666666-6666-4666-8666-666666666666')).rejects.toThrow('Secret handoff unavailable');
+ expect(socketCheck).not.toHaveBeenCalled();
  expect(existsSync(f.server.socket)).toBe(false);expect(existsSync(f.admissionSocket)).toBe(false);
 });
