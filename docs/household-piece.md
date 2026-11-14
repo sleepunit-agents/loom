@@ -1251,3 +1251,41 @@ is removed by this unit.
 | Extract tar paths into a destination | Validated envelope; descriptor-pinned exclusive Linux writer into an absent home |
 | Start a restored household | Refused while `.restore-pending` exists; owning Secrets recovery and restored-home acceptance still pending |
 | Overwrite or merge an existing home | Dropped: always refuse, including an empty existing destination |
+
+### Owning Secrets recovery consumption, still quarantined
+
+`stageHouseholdRestoreWithRecovery` composes the existing bounded validator and
+exclusive Linux writer with a temporary `HouseholdSecretsRestore` role. The role
+is constructed by its owning caller with explicit owner authority and an isolated,
+absent holder destination. Core supplies only an owned copy of the actual validated
+opaque recovery part. It passes no holder paths, keys, live-discovery instructions
+or grants. Missing roles fail before destination IO; invalid bundles and failed
+staging fail before owning recovery IO. Existing candidates are never adopted.
+
+The role durably restores its complete state, including historical identities and
+fingerprint/receipt keys, and returns its original session. Core awaits that
+session's acceptance of actual restored state, then awaits its original cleanup
+on success or failure. Cleanup stops and joins temporary resources while retaining
+the stopped restored state. A rejecting restore owns cleanup of its acquisitions.
+Malformed sessions and failed acceptance/cleanup fail closed. Role methods are
+captured with their original receivers; role input mutation fails, and the owned
+copy is wiped on every exit. App files and deliberate absences remain exact.
+
+Success reports `awaiting-household-acceptance` for this invocation only. This is
+not a durable receipt or an activation/retry capability. The reserved staging name
+and `.restore-pending` both remain, including after successful owning recovery.
+No recovery session is serialized, re-discovered or reconstituted from metadata.
+The role is trusted local code, not an operation input or a sandbox boundary.
+
+There is still no production owning implementation on main; fixtures use the
+smallest explicit fake. A real owning export/verifier/restore and its isolated
+acceptance witness remain a dependency on t-2208. Public restore, safe activation
+into an empty usable home, every restored sign-in/token and stopped-daemon stdio
+acceptance remain required. No blocker remover, startup bypass, daemon/worker
+startup, running-home change or machine-local arming is supplied by this unit.
+Saved backup settings continue to report `awaiting-runner`.
+
+| Old restore action | New unit / remaining work |
+| --- | --- |
+| Restore a piece's opaque part | Explicit owning session restore/accept/close seam, test fake only |
+| Start the recovered household | Still refused; actual owning implementation and usable-home acceptance/activation remain required |

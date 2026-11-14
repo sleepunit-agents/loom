@@ -5,6 +5,63 @@ import { isAbsolute } from 'node:path';
 import { restorePending, restorePrefix } from '../home-state.js';
 import { withHouseholdRestore, type RestoreBudget, type ValidatedHouseholdBundle } from './backup-restore.js';
 
+/** Temporary owning role until Secrets supplies its recovery implementation.
+ * Construct it with an explicit, isolated, absent holder destination and owner
+ * authority. It must never discover a live holder, self-grant, or change one.
+ * restore consumes borrowed opaque bytes, durably restores ALL holder state
+ * (including historical identities and fingerprint/receipt keys), and returns
+ * the original recovery session. On rejection it must clean its own acquisitions.
+ * accept checks that actual restored state against the supplied recovery part.
+ * close stops/joins all original recovery resources, even after failed accept;
+ * it retains the stopped restored state. Neither method may retain input bytes.
+ * This is trusted local code, not a serialized capability or operation input.
+ */
+export interface HouseholdSecretsRestore {
+  restore(bytes: Buffer): Promise<{
+    accept(): Promise<void>;
+    close(): Promise<void>;
+  }>;
+}
+
+/** Fresh staging plus owning Secrets recovery. Still NOT a usable-home restore.
+ * Never reopens/adopts an existing candidate; never removes the startup fence.
+ * Success reports only this invocation's joined owning recovery. The returned
+ * state is not a receipt/capability authorizing future activation or retry.
+ * No production role or public caller exists yet. The owning implementation and
+ * actual restored sign-in/stdio acceptance remain required before activation.
+ */
+export async function stageHouseholdRestoreWithRecovery(ciphertext: Uint8Array, identity: string, destination: string,
+  secrets: HouseholdSecretsRestore, budget?: RestoreBudget): Promise<{ home: string; state: 'awaiting-household-acceptance' }> {
+  try {
+    // Pin the original role method before decryption's first async boundary.
+    const restoreMethod = secrets?.restore;
+    if (typeof restoreMethod !== 'function') throw Error();
+    const restore = restoreMethod.bind(secrets);
+    return await withHouseholdRestore(ciphertext, identity, async bundle => {
+      materialize(bundle, destination);
+      const original = bundle.files.get('secrets/recovery.age')!;
+      const copy = Buffer.from(original);
+      try {
+        const session = await restore(copy);
+        // Capture cleanup before reading/validating accept so malformed accept
+        // cannot skip the original session's available cleanup.
+        const closeMethod = session?.close;
+        if (typeof closeMethod !== 'function') throw Error();
+        const close = closeMethod.bind(session);
+        try {
+          const acceptMethod = session.accept;
+          if (typeof acceptMethod !== 'function' || !copy.equals(original)) throw Error();
+          const accept = acceptMethod.bind(session);
+          await accept();
+          if (!copy.equals(original)) throw Error();
+        } finally { await close(); }
+        if (!copy.equals(original)) throw Error();
+      } finally { copy.fill(0); }
+      return { home: destination, state: 'awaiting-household-acceptance' as const };
+    }, budget);
+  } catch { throw new Error('Household owning recovery failed'); }
+}
+
 /** Destination must NOT exist, even as an empty directory. Its existing parent
  * must belong to this OS user with mode 0700. Destination basename must start
  * with .loom-restore- (with a nonempty suffix): startup reserves that namespace
