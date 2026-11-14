@@ -1052,3 +1052,44 @@ This helper alone neither captures a complete household nor provides an atomic
 cross-file snapshot, encryption, a restore drill, execution or retirement evidence.
 The full bundle worker must account for all those boundaries before claiming
 coverage; current saved configuration still schedules nothing.
+
+
+### Continuity snapshot and attachment pairing prerequisite
+
+`captureHouseholdContinuity` in `src/core/household/backup-continuity.ts` takes
+explicit, trusted open connections for registered agents' memory and notes
+stores and the commons' knowledge and People stores. Each input must be an
+initialized database or explicit `null` (recorded as absence). It opens no
+source path, discovers no old home, and never interprets an open/check failure
+as absence. The eventual worker must establish the connections' identity and
+registered-agent selection; this internal helper is not an authorization door.
+
+The implementation uses SQLite's serialization API inside a read transaction,
+rather than copying database/WAL files or writing temporary plaintext backup
+files. This is the in-memory snapshot choice for the old contract's SQLite
+backup requirement. It preserves complete continuity stores, including memory
+vector virtual tables and their shadow rows, and includes committed WAL data.
+Only the captured buffer's read/write version header bytes are normalized for
+SQLite's [documented WAL deserialization limitation](https://sqlite.org/c3ref/deserialize.html);
+the source stays unchanged. Each image is independently reopened with the
+existing sqlite-vec extension and checked for integrity and foreign keys.
+A source inside a caller transaction is refused without committing that
+transaction. Images are bounded to 256 MiB each and 512 MiB combined, with a
+page-count preflight before serialization and a byte-count check afterward.
+
+Attachment hashes and lengths come from the corresponding captured notes
+image, never a later live query. The descriptor-pinned portable capture reads
+exactly those content-addressed attachments; a removed, changed, inconsistent
+or missing attachment fails the entire capture. Optional document absence
+remains governed by the portable allowlist. Every returned image/file Buffer
+is owned sensitive plaintext that the encryption caller must clear; failed
+captures clear all allocations already owned by this helper. SQLite and JS
+internal copies are outside that wiping guarantee.
+
+This establishes a consistent image per database and exact attachment pairing,
+not a simultaneous snapshot across all databases and mutable documents. The
+worker still needs safe source acquisition, cookie-key capture, the independent
+Secrets recovery boundary, the full encrypted bundle and actual restore drill.
+There is no production caller, command, new record, filesystem write, daemon,
+arming, publication or scheduled backup in this prerequisite. Existing
+configuration continues to report `awaiting-runner`.
