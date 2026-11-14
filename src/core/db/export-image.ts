@@ -54,6 +54,8 @@ export function exportDatabaseImage(db: Db): DatabaseImage {
     const sequence = sequences(db, names);
     const expected = tables.map(table => ({ name: table.name, rows: table.rows.length, sha256: digest(table.rows as Row[], table.sqlite) }));
     const restored = new Database(':memory:');
+    let bytes: Buffer | undefined;
+    let accepted = false;
     try {
       restored.pragma('foreign_keys = OFF');
       restored.transaction(() => {
@@ -76,7 +78,7 @@ export function exportDatabaseImage(db: Db): DatabaseImage {
         // or alter imported rows. Autoindexes are recreated by table DDL.
         for (const object of objects) if (object.type !== 'table') restored.exec(object.sql);
       })();
-      const bytes = restored.serialize();
+      bytes = restored.serialize();
       const drill = new Database(bytes);
       try {
         if (drill.pragma('integrity_check', { simple: true }) !== 'ok' || (drill.pragma('foreign_key_check') as unknown[]).length) throw Error('Database export restore integrity failed');
@@ -87,7 +89,9 @@ export function exportDatabaseImage(db: Db): DatabaseImage {
         }
         if (digest(sequences(drill, names)) !== digest(sequence)) throw Error('Database export restore sequences differ');
       } finally { drill.close(); }
-      return { bytes, tables: expected, sha256: createHash('sha256').update(bytes).digest('hex') };
-    } finally { restored.close(); }
+      const result = { bytes, tables: expected, sha256: createHash('sha256').update(bytes).digest('hex') };
+      accepted = true;
+      return result;
+    } finally { if (!accepted) bytes?.fill(0); restored.close(); }
   })();
 }
