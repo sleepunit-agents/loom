@@ -1350,6 +1350,9 @@ a private pending file, or a complete final bundle if failure followed publicati
 it never authorizes pruning. A retry with the same stamp refuses a collision,
 even for identical bytes; the runner must choose a fresh stamp or report failure.
 All held ancestor descriptors receive close attempts, including on error.
+Regression tests inject foreign target/marker ownership before and after export,
+exercise malformed existing paths for both inputs, and corrupt the published
+inode separately from pending-file readback.
 
 There is no production caller, public command, deletion, retention execution,
 git publication, RESTORE.md writer, local arming, staging bypass, daemon job or

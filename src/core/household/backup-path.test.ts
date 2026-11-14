@@ -135,3 +135,42 @@ it('reports failure after final-directory sync failure while preserving complete
 it.each([0, -1, NaN, 1.5, 898 * 1024 * 1024])('refuses budget %j before export', async budget => {
   const f = fixture(); await expect(f.run(budget)).rejects.toThrow(error); expect(f.produce).not.toHaveBeenCalled();
 });
+
+it.each(['target-before', 'marker-before', 'target-after', 'marker-after'] as const)('refuses foreign ownership at %s', async kind => {
+  const f = fixture(), stat = fs.fstatSync;
+  fs.writeFileSync(join(f.target, '.loom-backup'), 'KEEP');
+  let changed = !kind.endsWith('after');
+  vi.spyOn(fs, 'fstatSync').mockImplementation(((fd: number, options?: fs.StatOptions) => {
+    const st = stat(fd, options as undefined), path = fs.readlinkSync(`/proc/self/fd/${fd}`);
+    if (changed && path === (kind.startsWith('target') ? f.target : join(f.target, '.loom-backup'))) st.uid += 1;
+    return st;
+  }) as typeof fs.fstatSync);
+  f.produce.mockImplementation(async () => { changed = true; return f.bundle; });
+  await expect(f.run()).rejects.toThrow(error);
+  if (kind.endsWith('before')) expect(f.produce).not.toHaveBeenCalled();
+  else expect(f.produce).toHaveBeenCalledOnce();
+  expect(fs.readdirSync(f.target)).toEqual(['.loom-backup']);
+  expect(fs.readFileSync(join(f.target, '.loom-backup'), 'utf8')).toBe('KEEP');
+});
+it.each(['home', 'target'] as const)('rejects malformed existing %s paths before exporting', async side => {
+  const f = fixture();
+  const path = side === 'home' ? f.home : f.target;
+  const altered = [path + '/', path + '/.', path + '/../' + side, path.replace('/' + side, '//' + side), path.slice(1),
+    path + '\\suffix', path + '\nsuffix', path + '\0suffix'];
+  // Backslash and newline names are legal on Linux, but not accepted by this seam.
+  fs.mkdirSync(path + '\\suffix', { mode: 0o700 }); fs.mkdirSync(path + '\nsuffix', { mode: 0o700 });
+  for (const bad of altered) {
+    await expect(publishHouseholdPathBundle(side === 'home' ? bad : f.home, side === 'target' ? bad : f.target, stamp, f.produce)).rejects.toThrow(error);
+    expect(f.produce).not.toHaveBeenCalled(); expect(fs.readdirSync(f.target)).toEqual([]);
+  }
+});
+it('detects corruption of the final published inode and retains it without reporting success', async () => {
+  const f = fixture(), link = fs.linkSync;
+  vi.spyOn(fs, 'linkSync').mockImplementation((from, to) => {
+    link(from, to); const corrupt = Buffer.from(f.bytes); corrupt[corrupt.length - 1] ^= 1; fs.writeFileSync(to, corrupt);
+  });
+  await expect(f.run()).rejects.toThrow(error);
+  const final = fs.readFileSync(join(f.target, name));
+  expect(final.length).toBe(f.bytes.length); expect(final).not.toEqual(f.bytes);
+  expect(fs.readdirSync(f.target).sort()).toEqual(['.loom-backup', name]);
+});
