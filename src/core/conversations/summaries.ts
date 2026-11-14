@@ -1,10 +1,10 @@
 /** Small Home/People reads over the same conversations as Comms. Never uses
  * question answers as an agent's last reply or subscribes to whole threads. */
-import { and, desc, eq, gt, isNotNull, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
 import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, members, memberAgents, projectMembers, projectAgents, threads, messages } from '../data/schema.js';
+import { conversations, members, memberAgents, projectMembers, projectAgents, threads, messages, household } from '../data/schema.js';
 import type { WordsKey } from './words.js';
 
 type Conversation = typeof conversations.$inferSelect;
@@ -35,17 +35,21 @@ export class ConversationSummaries {
   /** Words are read only when the client selects lastAnswer. Recheck the exact
    * reply, retention and current sharing after the key operation yields. */
   async lastAnswer(viewer: Viewer, conversation: string): Promise<{ at: string; words: string } | null> {
-    const latest = () => this.db.select({ thread: messages.thread, seq: messages.seq, at: messages.at, keepUntil: messages.keepUntil, words: messages.words })
+    const latest = () => this.db.select({ thread: messages.thread, seq: messages.seq, at: messages.at, keepUntil: messages.keepUntil, words: messages.words, agent: conversations.agent, project: conversations.project, member: conversations.member })
       .from(messages).innerJoin(threads, eq(threads.id, messages.thread))
       .innerJoin(conversations, eq(conversations.id, threads.conversation))
       .where(and(visible(viewer), eq(conversations.id, conversation), eq(messages.kind, 'reply'),
-        eq(messages.sender, conversations.agent), isNotNull(messages.words), gt(messages.keepUntil, this.now())))
+        eq(messages.sender, conversations.agent)))
       .orderBy(desc(messages.seq)).limit(1).get();
-    const row = latest();
-    if (!row?.words) return null;
+    const keepDays = () => this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+    const retained = (row: ReturnType<typeof latest>, days: number) => !!row?.words && !!row.keepUntil
+      && Number.isInteger(days) && days >= 1 && days <= 14
+      && row.keepUntil > this.now() && Date.parse(row.at) + days * 86400000 > Date.parse(this.now());
+    const row = latest(), days = keepDays();
+    if (!retained(row, days) || !row?.words) return null;
     const words = await this.key.open(row.words);
     const current = latest();
-    if (!current?.words || current.thread !== row.thread || current.seq !== row.seq || current.keepUntil !== row.keepUntil || !current.words.equals(row.words)) return null;
+    if (!retained(current, keepDays()) || keepDays() !== days || !current?.words || current.agent !== row.agent || current.project !== row.project || current.member !== row.member || current.at !== row.at || current.thread !== row.thread || current.seq !== row.seq || current.keepUntil !== row.keepUntil || !current.words.equals(row.words)) return null;
     return { at: row.at, words };
   }
 }

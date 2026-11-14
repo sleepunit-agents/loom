@@ -3,7 +3,7 @@ import { afterEach, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { createDataSchema } from '../data/database.js';
-import { agents, members, memberAgents, projectMembers, projectAgents, projects, conversations, messages } from '../data/schema.js';
+import { agents, members, memberAgents, projectMembers, projectAgents, projects, conversations, messages, household } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { ConversationSummaries, conversationSummaryFields } from './summaries.js';
 const clients: Database.Database[] = [];
@@ -67,16 +67,47 @@ it('returns only the latest agent reply, selected lazily through the shared quer
   expect(f.opens()).toBe(1);
 });
 it('withholds words when sharing, exact ciphertext, retention or the thread changes during decryption', async () => {
-  for (const change of ['sharing', 'ciphertext', 'expiry', 'deadline', 'delete'] as const) {
+  for (const change of ['sharing', 'ciphertext', 'expiry', 'deadline', 'household', 'scope', 'delete'] as const) {
     const f = setup();
     await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Private answer' });
     f.onOpen(() => {
+      if (change === 'scope') f.db.update(conversations).set({ member: 'bob' }).where(eq(conversations.id, f.thread.conversation)).run();
       if (change === 'sharing') f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'owner')).run();
       if (change === 'ciphertext') f.db.update(messages).set({ words: Buffer.from('Replacement') }).run();
+      if (change === 'household') f.db.insert(household).values({ commsDays: 1 }).run();
       if (change === 'deadline') f.db.update(messages).set({ keepUntil: '2026-11-16T18:00:00.000Z' }).run();
       if (change === 'expiry') f.setTime('2026-11-29T18:00:00.000Z');
       if (change === 'delete') f.comms.delete(f.thread.id);
     });
     expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation), change).toBeNull();
   }
+});
+
+it('never falls back to an older answer when the latest reply words are unavailable', async () => {
+  const f = setup();
+  await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Older' });
+  const latest = await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Latest' });
+  f.db.update(messages).set({ words: null }).where(eq(messages.seq, latest.seq)).run();
+  expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
+  expect(f.opens()).toBe(0);
+});
+it('applies a shortened household keep time to existing replies before decrypting', async () => {
+  const f = setup();
+  await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Old answer' });
+  f.db.insert(household).values({ commsDays: 1 }).run();
+  f.setTime('2026-11-15T18:00:00.000Z');
+  expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
+  expect(f.opens()).toBe(0);
+});
+
+it('withholds words after an earlier stored deadline even when message age is still within household retention', async () => {
+  const f = setup();
+  await f.comms.send({ thread: f.thread.id, sender: 'art', kind: 'reply', words: 'Answer' });
+  f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00.000Z' }).run();
+  expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
+  expect(f.opens()).toBe(0);
+});
+it('enforces the fourteen-day household keep maximum at the database boundary', () => {
+  const f = setup();
+  expect(() => f.db.insert(household).values({ commsDays: 15 }).run()).toThrow();
 });
