@@ -320,6 +320,8 @@ it('checks the original retained central claim for its exact worker and pending 
  const configured={fingerprint:f.fingerprint('daemon'),binding:{...binding}};
  const server=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[configured]);closes.push(server.close);
  configured.binding.runner='replacement';
+ const workerClient=remoteTicketAuthority({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'));closes.push(workerClient.close);
+ expect(await workerClient.claim(t.id)).toBeNull();expect(f.state(t.id)).toEqual({state:'admitted'});
  const c=(await f.remote.claim(t.id))!;
  const worker=remoteWorkerTicketProof({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'),t.id,pendingId);closes.push(worker.close);
  expect(await worker.current()).toBe(true);
@@ -361,4 +363,27 @@ it('rejects holder/worker pin aliasing before listening',async()=>{
  await expect(listenTicketAuthority({...f.server,socket:join(f.home,'alias.sock')},f.fingerprint('holder'),f.tickets,
   [{fingerprint:f.fingerprint('holder'),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}}])).rejects.toThrow(/^Secret ticket authority unavailable$/);
  expect(existsSync(join(f.home,'alias.sock'))).toBe(false);
+});
+
+it.each(['idle','in-flight'] as const)('worker proof shutdown fences %s successful checks permanently',async phase=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},pendingId=randomUUID();
+ const t=f.tickets.admit(f.viewer,'API',{id:pendingId,binding});expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ await f.authority.close();
+ const server=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(server.close);
+ const c=(await f.remote.claim(t.id))!;
+ const worker=remoteWorkerTicketProof({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'),t.id,pendingId);closes.push(worker.close);
+ expect(await worker.current()).toBe(true);
+ if(phase==='idle')await worker.close();
+ else {
+  let entered!:()=>void,release!:()=>void;const ready=new Promise<void>(resolve=>{entered=resolve;});
+  const end=ServerResponse.prototype.end;
+  const hold=vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
+   if(this.req.url?.endsWith('/worker-current')){release=()=>{end.apply(this,args);};entered();return this;}
+   return end.apply(this,args);
+  });
+  try {const pending=worker.current();await ready;await worker.close();release();expect(await pending).toBe(false);}
+  finally {hold.mockRestore();release?.();}
+ }
+ expect(await c.current()).toBe(true);expect(await worker.current()).toBe(false);expect(await worker.current()).toBe(false);
+ await c.finish(false);
 });
