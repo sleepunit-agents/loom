@@ -1,10 +1,12 @@
 name: CI
 
 on:
+  # main is what is released and deployed. next is where the next version is built: pull requests to it
+  # merge themselves when "CI results" passes.
   push:
-    branches: [main, 'hat-v*']
+    branches: [main, next, 'hat-v*']
   pull_request:
-    branches: [main, 'hat-v*']
+    branches: [main, next, 'hat-v*']
   # The merge queue (t-1935) tests each group before it lands on main.
   merge_group:
 
