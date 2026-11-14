@@ -88,6 +88,19 @@ describe('worker work plane', () => {
     const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve();
     expect(await run).toBe('abandoned'); expect(f.body.stop).toHaveBeenCalled(); expect(f.body.release).not.toHaveBeenCalled(); expect(f.control.finish).not.toHaveBeenCalled();
   });
+  it('never releases a body after shutdown while its running acknowledgement is pending', async () => {
+    const f = fixture(), acknowledgement = deferred<void>();
+    vi.mocked(f.control.started).mockReturnValue(acknowledgement.promise);
+    const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush();
+    expect(f.control.started).toHaveBeenCalledOnce();
+    f.abort.abort();
+    acknowledgement.resolve();
+    expect(await run).toBe('abandoned');
+    expect(f.body.release).not.toHaveBeenCalled();
+    expect(f.body.stop).toHaveBeenCalled();
+    expect(f.control.finish).not.toHaveBeenCalled();
+    expect(f.disposed).toHaveBeenCalledOnce();
+  });
   it('reaps a body before reporting an input-release failure to the server', async () => {
     const f = fixture(), reaped = deferred<void>();
     vi.mocked(f.body.release).mockRejectedValue(new Error('stdin gone'));
