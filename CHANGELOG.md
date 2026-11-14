@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Inbox now separates self-cleared asks into searchable FYI history, keeping human answers in Answered.
+
 - Classify already owned Runtime spawn threads in Comms through original member metadata, preserving independent transport and execution holds.
 
 - New desk: group the launcher inventory and make Profile discoverable through the account shortcut and search.

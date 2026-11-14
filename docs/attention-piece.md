@@ -221,3 +221,14 @@ If startup reconciliation lacks its service authority or hits a source conflict,
 Several same-audience conversations can wait on one approval; shared lists choose the oldest open conversation wait, breaking ties by id, as the single representative. Source and wait records remain raw/directly navigable. Different audiences and terminal historical facts are retained separately.
 
 The privacy guarantee here concerns the added Attention projections and filing/read-mark retry results. Approvals' own pre-existing private decision results and member-window replay contract are unchanged (including its private export exclusions); this filing unit does not rewrite that owning API.
+
+## Quiet resolution history
+
+Inbox files resolved asks in FYI, separate from human Answered history. FYI rows show the existing resolution reason, searchable alongside the question; both history folders use newest-change order. The same central records and per-member read marks remain authoritative. Opening a resolved ask retains its full reader and never offers answer controls. Needs you and Home counts are unchanged.
+
+| Old surface | New side | Choice |
+|---|---|---|
+| Self-cleared conversation asks shown as quiet FYI | Resolved `attention.ask` in the FYI folder | All source resolutions use the same existing fact; no inferred human answer or extra notice record |
+| Seven-day answered/FYI view | Complete visible central history | Deliberately retain searchable history rather than hide it after a week |
+
+This completes resolution-history classification only. Piece-emitted notices, action-error outcomes, public delivery, private Inbox replies and the Runtime/grading audit still remain before retiring the old Inbox.

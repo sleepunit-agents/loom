@@ -12,7 +12,7 @@ const f = vi.hoisted(() => ({ snapshot: {records:[] as Ask[],status:'live'} as S
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>type==='household.preferences'?f.identity:type==='attention.readMark'?f.marks:f.snapshot),call:(op:string,input:unknown)=>op==='attention.markRead'?f.markRead(op,input):f.call(op,input)}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import InboxApp, { AskReader } from './index';
-import { listedAsks, decisionLink, safeHref } from './model';
+import { inFolder, matches, listedAsks, decisionLink, safeHref } from './model';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 const ask = (id='ask-1', fields:Partial<Ask>={}):Ask=>({id,agent:'art',ask:'Continue the work?',why:'A useful result',if_yes:'I continue.',if_no:'I stop.',answers:'yes-no',source:{kind:'piece',id:'test'},state:'open',createdAt:1,changedAt:1,...fields});
 function request<T>() {
@@ -103,7 +103,7 @@ it('sorts agent folders, filters them and includes resolved asks in history with
   await draw(h<{path?:string;go?:(path:string)=>void}>(InboxApp,{go:vi.fn(),path:'/p/inbox-preview/ask/resolved'}));
   const folders=tree!.root.findAllByType('button').map(words);expect(folders.indexOf('alpha1')).toBeLessThan(folders.indexOf('zeta1'));
   await click('alpha1');expect(tree!.root.findAllByProps({'data-split-row':''}).map(words).join(' ')).toContain('Alpha question');expect(tree!.root.findAllByProps({'data-split-row':''}).map(words).join(' ')).not.toContain('Zeta question');
-  await click('Answered1');expect(tree!.root.findAllByProps({'data-split-row':''}).map(words).join(' ')).toContain('Resolved question');
+  await click('FYI1');expect(tree!.root.findAllByProps({'data-split-row':''}).map(words).join(' ')).toContain('Resolved question');
   for(const word of ['Closed elsewhere','t-2205','A recorded answer','jonathan','11/13/2026','12:00:00 AM','CT'])expect(text()).toContain(word);
   expect(tree!.root.findByType('a').props.href).toBe('https://example.com/record');
 });
@@ -237,4 +237,25 @@ it('chooses one stable conversation representative across multiple waits for the
   expect(listedAsks([old,source,tied,newer])).toEqual([old]);
   expect(listedAsks([source,{...old,state:'resolved'},tied,newer])).toEqual([{...old,state:'resolved'},tied]);
   expect(listedAsks([source,old,{...tied,member:'jonathan'}])).toHaveLength(2);
+});
+
+it('files self-cleared asks as searchable FYI, separate from human answers and needs',async()=>{
+  const cleared=ask('cleared',{state:'resolved',ask:'Review the release?',resolution:'The requested task was closed',changedAt:3});
+  const answered=ask('answered',{state:'answered',answer:{kind:'done',by:{kind:'member',id:'jonathan'},at:2}});
+  expect(inFolder(cleared,'fyi')).toBe(true);
+  expect(inFolder(cleared,'answered')).toBe(false);
+  expect(inFolder(cleared,'needs')).toBe(false);
+  expect(inFolder(answered,'fyi')).toBe(false);
+  expect(inFolder(answered,'answered')).toBe(true);
+  expect(matches(cleared,'requested closed')).toBe(true);
+  f.snapshot={records:[ask(),cleared,answered],status:'live'};
+  await draw(h(InboxApp,{}));
+  await click('FYI1');
+  expect(text()).toContain('Review the release?');
+  expect(text()).toContain('Cleared itself: The requested task was closed');
+  expect(text()).not.toContain('Continue the work?');
+  await act(async()=>tree!.root.findByProps({type:'search'}).props.onChange({target:{value:'requested closed'}}));
+  expect(text()).toContain('Review the release?');
+  expect(buttons('Yes')).toHaveLength(0);
+  expect(f.call).not.toHaveBeenCalled();
 });
