@@ -1,3 +1,4 @@
+import { installPublicInputs } from './public-inputs.js';
 import { installPublicMetadata } from './public-metadata.js';
 import { rememberClockReceipt } from './private-export.js';
 import { installClockExecution } from './clock-execution.js';
@@ -20,7 +21,7 @@ import { bodyPolicyExecutionHeld } from './policy-store.js';
 import type { Wake } from '../clock/role.js';
 import type { RuntimeRecords } from './records.js';
 import type { ClockProvenanceReader } from './role.js';
-export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation. Acknowledge through runtime.acknowledgeClockInput only after accepting the actual words for execution; reading a filename is not execution. Native workers use runtime.beginClockExecution and its owning current/completion protocol. New inputs may arrive in this conversation.';
+export const CLOCK_BRIEF='Read scheduled inputs through runtime.readConversation. Acknowledge through runtime.acknowledgeClockInput only after accepting the actual words for execution; reading a filename is not execution. Native workers use runtime.beginClockExecution and its owning current/completion protocol. Read public Inbox answers through runtime.readPublicInputs and acknowledge them through runtime.acknowledgePublicInputs. New inputs may arrive in this conversation.';
 const hash=(s:string)=>createHash('sha256').update(s).digest('hex').slice(0,40);
 const id=z.string().min(1).max(200);
 interface Turn {seq:number;id:string;conversation:string;job:string;record:string;released:number|null;consumed:number|null}
@@ -206,11 +207,18 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     const p=provenanceStore(db).read(job.conversation);if(!p)return;
     return {agent:job.agent,member:job.member,conversation:job.conversation,project:job.project,service:job.service,principal:principalForWork(p.history,owners())};
   };
+  const publicJob=(jobId:string)=>{
+    if(!valid(jobId))return;
+    const job=store.read('job',jobId);
+    const root=db.prepare('SELECT * FROM runtime_clock_turns WHERE job=? ORDER BY seq LIMIT 1').get(jobId) as Turn|undefined;
+    return job&&root&&!withdrawn(root)&&job.member===undefined&&job.service===undefined&&['running','waiting'].includes(job.state)?job:undefined;
+  };
+  const publicInputs=installPublicInputs(app,sharing,effects,v=>{const job=bound(v);return job&&publicJob(job.id);},publicJob);
   installPublicMetadata(app,v=>{
     const job=bound(v);if(!job?.conversation)return;
     const root=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(job.conversation) as Turn|undefined;
     return root&&!withdrawn(root)?job:undefined;
-  });
+  },publicInputs);
   return {valid,bound,read,clockProvenance,
     // The existing runner input boundary needs owning Clock authority for
     // public jobs too. A generic replacement destination cannot authorize a

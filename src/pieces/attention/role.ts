@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 /** The desk's seam. Other pieces raise/resolve asks here, never in their own tables. */
-import { migrate, failure, type Db } from '../../core/index.js';
+import { migrate, failure, OperationError, type Db } from '../../core/index.js';
 import { schema } from './schema/001.js';
 import type { Context, Operations, Result, Scope, Viewer } from '../../core/index.js';
 
@@ -137,3 +137,18 @@ export function attentionAnnouncements(operations:Operations,member:string):Atte
 /** Canonical metadata identity and validation shared by owning body adapters. */
 export { conversationId as attentionConversationId } from './conversations.js';
 export { digestInput as attentionDigestInput } from './digests.js';
+
+/** Trusted synchronous consumer; runs inside the answer transaction. A consumer
+ * must establish ownership from its own records, never a typed source label.
+ */
+const conversationAnswers = new WeakMap<Operations, (ctx: Context, ask: Ask) => boolean>();
+export function registerConversationAnswers(operations: Operations, answer: (ctx: Context, ask: Ask) => boolean): void {
+  if (conversationAnswers.has(operations)) throw new Error('Conversation answer consumer already installed');
+  conversationAnswers.set(operations, answer);
+}
+export function deliverConversationAnswer(operations: Operations, ctx: Context, ask: Ask, required = false): void {
+  if (ask.source.kind !== 'conversation' || ask.member !== undefined || ask.privateQuestion || ask.sourceManaged || ask.waits_on) return;
+  const result: unknown = conversationAnswers.get(operations)?.(ctx, ask);
+  if (result instanceof Promise) { void result.catch(() => {}); throw new OperationError('unavailable', 'Conversation answer must be synchronous'); }
+  if (required && result !== true) throw new OperationError('unavailable', 'Owning public answer destination is unavailable');
+}

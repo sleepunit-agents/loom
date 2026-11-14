@@ -9,9 +9,10 @@ import type { Foundation } from '../../core/app.js';
 import { attentionConversationId as conversationId, attentionDigestInput as digestInput } from '../attention/role.js';
 import type { RuntimeRecords } from './records.js';
 import { runtimeStore } from './store.js';
+import type { PublicInputs } from './public-inputs.js';
 import { hearJob } from './heartbeat.js';
 const printable=(max:number)=>z.string().min(1).max(max).regex(/^[^\x00-\x1f\x7f]+$/);
-export function installPublicMetadata(app:Foundation,bound:(viewer:Viewer)=>RuntimeRecords['job']|undefined) {
+export function installPublicMetadata(app:Foundation,bound:(viewer:Viewer)=>RuntimeRecords['job']|undefined, inbox:PublicInputs) {
  const {operations,db}=app,store=runtimeStore(db);
  const destination=(viewer:Viewer)=>{
   const job=bound(viewer);
@@ -43,17 +44,17 @@ export function installPublicMetadata(app:Foundation,bound:(viewer:Viewer)=>Runt
    const d=destination(ctx.viewer);if(!d)throw new OperationError('denied','Public Clock body binding ended');
    const result=unwrap(operations.call('direct',ctx.viewer,'attention.recordTurn',{agent:d.job.agent,project:d.job.project,
     turn:{...input,venue:d.venue,place:d.place,at:new Date(ctx.now).toISOString(),from:{kind:'agent',id:d.job.agent},run:d.job.id}},`runtime-turn:${ctx.receipt!.id}`));
+   inbox.conversation(ctx, d.job);
    hearJob(db,d.job.id,ctx.now);return result;
   },
  }));
  operations.register(operation({name:'runtime.writeDigest',doors:['http','direct'],write:true,recheckPolicy:true,inputHash,
   input:digestInput.pick({digest:true}),output:z.unknown(),may:v=>!!destination(v),run(ctx,input){
    const d=destination(ctx.viewer);if(!d)throw new OperationError('denied','Public Clock body binding ended');
-   // Until the owning public answer consumer is installed, do not create an
-   // actionable ask which only persists its answer and never reaches the body.
-   if(input.digest.needs_owner!==null)throw new OperationError('unavailable','Public Clock answer delivery is not installed');
+   if(input.digest.needs_owner?.waits_on)throw new OperationError('unavailable','Managed decisions remain owned by their source');
    const result=unwrap(operations.call('direct',ctx.viewer,'attention.writeDigest',{
     conversation:conversationId(d.job.agent,d.venue,d.place),run:d.job.id,digest:input.digest},`runtime-digest:${ctx.receipt!.id}`));
+   inbox.question(ctx, d.job, result);
    hearJob(db,d.job.id,ctx.now);return result;
   },
  }));

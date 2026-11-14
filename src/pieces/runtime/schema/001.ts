@@ -52,4 +52,11 @@ CREATE INDEX runtime_clock_conversation ON runtime_clock_turns(conversation,seq)
 -- Receipt ownership commits with Clock consumption; legacy wordless receipts
 -- cannot be attributed and are excluded from filtered exports.
 CREATE TABLE runtime_clock_receipts (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, expires INTEGER NOT NULL, job TEXT NOT NULL REFERENCES runtime_jobs(id), private INTEGER NOT NULL CHECK(private IN (0,1)), PRIMARY KEY(viewer,id));
+` }, { number: 13, sql: `
+-- Public inbox ownership is captured only by the authenticated metadata adapter.
+-- The immutable original destination is separate from words and release receipts.
+CREATE TABLE runtime_public_conversations (id TEXT PRIMARY KEY, conversation TEXT NOT NULL, job TEXT NOT NULL REFERENCES runtime_jobs(id));
+CREATE TABLE runtime_public_questions (id TEXT PRIMARY KEY, conversation TEXT NOT NULL, job TEXT NOT NULL REFERENCES runtime_jobs(id), destination TEXT NOT NULL, question TEXT NOT NULL CHECK(json_valid(question)));
+CREATE TABLE runtime_public_inputs (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, conversation TEXT NOT NULL, job TEXT NOT NULL REFERENCES runtime_jobs(id), record TEXT NOT NULL CHECK(json_valid(record)), destination TEXT NOT NULL, released INTEGER, consumed INTEGER);
+CREATE INDEX runtime_public_input_job ON runtime_public_inputs(job,seq);
 ` }];

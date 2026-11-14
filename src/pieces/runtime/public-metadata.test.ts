@@ -61,9 +61,9 @@ it('projects real authenticated public Clock turns and digests under canonical i
  expect(f.store.read('binding',f.conversation)).toEqual(before);
  expect(JSON.stringify(f.app.db.prepare('SELECT * FROM attention_turns').all())).not.toContain('SCHEDULED WORDS');
 });
-it('holds actionable questions until owning answer delivery exists and rolls back its receipt',async()=>{
+it('keeps managed-source decisions outside the public answer inbox and rolls back its receipt',async()=>{
  const f=await setup();expect(await f.post(f.body,'recordTurn',turn)).toMatchObject({ok:true});
- expect(await f.post(f.body,'writeDigest',{digest:{...digest,needs_owner:{ask:'Continue?',if_yes:'I continue.',if_no:'I stop.',refs:[]}}})).toMatchObject({ok:false,code:'unavailable'});
+ expect(await f.post(f.body,'writeDigest',{digest:{...digest,needs_owner:{ask:'Continue?',if_yes:'I continue.',if_no:'I stop.',refs:[],waits_on:{task:'t-1'}}}})).toMatchObject({ok:false,code:'unavailable'});
  expect(f.app.db.prepare('SELECT * FROM attention_asks').all()).toEqual([]);
  expect(f.app.db.prepare('SELECT * FROM attention_digests').all()).toEqual([]);
  expect(await f.post(f.body,'writeDigest',{digest})).toMatchObject({ok:true});

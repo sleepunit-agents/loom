@@ -6,7 +6,7 @@ import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
 import { approvalFiling } from './approval-filing.js';
-import { registerAttentionAnnouncements, taskAskId, registerPrivateQuestions, registerPrivateReplies, registerPrivateDecisions, type Ask, type AgentStatus, type AttentionSources, type TaskAskFiling } from './role.js';
+import { deliverConversationAnswer, registerAttentionAnnouncements, taskAskId, registerPrivateQuestions, registerPrivateReplies, registerPrivateDecisions, type Ask, type AgentStatus, type AttentionSources, type TaskAskFiling } from './role.js';
 import { installWaitChecks, type AttentionWaits } from './waits.js';
 import { installHomeRoster } from './home.js';
 import { installRetention } from './retention.js';
@@ -167,6 +167,8 @@ export function installAttention(db: Db, operations: Operations, live: Live, sha
         const result: unknown = hook(ctx, record);
         if (result instanceof Promise) { void result.catch(() => {}); throw new OperationError('unavailable', 'Source answer must be synchronous'); }
       }
+      const publicConversation = record.source.kind === 'conversation' ? db.prepare('SELECT record FROM attention_conversations WHERE id=?').get(record.source.id) as {record:string}|undefined : undefined;
+      deliverConversationAnswer(operations, ctx, record, !!publicConversation && JSON.parse(publicConversation.record).venue === 'runtime-clock');
       return record;
     },
   }));
