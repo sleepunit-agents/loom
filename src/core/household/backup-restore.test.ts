@@ -118,7 +118,12 @@ it.each(['magic', 'version', 'format', 'hash', 'negative', 'fraction', 'too-larg
   if (kind === 'truncated') bytes = bytes.subarray(0, -1);
   if (kind === 'trailing') bytes = Buffer.concat([bytes, Buffer.from('x')]);
   if (kind === 'header-length') bytes.writeUInt32BE(0xffffffff, magic.length);
-  if (kind === 'bad-utf8') bytes[magic.length + 5] = 0xff;
+  if (kind === 'bad-utf8') {
+    // JSON syntax remains valid under permissive decoding; the malformed byte
+    // is inside a string value rather than replacing a structural quote.
+    const value = bytes.indexOf(Buffer.from('loom-next-household'), magic.length + 4);
+    bytes[value] = 0xff;
+  }
   if (kind === 'duplicate-json-key') {
     const end = magic.length + 4 + bytes.readUInt32BE(magic.length);
     const header = Buffer.from('{"version":0,' + bytes.toString('utf8', magic.length + 5, end));
