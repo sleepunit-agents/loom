@@ -1416,3 +1416,57 @@ This is an unmanaged conversation question. Managed Approvals and Tasks retain
 their owning decision protocols; conversational text does not authorize them.
 The proof uses the in-process runner API and does not claim an external worker
 process, live installation or host rollout has been exercised.
+
+## External Claude worker control consumer
+
+`loom-claude-worker <owner-config.json>` is a separate executable, never started
+by `loom serve`. It connects to next-mode Runtime using an existing assigned
+runner token, claims one unbound job, takes its one-time staging-gated input,
+reports running on process spawn, invokes the worker-owned Claude session and
+reports done with its exit status and the existing bounded result-log tail.
+It never retries an uncertain claim, input release, process or report. A failure
+requires owning reconciliation; it deliberately leaves the job's uncertain
+state visible instead of asserting that a process never started.
+
+Its local JSON configuration is owner authority, never operation or model data:
+`url`, absolute `tokenFile`, `job`, `agent`, absolute `command`, absolute
+`checkout`, `house` (the exact configured build identity), explicit `env`, and
+`rules` (the compiled key, denies and required sections). The owner prepares and
+verifies the checkout and policy first. This program does not fetch/build a
+repository, discover logins, install a token, enroll a box or inherit the runner
+process's environment into Claude. HTTP is restricted to loopback; remote
+workers require HTTPS. No token or diagnostic words are printed.
+
+`runtime-runner/lifecycle.ts` consumes authenticated `runtime.jobControl` before
+input, after output and every second, with a 1.5-second request deadline. The
+same worker owns the native session and active process. Stop, discard, unknown
+history, refused access or a failed control read permanently close that owner,
+kill its foreground child and discard its in-memory resume authority. Returned
+reset/write-off markers therefore cannot be bypassed by a stale local success.
+A fresh connection has no native session id to adopt. This fences native reuse;
+it does not erase Claude's files or claim durable native-history collection.
+Normal terminal stop also discards local reuse, conservatively.
+
+| Legacy lifecycle contract | This consumer | Remaining |
+| --- | --- | --- |
+| `pollState.stop`, including returned written-off work | periodic authenticated `jobControl`; sticky foreground kill and history fence | full box polling and process/container adoption |
+| `start` / claim / start acknowledgement | explicit one-job executable: claim, one-time input, report running, finish | automatic dispatch, checkout/build and body credentials |
+| `active` / `activeInfo` recovery | a fresh worker has no native resume authority | durable physical-process inventory, collection receipts and reconciliation |
+| owner reset / write-off tombstones | remote markers close retained sessions even when idle or returning | conversation-policy delivery and full external body-host integration |
+
+The executable refuses conversation-bound input and model/account selections. Runtime
+now includes model-account selection and any original conversation id in `takeInput`, even when no private
+body credential is issued, so this refusal cannot mistake a bridge job for
+unbound work. Supporting conversations requires the owning compiled-policy,
+original-source and credential delivery path; local copied policy is not a
+replacement for that authority. The lower-level controlled session remains an
+owner-only worker capability, requiring the owning caller's original current
+proof in addition to remote stop/history checks.
+
+Integration tests use actual `startLoom` HTTP and runner bearer authentication,
+with only the Claude process adapter replaced in-process. They cover the
+executable startup path, original argv/stdin, stop/reset/write-off/import and
+unknown-history fences, offline control, idle watchdog, fresh native ids,
+unsupported input, and a lost one-time input response with no second attempt.
+This is a bounded worker-control unit; the complete standalone runner, durable
+native history, enrollment, accounts, command parity and screens remain open.

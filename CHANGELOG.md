@@ -1264,6 +1264,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - Account can queue a test notification for an exact device and follow private Live outcomes, preserving uncertain retries across navigation. Push acceptance is shown separately from device delivery.
 
+- Add an explicit external Claude worker for unbound next-mode jobs, with authenticated stop/history polling and no automatic retry after uncertain execution.
+
 ## [0.16.1] - 2026-10-25
 
 ### Fixed
