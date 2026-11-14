@@ -9,11 +9,12 @@ import { schema as retrySchema } from './schema/002.js';
 import { schema as slackInboxSchema } from './schema/003.js';
 import { schema as discordInboxSchema } from './schema/004.js';
 import { schema as filesSchema } from './schema/005.js';
+import { schema as rawExpirySchema } from './schema/006.js';
 import { venueSchema, routeSchema, linkSchema, statusSchema } from './model.js';
 import { all, put, bumpSetup } from './store.js';
 export function installBridges(app: Foundation, sharing: () => Sharing, options: { staging?: boolean } = {}) {
   registerBuiltinService(app.operations, 'bridges', ['bridges.venue', 'bridges.route', 'bridges.link', 'bridges.send']);
-  migrate(app.db, 'bridges', [...foundationSchema, ...retrySchema, ...slackInboxSchema, ...discordInboxSchema, ...filesSchema]);
+  migrate(app.db, 'bridges', [...foundationSchema, ...retrySchema, ...slackInboxSchema, ...discordInboxSchema, ...filesSchema, ...rawExpirySchema]);
   registerExportFilter(app.db, 'bridges-files', table => !['bridges_files', 'bridges_file_deliveries', 'bridges_file_sources'].includes(table));
   const { db, operations, live } = app;
   // Connections and routing are household setup; person links are authority, not descriptive People handles.

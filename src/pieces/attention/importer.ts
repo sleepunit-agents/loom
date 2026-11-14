@@ -48,7 +48,7 @@ export function importAttention(db: Db, from: string[], scopesInput: ImportScope
     migrate(db,'attention',attentionMigrations);
     const marker = db.prepare("SELECT checksum FROM attention_import WHERE id='source'").get() as { checksum: string } | undefined;
     if (marker) { if (marker.checksum !== checksum) throw Error('A different attention source was already imported'); return { ok: true, imported: false, checksum, counts }; }
-    for (const t of [...destinations,'attention_statuses']) check(!(db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get()), 'destination must be empty');
+    for (const t of [...destinations,'attention_statuses','attention_read_marks','attention_outcomes','attention_outcome_seen']) check(!(db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get()), 'destination must be empty');
     for (const table of destinations) for (const row of expected[table]) {
       const columns = Object.keys(row);
       db.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(() => '?').join(',')})`).run(...Object.values(row));
