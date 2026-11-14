@@ -1431,12 +1431,14 @@ authorized Comms thread and revoke policy during preparation and at the gate.
 
 Runtime registers its own required export filter. A private Clock turn excludes
 its entire Runtime job/conversation chain, copied words, results, provenance,
-source receipts and matching Runtime effects/operation receipts. Wordless
-`acknowledgeClockInput` and `completeClockExecution` retry receipts (including
-public ACKs) are deliberately omitted: historical ACKs have no source/scope
-identity. Public work records remain; a restored retry cache is not execution
-evidence. The original
-turn's private scope still excludes the chain after a current job or binding
+source receipts and matching Runtime effects/operation receipts. Consumption
+commits an owning marker for both `acknowledgeClockInput` and
+`completeClockExecution`, including exact viewer, operation id/name, input hash,
+expiry and job. New public ACK receipts and markers survive export; private ones
+do not. Historical ACK retry receipts with no matching ownership marker are
+omitted for both scopes: they cannot be safely attributed. This deliberately
+loses only that historical retry cache, not public work records or execution
+evidence. The original turn's private scope still excludes the chain after a current job or binding
 summary changes. Clock continues to own exclusions for its own tables.
 
 Sign-in consumes excluded Runtime job identities through composition. Its token

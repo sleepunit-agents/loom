@@ -160,6 +160,9 @@ it('redacts owning text encodings without mutating source rows or SQLite identit
  const restored=new Database(exportDatabaseImage(db).bytes);close.push(()=>restored.close());
  expect(restored.prepare('SELECT *,typeof(count) AS kind FROM documents').get()).toEqual({id:42,body:'public copy',count:7,kind:'integer'});
  expect(db.prepare('SELECT body FROM documents').get()).toEqual({body:'private copy'});
- registerExportTextRedactor(db,'documents',()=>({count:'changed type'}));
+ db.exec("CREATE TABLE labels(id TEXT PRIMARY KEY, body TEXT); INSERT INTO labels VALUES ('stable','words')");
+ registerExportTextRedactor(db,'documents',(table):Record<string,string>=>table==='labels'?{id:'changed'}:{});
+ expect(()=>exportDatabaseImage(db)).toThrow('preserve primary keys');
+ registerExportTextRedactor(db,'documents',(table):Record<string,string>=>table==='documents'?{count:'changed type'}:{});
  expect(()=>exportDatabaseImage(db)).toThrow('preserve text storage');
 });

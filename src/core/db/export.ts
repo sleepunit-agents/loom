@@ -67,6 +67,7 @@ export function exportDatabase(db:Db, captureSqlite = false) {
    const captured=captureSqlite?sqliteExportRows(db,t.name):undefined;
    const input=captured?.rows??db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all() as ExportRow[];
    const sqlite:SqliteRow[]=[];
+   const keys=new Set((db.prepare(`PRAGMA table_xinfo("${t.name.replaceAll('"','""')}")`).all() as {name:string;pk:number}[]).filter(c=>c.pk).map(c=>c.name));
    const rows=input.flatMap((row,i)=>{
     const keep=(t.name!=='core_migrations'||row.piece!=='comms') && [...filters.get(db)?.values()??[]].every(filter=>filter(t.name,row));
     if(!keep)return [];
@@ -74,6 +75,7 @@ export function exportDatabase(db:Db, captureSqlite = false) {
     for(const redact of redactors.get(db)?.values()??[]){
      const patch=redact(t.name,Object.freeze({...output}));
      for(const [key,value] of Object.entries(patch)){
+      if(keys.has(key)&&value!==output[key])throw Error('Export redaction must preserve primary keys');
       if(typeof output[key]!=='string'||typeof value!=='string')throw Error('Export redaction must preserve text storage');
       output[key]=value;
      }

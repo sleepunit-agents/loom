@@ -854,7 +854,7 @@ it.each(['before-input','final-release'] as const)('denies public Clock input af
  expect(f.app.db.prepare('SELECT released,consumed FROM runtime_clock_turns').get()).toEqual({released:null,consumed:null});
 });
 
-it.each(['original','cleared-summary','withdrawn','restarted'])('excludes a dispatched private Clock prompt and its Runtime correlations while retaining public delivery (%s)',async(mode)=>{
+it.each(['original','cleared-summary','withdrawn','restarted','marker-rollback'])('excludes a dispatched private Clock prompt and its Runtime correlations while retaining public delivery (%s)',async(mode)=>{
  const f=await setup();
  const privateWords='UNEXPORTABLE_CLOCK_WORDS',publicWords='PUBLIC_CLOCK_WORDS';
  const file=async(privateWork:boolean)=>{
@@ -874,6 +874,13 @@ it.each(['original','cleared-summary','withdrawn','restarted'])('excludes a disp
   }else{
    const read=await f.post(input.value.credential,'readConversation',{});expect(read).toMatchObject({ok:true});
    const through=read.value.messages.at(-1).seq;
+   if(mode==='marker-rollback'&&privateWork){
+    f.app.db.exec("CREATE TRIGGER fail_private_clock_receipt BEFORE INSERT ON runtime_clock_receipts WHEN NEW.private=1 BEGIN SELECT RAISE(ABORT,'receipt fixture'); END");
+    expect(await f.post(input.value.credential,'acknowledgeClockInput',{through})).toMatchObject({ok:false});
+    expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE job=?').get(turn.job)).toEqual({consumed:null});
+    expect(f.app.db.prepare('SELECT * FROM runtime_clock_receipts').all()).toEqual([]);
+    f.app.db.exec('DROP TRIGGER fail_private_clock_receipt');
+   }
    expect(await f.post(input.value.credential,'acknowledgeClockInput',{through})).toMatchObject({ok:true,value:{acknowledged:true}});
   }
   return {id,...turn,credential:input.value.credential as string};
@@ -896,10 +903,19 @@ it.each(['original','cleared-summary','withdrawn','restarted'])('excludes a disp
  if(mode==='withdrawn')expect(await f.app.operations.callAsync('socket',owner,'clock.cancel',{id:secret.id},'withdraw-private',true)).toMatchObject({ok:true});
  if(mode==='restarted')await f.restart();
  const before=f.app.db.prepare('SELECT * FROM runtime_clock_turns').all();
+ // Historic ACK receipts carry no scope or job. Exclude these unknown caches,
+ // while preserving the newly attributed public receipt above.
+ f.app.db.prepare('INSERT INTO core_operations VALUES (?,?,?,?,?,?)').run('agent:art','historical-clock-ack','runtime.acknowledgeClockInput','old-hash',JSON.stringify({ok:true,value:{acknowledged:true}}),f.clock.now()+100000);
  const acknowledgements=f.app.db.prepare("SELECT id FROM core_operations WHERE name IN ('runtime.acknowledgeClockInput','runtime.completeClockExecution')").all() as {id:string}[];
- expect(acknowledgements).toHaveLength(2);
+ expect(acknowledgements).toHaveLength(3);
  const tables=exportDatabase(f.app.db),text=JSON.stringify(tables);
- for(const {id} of acknowledgements)expect(tables.find(t=>t.name==='core_operations')!.rows.some(row=>row.id===id)).toBe(false);
+  expect(text.includes('historical-clock-ack')).toBe(false);
+ const markers=f.app.db.prepare('SELECT * FROM runtime_clock_receipts').all() as {id:string;private:number}[];
+ expect(markers).toHaveLength(2);
+ for(const {id,private:privateWork} of markers){
+  expect(tables.find(t=>t.name==='core_operations')!.rows.some(row=>row.id===id)).toBe(privateWork===0);
+  expect(tables.find(t=>t.name==='runtime_clock_receipts')!.rows.some(row=>row.id===id)).toBe(privateWork===0);
+ }
  expect(text).toContain(publicWords);expect(text).not.toContain(privateWords);
  for(const table of tables.filter(t=>t.name.startsWith('runtime_')||['core_operations','core_effects'].includes(t.name))){
   const saved=JSON.stringify(table.rows);
@@ -930,4 +946,9 @@ it.each(['original','cleared-summary','withdrawn','restarted'])('excludes a disp
  const denied=await fetch(`${restored.url}/api/runtime/beginClockExecution`,{method:'POST',headers:{authorization:`Bearer ${secret.credential}`,'content-type':'application/json'},body:JSON.stringify({input:{},id:'restored-native'})});
  expect(denied.ok).toBe(false);
  expect(f.app.db.prepare('SELECT * FROM runtime_clock_turns').all()).toEqual(before);
+ if(mode==='original'){
+  const publicMarker=markers.find(m=>m.private===0)!;
+  f.app.db.prepare("UPDATE runtime_clock_receipts SET input_hash='different-generation' WHERE id=?").run(publicMarker.id);
+  expect(exportDatabase(f.app.db).find(t=>t.name==='core_operations')!.rows.some(row=>row.id===publicMarker.id)).toBe(false);
+ }
 });

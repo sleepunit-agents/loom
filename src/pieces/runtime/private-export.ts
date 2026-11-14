@@ -1,5 +1,11 @@
 /** Runtime owns its downstream copies; no read of Clock's tables or saved Viewer. */
-import { privateExportCopy, registerExportFilter, type Db } from '../../core/index.js';
+import { privateExportCopy, registerExportFilter, type Db, type Context } from '../../core/index.js';
+
+export function rememberClockReceipt(ctx:Context,job:{id:string;member?:string}){
+ const r=ctx.receipt;if(!r)throw Error('Clock consumption requires its write receipt');
+ ctx.db.prepare('INSERT INTO runtime_clock_receipts VALUES (?,?,?,?,?,?,?) ON CONFLICT(viewer,id) DO UPDATE SET name=excluded.name,input_hash=excluded.input_hash,expires=excluded.expires,job=excluded.job,private=excluded.private')
+  .run(r.viewer,r.id,r.name,r.inputHash,r.expires,job.id,job.member===undefined?0:1);
+}
 
 export function privateRuntimeExport(db: Db) {
  const jobs=new Set<string>(),conversations=new Set<string>(),sources=new Set<string>();
@@ -44,10 +50,14 @@ export function privateRuntimeExport(db: Db) {
  return {jobs,excludes(table:string,row:Record<string,unknown>){
   if(table==='core_effects')return effect(String(row.id));
   if(!table.startsWith('runtime_')&&table!=='core_operations')return false;
-  // Older ACK receipts have no private scope or source identity. Drop both
-  // wordless completion caches, including public ACKs, rather than inventing
-  // ownership for historical receipts or restoring them as execution evidence.
-  if(table==='core_operations'&&['runtime.acknowledgeClockInput','runtime.completeClockExecution'].includes(String(row.name)))return true;
+  if(table==='runtime_clock_receipts'&&row.private===1)return true;
+  if(table==='core_operations'&&['runtime.acknowledgeClockInput','runtime.completeClockExecution'].includes(String(row.name))){
+   // Historical ACKs have no ownership evidence. A public marker must match
+   // the entire current receipt generation, never just a reused operation id.
+   const marker=db.prepare('SELECT private,job FROM runtime_clock_receipts WHERE viewer=? AND id=? AND name=? AND input_hash=? AND expires=?')
+    .get(row.viewer,row.id,row.name,row.input_hash,row.expires) as {private:number;job:string}|undefined;
+   return !marker||marker.private!==0||jobs.has(marker.job);
+  }
   if(table==='core_operations'&&row.name==='core.releaseEffect'){
    const result=JSON.parse(String(row.result));if(effect(String(result?.value?.id)))return true;
   }
