@@ -35,6 +35,9 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try {
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
+    // A missing locator must identify its own failure before the whole proof
+    // times out. Match expect.poll's condition budget; do not extend this test.
+    context.setDefaultTimeout(10_000);
     await context.grantPermissions(['local-network-access'],{origin:loom.url});
     const a=await context.newPage(),b=await context.newPage();
     const signIn=async(page:typeof a,member:string)=>{
@@ -114,6 +117,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await expect.poll(()=>b.getByText('Answer this in its private conversation. Private replies stay there.').count()).toBe(1);
     expect(await yes(b).count()).toBe(0);
     const member=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
+    member.setDefaultTimeout(10_000);
     await member.grantPermissions(['local-network-access'],{origin:loom.url});
     const p=await member.newPage();await signIn(p,'pollock');
     expect(loom.operations.call('direct',{kind:'member',id:'pollock'},'attention.outcomes',{})).toEqual({ok:true,value:[]});await p.goto(`${loom.url}/p/inbox-preview`);
@@ -228,6 +232,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     expect(requested.ok).toBe(true);if(!requested.ok)throw Error(requested.message);
     const approvalId=(requested.value as {id:string}).id;
     for(const page of [a,b]){
+      phase=`owning approval: open ${page===a?'first':'second'} window`;
       await page.goto(`${loom.url}/p/inbox-preview/ask/${approvalAskId(approvalId)}`);
       await page.getByRole('button',{name:'Open approval',exact:true}).waitFor();
       expect(await yes(page).count()).toBe(0);
@@ -235,22 +240,27 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
 
     raise({id:'approval-wait',source:{kind:'conversation',id:'cv-approval-wait'},project:'pond',ask:'Please decide the Inbox fix?',waits_on:{approval:approvalId}});
     raise({id:'approval-wait-2',source:{kind:'conversation',id:'cv-approval-wait-2'},project:'pond',ask:'Another conversation about the fix?',waits_on:{approval:approvalId}});
+    phase='owning approval: deduplicated wait rows';
     for(const page of [a,b]){
       await expect.poll(()=>page.locator('[data-split-row]').filter({hasText:'Please decide the Inbox fix?'}).count()).toBe(1);
       await expect.poll(()=>page.locator('[data-split-row]').filter({hasText:'Merge the Inbox source fix?'}).count()).toBe(0);
       expect(await page.locator('[data-split-row]').filter({hasText:'Another conversation about the fix?'}).count()).toBe(0);
     }
+    phase='owning approval: navigate to source';
     await a.getByRole('button',{name:'Open approval',exact:true}).click();
     await expect.poll(()=>new URL(a.url()).pathname).toBe(`/p/approvals-preview/approval/${approvalId}`);
     expect(loom.operations.call('direct',owner,'approvals.answer',{id:approvalId,action:'deny'},'inbox-deny-approval').ok).toBe(true);
+    phase='owning approval: source resolution';
     await b.getByRole('heading',{name:'Approval no longer needs you',exact:true}).waitFor();
     // An actual owning private conversation: typed words never enter Attention or device storage.
     for(const page of [a,b]){
+      phase=`private reply: check ${page===a?'first':'second'} window`;
       await page.goto(`${loom.url}/p/inbox-preview/ask/private-reply`);
       await page.getByRole('button',{name:'Check again',exact:true}).click();
       await page.getByRole('textbox',{name:'Your private reply',exact:true}).waitFor();
       expect(await yes(page).count()).toBe(0);
     }
+    phase='private reply: send';
     const privateWords='Private Inbox reply fixture sentinel';
     await a.getByRole('textbox',{name:'Your private reply',exact:true}).fill(privateWords);
     expect(await b.getByRole('textbox',{name:'Your private reply',exact:true}).inputValue()).toBe('');
@@ -271,11 +281,13 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     const sealedWords='Keep the sealed Inbox plan private?';
     const sealed=await askPrivate('art',privateThread,{id:'inbox-sealed',question:{ask:sealedWords,why:'Only this member sees the full question.',if_yes:'Continue the private plan.',if_no:'Hold the private plan.',answers:'yes-no'}});
     for(const page of [a,b]){
+      phase=`sealed private reply: check ${page===a?'first':'second'} window`;
       await page.goto(`${loom.url}/p/inbox-preview/ask/${encodeURIComponent(sealed.ref)}`);
       await page.getByRole('heading',{name:sealedWords,exact:true}).waitFor();
       await page.getByRole('button',{name:'Check private question',exact:true}).click();
       await page.getByRole('textbox',{name:'Your private reply',exact:true}).waitFor();
     }
+    phase='sealed private reply: send';
     await a.getByRole('textbox',{name:'Your private reply',exact:true}).fill('Sealed typed Inbox answer');
     expect(await b.getByRole('textbox',{name:'Your private reply',exact:true}).inputValue()).toBe('');
     expect(await a.evaluate(()=>JSON.stringify(localStorage).includes('Sealed typed Inbox answer'))).toBe(false);
@@ -289,8 +301,10 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       const stored=JSON.stringify(loom.db.prepare(`SELECT * FROM ${table}`).all());
       expect(stored).not.toContain(sealedWords);expect(stored).not.toContain('Sealed typed Inbox answer');
     }
+    phase='sealed private reply: other member';
     await p.goto(`${loom.url}/p/inbox-preview/ask/${encodeURIComponent(sealed.ref)}`);
     await p.getByText('This ask is no longer in view',{exact:true}).waitFor();expect(await p.getByText(sealedWords,{exact:true}).count()).toBe(0);
+    phase='sealed private reply: retention';
     clock.advance(14*86400_000);
     // Retention also ages the real sign-in session. Reauthenticate before reading its wordless history.
     await expect.poll(()=>b.getByText(sealedWords,{exact:true}).count()).toBe(0);
