@@ -1193,7 +1193,7 @@ set referenced by the captured notes images. Unregistered agents, traversal,
 extra/missing attachments, drill keys and machine-local arming paths refuse.
 The format budgets are 896 MiB total, 256 MiB per app/continuity/Secrets image,
 512 MiB aggregate continuity and 64 MiB/4096 portable documents, with a 4 MiB
-manifest and 16384-entry limits. Callers may lower envelope/header budgets.
+manifest and 16384-entry limits. Callers may lower any of these ceilings, never raise them.
 
 `withHouseholdRestore` bounds encrypted input (envelope ceiling plus 1 MiB age
 framing), decrypts with an explicit identity, validates and lends views to a

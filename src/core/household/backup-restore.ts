@@ -19,8 +19,11 @@ const manifestSchema = z.object({
     sha256: z.string().regex(digest) }).strict()).max(16384),
   absent: z.array(z.string().max(256)).max(16384),
 }).strict();
-export interface RestoreBudget { bundleBytes: number; headerBytes: number }
-const limits: RestoreBudget = { bundleBytes: 896 * MiB, headerBytes: 4 * MiB };
+const limits = { bundleBytes: 896 * MiB, headerBytes: 4 * MiB, databaseImageBytes: 256 * MiB,
+  secretsBytes: 256 * MiB, databaseBytes: 512 * MiB, documentBytes: 64 * MiB,
+  fileBytes: 10 * MiB, documentCount: 4096, entryCount: 16384 };
+/** Lower any ceiling for constrained restore consumers, never raise format caps. */
+export type RestoreBudget = Partial<typeof limits>;
 export interface ValidatedHouseholdBundle {
   /** Borrowed views into the supplied plaintext; never retain beyond its lifetime.
    * Validation is not authority to execute settings, start workers or restore Secrets. */
@@ -30,8 +33,8 @@ export interface ValidatedHouseholdBundle {
 }
 const fail = () => new Error('Household restore validation failed');
 function budgetFor(input: RestoreBudget) {
-  const budget = { ...input };
-  for (const key of Object.keys(limits) as (keyof RestoreBudget)[])
+  const budget = { ...limits, ...input };
+  for (const key of Object.keys(limits) as (keyof typeof limits)[])
     if (!Number.isSafeInteger(budget[key]) || budget[key] <= 0 || budget[key] > limits[key]) throw fail();
   return budget;
 }
@@ -54,6 +57,7 @@ export function validateHouseholdBundle(plain: Buffer, inputBudget: RestoreBudge
     // invalid/lossy encodings and ambiguous numeric spellings before interpretation.
     if (!Buffer.from(JSON.stringify(raw)).equals(header)) throw fail();
     const manifest = manifestSchema.parse(raw);
+    if (manifest.files.length > budget.entryCount || manifest.absent.length > budget.entryCount) throw fail();
     const files = new Map<string, Buffer>(), absent = new Set<string>();
     let offset = end;
     for (const item of manifest.files) {
@@ -68,7 +72,8 @@ export function validateHouseholdBundle(plain: Buffer, inputBudget: RestoreBudge
       absent.add(path);
     }
     const app = files.get('loom.db'), recovery = files.get('secrets/recovery.age');
-    if (!app?.length || !recovery?.length || files.get('ui-cookie.key') && files.get('ui-cookie.key')!.length !== 32) throw fail();
+    if (!app?.length || app.length > budget.databaseImageBytes || !recovery?.length || recovery.length > budget.secretsBytes
+      || files.get('ui-cookie.key') && files.get('ui-cookie.key')!.length !== 32) throw fail();
     const withDatabase = <T>(bytes: Buffer, continuity: boolean, read: (db: Database.Database) => T): T => {
       if (bytes.length < 100 || bytes.toString('ascii', 0, 16) !== 'SQLite format 3\0'
         || bytes[18] !== 1 || bytes[19] !== 1) throw fail();
@@ -102,7 +107,7 @@ export function validateHouseholdBundle(plain: Buffer, inputBudget: RestoreBudge
       if (path === 'loom.db' || path === 'secrets/recovery.age' || path === 'ui-cookie.key') continue;
       if (expectedStores.has(path)) {
         databaseBytes += bytes.length;
-        if (!bytes.length || databaseBytes > 512 * MiB) throw fail();
+        if (!bytes.length || bytes.length > budget.databaseImageBytes || databaseBytes > budget.databaseBytes) throw fail();
         withDatabase(bytes, true, db => {
           if (!path.endsWith('/notes.db')) return;
           db.prepare('SELECT path FROM notes LIMIT 0').all();
@@ -119,7 +124,7 @@ export function validateHouseholdBundle(plain: Buffer, inputBudget: RestoreBudge
       const match = /^agents\/([a-z][a-z0-9-]{0,39})\/(IDENTITY\.md|preferences\.md|self-model\.md|(?:roles|projects)\/[A-Za-z0-9][A-Za-z0-9_-]{0,99}\.md|note-files\/[a-f0-9]{2}\/[a-f0-9]{64})$/.exec(path);
       if (!match || !known.has(match[1])) throw fail();
       documentBytes += bytes.length; documentCount++;
-      if (bytes.length > 10 * MiB || documentBytes > 64 * MiB || documentCount > 4096) throw fail();
+      if (bytes.length > budget.fileBytes || documentBytes > budget.documentBytes || documentCount > budget.documentCount) throw fail();
     }
     for (const [path, bytes] of files) if (path.includes('/note-files/')) {
       if (attachments.get(path) !== bytes.length || hash(bytes) !== path.slice(path.lastIndexOf('/') + 1)) throw fail();

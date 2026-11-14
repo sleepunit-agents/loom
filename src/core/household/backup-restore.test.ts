@@ -97,10 +97,11 @@ it.each(['duplicate-file', 'duplicate-absence', 'contradiction', 'unlisted-store
   if (kind === 'unreferenced-attachment') files.set(`agents/mark/note-files/${hash(Buffer.from('x')).slice(0,2)}/${hash(Buffer.from('x'))}`, Buffer.from('x'));
   if (kind === 'wrong-shard') { files.set(f.attachmentPath.replace(/note-files\/../, 'note-files/ff'), files.get(f.attachmentPath)!); files.delete(f.attachmentPath); }
   if (kind === 'changed-attachment') files.set(f.attachmentPath, Buffer.from('DIFFERENT!'));
-  const bytes = pack(files, absent, m => {
+  let bytes = pack(files, absent, m => {
     if (kind === 'duplicate-file') m.files.push(m.files[0]);
     if (kind === 'duplicate-absence') m.absent.push(m.absent[0]);
   });
+  if (kind === 'duplicate-file') bytes = Buffer.concat([bytes, files.values().next().value!]);
   expect(() => validateHouseholdBundle(bytes)).toThrow(failure);
 });
 it.each(['magic', 'version', 'format', 'hash', 'negative', 'fraction', 'too-large', 'truncated', 'trailing', 'header-length', 'extra-field', 'bad-utf8', 'duplicate-json-key'] as const)('rejects malformed %s', async kind => {
@@ -189,4 +190,50 @@ it.each(['foreign-key', 'missing-notes-schema', 'attachment-size', 'missing-regi
     files.set(path, db.serialize());
   } finally { db.close(); }
   expect(() => validateHouseholdBundle(pack(files, f.absent))).toThrow(failure);
+});
+
+it('rejects every otherwise-valid payload at lowered individual and aggregate limits', async () => {
+  const f = await fixture();
+  const documents = [...f.files].filter(([p]) => p.startsWith('agents/') && !p.endsWith('.db'));
+  const sizes = documents.map(([, bytes]) => bytes.length);
+  const cases = [
+    { databaseImageBytes: f.files.get('loom.db')!.length - 1 },
+    { secretsBytes: f.files.get('secrets/recovery.age')!.length - 1 },
+    { databaseBytes: f.files.get('agents/art/notes.db')!.length - 1 },
+    { documentBytes: sizes.reduce((sum, n) => sum + n, 0) - 1 },
+    { fileBytes: Math.max(...sizes) - 1 },
+    { documentCount: documents.length - 1 },
+    { entryCount: f.files.size - 1 },
+  ];
+  expect(() => validateHouseholdBundle(f.plain)).not.toThrow();
+  for (const budget of cases) expect(() => validateHouseholdBundle(f.plain, budget), JSON.stringify(budget)).toThrow(failure);
+  for (const [key, value] of Object.entries({ databaseImageBytes: 256*1024*1024, secretsBytes: 256*1024*1024,
+    databaseBytes: 512*1024*1024, documentBytes: 64*1024*1024, fileBytes: 10*1024*1024, documentCount: 4096, entryCount: 16384 }))
+    expect(() => validateHouseholdBundle(f.plain, { [key]: value + 1 })).toThrow(failure);
+});
+it('bounds ciphertext before decryption, even if decryption would produce a valid small envelope', async () => {
+  const f = await fixture(), consume = vi.fn();
+  const decrypt = vi.spyOn(Decrypter.prototype, 'decrypt').mockResolvedValue(f.plain);
+  // A tiny caller ceiling makes a genuinely oversized ciphertext inexpensive.
+  await expect(withHouseholdRestore(Buffer.alloc(1024*1024 + 2), f.owner, consume, { bundleBytes: 1 })).rejects.toThrow(failure);
+  expect(decrypt).not.toHaveBeenCalled(); expect(consume).not.toHaveBeenCalled();
+});
+it('bounds continuity image size independently of app and aggregate ceilings, and absence entry count independently of files', async () => {
+  const f = await fixture(), files = new Map(f.files);
+  const notes = new Database(files.get('agents/art/notes.db')!);
+  try {
+    notes.exec('CREATE TABLE padding(value BLOB)');
+    notes.prepare('INSERT INTO padding VALUES (zeroblob(?))').run(files.get('loom.db')!.length + 4096);
+    files.set('agents/art/notes.db', notes.serialize());
+  } finally { notes.close(); }
+  const packed = pack(files, f.absent);
+  const ceiling = files.get('agents/art/notes.db')!.length - 1;
+  expect(ceiling).toBeGreaterThan(files.get('loom.db')!.length);
+  expect(() => validateHouseholdBundle(packed)).not.toThrow();
+  expect(() => validateHouseholdBundle(packed, { databaseImageBytes: ceiling })).toThrow(failure);
+  for (const path of files.keys()) if (path.includes('/roles/')) files.delete(path);
+  expect(f.absent.length).toBeGreaterThan(files.size);
+  const compact = pack(files, f.absent);
+  expect(() => validateHouseholdBundle(compact)).not.toThrow();
+  expect(() => validateHouseholdBundle(compact, { entryCount: files.size })).toThrow(failure);
 });
