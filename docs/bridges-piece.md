@@ -1232,7 +1232,7 @@ the eventual composition after save; returned read buffers belong to that caller
 
 | Legacy storage behavior | This unit / remaining work |
 | --- | --- |
-| `Files.fetch` private scoped storage and fetch dedup | Atomic scoped byte dedup; actual intake fetch-once orchestration pending |
+| `Files.fetch` private scoped storage and fetch dedup | Atomic scoped byte dedup and internal concurrent/restart fetch-once; actual Runtime intake wiring pending |
 | `Files.take` scoped bytes, digest and safe name | Internal delivery/body-proof retrieval with no output path; actual Runtime issuer and generated file command pending |
 | `Files.prune` fourteen-day expiry | Exact expiry on every read plus transactional prune; next-mode startup/hourly job installed |
 | Private on-disk file copies | Private `loom.db` BLOBs, excluded from owning export/backup; no legacy file read |
@@ -1292,3 +1292,25 @@ transaction rollback/recovery, fixed diagnostics and isolated long-clock-jump/
 shutdown behavior. Explicit fake save permits only seed private fixture bytes.
 Runtime issuance, fetch-once intake/restart orchestration and the generated file
 client remain required; retention alone does not enable file support.
+
+## Internal attachment fetch-once orchestration
+
+`file-once.ts` is unregistered and has no production Runtime issuer. It composes
+an exact delivered-message permit, a bounded transport callback and private
+storage. Independent callers serialize by database and exact agent/venue/
+workspace/channel scope. Each caller captures and rechecks its own immutable
+permit before and after waiting; one caller's authority never admits another.
+Still-live stored file IDs are reused across deliveries and restarts, missing
+IDs alone reach the transport, and the original full batch is atomically saved
+with each delivery's manifest and associations. Cached bytes pass digest/name/
+expiry checks; all intermediate cached/fetched buffers are erased on success
+and refusal. Reuse never refreshes the original file age.
+
+A failed fetch or save leaves no success marker and the next caller can retry.
+A process stopped after GET but before commit may repeat that GET after restart;
+this promises fetch dedup after durable save, not network exactly-once delivery.
+Concurrent scopes can proceed independently. The future production composition
+must supply the existing bounded Slack transport with service/staging fences and
+an actual Runtime permit. This unit installs no daemon intake, public operation
+or client and reads no old-side data. Runtime issuance, production intake wiring
+and generated command parity remain required.

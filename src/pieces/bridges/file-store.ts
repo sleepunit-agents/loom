@@ -33,9 +33,36 @@ export function bridgeFileStore(db:Db, now:()=>number) {
     db.prepare('DELETE FROM bridges_file_deliveries WHERE created<=?').run(at-BRIDGE_FILE_RETENTION);
   };
   return {
+    /** Internal fetch orchestration only: owned copies of still-live cached
+     * files, or undefined for missing IDs. Never grants a body read. */
+    cached(permit:BridgeFileSavePermit):(FetchedSlackFile|undefined)[] {
+      const owned:Buffer[]=[];
+      try {
+        const scope=scopeKey(permit),delivery=word.parse(permit.delivery),deliveredAt=permit.deliveredAt;
+        const files=z.array(descriptor).max(SLACK_FILES_PER_MESSAGE).parse(permit.files.slice(0,SLACK_FILES_PER_MESSAGE));
+        if(new Set(files.map(f=>f.id)).size!==files.length||!Number.isSafeInteger(deliveredAt)||deliveredAt<0)throw held();
+        const manifest=hash(JSON.stringify(files));
+        const current=()=>permit.current()&&scopeKey(permit)===scope&&permit.delivery===delivery&&permit.deliveredAt===deliveredAt
+          &&hash(JSON.stringify(z.array(descriptor).max(SLACK_FILES_PER_MESSAGE).parse(permit.files.slice(0,SLACK_FILES_PER_MESSAGE))))===manifest;
+        const at=tick(now);
+        if(!current()||at<deliveredAt||at>=deliveredAt+BRIDGE_FILE_RETENTION)throw held();
+        const before=db.prepare('SELECT manifest,created FROM bridges_file_deliveries WHERE scope=? AND delivery=?').get(scope,delivery) as {manifest:string;created:number}|undefined;
+        if(before&&(before.manifest!==manifest||before.created!==deliveredAt))throw held();
+        const result=files.map(f=>{
+          const row=db.prepare('SELECT name,bytes,digest,created FROM bridges_files WHERE scope=? AND file=? AND created>?').get(scope,f.id,at-BRIDGE_FILE_RETENTION) as Row|undefined;
+          if(!row)return undefined;
+          if(Buffer.isBuffer(row.bytes))owned.push(row.bytes);
+          if(row.name!==safeName(f.name)||!Buffer.isBuffer(row.bytes)||row.bytes.length>SLACK_FILE_BYTES||hash(row.bytes)!==row.digest
+            ||tick(now)>=row.created+BRIDGE_FILE_RETENTION)throw held();
+          return {id:f.id,name:row.name,bytes:row.bytes};
+        });
+        if(!current()||tick(now)>=deliveredAt+BRIDGE_FILE_RETENTION)throw held();
+        return result;
+      }catch{for(const bytes of owned)bytes.fill(0);throw held();}
+    },
     /** Atomic batch save. Dedup never overwrites bytes or refreshes their age.
      * Caller owns fetched buffers; this method neither consumes nor erases them.
-     * Platform fetch orchestration (including fetch-once) is not installed. */
+     * Internal fetch-once orchestration is unregistered; Runtime issuance is pending. */
     save(permit:BridgeFileSavePermit, fetched:readonly FetchedSlackFile[]):void {
       try {
         const scope=scopeKey(permit),delivery=word.parse(permit.delivery),deliveredAt=permit.deliveredAt;
