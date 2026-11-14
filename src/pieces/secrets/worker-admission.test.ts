@@ -113,3 +113,36 @@ it('retires an admission created before the response acceptance deadline elapsed
  const client=workerAdmission(f.config.admission,f.fingerprint('daemon'),randomUUID());closes.push(client.close);
  await expect(client.admit('API')).rejects.toThrow();const id=await f.admitted();expect(f.state(id)).toEqual({state:'uncertain'});expect(f.source).not.toHaveBeenCalled();
 });
+it('peer replacement fences a real dispatch while the holder source is awaiting',async()=>{
+ const f=await setup();let entered!:()=>void,resume!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;}),wait=new Promise<void>(r=>{resume=r;});
+ f.source.mockImplementation(async()=>{entered();await wait;return Buffer.from('synthetic-admitted-value');});
+ const command=await f.start();
+ try {
+  await ready;const id=await f.admitted();
+  f.listener.replaceWorkers([f.peer]);expect(f.state(id)).toEqual({state:'uncertain'});
+  resume();expect(await command.delivery).toBe(false);await command.close();
+  expect(await command.completed).toBe(false);
+ }finally{resume();await command.close();}
+});
+it('rejects the original dispatch HTTP response when its retired completion resolves successfully',async()=>{
+ const f=await setup(false),original=f.tickets.admitHandoff;
+ let entered!:()=>void,resume!:()=>void;
+ const ready=new Promise<void>(r=>{entered=r;}),wait=new Promise<void>(r=>{resume=r;});
+ // Isolate the listener's own post-await generation fence independently of the
+ // ticket owner's rejection, which the real source/command test covers above.
+ vi.spyOn(f.tickets,'admitHandoff').mockImplementation((...args)=>{
+  const admission=original(...args);
+  return {...admission,async dispatch(){entered();await wait;}};
+ });
+ const client=workerAdmission(f.config.admission,f.fingerprint('daemon'),randomUUID());closes.push(client.close);
+ const id=await client.admit('API'),dispatch=expect(client.dispatch()).rejects.toThrow('Worker admission unavailable');
+ try {await ready;f.listener.replaceWorkers([f.peer]);expect(f.state(id)).toEqual({state:'uncertain'});}
+ finally {resume();}
+ await dispatch;
+});
+it('refuses sparse owner replacement before retiring any original admission',async()=>{
+ const f=await setup(false),client=workerAdmission(f.config.admission,f.fingerprint('daemon'),randomUUID());closes.push(client.close);
+ const id=await client.admit('API');expect(()=>f.listener.replaceWorkers(new Array(1))).toThrow(/^Worker admission unavailable$/);
+ expect(f.state(id)).toEqual({state:'admitted'});
+});

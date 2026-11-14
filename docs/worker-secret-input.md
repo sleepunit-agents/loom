@@ -255,3 +255,23 @@ worker entrypoint, public operation or host activation. Runtime dynamic job/peer
 refresh, production tombstone lifecycle/capacity and whole-path staging/value-free
 accounting remain required before public activation. No Claude fd3 compatibility
 is implied; only explicit command consumers implementing fd3-to-EOF are supported.
+
+### Daemon peer generation replacement (private source capability)
+
+The controller returned by `startSecretWorkers` has owner-only
+`replaceWorkers([{tokenDigest,fingerprint}, ...])`. It resolves every selected
+credential through Signin and Runtime before changing either listener, retaining
+the newly authenticated original viewer and exact assignment. Malformed,
+revoked, non-body, ambiguous, holder-colliding or oversized selections fail before
+retiring the current generation. Replacement during a database transaction or
+after shutdown is refused. An empty list revokes all peers.
+
+Every successful replacement retires all retained authority claims and pending
+admissions, even when identical metadata is selected. Old dispatch continuations
+check their original peer generation after awaits. Pending identities remain
+consumed by the original ticket owner; replacement cannot readmit them. A fresh
+job receives a fresh admission and original worker-local proof. This source
+capability does not discover peers, grant access, start a worker, configure holder
+routes, or add a public/CLI endpoint. Holder route refresh, persistent holder
+handoff wiring, Runtime orchestration, production tombstone lifecycle/capacity,
+whole-path staging/accounting and the Settings/parity ledger remain required.
