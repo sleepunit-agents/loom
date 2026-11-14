@@ -65,3 +65,11 @@ it('refuses missing/current-house drift, revoked central proof, and policy-held 
  expect(g.app.operations.call('direct',{kind:'member',id:'jonathan'},'runtime.configureBodyPolicy',{agent:'art',revision:0,gates:{people:{},agents:{}},policy:{}},'policy').ok).toBe(true);
  expect(other.current()).toBe(false);expect(g.read()).toBeUndefined();
 });
+it('never caches body proof across expiry or database shutdown',async()=>{
+ const f=await setup(),bound=f.read()!;f.clock.advance(24*3600_000);expect(bound.current()).toBe(false);expect(f.read()).toBeUndefined();
+ const g=await setup(),other=g.read()!;await g.app.close();expect(other.current()).toBe(false);expect(g.read()).toBeUndefined();
+});
+it('keeps the original destination through ordinary running/waiting metadata reports',async()=>{
+ const f=await setup(),bound=f.read()!;f.job({state:'waiting',title:'new status'});expect(bound.current()).toBe(true);
+ f.job({state:'running'});expect(bound.current()).toBe(true);
+});

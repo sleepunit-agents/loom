@@ -4,7 +4,7 @@ import { runtimeStore } from './store.js';
 import { currentExecution } from './control.js';
 import { bodyPolicyExecutionHeld } from './policy-store.js';
 /** Runtime's seam for Clock, Comms and venue adapters. No runner or store imports. */
-import type { Operations, Result, Scope, Viewer } from '../../core/index.js';
+import type { Operations, Result, Scope, Viewer, Sharing } from '../../core/index.js';
 import { attentionRole, type AgentStatus } from '../attention/role.js';
 
 /** Trusted in-process provenance, never a public read or a permission grant.
