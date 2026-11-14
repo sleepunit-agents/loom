@@ -587,14 +587,19 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       void Promise.resolve().then(() => {
         if(closed || wake(db,w.id)?.state!=='firing') return undefined;
         // Recheck after the intent commit, immediately before the external call.
+        let current:Wake;
         try {
-          const current=wake(db,w.id)!;
+          current=wake(db,w.id)!;
+          if(current.attempt!==attempt) return undefined;
           if(privateLocal(current)) throw new OperationError('denied','Private local delivery is not composed');
           if(!create(current.by,current)) throw new OperationError('denied','Dispatch policy changed');
           checkStandingWake(db,operations,current);
         }
         catch { holdDenied(wake(db,w.id)!); return undefined; }
-        return runtime.startBody({wake:intent.value as Wake,viewer:w.by,intent:attempt});
+        // Internal delivery uses the committed owning row. Registry responses strip
+        // authorship (and private writes return ACKs); never use that public
+        // projection as the Runtime authorization input.
+        return runtime.startBody({wake:structuredClone(current),viewer:w.by,intent:attempt});
       }).catch((): StartResult => ({ state: 'uncertain', reason: 'Runtime did not confirm whether a body started' })).then(result => {
         if (!closed && result) { const parsed = startResult.safeParse(result); result = parsed.success ? parsed.data : { state: 'uncertain', reason: 'Runtime returned an invalid outcome' }; const answer = call(w, 'outcome', { id: w.id, attempt, result }); if (!answer.ok) { const current = wake(db, w.id); if (current?.state === 'firing') holdDenied(current, true); } }
       });

@@ -866,3 +866,13 @@ describe('durable daemon clock', () => {
     const removed = once(ws, 'message'); app.clock.advance(86400_000); await removed; expect(messages.at(-1)).toMatchObject({ kind: 'del', id: w.id }); ws.terminate(); await once(ws, 'close');
   });
 });
+
+it('never hands a superseded dispatch attempt to Runtime after the intent commit',async()=>{
+ const startBody=vi.fn(async()=>({state:'started' as const,body:'must-not-start'}));
+ const app=await loom({runtime:{startBody}}),scheduled=app.set();
+ app.clock.advance(scheduled.due-app.clock.now());
+ const current=wake(app.db,scheduled.id)!;expect(current.state).toBe('firing');
+ app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify({...current,attempt:'replacement-attempt'}),current.id);
+ await settled();expect(startBody).not.toHaveBeenCalled();
+ expect(wake(app.db,current.id)).toMatchObject({state:'firing',attempt:'replacement-attempt'});
+});

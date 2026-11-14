@@ -215,3 +215,120 @@ it('keeps the original agent viewer in the installed Clock start path',async()=>
   expect(await f.post(f.runner,'reportJob',{job,state:'running'})).toMatchObject({ok:true});await settle();
   expect(wake(f.app.db,id)).toMatchObject({state:'fired',outcome:job,by:{kind:'agent',id:'art'}});
 });
+
+it('issues Clock lane witnesses from current Runtime bindings, never Comms/bridge or copied metadata',async()=>{
+ const {clockDestination}=await import('./clock-destination.js');
+ const {provenanceStore}=await import('./provenance-store.js');
+ const f=await setup(),job=f.jobOf(f.call('runtime.startBody',{...f.input,conversation:'cv-lane'}));
+ await f.post(f.runner,'claimJob',{job});await f.post(f.runner,'takeInput',{job});await f.post(f.runner,'reportJob',{job,state:'running'});
+ const input={agent:'art',place:'lane:daily'},read=clockDestination(f.app,()=>fixtureSharing());
+ expect(read(input)).toBeUndefined();
+ f.app.db.transaction(()=>{
+  f.store.put('binding',{id:'cv-lane',agent:'art',place:'lane:daily',venue:'wake',job},f.clock.now());
+  provenanceStore(f.app.db).note('cv-lane','art',{key:'clock-source',sender:{kind:'unknown'},at:f.clock.now()},['jonathan']);
+ })();
+ const witness=read(input)!;expect(witness).toMatchObject({agent:'art',conversation:'cv-lane',place:'lane:daily'});expect(witness.current()).toBe(true);
+ for(const change of [{place:'lane:other'},{agent:'mark'},{member:'jonathan'},{project:'pond'}])expect(read({...input,...change})).toBeUndefined();
+ const binding=f.store.read('binding','cv-lane')!,before=f.store.read('job',job)!;
+ for(const change of [{runner:'b',box:'b'},{claimedAt:before.claimedAt!+1}]){
+  f.app.db.transaction(()=>{const {changedAt:_,...j}=before;f.store.put('job',{...j,...change},f.clock.now());})();
+  expect(witness.current()).toBe(false);expect(read(input)?.current()).toBe(true);
+ }
+ f.app.db.transaction(()=>{const {changedAt:_,...j}=before;f.store.put('job',j,f.clock.now());})();
+ expect(witness.current()).toBe(true);
+ for(const change of [{venue:'loom'},{venue:'bridge:discord'},{job:'missing'},{member:'jonathan'},{project:'pond'},{agent:'mark'}]){
+  f.app.db.transaction(()=>{const {changedAt:_,...b}=binding;f.store.put('binding',{...b,...change},f.clock.now());})();
+  expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+ }
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=binding;f.store.put('binding',b,f.clock.now());})();
+ expect(witness.current()).toBe(true);
+ for(const change of [{state:'done' as const},{endedAt:f.clock.now()},{imported:{history:'unknown' as const}},
+  {principalReset:{approval:'a-reset',by:'jonathan',at:f.clock.now()}},{writtenOff:{approval:'a-off',by:'jonathan',at:f.clock.now()}},
+  {agent:'mark'},{member:'jonathan'},{project:'pond'},{conversation:'cv-elsewhere'},{service:'slack'},{runner:'b'},{claimedAt:undefined}]){
+  f.app.db.transaction(()=>{const {changedAt:_,...j}=before;f.store.put('job',{...j,...change},f.clock.now());})();
+  expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+ }
+ f.app.db.transaction(()=>{const {changedAt:_,...j}=before;f.store.put('job',j,f.clock.now());
+  f.store.put('binding',{id:'cv-replacement',agent:'art',place:'lane:replacement',venue:'wake',job},f.clock.now());})();
+ expect(()=>f.app.db.transaction(()=>f.store.put('binding',{id:'cv-duplicate',agent:'art',place:'lane:daily',venue:'wake',job},f.clock.now()))()).toThrow(/UNIQUE/);
+ f.app.db.prepare('DELETE FROM runtime_bindings WHERE id=?').run('cv-replacement');
+ expect(witness.current()).toBe(true);
+ const history=provenanceStore(f.app.db).read('cv-lane')!;
+ f.app.db.transaction(()=>provenanceStore(f.app.db).put('cv-lane',{...history,agent:'mark'}))();
+ expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+ f.app.db.transaction(()=>provenanceStore(f.app.db).put('cv-lane',history))();
+ expect(witness.current()).toBe(true);
+ f.app.db.prepare('DELETE FROM runtime_provenance WHERE conversation=?').run('cv-lane');
+ expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+});
+it('holds a verified Clock join instead of starting a second body',async()=>{
+ const f=await setup(),input:Wake={id:'w-join',agent:'art',prompt:'PRIVATE join words',note:'join',schedule:'daily',state:'firing',due:1,createdAt:0,changedAt:0,by:owner,failures:0,
+  authorship:{origin:'art',conversation:'cv-own',principal:{for:'owner',people:[]}}};
+ const current=()=>true;
+ const runtime=clockRuntime(f.app,f.app.effects!,()=>({agent:'art',place:'lane:daily',conversation:'cv-own',current}));
+ const result=runtime.startBody({wake:input,viewer:owner,intent:'join'});f.clock.advance(START_CONFIRM_MS);
+ expect(await result).toMatchObject({state:'held'});
+ expect(f.store.ids('job')).toEqual([]);
+});
+it('rechecks independent private member/project access, hosting, policy and shutdown on a Clock witness',async()=>{
+ const {clockDestination}=await import('./clock-destination.js');
+ const {provenanceStore}=await import('./provenance-store.js');
+ const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);
+ const job=f.jobOf(f.call('runtime.startBody',{...f.input,conversation:'cv-private-lane'}));
+ await f.post(f.runner,'claimJob',{job});await f.post(f.runner,'takeInput',{job});await f.post(f.runner,'reportJob',{job,state:'running'});
+ const input={agent:'art',place:'lane:daily',member:'jonathan',project:'pond'};
+ f.app.db.transaction(()=>{
+  const {changedAt:_,...j}=f.store.read('job',job)!;
+  f.store.put('job',{...j,member:input.member,project:input.project},f.clock.now());
+  f.store.put('binding',{id:'cv-private-lane',...input,venue:'wake',job},f.clock.now());
+  provenanceStore(f.app.db).note('cv-private-lane','art',{key:'private-clock-source',sender:{kind:'unknown'},at:f.clock.now()},['jonathan']);
+ })();
+ const read=clockDestination(f.app,()=>access),witness=read(input)!;
+ expect(witness).toMatchObject({member:'jonathan',project:'pond'});expect(witness.current()).toBe(true);
+ access.projects.pond.agents=[];
+ expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();access.projects.pond.agents=['art'];
+ access.members.jonathan.agents=[];
+ expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();access.members.jonathan.agents=['art'];
+ const settings=f.store.read('settings','art')!;
+ f.app.db.transaction(()=>{const {changedAt:_,...s}=settings;f.store.put('settings',{...s,house:{repo:'/changed',houseFile:'house/house.json'}},f.clock.now());})();
+ expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+ f.app.db.transaction(()=>{const {changedAt:_,...s}=settings;f.store.put('settings',s,f.clock.now());})();
+ expect(witness.current()).toBe(true);
+ const box=f.store.read('box','a')!;
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=box;f.store.put('box',{...b,revokedAt:f.clock.now()},f.clock.now());})();
+ expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=box;f.store.put('box',b,f.clock.now());})();
+ expect(witness.current()).toBe(true);
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=box;f.store.put('box',{...b,mayHost:[]},f.clock.now());})();
+ expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+ f.app.db.transaction(()=>{const {changedAt:_,...b}=box;f.store.put('box',b,f.clock.now());})();
+ expect(witness.current()).toBe(true);
+ f.app.db.prepare('INSERT INTO runtime_body_policy(agent,record) VALUES (?,?)').run('art','{}');
+ expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+ f.app.db.prepare('DELETE FROM runtime_body_policy WHERE agent=?').run('art');
+ expect(witness.current()).toBe(true);
+ await f.app.close();expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();
+});
+it('uses the destination reader in installed Clock dispatch and rechecks memberless project policy',async()=>{
+ const {clockDestination}=await import('./clock-destination.js');
+ const {provenanceStore}=await import('./provenance-store.js');
+ const access=structuredClone(fixtureSharing()),f=await setup(false,()=>access);
+ const job=f.jobOf(f.call('runtime.startBody',{...f.input,conversation:'cv-clock-lane',project:'pond'}));
+ await f.post(f.runner,'claimJob',{job});await f.post(f.runner,'takeInput',{job});await f.post(f.runner,'reportJob',{job,state:'running'});
+ const input={agent:'art',project:'pond',place:'lane:daily'};
+ f.app.db.transaction(()=>{
+  f.store.put('binding',{id:'cv-clock-lane',...input,venue:'wake',job},f.clock.now());
+  provenanceStore(f.app.db).note('cv-clock-lane','art',{key:'clock-source',sender:{kind:'unknown'},at:f.clock.now()},['jonathan']);
+ })();
+ const read=clockDestination(f.app,()=>access),witness=read(input)!;expect(witness.current()).toBe(true);
+ access.projects.pond.agents=[];expect(witness.current()).toBe(false);expect(read(input)).toBeUndefined();access.projects.pond.agents=['art'];
+ const result=f.call('clock.in',{...input,prompt:'PRIVATE scheduled join',note:'join',when:'1s'});expect(result.ok).toBe(true);
+ const id=(result as {ok:true;value:{id:string}}).value.id,scheduled=wake(f.app.db,id)!;
+ // The delivery producer is not installed yet: seed only owning routing metadata
+ // in this fixture. The real Clock daemon and next composition then run normally.
+ scheduled.authorship={origin:'art',conversation:'cv-clock-lane',project:'pond',principal:{for:'?',people:[]}};
+ f.app.db.prepare('UPDATE clock_wakes SET record=? WHERE id=?').run(JSON.stringify(scheduled),id);
+ f.clock.advance(1000);await settle();
+ expect(wake(f.app.db,id)).toMatchObject({state:'held',outcome:expect.stringContaining('conversation delivery')});
+ expect(f.store.ids('job')).toEqual([job]);
+});

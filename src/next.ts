@@ -48,6 +48,7 @@ import { installApprovals } from './pieces/approvals/index.js';
 import { installRunnerInput } from './pieces/runtime/input.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { clockRuntime } from './pieces/runtime/clock.js';
+import { clockDestination } from './pieces/runtime/clock-destination.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { listenHolderAuthority, type AuthorityServerConfig } from './pieces/secrets/holder-authority.js';
 import { installHouseSecrets } from './pieces/secrets/house.js';
@@ -224,7 +225,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   mindTransports.set(app, sources);
   const effects = installEffects(app, sharing, !!options.staging);
   if (!app.operations.has('clock.list')) {
-    const jobs = installClock(app.db, app.operations, app.live, sharing, { provenance: conversations.clockProvenance, caller: conversations.approvalCaller, capacityConversation: conversations.capacityConversation, runtime: clockRuntime(app, effects), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
+    const jobs = installClock(app.db, app.operations, app.live, sharing, { provenance: conversations.clockProvenance, caller: conversations.approvalCaller, capacityConversation: conversations.capacityConversation, runtime: clockRuntime(app, effects, clockDestination(app, sharing)), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
   }
   if (options.bridges && !bridgeDaemons.has(app)) {

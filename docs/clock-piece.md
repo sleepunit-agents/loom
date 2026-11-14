@@ -1136,3 +1136,31 @@ Conversation join authorization must be implemented with service dispatch agains
 Runtime's current destination binding; no caller-supplied place, lane name or saved
 conversation alone may select an existing body's conversation. Agent-authored
 six-hour suppression and imported recovery remain unfinished.
+
+## Clock lane destination authorization
+
+`clockRoute` considers reuse only inside the Clock lane namespace. Original
+agent and verified conversation must match Runtime's current destination, with
+agent, member, project and credential service matching independently. A principal of owner, saved
+Viewer, capacity bucket or archived delivery never waives this comparison.
+Unproved work gets its own `wake:<id>` route. Paths retain the existing exact
+string semantics; no host file is read.
+
+The internal Runtime destination reader checks an exact `wake` binding, its
+current running/waiting job, exact claimed runner/box, house, sender-history store and current
+central filing policy. Imported, reset, written-off, ended or policy-held work
+cannot issue the witness. Comms and bridge bindings are separate destinations.
+The witness contains routing metadata only and rechecks the binding on use; it
+confers no private read, principal, credential or start permission.
+
+Next mode supplies this reader to the Clock bridge. A verified join is held
+instead of calling the fresh-body start path: that path cannot feed an existing
+conversation. Actual delivery still must consume the same current witness at
+the asynchronous boundary, retain scope and add sender history atomically.
+Runtime does not yet create Clock `wake` bindings, so positive binding cases
+are owning-store fixtures, not evidence of an end-to-end delivered lane.
+Conversation joining therefore remains unfinished until that delivery is merged.
+
+| Old surface | New authorization boundary |
+| --- | --- |
+| `house_may_join`, `wake_place`, persisted `places.json` | `clockRoute` plus Runtime's current exact destination witness; never imported place strings or caller-selected bodies. Actual feed/resume remains held. |
