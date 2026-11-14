@@ -115,3 +115,14 @@ it('keeps an empty home quiet across retry expiry and discovers newly configured
  clock.advance(180000);await Promise.resolve();await job.run();
  expect(read).toHaveBeenCalledOnce();expect(loadChanges(app.db)).toMatchObject([{title:change().title}]);
 });
+
+it('publishes completion for an explicitly requested read even in an empty home',async()=>{
+ const {app,job,config,clock}=setup(async()=>[]);config.projects=[];
+ await job.run();
+ expect(app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get()).toBeUndefined();
+ expect(app.operations.call('direct',owner,'changes.refresh',{},'manual')).toMatchObject({ok:true});
+ await job.run();
+ const status=app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get() as {value:string};
+ expect(status).toBeDefined();
+ expect(JSON.parse(status.value)).toEqual({at:clock.now(),error:false,held:false});
+});

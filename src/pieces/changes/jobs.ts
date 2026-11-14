@@ -34,9 +34,10 @@ export function startChangesJob(app:Foundation,options:{clock:Clock;sharing:()=>
   busy=true;let error=false,committed=false;
   try {
    const projects=options.projects.list(),repos=[...new Set(projects.flatMap(p=>p.repos.map(repoId)))],now=clock.now(),before=loadChanges(app.db),records:Change[]=[];
-   // An idle home has no snapshot to publish. Keep checking configuration,
+   // An idle home has no snapshot to publish until someone requests a read.
+   // Keep checking configuration,
    // without manufacturing write receipts or live updates for empty reads.
-   if(!repos.length&&!before.length){
+   if(!repos.length&&!before.length&&row.requested===0){
     app.db.prepare('UPDATE changes_jobs SET due=? WHERE id=1').run(now+interval);
     committed=true;return;
    }
