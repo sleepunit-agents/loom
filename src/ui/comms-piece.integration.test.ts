@@ -494,7 +494,8 @@ async function proveNextComms(browser:Browser,webRoot:string) {
       const send=el.getBoundingClientRect(),tile=el.closest('.next-page')!.getBoundingClientRect();
       return send.top>=tile.top&&send.bottom<=tile.bottom&&send.left>=tile.left&&send.right<=tile.right;
      })).toBe(true);
-     expect(await b.getByLabel('Thread messages',{exact:true}).evaluate(el=>el.getBoundingClientRect().width)).toBeGreaterThan(200);
+     const transcript=await b.getByLabel('Thread messages',{exact:true}).boundingBox();
+     expect(transcript!.width).toBeGreaterThan(200);expect(transcript!.height).toBeGreaterThanOrEqual(100);
      await expect.poll(()=>b.locator('.comms-work-strip').isVisible()).toBe(width<1920);
      await b.screenshot({path:join(shots,`comms-next-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }

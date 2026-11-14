@@ -68,6 +68,8 @@ Six additional captures show the real filed thread in both looks and all widths.
 These revealed and now guard two integration defects: the transcript must fit
 its tile height to keep Send visible, and Work must fold based on the reader
 width after Split takes its list/folders, rather than the whole app width.
+Narrow next tiles use a bounded scrolling header and a shorter composer so the
+transcript retains at least 100 pixels as well as keeping Send visible.
 The standalone preview keeps its viewport height.
 
 This does not prove an external model process or worker transport. Runtime's

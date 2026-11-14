@@ -18,6 +18,11 @@
 .comms-work-body { display: none; max-height: 30dvh; overflow-y: auto; overflow-wrap: anywhere; }
 .comms-work[data-open] .comms-work-body { display: block; }
 .comms-work-desktop { display: none; }
+/* A narrow tile still needs room to read while keeping the composer in view. */
+@container comms-reader (max-width: 639px) {
+ .next-page .loom-comms .comms-thread > header { max-height: 30cqh; overflow-y: auto; }
+ .next-page .loom-comms .comms-thread > form textarea { min-height: 72px; height: 72px; }
+}
 @container comms-reader (min-width: 640px) {
 .loom-comms .comms-thread { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 30%); grid-template-rows: auto minmax(0, 1fr) auto auto; }
 .loom-comms .comms-thread > header { grid-column: 1; grid-row: 1; }
