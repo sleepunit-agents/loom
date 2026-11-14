@@ -23,7 +23,8 @@ export function recordAccountWindows(db: DataDatabase, identity: Identity, windo
   return db.transaction(() => {
     const before = readAccountWindows(db, identity.account);
     if (windows.some(row => row.readAt !== null && before.some(old => old.name === row.name
-      && old.readAt !== null && Date.parse(old.readAt) > Date.parse(row.readAt!)))) return false;
+      && old.readAt !== null && Date.parse(old.readAt) <= Date.parse(now)
+      && Date.parse(old.readAt) > Date.parse(row.readAt!)))) return false;
     const result = recordAccountUsage(db, { ...identity, windows, now });
     if (!result.recorded) return false;
     db.delete(modelAccountWindows).where(eq(modelAccountWindows.account, identity.account)).run();

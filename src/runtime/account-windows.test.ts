@@ -79,3 +79,11 @@ it('late successful refresh cannot replace a completed refresh from the same sta
   expect(await old).toEqual({ refreshed: false });
   expect(readAccountWindows(db, 'shared')[0]?.usage).toBe(0.2);
 });
+
+it('a future window observation cannot fence out the next valid provider reading', () => {
+  const db = fixture();
+  recordAccountWindows(db, identity, [{ ...window, readAt: '2026-11-14T20:30:00.000Z' }], now);
+  expect(currentAccountCapacity(db, 'shared', now).hasRoom).toBe(false);
+  expect(recordAccountWindows(db, identity, [window], now)).toBe(true);
+  expect(currentAccountCapacity(db, 'shared', now).hasRoom).toBe(true);
+});
