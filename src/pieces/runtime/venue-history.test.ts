@@ -104,3 +104,30 @@ it('withholds late history when the real owning credential is revoked between re
  const api=discordApi({withValue:use},()=>true,request),venue=venueSchema.parse({id:'discord',platform:'discord',agent:'art',workspace:'300',bot:'100',tokenSecret:'discord'});
  expect(await api.history(venue,{channel:'400',kind:'channel'},f.permit)).toBe('wait');expect(request).toHaveBeenCalledTimes(1);expect(use).toHaveBeenCalledTimes(1);
 });
+it('refuses an otherwise current service body whose job and credential agree',async()=>{
+ const f=await running();
+ f.app.db.prepare("UPDATE runtime_jobs SET record=json_set(record,'$.service','discord') WHERE id=?").run(f.job);
+ const body=f.token(`agent:art/discord@${f.job}`),viewer=signin(f.app).token(hash(body))!.viewer;
+ expect(await f.post(body,'runtime.readConversation',{})).toMatchObject({ok:true});
+ expect(runtimeDiscordHistoryPermit(f.app,viewer,place)).toBeUndefined();
+});
+it('pins the original route even when the replacement is independently valid',async()=>{
+ const f=await running();
+ value(await f.socket('comms.change',{thread:f.thread,action:'project',project:'other'}));
+ expect(await f.post(f.body,'runtime.readConversation',{})).toMatchObject({ok:true});
+ expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)?.current()).toBe(true);
+ expect(f.permit.current()).toBe(false);
+});
+it('pins the transport place independently of an unchanged current principal and conversation',async()=>{
+ const f=await running(),next='th:replacement-place',store=runtimeStore(f.app.db),job=store.read('job',f.job)!;
+ f.app.db.transaction(()=>{
+  // Coherent owning metadata replacement: keep exactly one live thread for the
+  // same conversation and member. No copied viewer or hypothetical role proof.
+  f.app.db.prepare("INSERT INTO comms_threads SELECT ?,member,agent,project,json_set(record,'$.id',?) FROM comms_threads WHERE id=?").run(next,next,f.thread);
+  f.app.db.prepare("DELETE FROM comms_threads WHERE id=?").run(f.thread);
+  const {changedAt:_,...binding}=store.read('binding',job.conversation!)!;store.put('binding',{...binding,place:next},f.clock.now());
+ })();
+ expect(await f.post(f.body,'runtime.describeConversation',{})).toMatchObject({ok:true});
+ expect(runtimeDiscordHistoryPermit(f.app,f.viewer,place)?.current()).toBe(true);
+ expect(f.permit.current()).toBe(false);
+});

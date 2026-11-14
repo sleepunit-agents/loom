@@ -1711,8 +1711,10 @@ cannot be obtained through a public operation. It permits reading into the
 original body; it grants no venue delivery, body start, reply or sender attribution.
 
 This first issuer supports owner-steered private Comms bodies only. Bridges owns
-production history operation/client wiring and author/`may_wake` resolution;
-other source types, broader caller authority, other venue permits and durable
+production history operation/client wiring and author/`may_wake` resolution.
+Fixtures exercise otherwise-current bridge and private/public Clock sources, a
+matching service job/credential, a valid Comms project refile and an independently
+valid replacement thread place against an old permit. Other source types, broader caller authority, other venue permits and durable
 receiver reconciliation remain separate work. No importer behavior changes.
 
 | Old behavior | Owning replacement in this unit | Remaining |
