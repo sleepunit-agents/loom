@@ -75,7 +75,7 @@ export function installPrivateReplies(o:Options & {closed():boolean;changed(t:Th
      ||question(current.ask)!==question(p.before.ask)||!sameWords)throw new OperationError('conflict','Ask changed; check it again');
     seq=existing.seq;
    }
-   if(!seq)seq=append(db,t,{id:`private-reply:${input.ref}`,kind:'message',at:ctx.now,sender:t.member,words:p.words!,hash:p.hash,record:JSON.stringify({delivery:'sending',attempted:false})}).seq;
+   if(!seq)seq=append(db,t,{id:`private-reply:${input.ref}`,kind:'message',at:ctx.now,sender:t.member,words:p.words!,hash:p.hash,record:JSON.stringify({delivery:'sending',attempted:false})},input.text).seq;
    const answer=o.attention.privateReply!(ctx,{id:input.ref,conversation:t.conversation,agent:t.agent,member:t.member,thread:t.id,seq});
    if(!answer.ok)throw new OperationError(answer.code,answer.message);
    ctx.changed('thread',t.id);ctx.changed('message',messageId(t.id,seq));

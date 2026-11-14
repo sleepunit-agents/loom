@@ -325,7 +325,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
    if(db.prepare('SELECT 1 FROM comms_deleted WHERE id=?').get(place))return fail('conflict','This thread was deleted');
    const t:Thread={id:place,member:ctx.viewer.id,agent:i.agent,conversation:`cv-${createHash('sha256').update(`${i.agent}\0loom\0${place}`).digest('hex').slice(0,12)}`,project:i.project,title:null,titledBy:null,pinned:false,archived:null,opened:ctx.now,last:ctx.now,readSeq:0,nextSeq:1,stop:false,firstId:i.id,firstHash:p.hash,working:false,...(p.aboutHash?{aboutHash:p.aboutHash}:{})};
    saveThread(db,t);
-   const {seq}=append(db,t,{id:i.id,kind:'message',at:ctx.now,sender:t.member,words:p.words,hash:p.hash,record:JSON.stringify({delivery:'sending',attempted:false})});
+   const {seq}=append(db,t,{id:i.id,kind:'message',at:ctx.now,sender:t.member,words:p.words,hash:p.hash,record:JSON.stringify({delivery:'sending',attempted:false})},attachedText(i.text,i.about,ctx.now));
    ctx.changed('thread',place);ctx.changed('message',messageId(place,seq));return {thread:place,seq};
   },after:(i,r)=>sendAfter(i,r),
  }));
@@ -335,7 +335,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
   run(ctx,i,raw) {
    const t=thread(db,i.thread)!; if(t.archived!==null)return fail('conflict','Unarchive this thread first');
    const p=raw as {words:Buffer;hash:string};let value;
-   try {value=append(db,t,{id:i.id,kind:'message',at:ctx.now,sender:t.member,words:p.words,hash:p.hash,record:JSON.stringify({delivery:'sending',attempted:false})});} catch {return fail('conflict','Message id already used');}
+   try {value=append(db,t,{id:i.id,kind:'message',at:ctx.now,sender:t.member,words:p.words,hash:p.hash,record:JSON.stringify({delivery:'sending',attempted:false})},i.text);} catch {return fail('conflict','Message id already used');}
    ctx.changed('thread',t.id);ctx.changed('message',messageId(t.id,value.seq));return {thread:t.id,seq:value.seq};
   },after:(i,r)=>sendAfter(i,r),
  }));
@@ -475,7 +475,7 @@ export function installComms(o: Options): Comms & { close(): Promise<void> } {
     if(!old.words)return {seq:old.seq}; // A swept step cannot resurrect its words.
     db.prepare('UPDATE comms_messages SET words=?,record=? WHERE thread=? AND seq=?').run(words,JSON.stringify(meta),place,old.seq);return {seq:old.seq};
    }
-   let result;try{result=append(db,t,{id:m.id,kind:m.kind,at:clock.now(),sender:agent,words,hash:key.hash(JSON.stringify(m)),record:JSON.stringify(meta)});}catch{return fail('conflict','Reply id already used');}
+   let result;try{result=append(db,t,{id:m.id,kind:m.kind,at:clock.now(),sender:agent,words,hash:key.hash(JSON.stringify(m)),record:JSON.stringify(meta)},m.text);}catch{return fail('conflict','Reply id already used');}
    // Only the first notice settles a turn; a replay must not stop a later body.
    if(terminal&&!result.repeat){t.working=false;t.workingSince=null;t.workingBeat=null;saveThread(db,t);}
    return {seq:result.seq};

@@ -1219,3 +1219,24 @@ source, scope, connection, archive or retention changes. Both yes/no and typed
 answers re-read the exact displayed question before an ephemeral write. Archived
 threads require explicit unarchive. Imported legacy asks retain their existing
 reader and Inbox path.
+
+### Write-time reference index (follow-up unit)
+
+New-side messages and replies now append a word-free `comms_refs` index in the
+same transaction as their ciphertext. It keeps the latest mention of each ref,
+at most 200 per thread, dropping oldest sequence and earliest position first.
+Only task, fully qualified forge and note pointers are indexed; cards, asks and
+errors are excluded. A repeated message receipt never changes its refs. Retention
+leaves refs intact; thread deletion cascades to them.
+
+The importer rebuilds retained message/reply refs once in memory and preserves
+old index rows, including refs whose words have expired. Source refs participate
+in the checksum; validation, reference comparison and writes share the import
+transaction. No view decrypts history. Bare `repo#N` is deliberately omitted:
+next mode does not read the retired household JSON's default GitHub owner, and
+an unqualified repository is ambiguous. Use `owner/repo#N`.
+
+This unit is the storage prerequisite only. Startup backfill for existing next
+fixture homes, referenced work and note rows, authorized chip cards, reverse From
+links, swipe/undo, final phone layout, imported/spawn privacy and screenshots,
+and the consolidated old-to-new acceptance table still remain on t-2206.

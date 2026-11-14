@@ -1,3 +1,4 @@
+import {indexRefs,refsIn} from './refs.js';
 import type { Db } from '../../core/index.js';
 export interface Thread {
  id: string; member: string; agent: string; conversation: string; project?: string;
@@ -27,10 +28,11 @@ export const messageId = (thread: string, seq: number) => `${thread}/${seq}`;
 export function messageRows(db: Db, id: string, before = Number.MAX_SAFE_INTEGER, limit = 100): MessageRow[] {
  return (db.prepare('SELECT * FROM comms_messages WHERE thread=? AND seq < ? ORDER BY seq DESC LIMIT ?').all(id,before,limit) as MessageRow[]).reverse();
 }
-export function append(db: Db, t: Thread, row: Omit<MessageRow, 'thread' | 'seq'>): { seq: number; repeat: boolean } {
+export function append(db: Db, t: Thread, row: Omit<MessageRow, 'thread' | 'seq'>, text?:string): { seq: number; repeat: boolean } {
  const old = db.prepare('SELECT seq,hash FROM comms_messages WHERE thread=? AND kind=? AND id=?').get(t.id,row.kind,row.id) as {seq:number;hash:string}|undefined;
  if (old) { if (old.hash !== row.hash) throw new Error('conflict'); return {seq:old.seq,repeat:true}; }
  const seq = t.nextSeq++;
  db.prepare('INSERT INTO comms_messages VALUES (?,?,?,?,?,?,?,?,?)').run(t.id,seq,row.id,row.kind,row.at,row.sender,row.words,row.hash,row.record);
+ if(text!==undefined&&(row.kind==='message'||row.kind==='reply'))indexRefs(db,t.id,seq,row.at,refsIn(text));
  t.last = row.at; saveThread(db,t); return {seq,repeat:false};
 }
