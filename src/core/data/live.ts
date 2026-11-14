@@ -43,6 +43,7 @@ export class DataLive {
     query: string;
     variables?: Record<string, unknown>;
     operationName?: string;
+    contextValue?: unknown;
     valid(): boolean;
   }): AsyncIterableIterator<DataDelta> {
     if (this.stopped) throw new Error('Live data access ended');
@@ -72,7 +73,7 @@ export class DataLive {
           // settles. The losing execution stays observed, including rejection.
           const cancellation = new Promise<typeof cancelled>(resolve => { cancel = () => resolve(cancelled); });
           const result = await Promise.race([
-            execute({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName }),
+            execute({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }),
             cancellation,
           ]);
           cancel = undefined;
