@@ -176,3 +176,21 @@ it('detects corruption of the final published inode and retains it without repor
   expect(final.length).toBe(f.bytes.length); expect(final).not.toEqual(f.bytes);
   expect(fs.readdirSync(f.target).sort()).toEqual(['.loom-backup', name]);
 });
+
+it.each(['marker', 'pending'] as const)('refuses an injected %s creation collision without overwriting existing bytes', async kind => {
+  const f = fixture(), open = fs.openSync;
+  let existing: string | undefined;
+  const keep = Buffer.alloc(f.bytes.length, 75);
+  vi.spyOn(fs, 'openSync').mockImplementation((path, flags, mode) => {
+    const leaf = String(path).split('/').at(-1)!;
+    if (!existing && (Number(flags) & fs.constants.O_CREAT) !== 0
+      && (kind === 'marker' ? leaf === '.loom-backup' : leaf.endsWith('.pending'))) {
+      existing = leaf; fs.writeFileSync(path, keep);
+    }
+    return open(path, flags, mode);
+  });
+  await expect(f.run()).rejects.toThrow(error);
+  expect(existing).toBeDefined();
+  expect(fs.readFileSync(join(f.target, existing!))).toEqual(keep);
+  expect(fs.existsSync(join(f.target, name))).toBe(false);
+});

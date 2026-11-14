@@ -1354,6 +1354,8 @@ Regression tests inject foreign target/marker ownership before and after export,
 exercise malformed existing paths for both inputs, and corrupt the published
 inode separately from pending-file readback. A final-name collision introduced
 during suspended export refuses before any marker or pending-file write.
+Injected marker/pending creation collisions also refuse without overwriting the
+existing bytes, independently testing exclusive creation.
 
 There is no production caller, public command, deletion, retention execution,
 git publication, RESTORE.md writer, local arming, staging bypass, daemon job or
