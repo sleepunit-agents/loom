@@ -288,3 +288,10 @@ it('merges retained and old refs before applying the capacity bound',async()=>{
  const refs=app.db.prepare('SELECT ref FROM comms_refs').all();expect(refs).toHaveLength(200);
  expect(refs).toContainEqual({ref:'t-1'});expect(refs).not.toContainEqual({ref:'t-201'});
 });
+
+it('preserves an expired qualified GitHub ref with a task-shaped owner',async()=>{
+ const s=await source(),to=home();await loadKey(to);const hh=new Database(join(s.from,'household.db'));cleanup.push(()=>hh.close());
+ hh.exec('CREATE TABLE comms_refs(thread,ref,seq,pos,at)');hh.prepare('INSERT INTO comms_refs VALUES (?,?,?,?,?)').run('th:old','github:t-12/app#3',99,0,'2026-11-12T01:00:00Z');
+ const app=createFoundation({home:to});cleanup.push(()=>app.close());await importComms(app.db,s.from,to);
+ expect(app.db.prepare('SELECT ref FROM comms_refs').all()).toEqual([{ref:'github:t-12/app#3'}]);
+});

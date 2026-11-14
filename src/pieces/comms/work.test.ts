@@ -185,3 +185,11 @@ it('indexes actual open/send/post writes and keeps private pointers out of other
  expect(refs()).toEqual([{ref:'github:acme/app#4'},{ref:'note:pond/plan'},{ref:'t-88'},{ref:'t-89'},{ref:'t-90'}]);
  expect(await s.call('work',{thread:place},{kind:'member',id:'other'})).toMatchObject({ok:false,code:'denied'});
 });
+
+it('retains word-free refs across the actual Comms expiry sweep',async()=>{
+ const s=await setup();await s.call('send',{thread:s.thread,id:'dddddddddddddddd',text:'t-911 PLANTED'});
+ expect(s.app.db.prepare('SELECT ref FROM comms_refs WHERE thread=?').all(s.thread)).toEqual([{ref:'t-911'}]);
+ s.clock.advance(14*86400_000);
+ expect(s.app.db.prepare('SELECT words FROM comms_messages WHERE thread=? AND kind=?').all(s.thread,'message').every((r:unknown)=>(r as {words:unknown}).words===null)).toBe(true);
+ expect(s.app.db.prepare('SELECT ref FROM comms_refs WHERE thread=?').all(s.thread)).toEqual([{ref:'t-911'}]);
+});

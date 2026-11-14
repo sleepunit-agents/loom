@@ -5,7 +5,7 @@ import { join, dirname, basename } from 'node:path';
 import { readFileSync, realpathSync, existsSync } from 'node:fs';
 import { migrate, type Db } from '../../core/index.js';
 import { readKey, wordsKey } from './crypto.js';
-import {refsIn} from './refs.js';
+import {refsIn,MAX_REFS} from './refs.js';
 import { schema } from './schema/001.js';
 import { saveThread, type Thread, type MessageRow } from './store.js';
 type Row=Record<string,unknown>;
@@ -93,7 +93,7 @@ export async function importComms(db:Db,from:string,newHome:string,options:{inte
   };
   for(const mention of mentions)mention.refs.forEach((ref,pos)=>put(mention.thread,ref,mention.seq,pos,mention.at));
   for(const ref of references)put(String(ref.thread),String(ref.ref),Number(ref.seq),Number(ref.pos),time(ref.at),true);
-  const expectedRefs=imported.flatMap(t=>[...expected.values()].filter(r=>r.thread===t.id).sort((a,b)=>b.seq-a.seq||b.pos-a.pos||(a.ref<b.ref?-1:a.ref>b.ref?1:0)).slice(0,200))
+  const expectedRefs=imported.flatMap(t=>[...expected.values()].filter(r=>r.thread===t.id).sort((a,b)=>b.seq-a.seq||b.pos-a.pos||(a.ref<b.ref?-1:a.ref>b.ref?1:0)).slice(0,MAX_REFS))
    .sort((a,b)=>a.thread<b.thread?-1:a.thread>b.thread?1:a.ref<b.ref?-1:a.ref>b.ref?1:0);
   const insertRef=db.prepare('INSERT INTO comms_refs(thread,ref,seq,pos,at) VALUES (?,?,?,?,?)');
   for(const r of expectedRefs)insertRef.run(r.thread,r.ref,r.seq,r.pos,r.at);

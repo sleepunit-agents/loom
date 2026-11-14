@@ -53,3 +53,8 @@ it('enforces numeric grammar boundaries for tasks and fully qualified changes',(
  expect(refsIn('t-123456789 acme/app#1234567890')).toEqual(['t-123456789','github:acme/app#1234567890']);
  expect(refsIn('t-1234567890 acme/app#12345678901')).toEqual([]);
 });
+
+it('recognizes fully qualified changes whose owner looks like a task id',()=>{
+ const {app,t,add}=fixture();add('qualified','t-12/app#3 t-1');
+ expect(refsOf(app.db,t.id).map(r=>r.ref)).toEqual(['t-1','github:t-12/app#3']);
+});
