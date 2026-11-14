@@ -1,3 +1,4 @@
+import {IncomingMessage} from 'node:http';
 import https from 'node:https';
 import {localHolderHandoff} from './holder-handoff.js';
 import {afterEach,expect,it,vi} from 'vitest';
@@ -292,4 +293,32 @@ it('rejects callback lookalikes and copied/wrapped holder clients before admissi
  }
  expect(fake).not.toHaveBeenCalled();expect(holder.calls).not.toHaveBeenCalled();
  expect(f.app.db.prepare('SELECT * FROM secrets_tickets').all()).toEqual([]);
+});
+
+it('waits for complete authenticated holder response processing before settling the original claim',async()=>{
+ const f=await setup(),holder=await testHolder(f,async(id:string)=>{expect(f.tickets.claim(id)).not.toBeNull();});
+ const t=f.tickets.admitHandoff(f.viewer,'API',{id:randomUUID(),binding:{agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()}},holder.client);
+ expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ let entered!:()=>void,releaseEnd:(()=>void)|undefined;
+ const ready=new Promise<void>(r=>{entered=r;}),emit=IncomingMessage.prototype.emit;
+ // A zero-length 204 is complete on the wire at the header terminator. Hold
+ // client response-end processing, rather than pretending delayed server end
+ // delays that HTTP message, to distinguish resolving at headers from end.
+ const hold=vi.spyOn(IncomingMessage.prototype,'emit').mockImplementation(function(this:IncomingMessage,event:string|symbol,...args:unknown[]) {
+  const response=this as IncomingMessage&{req?:{path?:string}};
+  if(event==='end'&&response.req?.path===`/v1/handoff/${t.id}`) {
+   releaseEnd=()=>{emit.call(this,event,...args);};entered();return true;
+  }
+  return emit.call(this,event,...args);
+ });
+ let settled=false;const dispatch=t.dispatch().then(()=>{settled=true;});
+ try {
+  await ready;await Promise.resolve();
+  expect(settled).toBe(false);expect(holder.calls).toHaveBeenCalledExactlyOnceWith(t.id);
+  expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(t.id)).toEqual({state:'claimed'});
+  expect(f.app.effects!.status(`secrets:handoff:${t.id}`)).toBe('started');
+  releaseEnd!();await dispatch;expect(settled).toBe(true);
+  expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(t.id)).toEqual({state:'released'});
+  await expect(t.dispatch()).rejects.toThrow();expect(holder.calls).toHaveBeenCalledTimes(1);
+ }finally {hold.mockRestore();releaseEnd?.();await dispatch;}
 });
