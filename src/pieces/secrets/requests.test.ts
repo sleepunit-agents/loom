@@ -24,13 +24,14 @@ describe('shared-schema secret requests and grants', () => {
   it('puts a pending question in every owner inbox, with no value', () => {
     const f = fixture();
     const row = f.service.request(f.input);
-    expect(row).toMatchObject({ state: 'pending', askedAt: f.now(), always: false });
+    expect(row).toMatchObject({ state: 'pending', askedAt: f.now(), always: false, why: f.input.why });
     const mail = f.db.select().from(inbox).all();
     expect(mail.map(i => i.to).sort()).toEqual(['jonathan', 'owner2']);
-    expect(mail[0]).toMatchObject({ source: 'secret-request', sourceId: row.id, waitsOnKind: 'secret-request', waitsOnId: row.id, fromId: 'art', answers: 'yes-no' });
+    expect(mail[0]).toMatchObject({ source: 'secret-request', sourceId: row.id, waitsOnKind: 'secret-request', waitsOnId: row.id, fromId: 'art', answers: 'yes-no', why: f.input.why });
     expect(f.service.request(f.input)).toEqual(row);
     expect(f.db.select().from(inbox).all()).toHaveLength(2);
     expect(() => f.service.request({ ...f.input, minutes: 60 })).toThrow('reused');
+    expect(() => f.service.request({ ...f.input, why: 'Different purpose' })).toThrow('reused');
     expect(f.db.select().from(secretGrants).all()).toHaveLength(0);
   });
   it('answers once and expires the grant at the exact requested deadline', () => {
@@ -80,7 +81,7 @@ describe('shared-schema secret requests and grants', () => {
     f.service.setRule({ secret: 'github-token', answer: 'auto', minutes: 5, agents: [{ agent: 'mark', when: 'on_request' }] });
     f.service.request(f.input); f.service.answer(f.input.id, 'jonathan', true, true);
     expect(f.db.select().from(secretRuleAgents).all().map(a => a.agent).sort()).toEqual(['art', 'mark']);
-    f.service.setRule({ secret: 'github-token', answer: 'ask', minutes: 5, agents: [{ agent: 'art', when: 'on_request' }] });
+    f.service.setRule({ secret: 'github-token', answer: 'ask', minutes: 5, agents: [{ agent: 'art', when: 'on_request' }, { agent: 'mark', when: 'on_request' }] });
     f.service.request({ ...f.input, id: 'q-new' }); f.service.answer('q-new', 'jonathan', false, true);
     expect(f.db.select().from(secretRules).get()?.answer).toBe('never');
     expect(f.db.select().from(secretRuleAgents).all().map(a => a.agent)).toEqual(['art']);
