@@ -75,11 +75,13 @@ it('refuses agent bot/person collisions after both accepted connections resolve'
   expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
  }
 });
-it('refuses unrepresentable flags from another accepted agent and inherits parent rules for threads',()=>{
+it('blocks partial flags from another accepted agent and inherits parent rules for threads',()=>{
  const f=fixture();f.store('shuttle',[['routes','household',{guild:'789'}],['channels','art',{bot:'100',answers:{'300':'a'},threads:{'500':{parent:'300',primary:'art',peer:false}},flags:{'300':{peer:true}}}]]);
  expect(readBridgeImport(f.sources,f.options,h,f.open).expected.routes.find(r=>r.channel==='500')?.peer).toBe(true);
  const d=new Database(f.sources.stores[0].path);d.prepare('INSERT INTO docs VALUES (?,?,?,1,?,?)').run('channels','mark',JSON.stringify({bot:'200',answers:{'400':'b'},flags:{'400':{guest_venue:true}}}),'now','owner');d.close();
- expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow();
+ const result=readBridgeImport(f.sources,f.options,h,f.open);
+ expect(result.expected.routes).toEqual([]);expect(result.expected.venues[0].ignore).toEqual(expect.arrayContaining(['300','400']));
+ expect(JSON.parse(result.evidence).retained).toContainEqual(expect.objectContaining({source:'shuttle.db',collection:'channels',agent:'art',path:['channels','art','flags','300','peer']}));
 });
 it('requires explicit Slack team/bot/app and token secret names without opening a whole bundle',()=>{
  const f=fixture();writeFileSync(f.sources.files[0].path,JSON.stringify({agent:{slug:'art'},slack:{secrets_env:'/never-open-bundle'}}));writeFileSync(f.sources.files[2].path,'{}');writeFileSync(f.sources.files[1].path,JSON.stringify({people:{jonathan:{slack:{T1:['U1']}}}}));
@@ -236,4 +238,19 @@ it('reports malformed revision JSON without original words and still closes the 
  const store=new Database(f.sources.stores[0].path);store.prepare('INSERT INTO revisions VALUES (1,?,?,?,?,?,?,?)').run('gates','art','PRIVATE_BAD_JSON',1,'put','today','owner');store.close();
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('Invalid offline Bridges configuration inventory: runtime.db at $["revisions"]["1"]["doc"]');
  const reopened=f.open(f.sources.stores[0].path);expect(reopened.open).toBe(true);reopened.close();
+});
+
+it('refuses only contradictory present flags with store, collection, agent and field diagnostics',()=>{
+ const f=fixture();f.store('shuttle',[
+ ['routes','household',{guild:'789'}],
+ ['channels','art',{bot:'100',flags:{'300':{peer:true}}}],
+ ['channels','mark',{bot:'200',flags:{'300':{peer:false}}}],
+ ]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["channels"]["mark"]["flags"]["300"]["peer"]');
+});
+it('validates a malformed present flag even when another part is silent',()=>{
+ const f=fixture();f.store('shuttle',[
+ ['routes','household',{guild:'789'}],['channels','art',{bot:'100',flags:{'300':{peer:'PRIVATE'}}}],['channels','mark',{bot:'200'}],
+ ]);
+ expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["channels"]["art"]["flags"]["300"]["peer"]');
 });
