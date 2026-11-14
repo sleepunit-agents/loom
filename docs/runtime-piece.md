@@ -1498,7 +1498,11 @@ Real-HTTP regressions change the same job after input release and require no
 spawn; active-watchdog cases wait for the real running acknowledgement before
 changing source/policy/capabilities and require the owned process to be killed.
 Final-write cases change selection immediately before running/finish reaches
-the server and require no state/output write.
+the server and require no state/output write. Scope and house regressions
+replace project scope or both the claimed house and its current configuration;
+the same authenticated job still passes unpinned control, while pinned control,
+running and finish each refuse. Removing only the respective digest field makes
+its regression fail, independently of the other lifecycle checks.
 
 ### Durable external worker attempt receipts
 

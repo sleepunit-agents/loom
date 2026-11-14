@@ -159,6 +159,34 @@ it('an old unpinned control response cannot activate the original input assertio
  release();await old;expect(control.current()).toBe(false);await control.fresh();expect(control.current()).toBe(true);
  expect(()=>control.pinExecution(execution)).toThrow();expect(revoked).toBe(true);expect(control.current()).toBe(false);
 });
+it.each(['project','house'] as const)('original %s survives an independently valid replacement at every server boundary',async field=>{
+ const f=await setup();let execution='',reported:()=>void=()=>{};
+ const running=new Promise<void>(resolve=>{reported=resolve;});
+ const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{
+  const response=await fetch(...args);
+  if(String(args[0]).endsWith('/reportJob')) {
+   execution=JSON.parse(String(args[1]!.body)).input.execution;expect(response.ok).toBe(true);reported();
+  }
+  return response;
+ }};
+ const p=runClaudeJob(f.config,f.selected,runtime),rejected=expect(p).rejects.toThrow();await f.waitSpawn(1);await running;
+ if(field==='project')f.update({project:'replacement-project'});
+ else {
+  const replacement={...house,repo:'/replacement-house'};f.update({made:replacement});
+  f.app.db.transaction(()=>{const {changedAt:_,...settings}=f.store.read('settings','art')!;f.store.put('settings',{...settings,house:replacement},f.clock.now());})();
+  expect(f.store.read('job','j')?.made).toEqual(f.store.read('settings','art')?.house);
+ }
+ const post=async(op:string,input:unknown,id?:string)=>(await fetch(`${f.app.url}/api/runtime/${op}`,{method:'POST',
+  headers:{authorization:`Bearer ${f.config.token}`,'content-type':'application/json'},body:JSON.stringify({input,id})})).json();
+ // Same job, principal, active state and current house still independently work.
+ expect(await post('jobControl',{job:'j'})).toEqual({ok:true,value:{stop:false,history:'retain'}});
+ expect(execution).toMatch(/^[a-f0-9]{64}$/);
+ expect(await post('jobControl',{job:'j',execution})).toMatchObject({ok:false,code:'denied'});
+ expect(await post('reportJob',{job:'j',execution,state:'waiting',log:'OLD OUTPUT'},'changed-report')).toMatchObject({ok:false,code:'denied'});
+ expect(await post('finishJob',{job:'j',execution,state:'done',log:'OLD OUTPUT'},'changed-finish')).toMatchObject({ok:false,code:'denied'});
+ expect(f.store.read('job','j')?.state).toBe('running');expect(jobResults(f.app.db).read('j')).toBeNull();
+ f.tick();await rejected;expect(f.calls[0].child.killed).toBe(true);
+});
 it('does not start after an uncertain input response and never retries that request',async()=>{
  const f=await setup();let takes=0;
  const runtime={...f.runtime,request:async(...args:Parameters<typeof fetch>)=>{if(String(args[0]).endsWith('/takeInput')){takes++;await fetch(...args);throw Error('lost');}return fetch(...args);}};
