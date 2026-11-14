@@ -27,6 +27,73 @@ function fixture() {
 afterEach(() => { for (const client of opened.splice(0)) client.close(); });
 
 describe('generated SQL reads', () => {
+  it('counts visible comments with selected root and connected task rows in one statement', async () => {
+    const { client, statements } = fixture();
+    const schema = dataQueries(client, {
+      tables: ['tasks', 'taskComments', 'projects'],
+      visibility: { tasks: fields => ne(fields.id, 'hidden'), taskComments: fields => ne(fields.text, 'excluded-comment'), projects: () => sql`true` },
+    });
+    const root = await graphql({ schema, source: '{ tasks(orderBy:{id:{direction:asc,priority:0}}) { id total: commentCount } }' });
+    expect(root.errors).toBeUndefined();
+    expect(root.data).toEqual({ tasks: [{ id: 'a', total: 1 }, { id: 'b', total: 1 }] });
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toContain('count(*)');
+    expect(statements[0]).not.toContain('"title"');
+    statements.length = 0;
+    const nested = await graphql({ schema, source: '{ projects(where:{id:{eq:"pond"}}) { tasksByProject(orderBy:{id:{direction:asc,priority:0}}) { id commentCount } } }' });
+    expect(nested.errors).toBeUndefined();
+    expect(nested.data).toEqual({ projects: [{ tasksByProject: [{ id: 'a', commentCount: 1 }, { id: 'b', commentCount: 1 }] }] });
+    expect(statements).toHaveLength(1);
+  });
+
+  it('counts zero, sees fresh writes, supports fragments and omits unrequested counts', async () => {
+    const { client, db, statements } = fixture();
+    const schema = dataQueries(client, {
+      tables: ['tasks', 'taskComments'],
+      visibility: { tasks: () => sql`true`, taskComments: () => sql`true` },
+    });
+    const query = 'query { tasksSingle(where:{id:{eq:"a"}}) { ...Count } } fragment Count on TasksSelectItem { commentCount }';
+    expect((await graphql({ schema, source: query })).data).toEqual({ tasksSingle: { commentCount: 2 } });
+    const limited = await graphql({ schema, source: '{ counted: tasksSingle(where:{id:{eq:"a"}}) { commentCount taskCommentsByTask(limit:1) { seq } } plain: tasksSingle(where:{id:{eq:"b"}}) { id } }' });
+    expect(limited.errors).toBeUndefined();
+    expect(limited.data).toEqual({ counted: { commentCount: 2, taskCommentsByTask: [{ seq: 1 }] }, plain: { id: 'b' } });
+    db.delete(taskComments).where(eq(taskComments.task, 'a')).run();
+    statements.length = 0;
+    const empty = await graphql({ schema, source: query });
+    expect(empty.errors).toBeUndefined();
+    expect(empty.data).toEqual({ tasksSingle: { commentCount: 0 } });
+    expect(statements).toHaveLength(1);
+    statements.length = 0;
+    await graphql({ schema, source: '{ tasks { id } }' });
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).not.toContain('count(*)');
+    statements.length = 0;
+    const skipped = await graphql({ schema, source: 'query($count:Boolean!) { tasks { id commentCount @include(if:$count) } }', variableValues: { count: false } });
+    expect(skipped.errors).toBeUndefined();
+    expect(statements[0]).not.toContain('count(*)');
+    const noComments = dataQueries(client, { tables: ['tasks'], visibility: { tasks: () => sql`true` } });
+    expect((await graphql({ schema: noComments, source: '{ tasks { commentCount } }' })).errors?.[0].message).toContain('Cannot query field');
+  });
+
+  it('preserves policy subqueries and parameter binding inside counts, failing closed on invalid policies', async () => {
+    const { client, statements } = fixture();
+    const read = (commentPolicy: () => ReturnType<typeof sql>) => dataQueries(client, {
+      tables: ['tasks', 'taskComments'], visibility: { tasks: () => sql`true`, taskComments: commentPolicy },
+    });
+    const source = '{ tasksSingle(where:{id:{eq:"a"}}) { id commentCount } }';
+    // A destructive column-alias rewrite would make this false predicate true.
+    const denied = await graphql({ schema: read(() => sql`${taskComments.task} in (select ${projects.id} from ${projects} where ${projects.name} = ${'Pond'})`), source });
+    expect(denied.errors).toBeUndefined();
+    expect(denied.data).toEqual({ tasksSingle: { id: 'a', commentCount: 0 } });
+    expect(statements).toHaveLength(1);
+    const allowed = await graphql({ schema: read(() => sql`${taskComments.task} in (select ${tasks.id} from ${tasks} where ${tasks.project} = ${'pond'})`), source });
+    expect(allowed.errors).toBeUndefined();
+    expect(allowed.data).toEqual({ tasksSingle: { id: 'a', commentCount: 2 } });
+    statements.length = 0;
+    expect((await graphql({ schema: read(() => undefined as never), source })).errors?.[0].message).toContain('SQL visibility required for taskComments');
+    expect(statements).toHaveLength(0);
+  });
+
   it('filters, orders, limits and joins selected fields in one SQL statement', async () => {
     const { client, statements } = fixture();
     const schema = dataQueries(client, {

@@ -59,6 +59,20 @@ it('lets household owners see member-private rows and responds to demotion', asy
   expect(await (await read('{ projects { id } agents { id } }', 'owner')).json()).toEqual({ data: { projects: [], agents: [] } });
   expect(await (await read(query, 'owner')).json()).toEqual({ data: { tasks: [] } });
 });
+it('returns comment counts in the authenticated query and reflects current project grants', async () => {
+  const { db, statements, read } = fixture();
+  const query = '{ tasks(orderBy:{id:{direction:asc,priority:0}}) { id commentCount } }';
+  const first = await (await read(query)).json();
+  expect(first).toEqual({ data: { tasks: [{ id: 'agent', commentCount: 1 }, { id: 'mine', commentCount: 1 }] } });
+  expect(statements).toHaveLength(1);
+  db.insert(projectMembers).values({ project: 'pond', member: 'sam' }).run();
+  const connected = '{ projects { tasksByProject { id commentCount } } }';
+  statements.length = 0;
+  expect(await (await read(connected)).json()).toEqual({ data: { projects: [{ tasksByProject: [{ id: 'project', commentCount: 1 }] }] } });
+  expect(statements).toHaveLength(1);
+  db.delete(projectMembers).run();
+  expect(await (await read(connected)).json()).toEqual({ data: { projects: [] } });
+});
 it('fails closed on missing/ended auth, cross-origin, unsafe content and sensitive fields', async () => {
   const { read, app, end, statements } = fixture();
   expect((await read('{ tasks { id } }', 'nobody')).status).toBe(401);
