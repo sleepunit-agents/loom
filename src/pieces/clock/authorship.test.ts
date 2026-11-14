@@ -32,8 +32,9 @@ it.each(['at','in','park'])('persists %s original scope without returning words 
  expect(JSON.stringify(ack)).not.toMatch(/PRIVATE_|pollock|bridge|cv-proof/);
  const row=wakes(f.app.db)[0];expect(row).toMatchObject({member:'jonathan',project:'pond',authorship:{origin:'art',conversation:'cv-proof',member:'jonathan',project:'pond',service:'bridge',principal:{for:'?',people:['pollock']}}});
  expect(f.call(name,extra,body,id)).toEqual(ack);expect(wakes(f.app.db)).toHaveLength(1);
- const original = f.proof!;f.proof={...original,conversation:'cv-other',member:'other'};
+ const original = f.proof!;f.proof={...original,conversation:'cv-other'};
  expect(f.call(name,extra,body,id)).toMatchObject({ok:false,code:'conflict'});
+ f.proof={...original,member:'other'};expect(f.call(name,extra,body,id)).toMatchObject({ok:false,code:'conflict'});
  f.proof=original;expect(f.call(name,extra,{...body},id)).toMatchObject({ok:false,code:'conflict'});
  for(const viewer of [body,owner,{kind:'member',id:'other'}] as Viewer[]){
   expect(JSON.stringify(f.app.operations.call('direct',viewer,'clock.list',{},randomUUID()))).not.toContain('PRIVATE_');
@@ -83,7 +84,9 @@ it('scopes generated-command receipts as well as direct one-off receipts to the 
  const original=f.app.operations.call('direct',body,'clock.command',input,id);
  expect(original).toMatchObject({ok:true,value:{exit:0}});
  expect(f.app.operations.call('direct',body,'clock.command',input,id)).toEqual(original);
- f.proof={...f.proof!,conversation:'cv-other',member:'other'};
+ f.proof={...f.proof!,conversation:'cv-other'};
+ expect(f.app.operations.call('direct',body,'clock.command',input,id)).toMatchObject({ok:false,code:'conflict'});
+ f.proof={...f.proof!,conversation:'cv-proof',member:'other'};
  expect(f.app.operations.call('direct',body,'clock.command',input,id)).toMatchObject({ok:false,code:'conflict'});
  expect(wakes(f.app.db)).toHaveLength(1);
  f.proof={...f.proof!,conversation:'cv-proof',member:'jonathan'};f.access.members.jonathan.agents=[];

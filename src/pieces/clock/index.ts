@@ -107,7 +107,8 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
       [proof.agent,proof.conversation,proof.member,proof.project,proof.service]]) : body).digest('hex');
   };
   function register<I>(name: string, input: z.ZodType<I>, write: boolean, may: (v: Viewer, i: I) => boolean, run: (ctx: Context, i: I) => unknown, internal = false) {
-    operations.register(operation({ name: `clock.${name}`, input, output, write, recheckPolicy: write && ['at','in','park'].includes(name) ? viewer => !!options.provenance?.(viewer) : false, inputHash: ['at','in','park'].includes(name) ? filingHash : undefined, requiresWindow: internal ? undefined : (i)=>{const input=i as {id?:string;member?:string};return input.member!==undefined || !!(input.id && (wake(db,input.id)??schedule(db,input.id))?.member);}, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
+    const ordinaryFiling = ['at','in','park'].includes(name);
+    operations.register(operation({ name: `clock.${name}`, input, output, write, recheckPolicy: write && ordinaryFiling ? viewer => !!options.provenance?.(viewer) : false, inputHash: ordinaryFiling ? filingHash : undefined, requiresWindow: internal ? undefined : (i)=>{const input=i as {id?:string;member?:string};return input.member!==undefined || !!(input.id && (wake(db,input.id)??schedule(db,input.id))?.member);}, cli: clockCommands.find(c => c.name === clockOperationCommands[name]), ...(internal ? { doors: ['direct' as const] } : {}), may,
       run(ctx, i) {
         if (closed) throw new OperationError('unavailable', 'Clock stopped');
         const result = run(ctx, i);
