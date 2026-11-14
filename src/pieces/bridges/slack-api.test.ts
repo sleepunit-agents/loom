@@ -266,3 +266,78 @@ describe('authenticated Slack application binding', () => {
     expect(await f.api.authenticate(venue)).toBe('wait');
   });
 });
+
+it.each([200, 429])('cancels HTTP %s bodies when the lifetime closes during fetch', async status => {
+  const f=fixture(); let open=true;
+  const cancel=vi.fn();
+  const request=vi.fn(async()=>{open=false;return new Response(new ReadableStream({cancel}),{status});});
+  expect(await slackApi({withValue:f.read},()=>open,request as typeof fetch).inspect(venue,message)).toBe('wait');
+  expect(cancel).toHaveBeenCalledTimes(1); expect(request).toHaveBeenCalledTimes(1);
+});
+it('cancels an HTTP error body while the lifetime remains current', async()=>{
+  const f=fixture(),cancel=vi.fn();
+  const request=vi.fn(async()=>new Response(new ReadableStream({cancel}),{status:500}));
+  expect(await slackApi({withValue:f.read},()=>true,request as typeof fetch).inspect(venue,message)).toBe('wait');
+  expect(cancel).toHaveBeenCalledTimes(1);
+});
+it('stops consuming a stream when a pending read crosses lifetime closure', async()=>{
+  const f=fixture(); let open=true,release!:()=>void,entered!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  const blocked=new Promise<void>(resolve=>{release=resolve;});
+  const cancel=vi.fn(); let pulls=0;
+  const stream=new ReadableStream<Uint8Array>({async pull(controller){
+    if(++pulls===1){entered();await blocked;controller.enqueue(new TextEncoder().encode('{"ok":true,'));}
+    else controller.close();
+  },cancel},{highWaterMark:0});
+  const request=vi.fn(async()=>new Response(stream));
+  const pending=slackApi({withValue:f.read},()=>open,request as typeof fetch).inspect(venue,message);
+  await started;open=false;release();
+  expect(await pending).toBe('wait'); expect(cancel).toHaveBeenCalledTimes(1);
+  expect(pulls).toBe(1);expect(request).toHaveBeenCalledTimes(1);
+});
+it('bounds empty member pages with distinct cursors without fetching human evidence',async()=>{
+  const f=fixture();let pages=0;
+  f.request.mockImplementation(async url=>{
+    if(String(url).endsWith('conversations.info')) return Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false}});
+    if(++pages>50) throw Error('fixture page ceiling exceeded');
+    return Response.json({ok:true,members:[],response_metadata:{next_cursor:`page-${pages}`}});
+  });
+  expect(await f.api.inspect(venue,message)).toBe('wait');
+  expect(pages).toBe(50); expect(f.request).toHaveBeenCalledTimes(51);
+});
+it('refuses an oversized member page before checking any human',async()=>{
+  const f=fixture();
+  f.request.mockResolvedValueOnce(Response.json({ok:true,channel:{id:'G123',is_mpim:true,is_im:false}}));
+  f.request.mockResolvedValueOnce(Response.json({ok:true,members:['U999','U111',...Array.from({length:199},(_,i)=>`U${1000+i}`)],response_metadata:{next_cursor:''}}));
+  expect(await f.api.inspect(venue,message)).toBe('wait');expect(f.request).toHaveBeenCalledTimes(2);
+});
+it('keeps inspection bound to its original venue and message across async metadata reads',async()=>{
+  const f=fixture(),v=structuredClone(venue),m={...message,channel:'D123',dm:true,group:false};
+  f.request.mockImplementationOnce(async()=>{
+    v.tokenSecret='replacement';v.workspace='T999';m.user='U222';m.channel='D222';
+    return Response.json({ok:true,channel:{id:'D123',is_im:true,is_mpim:false,user:'U111'}});
+  });
+  expect(await f.api.inspect(v,m)).toEqual({kind:'allow',members:['U999','U111']});
+  expect((f.request.mock.calls[1][1]?.body as URLSearchParams).get('user')).toBe('U111');
+  expect(f.read.mock.calls.map(c=>c[0])).toEqual(['slack-bot','slack-bot']);
+});
+it('rechecks lifetime after deferred credential acquisition before starting HTTP',async()=>{
+  const f=fixture();let open=true,release!:()=>void,entered!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  const blocked=new Promise<void>(resolve=>{release=resolve;});
+  f.read.mockImplementationOnce(async(_name,use)=>{entered();await blocked;return use('SECRET');});
+  const pending=slackApi({withValue:f.read},()=>open,f.request as typeof fetch).inspect(venue,message);
+  await started;open=false;release();
+  expect(await pending).toBe('wait'); expect(f.read).toHaveBeenCalledTimes(1); expect(f.request).not.toHaveBeenCalled();
+});
+it('keeps authentication bound to its original venue across auth.test',async()=>{
+  const f=fixture(),v=structuredClone(venue);
+  f.request.mockImplementationOnce(async()=>{
+    v.workspace='T999';v.bot='U111';v.tokenSecret='replacement';
+    return Response.json({ok:true,team_id:'T123',user_id:'U999',bot_id:'B999'});
+  });
+  f.request.mockResolvedValueOnce(Response.json({ok:true,bot:{id:'B999',user_id:'U999',app_id:'A123',deleted:false}}));
+  expect(await f.api.authenticate(v)).toEqual({workspace:'T123',bot:'U999',app:'A123'});
+  expect(Object.fromEntries(f.request.mock.calls[1][1]?.body as URLSearchParams)).toEqual({bot:'B999',team_id:'T123'});
+  expect(f.read.mock.calls.map(c=>c[0])).toEqual(['slack-bot','slack-bot']);
+});

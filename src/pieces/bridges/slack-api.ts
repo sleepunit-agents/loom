@@ -24,14 +24,20 @@ export function slackApi(secrets: SecretUse, beforeRead: () => boolean, request:
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams(fields),
       });
-      if (!response.ok) throw Error('Slack unavailable');
+      if (!beforeRead() || !response.ok) {
+        await response.body?.cancel();
+        throw Error('Slack unavailable');
+      }
       // A bounded reply also bounds member pagination memory. Never reflect its text.
       const reader = response.body?.getReader();
       if (!reader) throw Error('Slack unavailable');
       const chunks: Uint8Array[] = []; let size = 0;
       try {
         while (true) {
-          const next = await reader.read(); if (next.done) break;
+          if (!beforeRead()) throw Error('Read held');
+          const next = await reader.read();
+          if (!beforeRead()) throw Error('Read held');
+          if (next.done) break;
           size += next.value.byteLength;
           if (size > 1024 * 1024) throw Error('Slack reply too large');
           chunks.push(next.value);
@@ -70,6 +76,7 @@ export function slackApi(secrets: SecretUse, beforeRead: () => boolean, request:
      * Unknown flags and incomplete pagination fail closed as wait.
      */
     async inspect(venue: Venue, message: Message): Promise<Inspection> {
+      venue = structuredClone(venue); message = structuredClone(message);
       if (venue.platform !== 'slack' || message.user === venue.bot) return 'drop';
       if (!id(venue.workspace) || !id(venue.bot) || !id(message.channel) || !id(message.user)) return 'wait';
       try {
@@ -84,10 +91,11 @@ export function slackApi(secrets: SecretUse, beforeRead: () => boolean, request:
         if (!group && channel.user !== message.user) return 'drop';
         const members: string[] = [];
         if (group) {
-          const cursors = new Set<string>(); let cursor = '';
+          const cursors = new Set<string>(); let cursor = '', pages = 0;
           do {
+            if (++pages > 50) return 'wait';
             const page = await call(venue, 'conversations.members', { channel: message.channel, limit: '200', ...(cursor ? {cursor} : {}) });
-            if (!Array.isArray(page.members) || !page.members.every(id)) return 'wait';
+            if (!Array.isArray(page.members) || page.members.length > 200 || !page.members.every(id)) return 'wait';
             members.push(...page.members);
             if (members.length > 10_000 || new Set(members).size !== members.length) return 'wait';
             if (!object(page.response_metadata) || typeof page.response_metadata.next_cursor !== 'string') return 'wait';
