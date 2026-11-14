@@ -90,3 +90,18 @@ it('uses actual Secrets service grants and erases holder buffers in a synthetic 
   await expect(transport.fetch()).rejects.toThrow();expect(f.request).toHaveBeenCalledTimes(1);
  }finally{await app.close();rmSync(home,{recursive:true,force:true});}
 });
+
+it.each(['second request','proof throws','holder rejects'])('erases owned buffers on failed batch: %s',async phase=>{
+ const f=fixture(),owned:Buffer[]=[];
+ Object.assign(f.permit,{files:[attachment(),attachment(1)]});
+ let calls=0;
+ f.secrets.withValue=async(_name,use)=>{
+  if(++calls===2)throw Error('holder unavailable');
+  const bytes=await use('fixture-token');owned.push(bytes as Buffer);
+  if(phase==='proof throws')Object.assign(f.permit,{current(){throw Error('Runtime unavailable');}});
+  if(phase==='holder rejects')throw Error('holder failed after callback');
+  return bytes;
+ };
+ await expect(f.fetch()).rejects.toThrow(/^Bridge file fetch held$/);
+ expect(owned).toHaveLength(1);expect(owned[0].every(byte=>byte===0)).toBe(true);
+});

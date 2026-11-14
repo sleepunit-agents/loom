@@ -41,7 +41,7 @@ const safeName=(value:string)=>value.replace(/[^A-Za-z0-9._-]+/g,'_').slice(0,80
 export function slackFiles(input:Venue, permit:SlackFilesPermit, secrets:SecretUse,
   beforeRead:()=>boolean, request:typeof fetch=fetch) {
   return {async fetch():Promise<FetchedSlackFile[]> {
-    const completed:FetchedSlackFile[]=[];
+    const completed:FetchedSlackFile[]=[], owned:Buffer[]=[];
     try {
       const venue=venueSchema.parse(structuredClone(input));
       const scope={agent:permit.agent,venue:permit.venue,workspace:permit.workspace,channel:permit.channel,delivery:permit.delivery};
@@ -89,7 +89,7 @@ export function slackFiles(input:Venue, permit:SlackFilesPermit, secrets:SecretU
               chunks.push(Buffer.from(next.value));
             }
             if(!current())throw held();
-            return Buffer.concat(chunks);
+            const bytes=Buffer.concat(chunks);owned.push(bytes);return bytes;
           }finally{
             clearTimeout(timer);abort.abort();
             void reader?.cancel().catch(()=>{});
@@ -102,7 +102,7 @@ export function slackFiles(input:Venue, permit:SlackFilesPermit, secrets:SecretU
       if(!current())throw held();
       return completed;
     }catch{
-      for(const f of completed)f.bytes.fill(0);
+      for(const bytes of owned)bytes.fill(0);
       throw held();
     }
   }};
