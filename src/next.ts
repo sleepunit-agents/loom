@@ -76,7 +76,7 @@ import { listenHolderAuthority, type AuthorityServerConfig } from './pieces/secr
 import { installHouseSecrets } from './pieces/secrets/house.js';
 import { installSecrets } from './pieces/secrets/index.js';
 import { secretGrantAttention } from './pieces/secrets/attention.js';
-import { installSecretServices, secretUseRole, type SecretValueSource } from './pieces/secrets/service.js';
+import { installSecretServices, installedSecretUse, secretUseRole, type SecretValueSource } from './pieces/secrets/service.js';
 import { githubSecrets } from './pieces/changes/secrets.js';
 import { changesApprovals } from './pieces/changes/approvals.js';
 import { installChangesDaemon, householdAttribution } from './pieces/changes/daemon.js';
@@ -170,9 +170,10 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('tasks.list')) installTasks(app.db, app.operations, app.live, sharing);
   if (attentionSources) connectTaskAttention(app.operations, () => attentionSources.tasks());
   if (app.operations.has('tasks.reconcileAttention')) {
+    const caller = app.operations.internal('tasks');
     const reconcile = () => {
-      const pending = app.operations.call('direct', {kind:'service',id:'tasks'}, 'tasks.attentionPending', {});
-      return !pending.ok || !pending.value ? pending : app.operations.call('direct', {kind:'service',id:'tasks'}, 'tasks.reconcileAttention', {}, `task-filing:${randomUUID()}`);
+      const pending = caller.call('tasks.attentionPending', {});
+      return !pending.ok || !pending.value ? pending : caller.call('tasks.reconcileAttention', {}, `task-filing:${randomUUID()}`);
     };
     const initial = reconcile();
     if (!initial.ok) console.warn(`Task filing failed (${initial.code})`);
@@ -210,12 +211,12 @@ export async function installNext(app: Foundation, options: NextOptions) {
     },
   });
   if (attentionSources) connectApprovalAttention(app.operations, current => attentionSources.approvals(current));
-  // Keep the small owning-service compare/write sequences explicit: neither
-  // source can accidentally borrow the other's identity or operation names.
+  // Installed modules reconcile directly through the registry's live handle.
   if (app.operations.has('approvals.reconcileAttention')) {
+    const caller = app.operations.internal('approvals');
     const reconcile = () => {
-      const pending = app.operations.call('direct', {kind:'service',id:'approvals'}, 'approvals.attentionPending', {});
-      return !pending.ok || !pending.value ? pending : app.operations.call('direct', {kind:'service',id:'approvals'}, 'approvals.reconcileAttention', {}, `approval-filing:${randomUUID()}`);
+      const pending = caller.call('approvals.attentionPending', {});
+      return !pending.ok || !pending.value ? pending : caller.call('approvals.reconcileAttention', {}, `approval-filing:${randomUUID()}`);
     };
     const result = reconcile();
     if (!result.ok) console.warn(`Approval filing failed (${result.code})`);
@@ -229,11 +230,8 @@ export async function installNext(app: Foundation, options: NextOptions) {
     // No default holder, legacy token lookup, or installation-time grant. An
     // unconfigured reader fails before acquiring a value or contacting GitHub.
     const credentials = options.changes;
-    if (credentials) {
-      if (!app.operations.has('secrets.grantService')) installSecretServices(app.db, app.operations, sharing);
-    }
     const secrets = githubSecrets(credentials
-      ? secretUseRole(app.db, credentials.source, sharing, {kind: 'service', id: 'changes'}, () => app.operations.clock.now(), app.live)
+      ? installedSecretUse(app.operations, credentials.source, app.live, 'changes')
       : {async withValue() { throw new Error('GitHub credential unavailable'); }}, credentials?.github ?? {});
     installChangesDaemon(app, {home: options.home, clock: app.operations.clock, sharing, attribution, approvals, secrets,
       staging: options.staging, interval: credentials?.interval, request: credentials?.request});
