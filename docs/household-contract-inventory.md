@@ -1,6 +1,6 @@
 # Household replacement inventory
 
-This is an implementation inventory for t-2203, checked against main `b462c82` plus this Account implementation.
+This is an implementation inventory for t-2203, checked against main `e61ee3a` for first-run behavior; subsequent sections retain their explicit gaps.
 It records existing behavior and gaps; it does not change the contract in
 [web-foundation.md](specs/web-foundation.md#moving-there). **Pending** means
 there is no complete replacement yet, not that the behavior has been dropped.
@@ -18,8 +18,8 @@ codes are in [household-piece.md](household-piece.md#generated-household-api-cli
 | --- | --- |
 | `loom household show` | `loom-household show '{}'`; same summary fields, JSON instead of aligned text |
 | `loom household add AGENT` | `loom-household addAgent '{"agent":"AGENT"}'`; registers an existing context (also in Setup), JSON agent list instead of `Agents: …` |
-| `loom household init AGENT [--owner PERSON]` | Fresh `serve --next --home NEW_HOME` creates an OS-owned household and complete default assistant context before its first sign-in link; Setup creates additional named agents. **Pending** old directory move/symlink and implicit commons split; importing an existing household is separate |
-| `loom household commons` | **Pending** explicit offline commons migration. The app importer does not move knowledge or split People; neither the daemon nor stdio runs this old command implicitly |
+| `loom household init AGENT [--owner PERSON]` | Fresh `serve --next --home NEW_HOME` creates an OS-owned household and complete default assistant context before its first sign-in link; Setup creates additional named agents. Old in-place directory move, compatibility symlink and implicit commons split are **retired**; see [first-run choices](household-piece.md#first-run-and-the-old-in-place-conversion). Existing standalone contexts still run explicitly; existing households use offline import |
+| `loom household commons` | **Retired** as a new-side command: a fresh household starts with separate shared directory/knowledge and private relationship stores, so there are no old cards to split. Existing already-split commons and context files belong to the coordinated move; unsplit standalone promotion is not supported by the household importer. See [first-run choices](household-piece.md#first-run-and-the-old-in-place-conversion) |
 | `loom household sprite AGENT SHEET PIXELLAB` and its weight/variant options | **Pending** artwork installation on the new side |
 | `loom household sprite AGENT --manifest MANIFEST [SHEETS…]` | **Pending** manifest/sheet replacement on the new side |
 | `loom household icons install DIR [--name SET]` | **Pending** icon-set installation and selection |
