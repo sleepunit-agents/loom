@@ -250,6 +250,8 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
             await page.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(commsId));
             await expect.poll(()=>page.locator('.comms-thread').count()).toBe(1);
             await reference.goto(old.base+'/comms/'+oldThread.id.slice(3)+(width<1024?'':'?t=*comms'));
+            await expect.poll(()=>reference.locator('.comms-thread').count()).toBe(1);
+            await expect.poll(()=>reference.locator('.comms-screen').isVisible()).toBe(true);
             if(width>=1024){
               await expect.poll(()=>page.locator('.desk-rail-card[data-companion]').getAttribute('data-agent')).toBe('art');
               expect(await page.locator('.desk-agent-rail').locator(':scope > *').first().getAttribute('data-agent')).toBe('art');
