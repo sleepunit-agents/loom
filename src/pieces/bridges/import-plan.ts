@@ -1,4 +1,5 @@
 /** Offline source resolution. Never applies legacy gates, offers or proposals. */
+import { readBridgeDocuments, type BridgeDocumentFile } from './import-documents.js';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type Database from 'better-sqlite3';
@@ -8,10 +9,11 @@ import { venueSchema, routeSchema, linkSchema, type Venue, type Route, type Pers
 const name=z.string().min(1).max(200);
 export const bridgeImportOptions=z.object({
   instances:z.array(z.object({shuttle:name,people:name,routes:name}).strict()),
+  documents:z.array(z.object({path:name,agent:name,key:name}).strict()).max(128).optional(),
   connections:z.array(z.object({agent:name,platform:z.enum(['discord','slack']),workspace:name,bot:name.optional(),tokenSecret:name.optional(),appSecret:name.optional(),setupIncomplete:z.literal(true).optional()}).strict()),
 }).strict();
 export type BridgeImportOptions=z.infer<typeof bridgeImportOptions>;
-export interface BridgeImportSources {files:BridgeSourceFile[];stores:BridgeStoreFile[]}
+export interface BridgeImportSources {files:BridgeSourceFile[];stores:BridgeStoreFile[];documents?:BridgeDocumentFile[]}
 const canonical=(value:unknown):string=>Array.isArray(value)?`[${value.map(canonical).join(',')}]`:value&&typeof value==='object'?`{${Object.entries(value).sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>`${JSON.stringify(k)}:${canonical(v)}`).join(',')}}`:JSON.stringify(value);
 const hash=(v:string)=>createHash('sha256').update(v).digest('hex');
 const object=z.record(z.string(),z.unknown());
@@ -257,7 +259,15 @@ export function readBridgeImport(sources:BridgeImportSources,rawOptions:unknown,
     }
     const expected={venues:unique(venues),routes:unique(routes.filter(r=>!blockedRoutes.has(r.id))),links:unique(links)};
     const noteInventories=effective.routes.filter(r=>r.noteChannels!==undefined).map(r=>({source:r.source,agent:routeOwners.get(r.source),noteChannels:r.noteChannels}));
-    const evidence=JSON.stringify({inventory,stores,incomplete,retained,...(noteInventories.length?{noteInventories}:{})}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping]));
+    const documents=readBridgeDocuments(sources.documents??[]);
+    const selections=options.documents??[];
+    if(selections.length!==documents.length||new Set(selections.map(s=>s.path)).size!==selections.length)throw Error();
+    const selectedDocuments=selections.map(selection=>{
+      const document=documents.find(d=>d.name===selection.path);
+      if(!document||!household.agents.includes(selection.agent)||!effective.routes.some(r=>routeOwners.get(r.source)===selection.agent&&Object.hasOwn(r.noteChannels??{},selection.key)))throw Error();
+      return {...selection,...document};
+    });
+    const evidence=JSON.stringify({inventory,stores,incomplete,retained,...(selectedDocuments.length?{selectedDocuments}:{}),...(noteInventories.length?{noteInventories}:{})}),mapping=canonical(options),checksum=hash(JSON.stringify([inventory.checksum,stores.checksum,mapping,...(documents.length?[documents]:[])]));
     return {expected,evidence,mapping,checksum};
   }catch(error){if(error instanceof BridgeSourceError)throw error;throw Error('Invalid offline Bridges import mapping or sources');}
 }

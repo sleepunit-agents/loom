@@ -356,3 +356,22 @@ it('refuses unsafe accepted note members at the original extra path while ignori
  try{d.prepare("UPDATE docs SET doc=? WHERE collection='channels'").run('{"bot":"100","extra":{"arbitrary":[9007199254740993]}}');}finally{d.close();}
  expect(()=>readBridgeImport(f.sources,f.options,h,f.open)).toThrow('shuttle.db at $["channels"]["art"]["extra"]["arbitrary"]["0"]');
 });
+
+it('binds selected document bytes to an effective agent note key and import checksum',()=>{
+ const f=fixture();writeFileSync(f.sources.files[2].path,JSON.stringify({guild:'789',bots:{art:'100'},work:['300']}));
+ const path=join(f.root,'selected.md');writeFileSync(path,'PRIVATE SELECTED\r\n');
+ f.sources.documents=[{name:'bridges-documents/0.md',path}];
+ const options={...f.options,documents:[{path:'bridges-documents/0.md',agent:'art',key:'work'}]};
+ const before=readBridgeImport(f.sources,options,h,f.open),{db,close}=openDb(join(f.root,'new'));
+ try{
+  expect(()=>importBridges(db,f.sources,options,h,f.open,{interrupt:()=>{throw Error('interrupted document');}})).toThrow('interrupted document');
+  expect(db.prepare("SELECT 1 FROM sqlite_master WHERE name='bridges_meta'").get()).toBeUndefined();
+  expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(true);
+  expect(importBridges(db,f.sources,options,h,f.open).imported).toBe(false);
+  expect((db.prepare("SELECT value FROM bridges_meta WHERE key='legacy-evidence'").get() as{value:string}).value).toBe(before.evidence);
+  writeFileSync(path,'changed');expect(readBridgeImport(f.sources,options,h,f.open).checksum).not.toBe(before.checksum);
+  expect(()=>importBridges(db,f.sources,options,h,f.open)).toThrow('different Bridges source');
+  for(const documents of [[],[{path:'bridges-documents/1.md',agent:'art',key:'work'}],[{path:'bridges-documents/0.md',agent:'mark',key:'work'}],[{path:'bridges-documents/0.md',agent:'art',key:'missing'}]])expect(()=>readBridgeImport(f.sources,{...options,documents},h,f.open)).toThrow('Invalid offline');
+  expect(()=>readBridgeImport({...f.sources,documents:[]},options,h,f.open)).toThrow('Invalid offline');
+ }finally{close();}
+});
