@@ -1011,3 +1011,26 @@ without values or parser/filesystem exception text. Malformed instance JSON
 reports the file root `$`; malformed stored JSON identifies its document field.
 Accepted-route diagnostics map assembled fields back to their original store
 collection/key/field.
+
+### Discord history transport (not yet a public read command)
+
+The internal `discordApi.history` reads a channel/thread only with a trusted
+`DiscordHistoryPermit` matching the exact agent, workspace, channel and kind.
+The owning role must keep its `current()` proof valid; Bridges makes no read
+permission decision. No installed Runtime permit issuer exists yet, so this
+transport is unregistered and cannot be reached through a public operation or
+command. DM admission is not a substitute. Runtime sender resolution and
+`may_wake`, the public read operation/client and legacy output parity remain
+required in the [inventory](bridges-contract-inventory.md).
+
+Each read checks fresh channel type/guild evidence and reacquires the Bridges
+service credential for the history request, with lifetime/staging/permit checks
+before and after IO. Results retain all message classes, original author IDs,
+platform time (snowflake fallback), and attachment descriptions, oldest first.
+No body starts, reply posts or route filters run. Limits are 1–100; first sight
+defaults to the latest one, `after` defaults to 100. Extra source fields, labels
+and upstream errors are not returned. Reads are bounded by the existing 15-second
+request deadline and 1 MiB response limit; ambiguous/malformed results wait.
+This ports the transport part of legacy loom-discord `5d197bac` read; the
+permission/identity half stays with Runtime. All test permits are explicit fakes;
+Secrets registration/grants/erasure use the actual installed next role.

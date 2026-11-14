@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add an internal Runtime role for current authenticated Clock conversation provenance, retaining private scope and sender history.
 - Match imported private spawn bindings to Comms by conversation ownership, preserving job and spawn handles independently of thread ids.
 
+- Add an unregistered exact-place-permit Discord history transport with bounded oldest-first reads; Runtime authorization, sender policy and the public read command remain pending.
 - Bridges migration skips underscore annotation keys in every legacy source map before validation/assembly and reports safe file/field diagnostics; household rehearsal includes real note shapes.
 - Preserve authoritative shuttle and Runtime store documents and revisions as bounded offline Bridges import evidence; do not select or apply authority.
 - Import Bridges setup from explicit completed snapshots with authoritative source resolution, disabled connections, private evidence and independent verification.
