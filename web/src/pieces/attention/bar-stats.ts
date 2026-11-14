@@ -17,10 +17,12 @@ export function useDeskStats() {
   const enrolled = boxes.status === 'live' ? current(boxes).filter(b=>b.revokedAt===undefined).length : undefined;
   const open = current(changes).filter(c=>c.state==='open');
   const failing = open.filter(c=>c.checks.state==='failing').length;
+  const activeWakes = current(wakes).filter(w=>['pending','parked','held','firing'].includes(w.state)).length;
+  const enabledVenues = current(venues).filter(v=>v.enabled).length;
   const parts: TickPart[] = [
     {text:tasks.status==='live' ? `Tasks · ${current(tasks).filter(t=>t.status==='in_progress').length} in progress · ${current(tasks).filter(t=>t.ready).length} ready` : 'Tasks unavailable',href:'/p/tasks-preview'},
-    {text:wakes.status==='live' ? `Clock · ${current(wakes).filter(w=>['pending','parked','held','firing'].includes(w.state)).length} active wakes` : 'Clock unavailable',href:'/p/clock-preview'},
-    {text:venues.status==='live' ? `Bridges · ${current(venues).filter(v=>v.enabled).length} enabled venues` : 'Bridges unavailable',href:'/p/bridges-preview'},
+    {text:wakes.status==='live' ? `Clock · ${activeWakes} active wake${activeWakes===1?'':'s'}` : 'Clock unavailable',href:'/p/clock-preview'},
+    {text:venues.status==='live' ? `Bridges · ${enabledVenues} enabled venue${enabledVenues===1?'':'s'}` : 'Bridges unavailable',href:'/p/bridges-preview'},
     {text:changes.status==='live' ? `Changes · ${open.length} open${failing?` · ${failing} CI red`:''}` : 'Changes unavailable',href:'/p/changes-preview',tone:failing?'bad':undefined},
   ];
   // Trouble first, preserving the normal order for equal tones.

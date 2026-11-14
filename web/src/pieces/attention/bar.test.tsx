@@ -64,8 +64,8 @@ it('uses real piece counts, puts CI trouble first, and never calls enrollment he
  expect(tree.root.findByType('ticker-test').props.parts.slice(2)).toEqual([
   {text:'Changes · 1 open · 1 CI red',href:'/p/changes-preview',tone:'bad'},
   {text:'Tasks · 1 in progress · 1 ready',href:'/p/tasks-preview'},
-  {text:'Clock · 1 active wakes',href:'/p/clock-preview'},
-  {text:'Bridges · 1 enabled venues',href:'/p/bridges-preview'},
+  {text:'Clock · 1 active wake',href:'/p/clock-preview'},
+  {text:'Bridges · 1 enabled venue',href:'/p/bridges-preview'},
   {text:'1 enrolled box · health unavailable'},
  ]);
  expect(tree.root.findByProps({'aria-label':'1 enrolled box; health unavailable'})).toBeTruthy();
