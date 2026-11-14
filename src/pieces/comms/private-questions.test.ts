@@ -40,7 +40,7 @@ it('seals the whole question and atomically publishes only a metadata projection
   const stored=JSON.stringify(f.app.db.prepare(`SELECT * FROM ${table}`).all());
   for(const word of [question.ask,question.why,question.if_yes,question.href,...question.refs])expect(stored).not.toContain(word);
  }
- const page=await f.call('comms.messages',{thread:f.place});expect(page).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:question})])});
+ const page=await f.call('comms.messages',{thread:f.place});expect(page).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({ask:question,sealedQuestion:true})])});
  const sealed=f.app.db.prepare('SELECT hash FROM comms_messages WHERE thread=? AND seq=?').get(f.place,r.seq) as {hash:string};
  expect(sealed.hash).toBe(f.key.hash(JSON.stringify({id:'question',question})));
  expect(batches).toContainEqual(expect.arrayContaining([{type:'message',id:`${f.place}/${r.seq}`},{type:'attention.ask',id:r.ref}]));
@@ -348,4 +348,12 @@ it('rejects changed sealed typed words under the same and fresh operation ids wi
  for(const op of ['typed-first','typed-changed'])expect(await f.call('comms.replyToAsk',{...input,text:'Conflicting sealed typed words'},f.viewer,op)).toMatchObject({ok:false,code:'conflict'});
  expect(f.app.db.prepare('SELECT * FROM comms_messages WHERE id=?').get(`private-reply:${r.ref}`)).toEqual(saved);
  expect(f.attention.get(f.viewer,{id:r.ref})).toEqual(answer);
+});
+
+it('marks sealed questions only with exact owning Attention provenance, never encoding or ref prefix',async()=>{
+ const f=await setup(),r=await f.comms.ask('art',f.place,{id:'question',question});
+ const page=()=>f.call('comms.messages',{thread:f.place});
+ expect(await page()).toMatchObject({ok:true,value:expect.arrayContaining([expect.objectContaining({sealedQuestion:true})])});
+ f.app.db.prepare('DELETE FROM attention_asks WHERE id=?').run(r.ref);
+ const result=await page();expect(result.ok).toBe(true);if(result.ok)expect((result.value as {sealedQuestion?:boolean}[]).some(m=>m.sealedQuestion)).toBe(false);
 });
