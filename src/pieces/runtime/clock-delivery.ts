@@ -1,3 +1,4 @@
+import { installPublicMetadata } from './public-metadata.js';
 import { installClockExecution } from './clock-execution.js';
 import type { Context } from '../../core/index.js';
 import { supportedClockPrompt } from './clock-input.js';
@@ -194,6 +195,11 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
     const p=provenanceStore(db).read(job.conversation);if(!p)return;
     return {agent:job.agent,member:job.member,conversation:job.conversation,project:job.project,service:job.service,principal:principalForWork(p.history,owners())};
   };
+  installPublicMetadata(app,v=>{
+    const job=bound(v);if(!job?.conversation)return;
+    const root=db.prepare('SELECT * FROM runtime_clock_turns WHERE conversation=? ORDER BY seq LIMIT 1').get(job.conversation) as Turn|undefined;
+    return root&&!withdrawn(root)?job:undefined;
+  });
   return {valid,bound,read,clockProvenance,
     // The existing runner input boundary needs owning Clock authority for
     // public jobs too. A generic replacement destination cannot authorize a
