@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createDataSchema } from '../../core/data/database.js';
 import { FakeClock } from '../../core/clock.js';
 import { agents, members, secrets, bridgeConnections, bridgeIncoming, bridgeRawEvents, bridgeResume } from '../../core/data/schema.js';
@@ -69,7 +69,12 @@ it('consumes normalized writes and receipt atomically, retaining a failed event 
   })).toThrow('normalization failed');
   expect(f.db.select().from(bridgeIncoming).all()).toHaveLength(2);
   expect(f.rows()).toHaveLength(1);
-  expect(spool.drain('slack', (id, bytes) => { expect(id).toBe('one'); expect(bytes).toEqual(f.input); })).toBe(1);
+  expect(spool.drain('slack', (id, bytes) => {
+    expect(id).toBe('one'); expect(bytes).toEqual(f.input);
+    f.db.insert(bridgeIncoming).values({ id: 'normalized', connection: 'slack', channel: 'c', isDm: false,
+      user: 'u', text: 'new', postedAt: f.now(), receivedAt: f.now(), state: 'pending' }).run();
+  })).toBe(1);
+  expect(f.db.select().from(bridgeIncoming).all()).toHaveLength(3);
   expect(spool.drain('slack', () => { throw Error('already consumed'); })).toBe(0);
   expect(f.rows()).toEqual([]);
   spool.close();
@@ -89,13 +94,21 @@ it('requires explicit cursor reset for session changes and rejects Slack checkpo
 });
 
 it('sweeps expired rows on startup, cancels timers on close, and never drains expired bytes', () => {
-  const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
+  const f = fixture();
+  const cancel = vi.fn();
+  const at = f.clock.at.bind(f.clock);
+  vi.spyOn(f.clock, 'at').mockImplementation((time, fn) => {
+    const stop = at(time, fn); return () => { cancel(); stop(); };
+  });
+  const spool = new BridgeEvents(f.db, f.clock);
   spool.retain('slack', 'one', f.input);
   spool.close();
+  expect(cancel).toHaveBeenCalledTimes(1);
   f.clock.advance(HOUR);
   expect(f.rows()).toHaveLength(1);
   expect(() => spool.retain('slack', 'two', f.input)).toThrow('closed');
   const reopened = new BridgeEvents(f.db, f.clock);
+  expect(f.rows()).toEqual([]);
   expect(reopened.drain('slack', () => { throw Error('expired'); })).toBe(0);
   expect(f.rows()).toEqual([]);
   reopened.close();
@@ -105,9 +118,31 @@ it('bounds each drain and isolates receiving connections', () => {
   const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
   for (let i = 0; i < 65; i++) spool.retain('slack', String(i).padStart(2, '0'), f.input);
   spool.retain('discord', 'one', f.input, checkpoint);
-  expect(spool.drain('slack', () => {})).toBe(64);
+  const delivered: string[] = [];
+  expect(spool.drain('slack', id => { delivered.push(id); })).toBe(64);
+  expect(delivered).toEqual(Array.from({ length: 64 }, (_, i) => String(i).padStart(2, '0')));
+  expect(f.rows().find(r => r.connection === 'discord')?.id).toBe('one');
   expect(f.rows()).toHaveLength(2);
   expect(() => spool.drain('slack', () => {}, 100)).toThrow('limit');
   expect(f.db.select().from(bridgeResume).all()).toHaveLength(1);
+  spool.close();
+});
+
+it('allows an updated resume URL without changing session or rewinding', () => {
+  const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
+  spool.retain('discord', 'one', f.input, checkpoint);
+  const next = { ...checkpoint, sequence: 2, resumeUrl: 'wss://gateway-us-east1-b.discord.gg/' };
+  spool.retain('discord', 'two', f.input, next);
+  expect(spool.checkpoint('discord')).toEqual(next);
+  spool.close();
+});
+
+it('requires its own transaction, including rejecting reentrant drain', () => {
+  const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
+  expect(() => f.db.transaction(() => spool.retain('slack', 'one', f.input))).toThrow('own transaction');
+  expect(f.rows()).toEqual([]);
+  spool.retain('slack', 'one', f.input);
+  expect(() => spool.drain('slack', () => { spool.drain('slack', () => {}); })).toThrow('own transaction');
+  expect(f.rows()).toHaveLength(1);
   spool.close();
 });

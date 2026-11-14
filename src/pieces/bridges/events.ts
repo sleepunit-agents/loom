@@ -13,7 +13,7 @@ const HOUR = 3_600_000;
 export class BridgeEvents {
   private closed = false;
   private cancel?: () => void;
-  constructor(private db: DataDatabase, private clock: Clock) { this.sweep(); }
+  constructor(private db: DataDatabase, private clock: Clock) { this.open(); this.sweep(); }
 
   retain(connection: string, id: string, event: Buffer, checkpoint?: BridgeCheckpoint): void {
     this.open();
@@ -26,7 +26,7 @@ export class BridgeEvents {
         if (source.platform !== 'discord' || !checkpoint.session || !checkpoint.resumeUrl
           || !Number.isSafeInteger(checkpoint.sequence) || checkpoint.sequence < 0) throw Error('Invalid Discord checkpoint');
         const old = tx.select().from(bridgeResume).where(eq(bridgeResume.connection, connection)).get();
-        if (old && (old.session !== checkpoint.session || old.resumeUrl !== checkpoint.resumeUrl || old.sequence > checkpoint.sequence)) {
+        if (old && (old.session !== checkpoint.session || old.sequence > checkpoint.sequence)) {
           throw Error('Reset Discord checkpoint before changing session or rewinding');
         }
         tx.insert(bridgeResume).values({ connection, ...checkpoint }).onConflictDoUpdate({
@@ -77,7 +77,10 @@ export class BridgeEvents {
     return count;
   }
 
-  private open(): void { if (this.closed) throw Error('Bridge events closed'); }
+  private open(): void {
+    if (this.closed) throw Error('Bridge events closed');
+    if (this.db.$client.inTransaction) throw Error('Bridge events require their own transaction');
+  }
   private sweep(): void {
     if (this.closed) return;
     this.cancel?.(); this.cancel = undefined;
