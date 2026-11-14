@@ -70,7 +70,9 @@ export async function listenTicketAuthority(config:Omit<LocalHolderConfig,'serve
           if(!claim?.pendingId||pendingId!==claim.pendingId||!peers.some(w=>w.fingerprint===fingerprint
             &&JSON.stringify(w.binding)===JSON.stringify(secretInputBindingSchema.parse(binding))))throw failed();
         }else if(fingerprint!==holderFingerprint)throw failed();
-        prune();
+        // Workers are read-only, including indirect lifecycle effects on
+        // their own or unrelated retained claims. Only holder calls prune.
+        if(action!=='worker-current')prune();
         let body='';
         if(action==='claim') {
           if(claims.has(id)||claims.size>=1024)throw failed();

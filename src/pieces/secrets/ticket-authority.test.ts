@@ -294,12 +294,17 @@ it('carries the original bound pending id across pinned TLS without accepting a 
  expect(await f.remote.claim(t.id)).toBeNull();
 });
 
-it.each(['job','pending','pin','unbound','revoked','restart'] as const)('worker current proof rejects %s and cannot claim or finish',async change=>{
+it.each(['agent','job','runner','box','claimedAt','service','service-absent','pending','pin','unbound','revoked','restart'] as const)('worker current proof rejects %s and cannot claim or finish',async change=>{
  const f=await setup('slack'),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now(),service:'slack'},pendingId=randomUUID();
  const t=f.tickets.admit(f.viewer,'API',change==='unbound'?undefined:{id:pendingId,binding});
  expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
  await f.authority.close();
- const server=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding:change==='job'?{...binding,job:randomUUID()}:binding}]);closes.push(server.close);
+ const assigned={...binding};
+ if(['agent','runner','box','service'].includes(change))Object.assign(assigned,{[change]:'other'});
+ if(change==='job')assigned.job=randomUUID();
+ if(change==='claimedAt')assigned.claimedAt++;
+ const {service:_,...withoutService}=assigned;
+ const server=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding:change==='service-absent'?withoutService:assigned}]);closes.push(server.close);
  const c=(await f.remote.claim(t.id))!;expect(c).not.toBeNull();
  const workerConfig={...f.config,cert:f.server.cert,key:f.server.key};
  const worker=remoteWorkerTicketProof(change==='pin'?f.config:workerConfig,f.fingerprint('daemon'),t.id,change==='pending'?randomUUID():pendingId);closes.push(worker.close);
@@ -386,4 +391,30 @@ it.each(['idle','in-flight'] as const)('worker proof shutdown fences %s successf
  }
  expect(await c.current()).toBe(true);expect(await worker.current()).toBe(false);expect(await worker.current()).toBe(false);
  await c.finish(false);
+});
+
+it('worker checks never settle stale original or unrelated retained claims through pruning',async()=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()},pendingId=randomUUID();
+ const t=f.tickets.admit(f.viewer,'API',{id:pendingId,binding}),other=f.tickets.admit(f.viewer,'API',{id:randomUUID(),binding});
+ for(const ticket of [t,other]){expect(f.tickets.claim(ticket.id)).toBeNull();f.release(ticket.id);}
+ await f.authority.close();
+ const server=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(server.close);
+ expect(await f.remote.claim(t.id)).not.toBeNull();expect(await f.remote.claim(other.id)).not.toBeNull();
+ const worker=remoteWorkerTicketProof({...f.config,cert:f.server.cert,key:f.server.key},f.fingerprint('daemon'),t.id,pendingId);closes.push(worker.close);
+ f.app.effects!.finish(`secrets:handoff:${other.id}`,false);
+ expect(await worker.current()).toBe(true);expect(f.state(other.id)).toEqual({state:'claimed'});
+ f.app.effects!.finish(`secrets:handoff:${t.id}`,false);
+ expect(await worker.current()).toBe(false);
+ expect(f.state(t.id)).toEqual({state:'claimed'});expect(f.state(other.id)).toEqual({state:'claimed'});
+});
+it.each(['released','uncertain'])('worker cannot settle an active claim via %s even before rejecting',async action=>{
+ const f=await setup(),binding={agent:'art',job:f.id,runner:'worker',box:'worker',claimedAt:f.clock.now()};
+ const t=f.tickets.admit(f.viewer,'API',{id:randomUUID(),binding});expect(f.tickets.claim(t.id)).toBeNull();f.release(t.id);
+ await f.authority.close();
+ const server=await listenTicketAuthority(f.server,f.fingerprint('holder'),f.tickets,[{fingerprint:f.fingerprint('daemon'),binding}]);closes.push(server.close);
+ const c=(await f.remote.claim(t.id))!;
+ const status=await new Promise<number|undefined>((resolve,reject)=>{
+  const req=https.request({socketPath:f.config.socket,servername:f.config.servername,ca:readFileSync(f.config.ca),cert:readFileSync(f.server.cert),key:readFileSync(f.server.key),method:'POST',path:`/v1/tickets/${t.id}/${action}`,headers:{'content-length':0}},res=>{res.resume();res.once('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end();
+ });
+ expect(status).toBe(503);expect(f.state(t.id)).toEqual({state:'claimed'});expect(await c.current()).toBe(true);await c.finish(false);
 });
