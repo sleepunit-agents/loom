@@ -9,6 +9,7 @@ import { Dock } from '../components/ui/dock';
 import { AppIcon } from '../app-icon';
 import { tintOf } from '../tint';
 import Launcher from './launcher';
+import { useHiding } from './hiding';
 export interface RegisteredApp extends AppRegistration { icon: string; Screen: LazyExoticComponent<ComponentType<{ path?: string; go?: (path: string) => void; active?: boolean }>> }
 /** The shell only consumes registrations. Home and agent rail will register alongside other apps. */
 class AppBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
@@ -20,7 +21,7 @@ function Screen({ app, tile, router, active }: { app: RegisteredApp; tile: Tile;
   const View = app.Screen;
   return <AppBoundary><Suspense fallback={<Loading label={`Opening ${app.title}…`} />}><View active={active} path={currentPath(tile)} go={path => router.go(tile.id,path)} /></Suspense></AppBoundary>;
 }
-export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void }>; Bar?: ComponentType<{ title: string; go(path: string): void; actions: ReactNode }> }
+export interface ShellSurfaces { Home?: ComponentType<{ go(path: string): void }>; Rail?: ComponentType<{ go(path: string): void; onAttention?: (value:boolean)=>void }>; Bar?: ComponentType<{ title: string; go(path: string): void; actions: ReactNode }> }
 export default function Shell({ apps, surfaces = {} }: { apps: readonly RegisteredApp[]; surfaces?: ShellSurfaces }) {
   const [router] = useState(() => new DeskRouter(apps, window));
   const route = useSyncExternalStore(router.subscribe,router.getSnapshot);
@@ -31,6 +32,9 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const [width,setWidth] = useState(innerWidth);
   const [notice,setNotice] = useState('');
   const [menu,setMenu] = useState<MenuAt>();
+  const hiding = useHiding(!!menu,setNotice);
+  const [attention,setAttention] = useState(false);
+  const railAs = hiding.modes.rail==='always'&&!railWidth(width)?'strip':hiding.modes.rail;
   const drag = useRef<string | undefined>(undefined);
   const [launcher,setLauncher] = useState(false);
   useEffect(() => {
@@ -42,7 +46,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const visible = route.tiles.filter(t => !t.minimized);
   // Until Home's piece registers a rail there is no invented agent data or empty reserved column.
   const { Home, Rail, Bar } = surfaces;
-  const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railWidth(width)||64)+10 : 0)) };
+  const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railAs==='always'?railWidth(width)+10:railAs==='strip'?24:0) : 0)) };
   useEffect(() => { if(!phone) {const notices=router.fit(workArea,width);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,router]);
   const boxes = layout(router.asTiles(),workArea,width).apps;
   const open = (id: string) => {
@@ -77,7 +81,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     window.addEventListener('keydown',key); return () => window.removeEventListener('keydown',key);
   },[visible,route.focused,router]);
   const focused = visible.find(t => t.id === route.focused) ?? visible[0];
-  return <div className="next-shell" data-shell={phone ? 'phone' : 'desk'}>
+  return <div className="next-shell" data-shell={phone ? 'phone' : 'desk'} data-dock-mode={phone?'always':hiding.modes.dock}>
     {Bar ? <Bar title={apps.find(a => a.id === focused?.id)?.title ?? 'Home'} go={path => {
       if(path === '/') {router.home();return;}
       const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));
@@ -85,7 +89,14 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
     }} actions={<Preferences />} /> : <header className="next-bar"><strong>LOOM<span aria-hidden="true">//</span>OS</strong><span>{apps.find(a => a.id === focused?.id)?.title ?? 'Home'}</span><Preferences /><Button variant="ghost" size="sm" onClick={() => setLauncher(!launcher)}>All apps</Button></header>}
     <div ref={ground} className="next-ground">
       {!visible.length && (Home ? <Home go={path => { const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/')); if(app){open(app.id);router.go(app.id,path);} }} /> : <Empty title="Your desk" text="Open an app from the dock." />)}
-      {!phone && Rail && visible.length>0 && <aside aria-label="Your agents" className="next-rail" style={{width:railWidth(width)||64}}><Rail go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} /></aside>}
+      {!phone && Rail && <>
+        {visible.length>0&&railAs!=='always'&&<button type="button" data-hide-part="rail" className="next-rail-edge" data-mode={railAs} data-attention={attention||undefined} aria-label="Show agents rail" aria-expanded={hiding.peek.rail}
+          onClick={()=>hiding.show('rail',true)} onPointerEnter={()=>{if(railAs==='auto')hiding.show('rail',true);}} onPointerDown={e=>{if(e.pointerType==='touch')hiding.show('rail',true);}} onContextMenu={e=>setMenu(hiding.menu('rail',e))}><span aria-hidden="true">‹</span></button>}
+        <aside hidden={!visible.length} aria-label="Your agents" tabIndex={-1} data-hide-part="rail" className="next-rail" data-mode={railAs} data-peek={hiding.peek.rail||undefined} inert={!visible.length||(railAs!=='always'&&!hiding.peek.rail)} style={{width:railWidth(width)||296}}
+          onPointerEnter={()=>{if(railAs==='auto')hiding.show('rail',true);}} onPointerLeave={e=>{if(railAs==='auto'&&e.pointerType==='mouse'&&!menu)hiding.show('rail',false);}} onContextMenu={e=>setMenu(hiding.menu('rail',e))}>
+          <Rail onAttention={setAttention} go={path => {const app=apps.find(a=>path===a.path||path.startsWith(a.path+'/'));if(app){open(app.id);router.go(app.id,path);}}} />
+        </aside>
+      </>}
       {route.tiles.map(tile => {
         const shown=!tile.minimized&&(!phone||tile.id===focused?.id);
         const app = apps.find(a => a.id === tile.id)!;
@@ -108,7 +119,11 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
       })}
     </div>
     <Launcher apps={apps} open={launcher} onOpenChange={setLauncher} launch={open} />
-    <div className="next-dock-bar loom-dock-bar"><Dock variant="shelf" className="next-dock" aria-label="Dock" itemSize={44} magnification={1.25} value={route.focused??'home'} items={[
+    {!phone&&hiding.modes.dock!=='always'&&<button type="button" data-hide-part="dock" className="next-dock-edge" data-mode={hiding.modes.dock} data-attention={attention||undefined} aria-label="Show dock" aria-expanded={hiding.peek.dock}
+      onClick={()=>hiding.show('dock',true)} onPointerEnter={()=>{if(hiding.modes.dock==='auto')hiding.show('dock',true);}} onPointerDown={e=>{if(e.pointerType==='touch')hiding.show('dock',true);}} onContextMenu={e=>setMenu(hiding.menu('dock',e))}><span aria-hidden="true">⌃</span></button>}
+    <div className="next-dock-bar loom-dock-bar" data-hide-part="dock" data-peek={hiding.peek.dock||undefined} inert={!phone&&hiding.modes.dock!=='always'&&!hiding.peek.dock}
+      onPointerEnter={()=>{if(hiding.modes.dock==='auto')hiding.show('dock',true);}} onPointerLeave={e=>{if(hiding.modes.dock==='auto'&&e.pointerType==='mouse'&&!menu)hiding.show('dock',false);}}
+      onContextMenu={e=>{if(!(e.target as Element).closest('button')||(e.target as Element).closest('button[aria-label="Home"],button[aria-label="All apps"]'))setMenu(hiding.menu('dock',e));}}><Dock variant="shelf" className="next-dock" aria-label="Dock" itemSize={44} magnification={1.25} value={route.focused??'home'} items={[
       {value:'home',label:'Home',tint:'pink',icon:<AppIcon label="Home" name="home" />,onSelect:()=>router.home()},
       ...apps.filter(app=>app.id!=='home-preview').map(app=>({value:app.id,label:`Open ${app.title}`,tint:tintOf(app.title),icon:<AppIcon label={app.title} name={app.icon} />,open:route.tiles.some(t=>t.id===app.id),onSelect:()=>route.focused===app.id?router.remove(app.id,true):open(app.id)})),
       {value:'launcher',label:'All apps',tint:'olive',divider:true,icon:<AppIcon label="Places" name="grid-2x2" />,onSelect:()=>setLauncher(true)},

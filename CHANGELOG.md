@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Give the new desk device-local rail and dock hide modes, overlay edge reveals and agent keyboard shortcuts.
+
 - Add unregistered one-use Secrets handoff tickets with durable claims, exact grant/Runtime fences and staging holds; real worker delivery remains disabled.
 
 - Add member-private Inbox read facts without answering asks or copying draft words.

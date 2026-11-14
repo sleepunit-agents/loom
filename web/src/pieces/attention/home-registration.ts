@@ -11,7 +11,7 @@ export const homeApp = {
 };
 
 const Rail = lazy(() => import('./rail'));
-export function RailSurface(props: { go: (path:string)=>void }) {
+export function RailSurface(props: { go: (path:string)=>void; onAttention?: (value:boolean)=>void }) {
   return createElement(Suspense,{fallback:createElement(Loading,{label:'Opening your agents…'})},createElement(Rail,props));
 }
 

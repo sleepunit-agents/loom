@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import { Row } from '../../kit';
 import { useRecords, type LiveRecord } from '../../data';
@@ -8,7 +8,7 @@ import './rail.css';
 
 interface Thread extends LiveRecord { id: string; agent: string; title: string | null; archived: number | null; last: number; unread: boolean; working?: boolean }
 /** Only policy-filtered feeds. No messages, local cache, direct fetch or answer controls. */
-export default function AgentRail({ go }: { go(path: string): void }) {
+export default function AgentRail({ go, onAttention }: { go(path: string): void; onAttention?: (value:boolean)=>void }) {
   const roster = useRecords<OwnedAgent>('attention.ownedAgent');
   const displays = useAgentDisplays();
   const people = useRecords<AgentPerson>('person');
@@ -17,6 +17,16 @@ export default function AgentRail({ go }: { go(path: string): void }) {
   const threads = useRecords<Thread>('thread');
   const open = asks.status === 'live' ? openAsks(asks.records) : [];
   const agents = orderedAgents(namedAgents(roster.status === 'live' ? roster.records : [], people.status === 'live' ? people.records : []));
+  useEffect(()=>{
+    const shortcut=(e:KeyboardEvent)=>{
+      if(!e.ctrlKey||!e.shiftKey||e.altKey||e.metaKey||!/^Digit[1-9]$/.test(e.code))return;
+      const agent=agents[Number(e.code.slice(-1))-1];if(!agent)return;
+      const recent=threads.status==='live'?threads.records.filter(t=>t.agent===agent.id&&t.archived===null).sort((a,b)=>b.last-a.last||a.id.localeCompare(b.id)):[];
+      const thread=recent.find(t=>t.unread)??recent[0];
+      e.preventDefault();go(thread?`/p/comms-preview/thread/${encodeURIComponent(thread.id.replace(/^th:/,''))}`:'/p/comms-preview');
+    };
+    addEventListener('keydown',shortcut);return()=>removeEventListener('keydown',shortcut);
+  },[agents,threads.records,threads.status,go]);
   const box = useRef<HTMLDivElement>(null);
   const [fold, setFold] = useState(false);
   const [room, setRoom] = useState('');
@@ -31,6 +41,8 @@ export default function AgentRail({ go }: { go(path: string): void }) {
     return()=>{on=false;observer.disconnect();};
   },[]);
   const recentThreads = threads.status==='live'?threads.records.filter(t=>t.archived===null):[];
+  const attention = open.length>0||recentThreads.some(t=>t.unread&&agents.some(a=>a.id===t.agent));
+  useEffect(()=>{onAttention?.(attention);return()=>onAttention?.(false);},[attention,onAttention]);
   // Comms companion selection joins this priority in its own slice; no inferred active pane.
   const opened = (agents.find(a=>recentThreads.some(t=>t.agent===a.id&&t.working))
     ?? agents.find(a=>open.some(ask=>ask.agent===a.id))
