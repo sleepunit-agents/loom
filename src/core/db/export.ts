@@ -1,6 +1,15 @@
 import { migrate, type Db } from './index.js';
 type ExportRow=Record<string,unknown>;
-type ExportFilter=(table:string,row:ExportRow)=>boolean;
+export interface ExportSnapshot { memo<T>(key:object,read:()=>T):T }
+type ExportFilter=(table:string,row:ExportRow,snapshot:ExportSnapshot)=>boolean;
+type TextRedactor=(table:string,row:Readonly<ExportRow>,snapshot:ExportSnapshot)=>Record<string,string>;
+const redactors=new WeakMap<Db,Map<string,TextRedactor>>();
+/** Owning text encodings may remove private entries without altering schema,
+ * identities or SQLite storage classes. Input rows are never mutated. */
+export function registerExportTextRedactor(db:Db,piece:string,redact:TextRedactor){
+ registerExportFilter(db,piece,()=>true);
+ let held=redactors.get(db);if(!held){held=new Map();redactors.set(db,held);}held.set(piece,redact);
+}
 const filters=new WeakMap<Db,Map<string,ExportFilter>>();
 export interface SqliteRow { types: string[]; rowid?: bigint }
 /** SQLite values include a numeric storage class and sometimes an implicit
@@ -50,6 +59,12 @@ export function privateExportCopy(value:unknown,ids:ReadonlySet<string>,field?:s
  */
 export function exportDatabase(db:Db, captureSqlite = false) {
  return db.transaction(()=>{
+  // Classification is shared only within this committed snapshot. Never reuse
+  // it across exports, where scope or credential groups may have changed.
+  const memo=new Map<object,unknown>();
+  const snapshot:ExportSnapshot={memo<T>(key:object,read:()=>T):T{
+   if(!memo.has(key))memo.set(key,read());return memo.get(key) as T;
+  }};
   if(db.prepare("SELECT 1 FROM sqlite_master WHERE name='core_export_required'").get()) {
    for(const {piece} of db.prepare('SELECT piece FROM core_export_required').all() as {piece:string}[])
     if(!filters.get(db)?.has(piece))throw new Error('Export requires the installed privacy filter for '+piece);
@@ -59,9 +74,20 @@ export function exportDatabase(db:Db, captureSqlite = false) {
    const captured=captureSqlite?sqliteExportRows(db,t.name):undefined;
    const input=captured?.rows??db.prepare(`SELECT * FROM "${t.name.replaceAll('"','""')}"`).all() as ExportRow[];
    const sqlite:SqliteRow[]=[];
-   const rows=input.filter((row,i)=>{
-    const keep=(t.name!=='core_migrations'||row.piece!=='comms') && [...filters.get(db)?.values()??[]].every(filter=>filter(t.name,row));
-    if(keep&&captured)sqlite.push(captured.sqlite[i]);return keep;
+   const keys=new Set((db.prepare(`PRAGMA table_xinfo("${t.name.replaceAll('"','""')}")`).all() as {name:string;pk:number}[]).filter(c=>c.pk).map(c=>c.name));
+   const rows=input.flatMap((row,i)=>{
+    const keep=(t.name!=='core_migrations'||row.piece!=='comms') && [...filters.get(db)?.values()??[]].every(filter=>filter(t.name,row,snapshot));
+    if(!keep)return [];
+    let output={...row};
+    for(const redact of redactors.get(db)?.values()??[]){
+     const patch=redact(t.name,Object.freeze({...output}),snapshot);
+     for(const [key,value] of Object.entries(patch)){
+      if(keys.has(key)&&value!==output[key])throw Error('Export redaction must preserve primary keys');
+      if(typeof output[key]!=='string'||typeof value!=='string')throw Error('Export redaction must preserve text storage');
+      output[key]=value;
+     }
+    }
+    if(captured)sqlite.push(captured.sqlite[i]);return [output];
    });
    return {...t,rows,...(captured?{sqlite,rowid:captured.rowid}:{})};
   });

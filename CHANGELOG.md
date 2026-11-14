@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Add owner-only next-mode backup configuration operations and Live status; saved configuration explicitly remains unscheduled pending the new runner.
 
 - Deliver private timed prompts through Runtime’s bound inbox, retaining member scope and current grants through runner confirmation, reads and acknowledgment.
+- Exclude private dispatched Clock prompts and correlated Runtime/Sign-in copies from filtered exports and backups while preserving public records.
 
 - Deliver stored public household lane prompts through Runtime’s scheduled inbox, with runner confirmation, authenticated reads and staging holds.
 - Add next-mode Bridges status JSON for Discord and Slack with configured agents, intake holds and explicit staging mode.

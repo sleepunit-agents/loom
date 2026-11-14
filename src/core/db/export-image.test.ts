@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { exportDatabaseImage } from './export-image.js';
-import { registerExportFilter } from './export.js';
+import { registerExportFilter, registerExportTextRedactor } from './export.js';
 import { startLoom } from '../../foundation.js';
 import { fixture, installFixture } from '../../fixture.js';
 import { createHash } from 'node:crypto';
@@ -152,4 +152,17 @@ it('preserves the exact integer storage class and large high water of AUTOINCREM
   const restored = new Database(exportDatabaseImage(db).bytes); close.push(() => restored.close());
   expect(restored.prepare('SELECT seq,typeof(seq) AS kind FROM sqlite_sequence').safeIntegers().get()).toEqual({ seq: 9007199254740993n, kind: 'integer' });
   expect(restored.prepare('INSERT INTO data DEFAULT VALUES').run().lastInsertRowid).toBe(9007199254740994);
+});
+
+it('redacts owning text encodings without mutating source rows or SQLite identity and types',()=>{
+ const db=database();db.exec("CREATE TABLE core_migrations(piece TEXT, number INTEGER, sql TEXT); CREATE TABLE documents(id INTEGER PRIMARY KEY, body TEXT, count INTEGER); INSERT INTO documents VALUES (42,'private copy',7)");
+ registerExportTextRedactor(db,'documents',(table):Record<string,string>=>table==='documents'?{body:'public copy'}:{});
+ const restored=new Database(exportDatabaseImage(db).bytes);close.push(()=>restored.close());
+ expect(restored.prepare('SELECT *,typeof(count) AS kind FROM documents').get()).toEqual({id:42,body:'public copy',count:7,kind:'integer'});
+ expect(db.prepare('SELECT body FROM documents').get()).toEqual({body:'private copy'});
+ db.exec("CREATE TABLE labels(id TEXT PRIMARY KEY, body TEXT); INSERT INTO labels VALUES ('stable','words')");
+ registerExportTextRedactor(db,'documents',(table):Record<string,string>=>table==='labels'?{id:'changed'}:{});
+ expect(()=>exportDatabaseImage(db)).toThrow('preserve primary keys');
+ registerExportTextRedactor(db,'documents',(table):Record<string,string>=>table==='documents'?{count:'changed type'}:{});
+ expect(()=>exportDatabaseImage(db)).toThrow('preserve text storage');
 });

@@ -1,3 +1,4 @@
+import { rememberClockReceipt } from './private-export.js';
 import { installClockExecution } from './clock-execution.js';
 import type { Context } from '../../core/index.js';
 import { supportedClockPrompt } from './clock-input.js';
@@ -137,6 +138,7 @@ export function clockDelivery(app:Foundation,sharing:()=>Sharing,effects:Outside
       for(const row of rows)db.prepare('UPDATE runtime_clock_turns SET consumed=COALESCE(consumed,?) WHERE id=?').run(ctx.now,row.id);
       const keys=provenanceStore(db).read(job.conversation!)?.queue.map(row=>row.key)??[];
       provenanceStore(db).consumed(job.conversation!,keys.filter(key=>all.some(row=>key===row.id||key.startsWith(`${row.id}:person:`))));
+      rememberClockReceipt(ctx,job);
       ctx.changed('runtime.job',job.id);
   };
   operations.register(operation({name:'runtime.acknowledgeClockInput',doors:['http','direct'],write:true,recheckPolicy:true,

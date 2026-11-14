@@ -48,4 +48,8 @@ CREATE TABLE runtime_body_policy (agent TEXT PRIMARY KEY, record TEXT NOT NULL C
 -- Owning scheduled words and permanent delivery receipt; words never enter live records.
 CREATE TABLE runtime_clock_turns (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE, conversation TEXT NOT NULL, job TEXT NOT NULL REFERENCES runtime_jobs(id), record TEXT NOT NULL CHECK(json_valid(record)), released INTEGER, consumed INTEGER);
 CREATE INDEX runtime_clock_conversation ON runtime_clock_turns(conversation,seq);
+` }, { number: 12, sql: `
+-- Receipt ownership commits with Clock consumption; legacy wordless receipts
+-- cannot be attributed and are excluded from filtered exports.
+CREATE TABLE runtime_clock_receipts (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, expires INTEGER NOT NULL, job TEXT NOT NULL REFERENCES runtime_jobs(id), private INTEGER NOT NULL CHECK(private IN (0,1)), PRIMARY KEY(viewer,id));
 ` }];
