@@ -28,7 +28,7 @@ export interface SharedTasksProps {
   questionFor: string;
   select(id?: string): void;
   /** The composition opens a form; its authenticated operation supplies the actor. */
-  act(action: TaskAction, task?: Task): void;
+  act?(action: TaskAction, task?: Task): void;
   conversation?(id: string): void;
 }
 const labels: Record<TaskAction, string> = {create:'Create task',claim:'Claim',unclaim:'Unclaim',close:'Close',reopen:'Reopen',comment:'Comment',edit:'Edit',priority:'Priority',project:'Project',parent:'Parent',link:'Blockers',ask:'Ask a person'};
@@ -66,14 +66,14 @@ export function SharedTasks(props: SharedTasksProps) {
   })}</List> : <p>None</p>}</section>;
   return <Split label="Tasks" className="h-full" folders={folders} folder={folder} onFolder={setFolder}
     search={<label>Search tasks<Input type="search" value={query} onChange={e => setQuery(e.target.value)}/></label>}
-    listTitle="Tasks" listMeta={shown.length} listTop={<Button disabled={props.status !== 'live'} onClick={() => props.act('create')}>Create task</Button>}
+    listTitle="Tasks" listMeta={shown.length} listTop={<Button disabled={props.status !== 'live' || !props.act} onClick={() => props.act?.('create')}>Create task</Button>}
     list={props.status === 'loading' ? <Loading label="Opening tasks…"/> : props.status !== 'live' ? <Error text={props.status === 'denied' ? 'Sign in to see tasks.' : 'Waiting for connection.'}/> : <><List label="Task list">{shown.map(t => <Row key={t.id} title={t.title} meta={t.goal} status={`${t.id} · P${t.priority} · ${t.closeReason === 'cancelled' && t.status === 'closed' ? 'cancelled' : t.status.replace('_',' ')}`} selected={t.id === selected?.id} onClick={() => props.select(t.id)}/>)}</List>{!shown.length && <Empty title="No tasks here" text="Choose another folder or change your search."/>}</>}
     open={!!props.selected} onBack={() => props.select()} backLabel="Tasks" blank={<Empty title="Open a task" text="Choose work from the list."/>}
     reader={selected ? <article className="grid gap-5 p-5">
       <header><p>{selected.id} · {selected.type}</p><h1>{selected.title}</h1><p>{selected.status.replace('_',' ')} · P{selected.priority}{selected.project && ` · ${selected.project}`}</p></header>
       <p>Owner: {selected.ownerKind === 'household' ? 'Household' : `${selected.ownerKind} ${selected.owner}`}</p>
       {selected.assignee && <p>Assigned to {selected.assigneeKind} {selected.assignee}</p>}
-      <div role="group" aria-label="Task actions" className="flex flex-wrap gap-2">{actions(selected).map(action => <Button variant="outline" key={action} onClick={() => props.act(action,selected)}>{labels[action]}</Button>)}</div>
+      {props.act && <div role="group" aria-label="Task actions" className="flex flex-wrap gap-2">{actions(selected).map(action => <Button variant="outline" key={action} onClick={() => props.act?.(action,selected)}>{labels[action]}</Button>)}</div>}
       {([['Goal',selected.goal],['Why',selected.why],['Done when',selected.doneWhen],['Description',selected.description],['Question',selected.ask],['If yes',selected.ifYes],['If no',selected.ifNo],['Closed because',selected.closeReason]] as const).filter(([,value]) => value).map(([label,value]) => <section key={label}><h3>{label}</h3><p className="whitespace-pre-wrap break-words">{value}</p></section>)}
       {selected.sourceKind === 'conversation' && selected.sourceId && props.conversation && <Button variant="outline" onClick={() => props.conversation!(selected.sourceId!)}>From conversation</Button>}
       {relations('Parent',links.filter(l => l.task === selected.id && l.type === 'parent-child').map(l => l.dependsOn))}

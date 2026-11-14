@@ -45,6 +45,12 @@ existing operation/retry mechanism; these forms add no transport or registration
 On connection/access loss set status to loading, unavailable or denied, even if
 the client still holds cached arrays. The view then hides all tasks, detail,
 comments, project folders and write actions, and disables Create. Do not combine
-rows from different authorization snapshots. The view intentionally remains
-unmounted until root composition supplies the generated reads and write adapter;
-the existing registration remains in place until that replacement is complete.
+rows from different authorization snapshots. The registered Tasks screen now supplies the generated query snapshot through
+`useDataQuery`. The selection includes SQL `isReady` (all unfinished blockers,
+including hidden ones) and joined links/comments. It makes no legacy record
+subscription or detail/list request. The root supplies `submit`, authorized
+people/project choices, `questionFor`, and conversation navigation to TasksApp.
+Until the shared authenticated command adapter is bound, Create is disabled and
+row write controls are absent; no command is sent to a legacy operation.
+The websocket still needs mounting by root composition for the screen to receive
+its initial snapshot and changes.

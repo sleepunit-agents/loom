@@ -1,11 +1,11 @@
 import type Database from 'better-sqlite3';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { and, createTableRelationsHelpers, getOperators, getTableColumns, getTableName, is, Relations, type AnyColumn, SQL, sql } from 'drizzle-orm';
-import type { AnySQLiteTable } from 'drizzle-orm/sqlite-core';
+import { alias, type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { buildSchema } from 'drizzle-graphql';
-import { GraphQLError, GraphQLInt, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
-import { schema, tables, taskComments } from './schema.js';
+import { GraphQLError, GraphQLInt, GraphQLBoolean, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
+import { schema, tables, taskComments, taskLinks } from './schema.js';
 
 type TableName = keyof typeof tables;
 type Fields = Record<string, AnyColumn>;
@@ -74,15 +74,22 @@ export function dataQueries(client: Database.Database, options: {
     const fieldsSelected = selectedFields(sets, querySelection.getStore()!);
     return {
       ...config,
-      ...(name === 'tasks' && selected.has('taskComments') && fieldsSelected.has('commentCount') ? {
+      ...(name === 'tasks' && (fieldsSelected.has('isReady') || (selected.has('taskComments') && fieldsSelected.has('commentCount'))) ? {
         extras: (fields: Fields) => {
+          const extras: Record<string, SQL.Aliased> = {};
+          if (fieldsSelected.has('isReady')) {
+            const blocker = alias(tables.tasks, 'data_blocker');
+            const ready = sql`(${fields.status} = 'open' and ${fields.type} != 'epic' and not exists (select 1 from ${taskLinks} join ${tables.tasks} as ${sql.identifier('data_blocker')} on ${blocker.id} = ${taskLinks.dependsOn} where ${taskLinks.task} = ${fields.id} and ${taskLinks.type} = 'blocks' and ${blocker.status} != 'closed'))`;
+            extras.isReady = sql`${{ getSQL: () => ready }}`.mapWith(Boolean).as('data_is_ready');
+          }
+          if (!selected.has('taskComments') || !fieldsSelected.has('commentCount')) return extras;
           const allowed = visibility.taskComments!(getTableColumns(taskComments));
           if (!is(allowed, SQL)) throw new Error('SQL visibility required for taskComments');
           // Defer rendering past Drizzle's alias rewrite, as with row policies.
           // The parent fields are already aliased; the count's inner tables
           // and policy subqueries must retain their own column identities.
           const count = sql`(select count(*) from ${taskComments} where ${taskComments.task} = ${fields.id} and ${allowed})`;
-          return { commentCount: sql`${{ getSQL: () => count }}`.mapWith(Number).as('data_comment_count') };
+          return { ...extras, commentCount: sql`${{ getSQL: () => count }}`.mapWith(Number).as('data_comment_count') };
         },
       } : {}),
       where: (fields: Fields, operators: ReturnType<typeof getOperators>) => {
@@ -126,6 +133,11 @@ export function dataQueries(client: Database.Database, options: {
     if (!output || !isObjectType(output) || visited.has(output)) return;
     visited.add(output);
     const fields = output.getFields();
+    if (name === 'tasks') fields.isReady = {
+      name: 'isReady', type: new GraphQLNonNull(GraphQLBoolean), args: [],
+      description: 'Open non-epic task with no unfinished blocker, computed before visibility hides linked rows.',
+      resolve: row => row.isReady, extensions: {}, astNode: undefined, deprecationReason: undefined,
+    };
     if (name === 'tasks' && selected.has('taskComments')) fields.commentCount = {
       name: 'commentCount', type: new GraphQLNonNull(GraphQLInt), args: [],
       description: 'Number of visible comments on this task, counted in the same SQL statement.',
