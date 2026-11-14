@@ -119,7 +119,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
     await b.setViewportSize({width:1280,height:900});
     await b.getByRole('button',{name:/^FYI/}).click();
     await expect.poll(()=>b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).count()).toBe(1);
-    await b.getByRole('textbox',{name:'Search asks'}).fill('t-1 is closed');
+    await b.getByRole('searchbox',{name:'Search asks'}).fill('t-1 is closed');
     await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).click();
     await b.getByRole('heading',{name:'Check the completed work?',exact:true}).waitFor();
     expect(await yes(b).count()).toBe(0);
@@ -131,7 +131,7 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Inbox confirms asks, ans
       await b.screenshot({path:join(shots,`inbox-fyi-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     await b.setViewportSize({width:1280,height:900});
-    await b.getByRole('textbox',{name:'Search asks'}).fill('');
+    await b.getByRole('searchbox',{name:'Search asks'}).fill('');
     await b.getByRole('button',{name:/^Answered/}).click();
     expect(await b.locator('[data-split-row]').filter({hasText:'Check the completed work?'}).count()).toBe(0);
     await b.getByRole('button',{name:/^Needs you/}).click();
