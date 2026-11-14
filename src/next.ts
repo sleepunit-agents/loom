@@ -44,7 +44,7 @@ import type { HolderGeneration } from './pieces/secrets/local-holder.js';
 import { installDiscordDaemon, type DiscordDaemonOptions } from './pieces/bridges/discord-daemon.js';
 import { installSlackDaemon, type SlackDaemonOptions } from './pieces/bridges/slack-daemon.js';
 import { installBridges } from './pieces/bridges/index.js';
-import { installApprovals } from './pieces/approvals/index.js';
+import { connectApprovalAttention, installApprovals } from './pieces/approvals/index.js';
 import { installRunnerInput } from './pieces/runtime/input.js';
 import { installRuntime } from './pieces/runtime/index.js';
 import { clockRuntime } from './pieces/runtime/clock.js';
@@ -175,6 +175,15 @@ export async function installNext(app: Foundation, options: NextOptions) {
       } catch { return undefined; } // Unreadable metadata must preserve the asking fallback.
     },
   });
+  if (attentionSources) connectApprovalAttention(app.operations, () => attentionSources.approvals());
+  if (app.operations.has('approvals.reconcileAttention')) {
+    const reconcile = () => {
+      const pending = app.operations.call('direct', {kind:'service',id:'approvals'}, 'approvals.attentionPending', {});
+      return !pending.ok || !pending.value ? pending : app.operations.call('direct', {kind:'service',id:'approvals'}, 'approvals.reconcileAttention', {}, `approval-filing:${randomUUID()}`);
+    };
+    const result = reconcile();
+    if (!result.ok) console.warn(`Approval filing failed (${result.code})`);
+  }
   if (!app.operations.has('runtime.listBoxes')) installRuntime(app.db, app.operations, app.live, sharing, { credentials: centralRuntimeCredentials, privateStart:i=>conversations.privateStart(i)||bridgeBodies.privateStart(i) });
   if (!app.operations.has('secrets.houseRequest')) installHouseSecrets(app);
   if (!app.operations.has('changes.list')) {

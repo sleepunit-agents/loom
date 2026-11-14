@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- File pending Approvals in the new Inbox with exact source scope and owning decisions; keep private card wording in Approvals.
+
 - Check Clock lane reuse against current Runtime destination metadata; hold verified joins until conversation delivery can feed the existing body safely.
 - Preserve private ordinary schedule scope and bind body schedule controls and cancellation, including command receipt replay, to fresh Runtime conversation proof and current policy.
 - Resolve unique member-private Comms ownership as metadata and refuse ambiguous or deleted Runtime routes.
