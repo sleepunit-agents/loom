@@ -1,8 +1,10 @@
 import { expect, it } from 'vitest';
-import { gql } from '@urql/core';
+import { createClient, gql } from '@urql/core';
 import type { FormattedExecutionResult } from 'graphql';
 import type { Sink, SubscribePayload } from 'graphql-ws';
-import { applyDataPatch, generatedDataClient, type QueryTransport } from './client';
+import { cacheExchange } from '@urql/exchange-graphcache';
+import { filter, map, pipe } from 'wonka';
+import { dataCacheKeys, applyDataPatch, generatedDataClient, type QueryTransport } from './client';
 
 class Transport implements QueryTransport {
   feeds: { request: SubscribePayload; sink: Sink<FormattedExecutionResult> }[] = [];
@@ -69,4 +71,22 @@ it('shares one live selection between readers and does not release cached rows t
   expect(fresh.every(result => result.data === undefined)).toBe(true);
   wire.send(1, [{ path: [], removed: false, value: { tasks: [] } }]);
   expect(fresh.at(-1)?.data).toEqual({tasks:[]}); c.unsubscribe();
+});
+
+it('normalizes Comms messages by thread and sequence across selections', () => {
+  const messages = gql`query Messages($thread: String!) { commsMessages(thread: $thread) { thread seq words } }`;
+  const recent = gql`query Recent { recentMessages { thread seq words } }`;
+  const message = (thread: string, words: string) => ({__typename: 'CommsMessageView', thread, seq: 1, words});
+  const client = createClient({url:'/graphql', exchanges:[cacheExchange({keys:dataCacheKeys}), () => operations => pipe(operations, filter(operation => operation.kind === 'query'), map(operation => ({
+    operation,
+    data: !operation.variables?.thread
+      ? {recentMessages:[message('a','After')]}
+      : {commsMessages:[message(String(operation.variables.thread), operation.variables.thread === 'a' ? 'Before' : 'Separate')]},
+    stale:false, hasNext:false,
+  })))]});
+  client.query(messages, {thread:'a'}).subscribe(() => {});
+  client.query(messages, {thread:'b'}).subscribe(() => {});
+  client.query(recent, {}).subscribe(() => {});
+  expect(client.readQuery(messages, {thread:'a'})?.data).toMatchObject({commsMessages:[{thread:'a',seq:1,words:'After'}]});
+  expect(client.readQuery(messages, {thread:'b'})?.data).toMatchObject({commsMessages:[{thread:'b',seq:1,words:'Separate'}]});
 });
