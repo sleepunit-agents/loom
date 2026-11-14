@@ -18,6 +18,7 @@ import { runtimeStore } from './store.js';
 import { centralRuntimeCredentials } from './central-credentials.js';
 export const PRIVATE_BRIEF='Read the bound private conversation through runtime.readConversation. Reply through runtime.reply.';
 const id=z.string().min(1).max(200);
+type PreparedQuestion={ack:Awaited<ReturnType<Comms['ask']>>;valid:()=>boolean};
 const routing=z.object({thread:id,agent:id,member:id,conversation:id,seq:z.number().int().positive(),generation:z.number().int().min(0).max(1000).optional(),project:id.optional()}).strict();
 type Routing=z.infer<typeof routing>;
 const key=(m:DeliveryReceipt)=>JSON.stringify([m.agent,m.member,m.thread,m.conversation,m.seq,m.generation??0]);
@@ -183,7 +184,7 @@ export function conversationRuntime(app:Foundation, sharing:()=>Sharing, proof:(
    const ack=await comms!.ask(b.job.agent,b.binding.place,{id:source,question:i.question},
     {agent:b.job.agent,conversation:b.binding.id,valid});
    return {ack,valid};
-  },run(ctx,_i,prepared){if(!prepared.valid())throw new OperationError('denied','Body binding ended');const b=commsBody(ctx.viewer)!;hearJob(db,b.job.id,ctx.now);return prepared.ack;},
+  },run(ctx,_i,prepared){if(!(prepared as PreparedQuestion).valid())throw new OperationError('denied','Body binding ended');const b=commsBody(ctx.viewer)!;hearJob(db,b.job.id,ctx.now);return (prepared as PreparedQuestion).ack;},
  }));
  operations.register(operation({name:'runtime.conversationStatus',doors:['http','direct'],input:z.object({state:z.enum(['working','done']).optional()}).strict(),output:z.object({stop:z.boolean(),archived:z.boolean()}),
   may:v=>!!commsBody(v),run(ctx,i){const b=commsBody(ctx.viewer)!;hearJob(db,b.job.id,ctx.now);const status=comms!.status(b.job.agent,b.binding.place,i.state);
