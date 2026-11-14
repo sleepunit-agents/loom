@@ -93,7 +93,7 @@ export function installClock(db: Db, operations: Operations, live: Live, sharing
     return !!filed && (create(v, filed) || mayFilePrivateWork(v, { ...scope(filed),
       privateControl: !!filed.authorship?.conversation }, sharing()));
   };
-  const filedWork = <T extends Work>(v: Viewer, w: T): T => prepareFiling(v, w) as T | undefined
+  const filedWork = <T extends Work>(v: Viewer, w: T): T & Work => prepareFiling(v, w) as (T & Work) | undefined
     ?? (() => { throw new OperationError('denied', 'Work must retain its authenticated conversation scope'); })();
   const privateLocal=(w:Wake)=>w.member!==undefined && !!w.approval && !!filedLocal(db,w.approval);
   const get = (id: string) => wake(db, id) ?? (() => { throw new OperationError('not-found', 'Wake not found'); })();
