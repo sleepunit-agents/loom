@@ -211,3 +211,14 @@ it('preserves old raw timestamp ordering before normalizing digest dates',async(
   expect(f.load('attention_asks').find(a=>a.id===`${f.first}:1`).state).toBe('open');
   expect(f.load('attention_asks').find(a=>a.id===`${f.latest}:1`).state).toBe('resolved');
 });
+
+it.each(['attention_outcomes','attention_outcome_seen'])('refuses a first import into a home holding %s',async table=>{
+  const f=await setup(true);
+  if(table==='attention_outcomes')f.app.db.prepare('INSERT INTO attention_outcomes(id,member,record) VALUES (?,?,?)').run('held','alice','{"id":"held","member":"alice"}');
+  else f.app.db.prepare('INSERT INTO attention_outcome_seen VALUES (?,?)').run('held',1);
+  const held=f.app.db.prepare(`SELECT * FROM ${table}`).all();
+  expect(()=>importAttention(f.app.db,[f.path],f.scopes)).toThrow('destination must be empty');
+  expect(f.app.db.prepare(`SELECT * FROM ${table}`).all()).toEqual(held);
+  expect(f.app.db.prepare('SELECT * FROM attention_import').all()).toEqual([]);
+  expect(f.app.db.prepare('SELECT * FROM attention_conversations').all()).toEqual([]);
+});

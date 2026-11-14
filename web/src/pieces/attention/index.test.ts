@@ -8,8 +8,8 @@ import type { ReactElement } from 'react';
 type Node = { children: Array<Node|string>; props: Record<string, any> };
 import type { Ask } from './model';
 import type { Call, CallState, Result, Snapshot } from '../../data';
-const f = vi.hoisted(() => ({ snapshot: {records:[] as Ask[],status:'live'} as Snapshot<Ask>, listeners:new Set<()=>void>(), call:vi.fn(), privateCall:vi.fn(), markRead:vi.fn(), identity:{records:[{id:'jonathan',member:'jonathan'}],status:'live'} as Snapshot<any>, marks:{records:[],status:'live'} as Snapshot<any> }));
-vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>type==='household.preferences'?f.identity:type==='attention.readMark'?f.marks:f.snapshot),callOnce:(op:string,input:unknown)=>f.privateCall(op,input),call:(op:string,input:unknown)=>op==='attention.markRead'?f.markRead(op,input):f.call(op,input)}));
+const f = vi.hoisted(() => ({ snapshot: {records:[] as Ask[],status:'live'} as Snapshot<Ask>, listeners:new Set<()=>void>(), call:vi.fn(), privateCall:vi.fn(), markRead:vi.fn(), identity:{records:[{id:'jonathan',member:'jonathan'}],status:'live'} as Snapshot<any>, outcomes:{records:[],status:'live'} as Snapshot<any>, marks:{records:[],status:'live'} as Snapshot<any> }));
+vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>type==='household.preferences'?f.identity:type==='attention.readMark'?f.marks:type==='attention.outcome'?f.outcomes:f.snapshot),callOnce:(op:string,input:unknown)=>f.privateCall(op,input),call:(op:string,input:unknown)=>['attention.markRead','attention.readOutcome'].includes(op)?f.markRead(op,input):f.call(op,input)}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import InboxApp, { AskReader } from './index';
 import { inFolder, matches, listedAsks, decisionLink, safeHref } from './model';
@@ -28,7 +28,7 @@ const words=(n:Node|string):string=>typeof n==='string'?n:(n.children??[]).map(w
 const buttons=(label:string)=>tree!.root.findAllByType('button').filter((b:Node)=>words(b)===label);
 const click=async(label:string)=>act(async()=>{buttons(label)[0].props.onClick({preventDefault(){}});});
 async function publish(snapshot:Snapshot<Ask>) { await act(async()=>{f.snapshot=snapshot;f.listeners.forEach(fn=>fn());}); }
-beforeEach(()=>{f.markRead.mockReset().mockReturnValue({result:Promise.resolve({ok:true})});f.identity={records:[{id:'jonathan',member:'jonathan'}],status:'live'};f.marks={records:[],status:'live'};f.call.mockReset();f.privateCall.mockReset();f.listeners.clear();f.snapshot={records:[ask()],status:'live'};});
+beforeEach(()=>{f.markRead.mockReset().mockReturnValue({result:Promise.resolve({ok:true})});f.identity={records:[{id:'jonathan',member:'jonathan'}],status:'live'};f.marks={records:[],status:'live'};f.outcomes={records:[],status:'live'};f.call.mockReset();f.privateCall.mockReset();f.listeners.clear();f.snapshot={records:[ask()],status:'live'};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
 it('shows central needs, agent folders, answered history, full details and search, and clears the reader on scope loss',async()=>{
   const go=vi.fn();
@@ -357,4 +357,22 @@ it('routes sealed questions to their owning encrypted reader and opens reference
   await act(async()=>tree!.update(h(AskReader,{ask:answered,snapshot:{records:[answered],status:'live'},go})));
   await click('Open private reply');expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
   expect(text()).not.toContain('Private answer');
+});
+
+it('lists member action success and errors in FYI, filters Errors, opens and marks one read, and withdraws on disconnect',async()=>{
+  const go=vi.fn();
+  f.outcomes={status:'live',records:[{id:'ok',member:'jonathan',at:200,ok:true,text:'Create task: saved.',sourceLabel:'Tasks',page:'/p/tasks-preview'},
+    {id:'bad',member:'jonathan',at:300,ok:false,text:'Update task: could not be saved.',sourceLabel:'Tasks',page:'/p/tasks-preview'},
+    {id:'other',member:'bob',at:400,ok:true,text:'Another member outcome',sourceLabel:'Tasks',page:'/p/tasks-preview'}]};
+  await draw(h(InboxApp,{go,path:'/p/inbox-preview'}));
+  await click('FYI2');
+  expect(text()).toContain('Create task: saved.');expect(text()).toContain('Update task: could not be saved.');expect(text()).not.toContain('Another member outcome');
+  await click('Errors1');expect(text()).not.toContain('Create task: saved.');expect(text()).toContain('Update task: could not be saved.');
+  await act(async()=>tree!.root.findAllByProps({title:'Update task: could not be saved.'})[0].props.onClick());
+  expect(go).toHaveBeenCalledWith('/p/inbox-preview/outcome/bad');
+  await act(async()=>tree!.update(h(InboxApp,{go,path:'/p/inbox-preview/outcome/bad'})));
+  expect(f.markRead).toHaveBeenCalledWith('attention.readOutcome',{id:'bad'});
+  await click('Open Tasks');expect(go).toHaveBeenCalledWith('/p/tasks-preview');
+  await act(async()=>{f.outcomes={status:'offline',records:[]};f.listeners.forEach(fn=>fn());});
+  expect(text()).not.toContain('Update task: could not be saved.');
 });

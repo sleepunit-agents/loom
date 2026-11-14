@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Next Inbox retains member-private action success/error FYI for Tasks and central answers, with read marks and an Errors folder.
+
 - Add an explicit external dedicated secret-command worker with authenticated Runtime stop/history checks and drained shutdown, reusing the Claude worker control owner.
 
 - Read current sealed questions and send ephemeral private replies inline in next-mode Comms.
