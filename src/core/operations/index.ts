@@ -1,4 +1,4 @@
-import { unregisterBuiltinServices } from '../services.js';
+import { invalidateBuiltinServices, unregisterBuiltinServices } from '../services.js';
 import { createHash } from 'node:crypto';
 import type { z } from 'zod';
 import type { Db } from '../db/index.js';
@@ -88,6 +88,7 @@ export class Operations {
     if (!/^[a-z][a-z0-9_]*\.[a-z][a-zA-Z0-9_-]*$/.test(op.name) || this.ops.has(op.name)) throw new Error('invalid or duplicate operation');
     if (op.admit && (!op.write || !op.prepare || !op.recover)) throw new Error('Admission needs a prepared write and global recovery');
     this.ops.set(op.name, op);
+    invalidateBuiltinServices(this.db);
     if (op.write && op.recover) this.recoveries.add(op.recover);
   }
   /** Trusted in-process recovery from a piece's durable journal, without the
