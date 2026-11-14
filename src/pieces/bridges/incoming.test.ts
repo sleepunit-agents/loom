@@ -26,7 +26,7 @@ describe('shared-schema bridge ingress', () => {
     const f = fixture(platform);
     const row = f.ingress.receive(f.message);
     expect(row).toMatchObject({ state: 'delivered', member: 'jonathan', deliveredAt: f.now() });
-    expect(f.db.select().from(inbox).all()).toEqual([expect.objectContaining({ source: platform, sourceId: row.id, conversation: row.conversation, fromKind: 'person', fromId: 'jonathan', words: 'Friday?' })]);
+    expect(f.db.select().from(inbox).all()).toEqual([expect.objectContaining({ source: platform, sourceId: JSON.stringify(['w', 'room', 'm']), conversation: row.conversation, fromKind: 'person', fromId: 'jonathan', words: 'Friday?' })]);
     expect(f.db.select().from(turns).all()).toHaveLength(1);
     expect(f.ingress.receive(f.message)).toEqual(row);
     expect(f.db.select().from(turns).all()).toHaveLength(1);
@@ -71,10 +71,10 @@ describe('shared-schema bridge ingress', () => {
   it('holds disabled connections until explicit retry, without duplicating a turn', () => {
     const f = fixture();
     f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'c')).run();
-    expect(f.ingress.receive(f.message).state).toBe('held');
+    expect(f.ingress.receive(f.message)).toMatchObject({ state: 'held', reason: 'Connection disabled' });
     expect(f.db.select().from(inbox).all()).toHaveLength(0);
     f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'c')).run();
-    expect(f.ingress.receive(f.message).state).toBe('held');
+    expect(f.ingress.receive(f.message)).toMatchObject({ state: 'held', reason: 'Connection disabled' });
     expect(f.ingress.receive(f.message, true).state).toBe('delivered');
     f.ingress.receive(f.message, true);
     expect(f.db.select().from(turns).all()).toHaveLength(1);
@@ -87,6 +87,27 @@ describe('shared-schema bridge ingress', () => {
     f.db.update(bridgeConnections).set({ workspace: 'w2' }).where(eq(bridgeConnections.id, 'c')).run();
     f.ingress.receive({ ...f.message, id: 'workspace', mentions: ['bot-art'] });
     expect(f.db.select().from(conversations).all()).toHaveLength(4);
+  });
+  it('delivers a message seen by two connections for one agent only once', () => {
+    const f = fixture();
+    f.db.update(bridgeConnections).set({ agent: 'art' }).where(eq(bridgeConnections.id, 'peer')).run();
+    const message = { ...f.message, mentions: ['bot-art', 'bot-mark'] };
+    const first = f.ingress.receive(message);
+    const second = f.ingress.receive({ ...message, connection: 'peer' });
+    expect(second).toMatchObject({ state: 'delivered', conversation: first.conversation });
+    expect(f.db.select().from(bridgeIncoming).all()).toHaveLength(2);
+    expect(f.db.select().from(turns).all()).toHaveLength(1);
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  });
+  it('delivers the same place to separate agents when both are addressed', () => {
+    const f = fixture();
+    const message = { ...f.message, mentions: ['bot-art', 'bot-mark'] };
+    const art = f.ingress.receive(message);
+    const mark = f.ingress.receive({ ...message, connection: 'peer' });
+    expect(mark.conversation).not.toBe(art.conversation);
+    expect(f.db.select().from(conversations).all().map(c => c.agent).sort()).toEqual(['art', 'mark']);
+    expect(f.db.select().from(inbox).all().map(i => i.to).sort()).toEqual(['art', 'mark']);
+    expect(f.db.select().from(turns).all()).toHaveLength(2);
   });
   it('rolls back incoming and turn creation when inbox insertion fails', () => {
     const f = fixture();

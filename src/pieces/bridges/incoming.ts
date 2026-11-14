@@ -3,7 +3,7 @@
 import { and, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, inbox } from '../../core/data/schema.js';
 
 export interface IncomingMessage {
   /** Stable platform message id, scoped to this connection by the service. */
@@ -67,8 +67,14 @@ export class BridgeIncoming {
         conversation = opened.id;
         const fromKind = sender ? 'agent' : link ? 'person' : 'unknown';
         const fromId = sender?.agent ?? link?.member ?? null;
-        this.conversations.turn({ conversation, kind: 'message', fromKind, fromId });
-        this.conversations.send({ toKind: 'agent', to: connection.agent, conversation, source: connection.platform, sourceId: id, fromKind, fromId, words: message.text, refs: [id] });
+        // Two connections can speak for the same agent in the same place.
+        // Record both receipts, but deliver the platform message only once.
+        const sourceId = JSON.stringify([connection.workspace, message.channel, message.id]);
+        const delivered = this.db.select().from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.to, connection.agent), eq(inbox.source, connection.platform), eq(inbox.sourceId, sourceId))).get();
+        if (!delivered) {
+          this.conversations.turn({ conversation, kind: 'message', fromKind, fromId });
+          this.conversations.send({ toKind: 'agent', to: connection.agent, conversation, source: connection.platform, sourceId, fromKind, fromId, words: message.text, refs: [id] });
+        }
       }
       return this.db.update(bridgeIncoming).set({ state, reason, member: sender ? null : link?.member ?? null, conversation, deliveredAt: state === 'delivered' ? at : null }).where(eq(bridgeIncoming.id, row.id)).returning().get()!;
     });
