@@ -12,7 +12,7 @@ export async function startRuntimeSecretWorker(config:WorkerControlConfig,select
   config={...config};selection=structuredClone(selection);
   if(selection.jobs.length!==1||selection.jobs[0].binding.job!==config.job)throw failed();
   const expiresAt=selection.jobs[0].expiresAt;
-  const retained=owner?.current.bind(owner)??(()=>true),signal=owner?.signal;
+  const retained=owner?.current.bind(owner)??(()=>true),signal=owner?.signal,execution=owner?.execution;
   const current=()=>!signal?.aborted&&retained()===true;
   let worker:ReturnType<typeof startSecretWorker>|undefined,closing:Promise<void>|undefined;
   let control:Awaited<ReturnType<typeof connectWorkerControl>>|undefined;
@@ -26,7 +26,7 @@ export async function startRuntimeSecretWorker(config:WorkerControlConfig,select
   try {
     if(!current())throw failed();
     control=await connectWorkerControl(config,()=>{void worker?.close().catch(()=>{});},runtime,current);
-    if(owner?.execution){control.pinExecution(owner.execution);await control.fresh();}
+    if(execution){control.pinExecution(execution);await control.fresh();}
     if(!current()||!control.current())throw failed();
     const originalControl=control;
     worker=startSecretWorker(selection);

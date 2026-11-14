@@ -242,3 +242,25 @@ it('source retirement joins the actual child close before allowing exclusive slo
   released=true;if(lateChild&&lateArgs)Reflect.apply(delegate,lateChild,lateArgs);resumeReport();await running.catch(()=>{});
  }
 });
+it.each(['reportJob','finishJob'] as const)('atomically refuses an otherwise-valid input replacement immediately before %s',async name=>{
+ const f=await setup(),request=f.runtime.request;
+ f.runtime.request=async(...args)=>{
+  if(String(args[0]).endsWith('/'+name))f.app.db.prepare('UPDATE runtime_inputs SET brief=? WHERE job=?').run('Later valid brief',f.id);
+  return request(...args);
+ };
+ await expect(f.start()).rejects.toThrow();expect(f.store.read('job',f.id)!.state).not.toBe('done');
+ expect(f.calls.filter(c=>c.name===name)).toHaveLength(1);
+ expect(inspectWorkerReceipts(f.receipts)).toMatchObject([{phase:name==='reportJob'?'running-attempt':'finish-attempt'}]);
+});
+it('snapshots the dedicated worker execution assertion before its initial control read',async()=>{
+ const f=await setup(),call=runtimeJobTransport(f.controlConfig,f.runtime);
+ await call('claimJob',{job:f.id});const input=await call('takeInput',{job:f.id,pinUnbound:true}) as {execution:string};
+ let worker:Awaited<ReturnType<typeof startRuntimeSecretWorker>>|undefined,starting:Promise<Awaited<ReturnType<typeof startRuntimeSecretWorker>>>|undefined;
+ f.source.own(async()=>{await (worker??await starting?.catch(()=>undefined))?.close();});
+ const assignment=await f.source.claimed(f.id),owner={signal:f.source.signal,current:assignment.current,execution:input.execution},request=f.runtime.request;
+ let first=true;f.runtime.request=async(...args)=>{const response=await request(...args);if(first){first=false;owner.execution='0'.repeat(64);}return response;};
+ starting=startRuntimeSecretWorker(f.controlConfig,assignment.selection,f.runtime,owner);worker=await starting;closes.push(worker.close);
+ expect(await worker.delivery).toBe(true);await expect.poll(()=>existsSync(f.marker)).toBe(true);f.complete();expect(await worker.completed).toBe(true);
+ const pins=f.calls.filter(c=>c.name==='jobControl').map(c=>(c.body as {input:{execution?:string}}).input.execution).filter(Boolean);
+ expect(pins).toEqual([input.execution,input.execution]);
+});
