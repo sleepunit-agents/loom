@@ -1,3 +1,4 @@
+import { installVenueHistory } from './pieces/runtime/venue-history.js';
 import { privateRuntimeExport } from './pieces/runtime/private-export.js';
 import {startSecretWorkers, type SecretWorkersConfig} from './secret-worker-startup.js';
 import { replyAnnouncements } from './pieces/comms/role.js';
@@ -261,6 +262,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   notificationClosers.set(app,notifications.close);
   const clockBodies=clockDelivery(app,sharing,effects,v=>signin(app).agent(v));
   conversations.connectClock(clockBodies);
+  installVenueHistory(app,sharing,conversations.clockProvenance);
   if (!app.operations.has('clock.list')) {
     const jobs = installClock(app.db, app.operations, app.live, sharing, { provenance: conversations.clockProvenance, credentialService: conversations.clockCredentialService, caller: conversations.approvalCaller, capacityConversation: conversations.capacityConversation, runtime: clockRuntime(app, effects, clockDestination(app, sharing), clockBodies), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
     app.onClose(jobs.close);
