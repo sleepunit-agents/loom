@@ -9,6 +9,7 @@ import { FakeClock } from '../core/clock.js';
 import { installFixture, fixtureSharing } from '../fixture.js';
 import { installComms } from '../pieces/comms/index.js';
 import { loadKey } from '../pieces/comms/crypto.js';
+import { proveNextComms } from './comms-next-proof.js';
 import { draftKey } from '../../web/src/pieces/comms/drafts.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
@@ -26,6 +27,7 @@ it.runIf(chrome&&existsSync(join(root,'index.html')))('Comms sends once across t
  if(!first.ok)throw new Error('fixture failed');const place=(first.value as {thread:string}).thread;await comms.deliver('art',place,1);
  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
  try{
+  await proveNextComms(browser,root);
   const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await context.grantPermissions(['local-network-access'],{origin:loom.url});
   await context.route('**/*',async route=>{const url=new URL(route.request().url());if(url.pathname==='/live'||url.pathname.startsWith('/api/'))return route.continue();const path=url.pathname.startsWith('/app/')?resolve(root,url.pathname.slice(5)):join(root,'index.html');if(!path.startsWith(root+'/')||!existsSync(path))return route.fulfill({status:404,body:''});await route.fulfill({body:readFileSync(path),contentType:({'.js':'text/javascript','.css':'text/css','.html':'text/html','.woff2':'font/woff2'} as Record<string,string>)[extname(path)]??'application/octet-stream'});});
   const a=await context.newPage(),b=await context.newPage();await b.addInitScript(()=>{const sockets:WebSocket[]=[];Reflect.set(window,'__fixtureSockets',sockets);const Native=window.WebSocket;window.WebSocket=class extends Native{constructor(url:string|URL,protocols?:string|string[]){super(url,protocols);sockets.push(this);}};});await b.clock.install({time:clock.now()});await Promise.all([a.goto(`${loom.url}/p/comms-preview`),b.goto(`${loom.url}/p/comms-preview`)]);
