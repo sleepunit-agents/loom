@@ -44,6 +44,8 @@ it('seals the whole question and atomically publishes only a metadata projection
  const sealed=f.app.db.prepare('SELECT hash FROM comms_messages WHERE thread=? AND seq=?').get(f.place,r.seq) as {hash:string};
  expect(sealed.hash).toBe(f.key.hash(JSON.stringify({id:'question',question})));
  expect(batches).toContainEqual(expect.arrayContaining([{type:'message',id:`${f.place}/${r.seq}`},{type:'attention.ask',id:r.ref}]));
+ expect(await f.call('attention.get',{id:r.ref},{kind:'member',id:'other'} as never)).toMatchObject({ok:true,value:{member:'jonathan'}});
+ f.sharing.members.other.owner=false;
  expect(await f.call('attention.get',{id:r.ref},{kind:'member',id:'other'} as never)).toMatchObject({ok:false});
  expect(f.attention.raise(f.viewer,{id:r.ref,ask:'overwrite',source:{kind:'conversation',id:'fake'}},'overwrite')).toMatchObject({ok:false});
  expect(f.attention.resolve(f.viewer,{id:r.ref,reason:'overwrite'},'resolve')).toMatchObject({ok:false});
