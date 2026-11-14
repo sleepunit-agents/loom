@@ -175,3 +175,21 @@ it('returns a generic CLI refusal and closes resources when Comms crypto rejects
  expect(io.stderr).toHaveBeenCalledExactlyOnceWith('Verification refused; check snapshot, plan and migration home, and stop the destination daemon.\n');
  expect(bytes(f.home)).toEqual(before);const release=acquireHttpLock(f.home);release();
 });
+
+it('independently verifies retained and expired references and detects same-count ref corruption',async()=>{
+ const f=await fixture('',false),hh=new Database(join(f.source,'household.db')),old=new Database(join(f.source,'comms.db'));
+ try{
+  hh.exec('CREATE TABLE comms_refs(thread,ref,seq,pos,at)');hh.prepare('INSERT INTO comms_refs VALUES (?,?,?,?,?)').run('th:one','github:t-12/app#3',1,0,1000);
+  old.prepare('UPDATE comms_messages SET text=? WHERE seq=2').run(await f.key.seal('PRIVATE_WORDS t-42 note:pond/plan'));
+ }finally{hh.close();old.close();}
+ await createSnapshot(f.old,f.root);await runMigrationAll(f.root,f.home);
+ expect(await verifyMigration(f.root,f.home)).toMatchObject({status:'verified',differences:[]});
+ const db=new Database(join(f.home,'loom.db'));try{db.exec("UPDATE comms_refs SET pos=pos+1 WHERE ref='t-42'");}finally{db.close();}
+ const result=await verifyMigration(f.root,f.home);expect(result).toMatchObject({status:'different',differences:expect.arrayContaining([expect.objectContaining({piece:'comms',table:'comms_refs'})])});
+ expect(JSON.stringify(result)).not.toMatch(/PRIVATE_WORDS|t-42|pond\/plan/);
+});
+
+it('refuses a malformed optional reference table before creating a destination',async()=>{
+ const f=await fixture('',false),db=new Database(join(f.source,'household.db'));try{db.exec('CREATE TABLE comms_refs(thread,ref,seq,pos)');}finally{db.close();}
+ await createSnapshot(f.old,f.root);expect(()=>prepareMigrationPlan(f.root)).toThrow('Incomplete Comms source columns');expect(existsSync(f.home)).toBe(false);
+});

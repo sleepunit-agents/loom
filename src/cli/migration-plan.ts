@@ -173,6 +173,7 @@ export function prepareMigrationPlan(snapshot: string, supplied?: unknown): {
       'household.db': {
         comms_threads: ['id','agent','member','conversation','title','titled_by','project','pinned','archived','opened','last','read_seq','first_id','first_hash','stop','working_since'],
         comms_deleted: ['id','member','agent','at'],
+        comms_refs: ['thread','ref','seq','pos','at'],
       },
       'comms.db': {
         comms_messages: ['thread','seq','at','kind','sender','id','hash','text','card_json','run','delivered','step'],
