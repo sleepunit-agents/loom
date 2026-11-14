@@ -6,7 +6,7 @@ import {
  GraphQLBoolean, GraphQLEnumType, GraphQLError, GraphQLInt, GraphQLList,
  GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap,
 } from 'graphql/index.js';
-import { maySee, type Sharing, type Viewer } from '../../policy.js';
+import { maySee, type Sharing, type Viewer } from '../../core/index.js';
 import { knowledgeView } from './knowledge.js';
 
 /** The outside door supplies the authenticated viewer, never a query argument. */

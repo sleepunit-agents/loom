@@ -102,3 +102,73 @@ until its generator can implement independent aliases. The module wraps visibili
 SQL in a deferred SQLWrapper: Drizzle's relational alias rewrite must not change
 unrelated table columns inside policy subqueries. Tests cover the otherwise
 permissive rewrite at both root and connected tables.
+
+## Authenticated HTTP door
+
+`dataHttp(db, authenticate?)` is the Hono `/graphql` route, mounted by
+`listenNext` on its existing connection. It uses pinned GraphQL Yoga 6.1.0
+([Fetch server documentation](https://the-guild.dev/graphql/yoga-server/docs)).
+It accepts POST JSON only, refuses cross-origin browser requests (using the configured
+public origin behind a same-host TLS proxy), disables CORS,
+GraphiQL and batching, and sends `Cache-Control: no-store`. The generated schema
+has no mutations or subscriptions yet; SSE negotiation is explicitly refused.
+Subscriptions will use graphql-ws on the one websocket as consumers move.
+
+The first outside projection exposes Tasks, comments, links, projects and agent
+metadata. No session, token, passkey, plumbing or other table is reachable,
+including through reverse relations. Both task-link ends must be visible even
+if the request selects only their IDs. Tasks retain project precedence; a
+project task cannot be read merely because the caller owns its agent or is its
+member owner. General agent metadata uses project-or-owned-agent visibility.
+Sharing predicates execute in SQL on every request, including nested relations.
+Runner and outside service projections currently return 403, rather than being
+mistaken for trusted installed code.
+
+`dataAuthentication(db, now?)` resolves raw bearer tokens or the `loom_ui` cookie
+using SHA-256 fingerprints in the shared tables. Bearer takes precedence over
+cookies. It rechecks session existence, token identity, revocation, expiry and
+principal existence. Agent browser sessions last six hours; ordinary sessions
+use the existing thirty-day lifetime (the site specifies no ordinary lifetime).
+The route checks current authentication after parsing and again before releasing
+buffered results. Trusted composition may supply another authentication resolver;
+request input never supplies an identity or SQL policy. Installed services call
+the shared application services directly without credentials.
+
+This route does not initialise, import or migrate a database. The next root
+still has interim startup/installers; its fresh-schema startup and the separate
+real-data move must supply the approved shared database. No fallback reads of
+interim task/token/session tables are provided. The mounted-route test builds a
+fresh in-memory shared database, writes through `taskService`, and reads those
+same rows over actual HTTP; it does not touch a home or installed state.
+`tasks.commentCount` is a generated task output extension, also available on
+connected task rows when comments are selected in the query schema. A correlated
+SQL count uses the same comment visibility predicate and runs inside the one
+relational statement; it never issues per-task reads. Counts are current on each
+execution and independent of pagination/filtering on a separately selected comment
+relation. Scalar aliases, fragments and directives select the count as usual.
+An unrequested count adds no SQL work. Counts have no separate stored column,
+filter or order input. This output-only detail follows the site's example;
+filtering and sorting remain on the schema's real columns.
+
+Remaining on t-2235: other outside table projections, file-backed Memory roots,
+websocket deltas and normalized Tasks client, deleting replaced
+interim reads/tables, and configurable database providers.
+
+## Runtime account placement and quota windows
+
+The site specifies an account summary but is silent on providers with concurrent
+usage windows. `modelAccountWindows` (`model_account_windows`) stores one row per
+`(account, window)`, with `usage`, `usageReadAt`, `resetsAt`, `durationMs` and
+`reserve` (default 0.05). Unknown observation fields are NULL; consumers must not
+interpret them or a passed reset time as available capacity. Duration must be
+positive and finite; usage and reserve are fractions from zero to one. The
+account FK and composite key share observations across all agents, rather than
+keeping agent-local quota copies. The existing `modelAccounts` fields remain the
+site's account summary. Runtime owns ingestion and the capacity evaluator.
+
+`jobs.account` is a nullable FK to the account selected for a job, and
+`jobs.harness` is the selected harness name. Both may be absent before placement.
+Typed relations include `jobs.accountRow`, `modelAccounts.jobsByAccount`, and
+`modelAccounts.modelAccountWindowsByAccount`. These are schema additions for a
+fresh database, not a migration. They add no public GraphQL projection: exact
+account observations still require the account-owner/household-owner projection.
