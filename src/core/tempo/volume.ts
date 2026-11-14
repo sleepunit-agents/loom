@@ -51,10 +51,13 @@ export class InboxVolume {
     )).run();
   }
 
-  /** Run at startup and each quiet deadline. Returns the next deadline. */
-  expire(): number | undefined {
-    this.db.update(inbox).set({ volume: 'full', quietUntil: null }).where(and(ne(inbox.volume, 'full'), lte(inbox.quietUntil, new Date(this.clock.now()).toISOString()))).run();
-    return this.db.select({ until: inbox.quietUntil }).from(inbox).where(ne(inbox.volume, 'full')).all()
+  /** Run at startup and each quiet deadline. Returns the next deadline;
+   * notify subscriptions after an expiration actually changes stored volume. */
+  expire(changed?: () => void): number | undefined {
+    const expired = this.db.update(inbox).set({ volume: 'full', quietUntil: null }).where(and(ne(inbox.volume, 'full'), lte(inbox.quietUntil, new Date(this.clock.now()).toISOString()))).run().changes;
+    const next = this.db.select({ until: inbox.quietUntil }).from(inbox).where(ne(inbox.volume, 'full')).all()
       .reduce<number | undefined>((next, row) => row.until === null ? next : Math.min(next ?? Infinity, Date.parse(row.until)), undefined);
+    if (expired) changed?.();
+    return next;
   }
 }

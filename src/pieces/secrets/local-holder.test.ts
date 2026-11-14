@@ -13,7 +13,7 @@ import { configuredSecretHolder } from './holder-config.js';
 import { startLoom } from '../../foundation.js';
 import { fixture } from '../../fixture.js';
 import { SharingDatabase } from '../../core/household/sharing.js';
-import { secretUseRole } from './service.js';
+import { installSecretServices, secretUseRole } from './service.js';
 import { FakeClock } from '../../core/clock.js';
 import { githubSecrets } from '../changes/secrets.js';
 const homes: string[] = [], closes: (() => Promise<void>)[] = [];
@@ -44,6 +44,7 @@ it('decrypts persistent age ciphertext through real mutual TLS and current servi
   const clock=new FakeClock();
   const app=await startLoom({home:appHome,next:true,staging:true,clock,changes,stdout:()=>{}});closes.push(app.close);
   const sharing=()=>new SharingDatabase(app.db,appHome).sharing();
+  installSecretServices(app.db,app.operations,sharing);
   const role=githubSecrets(secretUseRole(app.db,changes.source,sharing,{kind:'service',id:'changes'},()=>clock.now(),app.live),changes.github);
   let seq=0;
   const call=(name:string,input:unknown)=>app.operations.call('direct',{kind:'member',id:'jonathan'},`secrets.${name}`,input,`local-${++seq}`);
@@ -100,7 +101,7 @@ it('next-root Changes job acquires through the local holder; staging holds acqui
     const app=await startLoom({home:appHome,next:true,staging,clock,stdout:()=>{},changes:{source:localSecretSource(client),github:{acme:'github'},request:request as typeof fetch}});closes.push(app.close);
     app.db.transaction(()=>new SharingDatabase(app.db,appHome).create({slug:'holder-test',name:'Holder test',repositories:['acme/app'],members:[],agents:['art']}))();
     expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.describe',{name:'github',description:''},'name').ok).toBe(true);
-    expect(app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.grantService',{service:'changes',name:'github'},'grant').ok).toBe(true);
+    expect(app.db.prepare('SELECT * FROM secrets_grants').all()).toEqual([]);
     clock.advance(1);
     await vi.waitFor(()=>expect(app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get()).toBeDefined());
     const status=app.db.prepare("SELECT value FROM changes_meta WHERE key='sync-status'").get() as {value:string};

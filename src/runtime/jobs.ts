@@ -96,7 +96,7 @@ export class Jobs {
         if (depth >= 3) return { job };
       }
       const { id: _id, ...snapshot } = before;
-      const retry = this.db.insert(jobs).values({ ...snapshot, id: `job-${randomUUID()}`, state: 'queued', box: null,
+      const retry = this.db.insert(jobs).values({ ...snapshot, id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
         retryOf: id, retryAt: new Date(Date.parse(at) + 1000 * 2 ** depth).toISOString(), queuedAt: at,
         claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, logTail: null,
       }).returning().get();
