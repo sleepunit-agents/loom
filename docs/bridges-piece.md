@@ -1326,3 +1326,30 @@ webhook/notification/budget/note behavior from retired old process mechanisms
 and still-required cleanup of obsolete next-side raw receiving identities.
 It includes source fidelity gaps and move acceptance evidence; none of the
 remaining semantic behavior is completed by retaining importer metadata.
+
+## Raw receipt retention daemon
+
+Next mode installs `raw-retention.ts` after Bridges migrations, independently of
+platform credentials, current setup, receiving identities and staging. Startup
+and each subsequent minute expire at most 64 oldest pending receipts per platform
+whose immutable receipt time is more than one hour old. Exactly one hour remains
+eligible. Migration 006 adds partial age/id indexes over pending rows; permanent
+tombstones do not accumulate in the expiry scan. Backlogs take additional minute
+passes; missed ticks coalesce into one bounded pass after suspension.
+
+Expiry changes only raw `event` to null and `state` to consumed in one transaction
+across both platforms. Receipt IDs, receiving identity, original receipt time and
+Discord checkpoints remain. Repeated events cannot recreate erased words through
+`INSERT OR IGNORE`. Younger current or replaced identities remain recoverable;
+this age rule does not classify an identity as permanently obsolete. Already
+started normalization may finish from its in-memory copy, as before. Normalized
+receipts/outbox, Runtime turns and jobs are untouched. This is logical erasure,
+not forensic removal from SQLite pages or WAL. No old-side data is read or erased.
+
+Failures roll back the pass, emit a fixed warning without exception text, and
+retry on the next minute. Shutdown cancels the timer and fences queued work.
+`raw-retention.test.ts` covers actual next startup/restart (including staging and
+no credentials), exact boundary/young-row preservation, tombstones/checkpoints,
+per-pass limits, coalescing, partial-index plans, atomic failure/retry and shutdown.
+Permanent obsolete-binding/checkpoint cleanup still needs its separate lifecycle
+and outstanding-work reconciliation; this sweep does not close that required row.
