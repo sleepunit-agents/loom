@@ -117,3 +117,29 @@ it('never caches a completed batch across calls',async()=>{
  const first=await transport.fetch(),second=await transport.fetch();
  expect(first[0].bytes).not.toBe(second[0].bytes);expect(f.request).toHaveBeenCalledTimes(2);expect(f.secrets.withValue).toHaveBeenCalledTimes(2);
 });
+
+it.each(['failure','authority','timeout'] as const)('erases intermediate chunk copies after streaming %s',async phase=>{
+ vi.useFakeTimers();const f=fixture(),chunk=new Uint8Array([91,92,93]),owned:Buffer[]=[];
+ const from=vi.spyOn(Buffer,'from');let reads=0,cancelled=false;
+ f.request.mockResolvedValue({status:200,redirected:false,headers:new Headers({'content-type':'image/jpeg'}),body:{getReader:()=>({
+  async read(){
+   if(++reads===1)return {done:false,value:chunk};
+   owned.push(...from.mock.results.flatMap(r=>r.type==='return'&&Buffer.isBuffer(r.value)&&r.value.length===3&&r.value[0]===91?[r.value]:[]));
+   if(phase==='failure')throw Error('private upstream failure');
+   if(phase==='authority'){f.hold();return {done:true};}
+   return new Promise(()=>{});
+  },cancel:async()=>{cancelled=true;},
+ })}} as unknown as Response);
+ try{
+  const result=f.fetch(),check=expect(result).rejects.toThrow(/^Bridge file fetch held$/);
+  await vi.advanceTimersByTimeAsync(phase==='timeout'?15000:0);await check;
+  expect(owned).toHaveLength(1);expect(owned[0].every(byte=>byte===0)).toBe(true);expect(cancelled).toBe(true);
+ }finally{from.mockRestore();}
+});
+it('uses one total deadline across slow headers and stalled streaming',async()=>{
+ vi.useFakeTimers();const f=fixture();let cancelled=false,finished=false;
+ f.request.mockImplementation(()=>new Promise(resolve=>setTimeout(()=>resolve(new Response(new ReadableStream({cancel(){cancelled=true;}}))),5000)));
+ const pending=f.fetch();void pending.catch(()=>{finished=true;});const check=expect(pending).rejects.toThrow(/^Bridge file fetch held$/);
+ await vi.advanceTimersByTimeAsync(14999);expect(finished).toBe(false);
+ await vi.advanceTimersByTimeAsync(1);await check;expect(cancelled).toBe(true);expect(vi.getTimerCount()).toBe(0);
+});

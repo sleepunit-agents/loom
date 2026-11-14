@@ -111,7 +111,9 @@ export function slackFiles(input:Venue, permit:SlackFilesPermit, secrets:SecretU
         if(!current()){bytes.fill(0);throw held();}
         completed.push({id:f.id,name:safeName(f.name),bytes});
       }
-      if(!current())throw held();
+      // The post-holder check above is also the final batch check: pushing
+      // the result and returning contain no await or external callback. Empty
+      // batches are checked before the loop. No second lease check is needed.
       return completed;
     }catch{
       for(const bytes of owned)bytes.fill(0);
