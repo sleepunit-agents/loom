@@ -113,7 +113,7 @@ it('binds handoff before key history commits and rejects authenticated work unti
  try {expect(existsSync(f.config.handoff.listen.socket)).toBe(true);await expect(client.handTo(randomUUID())).rejects.toThrow();expect(claims).not.toHaveBeenCalled();expect(existsSync(join(f.config.directory,'holder.db'))).toBe(false);}
  finally {resume();await starting;}
 });
-it('shutdown fences a held read, drains its route and source before closing storage',async()=>{
+it('shutdown fences a held read and reports lost settlement ack after draining route and storage',async()=>{
  const f=await setup(),actual=storage.openHolderStore;let entered!:()=>void,resume!:()=>void;
  const ready=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{resume=r;});let bytes:Uint8Array|undefined;
  const closed=vi.fn();
@@ -125,12 +125,15 @@ it('shutdown fences a held read, drains its route and source before closing stor
  let retired=false;
  const end=ServerResponse.prototype.end;
  vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
-  const value=end.apply(this,args);if(this.req.url?.endsWith('/uncertain'))retired=true;return value;
+  if(this.req.url?.endsWith('/uncertain')){retired=true;this.destroy();return this;}
+  return end.apply(this,args);
  });
- const holder=await f.start();await f.put();const id=await f.admit();const delivery=f.admission.dispatch().catch(e=>e);await ready;
+ const holder=await startPersistentHolder(f.file);closes.push(async()=>{await holder.close().catch(()=>{});});
+ await f.put();const id=await f.admit();const delivery=f.admission.dispatch().catch(e=>e);await ready;
  const first=holder.close(),second=holder.close();expect(second).toBe(first);expect(closed).not.toHaveBeenCalled();
+ void first.catch(()=>{});
  try {await vi.waitFor(()=>expect(retired).toBe(true));expect(f.app.db.prepare('SELECT state FROM secrets_tickets WHERE id=?').get(id)).toEqual({state:'uncertain'});}
- finally {resume();await first;}
+ finally {resume();await expect(first).rejects.toThrow('Persistent secret holder could not close');}
  expect(await delivery).toBeInstanceOf(Error);expect(f.received).toEqual([]);expect(closed).toHaveBeenCalledOnce();
 });
 
@@ -321,7 +324,7 @@ it.each([false,true])('inherited owner selects configured holder peers only and 
  f.config.handoff.workers=[];Object.assign(f.config.handoff,{ownerPeers});f.save();
  const {parent,child}=pair();
  const server=serveHolderOwner(child,()=>startPersistentHolder(f.file,true));
- const client=holderOwner(parent);closes.push(async()=>{client.abort();await server.close();await server.done.catch(()=>{});});
+ const client=holderOwner(parent);closes.push(async()=>{client.abort();await server.close().catch(()=>{});await server.done.catch(()=>{});});
  await client.ready;await client.replaceWorkers(selected);await f.put();const id=await f.admit();
  if(staging)await expect(f.admission.dispatch()).rejects.toThrow();else await f.admission.dispatch();
  expect(f.received).toEqual(staging?[]:['SYNTHETIC-PERSISTENT-HANDOFF']);
@@ -335,17 +338,49 @@ it('inherited owner cannot add an unconfigured peer and lost channel closes actu
  const f=await setup(),selected=structuredClone(f.config.handoff.workers);
  f.config.handoff.workers=[];Object.assign(f.config.handoff,{ownerPeers:selected.map(({config,fingerprint})=>({config,fingerprint}))});f.save();
  const {parent,child}=pair(),server=serveHolderOwner(child,()=>startPersistentHolder(f.file,true)),client=holderOwner(parent);
- closes.push(async()=>{client.abort();await server.close();await server.done.catch(()=>{});});
+ closes.push(async()=>{client.abort();await server.close().catch(()=>{});await server.done.catch(()=>{});});
  await client.ready;
  await expect(client.replaceWorkers([{...selected[0],fingerprint:f.fingerprint('stranger')}])).rejects.toThrow('Secret holder owner unavailable');
  await expect(server.done).rejects.toThrow();expect(existsSync(f.config.read.socket)).toBe(false);expect(existsSync(f.config.mutation.socket)).toBe(false);
  expect(existsSync(f.config.handoff.listen.socket)).toBe(false);
 });
-it.each(['no-peers','bound-startup','legacy-mode','duplicate-peer'])('owned startup refuses %s before opening holder storage',async kind=>{
+it.each(['no-peers','bound-startup','legacy-mode','duplicate-peer','peer-tls','peer-directory','peer-alias'])('owned startup refuses %s before opening holder storage',async kind=>{
  const f=await setup(),selected=structuredClone(f.config.handoff.workers);
+ const peers=selected.map(({config,fingerprint})=>({config,fingerprint}));
+ if(kind==='peer-tls')peers[0].config.key=join(f.home,'absent.key');
+ if(kind==='peer-directory') {const directory=join(f.home,'public-owner');mkdirSync(directory,{mode:0o755});chmodSync(directory,0o755);peers[0].config.socket=join(directory,'worker.sock');}
+ if(kind==='peer-alias')peers[0].config.socket=f.home+'/./input.sock';
  if(kind!=='bound-startup')f.config.handoff.workers=[];
- if(kind!=='no-peers')Object.assign(f.config.handoff,{ownerPeers:selected.map(({config,fingerprint})=>({config,fingerprint}))});
- if(kind==='duplicate-peer')Object.assign(f.config.handoff,{ownerPeers:[selected[0],selected[0]].map(({config,fingerprint})=>({config,fingerprint}))});
+ if(kind!=='no-peers')Object.assign(f.config.handoff,{ownerPeers:peers});
+ if(kind==='duplicate-peer')Object.assign(f.config.handoff,{ownerPeers:[peers[0],peers[0]]});
  f.save();await expect(startPersistentHolder(f.file,kind!=='legacy-mode')).rejects.toThrow('Persistent secret holder could not start');
  expect(existsSync(join(f.config.directory,'holder.db'))).toBe(false);
+});
+
+it.each(['claim','settlement'] as const)('inherited replacement joins actual pending %s and withholds uncertain success ack',async phase=>{
+ const f=await setup(),selected=structuredClone(f.config.handoff.workers);
+ f.config.handoff.workers=[];Object.assign(f.config.handoff,{ownerPeers:selected.map(({config,fingerprint})=>({config,fingerprint}))});f.save();
+ const {parent,child}=pair(),server=serveHolderOwner(child,()=>startPersistentHolder(f.file,true)),client=holderOwner(parent);
+ closes.push(async()=>{client.abort();await server.close().catch(()=>{});await server.done.catch(()=>{});});
+ await client.ready;await client.replaceWorkers(selected);await f.put();await f.admit();
+ let entered!:()=>void,resume!:()=>void;const ready=new Promise<void>(r=>{entered=r;}),hold=new Promise<void>(r=>{resume=r;});
+ const end=ServerResponse.prototype.end;
+ vi.spyOn(ServerResponse.prototype,'end').mockImplementation(function(this:ServerResponse,...args:Parameters<ServerResponse['end']>){
+  if(phase==='claim'&&this.req.url?.endsWith('/claim')) {entered();void hold.then(()=>end.apply(this,args));return this;}
+  if(phase==='settlement'&&this.req.url?.endsWith('/uncertain')) {entered();void hold.then(()=>this.destroy());return this;}
+  if(phase==='settlement'&&this.req.url?.endsWith('/current')){readEntered();void readHold.then(()=>end.apply(this,args));return this;}
+  return end.apply(this,args);
+ });
+ let readEntered!:()=>void,readResume!:()=>void;const reading=new Promise<void>(r=>{readEntered=r;}),readHold=new Promise<void>(r=>{readResume=r;});
+ // Hold the actual HTTP response, never replace the original proof capability.
+ const delivery=f.admission.dispatch().catch(e=>e);
+ if(phase==='claim')await ready;else await reading;
+ let acknowledged=false;const replacing=client.replaceWorkers([]).then(()=>{acknowledged=true;});void replacing.catch(()=>{});
+ if(phase==='settlement')await ready;
+ await new Promise<void>(r=>setImmediate(r));expect(acknowledged).toBe(false);
+ resume();readResume();
+ if(phase==='claim')await replacing;
+ else {await expect(replacing).rejects.toThrow('Secret holder owner unavailable');await expect(server.done).rejects.toThrow();}
+ expect(await delivery).toBeInstanceOf(Error);expect(f.received).toEqual([]);
+ expect(child.messages.filter(m=>(m as {op:string}).op==='replaced')).toHaveLength(phase==='claim'?2:1);
 });

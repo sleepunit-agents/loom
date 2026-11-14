@@ -1337,3 +1337,14 @@ installed file or deployment is activated. The remaining source supervisor
 must retain the original daemon/source/worker capabilities, launch and join
 separate processes and preserve the single-use Runtime job proof throughout.
 The recovery boundary described above remains a separate outstanding duty.
+
+Retirement also joins claims whose original daemon acquisition is still in
+flight. A lost abandonment/settlement acknowledgement is sticky: the routing
+controller fences every generation and rejects replacement/close rather than
+claiming a successful ownership transfer. The holder still drains its other
+resources. An already uncertain central ticket does not justify reconstructing
+or retrying the original settlement proof. In particular, shutdown racing a
+central settlement can drain storage successfully while returning a generic
+failure; the owner must preserve that uncertainty instead of accepting a new
+routing generation. Invalid traffic during a held shutdown suppresses its
+success acknowledgement too.

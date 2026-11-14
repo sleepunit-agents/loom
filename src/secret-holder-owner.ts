@@ -16,8 +16,8 @@ const failed=()=>new Error('Secret holder owner unavailable');
 export interface HolderOwnerChannel {
   readonly connected:boolean;
   send(message:unknown,callback:(error:Error|null)=>void):boolean;
-  on(event:'message'|'disconnect'|'error',listener:(...args:any[])=>void):unknown;
-  off(event:'message'|'disconnect'|'error',listener:(...args:any[])=>void):unknown;
+  on(event:'message'|'disconnect'|'error',listener:(value?:unknown)=>void):unknown;
+  off(event:'message'|'disconnect'|'error',listener:(value?:unknown)=>void):unknown;
   disconnect():void;
 }
 interface OwnedHolder {
@@ -39,14 +39,18 @@ export function serveHolderOwner(channel:HolderOwnerChannel,start:()=>Promise<Ow
     // Fence the original owner immediately, before joining a held replacement.
     // Waiting for its ack first would leave that generation live on channel loss.
     if(holder)void retire().catch(()=>{});
-    return closing??=(async()=>{
+    if(!closing) {
+    closing=(async()=>{
       let ok=clean;
       try {await startup;}catch {ok=false;}
       try {await pending;}catch {ok=false;}
       try {await retire();}catch {ok=false;}
       detach();try {if(channel.connected)channel.disconnect();}catch {ok=false;}
-      if(ok&&!fault)finish();else reject(failed());
+      if(ok&&!fault)finish();else {reject(failed());throw failed();}
     })();
+    void closing.catch(()=>{});
+    }
+    return closing;
   };
   const send=(value:z.infer<typeof reply>)=>new Promise<void>((yes,no)=>{
     try {if(!channel.connected)throw failed();channel.send(value,error=>error?no(failed()):yes());}catch {no(failed());}
@@ -64,7 +68,7 @@ export function serveHolderOwner(channel:HolderOwnerChannel,start:()=>Promise<Ow
       }else {
         // The close acknowledgement is sent only after every original route,
         // listener, transport and storage owner has joined retirement.
-        stopped=true;await retire();cleanClose=true;await send({op:'closed',seq});
+        stopped=true;await retire();if(fault)throw failed();cleanClose=true;await send({op:'closed',seq});
       }
     })();
     void pending.then(()=>{if(command.op==='close')void close(true);},()=>{void close();});

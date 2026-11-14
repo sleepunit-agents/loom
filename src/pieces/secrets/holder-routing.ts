@@ -44,15 +44,18 @@ export function managedHolderAuthority(
   };
   let routes = snapshot(configured), generation = 0, closed = false;
   let closing: Promise<void> | undefined;
+  let uncertain=false;
   const retained = new Set<() => Promise<void>>();
   const draining = new Set<Promise<void>>();
+  const acquiring = new Set<Promise<unknown>>();
   const retire = async () => {
     const abandoned = [...retained];
     retained.clear();
     const pending = abandoned.map(abandon => abandon());
-    await Promise.allSettled([...pending, ...draining]);
+    const outcomes=await Promise.allSettled([...pending, ...draining, ...acquiring]);
+    if(uncertain||outcomes.some(result=>result.status==='rejected'))throw failed();
   };
-  const authority: HolderHandoffAuthority = async id => {
+  const acquire: HolderHandoffAuthority = async id => {
     if (closed) return null;
     const original = generation;
     let claim: RemoteTicketClaim | null;
@@ -65,7 +68,11 @@ export function managedHolderAuthority(
       abandoned = true; // Consume before IO, even when settlement loses its ack.
       retained.delete(abandon);
       const pending = (async () => {
-        try { await claim.finish(false); } catch { throw failed(); }
+        try { await claim.finish(false); } catch {
+          // Lost settlement is sticky. A new equal route cannot repair the
+          // original receipt or make this controller safe to transfer again.
+          uncertain=true;closed=true;generation++;routes.clear();throw failed();
+        }
       })();
       draining.add(pending);
       void pending.then(() => draining.delete(pending), () => draining.delete(pending));
@@ -110,6 +117,13 @@ export function managedHolderAuthority(
       try { await abandon(); } catch { /* never reconstruct or retry */ }
       return null;
     }
+  };
+  const authority:HolderHandoffAuthority=id=>{
+    // Register before returning to the event loop. Retirement must also join
+    // claims not yet acquired, whose original generation will be abandoned.
+    const pending=acquire(id);acquiring.add(pending);
+    void pending.then(()=>acquiring.delete(pending),()=>acquiring.delete(pending));
+    return pending;
   };
   return Object.freeze({authority,
     async replace(configured: readonly HolderWorkerRoute[]) {

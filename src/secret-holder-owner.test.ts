@@ -12,7 +12,7 @@ afterEach(async()=>{for(const f of cleanups.splice(0).reverse())await f();vi.use
 async function setup(){
   const {parent,child}=pair(),replaceOwnedWorkers=vi.fn(async(_workers:unknown)=>{}),close=vi.fn(async()=>{});
   const server=serveHolderOwner(child,async()=>({replaceOwnedWorkers,close}));
-  const client=holderOwner(parent);cleanups.push(async()=>{client.abort();await server.close();await server.done.catch(()=>{});});
+  const client=holderOwner(parent);cleanups.push(async()=>{client.abort();await server.close().catch(()=>{});await server.done.catch(()=>{});});
   await client.ready;return {parent,child,replaceOwnedWorkers,close,server,client};
 }
 it('carries binding and peer pin only, joins replacement before ack, and closes original holder',async()=>{
@@ -21,7 +21,8 @@ it('carries binding and peer pin only, joins replacement before ack, and closes 
   const selected=worker(),original=structuredClone(selected);
   let acknowledged=false;const replacing=f.client.replaceWorkers([selected]).then(()=>{acknowledged=true;});
   selected.binding.claimedAt=99;selected.fingerprint='bad';selected.config.key='SENTINEL-KEY';
-  await entered.promise;expect(acknowledged).toBe(false);
+  await entered.promise;await new Promise<void>(resolve=>setImmediate(resolve));expect(acknowledged).toBe(false);
+  expect(f.child.messages).toEqual([{op:'ready',seq:0}]);
   expect(f.replaceOwnedWorkers).toHaveBeenCalledWith([{binding:original.binding,fingerprint}]);
   expect(JSON.stringify(f.parent.messages)).not.toMatch(/private|SENTINEL|config|key/);
   hold.resolve();await replacing;
@@ -32,7 +33,7 @@ it('joins late startup after original channel loss',async()=>{
   const {parent,child}=pair(),entered=deferred(),hold=deferred(),close=vi.fn(async()=>{});
   const server=serveHolderOwner(child,async()=>{entered.resolve();await hold.promise;return {close,replaceOwnedWorkers:vi.fn()};});
   const client=holderOwner(parent);await entered.promise;client.abort();
-  let joined=false;const stopping=server.close().then(()=>{joined=true;});
+  let joined=false;const stopping=server.close().then(()=>{joined=true;},()=>{joined=true;});
   await Promise.resolve();expect(joined).toBe(false);hold.resolve();await stopping;
   await expect(server.done).rejects.toThrow('Secret holder owner unavailable');expect(close).toHaveBeenCalledOnce();
   expect(child.messages).toEqual([]);
@@ -100,6 +101,7 @@ it('never acknowledges failed holder shutdown or reuses its channel',async()=>{
   const f=await setup();f.close.mockRejectedValue(new Error('PRIVATE-CLOSE'));
   const pending=f.client.close();await expect(pending).rejects.toThrow('Secret holder owner unavailable');
   await expect(f.server.done).rejects.toThrow('Secret holder owner unavailable');
+  await expect(f.server.close()).rejects.toThrow('Secret holder owner unavailable');
   expect(f.child.messages).toEqual([{op:'ready',seq:0}]);expect(f.client.close()).toBe(pending);
   await expect(f.client.replaceWorkers([])).rejects.toThrow();
 });
@@ -120,6 +122,14 @@ it('times out missing startup ack without sending a route selection',async()=>{
 it('joins original holder close after local signal-style shutdown',async()=>{
   const f=await setup();await f.server.close();await expect(f.server.done).resolves.toBeUndefined();
   expect(f.close).toHaveBeenCalledOnce();await expect(f.client.replaceWorkers([])).rejects.toThrow();
+});
+it.each(['duplicate','malformed'])('withholds close ack after %s command poisons held shutdown',async kind=>{
+  const f=await setup(),entered=deferred(),hold=deferred();f.close.mockImplementation(async()=>{entered.resolve();await hold.promise;});
+  const pending=f.client.close();void pending.catch(()=>{});await entered.promise;
+  f.parent.send(kind==='duplicate'?{op:'close',seq:1}:{op:'read',seq:2},()=>{});
+  await new Promise<void>(resolve=>setImmediate(resolve));hold.resolve();
+  await expect(pending).rejects.toThrow();await expect(f.server.done).rejects.toThrow();
+  expect(f.child.messages).toEqual([{op:'ready',seq:0}]);expect(f.close).toHaveBeenCalledOnce();
 });
 it('packaged owned entrypoint refuses an absent inherited channel and mixed legacy arguments',async()=>{
   const connected=process.connected,stderr=vi.fn();

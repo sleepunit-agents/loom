@@ -90,7 +90,9 @@ it.each(['claim','current','delivery'] as const)('fences replacement across pend
  const replacement=setup();
  const acquiring=c.authority(randomUUID());
  if(phase==='claim'){
-  await c.replace([{binding:f.binding,transport:replacement.transport}]);release();expect(await acquiring).toBeNull();
+  let joined=false;const replacing=c.replace([{binding:f.binding,transport:replacement.transport}]).then(()=>{joined=true;});
+  await new Promise<void>(resolve=>setImmediate(resolve));expect(joined).toBe(false);
+  release();await replacing;expect(await acquiring).toBeNull();
  }else{
   const d=(await acquiring)!;
   if(phase==='current')f.claim.current.mockImplementationOnce(async()=>{await wait;return true;});
@@ -162,7 +164,7 @@ it('sanitizes direct abandonment errors and never retries their settlement',asyn
  const f=setup(),c=managedHolderAuthority(f.tickets,f.configured),d=(await c.authority(randomUUID()))!;
  f.claim.finish.mockRejectedValueOnce(Error('PRIVATE-SETTLEMENT-SENTINEL'));
  await expect(d.abandon()).rejects.toThrow(/^Secret handoff unavailable$/);
- await d.abandon();await c.close();expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
+ await d.abandon();await expect(c.close()).rejects.toThrow(/^Secret handoff unavailable$/);expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
 });
 it('empty replacement refuses fresh claims and changed routes use only the new transport',async()=>{
  const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
@@ -188,5 +190,25 @@ it.each(['false','reject'] as const)('standalone %s proof abandons once before r
  f.claim.finish.mockRejectedValueOnce(Error('PRIVATE-SETTLEMENT-SENTINEL'));
  expect(await d.current()).toBe(false);expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
  await expect(d.handTo(Buffer.from('synthetic'))).rejects.toThrow(/^Secret handoff unavailable$/);
- expect(await d.current()).toBe(false);await c.close();expect(f.claim.finish).toHaveBeenCalledOnce();
+ expect(await d.current()).toBe(false);await expect(c.close()).rejects.toThrow(/^Secret handoff unavailable$/);expect(f.claim.finish).toHaveBeenCalledOnce();
+});
+it('rejects retirement after a lost settlement ack and poisons all future route generations',async()=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured),d=(await c.authority(randomUUID()))!;
+ f.claim.finish.mockRejectedValueOnce(Error('PRIVATE-SETTLEMENT'));
+ await expect(c.replace(f.configured)).rejects.toThrow(/^Secret handoff unavailable$/);
+ expect(await d.current()).toBe(false);expect(await c.authority(randomUUID())).toBeNull();
+ await expect(c.replace(f.configured)).rejects.toThrow();await expect(c.close()).rejects.toThrow();
+ expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);
+});
+it('joins late acquired original settlement before replacement and propagates failure',async()=>{
+ const f=setup(),c=managedHolderAuthority(f.tickets,f.configured);
+ let acquire!:()=>void,settle!:()=>void;const acquisition=new Promise<void>(r=>{acquire=r;}),settlement=new Promise<void>(r=>{settle=r;});
+ f.tickets.claim.mockImplementationOnce(async()=>{await acquisition;return f.claim;});
+ f.claim.finish.mockImplementationOnce(async()=>{await settlement;throw Error('PRIVATE-SETTLEMENT');});
+ const pending=c.authority(randomUUID()),replacing=c.replace([]);void replacing.catch(()=>{});
+ let joined=false;void replacing.then(()=>{joined=true;},()=>{joined=true;});
+ acquire();await new Promise<void>(resolve=>setImmediate(resolve));expect(joined).toBe(false);
+ expect(f.claim.finish).toHaveBeenCalledExactlyOnceWith(false);settle();
+ await expect(replacing).rejects.toThrow(/^Secret handoff unavailable$/);expect(await pending).toBeNull();
+ await expect(c.close()).rejects.toThrow();
 });
