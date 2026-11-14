@@ -1205,3 +1205,39 @@ also verify the original agent/venue binding; a body-supplied key is no proof.
 This helper does not launch a harness, enforce its deny list, authorize history
 reuse or remove `bodyPolicyExecutionHeld`. Those end-to-end runner and owning
 binding checks remain required before configured-policy delivery is enabled.
+
+## Worker-owned Claude session execution
+
+`src/runtime-runner/session.ts` runs a foreground Claude turn on the worker:
+`-p --output-format json`, with the exact `prepareRunnerBrief` deny list in
+`--disallowedTools` and the resolved brief plus message on stdin. It accepts no
+extra harness arguments or caller-supplied native session id. The worker supplies
+the executable and environment; no credentials are read from the daemon or old
+stores. Other harnesses are not supported by this execution unit.
+
+One controller owns the ORIGINAL agent, conversation, venue and place. It generates
+its own UUID and retains resume authority only after a successful result naming
+that UUID. Combined stdout and stderr cannot exceed 1MiB. A changed binding
+permanently closes the controller.
+Changed policy/file bytes, deny list or effective absolute checkout starts a fresh UUID.
+An omitted checkout is captured from the worker current directory for both spawn
+and history comparison; relative checkouts refuse. No receipt
+from a body, adapter, imported record or a previous worker process authorizes
+history reuse. Concurrent turns refuse; close kills the active foreground child.
+Any uncertain child failure closes the controller permanently, preventing overlap
+with a child still exiting. A later controller starts fresh.
+
+The owning `current` predicate must synchronously check current policy revision,
+binding and job control. It is checked before preparation, immediately before
+spawn, immediately before input release and after the final await before returning
+words. False or throw permanently closes the controller and discards history. The
+owning lifecycle must call `close` on revocation and cancellation while a turn is
+active. This unit has no scheduler or periodic control poll; it does not promise
+to discover revocation during a silent turn by itself.
+
+This worker component is not installed or called by next mode. The daemon still
+needs to compose `currentBodyPolicy` and `compileBodyRules` with authenticated
+source evidence, release that policy to the assigned worker, and connect ongoing
+control/replies. `bodyPolicyExecutionHeld` remains intact. Account selection,
+runner enrollment, process recovery, Codex and the complete runner program remain
+on t-2209. No configured/imported agent becomes executable from this change.
