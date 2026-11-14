@@ -48,3 +48,13 @@ comments, project folders and write actions, and disables Create. Do not combine
 rows from different authorization snapshots. The view intentionally remains
 unmounted until root composition supplies the generated reads and write adapter;
 the existing registration remains in place until that replacement is complete.
+
+The trusted server seam is `dispatchTaskCommand(service, command, actor)` in
+`src/apps/task-command.ts`. It dispatches form intent to the shared service and
+returns a task row for row operations, or void for comments/relations. Errors
+propagate. This is an internal function, not an HTTP endpoint or a successful
+receipt. Root must validate the incoming envelope and current access (including
+related task, project, owner, recipient and source references), supply its
+resolved actor, persist the receipt with the write, then notify readers after
+commit. The browser's submit promise resolves only when that root receipt says
+the write succeeded. No browser transport has been chosen by this seam.
