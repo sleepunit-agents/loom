@@ -97,3 +97,16 @@ it('publishes an actual task command to the same socket query and withdraws proj
   next = once(ws, 'message'); f.root.writes.run(() => f.db.delete(projectMembers).run());
   expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toEqual([{ path: ['tasks',0], value: null, removed: true }]);
 });
+it.each(['project', 'agent'] as const)('rechecks current conversation source %s access for replay and fresh commands', async grant => {
+  const f = fixture();
+  if (grant === 'project') f.db.delete(memberAgents).run();
+  else f.db.delete(projectMembers).run();
+  const cv = f.root.services.conversations.open({ agent: 'art', project: grant === 'project' ? 'pond' : 'other', venue: 'loom', place: 'shared-source', label: 'Pump' });
+  const command = { action: 'create', input: { ...f.input, source: { kind: 'conversation', id: cv.id } } };
+  expect((await f.call(command)).status).toBe(200);
+  f.root.writes.run(() => { if (grant === 'project') f.db.delete(projectMembers).run(); else f.db.delete(memberAgents).run(); });
+  expect((await f.call(command)).status).toBe(403);
+  expect((await f.call(command, 'sam', 'fresh-after-withdrawal')).status).toBe(403);
+  expect(f.db.select().from(tasks).all()).toHaveLength(1);
+  expect(f.client.prepare('SELECT count(*) AS n FROM operation_results').get()).toEqual({ n: 1 });
+});
