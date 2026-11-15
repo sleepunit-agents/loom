@@ -68,7 +68,7 @@ for (const mode of ['--account-signin', '--account-usage'] as const) {
     expect(spawn).toHaveBeenCalledOnce(); expect(f.handlers.size).toBe(0); expect(vi.getTimerCount()).toBe(0);
   });
 }
-for (const output of ['not-json', JSON.stringify([{ ...windows[0], token: 'credential-secret' }]), JSON.stringify([{ ...windows[0], usage: 2 }])]) {
+for (const output of ['not-json', JSON.stringify([{ ...windows[0], token: 'credential-secret' }]), JSON.stringify([{ ...windows[0], usage: 2 }]), JSON.stringify([{ ...windows[0], readAt: 'invalid' }]), JSON.stringify([{ ...windows[0], durationMs: 0 }]), JSON.stringify([{ name: 'week' }])]) {
   it('rejects invalid private quota output through the actual worker entry', async () => {
     const f = fixture('--account-usage'), result = workerProgram(f.input); await spawned(f);
     f.child.stdout.emit('data', output); f.child.emit('close', 0, null); await vi.advanceTimersByTimeAsync(0);
@@ -87,3 +87,13 @@ for (const patch of [
   expect(await workerProgram(f.input)).toBe(1); expect(spawn).not.toHaveBeenCalled();
   expect(f.input.read).toHaveBeenCalledExactlyOnceWith('/config'); expect(f.input.output).not.toHaveBeenCalled();
 });
+
+for (const [output, code] of [['{"signedIn":false}', 0], ['not-json', 0], ['{"signedIn":true}', 7], ['{"signedIn":true,"token":"credential-secret"}', 0]] as const) {
+  it('never acknowledges unsuccessful or invalid private sign-in through the executable program', async () => {
+    const f = fixture('--account-signin'), result = workerProgram(f.input); await spawned(f);
+    f.child.stdout.emit('data', output); f.child.emit('close', code, null); await vi.advanceTimersByTimeAsync(0);
+    expect(await result).toBe(1); expect(f.input.output).not.toHaveBeenCalled();
+    expect(f.input.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+    expect(spawn).toHaveBeenCalledOnce(); expect(f.handlers.size).toBe(0);
+  });
+}
