@@ -2,7 +2,7 @@ import { statement } from '../../core/db/index.js';
 import { installOutcomes } from './outcomes.js';
 import { createHash } from 'node:crypto';
 import { registerBuiltinService } from '../../core/services.js';
-import { operation } from './commands.js';
+import { operation } from '../../core/index.js';
 import { attentionMigrations } from './schema/index.js';
 import { z } from 'zod';
 import { migrate, failure, OperationError, maySee, mayAct, mayCreate, type Context, type Db, type Operations, type Live, type Sharing, type RecordScope, type LiveRecord } from '../../core/index.js';
