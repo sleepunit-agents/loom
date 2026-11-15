@@ -18,7 +18,7 @@ const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const token = 'a'.repeat(64), cookie = 'b'.repeat(64);
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-function fixture(read: PullRequestReader, fields?: Parameters<typeof sharedRoot>[0]['fields']) {
+function fixture(read: PullRequestReader, fields?: Parameters<typeof sharedRoot>[0]['fields'], configured = true) {
   const client = new Database(':memory:'); cleanup.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString();
   const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
@@ -28,7 +28,7 @@ function fixture(read: PullRequestReader, fields?: Parameters<typeof sharedRoot>
   db.insert(projects).values({ id: 'pond', name: 'Pond' }).run();
   db.insert(projectRepositories).values({ project: 'pond', repository: 'house/pond' }).run();
   const errors: unknown[] = [];
-  const root = sharedRoot({ db, clock, originAllowed: () => true, changes: { read, rule: () => undefined }, fields, reportError: error => errors.push(error) });
+  const root = sharedRoot({ db, clock, originAllowed: () => true, changes: configured ? { read, rule: () => undefined } : undefined, fields, reportError: error => errors.push(error) });
   cleanup.push(() => root.close());
   const row: Change = { id: 'github:house/pond#1', repo: 'github:house/pond', number: 1, page: '', title: 'Pump', body: '', url: 'https://github.com/house/pond/pull/1', state: 'open', draft: false, author: { login: 'sam' }, created: at, updated: at, closed: null, head: { ref: 'pump', id: 'a'.repeat(40) }, base: { ref: 'next' }, checks: { state: 'passing', failing: [], running: [], total: 1 }, review: { state: 'approved', by: [] }, mergeable: 'yes', conflicts: false, people: [] };
   return { root, clock, client, db, row, errors };
@@ -161,4 +161,15 @@ it('rechecks owner and session after a configured source read before acknowledgi
   f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run();
   started=new Promise<void>(done=>{began=done;});const b=post();await started;
   f.db.delete(sessions).run();finish([f.row]);expect((await b).status).toBe(403);
+});
+
+it('exposes Refresh capability only for a configured root and current owner through actual GraphQL',async()=>{
+  for(const configured of [false,true]){
+    const f=fixture(async()=>[],undefined,configured);
+    const query=()=>f.root.http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+cookie},body:JSON.stringify({query:'{ workAnswerOwner workChangesRefresh }'})});
+    expect(await (await query()).json()).toEqual({data:{workAnswerOwner:true,workChangesRefresh:configured}});
+    f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run();
+    expect(await (await query()).json()).toEqual({data:{workAnswerOwner:false,workChangesRefresh:false}});
+    if(!configured)expect((await f.root.http.request('http://loom/api/changes/refresh',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+cookie},body:JSON.stringify({input:{}})})).status).toBe(404);
+  }
 });

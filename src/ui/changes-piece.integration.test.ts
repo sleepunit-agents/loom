@@ -55,7 +55,9 @@ async function fixture() {
   const ownerCookie='d'.repeat(64), ownerFingerprint=createHash('sha256').update('disposable-owner-token').digest('hex');
   db.insert(s.tokens).values({fingerprint:ownerFingerprint,label:'Disposable owner',kind:'owner',member:'pat',createdAt:at}).run();
   db.insert(s.sessions).values({id:createHash('sha256').update(ownerCookie).digest('hex'),token:ownerFingerprint,device:'Owner fixture',via:'token',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
-  const data = sharedRoot({db,clock,originAllowed:request=>request.headers.origin === `http://${request.headers.host}`,reportError:error=>{throw error;}});
+  db.insert(s.projectRepositories).values({project:'pond',repository:'acme/app'}).run();
+  let sourceReads=0;
+  const data = sharedRoot({db,clock,changes:{read:async()=>{sourceReads++;return [];},rule:()=>undefined},originAllowed:request=>request.headers.origin === `http://${request.headers.host}`,reportError:error=>{throw error;}});
   await data.ready;
   const serveData = getRequestListener(request => data.http.fetch(request));
   const http = createServer((request, response) => {
@@ -69,7 +71,7 @@ async function fixture() {
   const detach = data.attach(http);
   await new Promise<void>(ok => http.listen(0, '127.0.0.1', ok));
   const address = http.address(); if (!address || typeof address === 'string') throw new Error('No fixture listener');
-  return { db, data, cookie, ownerCookie, session, url: `http://127.0.0.1:${address.port}`,
+  return { db, data, cookie, ownerCookie, session, sourceReads:()=>sourceReads, url: `http://127.0.0.1:${address.port}`,
     async close() { detach(); await data.close(); await new Promise<void>(ok => http.close(() => ok())); client.close(); } };
 }
 
@@ -149,6 +151,9 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     const c=await owners.newPage(), d=await owners.newPage();
     for (const page of [c,d]) page.on('pageerror',error=>errors.push(error.message));
     await Promise.all([c.goto(`${app.url}/p/changes-preview/change/${encodeURIComponent(changeId)}`),d.goto(`${app.url}/p/changes-preview/change/${encodeURIComponent(changeId)}`)]);
+    await c.getByRole('button',{name:'Refresh',exact:true}).click();
+    await expect.poll(()=>app.sourceReads()).toBe(1);
+    for (const page of [c,d]) await expect.poll(()=>page.getByText(/^Last read /).count()).toBe(1);
     for (const page of [c,d]) {
       await expect.poll(()=>page.getByRole('button',{name:'Yes, merge it',exact:true}).count()).toBe(1);
       expect(await page.getByText('Typecheck · failing',{exact:true}).count()).toBe(0);

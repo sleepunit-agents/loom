@@ -261,3 +261,17 @@ it('offers configured Refresh only to a live owner and sends one explicit native
   feed.refresh=true;feed.owner=false;await act(async()=>tree.update(h(ChangesApp,{})));expect(refresh()).toBeUndefined();
   feed.owner=true;feed.ownerStatus='offline';await act(async()=>tree.update(h(ChangesApp,{})));expect(refresh()).toBeUndefined();
 });
+
+it('retains canonical records during pending Refresh and after acknowledgment until publication',async()=>{
+  fixture();feed.owner=true;feed.refresh=true;
+  let finish!:(response:Response)=>void;
+  const request=vi.fn(()=>new Promise<Response>(done=>{finish=done;}));vi.stubGlobal('fetch',request);
+  await draw(h(ChangesApp,{}));
+  await act(async()=>tree.root.findAllByType('Button').find((button:{props:{children:string}})=>button.props.children==='Refresh')!.props.onClick());
+  expect(request).toHaveBeenCalledTimes(1);expect(words()).toContain('Current change');expect(feed.changes.changes[0].title).toBe('Current change');
+  await act(async()=>finish(Response.json({ok:true,value:{refreshed:true}})));
+  expect(words()).toContain('Current change');expect(feed.changes.changes[0].title).toBe('Current change');
+  feed.changes={...feed.changes,changes:[{...feed.changes.changes[0],title:'Canonical refreshed change'}]};
+  await act(async()=>tree.update(h(ChangesApp,{})));
+  expect(words()).toContain('Canonical refreshed change');expect(words()).not.toContain('Current change');
+});
