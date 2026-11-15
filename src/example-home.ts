@@ -1,6 +1,7 @@
 /** Fictitious acceptance household. Use application services, never row inserts.
  * Missing operations are evidence, not a reason to manufacture passing data. */
 import Database from 'better-sqlite3';
+import {pathToFileURL} from 'node:url';
 import {z} from 'zod';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -41,7 +42,7 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   s.tasks.comment(tasks[0].id,'Compared three fictitious models.',{kind:'agent',id:'fern'});
   const approval=s.approvals.request({kind:'command',target:'example-worker:inspect-pump',what:'Inspect the example pump',why:'Check the hose before ordering.',agent:'fern',askedFrom:thread.conversation,actingFor:'alex',conversation:thread.conversation,project:'garden',member:'alex',ask:'Inspect the example pump?',ifYes:'Fern inspects it.',ifNo:'Fern waits.'});
   await s.comms!.ask(thread.id,'fern','example-question',{words:'Spend up to 180 example dollars on the pump?',answers:'yes-no',why:'The example pump is available.',ifYes:'Fern orders the pump.',ifNo:'Fern compares cheaper pumps.'});
-  const trigger=s.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:approval.id,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue after the example inspection is answered.',note:'Continue the pump inspection'});
+  const trigger=s.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:`approval:${approval.id}`,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue after the example inspection is answered.',note:'Continue the pump inspection'});
   const change=s.changes.put({id:'github:example-house/garden#12',repo:'github:example-house/garden',number:12,page:'',title:`Plan the pump repair (${tasks[0].id})`,body:'Fictitious pull request for the browser walkthrough.',url:'https://github.com/example-house/garden/pull/12',state:'open',draft:false,author:{login:'example-fern'},created:at,updated:at,closed:null,head:{ref:'pump-repair',id:'a'.repeat(40)},base:{ref:'next'},checks:{state:'passing',failing:[],running:[],total:1},review:{state:'approved',by:[]},mergeable:'yes',conflicts:false,people:[]});
   // This is an outside operation: use an actual current credential rather
   // than treating a caller label as identity. The setup token never survives.
@@ -54,7 +55,10 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
    account=answer.data.value;
   }finally{root.writes.run(()=>s.signin.revoke(setup.fingerprint));}
   const commons=join(home,'commons');
-  const program={database:join(home,'app.db'),commsKey:join(home,'comms.key'),signinMember:'alex',webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:['fern','moss'].map(agent=>({agent,directory:join(home,'agents',agent),memories:join(home,'agents',agent,'memories.db')}))}}};
+  const adapters=join(home,'example-adapters.mjs');
+  const adapterModule=pathToFileURL(join(import.meta.dirname,import.meta.filename.endsWith('.ts')?'example-home-adapters.ts':'example-home-adapters.js')).href;
+  writeFileSync(adapters,`export {default} from ${JSON.stringify(adapterModule)};\n`,{mode:0o600});
+  const program={adapters,database:join(home,'app.db'),commsKey:join(home,'comms.key'),signinMember:'alex',webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:['fern','moss'].map(agent=>({agent,directory:join(home,'agents',agent),memories:join(home,'agents',agent,'memories.db')}))}}};
   const manifest={fictional:true,createdAt:at,members:['alex','robin'],agents:['fern','moss'],thread:thread.id,conversation:thread.conversation,tasks:tasks.map(t=>t.id),approval:approval.id,trigger:trigger.id,change:change.id,account,gaps:[
    {page:'machines',promise:'An enrolled machine with a job',reason:'No shared machine enrollment operation is registered. A worker and assigned job cannot be fabricated through application operations.'},
   ]};

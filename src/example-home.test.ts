@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import {FakeClock} from './core/clock.js';
 import * as roots from './shared-root.js';
 import {Operations} from './core/operations/index.js';
 import {it,expect,vi,afterEach} from 'vitest';
@@ -31,13 +32,39 @@ it('builds fictitious data through services, then normal startup signs in and qu
   const before=readFileSync(join(home,'app.db'));
   await expect(exampleHome(home)).rejects.toThrow();expect(readFileSync(join(home,'app.db'))).toEqual(before);
   mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
-  let link='';app=await startSharedHome({home,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
+  const clock=new FakeClock(Date.now());let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
   const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});
   expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
   const query=await fetch(app.url+'/graphql',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id title status } approvals { id state } changes { id project agent } triggers { id } modelAccounts { ... on RuntimeAccountDetail { id label } } }'})});
   const result=await query.json();expect(result.errors).toBeUndefined();
   expect(result.data.tasks).toHaveLength(4);expect(result.data.tasks.map((t:{status:string})=>t.status)).toContain('in_progress');
   expect(result.data.approvals).toEqual([expect.objectContaining({state:'pending'})]);
+  const watched=app.writes.run(()=>app!.services.approvals.request({kind:'command',target:'example:watched',agent:'fern',askedFrom:'example-proof',actingFor:'alex',what:'Watched example',why:'Prove answer delivery.',ask:'Proceed?',ifYes:'Continue.',ifNo:'Wait.',minutes:1})).value;
+  const trigger=app.writes.run(()=>app!.services.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:`approval:${watched.id}`,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue fictitious work.',note:'Watched example'})).value;
+  const allowed=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'watched-example',input:{id:watched.id,answer:'allow'}})});expect(allowed.status).toBe(200);clock.advance(0);
+  const deliveries=()=>app!.services.comms!.db.$client.prepare("SELECT count(*) AS n FROM inbox JOIN inbox_refs ON inbox_refs.item=inbox.id WHERE inbox.source='trigger' AND inbox_refs.ref=?").get(trigger.id);
+  expect(deliveries()).toEqual({n:1});clock.advance(1);app.writes.run(()=>app!.services.approvals.deny(watched.id,'alex'));clock.advance(60_001);expect(deliveries()).toEqual({n:1});
+  for(const minutes of [1,3]){
+   const value={kind:'command' as const,target:'example:expiry-'+minutes,agent:'fern',askedFrom:'example-proof',actingFor:'alex',what:'Duration proof',why:'Configured duration.',ask:'Proceed?',ifYes:'Continue.',ifNo:'Wait.',minutes};
+   const first=app.writes.run(()=>app!.services.approvals.request(value)).value,second=app.writes.run(()=>app!.services.approvals.request(value)).value;app.writes.run(()=>{app!.services.approvals.allow(first.id,'alex');app!.services.approvals.allow(second.id,'alex');});
+   clock.advance(minutes*60_000-1);expect(app.services.approvals.get(second.id).state).toBe('allowed');expect(app.writes.run(()=>app!.services.approvals.use(first.id,'fern','command',value.target)).value.ok).toBe(true);clock.advance(1);
+   expect(app.services.approvals.get(second.id).state).toBe('expired');expect(app.writes.run(()=>app!.services.approvals.use(second.id,'fern','command',value.target)).value.ok).toBe(false);
+  }
+  const draft=app.writes.run(()=>app!.services.tasks.create({title:'Fictitious dangerous draft',goal:'Discard only on approval.',why:'Prove installed prepared actions.',owner:{kind:'household'}},{kind:'member',id:'alex'})).value;
+  const card=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',conversation:manifest.conversation,member:'alex',what:'Discard fictitious draft',why:'Prove the exact before/after.',ask:'Discard it?',ifYes:'Cancel draft.',ifNo:'Keep draft.'})).value;
+  expect(app.services.tasks.get(draft.id).status).toBe('open');
+  const answer=()=>fetch(app!.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify({id:'discard-example-draft',input:{id:card.id,answer:'allow'}})});
+  expect((await answer()).status).toBe(200);expect((await answer()).status).toBe(200);
+  expect(app.services.tasks.get(draft.id)).toMatchObject({status:'closed',closeReason:'cancelled'});
+  expect(app.services.approvals.record(card.id).map(row=>row.event)).toEqual(['request','allow','use']);
+  for(const stale of ['summary','state']){
+   const next=app.writes.run(()=>app!.services.tasks.create({title:'Fictitious guarded draft',goal:'Reject stale approvals.',why:'Verify before/after guards.',owner:{kind:'household'}},{kind:'member',id:'alex'})).value;
+   const request=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${next.id}`,operation:'example.discardDraft',changeSummary:stale==='summary'?'Wrong before/after':`Draft ${next.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',what:'Discard guarded draft',why:'Exercise stale refusal.',ask:'Discard guarded draft?',ifYes:'Cancel.',ifNo:'Keep.'})).value;
+   if(stale==='state')app.writes.run(()=>app!.services.tasks.close(next.id,'Already finished.'));
+   const before=app.services.tasks.get(next.id),audit=app.services.approvals.record(request.id);
+   const refused=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'stale-'+stale,input:{id:request.id,answer:'allow'}})});
+   expect(refused.status).toBe(503);expect(app.services.tasks.get(next.id)).toEqual(before);expect(app.services.approvals.get(request.id).state).toBe('pending');expect(app.services.approvals.record(request.id)).toEqual(audit);
+  }
   expect(result.data.changes).toEqual([{id:manifest.change,project:'garden',agent:'fern'}]);
   const token=app.writes.run(()=>app!.services.signin.issue({kind:'owner',member:'robin',label:'Fictitious sharing proof'})).value;
   try{
