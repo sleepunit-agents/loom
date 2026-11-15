@@ -1,5 +1,6 @@
 import BetterSqlite3 from 'better-sqlite3';
 import { PeopleStore } from '../../backends/people.js';
+import {peopleReader} from '../../pieces/mind/people.js';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
@@ -89,8 +90,9 @@ it('preserves raw fields, projects and credentials; supports ordinary members an
 });
 
 it('refuses the last household owner, unknown removals and invalid input without writes', async () => {
-  const {app,household}=await setup(), before=household.document();
-  expect(app.operations.call('direct',owner,'mind.personRead',{id:'commons:merged-guest'})).toMatchObject({ok:true,value:{slug:'guest',mergedFrom:'merged-guest'}});
+  const {app,home,clock,household}=await setup(), before=household.document();
+  const people=peopleReader({directory:join(home,'commons','people.db'),agents:[],sharing:()=>new SharingDatabase(app.db,home).sharing(),now:()=>clock.now()});closes.push(people.close);
+  expect(people.read('commons:merged-guest',owner)).toMatchObject({slug:'guest',mergedFrom:'merged-guest'});
   for (const input of [{person:'jonathan',agents:['art']},{person:'jonathan',agents:[]},{person:'guest',agents:['missing']},{person:'../bad',agents:'*'},{person:'guest',agents:[]},{person:'guest',agents:'*',role:'owner'},{person:'nonexistent',agents:'*'},{person:'archived',agents:'*'},{person:'merged-guest',agents:'*'}]) {
     expect(app.operations.call('direct',owner,'household.setMember',input,'invalid')).toMatchObject({code:'invalid'});
   }
