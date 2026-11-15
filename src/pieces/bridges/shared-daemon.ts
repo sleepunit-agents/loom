@@ -5,7 +5,7 @@ import { bridgeReplyApi } from './reply-api.js';
 /** Shared-model bridge composition. Socket receipt precedes platform ACK; bounded
  * asynchronous metadata/drain work follows separately. Installed parts share the
  * database directly; all outside permissions live at their respective doors. */
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeIncoming, bridgeFiles, inbox, inboxRefs } from '../../core/data/schema.js';
@@ -47,6 +47,7 @@ export class SharedBridges {
  private readonly lives=new Map<string,Life>();
  private readonly active=new Set<Promise<unknown>>();
  private syncing?:Promise<void>;
+ private settingsKey='';
  private cancelRetry?:()=>void;
  private readonly unobserve:()=>void;
  private closing?:Promise<void>;
@@ -84,12 +85,23 @@ export class SharedBridges {
   if(this.lives.get(life.connection.id)===life)this.lives.delete(life.connection.id);
   if(life.transport)this.track(Promise.resolve().then(()=>life.transport!.close()));
  }
+ private configurationSnapshot(){
+  const rows=this.options.db.select().from(bridgeConnections).orderBy(asc(bridgeConnections.id)).all();
+  return{rows,key:JSON.stringify(rows.map(configuration))};
+ }
  /** Root invokes after committed config/rule/link edits. Known value writes may
   * retire credentials immediately, without waiting for the metadata poll. */
  changed(credentials=false){
   if(this.closed)return;
-  for(const life of this.lives.values())if(credentials||!this.current(life))this.retire(life);
-  void this.reconcile();this.track(this.sends.flush());
+  let retired=false;
+  for(const life of this.lives.values())if(credentials||!this.current(life)){this.retire(life);retired=true;}
+  // State publications reenter Root's write observer. Only changed input
+  // settings or credentials may restart reconciliation; retrying our own
+  // backoff state would starve the generation poll with microtasks.
+  const {key}=this.configurationSnapshot();
+  if(credentials||retired||key!==this.settingsKey)void this.reconcile();
+  else for(const life of this.lives.values())this.pump(life);
+  this.track(this.sends.flush());
  }
  async ready(){await this.credentials.ready();await this.reconcile();}
  reconcile():Promise<void>{
@@ -100,7 +112,8 @@ export class SharedBridges {
    if(this.closed)return;
    for(const life of this.lives.values())if(!this.current(life))this.retire(life);
    const generation=this.credentials.current();
-   const rows=this.options.db.select().from(bridgeConnections).all();
+   const {rows,key}=this.configurationSnapshot();
+   this.settingsKey=key;
    for(const row of rows){
     if(!row.enabled||!generation||!this.options.effectsAllowed()){
      this.state(row.id,row.enabled?'backoff':'disconnected');continue;
