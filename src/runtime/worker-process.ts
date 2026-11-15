@@ -34,8 +34,27 @@ const native: ProcessRuntime = {
   },
 };
 function command(plan: WorkerCommand): WorkerCommand {
-  if (!plan.command || !plan.cwd) throw new Error('Worker command and directory are required');
+  if (!plan.command || !plan.cwd || [plan.command, plan.cwd, ...plan.args, ...Object.keys(plan.env), ...Object.values(plan.env)].some(value => value.includes('\0')))
+    throw new Error('Invalid worker command');
   return { ...plan, args: [...plan.args], env: { ...plan.env } };
+}
+export interface WorkerRunnerConfig {
+  /** Shared commands may choose the account from the startup envelope themselves. */
+  runners: Readonly<Record<string, WorkerCommand>>;
+  /** When present, every job requires an exact account/harness binding. */
+  accountRunners?: Readonly<Record<string, Readonly<Record<string, WorkerCommand>>>>;
+}
+/** Freeze local plans once. Never fall back to another account's credentials. */
+export function workerRunner(config: WorkerRunnerConfig) {
+  const plans = (values: Readonly<Record<string, WorkerCommand>>) => new Map(Object.entries(values).map(([name, plan]) => [name, command(plan)]));
+  const shared = plans(config.runners);
+  const accounts = config.accountRunners === undefined ? undefined
+    : new Map(Object.entries(config.accountRunners).map(([account, values]) => [account, plans(values)]));
+  return (job: Pick<WorkerAssignment, 'account' | 'harness'>) => {
+    const selected = accounts ? accounts.get(job.account)?.get(job.harness) : shared.get(job.harness);
+    if (!selected) throw new Error('Worker has no configured runner for account');
+    return selected;
+  };
 }
 function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntime, closePipesOnKill = false) {
   if (signal.aborted) throw new Error('Worker attempt cancelled');
@@ -120,21 +139,19 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
     },
   };
 }
-export function commandWorkerExecutor(config: {
+export function commandWorkerExecutor(config: WorkerRunnerConfig & {
   build: WorkerCommand;
   /** Maximum build time; running bodies have their own lifecycle. */
   buildTimeoutMs?: number;
-  /** Configured harness name -> runner command; a model name implies nothing. */
-  runners: Readonly<Record<string, WorkerCommand>>;
 }, runtime: ProcessRuntime = native): WorkerExecutor {
   const buildPlan = command(config.build);
   const buildTimeoutMs = config.buildTimeoutMs ?? 300_000;
   if (!Number.isSafeInteger(buildTimeoutMs) || buildTimeoutMs < 1 || buildTimeoutMs > 3_600_000)
     throw new Error('Invalid worker build deadline');
-  const runners = new Map(Object.entries(config.runners).map(([name, plan]) => [name, command(plan)]));
+  const runner = workerRunner(config);
   return {
     async build(job, signal) {
-      if (!runners.has(job.harness)) throw new Error('Worker has no configured runner');
+      runner(job);
       const abort = new AbortController();
       const cancel = () => abort.abort();
       signal.addEventListener('abort', cancel, { once: true });
@@ -157,8 +174,7 @@ export function commandWorkerExecutor(config: {
       }
     },
     start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody {
-      const plan = runners.get(job.harness);
-      if (!plan) throw new Error('Worker has no configured runner');
+      const plan = runner(job);
       const attempt = launch(plan, signal, runtime);
       return { spawned: attempt.spawned, exited: attempt.exited,
         release: () => attempt.release({ job, build }), stop: attempt.stop };
