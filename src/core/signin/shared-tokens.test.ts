@@ -95,3 +95,19 @@ it.each(['revoke','demote'] as const)('rechecks issuer authority inside the issu
   expect((await f.issue({kind:'owner',member:'sam',label:'Refused'})).status).toBe(403);
   expect(f.db.select().from(tokens).where(eq(tokens.label,'Refused')).all()).toEqual([]);
 });
+
+it.each(['revoke','demote','expire'] as const)('withholds the one-time bearer if post-commit publication %s ends issuer authority',async change=>{
+ const f=fixture();let observed=false,insideTransaction=true;
+ const stop=f.root.writes.observe(()=>{
+  if(observed||!f.db.select().from(tokens).where(eq(tokens.label,'Committed but withheld')).get())return;
+  observed=true;insideTransaction=f.client.inTransaction;
+  if(change==='revoke')f.db.update(tokens).set({revokedAt:f.at}).where(eq(tokens.fingerprint,hash(f.raw.owner))).run();
+  else if(change==='expire')f.db.update(tokens).set({expiresAt:f.at}).where(eq(tokens.fingerprint,hash(f.raw.owner))).run();
+  else f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();
+ });clean.push(stop);
+ const response=await f.issue({kind:'owner',member:'sam',label:'Committed but withheld'});
+ expect(observed).toBe(true);expect(insideTransaction).toBe(false);
+ expect(response.status).toBe(403);expect(await response.json()).toEqual({error:'Household owner required'});
+ expect(f.db.select().from(tokens).where(eq(tokens.label,'Committed but withheld')).get()).toMatchObject({kind:'owner',member:'sam'});
+ expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
+});

@@ -88,10 +88,13 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     const auth = authenticate(c.req.raw);
     if (!auth?.valid() || !sharedTokenOwner(options.db, auth.viewer)) return c.json({ error: 'Household owner required' }, 403);
     if (!input.success) return c.json({ error: 'Invalid token request' }, 400);
-    try { return c.json({ ok: true, value: write(() => {
+    try { const value = write(() => {
       if(!auth.valid() || !sharedTokenOwner(options.db, auth.viewer))throw new OperationError('denied','Household owner required');
       return sharedTokens(options.db, options.clock).issue(input.data);
-    }) }); }
+    });
+      if(!auth.valid() || !sharedTokenOwner(options.db,auth.viewer))return c.json({error:'Household owner required'},403);
+      return c.json({ok:true,value});
+    }
     catch (error) {
       if (error instanceof OperationError) return c.json({ error: error.message }, error.code === 'denied' ? 403 : error.code === 'conflict' ? 409 : 400);
       throw error;
@@ -115,7 +118,11 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     };
     if (!freshBrowser()) return c.json({error:'Sign in again before making a sign-in link'},403);
     // Request input cannot choose a token/member or impersonate an agent.
-    return c.json({ ok: true, value: write(() => { if(!auth.valid() || !freshBrowser())throw Error('Authentication ended'); return signin.makeLink(token); }) });
+    const value=write(() => { if(!auth.valid() || !freshBrowser())throw Error('Authentication ended'); return signin.makeLink(token); });
+    // Publication hooks can end this caller after the transaction committed.
+    if(!auth.valid())return c.json({error:'Member authentication required'},401);
+    if(!freshBrowser())return c.json({error:'Sign in again before making a sign-in link'},403);
+    return c.json({ok:true,value});
   });
   routes.get('/auth/session', c => {
     const auth = authenticate(c.req.raw);
