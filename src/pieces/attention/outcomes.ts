@@ -2,7 +2,7 @@ import { statement } from '../../core/db/index.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { mayAct, maySee, type Db, type Live, type LiveRecord, type Operations, type Result, type Sharing, type Viewer } from '../../core/index.js';
-import { operation } from './commands.js';
+import { operation } from '../../core/index.js';
 export interface ActionOutcome {
   id: string; member: string; at: number; order: number; ok: boolean; text: string;
   source: string; sourceLabel: string; page: string; operation: string; readAt?: number;
