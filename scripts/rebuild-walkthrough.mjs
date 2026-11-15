@@ -33,7 +33,7 @@ export const safeReport=report=>JSON.parse(JSON.stringify(report,(_key,value)=>t
 export function localRequest(url,origin){try{return new URL(url).origin===origin||/^(data:|blob:|about:)/.test(url);}catch{return false;}}
 /** A second disposable loopback listener proves both browser guards before
  * the sign-in link is opened. It contains no data and receives no credentials. */
-async function verifyIsolation(page){
+export async function verifyIsolation(page){
  let http=0,websocket=0;
  const trap=createServer((_request,response)=>{http++;response.setHeader('access-control-allow-origin','*');response.end('local isolation trap');});
  const ws=new WebSocketServer({server:trap});ws.on('connection',socket=>{websocket++;socket.close();});
