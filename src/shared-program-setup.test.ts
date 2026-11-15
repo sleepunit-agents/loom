@@ -103,3 +103,8 @@ it('rejects a promise returned by an untyped synchronous wrapper and rolls back 
 it('does not advertise a non-member credential as an owner-managed program',()=>{
  const f=fixture();f.db.insert(agents).values({id:'art',about:'Fixture',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();const issued=f.root.services.signin.issue({kind:'agent',agent:'art',label:'Agent marker'});f.values.set(issued.fingerprint,{records:[],operations:[]});expect(f.service.list()).toEqual([]);
 });
+it('does not interpret record names as reserved operation namespaces',()=>{
+ const f=fixture();f.choose({records:['program','account'],operations:[]});
+ const issued=f.service.issue({member:'sam',label:'Record-name port check',records:['program','account'],operations:[]});
+ expect(f.service.catalogue().records).toEqual(['account','program']);expect(f.values.get(issued.fingerprint)).toEqual({records:['account','program'],operations:[]});
+});
