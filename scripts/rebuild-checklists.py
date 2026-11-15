@@ -129,6 +129,15 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='desk':
   for row in rows:
    if row['promise'].startswith('Each tile asks for its rows over the one live connection'):row['probe']={'kind':'action','action':'dataDoor'}
+ if f.stem=='conversations':
+  for row in rows:
+   if row['promise'].startswith(('A conversation belongs to one agent', 'a Three labels.')):row['probe']={'kind':'action','action':'conversationLabels'}
+   if row['promise'].startswith('b Who sees it.'):row['probe']={'kind':'action','action':'conversationVisibility'}
+   if row['promise'].startswith('c Private.'):row['probe']={'kind':'action','action':'commsPrivacy'}
+ if f.stem=='inbox':
+  for row in rows:
+   if row['promise'].startswith(('Every item has one recipient:', 'a The recipient.')):row['probe']={'kind':'action','action':'inboxRecipients'}
+   if row['promise'].startswith('b Who else sees it.'):row['probe']={'kind':'action','action':'inboxVisibility'}
  # Carry source hashes so a changed approved page cannot silently reuse old results.
  obj={'page':f.stem,'title':next(n.text() for n in nodes if n.tag=='h1'),'ownerTask':owners[f.stem],'sourceSha256':source_hash,'promises':rows,'modelTables':[n.attrs['id'][2:] for n in nodes if n.tag=='details' and n.cls('tbl') and n.attrs.get('id','').startswith('t-')]}
  payload=(json.dumps(obj,indent=2,ensure_ascii=False)+'\n').encode('utf-8')
