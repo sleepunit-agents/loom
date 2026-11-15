@@ -10,6 +10,7 @@ import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, boxes, boxAgents, members, memberAgents, tokens } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
+import { applyDataPatch } from '../web/src/data/graphql/client.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const keys = { alice: 'a'.repeat(64), bob: 'b'.repeat(64), house: 'h'.repeat(64), art: 'x'.repeat(64), worker: 'w'.repeat(64) };
@@ -48,15 +49,23 @@ async function socket(f:ReturnType<typeof fixture>,who:keyof typeof keys){
   const ws=new WebSocket(`ws://127.0.0.1:${address.port}/graphql`,'graphql-transport-ws',{headers:{authorization:'Bearer '+keys[who]}});cleanup.push(()=>ws.terminate());
   await once(ws,'open');const ack=once(ws,'message');ws.send(JSON.stringify({type:'connection_init'}));await ack;return ws;
 }
-it('updates the exact ticker selection and removes retained rows on current role loss',async()=>{
-  const f=fixture(),ws=await socket(f,'house');let next=once(ws,'message');
+for(const withdrawal of ['ownership','household-role'] as const) it(`updates the exact retained ticker and clears rows on ${withdrawal} withdrawal`,async()=>{
+  const f=fixture(),who=withdrawal==='ownership'?'alice':'house',ws=await socket(f,who);let next=once(ws,'message');
+  const apply=(raw:unknown,current:unknown)=>{
+    const patches=JSON.parse(String(raw)).payload.data.observe.patches as Parameters<typeof applyDataPatch>[1][];
+    return patches.reduce(applyDataPatch,current);
+  };
   ws.send(JSON.stringify({type:'subscribe',id:'boxes',payload:{query:`subscription { observe(query:${JSON.stringify(query)}) { revision patches { path value removed } } }`}}));
-  expect(String((await next)[0])).toContain('alice-box');
+  let retained=apply((await next)[0],undefined);
+  expect(retained).toEqual({boxes:who==='alice'?[{id:'alice-box',revokedAt:null},{id:'retired',revokedAt:f.now()}]:[{id:'alice-box',revokedAt:null},{id:'bob-box',revokedAt:null},{id:'retired',revokedAt:f.now()}]});
   next=once(ws,'message');f.root.writes.run(()=>f.db.update(boxes).set({revokedAt:f.now()}).where(eq(boxes.id,'alice-box')).run());
-  expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toContainEqual({path:['boxes',0,'revokedAt'],value:f.now(),removed:false});
-  next=once(ws,'message');f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'house')).run());
-  expect(JSON.parse(String((await next)[0])).payload.data.observe.patches.every((patch:{removed?:boolean})=>patch.removed)).toBe(true);
-  expect((await(await f.post('house')).json()).data.boxes).toEqual([]);
+  retained=apply((await next)[0],retained);
+  expect((retained as {boxes:{id:string;revokedAt:string}[]}).boxes.find(row=>row.id==='alice-box')?.revokedAt).toBe(f.now());
+  next=once(ws,'message');f.root.writes.run(()=>withdrawal==='ownership'
+    ?f.db.update(boxes).set({owner:'bob'}).where(eq(boxes.owner,'alice')).run()
+    :f.db.update(members).set({role:'member'}).where(eq(members.id,'house')).run());
+  retained=apply((await next)[0],retained);expect(retained).toEqual({boxes:[]});
+  expect((await(await f.post(who)).json()).data.boxes).toEqual([]);
 });
 it('withholds a held HTTP response if ownership changes before publication',async()=>{
   let began!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{began=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
