@@ -17,7 +17,8 @@ export async function approvalActions({page,tile,app,example,out}){
  });
  await attempt('approvalAnswers',async()=>{
   for(const [index,answer] of ['allow','deny'].entries()){
-   const card=created[index];await tile.getByText(card.what,{exact:true}).first().click();
+   const card=created[index],back=tile.locator('.loom-split__back:visible');if(await back.count())await back.click();
+   await tile.locator('[data-split-row]:visible').filter({hasText:card.what}).click();
    await tile.getByRole('heading',{name:card.ask,exact:true}).waitFor();
    for(const text of [card.target,card.why,card.ifYes,card.ifNo])check((await tile.innerText()).includes(text),`Approval card omitted ${text}`);
    const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void response.catch(()=>{});
