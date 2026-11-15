@@ -91,3 +91,10 @@ it.each(['offline','unavailable'])('refuses program issuance when catalogue is %
  await act(async()=>{if(reason==='offline')f.programFeed.status='offline';else f.programFeed.data={programSetup:null};tree.update(h(Setup));});expect(tree.root.findAllByType('option').find((node:{props:{value?:string}})=>node.props.value==='program').props.disabled).toBe(true);
  await act(async()=>tree.root.findByProps({'aria-label':'Create token'}).props.onSubmit(event));expect(fetch).not.toHaveBeenCalled();
 });
+it.each(['owner','agent','runner'] as const)('keeps the ordinary %s token endpoint and identity payload',async kind=>{
+ const fetch=vi.fn().mockResolvedValue(Response.json({ok:true,value:{token:privateBearer,fingerprint:'d'.repeat(64)}}));vi.stubGlobal('fetch',fetch);
+ await act(async()=>{tree=create(h(Setup));});if(kind!=='owner')await act(async()=>tree.root.findAllByType('select').find((node:{props:{value?:string}})=>node.props.value==='owner').props.onChange({target:{value:kind}}));
+ vi.stubGlobal('FormData',class{get(name:string){return({label:'Ordinary token',member:'sam',agent:'art',box:'fictional-box',expiresAt:'2026-12-01T00:00:00Z'} as Record<string,string>)[name]??null;}});
+ await act(async()=>tree.root.findByProps({'aria-label':'Create token'}).props.onSubmit({preventDefault(){},currentTarget:{}}));
+ expect(fetch).toHaveBeenCalledOnce();const [path,options]=fetch.mock.calls[0];expect(path).toBe('/api/signin/token');expect(options.headers).toEqual({'content-type':'application/json'});expect(JSON.parse(options.body)).toEqual({kind,label:'Ordinary token',expiresAt:'2026-12-01T00:00:00Z',...(kind==='owner'?{member:'sam'}:kind==='agent'?{agent:'art'}:{box:'fictional-box'})});
+});
