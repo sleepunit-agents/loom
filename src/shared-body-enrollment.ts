@@ -1,6 +1,6 @@
 /** Canonical metadata-only enrollment for the locally generated body credential.
  * Only the current assigned starting worker can bind a fingerprint to its job. */
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {and,eq,ne,isNull} from 'drizzle-orm';
 import {z} from 'zod';
 import type {DataDatabase} from './core/data/database.js';
@@ -33,7 +33,9 @@ export function registerSharedBodyEnrollment(operations:Operations,db:DataDataba
    const found=target(ctx.viewer,value);if(!found)throw new OperationError('denied','Current assigned starting worker required');
    if(!found.old){
     db.update(tokens).set({revokedAt:options.now()}).where(and(eq(tokens.kind,'agent'),eq(tokens.job,found.job.id),ne(tokens.fingerprint,value.fingerprint),isNull(tokens.revokedAt))).run();
-    db.insert(tokens).values({fingerprint:value.fingerprint,label:'Job body',kind:'agent',agent:found.job.agent,job:found.job.id,
+    // Labels are globally unique while live; independent jobs retain their own
+    // credentials. The authoritative job link remains the typed job column.
+    db.insert(tokens).values({fingerprint:value.fingerprint,label:`Job body [${randomUUID()}]`,kind:'agent',agent:found.job.agent,job:found.job.id,
      madeFrom:found.proof.fingerprint,createdAt:options.now()}).run();
     ctx.changed('token',value.fingerprint);
    }

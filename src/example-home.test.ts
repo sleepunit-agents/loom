@@ -1,3 +1,6 @@
+import {prepareAcceptanceHome} from '../scripts/rebuild-acceptance-adapter.mjs';
+import {holderValueAbsent} from '../scripts/rebuild-secret-holder.mjs';
+import {FakeClock} from './core/clock.js';
 import Database from 'better-sqlite3';
 import * as roots from './shared-root.js';
 import {Operations} from './core/operations/index.js';
@@ -6,7 +9,6 @@ import {mkdtempSync,rmSync,readFileSync,mkdirSync,writeFileSync,statSync} from '
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {exampleHome,runExampleHome} from './example-home.js';
-import {FakeClock} from './core/clock.js';
 import {startSharedHome} from './shared-startup.js';
 afterEach(()=>{vi.restoreAllMocks();vi.unstubAllEnvs();});
 it('builds fictitious data through services, then normal startup signs in and queries it',async()=>{
@@ -104,6 +106,43 @@ it('revokes the temporary setup credential when the outside operation fails',asy
   const database=new Database(join(home,'app.db'),{readonly:true});
   try{expect(database.prepare("select revoked_at,expires_at from tokens where label='Example setup'").get()).toEqual({revoked_at:expect.any(String),expires_at:expect.any(String)});expect(database.prepare('select count(*) as n from model_accounts').get()).toEqual({n:0});}finally{database.close();}
  }finally{rmSync(parent,{recursive:true,force:true});}
+});
+
+it('executes guarded prepared operations and exact allowance deadlines in normal startup',async()=>{
+ const parent=mkdtempSync(join(tmpdir(),'loom-example-approvals-')),home=join(parent,'home');
+ let app:Awaited<ReturnType<typeof startSharedHome>>|undefined;
+ try{
+  const manifest=await exampleHome(home);prepareAcceptanceHome(home);mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
+  const clock=new FakeClock(Date.now());let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
+  expect(holderValueAbsent(home,'no-such-fictitious-secret')).toBe(true);
+  const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
+  const watched=app.writes.run(()=>app!.services.approvals.request({kind:'command',target:'example:watched',agent:'fern',askedFrom:'example-proof',actingFor:'alex',what:'Watched example',why:'Prove answer delivery.',ask:'Proceed?',ifYes:'Continue.',ifNo:'Wait.',minutes:1})).value;
+  const trigger=app.writes.run(()=>app!.services.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:`approval:${watched.id}`,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue fictitious work.',note:'Watched example'})).value;
+  const allowed=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'watched-example',input:{id:watched.id,answer:'allow'}})});expect(allowed.status).toBe(200);clock.advance(0);
+  const deliveries=()=>app!.services.comms!.db.$client.prepare("SELECT count(*) AS n FROM inbox JOIN inbox_refs ON inbox_refs.item=inbox.id WHERE inbox.source='trigger' AND inbox_refs.ref=?").get(trigger.id);
+  expect(deliveries()).toEqual({n:1});clock.advance(1);app.writes.run(()=>app!.services.approvals.deny(watched.id,'alex'));clock.advance(60_001);expect(deliveries()).toEqual({n:1});
+  for(const minutes of [1,3]){
+   const value={kind:'command' as const,target:'example:expiry-'+minutes,agent:'fern',askedFrom:'example-proof',actingFor:'alex',what:'Duration proof',why:'Configured duration.',ask:'Proceed?',ifYes:'Continue.',ifNo:'Wait.',minutes};
+   const first=app.writes.run(()=>app!.services.approvals.request(value)).value,second=app.writes.run(()=>app!.services.approvals.request(value)).value;app.writes.run(()=>{app!.services.approvals.allow(first.id,'alex');app!.services.approvals.allow(second.id,'alex');});
+   clock.advance(minutes*60_000-1);expect(app.services.approvals.get(second.id).state).toBe('allowed');expect(app.writes.run(()=>app!.services.approvals.use(first.id,'fern','command',value.target)).value.ok).toBe(true);clock.advance(1);
+   expect(app.services.approvals.get(second.id).state).toBe('expired');expect(app.writes.run(()=>app!.services.approvals.use(second.id,'fern','command',value.target)).value.ok).toBe(false);
+  }
+  const draft=app.writes.run(()=>app!.services.tasks.create({title:'Fictitious dangerous draft',goal:'Discard only on approval.',why:'Prove installed prepared actions.',owner:{kind:'household'}},{kind:'member',id:'alex'})).value;
+  const card=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',conversation:manifest.conversation,member:'alex',what:'Discard fictitious draft',why:'Prove the exact before/after.',ask:'Discard it?',ifYes:'Cancel draft.',ifNo:'Keep draft.'})).value;
+  expect(app.services.tasks.get(draft.id).status).toBe('open');
+  const answer=()=>fetch(app!.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify({id:'discard-example-draft',input:{id:card.id,answer:'allow'}})});
+  expect((await answer()).status).toBe(200);expect((await answer()).status).toBe(200);
+  expect(app.services.tasks.get(draft.id)).toMatchObject({status:'closed',closeReason:'cancelled'});
+  expect(app.services.approvals.record(card.id).map(row=>row.event)).toEqual(['request','allow','use']);
+  for(const stale of ['summary','state']){
+   const next=app.writes.run(()=>app!.services.tasks.create({title:'Fictitious guarded draft',goal:'Reject stale approvals.',why:'Verify before/after guards.',owner:{kind:'household'}},{kind:'member',id:'alex'})).value;
+   const request=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${next.id}`,operation:'example.discardDraft',changeSummary:stale==='summary'?'Wrong before/after':`Draft ${next.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',what:'Discard guarded draft',why:'Exercise stale refusal.',ask:'Discard guarded draft?',ifYes:'Cancel.',ifNo:'Keep.'})).value;
+   if(stale==='state')app.writes.run(()=>app!.services.tasks.close(next.id,'Already finished.'));
+   const before=app.services.tasks.get(next.id),audit=app.services.approvals.record(request.id);
+   const refused=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'stale-'+stale,input:{id:request.id,answer:'allow'}})});
+   expect(refused.status).toBe(503);expect(app.services.tasks.get(next.id)).toEqual(before);expect(app.services.approvals.get(request.id).state).toBe('pending');expect(app.services.approvals.record(request.id)).toEqual(audit);
+  }
+ }finally{await app?.close();if(app)expect(()=>holderValueAbsent(home,'no-such-fictitious-secret')).toThrow('not active');rmSync(parent,{recursive:true,force:true});}
 });
 
 it.each(['runtime.boxSettingsSet','runtime.health','tempo.set']as const)('revokes temporary setup authority when %s is refused',async operation=>{

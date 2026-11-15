@@ -174,6 +174,19 @@ export const tokens = sqliteTable('tokens', {
   index('tokens_expires_at_idx').on(t.expiresAt),
 ]);
 
+/** Internal outside-program restrictions. The marker survives an empty grant set. */
+export const programTokens = sqliteTable('program_tokens', {
+  token: text('token').primaryKey().notNull().references((): AnySQLiteColumn => tokens.fingerprint, {onDelete:'cascade'}),
+});
+export const programRecordGrants = sqliteTable('program_record_grants', {
+  token: text('token').notNull().references((): AnySQLiteColumn => programTokens.token, {onDelete:'cascade'}),
+  recordType: text('record_type').notNull(),
+}, t => [primaryKey({columns:[t.token,t.recordType]}),check('program_record_grants_name',sql`length(${t.recordType}) between 1 and 200`)]);
+export const programOperationGrants = sqliteTable('program_operation_grants', {
+  token: text('token').notNull().references((): AnySQLiteColumn => programTokens.token, {onDelete:'cascade'}),
+  operation: text('operation').notNull(),
+}, t => [primaryKey({columns:[t.token,t.operation]}),check('program_operation_grants_name',sql`length(${t.operation}) between 1 and 200`)]);
+
 /** One row per signed-in browser. */
 export const sessions = sqliteTable('sessions', {
   id: text('id').primaryKey().notNull(),
@@ -1818,7 +1831,8 @@ export const secretWriteJournal = sqliteTable('secret_write_journal', {
   // SQLite trim defaults to ASCII spaces; include Unicode whitespace too.
   check('secret_write_journal_input_hash_required', sql`length(trim(${t.inputHash}, char(9,10,11,12,13,32,133,160,5760,8192,8193,8194,8195,8196,8197,8198,8199,8200,8201,8202,8232,8233,8239,8287,12288,65279))) > 0`),
 ]);
-export const plumbing = { migrations, operationResults, outsideEffects, notificationQueue, signinChallenges, bridgeRawEvents, bridgeResume, secretWriteJournal };
+export const plumbing = {
+  programTokens, programRecordGrants, programOperationGrants, migrations, operationResults, outsideEffects, notificationQueue, signinChallenges, bridgeRawEvents, bridgeResume, secretWriteJournal };
 
 export const tables = {
   members,
