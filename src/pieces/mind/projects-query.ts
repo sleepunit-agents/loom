@@ -4,12 +4,13 @@ import { GraphQLBoolean, GraphQLError, GraphQLFloat, GraphQLInt, GraphQLList, Gr
 import type { Viewer } from '../../core/index.js';
 import type {ProjectsReader} from './projects.js';
 import {retainedQueryFields} from './retained-query.js';
-export type ProjectQueryReader=Pick<ProjectsReader,'list'|'read'|'memoryRead'|'retained'|'access'>;
+export type ProjectQueryReader=Pick<ProjectsReader,'list'|'read'|'memoryRead'|'memoryHistory'|'retained'|'access'>;
 import {projectDeadline} from './project-deadlines.js';
 import type {QueryDeadlines} from './query-deadlines.js';
 import type { ProjectRecord, ProjectMemory, ProjectCard, ProjectSection } from './projects-model.js';
 
 const text = { type: GraphQLString }, requiredText = { type: new GraphQLNonNull(GraphQLString) };
+const validId=(value:unknown,max:number)=>typeof value==='string'&&value.length>=3&&value.length<=max;
 const strings = { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) };
 const list = (type: GraphQLObjectType) => new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(type)));
 const item = new GraphQLObjectType({ name: 'MemoryProjectItem', fields: {
@@ -52,13 +53,14 @@ const memory = new GraphQLObjectType({ name: 'MemoryProjectMemory', fields: {
  id: requiredText, agent: requiredText, ref: requiredText, title: requiredText, content: requiredText,
  category: requiredText, created: requiredText, updated: requiredText, expires: { type: GraphQLFloat },
 } });
+const revision=new GraphQLObjectType({name:'MemoryRevision',fields:{id:{type:new GraphQLNonNull(GraphQLInt)},op:requiredText,replacedAt:requiredText,content:requiredText}});
 
 const access=new GraphQLObjectType({name:'MemoryProjectsAccess',fields:{allowed:{type:new GraphQLNonNull(GraphQLBoolean)},agents:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))}}});
 export function projectsQueryFields(source: ProjectQueryReader, deadlines?:QueryDeadlines, now:()=>number=Date.now): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
  const read = (context: { viewer: Viewer }, verb: string, input: Record<string, unknown>, absent: unknown) => {
   if (!context?.viewer) return absent;
   try {
-   if(verb!=='projectsList'&&(typeof input.id!=='string'||input.id.length<3||input.id.length>(verb==='projectMemoryRead'?300:200)))return absent;
+   if(verb!=='projectsList'&&!validId(input.id,verb==='projectMemoryRead'?300:200))return absent;
    const readAt=now();
    const value=verb==='projectsList'?source.list(context.viewer):verb==='projectRead'?source.read(input.id as string,context.viewer):source.memoryRead(input.id as string,context.viewer);
    if(value===undefined||value===null)return absent;
@@ -75,6 +77,12 @@ export function projectsQueryFields(source: ProjectQueryReader, deadlines?:Query
  const id = { type: new GraphQLNonNull(GraphQLString) };
  return {
   ...retainedQueryFields(source),
+  // Retained revisions have no current-body expiry lease. Keep this safe
+  // boundary separate from the live Project/Memory deadline path above.
+  memoryHistory:{type:list(revision),args:{id},resolve:(_source,args,context)=>{
+   if(!context?.viewer||!validId(args.id,300))return [];
+   try{return source.memoryHistory(args.id,context.viewer);}catch{throw new GraphQLError('Memory history is unavailable');}
+  }},
   memoryProjectsAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?source.access(context.viewer):null},
   memoryProjects: { type: new GraphQLList(new GraphQLNonNull(project)), resolve: (_source, _args, context) => read(context, 'projectsList', {}, []) },
   memoryProject: { type: projectDetail, args: { id }, resolve: (_source, args, context) => read(context, 'projectRead', { id: args.id }, null) },

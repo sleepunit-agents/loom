@@ -38,10 +38,26 @@ the separate data move prepares it.
 
 This is the canonical command/source side. The general native MCP
 consumer is built on t-2241. Exposing the remaining semantic changes
-(proposals, ratification, editing and revision history) through that path is
+(proposals and ratification) through that path is
 still on t-2243; their existing core/stdio helpers remain. No installed
 service or real source is changed by this implementation.
 
+## Native edits and saved body revisions
+
+memory.update accepts one own opaque ID and changed content, metadata, or a
+feedback observation. A changed body saves the displaced revision first.
+memory.restoreRevision accepts that ID and an integer revision_id belonging
+to the same memory. It saves the displaced body before restoring the old one;
+replay does not add another revision. Neither command chooses another source.
+
+memoryHistory(id:) on the canonical GraphQL door returns the newest ten
+retained revisions (id, op, replacedAt, content) under current private Memory
+visibility. This explicit history read includes retained revisions of archived
+or expired rows. Restoring a body revision does not unarchive the memory or
+renew its lifetime; memory.restore is the separate archive restoration.
+Shared command receipts contain only opaque IDs and keyed fingerprints;
+private effects, revisions and receipts commit together and roll back if the
+current body's authority ends before commit. Draft browsing remains separate.
 A receiving body's Identity
 ---------------------------------
 
