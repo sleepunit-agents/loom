@@ -1,10 +1,10 @@
 import { selectedQueryFields } from '../data/queries.js';
-import { readInboxSet, type InboxReadSet } from '../data/inbox-read.js';
+import { readInboxFolders, readInboxSet, type InboxReadSet } from '../data/inbox-read.js';
 import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
 import { wordsDeadline } from './retention.js';
 /** Unified Inbox reads for the generated query composition. The authenticated
  * door supplies current SQL visibility; no default policy or new transport. */
-import { and, asc, count, desc, eq, ne, getTableColumns, inArray, is, isNotNull, isNull, sql, SQL, type AnyColumn } from 'drizzle-orm';
+import { and, asc, desc, eq, ne, getTableColumns, inArray, is, isNotNull, isNull, sql, SQL, type AnyColumn } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap, type GraphQLResolveInfo } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
@@ -121,20 +121,7 @@ export class InboxQueries {
   }
   folders(viewer: Viewer) {
     if (viewer.kind !== 'member' && viewer.kind !== 'agent') return { needs: 0, alerts: 0, answered: 0, fyi: 0, all: 0, agents: [] };
-    const where = this.mailboxWhere(viewer);
-    const totals = this.db.select({
-      needs: sql<number>`coalesce(sum(case when ${this.folderWhere('needs')} then 1 else 0 end),0)`,
-      alerts: sql<number>`coalesce(sum(case when ${this.folderWhere('alerts')} then 1 else 0 end),0)`,
-      fyi: sql<number>`coalesce(sum(case when ${this.folderWhere('fyi')} then 1 else 0 end),0)`,
-      answered: sql<number>`coalesce(sum(case when ${this.folderWhere('answered')} then 1 else 0 end),0)`,
-      all: count(),
-    }).from(inbox).where(where).get()!;
-    const agents = this.db.select({ id: inbox.agent, count: count(),
-      needs: sql<number>`coalesce(sum(case when ${this.folderWhere('needs')} then 1 else 0 end),0)`,
-    }).from(inbox)
-      .where(and(where, isNotNull(inbox.agent))).groupBy(inbox.agent).orderBy(asc(inbox.agent)).all()
-      .map(row => ({ id: row.id!, count: row.count, needs: row.needs }));
-    return { ...totals, agents };
+    return readInboxFolders(this.db, this.mailboxWhere(viewer)!);
   }
 
   /** Search the recipient's whole mailbox before paging. Private text is opened
