@@ -287,6 +287,19 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
   });
 
 
+  for(const how of ['exclusive','recovery'] as const){
+    it('a turn still waits for household '+how+' while login remains responsive',async()=>{
+      const thread=await open(),keeper=new BetterSqlite3(join(h.home,HOUSEHOLD_DB));
+      keeper.prepare('SELECT 1 FROM sqlite_master LIMIT 1').get();
+      const held=await hold(join(h.home,HOUSEHOLD_DB),how);
+      try{
+        const turn=api('conversations/turn',{agent:'art',venue:'loom',place:thread.id,at:new Date().toISOString(),from:{kind:'person',slug:'jonathan'},kind:'message'});
+        await queuedFor(join(h.home,HOUSEHOLD_DB));expect((await fetch(base+'/login')).status).toBe(200);expect(await pending(turn)).toBe(true);
+        await held.release();expect((await turn).status).toBe(200);
+      }finally{await held.release();keeper.close();}
+    },30000);
+  }
+
   it('retired Comms runtime adapters refuse attribution and leave unobserved Stop intact',async()=>{
     const thread=await open(),db=new BetterSqlite3(join(h.home,HOUSEHOLD_DB)),words=new BetterSqlite3(join(h.home,COMMS_DB));
     try{
@@ -296,7 +309,10 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
         ['comms/adapter',{op:'post',place:thread.id,agent:'art',text:'MUST NOT BE WRITTEN'}],
         ['comms/adapter',{op:'status',place:thread.id,agent:'art'}],
         ['comms/activity',{conversation:thread.conversation,run:'invented',cards:[{id:'step',tool:'Read',summary:'MUST NOT BE WRITTEN',state:'done'}]}],
-      ] as const)expect((await api(path,body)).status).toBe(403);
+      ] as const)for(const token of [tok.runtime,tok.jonathan]){
+        const response=await fetch(base+'/api/loom/'+path,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify(body)});
+        expect(response.status).toBe(token===tok.runtime?403:404);
+      }
       expect(words.prepare('SELECT count(*) AS n FROM comms_messages WHERE thread=?').get(thread.id)).toEqual(before);
       expect(db.prepare('SELECT stop FROM comms_threads WHERE id=?').get(thread.id)).toEqual({stop:1});
     }finally{words.close();db.close();}
