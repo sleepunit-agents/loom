@@ -13,7 +13,7 @@ function fixture() {
   const provider = vi.fn(async (_account: typeof account) => windows);
   const input = { args: ['/config'], read: vi.fn(async (path: string) => path === '/config' ? JSON.stringify(config) : 'machine-token'),
     on: (name: string, stop: () => void) => { handlers.set(name, stop); }, off: (name: string) => { handlers.delete(name); },
-    error: vi.fn(), output: vi.fn(), usage: vi.fn((_plan: WorkerCommand, _options: { signal: AbortSignal; timeoutMs?: number }) => provider), usageBasis: vi.fn(async () => ({ basis: '00000000-0000-4000-8000-000000000001' })),
+    error: vi.fn(), output: vi.fn(), health: vi.fn(async (_input: { signal: AbortSignal; facts?: readonly string[] }) => ({ ok: true as const })), usage: vi.fn((_plan: WorkerCommand, _options: { signal: AbortSignal; timeoutMs?: number }) => provider), usageBasis: vi.fn(async () => ({ basis: '00000000-0000-4000-8000-000000000001' })),
     reportUsage: vi.fn(async (_remote: unknown, _observation: { basis: string }) => ({ recorded: true })), usageUnavailable: vi.fn(async () => ({ recorded: true })),
     control: vi.fn(() => ({} as never)), executor: vi.fn(() => ({} as never)),
     run: vi.fn(async ({ signal }: { signal: AbortSignal }) => { signal.addEventListener('abort', () => stopRun.resolve(), { once: true }); await stopRun.promise; }),
@@ -141,4 +141,65 @@ it('uses the documented one-minute interval when omitted from normal-worker conf
   const running = workerProgram(f.input); await flush();
   expect(f.input.pause).toHaveBeenCalledExactlyOnceWith(60_000, expect.any(AbortSignal));
   f.stopRun.resolve(); expect(await running).toBe(0);
+});
+
+it('reports health before and during a long initial read without allowing an early claim', async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture(), pending = deferred<typeof windows>(); f.provider.mockImplementationOnce(() => pending.promise);
+    f.input.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...f.config, facts: ['gpu:5090'] }) : 'machine-token');
+    const running = workerProgram(f.input); await flush();
+    expect(f.input.health).toHaveBeenCalledOnce(); expect(f.provider).toHaveBeenCalledOnce(); expect(f.input.run).not.toHaveBeenCalled();
+    for (let i = 1; i <= 3; i++) { await vi.advanceTimersByTimeAsync(14999); expect(f.input.health).toHaveBeenCalledTimes(i); await vi.advanceTimersByTimeAsync(1); expect(f.input.health).toHaveBeenCalledTimes(i+1); }
+    expect(f.input.health.mock.calls.map(([input]) => input.facts)).toEqual(Array.from({ length: 4 }, () => ['gpu:5090'])); expect(f.input.run).not.toHaveBeenCalled();
+    pending.resolve(windows); await flush(); expect(f.input.run).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(30000); expect(f.input.health).toHaveBeenCalledTimes(4);
+    f.stopRun.resolve(); expect(await running).toBe(0); expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+it('serializes startup health reports and joins a pending report before claiming', async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture(), reader = deferred<typeof windows>(), health = deferred<{ ok: true }>();
+    f.provider.mockImplementationOnce(() => reader.promise); f.input.health.mockImplementationOnce(async () => ({ ok: true })).mockImplementationOnce(() => health.promise);
+    const running = workerProgram(f.input); await flush(); await vi.advanceTimersByTimeAsync(45000);
+    expect(f.input.health).toHaveBeenCalledTimes(2); reader.resolve(windows); await flush(); expect(f.input.run).not.toHaveBeenCalled();
+    health.resolve({ ok: true }); await flush(); expect(f.input.run).toHaveBeenCalledOnce();
+    f.stopRun.resolve(); expect(await running).toBe(0); expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});
+for (const synchronous of [false, true]) for (const outcome of ['success', 'failure']) it(`suppresses late ${outcome} and aborts the initial reader after ${synchronous ? 'synchronous' : 'asynchronous'} health failure and emits no late quota report`, async () => {
+  vi.useFakeTimers(); const unhandled = vi.fn(); process.on('unhandledRejection', unhandled);
+  try {
+    const f = fixture(), reader = deferred<typeof windows>(); f.provider.mockImplementationOnce(() => reader.promise);
+    f.input.health.mockImplementationOnce(async () => ({ ok: true })).mockImplementationOnce(() => { if (synchronous) throw Error('private credential'); return Promise.reject(Error('private credential')); });
+    const running = workerProgram(f.input); await flush(); await vi.advanceTimersByTimeAsync(15000);
+    expect(f.input.usage.mock.calls[0][1].signal.aborted).toBe(true); expect(f.input.run).not.toHaveBeenCalled();
+    if (outcome === 'failure') reader.reject(Error('private late quota failure')); else reader.resolve(windows);
+    expect(await running).toBe(1); await vi.advanceTimersByTimeAsync(0); expect(unhandled).not.toHaveBeenCalled();
+    expect(f.input.reportUsage).not.toHaveBeenCalled(); expect(f.input.usageUnavailable).not.toHaveBeenCalled();
+    expect(f.input.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n'); expect(vi.getTimerCount()).toBe(0);
+  } finally { process.off('unhandledRejection', unhandled); vi.useRealTimers(); }
+});
+it('refuses an initial health failure before invoking private readers or claiming work', async () => {
+  const f = fixture(); f.input.health.mockRejectedValueOnce(Error('private credential'));
+  expect(await workerProgram(f.input)).toBe(1); expect(f.provider).not.toHaveBeenCalled(); expect(f.input.run).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
+});
+
+it('cancels and joins the initial health request without opening a reader or claiming', async () => {
+  const f = fixture(), health = deferred<{ ok: true }>(); f.input.health.mockImplementationOnce(() => health.promise);
+  let returned = false; const running = workerProgram(f.input).then(code => { returned = true; return code; }); await flush();
+  f.handlers.get('SIGTERM')!(); await flush(); expect(f.input.health.mock.calls[0][0].signal.aborted).toBe(true); expect(returned).toBe(false); expect(f.handlers.size).toBe(2);
+  health.resolve({ ok: true }); expect(await running).toBe(0); expect(f.provider).not.toHaveBeenCalled(); expect(f.input.run).not.toHaveBeenCalled(); expect(f.handlers.size).toBe(0);
+});
+it('joins an outstanding startup health request after cancellation even when the reader settles first', async () => {
+  vi.useFakeTimers();
+  try {
+    const f = fixture(), reader = deferred<typeof windows>(), health = deferred<{ ok: true }>();
+    f.provider.mockImplementationOnce(() => reader.promise); f.input.health.mockResolvedValueOnce({ ok: true }).mockImplementationOnce(() => health.promise);
+    let returned = false; const running = workerProgram(f.input).then(code => { returned = true; return code; }); await flush(); await vi.advanceTimersByTimeAsync(15000);
+    f.handlers.get('SIGINT')!(); reader.resolve(windows); await flush(); expect(returned).toBe(false); expect(f.handlers.size).toBe(2);
+    expect(f.input.health.mock.calls[1][0].signal.aborted).toBe(true); health.resolve({ ok: true }); expect(await running).toBe(0);
+    expect(f.input.reportUsage).not.toHaveBeenCalled(); expect(f.input.usageUnavailable).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0); expect(f.handlers.size).toBe(0);
+  } finally { vi.useRealTimers(); }
 });

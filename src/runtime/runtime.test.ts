@@ -5,7 +5,7 @@ import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
 import { createTempo } from '../core/tempo/tempo.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, inbox } from '../core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, inbox, boxFacts } from '../core/data/schema.js';
 import { createRuntime } from './runtime.js';
 
 const cleanups: (() => void)[] = [];
@@ -121,4 +121,13 @@ it('keeps polling after a callback fails and start is idempotent', () => {
   f.runtime.close();
   f.clock.advance(30_000);
   expect(f.changed).toHaveBeenCalledOnce();
+});
+
+it('forwards optional reported facts and clearing through the trusted runtime wrapper', () => {
+  const f = fixture(); f.clock.advance(1000);
+  expect(f.runtime.next('worker', ['gpu:5090'])).toBeUndefined();
+  expect(f.db.select().from(boxFacts).all()).toEqual([{ box: 'worker', fact: 'gpu:5090', fromOwner: false }]);
+  expect(f.db.select().from(boxes).get()?.lastSeenAt).toBe(f.now());
+  f.runtime.next('worker'); expect(f.db.select().from(boxFacts).all()).toHaveLength(1);
+  f.runtime.next('worker', []); expect(f.db.select().from(boxFacts).all()).toEqual([]);
 });
