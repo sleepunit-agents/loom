@@ -50,7 +50,7 @@ it.each(['comms','inbox','answer','summary','search'].flatMap(kind=>['stored','h
   else f.db.update(messages).set({keepUntil:'2026-11-14T18:00:01Z'}).run();
  });
  const source=kind==='comms'?`{commsMessages(thread:"${f.thread.id}"){words}}`:kind==='summary'?'{recentConversations(agent:"art"){lastAnswer{words}}}':kind==='search'?'{inboxItems(search:"PRIVATE WORDS"){id}}':`{inboxItem(id:"${question.inboxItem}"){${kind==='answer'?'answerText':'body{words}'}}}`;
- if(clone){const response=await f.query(source);expect(response.status).toBe(200);const copy=response.clone();await Promise.resolve();f.setTime(start+1000);await expect(copy.text()).rejects.toThrow('Data access ended');await expect(response.text()).rejects.toThrow('Data access ended');}
+ if(clone){const response=await f.query(source);expect(response.status).toBe(200);const holder=new Response(response.body,response),copy=holder.clone();await Promise.resolve();f.setTime(start+1000);await expect(copy.text()).rejects.toThrow('Data access ended');await expect(holder.text()).rejects.toThrow('Data access ended');}
  else {step=()=>f.setTime(start+1000);const response=await f.query(source.slice(0,-1)+' step}');expect(response.status).toBe(503);expect(await response.text()).not.toContain('PRIVATE WORDS');}
  expect(f.db.select().from(messages).get()?.words).not.toBeNull();
 });
