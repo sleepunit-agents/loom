@@ -1,0 +1,44 @@
+name: Rebuild walkthrough
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [next]
+    paths:
+      - 'src/**'
+      - 'web/**'
+      - 'assets/**'
+      - 'scripts/rebuild-*.mjs'
+      - 'docs/rebuild-checklists/**'
+      - '.github/workflows/rebuild-walkthrough.yml'
+permissions:
+  contents: read
+concurrency:
+  group: rebuild-walkthrough-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  walkthrough:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - name: Build the actual program
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+        run: |
+          nice -n 19 npm ci --no-audit --no-fund
+          nice -n 19 npm run build
+          npx playwright-core install --with-deps chromium
+      - name: Sign in and visit every launcher app
+        run: |
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          export LOOM_TEST_SHOTS="$RUNNER_TEMP/rebuild-walkthrough"
+          nice -n 19 npx vitest run src/ui/rebuild-walkthrough.integration.test.ts --maxWorkers=1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: rebuild-walkthrough-${{ github.event.pull_request.head.sha || github.sha }}
+          path: ${{ runner.temp }}/rebuild-walkthrough/
+          if-no-files-found: error

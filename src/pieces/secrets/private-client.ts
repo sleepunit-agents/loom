@@ -70,7 +70,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
  }
 
  return {
-  granted(secret:string,id=randomUUID()){return read({kind:'request',secret,id}) as Promise<Buffer>;},
+  granted(secret:string,id:string=randomUUID()){return read({kind:'request',secret,id}) as Promise<Buffer>;},
   async repository(job:string):Promise<Buffer|undefined>{
    for(;;){try{return await read({kind:'repository',job},job,true);}catch(error){
     if(!(error instanceof PendingRepository))throw error;
