@@ -73,5 +73,18 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  const ids=z.array(scopedId).describe('Opaque scoped memory IDs. Read words through memoryProjectMemory(id: id) on GraphQL.');
  operations.register({...base,doors:[...base.doors],name:'memory.remember',input:remember.describe('Remember in your own declared source. Returns opaque IDs; select memoryProjectMemory(id: id) on GraphQL to read words.'),output:z.object({ids}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>({ids:[opaque(db,(await backend.remember(input)).ref)]}))});
  operations.register({...base,doors:[...base.doors],name:'memory.recall',input:recall.describe('Recall your memories by meaning, adding heat. Returns opaque IDs and scores; select memoryProjectMemory(id: id) on GraphQL for title and content.'),output:z.object({ids,matches:z.array(z.object({id:scopedId,score:z.number()}))}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{const matches=(await backend.recall(input)).map(row=>({id:opaque(db,row.path),score:row.relevance}));return {ids:matches.map(row=>row.id),matches};})});
+ const target=z.object({id:scopedId}).strict();
+ const ownTarget=(db:Database.Database,viewer:Viewer,id:string)=>{
+  if(viewer.kind!=='agent'||!id.startsWith(viewer.id+':'))throw new OperationError('denied','Current body Memory required');
+  const uuid=id.slice(viewer.id.length+1),row=db.prepare('SELECT ref FROM memories WHERE uuid=?').get(uuid) as {ref:string}|undefined;
+  if(!row)throw new OperationError('not-found','Memory is absent');return {uuid,ref:row.ref};
+ };
+ for(const action of ['archive','restore','forget'] as const)operations.register({...base,doors:[...base.doors],name:`memory.${action}`,
+  input:(action==='archive'?target.extend({note:z.string().max(4000).optional()}):target).describe(`${action} one memory in your own declared source by its opaque scoped ID.`),output:z.object({ids}).strict(),
+  prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{
+   const row=ownTarget(db,viewer,input.id);
+   const result=action==='archive'?(await backend.archive({ref:row.ref,note:'note' in input?input.note as string|undefined:undefined})).archived:action==='restore'?(await backend.restore({ref:row.ref})).restored:(await backend.forget({ref:row.ref})).deleted;
+   return {ids:result.length?[row.uuid]:[]};
+  })});
  return {close};
 }
