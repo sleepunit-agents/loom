@@ -1,6 +1,7 @@
 /** First install only. Build privately beside the requested empty home, then
  * publish the complete directory atomically. Never roll back user pathnames. */
 import Database from 'better-sqlite3';
+import {householdService} from './apps/household.js';
 import {loadKey} from './pieces/comms/crypto.js';
 import {constants,openSync,closeSync,writeFileSync,fsyncSync,lstatSync,readdirSync,mkdirSync,mkdtempSync,renameSync} from 'node:fs';
 import {join,dirname,basename} from 'node:path';
@@ -9,7 +10,7 @@ import type {Clock} from './core/clock.js';
 import {assertHomeReady} from './core/home-state.js';
 import {ownHome} from './core/daemon-home.js';
 import {createDataSchema} from './core/data/database.js';
-import {members,agents,memberAgents,household} from './core/data/schema.js';
+import {members,agents,memberAgents} from './core/data/schema.js';
 export async function initializeSharedHome(home:string,clock:Clock){
  const config=join(home,'program.json');
  try{lstatSync(config);return;}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
@@ -28,7 +29,7 @@ export async function initializeSharedHome(home:string,clock:Clock){
   db.transaction(()=>{
    db.insert(members).values({id:member,role:'owner',fullOwner:true,joinedAt:at}).run();
    db.insert(agents).values({id:'assistant',about:'Help with the work you are given.',markBg:'#313244',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot'}).run();
-   db.insert(memberAgents).values({member,agent:'assistant'}).run();db.insert(household).values({defaultAgent:'assistant'}).run();
+   db.insert(memberAgents).values({member,agent:'assistant'}).run();householdService(db,()=>at).initialize('assistant');
   });
   client.close();client=undefined;
   await loadKey(stage);
