@@ -61,7 +61,16 @@ export function dataSocket(options: {
         await result[Symbol.asyncIterator]().return?.();
         throw new Error('Data access ended');
       }
-      return result;
+      if (!(Symbol.asyncIterator in result)) return result;
+      const iterator = result[Symbol.asyncIterator]();
+      // graphql-ws pulls after subscribe() returns. Carry the socket admission
+      // scope into each pull, so Live child callbacks inherit both lifetimes.
+      return {
+        [Symbol.asyncIterator]() { return this; },
+        next: () => run(() => iterator.next()),
+        return: () => executions.run(() => iterator.return?.() ?? Promise.resolve({ done: true as const, value: undefined })),
+        throw: (error: unknown) => executions.run(() => iterator.throw ? iterator.throw(error) : Promise.reject(error)),
+      };
     }),
     // Ordinary execution errors travel in next payloads, not onError. Drop
     // partial data as well: it may contain words from the failed projection.

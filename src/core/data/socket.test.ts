@@ -345,3 +345,25 @@ it('does not build a schema after activity synchronously stops admission', async
   await started; await closing;
   expect(built).toBe(0);
 });
+
+it('carries the socket admission fence into deferred live child callbacks', async () => {
+  const f = await setup(), ws = await f.open();
+  let began!: () => void, release!: () => void, children = 0;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  clean.push(release);
+  const child = new GraphQLObjectType({ name: 'DeferredChild', fields: {
+    value: { type: GraphQLString, resolve() { children++; f.client.prepare('SELECT title FROM tasks').all(); return 'late'; } },
+  } });
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    slow: { type: child, async resolve() { began(); await held; return {}; } },
+  } }) }));
+  ws.send(JSON.stringify({ ...selection, payload: { ...selection.payload, variables: { query: '{ slow { value } }' } } }));
+  await started;
+  const ended = once(ws, 'close'), closing = f.socket.close();
+  try { await ended; release(); await closing; expect(children).toBe(0); }
+  finally { release(); await closing; }
+  // Independent installed watchers still use the live hub after socket close.
+  const stream = f.live.watch({ schema: dataQueries(f.client, { tables: ['tasks'], visibility: taskVisibility({ kind: 'member', id: 'sam' }) }), query: '{ tasks { id } }', valid: () => true });
+  expect((await stream.next()).value?.revision).toBe(1); await stream.return!();
+});
