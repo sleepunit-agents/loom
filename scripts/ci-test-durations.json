@@ -170,7 +170,6 @@
   "src/ui/ask-open.integration.test.ts": 12246,
   "src/ui/block-cut.test.ts": 13,
   "src/ui/blocks.test.ts": 41,
-  "src/ui/changes-app.integration.test.ts": 43494,
   "src/ui/changes-page.test.ts": 5,
   "src/ui/chart-colors.test.ts": 5,
   "src/ui/collections-runtime.test.ts": 47,
