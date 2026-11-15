@@ -35,6 +35,17 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
   try {
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
     const a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});
+    const diagnostics:string[]=[];
+    for(const [name,page] of [['desktop',a],['phone',b]] as const){
+      page.on('pageerror',error=>diagnostics.push(`${name}: ${error.message}`));
+      page.on('websocket',socket=>{
+        socket.on('close',()=>diagnostics.push(`${name}: websocket closed`));
+        socket.on('framereceived',({payload})=>{
+          try{const frame=JSON.parse(String(payload));if(frame.ok===false)diagnostics.push(`${name}: ${frame.code}: ${frame.message}`);}catch{/* not JSON */}
+        });
+      });
+    }
+    try {
     const link=app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});if(!link.ok)throw Error('Fixture sign-in failed');
     await a.goto(app.url+(link.value as {path:string}).path);const signedIn=a.waitForResponse(r=>r.request().method()==='POST');
     await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signedIn).status()).toBe(303);
@@ -62,6 +73,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
     await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
     await b.reload();await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
     await b.getByRole('button',{name:'Contacts',exact:true}).last().click();
+    await expect.poll(()=>b.locator('.loom-split').getAttribute('data-open')).toBe(null);
     await b.getByRole('searchbox',{name:'Search people',exact:true}).fill('Casey');
     await expect.poll(()=>row(b,'Jonathan Barket').count()).toBe(0);expect(await row(b,'Casey Smith').count()).toBe(1);
     await b.getByRole('searchbox',{name:'Search people',exact:true}).fill('');
@@ -78,5 +90,17 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
     expect(await b.getByText('Helps with the workshop',{exact:true}).count()).toBe(1);
     directory.archive({slug:'casey',reason:'fixture archive',actor:'owner'});
     await expect.poll(()=>row(a,'Casey Smith').count()).toBe(0);
+    }catch(error){
+      // Fixture-only content; omit addresses, sign-in links, cookies and input values.
+      for(const [name,page] of [['desktop',a],['phone',b]] as const){
+        const state=await page.locator('main').evaluateAll(nodes=>nodes.map(main=>({
+          text:main.textContent?.slice(0,3000),
+          splits:Array.from(main.querySelectorAll('.loom-split')).map(split=>({mode:split.getAttribute('data-mode'),open:split.hasAttribute('data-open')})),
+          inputs:Array.from(main.querySelectorAll('input')).map(input=>({type:input.type,label:input.labels?.[0]?.textContent,hidden:!input.getClientRects().length,inert:!!input.closest('[inert]')})),
+        }))).catch(()=>[]);
+        diagnostics.push(`${name} People view: ${JSON.stringify(state)}`);
+      }
+      console.error('People fixture diagnostics',diagnostics);throw error;
+    }
   } finally {await browser.close();await app.close();directory.close();relationship.close();other.close();rmSync(home,{recursive:true,force:true});}
 },60_000);
