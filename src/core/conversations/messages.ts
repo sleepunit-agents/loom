@@ -1,6 +1,6 @@
 /** Trusted private-message service. External doors authenticate and authorize;
  * encrypted words never enter operation receipts or the plaintext Inbox. */
-import { and, eq, inArray, isNotNull, lte, max, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, lte, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, deletedThreads, household, inbox, inboxRefs, messages, threadRefs, threads } from '../data/schema.js';
 import type { WordsKey } from './words.js';
@@ -138,14 +138,24 @@ export class CommsMessages {
   /** Expired words stay unavailable even before the periodic sweep runs. */
   async words(thread: string, seq: number): Promise<string | null> {
     const row = this.db.select().from(messages).where(and(eq(messages.thread, thread), eq(messages.seq, seq))).get();
-    if (!row?.words || !row.keepUntil || row.keepUntil <= this.now()) return null;
+    const keepDays = () => this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+    const retained = (message: Message | undefined, days: number) => !!message?.words && !!message.keepUntil
+      && Number.isInteger(days) && days >= 1 && days <= 14
+      && message.keepUntil > this.now() && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
+    const days = keepDays();
+    if (!retained(row, days) || !row?.words) return null;
     const words = await this.key.open(row.words);
     const current = this.db.select().from(messages).where(and(eq(messages.thread, thread), eq(messages.seq, seq))).get();
-    return current?.words && current.keepUntil && current.keepUntil > this.now() ? words : null;
+    return retained(current, keepDays()) && keepDays() === days && current?.words
+      && current.at === row.at && current.keepUntil === row.keepUntil && current.words.equals(row.words) ? words : null;
   }
 
   expire(): number {
-    return this.db.update(messages).set({ words: null }).where(and(isNotNull(messages.words), lte(messages.keepUntil, this.now()))).returning({ seq: messages.seq }).all().length;
+    const days = this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+    if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
+    const at = this.now(), cutoff = new Date(Date.parse(at) - days * 86400000).toISOString();
+    return this.db.update(messages).set({ words: null }).where(and(isNotNull(messages.words),
+      or(lte(messages.keepUntil, at), lte(messages.at, cutoff)))).returning({ seq: messages.seq }).all().length;
   }
 
   /** Remove private words and references; retain Inbox outcome metadata and a

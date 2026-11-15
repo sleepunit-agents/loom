@@ -36,7 +36,9 @@ export function dataSocket(options: {
     context(ctx) {
       const auth = admitted.get(ctx.extra.socket);
       if (!auth?.valid()) throw new Error('Authentication ended');
-      return { viewer: auth.viewer };
+      // The same server-resolved principal feeds direct reads and every live
+      // execution. Neither variables nor connectionParams supply this context.
+      return Object.freeze({ viewer: auth.viewer });
     },
     // Ordinary execution errors travel in next payloads, not onError. Drop
     // partial data as well: it may contain words from the failed projection.

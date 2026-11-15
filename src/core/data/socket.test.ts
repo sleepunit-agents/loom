@@ -8,7 +8,7 @@ import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
 import { DataLive } from './live.js';
 import { dataSocket } from './socket.js';
-import { GraphQLObjectType, GraphQLScalarType, GraphQLSchema } from 'graphql/index.js';
+import { GraphQLObjectType, GraphQLScalarType, GraphQLSchema, GraphQLString } from 'graphql/index.js';
 import type { Authentication } from '../live/index.js';
 import { FakeClock } from '../clock.js';
 
@@ -192,4 +192,22 @@ it('isolates two authenticated socket viewers through interleaved reads and live
   const ordinary={type:'subscribe',id:'read',payload:{query:'{ caller }'}};
   const reads=await Promise.all([peer,owner].map(ws=>read(ws,()=>ws.send(JSON.stringify(ordinary)))));
   expect(reads.map(result=>result.payload.data.caller)).toEqual(['peer:2','owner:2']);
+});
+
+it('uses the upgrade viewer for context-based reads and observe reruns despite client identity claims', async () => {
+  const f = await setup();
+  let title = 'First';
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    title: { type: GraphQLString, resolve: (_source, _args, context) => `${context.viewer.id}:${title}` },
+  } }) }));
+  const ws = await f.open(undefined, { viewer: { kind: 'member', id: 'owner' } });
+  const direct = await read(ws, () => ws.send(JSON.stringify({ type: 'subscribe', id: 'direct', payload: {
+    query: '{ title }', variables: { viewer: { kind: 'member', id: 'owner' } },
+  } })));
+  expect(direct.payload).toEqual({ data: { title: 'sam:First' } });
+  const observed = { ...selection, payload: { query: 'subscription($query: String!, $variables: DataValue) { observe(query: $query, variables: $variables) { revision patches { path removed value } } }', variables: { query: '{ title }', variables: { viewer: { kind: 'member', id: 'owner' } } } } };
+  const initial = await read(ws, () => ws.send(JSON.stringify(observed)));
+  expect(initial.payload.data.observe.patches[0].value).toEqual({ title: 'sam:First' });
+  const changed = await read(ws, () => { title = 'Second'; f.live.changed(); });
+  expect(changed.payload.data.observe).toEqual({ revision: 2, patches: [{ path: ['title'], removed: false, value: 'sam:Second' }] });
 });

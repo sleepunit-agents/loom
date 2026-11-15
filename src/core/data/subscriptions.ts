@@ -24,7 +24,7 @@ export function dataSubscriptions(schema: GraphQLSchema, live: DataLive, valid: 
     observe: {
       type: new GraphQLNonNull(delta),
       args: { query: { type: new GraphQLNonNull(GraphQLString) }, variables: { type: value }, operationName: { type: GraphQLString } },
-      subscribe: (_source, args, contextValue) => live.watch({ schema, query: args.query, variables: args.variables, operationName: args.operationName, contextValue, valid }),
+      subscribe: (_source, args, contextValue) => live.watch({ schema, contextValue, query: args.query, variables: args.variables, operationName: args.operationName, valid }),
       resolve: event => event,
     },
   } }) });
