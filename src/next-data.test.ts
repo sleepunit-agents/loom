@@ -273,3 +273,27 @@ it('serves real Memory and Work through the same HTTP and socket caller, includi
   f.data.writes.run(() => f.client.prepare('UPDATE tokens SET revoked_at=? WHERE fingerprint=?').run(new Date(f.clock.now()).toISOString(), hash(token)));
   expect((await closed)[0]).toBe(4403);
 });
+
+it('ships the Tempo selection through the generated door and withdraws it after project revocation', async () => {
+  const f = await setup();
+  const at = new Date(f.clock.now()).toISOString();
+  f.db.insert(s.triggers).values({ id:'tempo-pond',ownerKind:'household',sourceKind:'answer',watches:'approval:example',lifespan:'once',
+    targetKind:'inbox',toKind:'person',to:'owner',project:'pond',note:'Wait for answer',enabled:true,state:'standing',createdAt:at,changedAt:at }).run();
+  f.db.insert(s.triggerLog).values({seq:1,trigger:'tempo-pond',at,event:'set',note:''}).run();
+  const { tempoQuery } = await import('../web/src/pieces/tempo/query.js');
+  const request = () => f.data.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:`Bearer ${token}`},body:JSON.stringify({query:tempoQuery})});
+  const first = await (await request()).json();
+  expect(first.errors).toBeUndefined();
+  expect(first.data.triggers).toMatchObject([{id:'tempo-pond',note:'Wait for answer'}]);
+  expect(first.data.triggerLog).toMatchObject([{trigger:'tempo-pond',event:'set'}]);
+  const socket = await f.open();
+  const initial = await read(socket,()=>socket.send(JSON.stringify({...selection,payload:{...selection.payload,variables:{query:tempoQuery}}})));
+  expect(initial.payload.data.observe.patches[0].value).toEqual(first.data);
+  const withdrawn = await read(socket,()=>{f.data.writes.run(()=>f.client.exec("DELETE FROM project_members WHERE member='sam'"));});
+  expect(withdrawn.payload.data.observe.patches).toEqual(expect.arrayContaining([
+    {path:['triggers',0],removed:true,value:null}, {path:['triggerLog',0],removed:true,value:null},
+  ]));
+  const removed = await (await request()).json();
+  expect(removed.errors).toBeUndefined();
+  expect(removed.data).toEqual({triggers:[],triggerLog:[],agentPauses:[]});
+});
