@@ -114,3 +114,12 @@ it('rejects malformed heads and every omitted binding field at the schema bounda
 it('refuses a fresh Always grant for closed and merged copies, rolling back the tentative standing rule',async()=>{
  for(const state of ['closed','merged'] as const){const f=fixture(),card=f.ask();f.db.update(s.changes).set({state}).where(eq(s.changes.id,change)).run();const before=f.snapshot();expect((await f.post(f.input(card.id))).status).toBe(409);expect(f.snapshot()).toEqual(before);}
 });
+
+it('requires explicit true from each configured Always gate, including receipt replay',async()=>{
+ for(const gate of ['approval','change'] as const)for(const value of [undefined,null,1,'yes'] as const){
+  const f=fixture(),card=f.ask(),before=f.snapshot();(f.restrictions as Record<string,unknown>)[gate]=value;
+  expect((await f.post(f.input(card.id))).status).toBe(403);expect(f.snapshot()).toEqual(before);
+  f.restrictions[gate]=true;expect((await f.post(f.input(card.id))).status).toBe(200);
+  const committed=f.snapshot();(f.restrictions as Record<string,unknown>)[gate]=value;expect((await f.post(f.input(card.id))).status).toBe(403);expect(f.snapshot()).toEqual(committed);
+ }
+});
