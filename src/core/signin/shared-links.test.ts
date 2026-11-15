@@ -16,7 +16,7 @@ afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await c
 const credential = 'a'.repeat(64), other = 'b'.repeat(64);
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function fixture(publicOrigin?: string) {
-  const client = new Database(':memory:'); cleanup.push(() => client.close());
+  const client = new Database(':memory:'); cleanup.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString();
   const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   for (const id of ['sam', 'other']) db.insert(members).values({ id, role: 'member', joinedAt: at }).run();
