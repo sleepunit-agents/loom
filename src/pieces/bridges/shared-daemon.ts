@@ -205,10 +205,11 @@ export class SharedBridges {
     if(!current())return;
     const message=this.options.db.select().from(bridgeIncoming).where(and(eq(bridgeIncoming.id,incoming),eq(bridgeIncoming.connection,row.id),eq(bridgeIncoming.state,'delivered'))).get();
     if(!message)continue;
-    const permit:SlackFilesPermit={agent:row.agent,venue:row.id,workspace:row.workspace,channel:message.channel,delivery:incoming,files,current};
-    const fetched=await slackFiles({id:row.id,platform:'slack',agent:row.agent,workspace:row.workspace,bot:row.botUser,tokenSecret:row.tokenSecret,appSecret:row.appSecret??undefined,enabled:row.enabled,only:[],ignore:[],botRoles:[]},permit,life.secrets,current,this.options.request).fetch();
+    const fileCurrent=()=>current()&&JSON.stringify(this.options.db.select().from(bridgeIncoming).where(eq(bridgeIncoming.id,incoming)).get())===JSON.stringify(message);
+    const permit:SlackFilesPermit={agent:row.agent,venue:row.id,workspace:row.workspace,channel:message.channel,delivery:incoming,files,current:fileCurrent};
+    const fetched=await slackFiles({id:row.id,platform:'slack',agent:row.agent,workspace:row.workspace,bot:row.botUser,tokenSecret:row.tokenSecret,appSecret:row.appSecret??undefined,enabled:row.enabled,only:[],ignore:[],botRoles:[]},permit,life.secrets,fileCurrent,this.options.request).fetch();
     try{
-     if(!current())return;
+     if(!fileCurrent())return;
      for(const file of fetched)this.files.store({connection:row.id,file:file.id,incoming,name:file.name,contents:file.bytes});
      life.again=true;
     }finally{for(const file of fetched)file.bytes.fill(0);}

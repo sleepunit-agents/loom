@@ -41,14 +41,14 @@ it('fences callback results after retirement and erases the acquired value',asyn
  await expect(pending).rejects.toThrow('Bridge credential unavailable');expect(f.buffers[0].every(byte=>byte===0)).toBe(true);
 });
 it.each([undefined,Buffer.alloc(0),Buffer.alloc(65537,65),Buffer.from([0xff]),Buffer.from('token\0suffix')])('refuses missing or malformed credentials before callback',async bytes=>{
- const f=fixture();f.source.read.mockResolvedValue(bytes as Buffer);const callback=vi.fn(async()=>{});await expect(f.use.withValue('TOKEN',callback)).rejects.toThrow(/^Bridge credential unavailable$/);expect(callback).not.toHaveBeenCalled();if(bytes)expect(bytes.every(byte=>byte===0)).toBe(true);
+ const f=fixture();f.source.read.mockResolvedValue(bytes as Awaited<ReturnType<typeof f.source.read>>);const callback=vi.fn(async()=>{});await expect(f.use.withValue('TOKEN',callback)).rejects.toThrow(/^Bridge credential unavailable$/);expect(callback).not.toHaveBeenCalled();if(bytes)expect(bytes.every(byte=>byte===0)).toBe(true);
 });
 it('erases owned bytes before a stalled callback and refuses holder rotation on callback completion',async()=>{
  const f=fixture();let release!:()=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});const pending=f.use.withValue('TOKEN',async()=>{expect(f.buffers[0].every(byte=>byte===0)).toBe(true);entered();await new Promise<void>(resolve=>{release=resolve;});});await started;
  f.source.generation.mockResolvedValue('87654321-1234-4234-8234-123456789abc');release();await expect(pending).rejects.toThrow(/^Bridge credential unavailable$/);expect(f.invalidate).toHaveBeenCalledOnce();
 });
 it.each(['retire','close'] as const)('erases a late acquisition and never calls platform code after %s',async phase=>{
- const f=fixture();let release!:(bytes:Buffer)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});const callback=vi.fn(async()=>{}),pending=f.use.withValue('TOKEN',callback);await started;if(phase==='close')f.use.close();else f.retire();const late=Buffer.from('late');release(late);await expect(pending).rejects.toThrow(/^Bridge credential unavailable$/);expect(late.every(byte=>byte===0)).toBe(true);expect(callback).not.toHaveBeenCalled();
+ const f=fixture();let release!:(bytes:Awaited<ReturnType<typeof f.source.read>>)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});const callback=vi.fn(async()=>{}),pending=f.use.withValue('TOKEN',callback);await started;if(phase==='close')f.use.close();else f.retire();const late=Buffer.from('late');release(late);await expect(pending).rejects.toThrow(/^Bridge credential unavailable$/);expect(late.every(byte=>byte===0)).toBe(true);expect(callback).not.toHaveBeenCalled();
 });
 it.each(['source','callback','invalidate'] as const)('sanitizes %s errors and retires the lease even when its hook fails',async phase=>{
  const clock=new FakeClock(),source={generation:vi.fn(async()=>generation),read:vi.fn(async()=>Buffer.from('synthetic'))},invalidate=vi.fn(()=>{if(phase==='invalidate')throw Error('PRIVATE token');});
