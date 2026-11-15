@@ -10,6 +10,7 @@ import { SharingDatabase } from '../../core/household/sharing.js';
 import { migrateHouseholdTables } from '../../core/household/schema.js';
 import { installAttentionMaintenance } from './daemon.js';
 import { isInternalCaller } from '../../core/internal.js';
+import { SqliteVecBackend } from '../../backends/sqlite-vec.js';
 
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const close of cleanups.splice(0)) await close(); });
@@ -188,4 +189,24 @@ it('runs installed maintenance without outside service grants while a same-name 
   expect(retention).toBeDefined();
   expect(isInternalCaller(retention![1], app.operations)).toBe(true);
   expect(app.operations.call('direct', { kind: 'service', id: 'attention' }, 'attention.retain', {}, 'outside-copy')).toMatchObject({ ok: false, code: 'denied' });
+});
+
+it('leaves actual private Comms words and agent memories intact while folding metadata', async () => {
+  const { app, home, clock, write, turns } = await setup(true);
+  const memory = new SqliteVecBackend({ dbPath: join(home, 'agents/art/memories.db') }, {
+    dimensions: 4, embed: async () => [1, 0, 0, 0], embedBatch: async texts => texts.map(() => [1, 0, 0, 0]),
+  });
+  try {
+    await memory.remember({ category: 'project', title: 'Fictional memory', content: 'Keep this fictional memory intact.' });
+    const beforeMemory = await memory.list({});
+    const opened = await app.operations.callAsync('socket', { kind: 'member', id: 'owner' }, 'comms.open', { agent: 'art', id: 'aaaaaaaaaaaaaaaa', text: 'Fictional private words remain intact.' }, 'preserve-words', true);
+    expect(opened).toMatchObject({ ok: true });
+    const beforeWords = app.db.prepare('SELECT * FROM comms_messages').all();
+    expect(beforeWords.length).toBeGreaterThan(0);
+    write('private-old-metadata', 'owner');
+    clock.advance(0);
+    expect(turns().some(turn => turn.at === '2026-07-01T09:00:00Z')).toBe(false);
+    expect(app.db.prepare('SELECT * FROM comms_messages').all()).toEqual(beforeWords);
+    expect(await memory.list({})).toEqual(beforeMemory);
+  } finally { memory.close(); }
 });
