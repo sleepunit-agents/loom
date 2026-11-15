@@ -1,14 +1,15 @@
 import { registerConversationBodyOutput } from './body-output.js';
+import { ConversationHistory } from './history.js';
 import { ConversationMail } from './mail.js';
 import { sameMailScope } from './body-input.js';
 import { conversationBodyScope, requireBodyScope, bodyOperationDefaults, type BodyProof } from './body-scope.js';
 /** Reports from the currently authenticated job body. Public Viewer labels,
  * input-selected jobs and ordinary agent tokens never establish this proof. */
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
-import { operation, type Operations } from '../operations/index.js';
-import { members } from '../data/schema.js';
+import { operation, OperationError, type Operations } from '../operations/index.js';
+import { members, turns } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
 export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean): void {
  if(operations.db!==service.db.$client)throw Error('Body reports need the shared connection');
@@ -21,6 +22,17 @@ export function registerConversationBodyOperations(operations:Operations, servic
   input:z.object({kind:z.enum(['reply','action','wake','note','refused']),model:z.string().min(1).max(200).optional(),outcome:z.enum(['answered','progressed','deferred','failed','none']).optional(),latencyMs:z.number().int().nonnegative().optional()}).strict(),
   output:z.object({saved:z.literal(true),conversation:z.string(),seq:z.number().int()}).strict(),
   run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer);const turn=conversationsService.turn({conversation:cv.id,fromKind:'agent',fromId:cv.agent,run:job.id,...input});ctx.changed('turns',`${cv.id}:${turn.seq}`);ctx.changed('conversations',cv.id);return {saved:true as const,conversation:cv.id,seq:turn.seq};},
+ }));
+ const findingLine=z.string().trim().min(1).max(400).refine(text=>[...text].length<=200,'Use at most 200 characters').refine(text=>!/[\p{C}\u2028\u2029]/u.test(text),'Use printable characters on one line');
+ operations.register(operation({...common,name:'conversation.finding',
+  input:z.object({turnSeq:z.number().int().positive(),measure:findingLine,score:z.number().int().min(1).max(5),text:findingLine}).strict(),
+  output:z.object({saved:z.literal(true),day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/)}).strict(),
+  run(ctx,input){
+   const {cv}=requireCurrent(ctx.viewer);
+   const target=db.select({seq:turns.seq}).from(turns).where(and(eq(turns.conversation,cv.id),eq(turns.seq,input.turnSeq),eq(turns.fromKind,'agent'),eq(turns.fromId,cv.agent))).get();
+   if(!target)throw new OperationError('not-found','Agent turn not found in current conversation');
+   const day=service.now().slice(0,10);new ConversationHistory(db,service.now).finding({...input,conversation:cv.id,day});ctx.changed('findings',cv.id);return {saved:true as const,day};
+  },
  }));
  operations.register(operation({...common,name:'conversation.confirm',
   input:z.object({items:z.array(z.string().min(1)).min(1).max(100)}).strict(),output:z.object({saved:z.literal(true)}).strict(),

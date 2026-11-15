@@ -1,6 +1,4 @@
-import {sharedMemory,type SharedMemoryOptions} from './shared-memory.js';
-import {installMemoryTempo} from './transport/memory-tempo.js';
-import {installMemorySignals} from './transport/memory-signals.js';
+import { registerModelAccountAdmin } from './shared-model-account-admin.js';
 import { modelCatalog } from './runtime/model-catalog.js';
 import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
 import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
@@ -31,6 +29,9 @@ import type { DataDatabase } from './core/data/database.js';
 import { sharedCredentials } from './shared-credentials.js';
 import { OperationResults } from './core/data/operation-results.js';
 import type { Clock } from './core/clock.js';
+import {sharedMemory,type SharedMemoryOptions} from './shared-memory.js';
+import {installMemoryTempo} from './transport/memory-tempo.js';
+import {installMemorySignals} from './transport/memory-signals.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
 import { householdService } from './apps/household.js';
 import { registerSharedHouseholdMembers } from './shared-household-members.js';
@@ -135,6 +136,7 @@ export function sharedRoot(options: {
   registerSharedPreferences(operations, db);
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   startupCleanups.push(()=>accountReports.close());
+  registerModelAccountAdmin(operations, db, roles);
   let tempo!: ReturnType<typeof installSharedTempo>;
   const jobEnded = (id: string) => {
     try {

@@ -58,10 +58,11 @@ it.each(['fixture','claude'] as const)('builds and runs a real %s private Comms 
  expect(job).toMatchObject({state:'done',brief:'',logTail:null,exitCode:0,build:'fixture-image'});expect(finish).toHaveBeenCalledExactlyOnceWith(job.id,0,'');expect(owned?.every(byte=>byte===0)).toBe(true);
  // The callback pause before confirmation is independently asserted by the real native recipient proof.
  expect(f.db.select().from(s.inbox).get()).toMatchObject({state:'done',toKind:'agent',to:'art',job:job.id});expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',null]);
- expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({job:null,turnCount:2});
+expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({job:null,turnCount:2});
  if(harness==='fixture')expect(f.db.select().from(s.digests).get()).toMatchObject({run:job.id,revision:1,summary:'Completed fictitious worker input'});
  else expect(f.db.select().from(s.digests).all()).toEqual([]);
  expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:harness==='fixture'?'Fictitious work complete':''});
+ if(harness==='fixture')expect(f.db.select().from(s.findings).get()).toMatchObject({conversation:f.thread.conversation,turnSeq:2,day:new Date(f.clock.now()).toISOString().slice(0,10),measure:'useful',score:4,text:'Fictitious comparison was useful'});else expect(f.db.select().from(s.findings).all()).toEqual([]);
  const messages=f.db.select().from(s.messages).all();expect(await Promise.all(messages.map(row=>f.key.open(row.words!)))).toEqual(['PRIVATE WORKER INPUT','PRIVATE WORKER REPLY']);
  expect(tokenCopy).toBeDefined();const token=tokenCopy!.toString();expect(f.db.select().from(s.tokens).where(eq(s.tokens.fingerprint,hash(token))).get()).toMatchObject({job:job.id,madeFrom:hash(raw.runner)});
  const denied=await fetch(url+'/api/conversation/status',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:{state:'working',work:''},id:'ended'})});expect(denied.status).toBe(401);
