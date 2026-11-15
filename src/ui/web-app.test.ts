@@ -37,7 +37,6 @@ describe('the app (web/)', () => {
   });
 
   it.runIf(existsSync(`${root}dist/web/.vite/manifest.json`))('keeps app screens out of both initial import graphs', () => {
-    const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { file: string; imports?: string[] }>;
     const screens = readdirSync(`${root}web/src/pieces`).filter(piece => existsSync(`${root}web/src/pieces/${piece}/registration.ts`))
       .map(piece => {
         const registration = resolve(root, 'web/src/pieces', piece, 'registration.ts');
@@ -50,27 +49,27 @@ describe('the app (web/)', () => {
         return relative(resolve(root, 'web'), screen!);
       });
     expect(screens.length).toBeGreaterThan(10);
+    const graph = JSON.parse(readFileSync(`${root}dist/web/.vite/screen-graph.json`, 'utf8')) as Record<string,{imports:string[];modules:string[]}>;
+    const built = new Set(Object.values(graph).flatMap(chunk => chunk.modules));
+    expect(screens.filter(key => !built.has(key)), 'registered screen missing from actual emitted chunks').toEqual([]);
     const emittedEntries:string[][]=[];
-    // Pin the source binding as well as the emitted public document entries.
-    expect(readFileSync(`${root}web/src/main.tsx`,'utf8')).toMatch(/import ['"]\.\/shell\/main['"]/);
     for (const page of ['index.html', 'next.html']) {
       const html = readFileSync(`${root}dist/web/${page}`, 'utf8');
       const scripts = [...html.matchAll(/<script\b[^>]*>/g)].map(match => match[0]).filter(tag => tag.includes('type="module"'))
-        .map(tag => tag.match(/src="\/app\/([^"]+)"/)?.[1]).filter(Boolean);
-      emittedEntries.push(scripts as string[]);
-      const entries = Object.entries(manifest).filter(([, chunk]) => scripts.includes(chunk.file)).map(([key]) => key);
-      expect(entries.length, page + ' shipped module entries').toBeGreaterThan(0);
+        .map(tag => tag.match(/src="\/app\/([^"]+)"/)?.[1]).filter((file):file is string=>typeof file==='string');
+      expect(scripts.length,page+' shipped module entries').toBeGreaterThan(0);emittedEntries.push(scripts);
       const initial = new Set<string>();
-      const visit = (key: string) => {
-        if (initial.has(key)) return;
-        initial.add(key);
-        for (const dependency of manifest[key]?.imports ?? []) visit(dependency);
+      const visit = (file: string) => {
+        if (initial.has(file)) return;
+        initial.add(file);expect(graph[file],file+' emitted chunk').toBeDefined();
+        for (const dependency of graph[file].imports) visit(dependency);
       };
-      entries.forEach(visit);
-      expect(screens.filter(key => initial.has(key)), page).toEqual([]);
+      scripts.forEach(visit);
+      const initialSources=new Set([...initial].flatMap(file=>graph[file].modules));
+      expect(initialSources.has('src/shell/main.tsx'),page+' starts the shared desk').toBe(true);
+      expect(screens.filter(key=>initialSources.has(key)),page).toEqual([]);
     }
     expect(emittedEntries[0]).toEqual(emittedEntries[1]);
-    // Shared lazy screens may be folded into another lazy app chunk.
   });
 
   // And each place that named a Tailwind colour now names the token that holds that colour (web/src/tones.ts, one map).

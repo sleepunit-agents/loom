@@ -45,10 +45,7 @@ export class InboxVolume {
   /** Call alongside an actual content change, never a read or a volume edit.
    * Explicitly addressing the recipient breaks either quiet level. */
   changed(who: Recipient, item: string, askedByName = false): void {
-    this.db.update(inbox).set({ volume: 'full', quietUntil: null }).where(and(
-      eq(inbox.id, item), eq(inbox.toKind, who.kind), eq(inbox.to, who.id),
-      askedByName ? ne(inbox.volume, 'full') : eq(inbox.volume, 'dim'),
-    )).run();
+    inboxContentChanged(this.db, who, item, askedByName);
   }
 
   /** Run at startup and each quiet deadline. Returns the next deadline;
@@ -65,4 +62,12 @@ export class InboxVolume {
     if (expired) changed?.();
     return next;
   }
+}
+
+/** Shared content producers call this within their own atomic write. */
+export function inboxContentChanged(db: DataDatabase, who: Recipient, item: string, askedByName = false): void {
+  db.update(inbox).set({ volume: 'full', quietUntil: null }).where(and(
+    eq(inbox.id, item), eq(inbox.toKind, who.kind), eq(inbox.to, who.id),
+    askedByName ? ne(inbox.volume, 'full') : eq(inbox.volume, 'dim'),
+  )).run();
 }

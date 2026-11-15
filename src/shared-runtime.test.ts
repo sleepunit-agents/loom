@@ -4,16 +4,18 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions, boxFacts, jobNeeds } from './core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions, boxFacts, jobNeeds, turns } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { httpWorkerControl } from './runtime/worker-http.js';
 import { workerProgram } from './runtime/worker-program.js';
+import { wordsKey } from './pieces/comms/crypto.js';
+import { bodyConversationClient } from './runtime/conversation-client.js';
 import { workOnce } from './runtime/worker.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const credential = 'a'.repeat(64), otherCredential = 'b'.repeat(64), ownerCredential = 'c'.repeat(64), agentCredential = 'd'.repeat(64);
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
-function fixture(tempo?: Parameters<typeof sharedRoot>[0]['tempo']) {
+function fixture(tempo?: Parameters<typeof sharedRoot>[0]['tempo'], commsKey?: Parameters<typeof sharedRoot>[0]['commsKey']) {
   const client = new Database(':memory:'); cleanup.push(() => { if (client.open) client.close(); });
   const clock = new FakeClock(), now = () => new Date(clock.now()).toISOString();
   const db = createDataSchema(client, now);
@@ -33,7 +35,7 @@ function fixture(tempo?: Parameters<typeof sharedRoot>[0]['tempo']) {
   const ended = vi.fn((id: string) => { expect(client.inTransaction).toBe(false); const job = db.select().from(jobs).where(eq(jobs.id, id)).get()!; expect(job.endedAt).toBe(now());
     if (job.state === 'done' || job.state === 'failed') expect(db.select().from(operationResults).all().some(row => row.operation === 'runtime.finish')).toBe(true); });
   const errors = vi.fn(); let roles = [{ model: 'model', provider: 'provider', harness: 'codex', series: 'series' }];
-  const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: errors, tempo, modelRoles: () => roles, runtimeJobEnded: ended });
+  const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: errors, tempo, commsKey, modelRoles: () => roles, runtimeJobEnded: ended });
   cleanup.push(() => root.close());
   const send = (venue: 'loom' | 'handoff' = 'loom', place = 'thread') => {
     const conversation = root.services.conversations.open({ agent: 'art', venue, place, label: place });
@@ -324,4 +326,58 @@ for (const change of ['delete', 'rebind']) it(`refuses retained health authentic
   expect(auth.valid()).toBe(false); expect(f.root.credentials.runner(auth.viewer)).toBeUndefined();
   expect({ boxes: f.db.select().from(boxes).all(), facts: f.db.select().from(boxFacts).all(), inbox: f.db.select().from(inbox).all() }).toEqual(before);
   expect(f.db.select().from(operationResults).all()).toEqual([]);
+});
+
+it('enrolls through the canonical Root then uses the private child credential for accepted mail and observed turns', async () => {
+  // Public fictitious identity shared with test/fixtures/conversation-body.ts.
+  const key = wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR');
+  const f = fixture(undefined, key), queued = f.send('handoff'), accepted: string[] = [];
+  const requests: { path: string; body: string; status?: number }[] = [];
+  const fetcher: typeof fetch = async (input, init) => {
+    const request = new Request(input, init), record = { path: new URL(request.url).pathname, body: await request.clone().text(), status: 0 }; requests.push(record);
+    const response = await f.root.http.fetch(request); record.status = response.status; return response;
+  };
+  const control = httpWorkerControl({ url: 'https://loom.example', token: credential, signal: new AbortController().signal, fetch: fetcher });
+  let raw = '', owned: Uint8Array | undefined, proof: ReturnType<typeof f.root.credentials.authenticate>;
+  let exit!: (result: { exitCode: number; logTail: string }) => void;
+  const exited = new Promise<{ exitCode: number; logTail: string }>(resolve => { exit = resolve; });
+  const result = await workOnce({ box: 'worker', control, signal: new AbortController().signal, schedule: { every: () => () => {} }, executor: {
+    build: async () => 'image:built',
+    start: assignment => ({ acceptsBootstrap: true, spawned: Promise.resolve(), exited, stop: async () => {},
+      release: async bootstrap => {
+        expect(bootstrap).toBeDefined(); owned = bootstrap!.token; raw = Buffer.from(owned).toString();
+        expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('running');
+        proof = f.root.credentials.authenticate(new Request(bootstrap!.origin, { headers: { authorization: 'Bearer '+raw } }));
+        expect(proof?.valid()).toBe(true); expect(f.root.credentials.body(proof!.viewer)).toEqual({ job: queued.id, agent: 'art', box: 'worker' });
+        expect(f.root.credentials.runner(proof!.viewer)).toBeUndefined(); expect(f.root.credentials.browser(proof!.viewer)).toBeUndefined();
+        const child = bodyConversationClient({ url: bootstrap!.origin, token: raw, job: assignment.id, conversation: assignment.conversation!, signal: new AbortController().signal, clock: f.clock, fetch: fetcher });
+        try {
+          expect(await child.takeAndAccept(async item => {
+            expect(f.db.select().from(inbox).where(eq(inbox.id, item.id)).get()?.state).toBe('taken');
+            accepted.push(item.words!);
+          })).toEqual({ accepted: 1, stopRequested: false });
+          expect(f.db.select().from(inbox).get()?.state).toBe('done');
+          await child.turn({ kind: 'note', model: 'observed-native-model', outcome: 'progressed' });
+        } finally { child.close(); }
+        exit({ exitCode: 0, logTail: raw });
+      },
+    }),
+  } });
+  expect(result).toBe('finished'); expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state, JSON.stringify(requests.map(({path,status}) => ({path,status})))).toBe('done'); expect(accepted).toEqual(['Private work instructions']); expect(owned!.every(byte => byte === 0)).toBe(true);
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', logTail: '', model: 'model' });
+  expect(f.db.select().from(turns).where(eq(turns.run, queued.id)).get()).toMatchObject({ run: queued.id, model: 'observed-native-model' });
+  expect(f.db.select().from(tokens).where(eq(tokens.fingerprint, hash(raw))).get()).toMatchObject({ kind: 'agent', agent: 'art', job: queued.id, member: null, box: null, madeFrom: hash(credential) });
+  expect(proof!.valid()).toBe(false); expect(f.root.credentials.body(proof!.viewer)).toBeUndefined();
+  expect(JSON.stringify(f.db.select().from(operationResults).all())).not.toContain(raw);
+  const registration = requests.find(request => request.path === '/api/runtime/enrollBody')!;
+  expect(JSON.parse(registration.body).input).toEqual({ job: queued.id, fingerprint: hash(raw) }); expect(registration.body).not.toContain(raw);
+  expect(requests.map(request => request.path)).toContain('/api/conversation/take'); expect(requests.map(request => request.path)).toContain('/api/conversation/confirm');
+});
+
+it('rejects ambiguous current model configuration without claiming a job or keeping a receipt',async()=>{
+ const f=fixture(),queued=f.send(),roles=[{model:'model',provider:'provider',harness:'codex',series:'series'},{model:'model',provider:'other-provider',harness:'other-runner',series:'other-series'}];
+ f.setRoles(roles);const before=f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get();
+ await expect(f.control.next()).rejects.toThrow('Worker next failed');
+ expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()).toEqual(before);expect(f.db.select().from(operationResults).all()).toEqual([]);
+ f.setRoles([roles[0]]);expect((await f.control.next())?.id).toBe(queued.id);
 });

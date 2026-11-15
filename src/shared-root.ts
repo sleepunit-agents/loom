@@ -1,5 +1,5 @@
+import { modelCatalog } from './runtime/model-catalog.js';
 import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
-import { registerTempoSettingsAnswer } from './shared-tempo-settings-answer.js';
 import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
 import type { SecretValueSource } from './pieces/secrets/role.js';
 import { sharedSecretInputRoutes } from './shared-secret-inputs.js';
@@ -35,6 +35,7 @@ import { changeService, type PullRequestReader, type MergeRuleReader } from './a
 import { pollChanges } from './apps/changes-polling.js';
 import { registerWorkRefresh } from './shared-work-refresh.js';
 import { workQueryFields } from './shared-work-queries.js';
+import { registerSharedWorkAlways } from './shared-work-always.js';
 import { registerSharedWorkCommands, type WorkAnswerAuthority } from './shared-work-commands.js';
 import { taskService } from './apps/tasks.js';
 import { approvalRulesService } from './apps/approval-rules.js';
@@ -89,6 +90,8 @@ export function sharedRoot(options: {
   runtimeJobEnded?(id: string): void;
 }) {
   if(options.secretWrites && (!(options.secretWrites.fingerprintKey instanceof Uint8Array) || options.secretWrites.fingerprintKey.byteLength!==32))throw Error('Invalid secret retry key');
+  const roles = () => modelCatalog(options.modelRoles?.() ?? []);
+  roles(); // Refuse invalid startup configuration before opening services.
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
   const chat = new AsyncLocalStorage<TempoChatAuthentication>();
@@ -117,7 +120,6 @@ export function sharedRoot(options: {
   });
   registerSharedPreferences(operations, db);
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
-  const roles = () => options.modelRoles?.() ?? [];
   let tempo!: ReturnType<typeof installSharedTempo>;
   const jobEnded = (id: string) => {
     try {
@@ -193,7 +195,6 @@ export function sharedRoot(options: {
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
   const commsLifetime = comms ? conversationLifetime(db, jobClock('conversations.expire'), comms.service, data.writes, options.reportError) : undefined;
 
-  registerTempoSettingsAnswer(operations, db, services.approvals);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
@@ -264,6 +265,7 @@ export function sharedRoot(options: {
   });
   registerSharedWorkCommands(operations,db,services.approvals,options.workAnswerAuthority);
   registerSharedApprovalRules(operations,db,services.approvalRules);
+  registerSharedWorkAlways(operations,db,services.approvals,services.approvalRules,options.workAnswerAuthority);
   if (changePolling) registerWorkRefresh(operations,db,changePolling.refresh);
   runtime.start();
   if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});

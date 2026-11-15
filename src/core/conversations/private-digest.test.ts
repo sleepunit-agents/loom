@@ -109,3 +109,9 @@ it('rejects oversized private digest summaries without encrypting or writing any
     for (const table of [messages, inbox, digests, digestItems]) expect(f.db.select().from(table).all()).toEqual([]);
   }
 });
+it.each(['dim','mute'] as const)('digest replacement changes %s only when its old question really retires',async volume=>{
+ const f=fixture(),until='2026-11-21T18:00:00.000Z',first=await f.comms.digest(f.input),id=first.inboxItem!;
+ f.db.update(inbox).set({volume,quietUntil:until}).where(eq(inbox.id,id)).run();await f.comms.digest({...f.input,question:undefined});
+ expect(f.comms.threads.conversations.item(id)).toMatchObject({state:'resolved',resolution:'Digest rewritten',volume:volume==='dim'?'full':'mute',quietUntil:volume==='dim'?null:until});
+ f.db.update(inbox).set({volume:'dim',quietUntil:until}).where(eq(inbox.id,id)).run();await f.comms.digest({...f.input,question:undefined});expect(f.comms.threads.conversations.item(id)).toMatchObject({volume:'dim',quietUntil:until});
+});

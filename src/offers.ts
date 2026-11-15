@@ -110,7 +110,9 @@ export const RUNTIME_VENUE = 'relay';
  * Core's own MCP tools. `loom_*` is core's too: its MCP-App widget tools
  * (src/transport/mcp-app-hello.ts) are named that way.
  */
-export const isCoreMcpTool = (name: string): boolean => (TOOLS as readonly string[]).includes(name) || name.startsWith('loom_');
+/** Retired core names cannot be reintroduced by a piece's tool offer. */
+export const isRetiredMcpTool = (name: string): boolean => name === 'comms_title' || name === 'comms_thread';
+export const isCoreMcpTool = (name: string): boolean => (TOOLS as readonly string[]).includes(name) || isRetiredMcpTool(name) || name.startsWith('loom_');
 
 /**
  * A declared name in an offer map (venues, mcp_tools), looked up as the map's own key only: a

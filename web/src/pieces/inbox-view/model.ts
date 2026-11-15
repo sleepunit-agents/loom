@@ -1,7 +1,7 @@
 /** Presentation of shared Inbox query rows; no store, policy or transport. */
 export type InboxBody = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
 export interface InboxItem {
-  canAnswer?: boolean; id: string; source: string; sourceId?: string | null; fromId?: string | null;
+  canSetVolume?: boolean; quietUntil?: string | null; canAnswer?: boolean; id: string; source: string; sourceId?: string | null; fromId?: string | null;
   agent?: string | null; project?: string | null; thread?: string | null; at: string;
   bodyKeepUntil?: string | null; answerKeepUntil?: string | null;
   state: 'waiting' | 'taken' | 'done' | 'answered' | 'resolved'; volume: 'full' | 'dim' | 'mute';
@@ -13,6 +13,7 @@ export interface InboxFolders { needs: number; alerts: number; answered: number;
 export interface InboxSnapshot { folders?: InboxFolders; status: 'live' | 'loading' | 'offline' | 'denied'; items: readonly InboxItem[] }
 export type InboxAnswer = 'yes' | 'no' | 'words' | 'done' | 'dismiss';
 export interface InboxActions {
+  volume?(id: string, volume: InboxItem['volume']): Promise<void>;
   read?(id: string): Promise<void>;
   answer?(id: string, answer: InboxAnswer, words?: string): Promise<void>;
   openSource?(item: InboxItem): void;

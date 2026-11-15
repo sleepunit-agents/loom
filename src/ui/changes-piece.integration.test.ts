@@ -133,7 +133,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       app.db.update(s.changes).set({checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you'}).where(eq(s.changes.id,changeId)).run();
       app.db.delete(s.changeChecks).where(eq(s.changeChecks.change,changeId)).run();
     });
-    const request=()=>app.data.writes.run(()=>app.data.services.approvals.request({kind:'merge',target:`${changeId}@${app.db.select().from(s.changes).where(eq(s.changes.id,changeId)).get()!.headCommit}`,agent:'art',project:'pond',what:'Merge shared change',why:'Ready',askedFrom:'changes',actingFor:'unknown',ask:'Merge this exact commit?',ifYes:'Agent merges this head',ifNo:'Wait'})).value;
+    const request=(actingFor='unknown')=>app.data.writes.run(()=>app.data.services.approvals.request({kind:'merge',target:`${changeId}@${app.db.select().from(s.changes).where(eq(s.changes.id,changeId)).get()!.headCommit}`,agent:'art',project:'pond',what:'Merge shared change',why:'Ready',askedFrom:'changes',actingFor,ask:'Merge this exact commit?',ifYes:'Agent merges this head',ifNo:'Wait'})).value;
     const first=request();
     const owners=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
     await owners.addCookies([{name:'loom_ui',value:app.ownerCookie,url:app.url}]);
@@ -147,14 +147,6 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       await expect.poll(()=>page.getByRole('button',{name:'Yes, merge it',exact:true}).count()).toBe(1);
       expect(await page.getByText('Typecheck · failing',{exact:true}).count()).toBe(0);
     }
-    const shots = process.env.LOOM_TEST_SHOTS ?? join(tmpdir(),'loom-changes-piece'); mkdirSync(shots, { recursive: true });
-    for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
-      await d.setViewportSize({ width, height: 900 });
-      await d.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; }, look);
-      await expect.poll(() => d.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
-      expect(await d.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-      await d.screenshot({ path: join(shots, `changes-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
-    }
     await c.getByRole('button',{name:'Yes, merge it',exact:true}).click();
     await expect.poll(()=>app.data.services.approvals.get(first.id).state).toBe('allowed');
     expect(app.data.services.approvals.get(first.id).decidedBy).toBe('pat');
@@ -166,6 +158,23 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await expect.poll(()=>app.data.services.approvals.get(second.id).state).toBe('denied');
     expect(app.data.services.approvals.get(second.id).decidedBy).toBe('pat');
     expect(app.db.select().from(s.changes).where(eq(s.changes.id,changeId)).get()!.state).toBe('open');
+    app.data.writes.run(()=>app.db.update(s.changes).set({headCommit:'c'.repeat(40),waitingOn:'you'}).where(eq(s.changes.id,changeId)).run());
+    const third=request('pat');
+    for(const page of [c,d])await expect.poll(()=>page.getByRole('button',{name:'Always for pond',exact:true}).count()).toBe(1);
+    const shots = process.env.LOOM_TEST_SHOTS ?? join(tmpdir(),'loom-changes-piece'); mkdirSync(shots, { recursive: true });
+    for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
+      await d.setViewportSize({ width, height: 900 });
+      await d.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; }, look);
+      await expect.poll(() => d.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
+      expect(await d.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+      await d.screenshot({ path: join(shots, `changes-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
+    }
+    await c.getByRole('button',{name:'Always for pond',exact:true}).click();
+    for(const page of [c,d])await expect.poll(()=>page.getByText('Waiting on agent',{exact:true}).count()).toBe(1);
+    expect(app.data.services.approvals.get(third.id)).toMatchObject({state:'allowed',decidedBy:'pat'});
+    expect(app.db.select().from(s.approvalRules).all()).toEqual([expect.objectContaining({kind:'merge',scope:'project:pond',person:'',tier:'do',setBy:'pat'})]);
+    expect(app.db.select().from(s.approvalRecord).all().filter(row=>row.approval===third.id&&row.event==='grant')).toHaveLength(1);
+    expect(app.db.select().from(s.changes).where(eq(s.changes.id,changeId)).get()).toMatchObject({state:'open',headCommit:'c'.repeat(40)});
     await owners.close();
     expect(errors).toEqual([]);
     await context.close();

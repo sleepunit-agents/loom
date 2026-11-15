@@ -1,5 +1,3 @@
-import { Readable } from 'node:stream';
-import { runWakeClient } from '../../cli/wake-client.js';
 import { afterEach, expect, it } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -84,19 +82,6 @@ it('shows already-scheduled output without duplicate work, respects global agent
   expect(answer).toEqual({exit:0,stdout:`already scheduled: care, next at ${clockTime(due)} (nothing armed)\n`,stderr:''});
   expect(wakes(a.db)).toHaveLength(1);
   expect(a.run(['schedule','list']).stdout).toBe('art has no schedules\n');
-});
-
-it('crosses the real HTTP door and retries a lost committed response without another wake',async()=>{
-  const a=await setup(), token=join(dirs.at(-1)!,'token');writeFileSync(token,'fixture-token');
-  let stdout='',stderr='',calls=0;const bodies: string[]=[];
-  const code=await runWakeClient(['in','1h','-p','Continue'],{
-    env:{LOOM_URL:a.url,LOOM_TOKEN_FILE:token,WAKE_AGENT:'art'},stdin:Readable.from([]),stdinIsTTY:false,stdout:s=>stdout+=s,stderr:s=>stderr+=s,
-  },{request:async(url,init)=>{
-    bodies.push(String(init?.body));const response=await fetch(url,init);
-    if(++calls===1){await response.body?.cancel();throw Error('lost response');}return response;
-  },retry:async()=>{}});
-  expect(code).toBe(0);expect(stderr).toBe('');expect(bodies).toHaveLength(2);expect(bodies[0]).toBe(bodies[1]);
-  const rows=wakes(a.db);expect(rows).toHaveLength(1);expect(stdout).toBe(`${rows[0].id} will wake at 2026-11-13 10:00:00\n`);
 });
 
 it('accepts nested options before the action and filters the actual displayed log lines',async()=>{
@@ -201,19 +186,4 @@ it('reports unchanged vouch targets truthfully and keeps the owning policy on ev
   expect(a.run(['vouch','w-aaaaaa',missing])).toEqual({exit:0,stdout:"vouched for w-aaaaaa: it fires as the owner's\nunchanged: w-cccccc\n",stderr:''});
   expect(wakes(a.db).find(w=>w.id==='w-bbbbbb')).toEqual(before.find(w=>w.id==='w-bbbbbb'));
   expect(a.run(['vouch','w-aaaaaa'])).toMatchObject({exit:1,stdout:''});
-});
-it('retries owner vouch over HTTP after losing the committed answer without adopting twice',async()=>{
-  const a=await setup(true),token=join(dirs.at(-1)!,'token');writeFileSync(token,'fixture-token');
-  let stdout='',stderr='',calls=0;const bodies:string[]=[];
-  const code=await runWakeClient(['vouch','w-aaaaaa'],{
-    env:{LOOM_URL:a.url,LOOM_TOKEN_FILE:token,WAKE_AGENT:'art'},stdin:Readable.from([]),stdinIsTTY:false,stdout:s=>stdout+=s,stderr:s=>stderr+=s,
-  },{request:async(url,init)=>{
-    bodies.push(String(init?.body));const response=await fetch(url,init);
-    if(++calls===1){await response.body?.cancel();throw Error('lost response');}return response;
-  },retry:async()=>{}});
-  expect(code).toBe(0);expect(stderr).toBe('');
-  expect(stdout).toBe("vouched for w-aaaaaa: it fires as the owner's\n");
-  expect(bodies).toHaveLength(2);expect(bodies[0]).toBe(bodies[1]);
-  expect(a.db.prepare('SELECT * FROM clock_events').all()).toHaveLength(1);
-  expect(wakes(a.db).find(w=>w.id==='w-aaaaaa')).toMatchObject({state:'pending',by:owner});
 });

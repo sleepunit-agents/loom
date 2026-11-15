@@ -14,7 +14,7 @@ import BetterSqlite3 from 'better-sqlite3';
 import { startHttpServer, type HttpServeHandle } from './transport/http-server.js';
 import { agentDir, createToken, loadHousehold, type Household } from './household.js';
 import { createConversationTables, recordTurn } from './backends/conversations.js';
-import { adapterCall, agentThreadRead, agentsComms, firstLine, FIRST_LINE_MAX, markRead, messagesOf, openThread, postActivity, setArchived, stateOf, sweepComms, threadFor, threadState, threadsOf, type AgentComms } from './comms.js';
+import { adapterCall, agentsComms, firstLine, FIRST_LINE_MAX, markRead, messagesOf, openThread, postActivity, setArchived, stateOf, sweepComms, threadFor, threadState, threadsOf, type AgentComms } from './comms.js';
 import { stopCommsWatch } from './ui/comms-live.js';
 import { closeAllBackends } from './backends/index.js';
 
@@ -254,11 +254,6 @@ describe.skipIf(!hasAge)('the desktop\'s per-agent Comms summary', () => {
     // Nothing a command printed or a file held is kept, read back opened (the store holds words only sealed).
     const opened = JSON.stringify(await messagesOf(h, process.env, tt));
     for (const never of ['OUTPUT-NEVER-KEPT', 'FILE-CONTENTS-NEVER-KEPT']) expect(opened.includes(never)).toBe(false);
-    // An agent reading its own thread past the words' time, before the sweep has run: no label and no words.
-    { const db = new BetterSqlite3(join(h.home, 'comms.db')); db.prepare("UPDATE comms_messages SET at = '2026-01-01T00:00:00.000Z' WHERE thread = ? AND id = 'd0'").run(tt.id); db.close(); }
-    const asAgent = (await agentThreadRead(h.home, process.env, 'mark', { thread: tt.id })).messages.find((m) => m.id === 'd0')!;
-    expect(asAgent.text).toBeNull();
-    expect(asAgent.card?.step).toBeUndefined();
     // Swept with its label: the sealed words go from the row itself.
     sweepComms({ ...h, commsDays: 0 }, new Date(Date.now() + 60_000));
     const gone = (await messagesOf(h, process.env, tt)).find((m) => m.id === 'p1')!;

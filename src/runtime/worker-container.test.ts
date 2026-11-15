@@ -247,3 +247,24 @@ it('uses each account and harness binding in the actual Docker specification', a
     await body.release(); f.socket.push(null); f.wait.resolve({ StatusCode: 0 }); await body.exited; await body.stop();
   }
 });
+
+it('keeps bootstrap bytes out of Docker metadata and discards credential-bearing attach output', async () => {
+  const f = fixture(), raw = 'body_'+'a'.repeat(64), token = Buffer.from(raw);
+  const executor = containerWorkerExecutor({ ...f.config, runners: { harness: { ...plan, bodyBootstrap: true } } }, { engine: f.engine, builder: f.builder, name: () => 'private' });
+  const body = executor.start(job, 'image', f.abort.signal); await body.spawned; expect(f.writes).toEqual([]); expect(body.acceptsBootstrap).toBe(true);
+  await body.release({ origin: 'https://loom.example', job: job.id, token });
+  expect(JSON.parse(f.writes[0])).toEqual({ job, build: 'image', bootstrap: { origin: 'https://loom.example', job: job.id, token: raw } });
+  expect(JSON.stringify(f.engine.json.mock.calls)).not.toContain(raw); f.socket.push(frame(raw)); f.socket.push(frame(raw, 2)); f.socket.push(null); f.wait.resolve({ StatusCode: 0 });
+  expect(await body.exited).toEqual({ exitCode: 0, logTail: '' }); await body.stop(); token.fill(0);
+});
+
+it('selects each account/harness private mode for the actual container stdin envelope', async () => {
+  for (const [account, harness, privateMode] of [['account', 'harness', true], ['account', 'ordinary', false], ['other', 'harness', false]] as const) {
+    const f = fixture(), executor = containerWorkerExecutor({ ...f.config, runners: { harness: { ...plan, bodyBootstrap: true } }, accountRunners: {
+      account: { harness: { ...plan, bodyBootstrap: true }, ordinary: plan }, other: { harness: plan },
+    } }, { engine: f.engine, builder: f.builder, name: () => 'binding' });
+    const assignment = { ...job, account, harness }, body = executor.start(assignment, 'image', f.abort.signal); await body.spawned; expect(body.acceptsBootstrap).toBe(privateMode);
+    const token = Buffer.from('body_'+'a'.repeat(64)); if (privateMode) await body.release({ origin: 'https://loom.example', job: assignment.id, token }); else await body.release();
+    const value = JSON.parse(f.writes[0]); expect(value.job).toEqual(assignment); expect(Boolean(value.bootstrap)).toBe(privateMode); await body.stop(); token.fill(0);
+  }
+});
