@@ -12,6 +12,7 @@ import { taskService } from './apps/tasks.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { nextData } from './next-data.js';
+import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
@@ -61,6 +62,7 @@ export function sharedRoot(options: {
     active.add(entry); c.set('shutdown', abort);
     try { await next(); } finally { active.delete(entry); finished(); }
   });
+  http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/:piece/:operation', async c => {
