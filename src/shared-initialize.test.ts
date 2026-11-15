@@ -1,4 +1,4 @@
-import {afterEach,expect,it,vi} from 'vitest';
+import {afterEach,beforeEach,expect,it,vi} from 'vitest';
 import Database from 'better-sqlite3';
 import * as fs from 'node:fs';
 import * as age from 'age-encryption';
@@ -14,8 +14,9 @@ import {initializeSharedHome} from './shared-initialize.js';
 import {startSharedHome} from './shared-startup.js';
 vi.mock('node:fs',async original=>{const real=await original<typeof import('node:fs')>();return {...real,renameSync:vi.fn(real.renameSync)};});
 vi.mock('age-encryption',async original=>{const real=await original<typeof import('age-encryption')>();return {...real,generateX25519Identity:vi.fn(real.generateX25519Identity)};});
+beforeEach(()=>{vi.stubEnv('LOOM_PUBLIC_URL',undefined);vi.stubEnv('LOOM_WORKER_SOCKET',undefined);});
 const clean:Array<()=>void|Promise<void>>=[];
-afterEach(async()=>{vi.restoreAllMocks();const real=await vi.importActual<typeof import('node:fs')>('node:fs');vi.mocked(fs.renameSync).mockImplementation(real.renameSync);for(const close of clean.splice(0).reverse())await close();});
+afterEach(async()=>{vi.restoreAllMocks();const real=await vi.importActual<typeof import('node:fs')>('node:fs');vi.mocked(fs.renameSync).mockImplementation(real.renameSync);for(const close of clean.splice(0).reverse())await close();vi.unstubAllEnvs();});
 function fixture(){const root=mkdtempSync(join(tmpdir(),'empty-shared-')),home=join(root,'home');mkdirSync(home);clean.push(()=>rmSync(root,{recursive:true,force:true}));return home;}
 it('first install publishes a private prepared inventory and the ordinary startup link admits HTTP and GraphQL',async()=>{
  const home=fixture(),webRoot=fixture(),clock=new FakeClock();writeFileSync(join(webRoot,'next.html'),'Shared app');let link='';

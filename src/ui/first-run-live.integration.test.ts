@@ -1,6 +1,6 @@
 /** Execute the CLI startup and printed first-run link, rather than seeding a
  * credential or hosting a second test-only app. CI owns the real browser. */
-import { it, expect, vi } from 'vitest';
+import { it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -11,6 +11,8 @@ import * as startup from '../shared-startup.js';
 import { run } from '../cli/serve.js';
 import { FakeClock } from '../core/clock.js';
 
+beforeEach(()=>{vi.stubEnv('LOOM_PUBLIC_URL',undefined);vi.stubEnv('LOOM_WORKER_SOCKET',undefined);});
+afterEach(()=>vi.unstubAllEnvs());
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(path=>path&&existsSync(path));
 it.runIf(process.env.CI==='true'&&chrome&&existsSync(join(root,'next.html')))('first-run CLI sign-in opens one GraphQL socket, receives task deltas and loses access when the browser ends',async()=>{
