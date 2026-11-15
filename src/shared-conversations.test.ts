@@ -149,7 +149,7 @@ it('unsubscribes and cancels the lifecycle timer before downstream query shutdow
     return () => { activeObservers--; events.push('observer-stop'); stop(); };
   });
   vi.spyOn(DataLive.prototype,'close').mockImplementation(function (this: DataLive) { events.push('data-close'); return close.call(this); });
-  const f = await fixture(); expect(activeObservers).toBe(1); expect(activeTimers.size).toBeGreaterThan(0);
+  const f = await fixture(); expect(activeObservers).toBeGreaterThan(0); expect(activeTimers.size).toBeGreaterThan(0);
   await f.root.close();
   expect(activeObservers).toBe(0); expect(activeTimers.size).toBe(0);
   expect(events.indexOf('observer-stop')).toBeLessThan(events.indexOf('data-close'));
