@@ -7,7 +7,7 @@ import { act, create } from 'react-test-renderer';
 const f = vi.hoisted(() => ({ status: 'live', data: {} as Record<string, unknown>, requests: [] as { query: string; variables: Record<string, unknown> }[], call: vi.fn(), queued: vi.fn(), records: vi.fn() }));
 vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>) {
   f.requests.push({ query, variables });
-  return { status: f.status, data: f.status === 'live' ? query.includes('ConversationQuestions(') ? {approvals:(f.data.ordinaryApprovals as {id:string}[]|undefined)??[],inboxItems:((f.data.questions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11)} : query.includes('WorkAnswerOwner') ? {workAnswerOwner:f.data.owner===true,workChangesRefresh:false} : query.includes('MentionedChange(') ? { changes: (f.data.mentionedChanges as Record<string,unknown[]> | undefined)?.[String(variables.id)] ?? [] } : query.includes('InlineQuestion') ? { inboxItem: (f.data.items as Record<string,unknown>|undefined)?.[String(variables.id)] ?? f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [], conversationMadeChanges:f.data.madeChanges ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
+  return { status: f.status, data: f.status === 'live' ? query.includes('ConversationQuestions(') ? {approvals:(f.data.ordinaryApprovals as {id:string}[]|undefined)??[],inboxItems:((f.data.questions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11)} : query.includes('WorkAnswerOwner') ? {workAnswerOwner:f.data.owner===true,workChangesRefresh:false} : query.includes('MentionedChange(') ? { conversationMadeChanges:((f.data.sourceMembership ?? f.data.madeChanges ?? []) as {id:string}[]).filter(row=>row.id===variables.id),changes: (f.data.mentionedChanges as Record<string,unknown[]> | undefined)?.[String(variables.id)] ?? [] } : query.includes('InlineQuestion') ? { inboxItem: (f.data.items as Record<string,unknown>|undefined)?.[String(variables.id)] ?? f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [], conversationMadeChanges:f.data.madeChanges ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.queued(name, input), useRecords: f.records }));
 vi.mock('../../kit', () => Object.fromEntries(['Split','List','Row','Empty','Error','Loading','Button','Input','Textarea'].map(name => [name,
@@ -230,9 +230,14 @@ it('labels source tasks as Made here and pages a change-only source list without
  f.data.commsRefs=[{ref:'github:house/loom#51',messageSeq:1}];
  await draw();
  expect(tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes('SOURCE TASK LABEL')).props.children).toContain(' · Made here');
- expect(text()).toContain('CHANGE TITLE 50');expect(text()).toContain('CHANGE TITLE 51');
+ expect(text()).toContain('CHANGE TITLE 50');expect(text()).toContain('CHANGE TITLE 51');expect(JSON.stringify(tree.root.findByProps({'aria-label':'Conversation change github:house/loom#51'}).findAllByType('p').map((node:{props:{children:ReactNode}})=>node.props.children))).toContain('Made here');
  const next=tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>node.props.children==='Next work');expect(next.props.disabled).toBe(false);
  f.data.sourceTasks=[];f.data.madeChanges=[{id:'github:house/loom#51'}];
  await act(async()=>{next.props.onClick();});
  expect(f.requests.findLast(row=>row.query.includes('ConversationWork('))?.variables.offset).toBe(50);expect(text()).not.toContain('CHANGE TITLE 50');expect(text()).toContain('CHANGE TITLE 51');
+});
+
+it('keeps a mentioned source task labelled Made here while the source list is on a different page',async()=>{
+ setup();f.data.sourceTasks=[];f.data.commsRefs=[{ref:'t-77',messageSeq:1}];f.data.mentionedTasks={'t-77':[{id:'t-77',title:'MENTIONED SOURCE',status:'open',sourceKind:'conversation',sourceId:'cv-pump'}]};
+ await draw();expect(tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes('MENTIONED SOURCE')).props.children).toContain(' · Made here');
 });

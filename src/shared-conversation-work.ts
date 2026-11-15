@@ -12,8 +12,8 @@ import {canReadSharedConversation} from './shared-sharing.js';
 import type {Viewer} from './policy.js';
 export function conversationWorkFields(db:DataDatabase){
  const row=new GraphQLObjectType({name:'ConversationMadeChange',fields:{id:{type:new GraphQLNonNull(GraphQLString)}}});
- return {conversationMadeChanges:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(row))),args:{conversation:{type:new GraphQLNonNull(GraphQLString)},limit:{type:GraphQLInt,defaultValue:51},offset:{type:GraphQLInt,defaultValue:0}},
-  resolve(_source:unknown,input:{conversation:string;limit:number;offset:number},context:{viewer:Viewer}){
+ return {conversationMadeChanges:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(row))),args:{conversation:{type:new GraphQLNonNull(GraphQLString)},change:{type:GraphQLString},limit:{type:GraphQLInt,defaultValue:51},offset:{type:GraphQLInt,defaultValue:0}},
+  resolve(_source:unknown,input:{conversation:string;change?:string;limit:number;offset:number},context:{viewer:Viewer}){
    if(!canReadSharedConversation(db,context.viewer,input.conversation))return [];
    const taskPolicy=taskVisibility(context.viewer).tasks!(getTableColumns(tasks));
    const comments=db.select({text:taskComments.text}).from(taskComments).innerJoin(tasks,eq(tasks.id,taskComments.task))
@@ -21,7 +21,7 @@ export function conversationWorkFields(db:DataDatabase){
    const ids=new Set(comments.flatMap(comment=>citations(comment.text)).filter(id=>id.startsWith('github:')));
    const limit=Math.max(1,Math.min(100,input.limit)),offset=Math.max(0,input.offset);
    return db.select({id:changes.id}).from(changes).where(workVisibility(context.viewer).changes!(getTableColumns(changes)))
-    .orderBy(asc(changes.id)).all().filter(row=>ids.has(row.id)).slice(offset,offset+limit);
+    .orderBy(asc(changes.id)).all().filter(row=>ids.has(row.id)&&(!input.change||row.id===input.change)).slice(offset,offset+limit);
   },
  }};
 }
