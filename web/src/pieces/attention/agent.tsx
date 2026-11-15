@@ -1,8 +1,9 @@
+import { useDeskAgentProfiles } from './agent-profiles';
 import { useDeskRecentActivity } from './recent-activity';
 import { useDeskAgentDirectory } from './agent-directory';
 import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
-import { useRecords, type LiveRecord } from '../../data';
+import { useRecords } from '../../data';
 import { AppFrame, List, Row, Empty, Error, Loading, Button } from '../../kit';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import { agentPath, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents } from './home-model';
@@ -10,11 +11,10 @@ import { HomeSteps } from './home-steps';
 import { useHomeComms, threadPath } from './home-comms-data';
 import type { Ask } from './model';
 import './home.css';
-interface Profile extends LiveRecord { agent: string; description?: string; requestedAt?: string; canEdit: boolean }
 /** A record-only agent window; profile writes and deeper sections stay in their owning apps. */
 export default function AgentApp({ path = '/p/agents-preview', go = p => location.assign(p) }: {path?:string;go?:(path:string)=>void} = {}) {
   const roster=useDeskRoster(), people=useDeskAgentDirectory();
-  const profiles=useRecords<Profile>('household.profile'), statuses=useDeskAgentStatuses();
+  const profiles=useDeskAgentProfiles(), statuses=useDeskAgentStatuses();
   const asks=useRecords<Ask>('attention.ask'), comms=useHomeComms();
   const activity=useDeskRecentActivity(), displays=useAgentDisplays();
   const agents=orderedAgents(namedAgents(roster.status==='live'?roster.records:[],people.status==='live'?people.records:[]));
@@ -31,7 +31,6 @@ export default function AgentApp({ path = '/p/agents-preview', go = p => locatio
     {title:'Activity',meta:'Recent work and conversations',href:`/p/activity-preview/?who=${encodeURIComponent(agent.id)}`},
     ...(agent.personPath?[{title:'People',meta:'Shared identity and relationships',href:agent.personPath}]:[]),
     {title:'Home',meta:'Current work and questions for all your agents',href:'/p/home-preview'},
-    ...(profile?.canEdit?[{title:'Edit profile in Setup',meta:'Description and description requests',href:'/p/setup-preview'}]:[]),
   ]:[];
   return <div className="desk-home h-full w-full min-w-0 max-w-full overflow-auto [overflow-wrap:anywhere]"><div className="desk-home-content"><AppFrame title={agent?.name??'Your agents'} where="Agents" go={go}
     actions={id?<Button variant="outline" onClick={()=>go('/p/agents-preview')}>All your agents</Button>:undefined}>
