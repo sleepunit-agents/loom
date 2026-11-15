@@ -43,7 +43,7 @@ function fixture(tempo?: Parameters<typeof sharedRoot>[0]['tempo'], commsKey?: P
   const errors = vi.fn(); let roles = [{ model: 'model', provider: 'provider', harness: 'codex', series: 'series' }];
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: errors, tempo, commsKey, modelRoles: () => roles, runtimeJobEnded: ended });
   cleanup.push(() => root.close());
-  const send = (venue: 'loom' | 'handoff' = 'loom', place = 'thread') => {
+  const send = (venue: 'loom' | 'handoff' | 'wake' = 'loom', place = 'thread') => {
     const conversation = root.services.conversations.open({ agent: 'art', venue, place, label: place });
     const mail = root.services.conversations.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Private work instructions' });
     expect(root.services.runtime.admit({ kind: 'agent', id: 'art' }, [mail])).toBe(true);
@@ -105,7 +105,7 @@ it('refuses stale claim/heartbeat replay while report receipts remain atomic and
   expect((await f.call('started', start, 'start')).status).toBe(401); expect((await f.call('finish', finish, 'finish')).status).toBe(401);
 });
 it('retains public output with ordinary replay conflict detection', async () => {
-  const f = fixture(), queued = f.send('handoff'); await f.control.next(); await f.control.started(queued.id, 'image');
+  const f = fixture(), queued = f.send('wake'); await f.control.next(); await f.control.started(queued.id, 'image');
   const finish = { job: queued.id, exitCode: 0, logTail: 'public-output' };
   expect((await f.call('finish', finish, 'public')).status).toBe(200);
   expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.logTail).toBe('public-output');
@@ -188,7 +188,7 @@ it('feeds actual Tempo job watches after worker completion and after root silenc
 it('admits mail through the actual shared write/Tempo lifecycle without direct runtime admission', async () => {
   const f = fixture();
   f.root.services.tempo.volume.setTimings({ kind: 'agent', id: 'art' }, { settleSeconds: 0 });
-  const conversation = f.root.services.conversations.open({ agent: 'art', venue: 'handoff', place: 'settled', label: 'Settled work' });
+  const conversation = f.root.services.conversations.open({ agent: 'art', venue: 'wake', place: 'settled', label: 'Settled work' });
   f.root.writes.run(() => f.root.services.conversations.send({ toKind: 'agent', to: 'art', conversation: conversation.id,
     source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Work after settling' }));
   f.clock.advance(1);
@@ -370,7 +370,7 @@ it('enrolls through the canonical Root then uses the private child credential fo
     }),
   } });
   expect(result).toBe('finished'); expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state, JSON.stringify(requests.map(({path,status}) => ({path,status})))).toBe('done'); expect(accepted).toEqual(['Private work instructions']); expect(owned!.every(byte => byte === 0)).toBe(true);
-  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', logTail: '', model: 'model' });
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', logTail: null, model: 'model' });
   expect(f.db.select().from(turns).where(eq(turns.run, queued.id)).get()).toMatchObject({ run: queued.id, model: 'observed-native-model' });
   expect(f.db.select().from(tokens).where(eq(tokens.fingerprint, hash(raw))).get()).toMatchObject({ kind: 'agent', agent: 'art', job: queued.id, member: null, box: null, madeFrom: hash(credential) });
   expect(proof!.valid()).toBe(false); expect(f.root.credentials.body(proof!.viewer)).toBeUndefined();

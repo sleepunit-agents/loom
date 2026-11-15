@@ -1,3 +1,4 @@
+import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
 /** Trusted in-process body delivery. Decrypted words are ephemeral output:
  * never save them in jobs.brief, generic operation receipts or Inbox columns.
  * External runner doors must recheck their current authentication after await
@@ -44,7 +45,10 @@ export class ConversationMail {
     const beforeRefs = refs();
     const prepared = new Map<string, string | null>();
     for (const item of items) {
-      if (!item.thread) { prepared.set(item.id, item.words); continue; }
+      if (!item.thread) {
+        const envelope=item.source==='handoff'?handoffEnvelope(item.words):undefined;
+        prepared.set(item.id,envelope?(handoffDeadline(item,keepDays())>Date.parse(now())?await key.open(Buffer.from(envelope.cipher,'base64')):null):item.words);continue;
+      }
       const row = privateRows.get(item.id);
       if (!row || row.conversation !== conversation || row.message.thread !== item.thread || row.message.seq !== item.messageSeq) throw new Error('Private mail reference differs');
       prepared.set(item.id, retained(row.message) && row.message.words ? await key.open(row.message.words) : null);
@@ -59,7 +63,7 @@ export class ConversationMail {
       for (const item of items) {
         const live = current.get(item.id);
         if (!live || content(live) !== content(item)) throw new Error('Mail changed; prepare again');
-        if (!item.thread) continue;
+        if (!item.thread) {if(item.source==='handoff'&&handoffDeadline(live,keepDays())<=Date.parse(now()))words.set(item.id,null);continue;}
         const before = privateRows.get(item.id)!, after = currentRows.get(item.id);
         if (!after || after.conversation !== conversation || after.message.thread !== item.thread || after.message.seq !== item.messageSeq) throw new Error('Private mail reference differs');
         // Retention is checked at release, even if ciphertext was swept during

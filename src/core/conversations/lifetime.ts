@@ -1,9 +1,10 @@
+import {handoffDeadline} from './handoff-words.js';
 /** One owned timer for ciphertext retention and daily wordless-history rollup. */
-import { isNotNull } from 'drizzle-orm';
+import { and,eq,isNotNull } from 'drizzle-orm';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
 import type { DataWrites } from '../data/writes.js';
-import { household, messages } from '../data/schema.js';
+import { household, inbox, messages } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
 import { ConversationHistory } from './history.js';
 export function conversationLifetime(db: DataDatabase, clock: Clock, service: CommsMessages, writes: DataWrites, reportError: (error: unknown) => void) {
@@ -24,6 +25,7 @@ export function conversationLifetime(db: DataDatabase, clock: Clock, service: Co
       if (Number.isFinite(householdEnd)) next = Math.min(next, householdEnd);
       if (Number.isFinite(storedEnd)) next = Math.min(next, storedEnd);
     }
+    for(const item of db.select().from(inbox).where(and(eq(inbox.source,'handoff'),isNotNull(inbox.words))).all())next=Math.min(next,handoffDeadline(item,days));
     cancel = clock.at(Math.max(now, next), () => {
       cancel = undefined; if (closed) return;
       try { sweep(); schedule(); }

@@ -1,3 +1,4 @@
+import {registerConversationHandoff} from './handoff.js';
 import { registerConversationBodyOutput } from './body-output.js';
 import { ConversationHistory } from './history.js';
 import { ConversationMail } from './mail.js';
@@ -15,6 +16,7 @@ export type BodyQuestionAuthority=(viewer:Viewer,scope:Readonly<{id:string;agent
 export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean,questionAllowed:BodyQuestionAuthority): void {
  if(operations.db!==service.db.$client)throw Error('Body reports need the shared connection');
  registerConversationBodyOutput(operations,service,proof,privateAssignment);
+ registerConversationHandoff(operations,service,proof,privateAssignment);
  const conversationsService=service.threads.conversations,db=service.db;
  const current=conversationBodyScope(db,proof,privateAssignment);
  const requireCurrent=requireBodyScope(current);

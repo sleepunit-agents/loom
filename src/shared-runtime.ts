@@ -79,12 +79,12 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     may: (viewer, input) => assigned(viewer, input.job),
     inputHash(canonical, { input }) {
       const job = db.select({ conversation: jobs.conversation }).from(jobs).where(eq(jobs.id, input.job)).get();
-      const conversation = job?.conversation ? db.select({ venue: conversations.venue }).from(conversations)
+      const conversation = job?.conversation ? db.select({ venue: conversations.venue, member: conversations.member }).from(conversations)
         .where(eq(conversations.id, job.conversation)).get() : undefined;
       // Private/dangling conversation output is discarded by Jobs.finish. Do
       // not retain even a guessable fingerprint of those words in a receipt.
       const privateOutput = job?.conversation !== null && job?.conversation !== undefined
-        && (!conversation || conversation.venue === 'loom');
+        && (!conversation || conversation.member !== null || conversation.venue === 'loom' || conversation.venue === 'handoff');
       return createHash('sha256').update(privateOutput
         ? JSON.stringify({ job: input.job, exitCode: input.exitCode, logTail: '' }) : canonical).digest('hex');
     },

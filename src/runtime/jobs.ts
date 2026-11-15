@@ -26,9 +26,9 @@ export class Jobs {
 
   private keepText(job: Pick<Job, 'conversation'>): boolean {
     if (!job.conversation) return true;
-    const conversation = this.db.select({ venue: conversations.venue }).from(conversations)
+    const conversation = this.db.select({ venue: conversations.venue, member: conversations.member }).from(conversations)
       .where(eq(conversations.id, job.conversation)).get();
-    return Boolean(conversation && conversation.venue !== 'loom');
+    return Boolean(conversation && !conversation.member && conversation.venue !== 'loom' && conversation.venue !== 'handoff');
   }
 
   /** Old queued rows may contain a plaintext brief; never send it to a worker. */
@@ -57,9 +57,9 @@ export class Jobs {
       const job = this.db.insert(jobs).values({
         id: `job-${randomUUID()}`, agent: conversation.agent, conversation: conversationId,
         project: conversation.project, member: conversation.member, title: conversation.label,
-        // Comms words are delivered ephemerally by ConversationMail, never copied
-        // into the durable worker job. Other venues keep their ordinary brief.
-        state: 'queued', brief: conversation.venue === 'loom' ? '' : mail.map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
+        // Comms and handoff words are delivered ephemerally by ConversationMail.
+        // No private conversation or encrypted brief is copied into the job.
+        state: 'queued', brief: conversation.member || conversation.venue === 'loom' || conversation.venue === 'handoff' ? '' : mail.map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
         // Inbox admission is automatic work started by the receiving agent.
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,
