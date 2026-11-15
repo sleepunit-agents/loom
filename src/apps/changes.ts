@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentAccounts, changes, changeChecks, changePeople, changeTasks, changeSync, projectRepositories, tasks } from '../core/data/schema.js';
+import { agentAccounts, changes, changeChecks, changePeople, changeTasks, changeSync, projectRepositories, tasks, approvals } from '../core/data/schema.js';
+import { lastApprovalAnswer } from './approval-answer.js';
 import { changeSchema, repoId, tasksCited, waitsOn, type Change, type Rule } from '../pieces/changes/model.js';
 
 export type ChangeRow = typeof changes.$inferSelect;
@@ -46,7 +47,18 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
     if (c.id !== id) throw new Error('Pull request identity differs from repository and number');
     if (!c.created || !c.updated) throw new Error('Pull request timestamps are required');
     const held = { ...c, ...(agent ? { agent } : {}) };
-    const waitingOn = waitsOn(held, agent ? rule(`${id}@${c.head.id}`, agent) : undefined).group;
+    const target = `${id}@${c.head.id}`;
+    let answer = agent ? rule(target, agent) : undefined;
+    const decision = agent ? lastApprovalAnswer(db, agent, 'merge', target) : undefined;
+    if (decision) {
+      const card = db.select().from(approvals).where(eq(approvals.id, decision.approval)).get();
+      // Keep the exact-head human answer across source refreshes. This is only
+      // a waiting-group projection; spending still checks the current allowance.
+      const allowed = decision.event === 'allow' && card?.project === project
+        && (card.state === 'used' || card.state === 'allowed' && !!card.expiresAt && Date.parse(card.expiresAt) > Date.parse(now()));
+      answer = {tier:'ask',approval:{state:allowed ? 'allowed' : decision.event === 'deny' ? 'denied' : 'expired'}};
+    }
+    const waitingOn = waitsOn(held, answer).group;
     const row: typeof changes.$inferInsert = {
       id, repository, number: c.number, title: c.title, body: c.body, url: c.url,
       state: c.state, draft: c.draft, authorLogin: c.author.login, project, agent,

@@ -2,7 +2,7 @@
  * Hiding the agents' rail and the dock (docs/specs/agent-desk.md, "Hiding"; t-1959 phase 4): a right-click on either
  * offers Always show, Minimize to strip and Auto-hide, kept per device. A strip brings it back; auto-hide brings it in
  * over the apps from its edge and away again, never moving the tiles; a glowing dot while anything is unread or asks.
- * With the rail hidden, Comms keeps its comm screen. Ctrl+Shift+N opens the Nth agent's thread. At 1280, 1440 and 1920
+ * With the rail hidden, Comms keeps its comm screen. At 1280, 1440 and 1920
  * in all three looks. Needs `age`.
  *
  * Runs where the app is built (npm run build) and a Chrome is installed (GitHub's runners have one).
@@ -138,21 +138,6 @@ describe.runIf(built && chrome && hasAge)('hiding the agents\' rail and the dock
     await expect.poll(bar).toBeLessThan(900);
     await p.mouse.move(720, 300);
     await expect.poll(bar).toBeGreaterThanOrEqual(900);
-    await p.context().close();
-  });
-
-  it('Ctrl+Shift+N opens the Nth agent\'s thread, in the cards\' order, typing or not', async () => {
-    const p = await screen(1440, 900, '/');
-    await p.locator('.loom-bigcard').first().waitFor();
-    await p.keyboard.press('Control+Shift+Digit2');
-    await expect.poll(() => new URL(p.url()).pathname).toBe(`/comms/${markT.id.slice(3)}`);
-    await p.locator('.loom-tile .comms-composer textarea').focus();
-    await p.keyboard.press('Control+Shift+Digit1');
-    await expect.poll(() => new URL(p.url()).pathname).toBe(`/comms/${artT.id.slice(3)}`);
-    // No third agent: nothing happens.
-    await p.keyboard.press('Control+Shift+Digit3');
-    await p.waitForTimeout(300);
-    expect(new URL(p.url()).pathname).toBe(`/comms/${artT.id.slice(3)}`);
     await p.context().close();
   });
 

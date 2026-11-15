@@ -395,6 +395,22 @@ replay cannot restore active authority. Running-body Stop remains with the recei
 body's status protocol. Preparation changes the thread working indicator, without
 inventing a reported agent status or consuming another conversation's Stop.
 
+## Machine registry
+
+An authenticated member registers their own machine with
+`runtime.boxCreate({name,sameMachineAsLoom})` through the normal HTTP command
+and stable receipt. A new machine starts in report-only mode, with hosting and
+always-on alerts disabled; its owner configures those independently through
+`runtime.boxSettingsSet`. Registration issues no credential. Runner credentials
+are issued by canonical Sign-in for the recorded machine.
+
+The machine owner or a current household owner can call
+`runtime.boxRevoke({box})`. Revocation retains job history and immediately
+withdraws existing machine/body credentials through the normal current-credential
+checks. It cannot restore a revoked machine or transfer ownership. A replacement
+may reuse the visible name, but receives a different machine ID. Neither command
+accepts an owner, token, heartbeat or caller-chosen enrollment timestamp.
+
 ## Body command/read consumer
 
 `bodyCommandClient` calls the existing Root HTTP operation and generated GraphQL
@@ -427,3 +443,23 @@ is accepted only for errors without a data entry; partial execution data and its
 errors remain HTTP200 results. Loopback HTTP includes localhost,127.0.0.1 and::1.
 The client rejects whitespace or controls in its fixed bearer before Fetch can
 normalize a header. A GraphQL errors entry is nonempty whenever present.
+
+## Composing native tools
+
+`bodyProgramTools` projects three standard MCP tool descriptors and a call callback
+for the receiving body's one local MCP listener: `loom_commands`, `loom_command`
+and `loom_query`. It starts no listener and supplies no new credential. Discovery
+uses the registered Root catalogue, command calls keep stable caller IDs and
+current Root permissions, and reads use the generated GraphQL schema. This
+projection is a composition port; the native listener/CLI wiring is separate.
+
+Mail confirmation, observed model/latency telemetry and Stop acknowledgement stay
+with the receiving runtime. The model cannot supply those fields or invoke the
+private take route. Successful status reports notify the runtime so its heartbeat
+can preserve the reported waiting status; a returned Stop request invokes the runtime's
+Stop callback before publishing a tool result. Request cancellation closes only
+that call, while body close cancels every current and future call.
+
+Native model tools report only working/waiting while a turn is live. Idle/offline
+reports and Stop acknowledgement belong to the receiving runtime after execution
+ends, so a model cannot clear the working flag or remove the live Stop control.

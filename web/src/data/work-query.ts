@@ -35,9 +35,16 @@ export interface ChangesResult {
 type Feed<T> = { status: ApprovalSnapshot['status']; data?: T };
 export function approvalSnapshot(feed: Feed<ApprovalsResult>, timezone: string): ApprovalSnapshot {
   const data = feed.status === 'live' ? feed.data : undefined;
+  // Private reports inherit their approval's sharing labels through the
+  // permanent record query. Never copy their words to unlabelled notices.
+  const privateReports = (data?.approvalRecord ?? []).flatMap(event => {
+    const card = data?.approvals.find(card => card.id === event.approval && card.member);
+    return card && event.event === 'use' && event.note.startsWith('Reported step: ')
+      ? [{id:`record:${event.seq}`,agent:card.agent,kind:card.kind,target:card.target,what:event.note.slice('Reported step: '.length),at:event.at}] : [];
+  });
   return { status: feed.status === 'live' && !data ? 'loading' : feed.status, timezone,
     approvals: data?.approvals ?? [], rules: data?.approvalRules ?? [],
-    notices: data?.approvalNotices ?? [], record: data?.approvalRecord ?? [] };
+    notices: [...(data?.approvalNotices ?? []),...privateReports], record: data?.approvalRecord ?? [] };
 }
 export function changeSnapshot(feed: Feed<ChangesResult>, timezone: string): ChangeSnapshot {
   const data = feed.status === 'live' ? feed.data : undefined;
