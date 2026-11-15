@@ -5,6 +5,7 @@
  * Harness/provider/model roles stay configuration, not hard-coded CLI guesses. */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { z } from 'zod';
+import { quotaWindows } from './account-observation.js';
 import type { UsageProvider } from './account-windows.js';
 import { StringDecoder } from 'node:string_decoder';
 import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
@@ -181,12 +182,7 @@ export function commandWorkerExecutor(config: WorkerRunnerConfig & {
   };
 }
 
-const quotaWindows = z.array(z.object({
-  name: z.string().min(1), usage: z.number().min(0).max(1).nullable(),
-  readAt: z.string().datetime({ offset: true }).nullable(),
-  resetsAt: z.string().datetime({ offset: true }).nullable(),
-  durationMs: z.number().positive(), reserve: z.number().min(0).max(1).optional(),
-}).strict()).max(128);
+
 
 /** Worker-side configured private quota reader. It reads {account,owner,provider}
  * JSON on stdin and returns the complete QuotaWindow[] JSON on stdout. Provider
