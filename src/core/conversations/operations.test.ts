@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import { FakeClock } from '../clock.js';
 import { Operations, type Change } from '../operations/index.js';
 import { createDataSchema } from '../data/database.js';
-import { agents, inbox, inboxReads, members, messages, threads } from '../data/schema.js';
+import { actionResults, agents, inbox, inboxReads, members, messages, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { registerConversationOperations, type ConversationAccess } from './operations.js';
 import type { Viewer } from '../../policy.js';
@@ -37,7 +37,7 @@ function fixture() {
   const viewer: Viewer = { kind: 'member', id: 'jonathan' };
   const call = (name: string, input: unknown, id: string, valid = () => true) => operations.callAsync('socket', viewer, name, input, id, true, valid);
   const thread = service.threads.open({ id: 'th:one', member: 'jonathan', agent: 'art', title: 'Pump' });
-  return { client, db, service, operations, changes, publicationTransactions, policyCalls, thread, call,
+  return { client, db, clock, service, operations, changes, publicationTransactions, policyCalls, thread, call,
     seals: () => seals,
     gate: (fn: () => Promise<void>) => { encryptionGate = fn; }, allow: (value: boolean) => { allowed = value; } };
 }
@@ -208,4 +208,35 @@ it('authorizes the current opened target on replay and refuses deleted or change
   expect(await f.call('comms.open', original, 'original')).toMatchObject({ ok: true });
   f.client.prepare('UPDATE conversations SET member=? WHERE id=?').run('other', f.thread.conversation);
   expect(await f.call('comms.open', original, 'original')).toMatchObject({ code: 'denied' });
+});
+
+it('dismisses only the signed-in member own action result through an authenticated window', async () => {
+  const f = fixture(), at = new Date(f.clock.now()).toISOString();
+  f.db.insert(actionResults).values([
+    { id: 'mine', member: 'jonathan', at, ok: true, text: 'Saved', page: '/inbox' },
+    { id: 'other', member: 'other', at, ok: false, text: 'Private outcome', page: '/inbox' },
+  ]).run();
+  for (const id of ['other', 'missing']) expect(await f.call('inbox.dismissResult', { id }, `deny-${id}`)).toMatchObject({ ok: false, code: 'denied' });
+  for (const kind of ['agent', 'runner', 'service'] as const) expect(await f.operations.callAsync('socket', { kind, id: 'jonathan' }, 'inbox.dismissResult', { id: 'mine' }, `deny-${kind}`, true)).toMatchObject({ ok: false, code: 'denied' });
+  expect(await f.operations.callAsync('socket', { kind: 'member', id: 'jonathan' }, 'inbox.dismissResult', { id: 'mine' }, 'no-window', false)).toMatchObject({ ok: false, code: 'denied' });
+  expect(await f.call('inbox.dismissResult', { id: 'mine' }, 'expired', () => false)).toMatchObject({ ok: false, code: 'denied' });
+  expect(f.db.select().from(actionResults).all().every(r => r.readAt === null)).toBe(true);
+  const result = await f.call('inbox.dismissResult', { id: 'mine' }, 'dismiss');
+  expect(result).toEqual({ ok: true, value: { saved: true } });
+  expect(f.db.select().from(actionResults).where(eq(actionResults.id, 'mine')).get()?.readAt).toBe(at);
+  expect(f.db.select().from(actionResults).where(eq(actionResults.id, 'other')).get()?.readAt).toBeNull();
+  expect(f.changes).toEqual([[{ type: 'actionResults', id: 'mine' }]]); expect(f.publicationTransactions).toEqual([false]);
+  f.clock.advance(1000);
+  expect(await f.call('inbox.dismissResult', { id: 'mine' }, 'dismiss')).toEqual(result);
+  expect(await f.call('inbox.dismissResult', { id: 'mine' }, 'dismiss-again')).toEqual(result);
+  expect(f.db.select().from(actionResults).where(eq(actionResults.id, 'mine')).get()?.readAt).toBe(at);
+  f.db.update(actionResults).set({ member: 'other' }).where(eq(actionResults.id, 'mine')).run();
+  expect(await f.call('inbox.dismissResult', { id: 'mine' }, 'dismiss')).toMatchObject({ ok: false, code: 'denied' });
+});
+it('rolls action-result dismissal back if the shared operation receipt cannot commit', async () => {
+  const f = fixture();
+  f.db.insert(actionResults).values({ id: 'mine', member: 'jonathan', at: new Date(f.clock.now()).toISOString(), ok: true, text: 'Saved', page: '/inbox' }).run();
+  f.client.exec("CREATE TRIGGER refuse_receipt BEFORE INSERT ON core_operations BEGIN SELECT RAISE(ABORT,'receipt refused'); END");
+  expect(await f.call('inbox.dismissResult', { id: 'mine' }, 'dismiss')).toMatchObject({ ok: false });
+  expect(f.db.select().from(actionResults).get()?.readAt).toBeNull(); expect(f.changes).toEqual([]);
 });

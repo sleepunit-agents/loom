@@ -2,7 +2,7 @@
 
 `registerConversationOperations(operations, commsMessages, {authorize})` registers
 the shared-schema `comms.open`, `comms.send`, `comms.change`, `inbox.answer` and
-`inbox.read` operations. Both services must use the same SQLite connection. The
+`inbox.read` and `inbox.dismissResult` operations. Both services must use the same SQLite connection. The
 root installs this instead of the old Comms/Attention operation registrations;
 installing both would duplicate operation names. This adapter does not bootstrap
 the data schema or switch the root. The root's Operations retry-table bootstrap
@@ -49,3 +49,8 @@ decrypted worker deliveries in an Operations result or a persisted job brief.
 Generated read projections, decrypted query fields, root wiring, UI adoption,
 action-result notices and removal of the replaced paths remain on t-2237 and its
 coordinating rebuild tasks. No additional read endpoint belongs here.
+
+`inbox.dismissResult({id})` acknowledges the current signed-in member's own
+`action_results` row. It cannot dismiss someone else's result, preserves the
+first read timestamp, returns only `{saved:true}`, and publishes `actionResults`
+after its receipt commits. Ownership is checked again before receipt replay.

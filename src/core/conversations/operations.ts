@@ -1,10 +1,10 @@
 /** Shared-schema mutation adapters. Composition supplies CURRENT authorization;
  * these adapters do not grant access, load keys or expose a private read door. */
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { Operations, OperationError, operation, type Context } from '../operations/index.js';
 import type { Viewer } from '../../policy.js';
-import { deletedThreads, threads, type conversations, type inbox } from '../data/schema.js';
+import { actionResults, deletedThreads, threads, type conversations, type inbox } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 
 type Conversation = typeof conversations.$inferSelect;
@@ -134,4 +134,16 @@ export function registerConversationOperations(operations: Operations, service: 
     may: (v, i) => itemAccess(v, i.item, 'read'),
     run(ctx, i) { cvs.read(i.item, member(ctx.viewer)); ctx.changed('inboxReads', i.item); return { saved: true }; },
   }));
+  operations.register(operation({ ...common, name: 'inbox.dismissResult',
+    input: z.object({ id: z.string().min(1) }).strict(), output: acknowledgement,
+    may: (viewer, input) => viewer.kind === 'member' && !!service.db.select({ id: actionResults.id }).from(actionResults)
+      .where(and(eq(actionResults.id, input.id), eq(actionResults.member, viewer.id))).get(),
+    run(ctx, input) {
+      service.db.update(actionResults).set({ readAt: sql`coalesce(${actionResults.readAt}, ${new Date(ctx.now).toISOString()})` })
+        .where(and(eq(actionResults.id, input.id), eq(actionResults.member, member(ctx.viewer)))).run();
+      ctx.changed('actionResults', input.id);
+      return { saved: true };
+    },
+  }));
+
 }
