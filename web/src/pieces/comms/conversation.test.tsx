@@ -16,6 +16,15 @@ it('opens Memory conversation links without mounting legacy reads and pages by s
  const earlier=tree!.root.findAllByType('button').find(button=>button.children.includes('Load earlier activity'))!;
  await act(async()=>earlier.props.onClick());expect(feed.variables.before).toBe(51);
 });
+it('renders history in the current household timezone',async()=>{
+ feed.result={status:'live',data:{activity,deskTime:{timezone:'Asia/Tokyo'}}};
+ const props={path:'/p/comms-preview/conversation/cv-fixture',go:vi.fn()};
+ await act(async()=>{tree=create(h(CommsApp,props));});
+ expect(tree!.root.findAllByType('time')[0].children).toEqual(['11/15/2026, 9:00:00 PM Asia/Tokyo']);
+ feed.result={status:'live',data:{activity,deskTime:{timezone:'Europe/London'}}};
+ await act(async()=>tree!.update(h(CommsApp,props)));
+ expect(tree!.root.findAllByType('time')[0].children).toEqual(['11/15/2026, 12:00:00 PM Europe/London']);
+});
 it('withdraws the previous private label on disconnect and a current hidden result',async()=>{
  feed.result={status:'live',data:{activity}};
  const props={path:'/p/comms-preview/conversation/cv-fixture',go:vi.fn()};

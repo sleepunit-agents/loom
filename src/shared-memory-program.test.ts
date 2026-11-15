@@ -52,7 +52,7 @@ it('follows Memory conversation links through current shared history while priva
  const owner=await query(combined);
  expect(owner).toMatchObject({homeComms:{member:'owner',agents:['art']},commsMessages:[{words:'PRIVATE ENCRYPTED PROGRAM WORDS'}],memoryKnowledge:{pages:[{title:'Program fact'}]},memoryPerson:{name:'Fictional friend',conversations:{rows:[{id:conversation,href:'/p/comms-preview/conversation/'+encodeURIComponent(conversation)}]}},memoryProject:{name:'Fictional project'},memoryActivity:{entries:[{title:'Private program chat'}]}});
  const newest=await query(conversationActivityQuery,{id:conversation,before:2147483647});
- expect(newest.activity.label).toBe('Private program chat');expect(newest.activity.turnsByConversation).toHaveLength(50);expect(JSON.stringify(newest)).not.toContain('PRIVATE ENCRYPTED PROGRAM WORDS');
+ expect(newest.deskTime.timezone).toBe('America/Chicago');expect(newest.activity.label).toBe('Private program chat');expect(newest.activity.turnsByConversation).toHaveLength(50);expect(JSON.stringify(newest)).not.toContain('PRIVATE ENCRYPTED PROGRAM WORDS');
  const oldestShown=newest.activity.turnsByConversation.at(-1).seq,earlier=await query(conversationActivityQuery,{id:conversation,before:oldestShown});
  expect(earlier.activity.turnsByConversation.length).toBeGreaterThan(0);expect(earlier.activity.turnsByConversation.every((step:{seq:number})=>step.seq<oldestShown)).toBe(true);
  const hidden=await query(combined,{},'peer');expect(hidden).toMatchObject({commsMessages:[],memoryKnowledge:null,memoryPerson:null,memoryProject:null,memoryActivity:null,recentConversations:[]});
