@@ -3,6 +3,7 @@ import {it,expect} from 'vitest';
 import Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
 import {createServer} from 'node:http';
+import type {Socket} from 'node:net';
 import {existsSync,readFileSync} from 'node:fs';
 import {resolve,join,extname} from 'node:path';
 import {getRequestListener} from '@hono/node-server';
@@ -34,24 +35,26 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   if(!file.startsWith(root+'/')||!existsSync(file))return new Response(null,{status:404});
   return new Response(new Uint8Array(readFileSync(file)),{headers:{'content-type':({'.html':'text/html','.js':'application/javascript','.css':'text/css','.woff2':'font/woff2'} as Record<string,string>)[extname(file)]??'application/octet-stream'}});
  }));
+ const sockets=new Set<Socket>();server.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
+ const mark=(phase:string)=>console.info('[Tempo browser]',phase);
  const detach=app.attach(server);let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
  try {
   await new Promise<void>(ok=>server.listen(0,'127.0.0.1',ok));const address=server.address();if(!address||typeof address==='string')throw Error('No address');
   const url=`http://127.0.0.1:${address.port}`;
-  browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  mark('launch');browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   const context=await browser.newContext({serviceWorkers:'block',timezoneId:'Asia/Tokyo',locale:'en-US'});context.setDefaultTimeout(10000);
   await context.addCookies([{name:'loom_ui',value:cookie,url}]);
   const a=await context.newPage(),b=await context.newPage();
-  await Promise.all([a,b].map(page=>page.goto(url+'/p/tempo')));
+  mark('navigate');await Promise.all([a,b].map(page=>page.goto(url+'/p/tempo')));mark('navigated');
   for(const page of [a,b]){
-   await page.getByRole('button',{name:/Check pump delivery/}).click();
+   mark('open trigger');await page.getByRole('button',{name:/Check pump delivery/}).click();
    await expect.poll(()=>page.getByRole('heading',{name:'Check pump delivery',exact:true}).count()).toBe(1);
    expect(await page.getByText(/America\/Chicago/).count()).toBeGreaterThan(0);
    const due=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'medium',timeStyle:'short'}).format(new Date(trigger.nextDueAt!));
    expect((await page.getByText(/^Due:/).textContent())?.replace(/\s+/g,' ')).toBe(`Due: ${due} · America/Chicago`.replace(/\s+/g,' '));
    expect(await page.getByText('Check the pump shipment',{exact:true}).count()).toBe(1);
   }
-  app.writes.run(()=>{
+  mark('settled notice');app.writes.run(()=>{
    for(const words of ['PRIVATE FIRST NOTICE','PRIVATE SECOND NOTICE'])app.services.conversations.send({toKind:'person',to:'owner',member:'owner',source:'notice',fromKind:'agent',words});
   });
   clock.advance(4999);
@@ -65,14 +68,14 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   await a.getByRole('button',{name:'Dismiss Inbox notification',exact:true}).click();
   expect(await a.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
   expect(await b.getByRole('status',{name:'Inbox notification'}).count()).toBe(1);
-  const paused=await context.request.post(url+'/api/tempo/pause',{data:{id:'pause',input:{agent:'art'}}});expect(paused.status()).toBe(200);
+  mark('pause');const paused=await context.request.post(url+'/api/tempo/pause',{data:{id:'pause',input:{agent:'art'}}});expect(paused.status()).toBe(200);
   for(const page of [a,b])await expect.poll(()=>page.getByText(/Held · agent paused/).count()).toBeGreaterThan(0);
-  app.writes.run(()=>db.update(tokens).set({revokedAt:now()}).run());
+  mark('revoke');app.writes.run(()=>db.update(tokens).set({revokedAt:now()}).run());
   for(const page of [a,b]){
    await expect.poll(()=>page.getByRole('heading',{name:'Check pump delivery',exact:true}).count()).toBe(0);
    await expect.poll(()=>page.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
   }
  } finally {
-  await browser?.close();detach();await app.close();server.closeAllConnections();await new Promise<void>(ok=>server.close(()=>ok()));client.close();
+  mark('cleanup browser');await browser?.close();detach();mark('cleanup root');await app.close();for(const socket of sockets)socket.destroy();server.closeAllConnections();mark('cleanup server');await new Promise<void>(ok=>server.close(()=>ok()));client.close();mark('closed');
  }
 });
