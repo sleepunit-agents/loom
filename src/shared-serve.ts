@@ -40,6 +40,9 @@ export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { 
   try {
     stopTouches=await listenForTouchSources(root.operations,root.memory.touches);
     detach = root.attach(server);
+    // This listener owns only GraphQL upgrades. Finish unsupported handshakes
+    // so an old /live client cannot leave a connection pending indefinitely.
+    server.on('upgrade',(request,socket)=>{if(new URL(request.url??'/', 'http://localhost').pathname!=='/graphql')socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');});
     const host = options.host ?? '127.0.0.1';
     await new Promise<void>((resolve, reject) => {
       const failed = (error: Error) => { server.off('listening', ready); reject(error); };

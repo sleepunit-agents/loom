@@ -63,6 +63,8 @@ it('signs in on the actual shared listener and converges Memory writes, source t
  expect(JSON.stringify(added)).toContain('Fictional pump');
  const retiredRead=await request('/api/mind/knowledgeRead',{input:{slug:'fictional-pump'}},headers);expect(retiredRead.status).toBe(404);
  expect((await fetch(app.url+'/live',{headers})).status).toBe(404);
+ const unsupported=new WebSocket(app.url.replace('http:','ws:')+'/live','graphql-transport-ws');unsupported.on('error',()=>{});cleanup.push(()=>unsupported.terminate());
+ const [,rejected]=await once(unsupported,'unexpected-response');rejected.resume();expect(rejected.statusCode).toBe(404);
  const people=new PeopleStore({dbPath:f.sources.agents[0].memories});cleanup.push(()=>people.close());
  const person=await waitMessage(ws,()=>people.write({slug:'friend',name:'Private fictional friend'}));expect(JSON.stringify(person)).toContain('Private fictional friend');
  const projects=new ProjectsStore({dbPath:f.sources.agents[0].memories});cleanup.push(()=>projects.close());
