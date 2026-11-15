@@ -17,8 +17,6 @@ import { useWaitChecks } from './wait-checks';
 import { useMemberRetention } from './member-retention';
 import type { Ask } from './model';
 import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson } from './home-model';
-import { deskJobs, agentNext } from '../../../../src/pieces/clock/desk';
-import { active, time, state, type Wake, type Clock } from '../clock/model';
 function Unavailable({ status, label }: { status: Snapshot['status']; label: string }) {
   return status === 'loading' ? <Loading label={`Opening ${label}…`} /> : <Error title={`Couldn’t load ${label}`} text={status === 'denied' ? 'Sign in with access to see this.' : 'Waiting for connection.'} />;
 }
@@ -34,8 +32,6 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const asks = useRecords<Ask>('attention.ask');
   useWaitChecks(asks);
   useMemberRetention(asks.status);
-  const wakes = useRecords<Wake>('wake');
-  const clocks = useRecords<Clock>('clock');
   const statuses = useDeskAgentStatuses();
   const lock = useRef(false), [busy,setBusy] = useState(false);
   const guard: Guard = {lock,busy,setBusy};
@@ -72,11 +68,6 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
                   onClick={()=>go(thread?threadPath(thread.id):'/p/comms-preview')} />
               </section>;
             }
-            const clockStatus = wakes.status !== 'live' ? wakes.status : clocks.status;
-            const paused = clocks.records.some(c => c.id === agent.id && c.paused);
-            const work = clockStatus === 'live' ? wakes.records.filter(w => w.agent === agent.id && active(w)) : [];
-            const next = agentNext(agent.id, work, paused);
-            const jobs = deskJobs(work, paused);
             return <section key={agent.id} aria-label={`${agent.name} card`} data-agent={agent.id} className="desk-home-card grid min-w-0 gap-3">
               <header className="desk-home-identity"><a className="inline-flex shrink-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 [&>*]:pointer-events-none" aria-label={`Open ${agent.name} agent window`} href={agentPath(agent.id)} onClick={event=>{if(event.button||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;event.preventDefault();go(agentPath(agent.id));}}><AgentFace display={displays.find(d=>d.id===agent.id)} name={agent.name} state={faceState(status?.state, !!first)} size={96} /></a><h2 className="text-xl font-semibold">{agent.name}</h2>{agent.personPath && <Button variant="outline" size="sm" aria-label={`${agent.name} in People`} onClick={()=>go(agent.personPath!)}>People</Button>}<p>{status?.state ?? 'No status reported'}{asks.status === 'live' && ownAsks.length ? ` · ${ownAsks.length} needs you` : ''}</p></header>
               <div role="region" aria-label={`${agent.name} desk details`} tabIndex={0} className="grid min-w-0 gap-3 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 lg:max-h-[70dvh] lg:overflow-y-auto lg:pr-2">
@@ -92,17 +83,6 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
                   <HomeConversations agent={agent.id} name={agent.name} reading={conversations} go={go} />
                 </div>
                 <div className="grid min-w-0 content-start gap-4">
-              <section aria-label={`${agent.name} clock`} className="grid min-w-0 gap-2">
-                <h3>Next</h3>
-                {clockStatus !== 'live' ? <Unavailable status={clockStatus} label="clock" /> : <>
-                  <p>{next.paused ? 'Clock paused' : next.next ? `${time(next.next.due)} · ${next.next.text}` : 'No wake scheduled'}</p>
-                  <h3>Clock jobs · {jobs.length}</h3>
-                  {!jobs.length ? <p>No clock jobs.</p> : <List label={`${agent.name} clock jobs`}>{jobs.map(job => {
-                    const wake = work.find(w => w.id === job.wake)!;
-                    return <Row key={job.id} title={job.text} status={state(wake, paused)} meta={job.status === 'scheduled' ? time(job.at) : undefined} onClick={()=>go(job.href)} />;
-                  })}</List>}
-                </>}
-              </section>
                   <HomeSteps agent={agent.id} name={agent.name} activity={activity} go={go} />
                 </div>
               </div>

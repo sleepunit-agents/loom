@@ -11,7 +11,7 @@ type Node={children:Array<Node|string>;props:Record<string,any>};
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),call:vi.fn(),once:vi.fn()}));
 vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['attention.agent'])}));
 vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:'live',data:{recentConversations:(f.snapshots['conversation.summary']?.records??[]).filter((row:any)=>row.agent===variables?.agent),agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent]);}}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]),call:f.call,callOnce:f.once}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['wake','clock','attention.agent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type])),call:f.call,callOnce:f.once}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import Home from './home';
 vi.mock('./member-retention',()=>({useMemberRetention:vi.fn()}));
@@ -32,7 +32,7 @@ function request<T>() {
   const call:Call<T>={id:'request',result:new Promise(r=>{resolve=r;}),getSnapshot:()=>state,subscribe:fn=>{listeners.add(fn);return()=>{listeners.delete(fn);};}};
   return {call,finish:async(result:Result<T>)=>act(async()=>{state={pending:false,status:'done',result};resolve(result);listeners.forEach(fn=>fn());})};
 }
-beforeEach(()=>{f.call.mockReset();f.once.mockReset();f.once.mockReturnValue({result:new Promise(()=>{})});f.listeners.clear();f.snapshots={'activity.window':live([]),'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'thread':live([]),'household.agentDisplay':live([]),'person':live([]),'generated.jobs':live([]),'wake':live([]),'clock':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
+beforeEach(()=>{f.call.mockReset();f.once.mockReset();f.once.mockReturnValue({result:new Promise(()=>{})});f.listeners.clear();f.snapshots={'activity.window':live([]),'attention.ownedAgent':live<OwnedAgent>([{id:'mark',name:'Mark'},{id:'art',name:'Art'}]),'thread':live([]),'household.agentDisplay':live([]),'person':live([]),'generated.jobs':live([]),'attention.ask':live<Ask>([]),'attention.agent':live<AgentStatus>([])};});
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
 it('keeps idle owned cards in saved position order with stable id ties, without deriving agents from asks or work',async()=>{
   f.snapshots['attention.ask']=live([ask('foreign',{agent:'other'})]);
@@ -121,34 +121,6 @@ it('ignores person-kind and mismatched directory identities and blank names',asy
   await draw();expect(text()).toContain('Art card');expect(text()).toContain('Mark card');expect(text()).not.toContain('Wrong');
 });
 
-const clockWake=(id:string,state='pending',extra:Record<string,unknown>={})=>({id,agent:'art',due:Date.parse('2026-11-13T12:31:00Z'),state,note:`Work ${id}`,failures:0,...extra});
-it('composes live Clock Next and all active jobs on owned cards without reported status or writes',async()=>{
-  f.snapshots['wake']=live([clockWake('later','pending',{due:Date.parse('2026-11-13T13:31:00Z')}),clockWake('first'),clockWake('park','parked'),clockWake('held','held',{hold:'uncertain'}),clockWake('running','firing'),clockWake('done','fired'),clockWake('failed','failed'),clockWake('cancelled','cancelled'),clockWake('foreign','pending',{agent:'other'})]);
-  const go=await draw();
-  const card=tree!.root.findByProps({'aria-label':'Art clock'});
-  expect(words(card)).toContain('Nov 13, 2026, 6:31 AM CT · Work first');
-  expect(words(card)).toContain('Clock jobs · 5');
-  for(const label of ['Work first','Work later','Work park','Work held','Work running','Parked · awaiting answer','Held · uncertain'])expect(words(card)).toContain(label);
-  for(const label of ['Work done','Work failed','Work cancelled','Work foreign'])expect(text()).not.toContain(label);
-  await click('Work firstNov 13, 2026, 6:31 AM CTpending');expect(go).toHaveBeenCalledWith('/p/clock-preview');expect(f.call).not.toHaveBeenCalled();
-  await publish('clock',live([{id:'art',paused:true}]));
-  expect(words(tree!.root.findByProps({'aria-label':'Art clock'}))).toContain('Clock paused');
-  expect(words(tree!.root.findByProps({'aria-label':'Art clock'}))).not.toContain('6:31 AM CT');
-  await publish('wake',live([clockWake('park','parked'),clockWake('held','held',{hold:'staging'})]));
-  await publish('clock',live([]));
-  expect(words(tree!.root.findByProps({'aria-label':'Art clock'}))).toContain('No wake scheduled');
-  expect(words(tree!.root.findByProps({'aria-label':'Art clock'}))).toContain('Clock jobs · 2');
-  await publish('wake',live([]));expect(words(tree!.root.findByProps({'aria-label':'Art clock'}))).toContain('No clock jobs.');
-});
-it.each(['loading','offline','denied'] as const)('clears stale Clock words and times when either stream is %s',async(status)=>{
-  const records=[clockWake('private')];f.snapshots['wake']=live(records);await draw();expect(text()).toContain('Work private');
-  await publish('wake',{records,status});expect(text()).not.toContain('Work private');expect(text()).not.toContain('No wake scheduled');
-  await publish('wake',live(records));await publish('clock',{records:[{id:'art',paused:true}],status});
-  expect(text()).not.toContain('Work private');expect(text()).not.toContain('Clock paused');expect(text()).toContain('Art card');
-  await publish('clock',live([]));expect(text()).toContain('Work private');
-  await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).not.toContain('Work private');expect(text()).not.toContain('Art clock');
-});
-
 it('checks the real member wait operation from Home without synthesizing a local resolution or answer',async()=>{
   const pending=request<Ask>();f.call.mockReturnValue(pending.call);
   const record=ask('wait',{waits_on:{task:'t-1'}});f.snapshots['attention.ask']=live([record]);
@@ -185,7 +157,7 @@ it.each(['loading','offline','denied'] as const)('clears Runtime words and avoid
   const panel=tree!.root.findByProps({'aria-label':'Art runtime jobs'});
   expect(words(panel)).not.toContain('Visible private Runtime title');expect(words(panel)).not.toContain('No current runtime jobs.');expect(words(panel)).not.toContain('Runtime jobs · 0');
   expect(words(panel)).toContain(status==='loading'?'Opening runtime jobs':'Couldn’t load runtime jobs');
-  expect(text()).toContain('Art card');expect(text()).toContain('No clock jobs.');
+  expect(text()).toContain('Art card');
   await publish('generated.jobs',live([{...runtimeJob('returned'),queuedAt:new Date(1).toISOString()}]));expect(words(tree!.root.findByProps({'aria-label':'Art runtime jobs'}))).toContain('Runtime returned');
   await publish('attention.ownedAgent',live([{id:'mark',name:'Mark'}]));expect(text()).not.toContain('Runtime returned');expect(text()).not.toContain('Art card');
 });
