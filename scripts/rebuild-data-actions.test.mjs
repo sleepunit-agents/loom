@@ -1,3 +1,5 @@
+import {readFileSync} from 'node:fs';
+import {evaluate} from './rebuild-report.mjs';
 import {it,expect} from 'vitest';
 import Database from 'better-sqlite3';
 import {connectionEvidence,changedFields,sqlRead,installDataProbe} from './rebuild-data-actions.mjs';
@@ -24,8 +26,8 @@ it('rejects repeated root, collection, row and unchanged-field snapshots',()=>{
 });
 it('observes tagged SQLite executions, preserves results and restores wrappers on success and failure',async()=>{
  const db=new Database(':memory:');db.exec('create table tasks(id text); insert into tasks values (\'fictitious\')');
- const originalPrepare=db.prepare;let seenRequest;
- const app={services:{comms:{db:{$client:db}}},http:{fetch:async request=>{seenRequest=request;return db.prepare('select id from tasks where id=?').all('fictitious');}}};
+ const originalPrepare=db.prepare;let seenRequest,retained,retainedMethod;
+ const app={services:{comms:{db:{$client:db}}},http:{fetch:async request=>{seenRequest=request;retained=db.prepare('select id from tasks where id=?');retainedMethod=Object.getPrototypeOf(retained).all;return retained.all('fictitious');}}};
  const originalFetch=app.http.fetch;
  const page={evaluate:async()=>{
   await app.http.fetch(new Request('http://127.0.0.1/graphql'));
@@ -34,7 +36,7 @@ it('observes tagged SQLite executions, preserves results and restores wrappers o
  }};
  try{
   const result=await sqlRead({page,app,query:'{ tasks { id } }',match:/tasks/,task:'fictitious'});
-  expect(result.body.data).toEqual([{id:'fictitious'}]);expect(result.statements).toHaveLength(1);expect(app.http.fetch).toBe(originalFetch);expect(db.prepare).toBe(originalPrepare);
+  expect(result.body.data).toEqual([{id:'fictitious'}]);expect(result.statements).toHaveLength(1);expect(retained.all).toBe(retainedMethod);expect(Object.hasOwn(retained,'all')).toBe(false);expect(app.http.fetch).toBe(originalFetch);expect(db.prepare).toBe(originalPrepare);
   await expect(sqlRead({page:{evaluate:async()=>{throw Error('browser failed');}},app,query:'{}',match:/tasks/})).rejects.toThrow('browser failed');expect(app.http.fetch).toBe(originalFetch);expect(db.prepare).toBe(originalPrepare);
  }finally{db.close();}
 });
@@ -52,4 +54,14 @@ it('installed socket observer forwards exact IO and does not record authenticati
   expect(JSON.stringify({requests:entry.requests,frames:entry.frames})).not.toContain('fictitious-auth-never-retain');
   socket.close();expect(socket.readyState).toBe(3);
  }finally{globalThis.WebSocket=original;globalThis.__loomDataProbe=previous;}
+});
+
+it('keeps actual approved-promise mappings and classifies positive, negative and partial evidence',()=>{
+ const pages=Object.fromEntries(['data','desk'].map(name=>[name,JSON.parse(readFileSync(new URL('../docs/rebuild-checklists/'+name+'.json',import.meta.url),'utf8'))]));
+ for(const [page,id,action,success] of [['data','data-003','dataSelectionSQL','met'],['data','data-004','dataSharingSQL','not checkable yet'],['data','data-005','dataTaskPatches','not checkable yet'],['data','data-009','dataInboxChange','met'],['data','data-011','dataSharingSQL','not checkable yet'],['data','data-012','dataTaskPatches','not checkable yet'],['desk','desk-006','dataDoor','not checkable yet']]){
+  const promise=pages[page].promises.find(p=>p.id===id);expect(promise.probe).toEqual({kind:'action',action});
+  expect(evaluate(promise,{actions:{[action]:{ok:true,...(success==='met'?{}:{inconclusive:true})}}}).status).toBe(success);
+  expect(evaluate(promise,{actions:{[action]:{ok:false,error:'Measured counterexample'}}}).status).toBe('not met');
+  expect(evaluate(promise,{actions:{[action]:{inconclusive:true}}}).status).toBe('not checkable yet');
+ }
 });

@@ -43,11 +43,11 @@ export function changedFields(history,after,root,minDepth){
 const check=(yes,message)=>{if(!yes)throw Error(message);};
 /** Attribute queries to the tagged browser request, retaining no bind values. */
 export async function sqlRead({page,app,query,match,task,caller}){
- const scope=new AsyncLocalStorage(),db=app.services.comms.db.$client,prepare=db.prepare,fetch=app.http.fetch,statements=[];
+ const scope=new AsyncLocalStorage(),db=app.services.comms.db.$client,prepare=db.prepare,fetch=app.http.fetch,statements=[],restore=[];
  app.http.fetch=(request,...rest)=>scope.run(request.headers.get('x-loom-walkthrough-sql')==='measure',()=>Reflect.apply(fetch,app.http,[request,...rest]));
- db.prepare=function(sql){const statement=Reflect.apply(prepare,this,[sql]);if(match.test(sql))for(const method of ['get','all','iterate']){const original=statement[method];statement[method]=function(...args){if(scope.getStore()&&(!task||args.flat(Infinity).includes(task))&&(!caller||caller.test(new Error().stack??'')))statements.push(String(sql));return Reflect.apply(original,this,args);};}return statement;};
+ db.prepare=function(sql){const statement=Reflect.apply(prepare,this,[sql]);if(match.test(sql))for(const method of ['get','all','iterate']){const original=statement[method],descriptor=Object.getOwnPropertyDescriptor(statement,method);restore.push(()=>{if(descriptor)Object.defineProperty(statement,method,descriptor);else delete statement[method];});statement[method]=function(...args){if(scope.getStore()&&(!task||args.flat(Infinity).includes(task))&&(!caller||caller.test(new Error().stack??'')))statements.push(String(sql));return Reflect.apply(original,this,args);};}return statement;};
  try{const response=await page.evaluate(async query=>{const r=await fetch('/graphql',{method:'POST',headers:{'content-type':'application/json','x-loom-walkthrough-sql':'measure'},body:JSON.stringify({query}),signal:AbortSignal.timeout(4000)});return{status:r.status,body:await r.json()};},query);return{...response,statements};}
- finally{app.http.fetch=fetch;db.prepare=prepare;scope.disable();}
+ finally{app.http.fetch=fetch;db.prepare=prepare;for(const undo of restore.reverse())undo();scope.disable();}
 }
 async function open(page,title){
  await page.keyboard.press('Escape');await page.keyboard.press('Control+Shift+Space');const launcher=page.getByRole('dialog',{name:'Apps',exact:true});await launcher.waitFor();const button=launcher.locator('.loom-lapp').filter({has:page.locator('.loom-lapp__nm',{hasText:new RegExp('^'+title+'$')})});await button.focus();await button.press('Enter');await launcher.waitFor({state:'hidden'});const tile=page.getByRole('region',{name:`${title} tile`,exact:true});await tile.waitFor();return tile;
@@ -63,7 +63,7 @@ export async function dataActions({page,app,example,apps,subscriptions,out}){
  const evidence={};
  const attempt=async(name,run)=>{const screenshot=`action-${name}.png`;try{evidence[name]={ok:true,...await run(),screenshot};}catch(error){evidence[name]={ok:false,error:String(error),screenshot};}await stop(page);await page.screenshot({path:join(out,screenshot),fullPage:true});};
  const unknown=apps.filter(a=>!a.dataDoor?.known||!a.dataDoor.selectionSeen),bad=apps.filter(a=>!a.opened||a.dataDoor?.graphql!==1||a.dataDoor?.other?.length);
- evidence.dataDoor=bad.length?{ok:false,error:'Expected one open GraphQL socket at '+bad.map(a=>a.title).join(', '),apps:apps.map(a=>a.dataDoor)}:unknown.length?{inconclusive:true,reason:'A current-document selection signature was not observed for '+unknown.map(a=>a.title).join(', '),apps:apps.map(a=>a.dataDoor)}:{ok:true,reason:'Every visited app’s actual data selection was observed on its current document’s single open GraphQL socket.',apps:apps.map(a=>a.dataDoor)};
+ evidence.dataDoor=bad.length?{ok:false,error:'Expected one open GraphQL socket at '+bad.map(a=>a.title).join(', '),apps:apps.map(a=>a.dataDoor)}:unknown.length?{inconclusive:true,reason:'A current-document selection signature was not observed for '+unknown.map(a=>a.title).join(', '),apps:apps.map(a=>a.dataDoor)}:{ok:true,inconclusive:true,reason:'One active successful selection for every app used its current document’s GraphQL socket; complete attribution of every secondary selection and transient transport is not measured.',apps:apps.map(a=>a.dataDoor)};
  await attempt('dataSelectionSQL',async()=>{
   const original=subscriptions.find(s=>/query\s+Tasks\b/.test(s.query))?.query;check(original,'The real Tasks selection was not observed');
   const query=original.replace(/\btasks\s*\(/,'tasks(where:{id:{eq:'+JSON.stringify(example.tasks[0])+'}}, ');check(query!==original,'Could not add the ID filter to the actual tile selection');
