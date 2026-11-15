@@ -1,6 +1,6 @@
 /** The executable's shared home. No interim tables, credential copies or /live. */
 import Database from 'better-sqlite3';
-import { constants, openSync, closeSync, fchmodSync, fstatSync, mkdirSync, readdirSync } from 'node:fs';
+import { constants, openSync, closeSync, fchmodSync, fstatSync, mkdirSync, readdirSync, lstatSync, unlinkSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { userInfo } from 'node:os';
 import { createHash, randomBytes } from 'node:crypto';
@@ -21,6 +21,7 @@ export async function startSharedLoom(options: {home:string; host?:string[]; por
   const release = await ownHome(home);
   let client: Database.Database | undefined;
   let server: Awaited<ReturnType<typeof serveShared>> | undefined;
+  let createdDatabase: {dev:number;ino:number} | undefined;
   let closing: Promise<void> | undefined;
   const close = () => closing ??= (async()=>{try {await server?.close();} finally {try {client?.close();} finally {await release();}}})();
   try {
@@ -31,9 +32,9 @@ export async function startSharedLoom(options: {home:string; host?:string[]; por
     // a DB symlink, or create the old foundation's migration tables here.
     for (const suffix of ['', '-wal', '-shm']) {
       let fd:number;
-      try {fd=openSync(join(home,'loom.db'+suffix),constants.O_RDWR|constants.O_NOFOLLOW|constants.O_NONBLOCK|(suffix ? 0 : constants.O_CREAT),0o600);}
+      try {fd=openSync(join(home,'loom.db'+suffix),constants.O_RDWR|constants.O_NOFOLLOW|constants.O_NONBLOCK|(suffix ? 0 : constants.O_CREAT|(!entries.includes('loom.db')?constants.O_EXCL:0)),0o600);}
       catch(error){if(suffix&&(error as NodeJS.ErrnoException).code==='ENOENT')continue;throw error;}
-      try {if(!fstatSync(fd).isFile())throw new Error('Database must be a regular file');fchmodSync(fd,0o600);} finally {closeSync(fd);}
+      try {const stat=fstatSync(fd);if(!stat.isFile())throw new Error('Database must be a regular file');if(!suffix&&!entries.includes('loom.db'))createdDatabase={dev:stat.dev,ino:stat.ino};fchmodSync(fd,0o600);} finally {closeSync(fd);}
     }
     client = new Database(join(home,'loom.db'));
     const fresh = !client.prepare('SELECT name FROM sqlite_schema LIMIT 1').get();
@@ -75,5 +76,22 @@ export async function startSharedLoom(options: {home:string; host?:string[]; por
     server.http.get('/health',c=>c.json({ok:true,next:true,staging:!!options.staging}));
     if (link) (options.stdout ?? (text=>process.stdout.write(text)))(new URL(link,server.url).href+'\n');
     return {...server,db,close};
-  } catch (error) {await close();throw error;}
+  } catch (error) {
+    // Only this startup's newly created, still-empty DB may be removed. Schema
+    // creation rolls back on failure; keeping that file would strand the next
+    // attempt behind the existing-home refusal. Never remove a replacement or
+    // a file containing any committed tables, and retain ownership until done.
+    if (createdDatabase) {
+      try {
+        const path=join(home,'loom.db'),stat=lstatSync(path);
+        const empty=client?.open ? !client.prepare('SELECT name FROM sqlite_schema LIMIT 1').get() : stat.size===0;
+        if (empty) {
+          if(client?.open)client.close();client=undefined;
+          const current=lstatSync(path);
+          if(current.isFile()&&current.dev===createdDatabase.dev&&current.ino===createdDatabase.ino)unlinkSync(path);
+        }
+      } catch { /* Preserve ambiguous state and the original startup error. */ }
+    }
+    await close();throw error;
+  }
 }

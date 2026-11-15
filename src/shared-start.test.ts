@@ -1,10 +1,11 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { WebSocket } from 'ws';
+import * as schemaCreation from './core/data/database.js';
 import { startSharedLoom } from './shared-start.js';
 import { tasks, sessions, members } from './core/data/schema.js';
 import { z } from 'zod';
@@ -102,5 +103,14 @@ it('releases home ownership after a real bind failure and recovers the first-run
  const blocker=createServer();blocker.listen(0,'127.0.0.1');await once(blocker,'listening');const address=blocker.address();if(!address||typeof address==='string')throw Error('No bind address');
  try{await expect(startSharedLoom({home,port:address.port,webRoot,stdout:()=>{throw Error('must not print');}})).rejects.toThrow('EADDRINUSE');}finally{await new Promise<void>(ok=>blocker.close(()=>ok()));}
  let link='';const app=await startSharedLoom({home,port:address.port,webRoot,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());
+ expect((await fetch(link,{method:'POST',redirect:'manual'})).status).toBe(303);
+});
+
+it('removes only its newly created empty database after rolled-back schema failure so first-run access can recover',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'schema-retry-')),webRoot=mkdtempSync(join(tmpdir(),'schema-web-'));clean.push(()=>{rmSync(home,{recursive:true,force:true});rmSync(webRoot,{recursive:true,force:true});});writeFileSync(join(webRoot,'next.html'),'Shared app');
+ const failing=vi.spyOn(schemaCreation,'createDataSchema').mockImplementationOnce(client=>client.transaction(()=>{client.exec('CREATE TABLE half_written (id TEXT)');throw Error('Synthetic schema failure');})());
+ try{await expect(startSharedLoom({home,port:0,webRoot,stdout:()=>{}})).rejects.toThrow('Synthetic schema failure');}finally{failing.mockRestore();}
+ expect(readdirSync(home)).toEqual([]);let link='';
+ const app=await startSharedLoom({home,port:0,webRoot,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());
  expect((await fetch(link,{method:'POST',redirect:'manual'})).status).toBe(303);
 });
