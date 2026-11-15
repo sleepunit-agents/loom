@@ -180,3 +180,17 @@ it('timing notifications wake selections without reviving a read invalidated by 
  live.timingsChanged();expect(live.currentRead(version)).toBe(false);
  live.close();expect(live.currentRead(live.epoch())).toBe(false);
 });
+
+it('still ends on a resolver error when no committed change invalidated that read',async()=>{
+  const {stream,reject}=heldSelection();
+  const pending=stream.next();reject(new Error('Stable resolver failure'));
+  await expect(pending).rejects.toThrow('Stable resolver failure');
+  expect(await stream.next()).toEqual({done:true,value:undefined});
+});
+
+it.each(['timingsChanged','metadataChanged'] as const)('does not hide a resolver error during %s',async notification=>{
+  const {live,stream,reject}=heldSelection();
+  const pending=stream.next();live[notification]();reject(new Error('Stable resolver failure'));
+  await expect(pending).rejects.toThrow('Stable resolver failure');
+  expect(await stream.next()).toEqual({done:true,value:undefined});
+});
