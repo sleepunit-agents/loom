@@ -471,3 +471,11 @@ an inline setting approval. Models remain unchanged until Allow. The static
 approved operation rechecks current ownership, configured model roles and the
 previous ordering; stale cards require a new request. It has no shell or provider
 side effects. The ordinary member-only agentModelsSet command remains unchanged.
+
+runtime.proposeBoxSettings files a private chat request for the machine owner or
+a household owner. Its card includes the current and proposed name, hosting
+flags, agent lending and owner facts. Allow rechecks the current member's
+authority, machine ownership/revocation, the full previous owner settings,
+lending and name uniqueness. Worker-reported facts are independent of that
+comparison. The direct owner command and approved operation share validation and
+application; no worker credentials or enrollment are issued by either.

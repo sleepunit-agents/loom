@@ -17,10 +17,10 @@ export function ConversationQuestions({ conversation, go, readVisible }: { conve
   }), [conversation, offset]));
   if (reading.status !== 'live') return null;
   const items = reading.data?.questions ?? [], ordinary = reading.data?.ordinary ?? [];
-  const ordinaryIds = new Set(ordinary.map(card => card.id));
+  const questionSources = new Set(items.slice(0,10).map(item=>item.sourceId));
   return <section aria-label="Conversation approvals">
-    {ordinary.slice(0,10).map(card => <LiveApprovalCard key={card.id} id={card.id} />)}
-    {items.slice(0,10).filter(item => !item.sourceId || !ordinaryIds.has(item.sourceId)).map(item => <InlineQuestion key={item.id} id={item.id} go={go} writable readVisible={readVisible} />)}
+    {ordinary.slice(0,10).filter(card=>!questionSources.has(card.id)).map(card => <LiveApprovalCard key={card.id} id={card.id} />)}
+    {items.slice(0,10).map(item => <InlineQuestion key={item.id} id={item.id} go={go} writable readVisible={readVisible} />)}
     {(offset > 0 || (items.length > 10 || ordinary.length > 10)) && <nav aria-label="Approval question pages">
       <Button disabled={!offset} onClick={() => setOffset(value => Math.max(0,value-10))}>Newer questions</Button>
       <Button disabled={items.length <= 10 && ordinary.length <= 10} onClick={() => setOffset(value => value+10)}>Older questions</Button>
