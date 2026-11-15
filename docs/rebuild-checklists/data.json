@@ -17,17 +17,29 @@
     {
       "id": "data-003",
       "promise": "A tile names exactly the fields and connected things it wants.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "dataSelectionSQL"
+      }
     },
     {
       "id": "data-004",
       "promise": "Loom runs one query, with the visibility check for whoever is asking.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "dataSharingSQL"
+      }
     },
     {
       "id": "data-005",
       "promise": "After the first rows, loom sends only what changed.",
-      "source": "docs/how-it-works/site/data.html"
+      "source": "docs/how-it-works/site/data.html",
+      "probe": {
+        "kind": "action",
+        "action": "dataTaskPatches"
+      }
     },
     {
       "id": "data-006",
@@ -50,7 +62,11 @@
     {
       "id": "data-009",
       "promise": "A new inbox item reaches an open Inbox tile as a change.",
-      "source": "docs/how-it-works/site/data.html#con-h"
+      "source": "docs/how-it-works/site/data.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "dataInboxChange"
+      }
     },
     {
       "id": "data-010",
@@ -60,12 +76,20 @@
     {
       "id": "data-011",
       "promise": "Loom turns the request into one database query. Filtering, joining and the visibility check all happen in the database.",
-      "source": "docs/how-it-works/site/data.html#how-h"
+      "source": "docs/how-it-works/site/data.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "dataSharingSQL"
+      }
     },
     {
       "id": "data-012",
       "promise": "After the first rows, changes arrive as subscriptions over the websocket. A tile never asks again for what it already has.",
-      "source": "docs/how-it-works/site/data.html#how-h"
+      "source": "docs/how-it-works/site/data.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "dataTaskPatches"
+      }
     },
     {
       "id": "data-013",
