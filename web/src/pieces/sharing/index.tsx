@@ -1,21 +1,28 @@
-import { useState, useSyncExternalStore, type FormEvent } from 'react';
-import { useRecords, call, type Call, type LiveRecord } from '../../data';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useDataQuery } from '../../data/graphql';
+import { memberOperation } from '../../data/operation';
+import { sharingQuery, type SharingProject, type SharingChoices, type SharingData } from './query';
 import { AppFrame, List, Row, Empty, Error, Loading, Button, Input } from '../../kit';
-interface Project extends LiveRecord { slug: string; name: string; members: string[]; agents: string[]; repositories: string[] }
-interface Choices extends LiveRecord { members: string[]; agents: string[] }
-const idle = { pending: false, status: 'done' as const };
-const noop = () => () => {};
-function ProjectForm({ project, choices, enabled }: { project?: Project; choices: Choices; enabled: boolean }) {
-  const [request, setRequest] = useState<Call<Project>>();
-  const state = useSyncExternalStore(request?.subscribe ?? noop, request?.getSnapshot ?? (() => idle));
-  function submit(event: FormEvent<HTMLFormElement>, field?: 'members' | 'agents') {
+function ProjectForm({ project, choices, enabled }: { project?: SharingProject; choices: SharingChoices; enabled: boolean }) {
+  const [state, setState] = useState<{ pending: boolean; saved?: boolean; error?: string }>({ pending: false });
+  const busy = useRef(false), mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  async function submit(event: FormEvent<HTMLFormElement>, field?: 'members' | 'agents') {
     event.preventDefault();
-    if (!enabled || state.pending) return;
+    if (!enabled || busy.current) return;
     const form = new FormData(event.currentTarget);
     const members = form.getAll('members'), agents = form.getAll('agents');
-    setRequest(call<Project>(project ? `household.setProject${field === 'members' ? 'Members' : 'Agents'}` : 'household.createProject', project
-      ? { slug: project.slug, [field!]: field === 'members' ? members : agents }
-      : { slug: form.get('slug'), name: form.get('name'), repositories: [], members, agents }));
+    const slug = project?.id ?? String(form.get('slug') ?? '');
+    busy.current = true; setState({ pending: true });
+    try {
+      const saved = await memberOperation<{ id: string }>(project ? `household.setProject${field === 'members' ? 'Members' : 'Agents'}` : 'household.createProject', project
+        ? { slug, [field!]: field === 'members' ? members : agents }
+        : { slug, name: String(form.get('name') ?? ''), members, agents });
+      if (saved?.id !== slug) throw new globalThis.Error('Unconfirmed project');
+      if (mounted.current) setState({ pending: false, saved: true });
+    } catch {
+      if (mounted.current) setState({ pending: false, error: 'Could not confirm this change. Check current sharing and try again.' });
+    } finally { busy.current = false; }
   }
   const checkboxes = (field: 'members' | 'agents') => <fieldset className="grid gap-2"><legend>{field === 'members' ? 'Members' : 'Agents'}</legend>{choices[field].map(id => <label key={id} className="flex gap-2"><input type="checkbox" name={field} value={id} defaultChecked={project?.[field].includes(id)} />{id}</label>)}</fieldset>;
   return <section className="grid gap-4">
@@ -30,23 +37,24 @@ function ProjectForm({ project, choices, enabled }: { project?: Project; choices
       </fieldset>
     </form>}
     {state.pending && <Loading label="Saving project…" />}
-    {state.result && (state.result.ok ? <p role="status">Saved</p> : <Error title="Couldn’t save project" text={`${state.result.code}: ${state.result.message}`} />)}
+    {state.saved && <p role="status">Saved</p>}
+    {state.error && <Error title="Couldn’t save project" text={state.error} />}
   </section>;
 }
 export default function SharingApp({ go = () => {} }: { path?: string; go?: (path: string) => void } = {}) {
-  const projects = useRecords<Project>('household.project');
-  const options = useRecords<Choices>('household.sharing');
+  const reading = useDataQuery<SharingData>(sharingQuery);
   const [selected, setSelected] = useState<string>();
-  const project = projects.records.find(p => p.slug === selected);
-  const live = projects.status === 'live' && options.status === 'live';
-  const choices = options.records[0];
+  const live = reading.status === 'live';
+  const choices = live ? reading.data?.projectSharing : undefined;
+  const projects = choices?.projects ?? [];
+  const project = projects.find(p => p.id === selected);
   return <AppFrame title="Project sharing" where="Sharing" go={go}>
-    {projects.status === 'loading' || options.status === 'loading' ? <Loading label="Opening project sharing…" /> : !live ? <Error text="Project sharing is unavailable. Connect as a household owner." /> : !choices ? <Empty title="Household owners manage sharing" text="Ask an owner to put members and agents on a project." /> : <div className="grid gap-6 p-5">
+    {reading.status === 'loading' || live && !reading.data ? <Loading label="Opening project sharing…" /> : !live ? <Error text="Project sharing is unavailable. Connect as a household owner." /> : !choices ? <Empty title="Household owners manage sharing" text="Ask an owner to put members and agents on a project." /> : <div className="grid gap-6 p-5">
       <p>A project shares its work with the members and agents on its lists.</p>
       <Button variant="outline" onClick={() => setSelected(undefined)}>New project</Button>
-      <List label="Projects">{projects.records.map(p => <Row key={p.slug} title={p.name} meta={p.slug} status={`${p.members.length} members · ${p.agents.length} agents`} selected={p.slug === selected} onClick={() => setSelected(p.slug)} />)}</List>
-      {!projects.records.length && <Empty title="No projects yet" text="Create a project to share work." />}
-      <ProjectForm key={project?.slug ?? 'new'} project={project} choices={choices} enabled={live} />
+      <List label="Projects">{projects.map(p => <Row key={p.id} title={p.name} meta={p.id} status={`${p.members.length} members · ${p.agents.length} agents`} selected={p.id === selected} onClick={() => setSelected(p.id)} />)}</List>
+      {!projects.length && <Empty title="No projects yet" text="Create a project to share work." />}
+      <ProjectForm key={project?.id ?? 'new'} project={project} choices={choices} enabled={live} />
     </div>}
   </AppFrame>;
 }

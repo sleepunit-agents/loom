@@ -9,6 +9,7 @@ import { registerAgentModels } from './shared-agent-models.js';
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
 import { modelCatalog } from './runtime/model-catalog.js';
 import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
+import { projectSharingFields, registerProjectSharing } from './shared-project-sharing.js';
 import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
 import type { SecretValueSource } from './pieces/secrets/role.js';
 import { sharedSecretInputRoutes } from './shared-secret-inputs.js';
@@ -131,7 +132,7 @@ export function sharedRoot(options: {
   const notices = settledNotices(db, () => data.changed(),conversationQuestionPolicy(db).visibility);
   startupCleanups.push(notices.close);
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, credentials.authenticate, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...projectSharingFields(db), ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, credentials.authenticate, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
@@ -142,6 +143,7 @@ export function sharedRoot(options: {
   memory.register(operations);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
+  registerProjectSharing(operations, db);
   registerSharedCommandCatalog(operations,viewer=>!!bodyScope(viewer));
   registerAgentBodyPolicy(operations, db);
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
