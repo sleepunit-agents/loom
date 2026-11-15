@@ -90,3 +90,25 @@ it('normalizes Comms messages by thread and sequence across selections', () => {
   expect(client.readQuery(messages, {thread:'a'})?.data).toMatchObject({commsMessages:[{thread:'a',seq:1,words:'After'}]});
   expect(client.readQuery(messages, {thread:'b'})?.data).toMatchObject({commsMessages:[{thread:'b',seq:1,words:'Separate'}]});
 });
+
+it('updates another open selection when a shared entity changes without reopening either feed', async () => {
+  const wire = new Transport(), client = generatedDataClient(wire);
+  const messages = gql`query Messages($thread: String!) { commsMessages(thread: $thread) { thread seq words } }`;
+  const recent = gql`query Recent { recentMessages { thread seq words } }`;
+  const seen: unknown[] = [];
+  const a = client.query(messages, {thread: 'a'}).subscribe(result => seen.push(result.data));
+  const b = client.query(recent, {}).subscribe(() => {});
+  const separate: unknown[] = [];
+  const c = client.query(messages, {thread: 'b'}).subscribe(result => separate.push(result.data));
+  const row = { __typename: 'CommsMessageView', thread: 'a', seq: 1, words: 'Before' };
+  wire.feeds[2].sink.next({ data: { observe: { revision: 1, patches: [{path: [], removed: false, value: {commsMessages: [{...row, thread: 'b', words: 'Separate'}]}}] } } });
+  wire.feeds[0].sink.next({ data: { observe: { revision: 1, patches: [{path: [], removed: false, value: {commsMessages: [row]}}] } } });
+  wire.feeds[1].sink.next({ data: { observe: { revision: 1, patches: [{path: [], removed: false, value: {recentMessages: [row]}}] } } });
+  wire.feeds[1].sink.next({ data: { observe: { revision: 2, patches: [{path: ['recentMessages', 0, 'words'], removed: false, value: 'After'}] } } });
+  await Promise.resolve();
+  expect(seen.at(-1)).toMatchObject({commsMessages: [{words: 'After'}]});
+  expect(separate.at(-1)).toMatchObject({commsMessages: [{thread: 'b', words: 'Separate'}]});
+  expect(wire.feeds).toHaveLength(3);
+  a.unsubscribe(); b.unsubscribe(); c.unsubscribe();
+  expect(wire.feeds).toHaveLength(0);
+});
