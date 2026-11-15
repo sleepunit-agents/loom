@@ -3,7 +3,7 @@
  * A positive holder receipt finishes metadata after a crash. A negative receipt
  * never proves that a write is undone, and never releases the reservation.
  */
-import { createHmac, createSecretKey } from 'node:crypto';
+import { createHash, createHmac, createSecretKey } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../../core/data/database.js';
@@ -25,7 +25,7 @@ export class SecretValues {
   constructor(private readonly db: DataDatabase, private readonly now: () => string,
     private readonly holder: AsyncSecretMutations, fingerprintKey: Uint8Array,
     /** The root supplies its shared write boundary to publish committed changes. */
-    private readonly commit: (write: () => void) => void = write => { db.transaction(write); }) {
+    private readonly commit: (write: () => void) => void) {
     if (!(fingerprintKey instanceof Uint8Array) || fingerprintKey.byteLength !== 32) throw Error('Invalid secret retry key');
     this.key = createSecretKey(fingerprintKey);
   }
@@ -48,6 +48,15 @@ export class SecretValues {
 
   private hash(text: string): string {
     return createHmac('sha256', this.key).update('loom-shared-secret-write-v1\0').update(text).digest('hex');
+  }
+  private holderIdentity(row: Journal) {
+    // Never forward a caller-chosen UUID: it could name an unrelated receipt
+    // already held by the key holder. Domain-separate a stable UUID from the
+    // daemon-keyed full-input binding. No secret digest is sent unkeyed.
+    const bytes = createHash('sha256').update('loom-shared-holder-write-v1\0').update(row.inputHash).digest().subarray(0, 16);
+    bytes[6] = (bytes[6] & 0x0f) | 0x80; bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = bytes.toString('hex');
+    return { member: row.member, writeId: `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}` };
   }
   private available(): void {
     if (this.closed || this.db.$client.inTransaction) throw unavailable();
@@ -80,7 +89,7 @@ export class SecretValues {
     // Publish the promise before trusted transports can synchronously reenter.
     const work = Promise.resolve().then(async () => {
       this.available();
-      const who = { member: row.member, writeId: row.id };
+      const who = this.holderIdentity(row);
       const found: unknown = await this.holder.hasReceipt(who);
       if (this.closed || typeof found !== 'boolean') throw unavailable();
       if (!found) {
@@ -135,7 +144,7 @@ export class SecretValues {
     const row = this.db.select().from(secretWriteJournal).where(eq(secretWriteJournal.state, 'prepared')).get();
     if (!row || this.running.has(row.id)) return;
     let found: unknown;
-    try { found = await this.holder.hasReceipt({ member: row.member, writeId: row.id }); }
+    try { found = await this.holder.hasReceipt(this.holderIdentity(row)); }
     catch { return; }
     if (!this.closed && found === true) this.finish(row);
   }
