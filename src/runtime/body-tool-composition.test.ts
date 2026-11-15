@@ -27,12 +27,14 @@ it('sanitizes extension exceptions through the existing private tool wrapper',as
  const f=await fixture([{name:'command',description:'Canonical command',inputSchema:z.object({}).strict(),execute:async()=>{throw new Error('PRIVATE_ROOT_BEARER');}}]);
  const result=await f.client.callTool({name:'command',arguments:{}});expect(result.isError).toBe(true);expect(JSON.stringify(result)).not.toContain('PRIVATE_ROOT_BEARER');
 });
-it('cancels extension work under the same body lifetime and waits for it to settle',async()=>{
- let entered!:()=>void,ended!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;}),finished=new Promise<void>(resolve=>{ended=resolve;});
- const f=await fixture([{name:'command',description:'Canonical command',inputSchema:z.object({}).strict(),execute:async(_input,signal)=>{entered();await new Promise<void>(resolve=>signal.addEventListener('abort',()=>resolve(),{once:true}));ended();return{content:[{type:'text',text:'late'}]};}}]);
- const call=f.client.callTool({name:'command',arguments:{}}).catch(()=>undefined);await started;f.abort.abort();await f.tools.close();await finished;await call;expect(f.tools.config.every(byte=>byte===0)).toBe(true);expect(f.root).not.toHaveBeenCalled();
+it('cancels extension work and keeps close pending until the callback actually settles',async()=>{
+ let entered!:()=>void,aborted!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;}),cancelled=new Promise<void>(resolve=>{aborted=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+ const listen=vi.spyOn(Server.prototype,'listen');
+ const f=await fixture([{name:'command',description:'Canonical command',inputSchema:z.object({}).strict(),execute:async(_input,signal)=>{entered();await new Promise<void>(resolve=>signal.addEventListener('abort',()=>{aborted();resolve();},{once:true}));await gate;return{content:[{type:'text',text:'late'}]};}}]);
+ const server=listen.mock.instances[0] as Server,listenerClosed=new Promise<void>(resolve=>server.once('close',resolve)),call=f.client.callTool({name:'command',arguments:{}}).catch(()=>undefined);await started;
+ let closed=false;const closing=f.tools.close().then(()=>{closed=true;});await cancelled;await listenerClosed;await new Promise<void>(resolve=>queueMicrotask(()=>queueMicrotask(resolve)));try{expect(closed).toBe(false);}finally{release();}
+ await closing;await call;expect(closed).toBe(true);expect(f.tools.config.every(byte=>byte===0)).toBe(true);expect(f.root).not.toHaveBeenCalled();
 });
-
 it('rejects invalid extension catalogues before any HTTP listener is bound',async()=>{
  const listen=vi.spyOn(Server.prototype,'listen'),valid:BodyModelTool={name:'command',description:'Canonical command',inputSchema:z.object({}),execute:async()=>({content:[]})};
  for(const extraTools of [[{...valid,name:'use_secret'}],[valid,valid],[{...valid,name:'invalid!'}],Array.from({length:33},(_,i)=>({...valid,name:'tool'+i}))]){

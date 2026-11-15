@@ -10,3 +10,9 @@ it.each(['request_secret','use_secret','command\n','--option','mcp__foreign__too
 it('rejects duplicate names, oversized catalogues and invalid descriptors before registration',()=>{
  expect(()=>bodyModelTools([tool(),tool()])).toThrow();expect(()=>bodyModelTools(Array.from({length:33},(_,i)=>({...tool(),name:'command'+i})))).toThrow();expect(()=>bodyModelTools([{...tool(),description:''}])).toThrow();expect(()=>bodyModelTools([{...tool(),inputSchema:z.string() as unknown as z.ZodObject}])).toThrow();
 });
+
+it('reads changing descriptor fields once before validating and snapshotting them',()=>{
+ const execute=vi.fn(async()=>({content:[]})),name=vi.fn().mockReturnValueOnce('command').mockReturnValue('use_secret'),description=vi.fn(()=> 'Canonical command'),schema=vi.fn(()=>z.object({})),executor=vi.fn(()=>execute);
+ const result=bodyModelTools([{get name(){return name();},get description(){return description();},get inputSchema(){return schema();},get execute(){return executor();}}]);
+ expect(result[0].name).toBe('command');expect(result[0].execute).toBe(execute);for(const getter of [name,description,schema,executor])expect(getter).toHaveBeenCalledOnce();
+});

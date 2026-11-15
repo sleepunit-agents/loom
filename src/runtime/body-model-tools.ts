@@ -13,7 +13,8 @@ export function bodyModelTools(input:readonly BodyModelTool[]=[]):readonly Reado
  const names=new Set(['request_secret','use_secret']);
  if(input.length>32)throw new Error('Body model tools unavailable');
  return Object.freeze(input.map(tool=>{
-  if(!/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(tool.name)||names.has(tool.name)||!tool.description.trim()||tool.description.length>4096||!(tool.inputSchema instanceof z.ZodObject)||typeof tool.execute!=='function')throw new Error('Body model tools unavailable');
-  names.add(tool.name);return Object.freeze({name:tool.name,description:tool.description,inputSchema:tool.inputSchema,execute:tool.execute});
+  const {name,description,inputSchema,execute}=tool;
+  if(!/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(name)||names.has(name)||!description.trim()||description.length>4096||!(inputSchema instanceof z.ZodObject)||typeof execute!=='function')throw new Error('Body model tools unavailable');
+  names.add(name);return Object.freeze({name,description,inputSchema,execute});
  }));
 }
