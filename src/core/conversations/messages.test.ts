@@ -247,9 +247,19 @@ it.each(['household', 'stored'] as const)('withholds words when the %s retention
   let release!: () => void;
   const gate = new Promise<void>(resolve => { release = resolve; });
   const gated = new CommsMessages(db, { ...key, open: async blob => { await gate; return key.open(blob); } }, service.now);
+  if (deadline === 'household') db.insert(household).values({ commsDays: 1 }).run();
   const reading = gated.words(thread.id, message.seq);
-  if (deadline === 'household') { db.insert(household).values({ commsDays: 1 }).run(); at('2026-11-16T18:00:00.000Z'); }
+  if (deadline === 'household') at('2026-11-15T18:00:00.000Z');
   else at(message.keepUntil!);
   expect(db.select().from(messages).get()?.words).not.toBeNull();
   release(); expect(await reading).toBeNull();
+});
+
+it('sweeps at the exact household deadline when message age uses whole seconds', async () => {
+  const { db, service, thread, at } = await fixture();
+  await service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Age deadline' });
+  db.update(messages).set({ at: '2026-11-14T18:00:00Z' }).run();
+  db.insert(household).values({ commsDays: 1 }).run();
+  at('2026-11-15T18:00:00.000Z');
+  expect(service.expire()).toBe(1); expect(db.select().from(messages).get()?.words).toBeNull();
 });
