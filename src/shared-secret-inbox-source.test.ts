@@ -5,7 +5,7 @@ import {bodyFixture,bodyCredentials as raw} from '../test/fixtures/conversation-
 import * as s from './core/data/schema.js';
 const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
-const selection='{inboxItems(folder:"needs"){id source sourceId state body{words}} inboxFolders{needs} }';
+const selection='{inboxItems(folder:"needs"){id canAnswer source sourceId state body{words}} inboxFolders{needs} }';
 it('publishes a native Secret request in the owner mailbox and removes access on current owner demotion',async()=>{
  const f=await bodyFixture(clean),at=new Date(f.clock.now()).toISOString(),id=randomUUID();
  f.root.writes.run(()=>{
@@ -17,7 +17,8 @@ it('publishes a native Secret request in the owner mailbox and removes access on
  expect(response.status).toBe(200);
  const item=f.db.select().from(s.inbox).where(eq(s.inbox.sourceId,id)).get()!;expect(item).toMatchObject({to:'alice',state:'waiting',waitsOnKind:'secret-request',waitsOnId:id,conversation:f.thread.conversation});
  const read=()=>f.root.http.request('/graphql',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({query:selection})});
- expect(await(await read()).json()).toMatchObject({data:{inboxItems:[{id:item.id,source:'secret-request',sourceId:id,state:'waiting',body:{words:'Allow art to use TOKEN for 7 minutes?'}}],inboxFolders:{needs:1}}});
+ expect(await(await read()).json()).toMatchObject({data:{inboxItems:[{id:item.id,canAnswer:false,source:'secret-request',sourceId:id,state:'waiting',body:{words:'Allow art to use TOKEN for 7 minutes?'}}],inboxFolders:{needs:1}}});
+ const generic=await f.root.http.request('/api/inbox/answer',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{item:item.id,answer:'yes'}})});expect(generic.status).toBe(503);expect(f.db.select().from(s.secretRequests).where(eq(s.secretRequests.id,id)).get()?.state).toBe('pending');
  const held=await read();f.root.writes.run(()=>f.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'alice')).run());
  expect(await(await read()).json()).toEqual({data:{inboxItems:[],inboxFolders:{needs:0}}});await expect(held.text()).rejects.toThrow();
  const direct=()=>f.root.http.request('/graphql',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({query:'{inboxItem(id:'+JSON.stringify(item.id)+'){id body{words}}}'})});
@@ -28,6 +29,7 @@ it('publishes a native Secret request in the owner mailbox and removes access on
  f.root.writes.run(()=>f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run());
  const answer=await f.root.http.request('/api/secrets/command',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{action:'answer',id,allow:true,always:false}})});expect(answer.status).toBe(200);
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,item.id)).get()?.state).toBe('resolved');expect(await(await read()).json()).toEqual({data:{inboxItems:[],inboxFolders:{needs:0}}});
+ expect(f.db.select().from(s.secretRequests).where(eq(s.secretRequests.id,id)).get()?.state).toBe('allowed');
  const pending=randomUUID();expect((await f.root.http.request('/api/secrets/request',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id:pending,secret:'TOKEN',why:'Another fictitious read',minutes:7}})})).status).toBe(200);
  expect((await(await read()).json()).data.inboxItems).toHaveLength(1);
  f.root.writes.run(()=>f.db.delete(s.secretRequests).where(eq(s.secretRequests.id,pending)).run());

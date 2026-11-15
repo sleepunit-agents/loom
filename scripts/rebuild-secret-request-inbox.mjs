@@ -4,14 +4,14 @@ import {join} from 'node:path';
 import {responseForAction} from './rebuild-response-capture.mjs';
 
 export async function secretRequestInbox({page,app,example,out}){
- const name='example-inbox-request',id=randomUUID(),words=`Allow fern to use ${name} for 5 minutes?`;
+ const id=randomUUID(),name='example-inbox-'+id,words=`Allow fern to use ${name} for 5 minutes?`;
  const screenshot='action-secretRequestInbox.png';let created=false;
  const command=async(operation,input)=>{
   const response=await page.request.post(app.url+'/api/secrets/'+operation,{headers:{origin:app.url},data:{id:randomUUID(),input}});
   if(response.status()!==200||(await response.json()).ok!==true)throw Error('Fictitious Secret setup was refused');
  };
- const inbox=async()=>{
-  await page.goto(app.url+'/p/inbox-preview');await page.locator('.next-shell').waitFor();
+ const inbox=async(reload=false)=>{
+  if(reload)await page.reload();else await page.goto(app.url+'/p/inbox-preview');await page.locator('.next-shell').waitFor();
   const tile=page.getByRole('region',{name:'Inbox tile',exact:true});await tile.waitFor();
   const back=tile.getByRole('button',{name:'Back to Inbox',exact:true});if(await back.isVisible())await back.click();
   return tile;
@@ -36,10 +36,9 @@ export async function secretRequestInbox({page,app,example,out}){
   const result=await response.json();
   if(result.errors||!result.data?.secretRequests.some(row=>row.id===id&&row.state==='allowed')||!result.data?.inboxItems.some(row=>row.sourceId===id&&row.state==='resolved'))throw Error('The source answer did not settle its Inbox item');
   tile=await inbox();await tile.getByRole('button',{name:/^Answered/}).click();await tile.getByText(words,{exact:true}).first().waitFor();
-  await page.reload();tile=page.getByRole('region',{name:'Inbox tile',exact:true});await tile.waitFor();
-  const back=tile.getByRole('button',{name:'Back to Inbox',exact:true});if(await back.isVisible())await back.click();
+  tile=await inbox(true);
   await tile.getByRole('button',{name:/^Answered/}).click();await tile.getByText(words,{exact:true}).first().waitFor();
   return{ok:true,pending:true,sourceNavigated:true,settled:true,persistedAfterReload:true,screenshot};
- }catch(error){return{ok:false,error:String(error),screenshot};}
+ }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return{ok:false,error:String(error),screenshot};}
  finally{if(created)await command('remove',{id:randomUUID(),name}).catch(()=>{});}
 }
