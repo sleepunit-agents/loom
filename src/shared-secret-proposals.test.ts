@@ -1,6 +1,6 @@
 import {afterEach,expect,it} from 'vitest';
 import {eq} from 'drizzle-orm';
-import {bodyFixture,bodyCredentials} from '../test/fixtures/conversation-body.js';
+import {bodyFixture,bodyCredentials,credentialHash} from '../test/fixtures/conversation-body.js';
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -18,7 +18,7 @@ it('proposes the exact default in private owner chat and changes it only on Allo
  const card=f.db.select().from(s.approvals).get()!;
  expect(card).toMatchObject({kind:'setting',operation:'secrets.settings',target:'secrets:default',agent:'art',member:'alice',actingFor:'alice',conversation:f.thread.conversation,askedFrom:f.thread.conversation,state:'pending'});
  expect(JSON.parse(card.details)).toEqual({before:{action:'default',answer:'ask'},after:{action:'default',answer:'never'}});
- expect(card.changeSummary).toContain('Before:');expect(card.changeSummary).toContain('After:');expect(f.read()).toEqual(before);
+ expect(card.changeSummary).toBe('Before: {"action":"default","answer":"ask"}. After: {"action":"default","answer":"never"}.');expect(f.read()).toEqual(before);
  expect((await f.propose()).status).toBe(200);expect(f.db.select().from(s.approvals).all()).toHaveLength(1);
  expect((await f.answer(card.id)).status).toBe(200);expect(f.read().default).toBe('never');expect(f.db.select().from(s.approvals).get()?.state).toBe('used');
  expect(f.db.select().from(s.approvalRecord).all().map(row=>row.event)).toEqual(['request','allow','use']);
@@ -46,6 +46,7 @@ it.each(['deny','default','owner','assignment','project','conversation','summary
  const before=f.read(),response=await f.answer(card.id,change==='deny'?'deny':'allow');
  expect(response.status).toBe(change==='deny'?200:change==='owner'||change==='assignment'||change==='project'||change==='conversation'?403:409);
  expect(f.read()).toEqual(before);expect(f.db.select().from(s.approvals).get()?.state).toBe(change==='deny'?'denied':'pending');
+ if(change!=='deny')expect(f.db.select().from(s.approvalRecord).all().map(row=>row.event)).toEqual(['request']);
 });
 it('creates a canonical standing rule without storing any Secret value or request words on the card',async()=>{
  const f=await fixture();f.db.insert(s.secrets).values({name:'example-token',description:'Metadata only',changedAt:new Date(f.clock.now()).toISOString(),changedBy:'alice'}).run();
@@ -87,14 +88,14 @@ it.each(['secret','agent']as const)('rechecks the referenced %s at Allow and rol
 });
 it('does not let a nonowner decide a valid owner proposal',async()=>{
  const f=await fixture();await f.propose();const card=f.db.select().from(s.approvals).get()!;
- f.db.insert(s.tokens).values({fingerprint:(await import('../test/fixtures/conversation-body.js')).credentialHash('d'.repeat(64)),label:'Bob',kind:'owner',member:'bob',createdAt:new Date(f.clock.now()).toISOString()}).run();
+ f.db.insert(s.tokens).values({fingerprint:credentialHash('d'.repeat(64)),label:'Bob',kind:'owner',member:'bob',createdAt:new Date(f.clock.now()).toISOString()}).run();
  expect((await f.post('approvals/answer',{id:card.id,answer:'allow'},'bob-answer','d'.repeat(64))).status).toBe(403);expect(f.read().default).toBe('ask');expect(f.db.select().from(s.approvals).get()?.state).toBe('pending');
 });
 it('binds a proposal receipt to the current body job rather than the agent identity alone',async()=>{
  const f=await fixture();await f.propose();const job=f.db.select().from(s.jobs).where(eq(s.jobs.id,'job')).get()!;
  f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run();
  f.db.insert(s.jobs).values({...job,id:'second-job'}).run();f.db.update(s.conversations).set({job:'second-job'}).run();
- const token='e'.repeat(64);const {credentialHash}=await import('../test/fixtures/conversation-body.js');
+ const token='e'.repeat(64);
  f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Second body',kind:'agent',agent:'art',job:'second-job',createdAt:new Date(f.clock.now()).toISOString()}).run();
  expect((await f.propose('proposal',undefined,token)).status).toBe(409);expect(f.db.select().from(s.approvals).all()).toHaveLength(1);
  expect((await f.propose('new-receipt',undefined,token)).status).toBe(200);expect(f.db.select().from(s.approvals).all()).toHaveLength(2);
@@ -112,7 +113,7 @@ it('excludes unrelated private Secret descriptions from the prepared card and re
 });
 it('rechecks the proposing owner when another current owner answers',async()=>{
  const f=await fixture();f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();
- const {credentialHash}=await import('../test/fixtures/conversation-body.js'),token='f'.repeat(64);
+ const token='f'.repeat(64);
  f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Bob owner',kind:'owner',member:'bob',createdAt:new Date(f.clock.now()).toISOString()}).run();
  await f.propose();const card=f.db.select().from(s.approvals).get()!;
  f.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'alice')).run();
