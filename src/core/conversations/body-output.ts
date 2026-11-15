@@ -1,9 +1,10 @@
+import { threadTitle } from './title.js';
 /** Job-body producers for a thread's encrypted output and reported state. */
 import { z } from 'zod';
-import { eq } from 'drizzle-orm';
+import { and,eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import { operation, OperationError, type Operations } from '../operations/index.js';
-import { agentStatus, threads } from '../data/schema.js';
+import { agentStatus, messages,threads } from '../data/schema.js';
 import { conversationBodyScope, requireBodyScope, bodyOperationDefaults, type BodyProof } from './body-scope.js';
 import type { CommsMessages } from './messages.js';
 export function registerConversationBodyOutput(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean):void {
@@ -32,6 +33,19 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
    };
   },
   run(ctx,_input,prepared){const found=threadFor(ctx.viewer),message=(prepared as ()=>{seq:number})();ctx.changed('messages',found.thread.id);ctx.changed('turns',found.cv.id);ctx.changed('conversations',found.cv.id);return {saved:true as const,seq:message.seq};},
+ }));
+
+ operations.register(operation({...common,name:'conversation.title',
+  input:z.object({title:threadTitle}).strict(),output:z.object({saved:z.literal(true),renamed:z.boolean()}).strict(),
+  run(ctx,input){const found=threadFor(ctx.viewer),updated=service.threads.rename(found.thread.id,input.title,'agent');ctx.changed('threads',found.thread.id);ctx.changed('conversations',found.cv.id);return {saved:true as const,renamed:updated.title!==found.thread.title};},
+ }));
+ operations.register(operation({...common,name:'conversation.cardState',
+  input:z.object({clientId:z.string().min(1).max(200),cardState:z.enum(['running','done','failed'])}).strict(),output:z.object({saved:z.literal(true),seq:z.number().int()}).strict(),
+  run(ctx,input){
+   const found=threadFor(ctx.viewer),card=db.select({seq:messages.seq}).from(messages).where(and(eq(messages.thread,found.thread.id),eq(messages.sender,found.cv.agent),eq(messages.run,found.job.id),eq(messages.clientId,found.job.id+':'+input.clientId),eq(messages.kind,'card'))).get();
+   if(!card)throw new OperationError('not-found','Current run card not found');
+   db.update(messages).set({cardState:input.cardState}).where(and(eq(messages.thread,found.thread.id),eq(messages.seq,card.seq))).run();ctx.changed('messages',found.thread.id);return {saved:true as const,seq:card.seq};
+  },
  }));
  operations.register(operation({...common,name:'conversation.status',
   input:z.object({state:z.enum(['working','waiting','idle','offline']),work:z.string().max(600).refine(text=>!/[\r\n\v\f\u0085\u2028\u2029]/u.test(text),'Use one line'),seenStop:z.literal(true).optional()}).strict(),
