@@ -4,7 +4,8 @@ import { eq } from 'drizzle-orm';
 import { afterEach, expect, it, vi } from 'vitest';
 import { FakeClock } from '../clock.js';
 import { createDataSchema } from '../data/database.js';
-import { agents, boxes, jobs, members, tokens } from '../data/schema.js';
+import { agents, boxes, jobs, members, tokens, sessions } from '../data/schema.js';
+import { sharedSigninLinks } from './shared-links.js';
 import { sharedRoot } from '../../shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -117,4 +118,12 @@ it('withholds a committed one-time bearer if publication starts shutdown',async(
  const response=await f.issue({kind:'owner',member:'sam',label:'Shutdown issuance'});
  expect(stopped).toBe(true);expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Sign-in unavailable'});
  expect(f.db.select().from(tokens).where(eq(tokens.label,'Shutdown issuance')).get()).toBeDefined();
+});
+it('withholds an issued bearer when publication ends the presenting owner browser',async()=>{
+ const f=fixture(),link=f.root.writes.run(()=>sharedSigninLinks(f.db,f.clock).makeLink(hash(f.raw.owner))).value;
+ const signed=await f.root.http.request('http://loom'+link.path,{method:'POST'}),cookie=signed.headers.get('set-cookie')!.split(';',1)[0];let ended=false;
+ const stop=f.root.writes.observe(()=>{if(ended||!f.db.select().from(tokens).where(eq(tokens.label,'Browser issuance')).get())return;ended=true;f.db.delete(sessions).where(eq(sessions.id,hash(cookie.slice(8)))).run();});clean.push(stop);
+ const response=await f.root.http.request('http://loom/api/signin/token',{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({kind:'owner',member:'sam',label:'Browser issuance'})});
+ expect(ended).toBe(true);expect(response.status).toBe(403);expect(await response.json()).toEqual({error:'Household owner required'});
+ expect(f.db.select().from(tokens).where(eq(tokens.label,'Browser issuance')).get()).toBeDefined();
 });

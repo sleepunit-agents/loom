@@ -321,3 +321,9 @@ it('withholds a committed one-time link if publication starts shutdown',async()=
  const response=await f.mint();expect(stopped).toBe(true);expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Sign-in unavailable'});
  expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
 });
+it.each(['revoke','expire'])('withholds a committed link when publication ends its bearer by %s',async change=>{
+ const f=fixture();let ended=false;
+ const stop=f.root.writes.observe(()=>{if(ended||!f.db.select().from(signinLinks).get())return;ended=true;f.db.update(tokens).set(change==='revoke'?{revokedAt:new Date(f.clock.now()).toISOString()}:{expiresAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(credential))).run();});cleanup.push(stop);
+ const response=await f.mint();expect(ended).toBe(true);expect(response.status).toBe(401);expect(await response.json()).toEqual({error:'Member authentication required'});
+ expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
+});
