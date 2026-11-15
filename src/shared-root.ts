@@ -1,3 +1,4 @@
+import { registerSharedCommandCatalog } from './shared-command-catalog.js';
 import { registerAgentBodyPolicy } from './shared-agent-body-policy.js';
 
 import { registerAgentRunSettings } from './shared-agent-run-settings.js';
@@ -140,6 +141,7 @@ export function sharedRoot(options: {
   memory.register(operations);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
+  registerSharedCommandCatalog(operations,viewer=>!!bodyScope(viewer));
   registerAgentBodyPolicy(operations, db);
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   startupCleanups.push(()=>accountReports.close());
