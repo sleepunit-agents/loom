@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, agents, tokens, sessions, projects, changes, approvalRecord, operationResults } from './core/data/schema.js';
+import { members, agents, tokens, sessions, projects, changes, approvalRecord, operationResults, inbox } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { sharedSharing } from './shared-sharing.js';
 import { mayAct, type RecordScope } from './policy.js';
@@ -14,7 +14,7 @@ const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const cookie = 'b'.repeat(64), token = 'a'.repeat(64), head = 'a'.repeat(40), changeId = 'github:house/pond#1';
-function fixture(install = true) {
+function fixture(install = true, permissive = false) {
   const client = new Database(':memory:'); cleanup.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString();
   const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
@@ -28,8 +28,8 @@ function fixture(install = true) {
   // This is not a default policy for the new shared kinds.
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {},
     workAnswerAuthority: install ? {
-      approval: (viewer, row) => mayAct(viewer, scope(row), sharedSharing(db), 'household'),
-      change: (viewer, row, approval) => mayAct(viewer, { type: 'change', agent: row.agent ?? undefined, project: row.project ?? undefined }, sharedSharing(db), 'household') && mayAct(viewer, scope(approval), sharedSharing(db), 'household'),
+      approval: (viewer, row) => permissive || mayAct(viewer, scope(row), sharedSharing(db), 'household'),
+      change: (viewer, row, approval) => permissive || mayAct(viewer, { type: 'change', agent: row.agent ?? undefined, project: row.project ?? undefined }, sharedSharing(db), 'household') && mayAct(viewer, scope(approval), sharedSharing(db), 'household'),
     } : undefined,
   });
   cleanup.push(() => root.close());
@@ -40,8 +40,9 @@ function fixture(install = true) {
 }
 
 it('does not install an answer route without the caller-supplied authority gate', async () => {
-  const f = fixture(false), request = f.request();
+  const f = fixture(false), request = f.request(); f.seedChange();
   expect((await f.send('approvals', { id: request.id, answer: 'allow' })).status).toBe(404);
+  expect((await f.send('changes', { id: changeId, head, approval: request.id, answer: 'yes' })).status).toBe(404);
   expect(f.root.services.approvals.get(request.id).state).toBe('pending');
   expect(f.db.select().from(operationResults).all()).toEqual([]);
 });
@@ -97,4 +98,33 @@ it('rolls a failed merge answer and its audit and receipt back without leaking t
   expect(f.db.select().from(approvalRecord).all().map(row => row.event)).toEqual(['request']);
   expect(f.db.select().from(operationResults).all()).toEqual([]);
   expect(f.db.select().from(changes).get()?.waitingOn).toBe('you');
+});
+
+it('denies authenticated agents even when supplied authority callbacks allow every caller', async () => {
+  const f = fixture(true, true); f.seedChange(); const request = f.request(), agentToken = 'c'.repeat(64);
+  f.db.insert(tokens).values({ fingerprint: hash(agentToken), label: 'Art', kind: 'agent', agent: 'art', createdAt: f.db.select().from(members).get()!.joinedAt }).run();
+  for (const [piece, input] of [
+    ['approvals', { id: request.id, answer: 'allow' }],
+    ['changes', { id: changeId, head, approval: request.id, answer: 'yes' }],
+  ] as const) {
+    const response = await f.root.http.request(`http://loom/api/${piece}/answer`, { method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + agentToken }, body: JSON.stringify({ input, id: 'agent-answer' }) });
+    expect(response.status).toBe(403);
+  }
+  expect(f.root.services.approvals.get(request.id).state).toBe('pending');
+  expect(f.db.select().from(changes).get()?.waitingOn).toBe('you');
+  expect(f.db.select().from(operationResults).all()).toEqual([]);
+});
+
+it('rolls the answer, audit, Inbox delivery and change back when saving the outer receipt fails', async () => {
+  const f = fixture(); f.seedChange(); const request = f.request(), before = f.db.select().from(inbox).all();
+  f.db.$client.exec("CREATE TRIGGER broken_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT, 'private receipt failure'); END");
+  const response = await f.send('changes', { id: changeId, head, approval: request.id, answer: 'yes' });
+  expect(response.status).toBe(503);
+  expect(await response.text()).not.toContain('private receipt failure');
+  expect(f.root.services.approvals.get(request.id).state).toBe('pending');
+  expect(f.db.select().from(changes).get()?.waitingOn).toBe('you');
+  expect(f.db.select().from(approvalRecord).all().map(row => row.event)).toEqual(['request']);
+  expect(f.db.select().from(inbox).all()).toEqual(before);
+  expect(f.db.select().from(operationResults).all()).toEqual([]);
 });
