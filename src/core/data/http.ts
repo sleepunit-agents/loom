@@ -1,3 +1,4 @@
+import { guardedResponse } from './guarded-response.js';
 import { Hono } from 'hono';
 import { GraphQLObjectType, GraphQLSchema, GraphQLInterfaceType, GraphQLUnionType, GraphQLList, GraphQLNonNull, type execute, type ExecutionArgs, type GraphQLType, type GraphQLNamedType, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import { bodyLimit } from 'hono/body-limit';
@@ -79,33 +80,8 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     if (stopping) return c.json({ errors: [{ message: 'Data request could not complete' }] }, 503);
     if (!auth.valid() || stopping) return c.json({ errors: [{ message: 'Authentication ended' }] }, 401);
     if (!current()) return c.json({ errors: [{ message: 'Data changed; retry the query' }] }, 503);
-    const guardedStream = (): ReadableStream<Uint8Array> => {
-    let buffered: string | undefined = body;
     const available = () => !stopping && auth!.valid() && !stopping && current();
-    // Zero buffering keeps the release check after every outer fetch/middleware
-    // await. A response returned while allowed cannot retain readable words if
-    // its consumer waits until permission or the word deadline has ended.
-    const stream = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        try {
-          if (!available()) throw new Error('Data access ended');
-          const bytes = new TextEncoder().encode(buffered); buffered = undefined;
-          if (!available()) throw new Error('Data access ended');
-          controller.enqueue(bytes); controller.close();
-        } catch { buffered = undefined; controller.error(new Error('Data access ended')); }
-      },
-      cancel() { buffered = undefined; },
-    }, { highWaterMark: 0 });
-    // Response.clone() uses body.tee(), including after middleware wraps the
-    // response. Preserve native Response/header semantics while keeping both
-    // tee branches lazy and independently guarded at their first byte pull.
-    stream.tee = () => {
-      stream.getReader(); // Match native tee's locked original-stream contract.
-      return [guardedStream(), guardedStream()];
-    };
-    return stream;
-    };
-    return new Response(guardedStream(), { status: response.status, headers: response.headers });
+    return guardedResponse(body, { status: response.status, headers: response.headers }, available);
   });
   return Object.assign(app, { stop() { stopping = true; }, drain: () => executions.drain() });
 }
