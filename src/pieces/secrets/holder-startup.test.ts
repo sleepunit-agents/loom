@@ -403,3 +403,15 @@ it.each(['SIGTERM','SIGINT'] as const)('owned packaged entrypoint joins actual h
  for(const endpoint of [f.config.read,f.config.mutation,f.config.handoff.listen])expect(existsSync(endpoint.socket)).toBe(false);
  await expect(client.replaceWorkers(selected)).rejects.toThrow('Secret holder owner unavailable');
 });
+it('persistent holder exposes authenticated fenced recovery across a real restart',async()=>{
+ const f=await setup();let holder=await f.start();
+ const api=localHolderMutations({...f.server,socket:f.config.mutation.socket,servername:'holder.test'});closes.push(api.close);
+ const abandoned={member:'jonathan',writeId:randomUUID()};
+ expect(await api.recover(abandoned)).toBe('undone');
+ await expect(api.set(abandoned,'API',Buffer.from('LATE-VALUE'),'add')).rejects.toThrow(/^Local secret mutation unavailable$/);
+ await holder.close();holder=await f.start();
+ expect(await api.recover(abandoned)).toBe('undone');
+ await expect(api.set(abandoned,'API',Buffer.from('LATE-VALUE'),'add')).rejects.toThrow(/^Local secret mutation unavailable$/);
+ const committed={member:'jonathan',writeId:randomUUID()};await api.set(committed,'API',Buffer.from('ACTUAL-VALUE'),'add');
+ expect(await api.recover(committed)).toBe('committed');
+});

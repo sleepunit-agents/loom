@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { members, agents, secrets, secretRequests, secretGrants, secretRules, secretRuleAgents, household, inbox, jobs } from '../../core/data/schema.js';
+import { members, agents, secrets, secretChanges, secretRequests, secretGrants, secretRules, secretRuleAgents, household, inbox, jobs } from '../../core/data/schema.js';
 import { SecretRequests } from './requests.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
@@ -15,6 +15,7 @@ function fixture() {
   db.insert(members).values([{ id: 'jonathan', role: 'owner', joinedAt: now() }, { id: 'owner2', role: 'owner', joinedAt: now() }]).run();
   for (const id of ['art', 'mark']) db.insert(agents).values({ id, about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
   db.insert(secrets).values({ name: 'github-token', description: '', changedAt: now(), changedBy: 'jonathan' }).run();
+  db.insert(secretChanges).values({ id: 'initial', secret: 'github-token', action: 'add', by: 'jonathan', at: now() }).run();
   const service = new SecretRequests(db, now);
   const input = { id: 'q-one', secret: 'github-token', agent: 'art', why: 'Merge the reviewed change', minutes: 30 };
   const job = (id: string, agent = 'art', conversation?: string) => db.insert(jobs).values({ id, agent, conversation, title: id, queuedAt: now(), state: 'running', brief: '', model: 'test', startedByKind: 'agent', startedBy: agent, houseRepository: '', houseFile: '', houseBranch: '' }).run();

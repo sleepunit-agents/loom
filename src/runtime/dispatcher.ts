@@ -64,7 +64,9 @@ export class Dispatcher {
       const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
       if (!job || job.box !== box || !(state === 'starting' ? job.state === 'starting' : ['running', 'waiting'].includes(job.state)))
         return { active: false };
-      this.jobs.heartbeat(id, box, state);
+      // The worker reports a live process, not whether its body resumed work.
+      // Preserve a body's explicit waiting status until a body status update.
+      this.jobs.heartbeat(id, box, job.state === 'waiting' ? 'waiting' : state);
       return { active: true };
     }, { behavior: 'immediate' });
   }
