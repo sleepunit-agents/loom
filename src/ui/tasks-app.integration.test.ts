@@ -67,11 +67,15 @@ it('executes the registered Tasks selection and real command envelope over share
     expect(result.data.tasks.map((task: { id: string }) => task.id)).toEqual(['t-1','t-2']);
     expect(JSON.stringify(result)).toContain('github:acme/app#3'); expect(JSON.stringify(result)).not.toContain('github:secret/app#9');
     const choices=()=>fetch(`${app.url}/graphql`,{method:'POST',headers,body:JSON.stringify({query:taskChoicesQuery})}).then(response=>response.json());
-    expect((await choices()).data.members).toEqual([{id:'sam'}]);
+    const firstChoices=await choices();expect(firstChoices.errors).toBeUndefined();expect(firstChoices.data.members).toEqual([{id:'sam'}]);
+    expect(firstChoices.data.projects.sort((a:{id:string},b:{id:string})=>a.id.localeCompare(b.id))).toEqual(['bank','pond'].map(id=>({id,name:id,projectMembersByProject:[{member:'lee'},{member:'sam'}]})));
     app.data.writes.run(()=>app.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'sam')).run());
     expect((await choices()).data.members).toEqual([{id:'lee'},{id:'sam'}]);
     app.data.writes.run(()=>app.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'sam')).run());
     expect((await choices()).data.members).toEqual([{id:'sam'}]);
+    app.data.writes.run(()=>app.db.delete(s.projectMembers).where(eq(s.projectMembers.member,'sam')).run());
+    expect((await choices()).data.projects).toEqual([]);
+    app.data.writes.run(()=>app.db.insert(s.projectMembers).values(['pond','bank'].map(project=>({project,member:'sam'}))).run());
     const input = { action: 'comment', id: 't-1', text: 'From real shared HTTP' };
     const send = () => fetch(`${app.url}/api/tasks/command`, { method: 'POST', headers, body: JSON.stringify({ input, id: 'fixture-comment' }) });
     expect(await (await send()).json()).toEqual({ ok: true, value: { id: 't-1' } });
