@@ -103,6 +103,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for row in rows:
    if row['promise'].startswith('e Words. Message words are kept'):row['probe']={'kind':'action','action':'conversationRetention'}
  if f.stem=='data':add('The real GraphQL websocket carries data after sign-in without protocol errors.','',{'kind':'live'})
+ if f.stem=='models':
+  for row in rows:
+   if row['promise'].startswith('An account is signed in on particular worker machines.'):row['probe']={'kind':'action','action':'modelsMachines'}
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})
  if f.stem=='inbox':
   for row in rows:
