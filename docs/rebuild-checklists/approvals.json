@@ -32,7 +32,11 @@
     {
       "id": "approvals-006",
       "promise": "A merge approval names a pull request at one exact commit.",
-      "source": "docs/how-it-works/site/approvals.html#con-h"
+      "source": "docs/how-it-works/site/approvals.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "approvals-007",
@@ -61,7 +65,20 @@
     {
       "id": "approvals-011",
       "promise": "An agent files what it wants to do, to exactly what, and why. An allowance lasts a set number of minutes and is spent once. A request can also be denied, withdrawn or expire.",
-      "source": "docs/how-it-works/site/approvals.html#how-h"
+      "source": "docs/how-it-works/site/approvals.html#how-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "approvalDecisions"
+          },
+          {
+            "kind": "action",
+            "action": "approvalRulesAndExpiry"
+          }
+        ]
+      }
     },
     {
       "id": "approvals-012",
