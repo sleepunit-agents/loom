@@ -35,7 +35,6 @@ const overview = new GraphQLObjectType({ name:'MemoryKnowledge',fields:{
 
 export function knowledgeQueryFields(options: { path?:string; sharing():Sharing; now():number }): {
  fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;
- sweep(checkingAgent:string):SweepPart;
  nextDeadline():number|undefined;
  sweep(checkingAgent:string):SweepPart;
  close():void;
