@@ -261,7 +261,11 @@ a Stop cancels native execution and suppresses its reply. A failed status beat
 also stops the body. The parent still owns and reaps the
 whole process group.
 
-This initial Claude entry handles one accepted mail batch and its response.
+This initial Claude entry handles one private Comms mail batch and its response.
+The claim includes its current Comms thread identifier when that reply surface
+exists. The child refuses assignments without it before startup inputs or native
+execution; this routing metadata never replaces the Root's current body proof.
+Other venues need their own receiving/output adapter and remain unfinished.
 The in-child bodyProgram.startup extension point precedes mail/model input;
 startup Secret alias retrieval is a separate integration. Codex, additional
 Comms tools and multi-turn question/wait handling remain unfinished.

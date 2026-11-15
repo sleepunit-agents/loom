@@ -35,7 +35,7 @@ export async function bodyProgram(input: {
     bytes.fill(0); bytes = undefined;
     bootstrap = { ...parsed.bootstrap, token: Buffer.from(parsed.bootstrap.token, 'ascii') };
     const { job } = bodyInput(parsed.job, parsed.build, bootstrap, true);
-    if (job.harness !== 'claude' || !job.conversation || input.signal.aborted) throw new Error();
+    if (job.harness !== 'claude' || !job.conversation || !job.thread || input.signal.aborted) throw new Error();
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
       job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
     await input.startup?.(job, bootstrap, signal);

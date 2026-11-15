@@ -1,7 +1,7 @@
 import { expect, it, vi } from 'vitest';
 import { bodyProgram } from './body-program.js';
 import type { WorkerAssignment } from './worker.js';
-const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' } };
+const job: WorkerAssignment = { id: 'job', box: 'box', agent: 'art', conversation: 'cv', thread: 'thread', model: 'requested', account: 'sub', harness: 'claude', brief: '', house: { repository: 'r', file: 'Containerfile', branch: 'next' } };
 const raw = 'body_' + 'a'.repeat(64);
 function fixture() {
   const input = Buffer.from(JSON.stringify({ job, build: 'image', bootstrap: { origin: 'https://loom.example', job: 'job', token: raw } }));
@@ -42,13 +42,14 @@ it('does not invoke the native model after a Stop', async () => {
   const f = fixture(); f.stop(); expect(await bodyProgram(f.options)).toBe(0); expect(f.native).not.toHaveBeenCalled();
   expect(f.calls.at(-1)?.body.input).toEqual({ state: 'idle', work: '', seenStop: true });
 });
-it.each(['token', 'job', 'origin', 'harness', 'conversation', 'malformed', 'large', 'pre-abort'] as const)('refuses %s before native execution and erases input', async mode => {
+it.each(['token', 'job', 'origin', 'harness', 'conversation', 'thread', 'malformed', 'large', 'pre-abort'] as const)('refuses %s before native execution and erases input', async mode => {
   const f = fixture(), value = JSON.parse(f.input.toString());
   if (mode === 'token') value.bootstrap.token = 'machine-credential';
   if (mode === 'job') value.bootstrap.job = 'other-job';
   if (mode === 'origin') value.bootstrap.origin = 'https://loom.example/private/..';
   if (mode === 'harness') value.job.harness = 'codex';
   if (mode === 'conversation') value.job.conversation = null;
+  if (mode === 'thread') value.job.thread = null;
   if (mode === 'pre-abort') f.abort.abort();
   const bytes = Buffer.from(mode === 'malformed' ? '{' : mode === 'large' ? 'x'.repeat(1_048_577) : JSON.stringify(value));
   expect(await bodyProgram({ ...f.options, stdin: async () => bytes })).toBe(1); expect(f.native).not.toHaveBeenCalled(); expect(f.calls).toEqual([]);

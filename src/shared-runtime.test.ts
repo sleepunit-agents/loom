@@ -413,6 +413,7 @@ it('runs the fixed private body entry against Root with a fake native Claude pro
     executor: { build: async () => 'image', start: assigned => ({
       acceptsBootstrap: true, spawned: Promise.resolve(), exited, stop: async () => {},
       release: async bootstrap => {
+        expect(assigned.thread).toBe(thread.id);
         privateDiagnostic = Buffer.from(bootstrap!.token).toString();
         const bytes = Buffer.from(JSON.stringify(bodyInput(assigned, 'image', bootstrap, true)));
         const exitCode = await bodyProgram({ args: ['config'], read: async () => JSON.stringify({ command: '/fake/claude', cwd: '/house' }),
@@ -436,4 +437,16 @@ it('rejects ambiguous current model configuration without claiming a job or keep
  await expect(f.control.next()).rejects.toThrow('Worker next failed');
  expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()).toEqual(before);expect(f.db.select().from(operationResults).all()).toEqual([]);
  f.setRoles([roles[0]]);expect((await f.control.next())?.id).toBe(queued.id);
+});
+
+it('refuses a conversation without a Comms reply surface before any native execution',async()=>{
+ const key=wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR'),f=fixture(undefined,key);
+ f.setRoles([{model:'model',provider:'provider',harness:'claude',series:'series'}]);
+ const queued=f.send('handoff'),signal=new AbortController().signal;
+ const assigned=(await f.control.next())!;expect(assigned.thread).toBeNull();const bootstrap=await f.control.enrollBody!(queued.id,signal);await f.control.started(queued.id,'image');
+ const native=vi.fn(async()=>({text:'should not run',model:'observed',actions:[]})),fetcher=vi.fn<typeof fetch>(async(url,init)=>f.root.http.fetch(new Request(url,init))),error=vi.fn();
+ expect(await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),
+  stdin:async()=>Buffer.from(JSON.stringify(bodyInput(assigned,'image',bootstrap,true))),env:{},signal,fetch:fetcher,clock:f.clock,native,error})).toBe(1);
+ expect(native).not.toHaveBeenCalled();expect(fetcher).not.toHaveBeenCalled();bootstrap.token.fill(0);bootstrap.erase?.();
+ await f.control.finish(queued.id,1,'');expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()?.state).toBe('failed');
 });
