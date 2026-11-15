@@ -35,17 +35,6 @@ it('explicit readers use generic rendering for two agents without creating the l
     expect(list).toHaveLength(1); expect(list[0].label).toBe(`${selection.agent} conversation`);
     const view = await conversationView(contextDir, selection.agent, conversation, { LOOM_HOME: home }, selection);
     expect(view?.render.by).toBe('core'); expect(view?.conversation.venue_label).toBe('external');
-    const { server } = createLoomServer({ contextDir, conversationSelection: selection });
-    const client = new Client({ name: 'continuity', version: '1' });
-    const [a, b] = InMemoryTransport.createLinkedPair();
-    await server.connect(a); await client.connect(b);
-    try {
-      for (const [name, args] of [['conversations', {}], ['conversation', { id: conversation }]] as const) {
-        const r = await client.callTool({ name, arguments: args }); expect(r.isError).not.toBe(true);
-        expect(JSON.stringify(r.content)).toContain(`${selection.agent} conversation`);
-        expect(JSON.stringify(r.content)).not.toContain(`${selection.agent === 'art' ? 'mark' : 'art'} conversation`);
-      }
-    } finally { await client.close(); await server.close(); }
   }
   expect(existsSync(join(home, 'household.db'))).toBe(false);
   expect(existsSync(join(home, 'household.json'))).toBe(false);

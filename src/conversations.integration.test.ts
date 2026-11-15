@@ -362,85 +362,16 @@ describe('criterion 3: digests (conversation_digest)', () => {
   });
   afterEach(() => { restoreEnv(); rmSync(h.home, { recursive: true, force: true }); });
 
-  it('goes to the identity\'s conversation and run; the same run replaces, another run adds', async () => {
-    const { call } = await mcp(art);
-    const none = await call('conversation_digest', { summary: 'Loren asked about the WAF.' });
-    expect(none.error).toBe(true);
-    expect(String(none.body.error)).toMatch(/pass conversation and run to identity first/);
 
-    await call('identity', { conversation: conv, run: 'run-1' });
-    const d1 = await call('conversation_digest', { summary: 'Loren asked about the WAF.', asks: ['unblock the WAF'] });
-    expect(d1.error).toBe(false);
-    expect(d1.body).toMatchObject({ id: digestId(conv, 'run-1'), conversation: conv, run: 'run-1', asks: ['unblock the WAF'], needs_owner: null });
-    await call('conversation_digest', { summary: 'Loren asked about the WAF; it is filed.', tasks: ['t-1271'] });
-    let ds = digestsOf(art, conv);
-    expect(ds).toHaveLength(1);
-    expect(ds[0]).toMatchObject({ id: digestId(conv, 'run-1'), summary: 'Loren asked about the WAF; it is filed.', asks: [], tasks: ['t-1271'] });
-
-    await call('identity', { conversation: conv, run: 'run-2' });
-    await call('conversation_digest', { summary: 'Followed up.' });
-    ds = digestsOf(art, conv);
-    expect(ds.map((d) => d.run).sort()).toEqual(['run-1', 'run-2']);
-  });
 
   // t-2061: inside one house every body could read another's ids, so the conversation named at identity proves
   // nothing by itself. From a body's house, a digest goes only to the conversation the runtime said that house holds.
-  it('from a body\'s house, only for the conversation that house holds; none when the runtime named none', async () => {
-    const other = recordTurn(art, 'art', msg('dm:U2', 0), 'runtime:shuttle').conversation;
-    bindHouseConversation(h.home, { agent: 'art', house: 'h-1', conversation: conv });
-    bindHouseConversation(h.home, { agent: 'art', house: 'h-2', conversation: other });
-    // Its own house: written.
-    const own = await mcp(art, { house: 'h-1' });
-    await own.call('identity', { conversation: conv, run: 'run-1' });
-    expect((await own.call('conversation_digest', { summary: 'mine' })).error).toBe(false);
-    // A sibling's house, naming this conversation (its run id too): refused, nothing written.
-    const sib = await mcp(art, { house: 'h-2' });
-    await sib.call('identity', { conversation: conv, run: 'run-1' });
-    const posed = await sib.call('conversation_digest', { summary: 'merged, as you asked', needs_owner: { ask: 'OK to merge it?' } });
-    expect(posed.error).toBe(true);
-    expect(String(posed.body.error)).toMatch(/h-2 holds cv-[0-9a-f]{12}: it writes for that conversation only/);
-    expect(digestsOf(art, conv).map((d) => d.summary)).toEqual(['mine']);
-    // A house the runtime named nothing for (one from before, or never bound): no digest at all.
-    const none = await mcp(art, { house: 'h-3' });
-    await none.call('identity', { conversation: conv, run: 'run-1' });
-    expect(String((await none.call('conversation_digest', { summary: 'x' })).body.error)).toMatch(/h-3 holds no conversation the runtime named/);
-    // Another agent's binding of the same house id isn't this agent's.
-    bindHouseConversation(h.home, { agent: 'mark', house: 'h-4', conversation: conv });
-    const marks = await mcp(art, { house: 'h-4' });
-    await marks.call('identity', { conversation: conv, run: 'run-1' });
-    expect((await marks.call('conversation_digest', { summary: 'x' })).error).toBe(true);
-    // A service's house (a chat bridge people other than the owner steer) holds no conversation the runtime named, so it
-    // writes none (t-2118). No house at all (loom's machine): as before.
-    const bridge = await mcp(art, { house: 'h-5', service: 'discord' });
-    await bridge.call('identity', { conversation: other, run: 'run-9' });
-    expect(String((await bridge.call('conversation_digest', { summary: 'bridge' })).body.error)).toMatch(/h-5 holds no conversation the runtime named/);
-    const local = await mcp(art);
-    await local.call('identity', { conversation: other, run: 'run-8' });
-    expect((await local.call('conversation_digest', { summary: 'local' })).error).toBe(false);
-  });
+
 
   // t-2118: a digest summarises its conversation's words, so a house reads only the conversation it holds: the list,
   // one conversation, its findings and a project hub's conversations section. A service's house (with or without a
   // house id) reads none; loom's machine (no house) reads all, as before.
-  it('from a house, the conversations it reads are the one it holds', async () => {
-    const other = recordTurn(art, 'art', msg('dm:U3', 0), 'runtime:shuttle').conversation;
-    bindHouseConversation(h.home, { agent: 'art', house: 'h-11', conversation: conv });
-    const ids = (r: { body: Record<string, unknown> }) => (r.body.conversations as Array<{ id: string }>).map((c) => c.id);
-    const own = await mcp(art, { house: 'h-11' });
-    expect(ids(await own.call('conversations'))).toEqual([conv]);
-    expect((await own.call('conversation', { id: conv })).error).toBe(false);
-    const theirs = await own.call('conversation', { id: other });
-    expect(theirs.error).toBe(true);
-    expect(String(theirs.body.error)).toBe(`no conversation ${other}`);
-    for (const caller of [{ house: 'h-12' }, { house: 'h-13', service: 'discord' }, { service: 'discord' }]) {
-      const none = await mcp(art, caller);
-      expect(ids(await none.call('conversations'))).toEqual([]);
-      expect((await none.call('conversation', { id: conv })).error).toBe(true);
-      expect((await none.call('conversation_findings')).body.findings).toEqual([]);
-    }
-    const local = await mcp(art);
-    expect(ids(await local.call('conversations'))).toEqual(expect.arrayContaining([conv, other]));
-  });
+
 
   // t-2118: the boot tape (identity's "Last 24h", the episodes tool, `/cli wake` and `memory tape`) carries digests:
   // from a house, only the held conversation's; from one that holds none, none.
@@ -482,34 +413,9 @@ describe('criterion 3: digests (conversation_digest)', () => {
     expect(houseConversation(h.home, 'h-8')).toBeNull();
   });
 
-  it('is never written for another agent\'s conversation', async () => {
-    const theirs = recordTurn(agentDir(h, 'pond-bot'), 'pond-bot', { ...msg('dm:U1', 0) }, 'runtime:shuttle').conversation;
-    const { call } = await mcp(art);
-    await call('identity', { conversation: theirs, run: 'run-1' });
-    const r = await call('conversation_digest', { summary: 'x' });
-    expect(r.error).toBe(true);
-    expect(String(r.body.error)).toMatch(/no conversation/);
-    expect(digestsOf(agentDir(h, 'pond-bot'), theirs)).toEqual([]);
-  });
 
-  it('unknown keys and the caps reject', async () => {
-    const { call } = await mcp(art);
-    await call('identity', { conversation: conv, run: 'run-1' });
-    expect((await call('conversation_digest', { summary: 'x', mood: 'good' })).error).toBe(true);
-    expect(() => parseDigest({ summary: 'x', mood: 'good' })).toThrow(/no key "mood"/);
-    expect(() => parseDigest({ summary: 'x'.repeat(601) })).toThrow(/summary/);
-    expect(() => parseDigest({ summary: '' })).toThrow(/summary/);
-    expect(() => parseDigest({ summary: 'x', projects: ['a', 'b', 'c', 'd', 'e'] })).toThrow(/projects/);
-    expect(() => parseDigest({ summary: 'x', asks: Array(9).fill('a') })).toThrow(/asks/);
-    expect(() => parseDigest({ summary: 'x', asks: ['a'.repeat(201)] })).toThrow(/asks/);
-    expect(() => parseDigest({ summary: 'x', decisions: Array(9).fill('a') })).toThrow(/decisions/);
-    expect(() => parseDigest({ summary: 'x', tasks: Array(17).fill('t-1') })).toThrow(/tasks/);
-    expect(() => parseDigest({ summary: 'x', tasks: ['t'.repeat(65)] })).toThrow(/tasks/);
-    expect(() => parseDigest({ summary: 'x', needs_owner: 'x'.repeat(201) })).toThrow(/needs_owner/);
-    expect(() => parseDigest({ summary: 'x', needs_owner: 'two\nlines' })).toThrow(/needs_owner/);
-    expect(parseDigest({ summary: 'x', asks: Array(8).fill('a'.repeat(200)), tasks: Array(16).fill('t'.repeat(64)), projects: ['a', 'b', 'c', 'd'], needs_owner: 'n'.repeat(200) })).toBeTruthy();
-    expect(digestsOf(art, conv)).toEqual([]);
-  });
+
+
 
   it('is never compared with audit text: a quote is the agent\'s judgment', () => {
     const d = writeDigest(art, { conversation: conv, run: 'run-1' }, { summary: 'Corrected me on his name: "Nobody calls me Danny." Daniel it is.' });
@@ -651,18 +557,7 @@ describe('criterion 5: venues', () => {
     });
     afterEach(() => { restoreEnv(); rmSync(h.home, { recursive: true, force: true }); });
 
-    it('with a live render, conversation returns the venue\'s render, run with --conversation <id>', async () => {
-      const v = await conversationView(art, 'art', conv);
-      expect(v!.render.by).toBe('venue');
-      expect(v!.render.feed).toEqual({ groups: [{ title: 'From the venue', items: [{ title: `args render --json --conversation ${conv}` }] }] });
-      expect(v!.conversation).toMatchObject({ id: conv, venue_label: 'Slack', turns: 2 });
-      expect(v!.digests).toHaveLength(1);
-      expect(v!.findings).toEqual([]);
-      // And through the MCP tool.
-      const { call } = await mcp(art);
-      const r = await call('conversation', { id: conv });
-      expect((r.body.render as { by: string }).by).toBe('venue');
-    });
+
 
     it('the render runs as the agent, so a grants authority is asked first (path render): a no is core\'s render', async () => {
       // A stub authority: $LOOM_HOME/render-grant is allow or deny; every ask is written down.
@@ -959,13 +854,7 @@ describe('criterion 14: scoping', () => {
     rmSync(h.home, { recursive: true, force: true });
   });
 
-  it('an agent\'s conversations lists only its own', async () => {
-    const { call } = await mcp(agentDir(h, 'art'));
-    const r = await call('conversations', {});
-    expect((r.body.conversations as Array<{ id: string; agent: string }>).map((c) => [c.agent, c.id])).toEqual([['art', artConv]]);
-    expect(householdConversations(h, { kind: 'agent', agent: 'art' }).map((c) => c.agent)).toEqual(['art']);
-    expect(() => householdConversations(h, { kind: 'agent', agent: 'art' }, { agent: 'mark' })).toThrow(ScopeError);
-  });
+
 
   it('a member whose agents is ["pond-bot"] sees only pond-bot\'s, and a request naming another agent is refused', () => {
     const loren = { kind: 'member' as const, member: memberOf(h, 'loren')! };

@@ -37,10 +37,10 @@ describe('createLoomServer', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-it('never advertises retired Comms names even when a piece descriptor supplies them directly',async()=>{
- const {server}=createLoomServer({...makeConfig(tmpDir),tools:['comms_title','comms_thread'].map(name=>({name,description:'Retired fixture',inputSchema:{type:'object'},call:async()=>({text:'Must never be offered'})}))});
+it('never advertises retired conversation names even when a piece descriptor supplies them directly',async()=>{
+ const {server}=createLoomServer({...makeConfig(tmpDir),tools:['comms_title','comms_thread','conversation_digest','conversations','conversation','conversation_findings'].map(name=>({name,description:'Retired fixture',inputSchema:{type:'object'},call:async()=>({text:'Must never be offered'})}))});
  const client=new Client({name:'retired-comms',version:'1'}),[a,b]=InMemoryTransport.createLinkedPair();
- try{await server.connect(a);await client.connect(b);const names=(await client.listTools()).tools.map(tool=>tool.name);expect(names).not.toContain('comms_title');expect(names).not.toContain('comms_thread');}
+ try{await server.connect(a);await client.connect(b);const names=(await client.listTools()).tools.map(tool=>tool.name);for(const name of ['comms_title','comms_thread','conversation_digest','conversations','conversation','conversation_findings']){expect(names).not.toContain(name);await expect(client.callTool({name,arguments:{}})).rejects.toThrow('Tool '+name+' not found');}}
  finally{await client.close();await server.close();}
 });
 
@@ -132,11 +132,7 @@ it('never advertises retired Comms names even when a piece descriptor supplies t
     project_list: { readOnlyHint: true, openWorldHint: false },
     project_hub: { readOnlyHint: true, openWorldHint: false },
     project_orphans: { readOnlyHint: true, openWorldHint: false },
-    conversation_digest: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     describe_self: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    conversations: { readOnlyHint: true, openWorldHint: false },
-    conversation: { readOnlyHint: true, openWorldHint: true },
-    conversation_findings: { readOnlyHint: true, openWorldHint: false },
   };
 
   // Offered tools (agent-runtime.md "Seams", 2): a server has a piece's tool only when it's given
