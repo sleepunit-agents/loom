@@ -23,7 +23,8 @@ function fixture(gate: 'all' | 'record', prepare?: () => Promise<unknown>) {
   root.operations.register({ name: 'private.save', write: true, recheckPolicy: true,
     input: z.object({ id: z.string() }).strict(), output: z.object({ ack: z.literal(true) }),
     ...(gate === 'all' ? { windowOnly: true } : { requiresWindow: (input: { id: string }) => db.select().from(tasks).where(eq(tasks.id, input.id)).get()?.ownerKind === 'member' }),
-    may: viewer => viewer.kind === 'member' && viewer.id === 'sam', prepare,
+    // Admit both identities here so the window gate itself must exclude agents.
+    may: viewer => (viewer.kind === 'member' && viewer.id === 'sam') || (viewer.kind === 'agent' && viewer.id === 'art'), prepare,
     run(ctx, input) { root.services.tasks.edit(input.id, { title: 'Saved' }); ctx.changed('task', input.id); return { ack: true }; },
   });
   const call = (headers: Record<string,string> = { cookie: 'loom_ui='+cookie }, id = 'save', envelope: Record<string,unknown> = {}) => root.http.request('http://loom/api/private/save', {
