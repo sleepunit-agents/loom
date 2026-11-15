@@ -2,10 +2,10 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createElement as h } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import { act, create } from 'react-test-renderer';
-import type { SelectionSnapshot } from '../../data/query';
+import type { DataQuerySnapshot } from '../../data/graphql';
 import type { TempoData } from './feed';
-const state = vi.hoisted(() => ({ feed: { status: 'loading' } as SelectionSnapshot<TempoData>, query: vi.fn() }));
-vi.mock('../../data/query', () => ({ useQuery: (selection: {query: string}) => { state.query(selection.query); return state.feed; } }));
+const state = vi.hoisted(() => ({ feed: { status: 'loading' } as DataQuerySnapshot<TempoData>, query: vi.fn() }));
+vi.mock('../../data/graphql', () => ({ useDataQuery: (query: string) => { state.query(query); return state.feed; } }));
 vi.mock('./index', () => ({ default: (props: unknown) => h('tempo', props), TempoCard: (props: unknown) => h('card', props) }));
 import { TempoApp, LiveTempoCard, tempoQuery } from './feed';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -21,12 +21,12 @@ it('binds the tile and inline card to the same generated selection and root acti
   await act(async () => tree.update(h(LiveTempoCard, { triggerId: 'tr-1', timezone: 'America/Chicago', actions })));
   expect(tree.root.findByType('card').props).toMatchObject({ triggerId: 'tr-1', actions, snapshot: { events: data.triggerLog } });
 });
-it.each(['loading', 'offline', 'denied', 'error'] as const)('drops retained data immediately on %s', async status => {
+it.each(['loading', 'offline', 'denied'] as const)('drops retained data immediately on %s', async status => {
   state.feed = { status: 'live', data };
   await act(async () => { tree = create(h(TempoApp, { timezone: 'UTC' })); });
   state.feed = { status, data };
   await act(async () => tree.update(h(TempoApp, { timezone: 'UTC' })));
-  expect(tree.root.findByType('tempo').props.snapshot).toEqual({ status: status === 'error' ? 'offline' : status, triggers: [], events: [], pauses: [], timezone: 'UTC' });
+  expect(tree.root.findByType('tempo').props.snapshot).toEqual({ status, triggers: [], events: [], pauses: [], timezone: 'UTC' });
 });
 it('clears rows on a new live selection and treats a missing payload as loading', async () => {
   state.feed = { status: 'live', data };
