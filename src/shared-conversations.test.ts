@@ -229,3 +229,15 @@ it('publishes the existing Tempo volume capability independently of answer owner
  f.root.writes.run(()=>f.db.delete(sessions).run());
  expect((await f.query(query)).response.status).toBe(401);
 });
+
+it('filters conversation questions inside the current recipient mailbox before paging',async()=>{
+ const f=await fixture(),mail=f.root.services.conversations;
+ const a=mail.open({agent:'art',member:'alice',venue:'loom',place:'one',label:'One'}),b=mail.open({agent:'art',member:'alice',venue:'loom',place:'two',label:'Two'});
+ const own=mail.send({conversation:a.id,toKind:'person',to:'alice',source:'approval',fromKind:'agent',words:'Own question'});
+ const other=mail.send({conversation:a.id,toKind:'person',to:'owner',source:'approval',fromKind:'agent',words:'Other recipient'});
+ mail.send({conversation:b.id,toKind:'person',to:'alice',source:'approval',fromKind:'agent',words:'Different thread'});
+ const query=`{inboxItems(conversation:"${a.id}",source:"approval",limit:1){id}}`;
+ expect((await f.query(query)).body).toMatchObject({data:{inboxItems:[{id:own.id}]}});
+ expect((await f.query(query,'owner')).body).toMatchObject({data:{inboxItems:[{id:other.id}]}});
+ expect((await f.query(query,'bob')).body).toMatchObject({data:{inboxItems:[]}});
+});
