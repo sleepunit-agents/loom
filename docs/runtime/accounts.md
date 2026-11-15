@@ -77,7 +77,39 @@ accounts or change membership. Account/window writes and the acknowledgement
 receipt commit together. Older observations cannot replace newer windows.
 
 Without `report`, the command keeps its existing local-output behavior and reads
-no Loom token. Failed provider reads do not send a successful observation; remote
-failure latching and periodic refresh scheduling remain separate integration work.
+no Loom token. With reporting configured, the worker obtains an opaque observation witness
+before invoking the provider. Both successful and failed reports carry that witness; only a completion whose
+witness still describes the current quota can change admission. A failed read
+closes admission without letting an older success reopen it. It preserves usage timestamps and windows; a
+newer successful reading, including identical values, invalidates older failures.
+The witness is a concurrency check, not authority: both requests still require
+current bearer-machine proof, account membership, owner and provider. Receipt
+replays are not fresh provider completions. Restart discards witnesses; an old
+failure then makes no change and needs a new read attempt. Normal-worker refreshes are configured below.
 An uncertain report is not retried automatically, and no remote diagnostics are
 printed. Neither the report nor its response contains provider credentials.
+
+### Normal worker refreshes
+
+The normal `loom-worker` configuration can include `accountUsage`:
+
+```json
+{"accountUsage":{"intervalMs":60000,"readers":[{"account":{"account":"subscription","owner":"member","provider":"provider"},"command":{"command":"/private/quota-reader","args":[],"cwd":"/private","env":{}},"timeoutMs":30000}]}}
+```
+
+These are machine-local private commands using the same structured quota reader
+protocol as `--account-usage`. The existing worker token reports to the worker's
+configured Loom origin. No extra token file or provider credential goes to Loom.
+Each configured account is refreshed before the first job claim, then scans run
+alongside the worker slot, one reader at a time, with no overlapping scans. The
+interval starts after a scan finishes (default one minute; configurable from one
+second to one hour). Configuration accepts 1–32 readers with distinct account
+identifiers. Reader deadlines retain the same one-shot limits.
+
+Failed provider reads report unavailable through the same observation witness;
+transport failures leave the existing observation untouched. Either failure emits
+only a fixed diagnostic and permits the next account and later scheduled scan.
+There is no retry of an uncertain report. Stopping the worker aborts pending
+reads/requests and joins the refresh loop before removing signal handlers. A late
+reader result cannot report or start another job. Without `accountUsage`, the
+normal worker starts no quota reader or refresh timer.
