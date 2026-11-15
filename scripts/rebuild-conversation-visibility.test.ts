@@ -51,3 +51,14 @@ it('retains observed violations if cleanup fails, and treats a failed browser re
  const failure=visibilityFailure(new ObservedVisibilityFailure('Hidden Inbox item','inboxVisibility'));applyCleanup(failure,{restored:false,contextClosed:false,credentialAbsent:true});expect(failure.inboxVisibility).toMatchObject({ok:false,cleanupError:expect.any(String)});expect(evaluate({probe:{kind:'action',action:'inboxVisibility'}},{actions:failure}).status).toBe('not met');
  let unknown;try{await browserRead({evaluate:async()=>({status:503,body:{}})},'{}');}catch(error){unknown=visibilityFailure(error);}expect(Object.values(unknown).every(row=>row.inconclusive&&row.ok!==true)).toBe(true);
 });
+
+it('keeps fixture authentication on the real operator client and rejects direct auth-store access',()=>{
+ const source=readFileSync(new URL('./rebuild-conversation-visibility.mjs',import.meta.url),'utf8');
+ // This is an architecture guard: fixtures may inspect app rows, but auth rows
+ // must be produced by the ordinary operator listener and sign-in flow.
+ const accepted=(text:string)=>/await requestLocalLink\(home,/.test(text)&&!/(?:services|s)\.signin\b|\bdb\.(?:exec|insert|update|delete)\s*\(|\b(?:from|join|into)\s+["`]?\b(?:tokens|sessions|signin_links)\b/i.test(text);
+ expect(accepted(source)).toBe(true);
+ expect(accepted(source.replace('await requestLocalLink(home,','await app.services.signin.issue(home,'))).toBe(false);
+ expect(accepted(source+'\ndb.prepare("INSERT INTO tokens VALUES (?)").run();')).toBe(false);
+ expect(accepted(source+'\ndb.prepare("SELECT * FROM sessions").all();')).toBe(false);
+});
