@@ -297,3 +297,12 @@ it.each(tempoAnswerCases)('awaits the actual $surface Tempo answer (allow=$allow
   if(success)expect(words()).not.toContain('Could not save your answer');else expect(words()).toContain('Could not save your answer');
  }finally{vi.unstubAllGlobals();}
 });
+
+it('mounts standing-rule editing only for the live current-owner metadata',async()=>{
+ fixture();feed.owner=true;
+ await draw(h(ApprovalsApp,{path:'/p/approvals-preview/rules'}));
+ const form=()=>tree.root.findAllByProps({'aria-label':'Standing rule'});
+ expect(form()).toHaveLength(1);
+ feed.owner=false;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/rules'})));expect(form()).toHaveLength(0);
+ feed.owner=true;for(const status of ['loading','offline','denied','error']){feed.ownerStatus=status;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/rules'})));expect(form()).toHaveLength(0);}
+});
