@@ -167,11 +167,20 @@ it('delivers Discord through normal startup and records confirmed, uncertain and
  const incoming=db.select().from(s.bridgeIncoming).get()!;expect(incoming).toMatchObject({state:'delivered',member:program.signinMember,connection:'discord-example'});
  expect(db.select().from(s.inbox).all().filter(row=>row.source==='discord')).toHaveLength(1);expect(db.select().from(s.conversations).where(eq(s.conversations.id,incoming.conversation!)).get()).toMatchObject({agent:'assistant',venue:'discord'});
  await options.commit({type:'MESSAGE_CREATE',seq:1,data},checkpoint,raw);clock.advance(0);await daemon.idle();expect(db.select().from(s.bridgeIncoming).all()).toHaveLength(1);
+ // A fresh transport sequence must also deduplicate the platform message,
+ // beyond the raw receipt's identical session/sequence key.
+ const repeated=Buffer.from(JSON.stringify({op:0,t:'MESSAGE_CREATE',s:2,d:data}));
+ await options.commit({type:'MESSAGE_CREATE',seq:2,data},{...checkpoint,seq:2},repeated);clock.advance(0);await daemon.idle();
+ expect(db.select().from(s.bridgeIncoming).all()).toHaveLength(1);expect(db.select().from(s.inbox).all().filter(row=>row.source==='discord')).toHaveLength(1);expect(db.select().from(s.conversations).where(eq(s.conversations.venue,'discord')).all()).toHaveLength(1);
  daemon.sends.queue({id:'discord-confirmed',incoming:incoming.id,text:'A fictitious Discord reply'});daemon.changed();await daemon.idle();expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'discord-confirmed')).get()).toMatchObject({state:'sent',postedId:'623456789012345678'});
  loseReply=true;daemon.sends.queue({id:'discord-uncertain',incoming:incoming.id,text:'A fictitious uncertain reply'});daemon.changed();await daemon.idle();expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'discord-uncertain')).get()?.state).toBe('uncertain');loseReply=false;
  daemon.changed();await daemon.idle();expect(posts).toBe(2);
+ // A failed private credential use retires its lifetime; reconnect before
+ // proving uncertainty is still not resent on an active connection.
+ await expect(options.commit({type:'MESSAGE_CREATE',seq:2,data},{...checkpoint,seq:2},repeated)).rejects.toThrow();
  expect(options.beforeConnect()).toBe(false);await daemon.idle();clock.advance(5000);await owner.source.generation();await daemon.idle();clock.advance(5000);
  await expect.poll(()=>wire.discord.mock.calls.length).toBe(2);await daemon.idle();const resumed=wire.discord.mock.calls[1][0];expect(resumed.beforeConnect()).toBe(true);
+ expect(posts).toBe(2);
  await command('bridges/command',{action:'review',id:'discord-uncertain',decision:'dismiss'});expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'discord-uncertain')).get()?.state).toBe('dismissed');
  daemon.sends.queue({id:'discord-held',incoming:incoming.id,text:'A fictitious held reply',held:true});daemon.changed();await daemon.idle();expect(posts).toBe(2);
  await command('bridges/command',{action:'review',id:'discord-held',decision:'release'});await daemon.idle();expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'discord-held')).get()?.state).toBe('sent');expect(posts).toBe(3);
