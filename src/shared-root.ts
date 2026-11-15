@@ -1,3 +1,4 @@
+import {registerMachineRegistry} from './shared-machine-registry.js';
 import { registerSharedCommandCatalog } from './shared-command-catalog.js';
 import { registerAgentBodyPolicy } from './shared-agent-body-policy.js';
 
@@ -151,6 +152,7 @@ export function sharedRoot(options: {
   registerAgentRunSettings(operations, db, () => tempo?.capacityChanged());
 
   registerBoxSettings(operations, db, () => tempo?.capacityChanged());
+  registerMachineRegistry(operations,db,{now,changed:()=>tempo?.capacityChanged()});
   registerAgentModels(operations, db, roles, () => tempo?.capacityChanged());
   const jobEnded = (id: string) => {
     try {
