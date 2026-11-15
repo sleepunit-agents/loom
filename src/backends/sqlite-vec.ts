@@ -1111,7 +1111,7 @@ export class SqliteVecBackend implements MemoryBackend {
         .prepare('SELECT id, ref, title, category,ttl,expires_at FROM memories WHERE uniq = ? AND archived = 0 LIMIT 1')
         .get(uniqKey) as Pick<MemoryRow, 'id' | 'ref' | 'title' | 'category'|'ttl'|'expires_at'> | undefined;
       if (!existing) return undefined;
-      if(existing.expires_at&&(!Number.isFinite(Date.parse(existing.expires_at))||isExpired(existing.expires_at,timestamp))){
+      if(existing.expires_at&&(!Number.isFinite(Date.parse(existing.expires_at))||isExpired(existing.expires_at,new Date(timestamp)))){
         const duration=ttl??existing.ttl??undefined;
         this.db.prepare('UPDATE memories SET ttl=?,expires_at=? WHERE id=?').run(duration??null,computeExpiresAt(timestamp,duration),existing.id);
       }
