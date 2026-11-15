@@ -262,8 +262,12 @@ it('preserves a private question retry after filing but still rechecks current i
  const f=await setup(),input={id:'filed-question',question},first=await f.comms.ask('art',f.place,input);
  f.sharing.members.jonathan.owner=false;f.sharing.projects.private={members:['jonathan'],agents:['art']};
  expect(await f.call('comms.change',{thread:f.place,action:'project',project:'private'})).toMatchObject({ok:true});
- const before=()=>['attention_asks','comms_messages'].map(table=>f.app.db.prepare(`SELECT * FROM ${table}`).all());
- const snapshot=before();expect(await f.comms.ask('art',f.place,input)).toEqual(first);expect(before()).toEqual(snapshot);
+ const before=()=>[f.app.db.prepare('SELECT * FROM attention_asks').all(),f.app.db.prepare("SELECT * FROM comms_messages WHERE kind='ask'").all()];
+ // The initial Hello delivery settles independently of the private question retry.
+ const delivery=f.app.db.prepare("UPDATE comms_messages SET record=? WHERE kind='message'");
+ delivery.run(JSON.stringify({delivery:'sending',attempted:false}));const snapshot=before();
+ delivery.run(JSON.stringify({delivery:'failed',attempted:false}));
+ expect(await f.comms.ask('art',f.place,input)).toEqual(first);expect(before()).toEqual(snapshot);
  f.sharing.projects.private.members=[];
  await expect(f.comms.ask('art',f.place,input)).rejects.toThrow('Ask unavailable');
  expect(before()).toEqual(snapshot);
