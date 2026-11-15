@@ -4,14 +4,14 @@ import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { DataWrites } from '../../core/data/writes.js';
 import { FakeClock } from '../../core/clock.js';
-import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends } from '../../core/data/schema.js';
+import { members, agents, secrets, bridgeConnections, bridgeChannels, bridgePeople, bridgeIncoming, bridgeRawEvents, inbox, bridgeSends, bridgeFiles } from '../../core/data/schema.js';
 import { SharedBridges, bridgeCredentialBinding } from './shared-daemon.js';
 import type { bridgeSlackSocket } from './slack-socket.js';
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const generation='12345678-1234-4234-8234-123456789abc';
 function fixture(){
- const client=new Database(':memory:');clean.push(()=>{client.close();});const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client);
+ const client=new Database(':memory:');clean.push(()=>{if(client.open)client.close();});const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client);
  db.insert(members).values({id:'owner',role:'owner',joinedAt:at}).run();
  db.insert(agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
  for(const name of ['TOKEN','APP'])db.insert(secrets).values({name,description:'',changedAt:at,changedBy:'owner'}).run();
@@ -104,4 +104,15 @@ it('refuses the next part when connection identity changes during its fresh cred
 it('flushes a preexisting pending send on the connected-state callback without a caller flush',async()=>{
  const f=fixture();f.db.insert(bridgeIncoming).values({id:'in',connection:'connection',channel:'CROOM',isDm:false,user:'UUSER',text:'Hi',postedAt:new Date(f.clock.now()).toISOString(),receivedAt:new Date(f.clock.now()).toISOString(),state:'delivered'}).run();f.daemon.sends.queue({id:'reply',incoming:'in',text:'Reply'});
  const original=f.request.getMockImplementation()!;f.request.mockImplementation(async(url,options)=>String(url).endsWith('/chat.postMessage')?Response.json({ok:true,channel:'CROOM',ts:'1794432000.000009'}):original(url,options));await f.daemon.ready();await f.daemon.idle();expect(f.db.select().from(bridgeSends).get()?.state).toBe('sent');
+});
+
+it('does not access a closed database when a timed-out post response arrives after manager close',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();await f.transports[0].receive({},f.raw());f.clock.advance(0);await f.daemon.idle();const incoming=f.db.select().from(bridgeIncoming).get()!;
+ let release!:(response:Response)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.request.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});f.daemon.sends.queue({id:'reply',incoming:incoming.id,text:'Hi'});f.daemon.changed();await started;const closing=f.daemon.close();f.clock.advance(15000);await closing;f.client.close();const reads=vi.spyOn(f.db,'select');let cancelled=false;
+ release(new Response(new ReadableStream({cancel(){cancelled=true;}})));await f.request.mock.results.at(-1)!.value;await Promise.resolve();expect(cancelled).toBe(true);expect(reads).not.toHaveBeenCalled();reads.mockRestore();
+});
+it('fetches attachments only after committed delivery, stores private bytes, and consumes raw only after caching',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();const original=f.request.getMockImplementation()!;f.request.mockImplementation(async(url,options)=>{if(String(url).startsWith('https://files.slack.com/')){expect(f.client.inTransaction).toBe(false);expect(f.db.select().from(inbox).all()).toHaveLength(1);expect(f.db.select().from(bridgeIncoming).get()?.state).toBe('delivered');return new Response('DATA',{headers:{'content-type':'application/octet-stream'}});}return original(url,options);});
+ const frame=JSON.parse(f.raw().toString());frame.payload.event.files=[{id:'FABC',name:'../image x',size:4,url_private:'https://files.slack.com/files-pri/TWORK-FABC/image'}];await f.transports[0].receive({},Buffer.from(JSON.stringify(frame)));expect(f.db.select().from(bridgeFiles).all()).toEqual([]);f.clock.advance(0);await f.daemon.idle();
+ expect(f.db.select().from(bridgeFiles).get()).toMatchObject({file:'FABC',name:'image_x',contents:Buffer.from('DATA')});expect(f.db.select().from(bridgeRawEvents).all()).toHaveLength(1);f.clock.advance(1);await f.daemon.idle();expect(f.db.select().from(bridgeRawEvents).all()).toEqual([]);expect(f.db.select().from(inbox).all()).toHaveLength(1);expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
 });

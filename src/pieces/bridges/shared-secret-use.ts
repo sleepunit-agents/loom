@@ -13,7 +13,8 @@ export function sharedBridgeSecretUse(options:{
  if(!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(options.generation))throw unavailable();
  const owned=new Set<Uint8Array>(),hashes=new Map<string,string>(),names=new Set(options.names);let closed=false;
  const current=()=>{if(closed)return false;try{return options.current();}catch{return false;}};
- const invalidate=()=>{if(closed)return;closed=true;hashes.clear();try{options.invalidate();}catch{}};
+ const clear=()=>{closed=true;hashes.clear();for(const bytes of owned)bytes.fill(0);owned.clear();};
+ const invalidate=()=>{if(closed)return;clear();try{options.invalidate();}catch{}};
  async function bounded<T>(work:(fresh:()=>boolean)=>Promise<T>):Promise<T>{
   const end=options.clock.now()+5000;let expired=false,cancel!:()=>void;
   const fresh=()=>!expired&&current()&&options.clock.now()<end;
@@ -47,6 +48,6 @@ export function sharedBridgeSecretUse(options:{
    }catch{invalidate();throw unavailable();}
    finally{if(borrowed){borrowed.fill(0);owned.delete(borrowed);}}
   },
-  close(){closed=true;hashes.clear();for(const bytes of owned)bytes.fill(0);owned.clear();},
+  close:clear,
  };
 }

@@ -45,3 +45,6 @@ it('aborts and cancels a pending response body at the absolute deadline',async()
 it.each([{status:503,body:{ok:true,channel:'CROOM',ts:'1794432000.000001'}},{status:200,body:{ok:false,channel:'CROOM',ts:'1794432000.000001'}},{status:200,body:{ok:true,channel:'OTHER',ts:'1794432000.000001'}},{status:200,body:{ok:true,channel:'CROOM',ts:'not-a-message'}}])('requires successful matching Slack confirmation: %j',async input=>{
  const f=fixture('slack');f.request.mockResolvedValue(Response.json(input.body,{status:input.status}));await expect(f.api.post({channel:'CROOM',thread:null},'Hi')).rejects.toThrow(/^Bridge reply attempt uncertain$/);expect(f.request).toHaveBeenCalledOnce();
 });
+it.each([{platform:'slack' as const,channel:'https://evil.test',thread:null},{platform:'slack' as const,channel:'CROOM',thread:'../token'},{platform:'discord' as const,channel:'123',thread:'456'}])('refuses invalid platform address/thread before credentials: %j',async input=>{
+ const f=fixture(input.platform);await expect(f.api.post(input,'Hi')).rejects.toThrow('uncertain');expect(f.secrets.withValue).not.toHaveBeenCalled();expect(f.request).not.toHaveBeenCalled();
+});

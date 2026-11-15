@@ -1,3 +1,4 @@
+import { slackFiles, type SlackFilesPermit } from './slack-files.js';
 import { BridgeSends } from './sends.js';
 import { bridgeReplyApi } from './reply-api.js';
 /** Shared-model bridge composition. Socket receipt precedes platform ACK; bounded
@@ -7,7 +8,7 @@ import { createHash } from 'node:crypto';
 import { and, eq, sql } from 'drizzle-orm';
 import type { Clock } from '../../core/clock.js';
 import type { DataDatabase } from '../../core/data/database.js';
-import { bridgeConnections, bridgeIncoming, inbox, inboxRefs } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeIncoming, bridgeFiles, inbox, inboxRefs } from '../../core/data/schema.js';
 import type { DataWrites } from '../../core/data/writes.js';
 import type { SecretValueSource } from '../secrets/role.js';
 import type { HolderGeneration } from '../secrets/role.js';
@@ -175,8 +176,19 @@ export class SharedBridges {
     if(evidence)life.channels!.put(id,evidence);
    }
    if(!current())return;
+   const pendingFiles=new Map<string,SlackFilesPermit['files']>();
    const before=this.options.db.select({row:sql<number>`coalesce(max(rowid),0)`}).from(inbox).get()!.row;
-   try{more=this.receiver.drain(row.id)===64;}finally{
+   try{more=this.receiver.drain(row.id,64,(incoming,raw)=>{
+    if(row.platform!=='slack')return;
+    const event=JSON.parse(raw.toString('utf8')).payload?.event;
+    if(!Array.isArray(event?.files)||!event.files.length)return;
+    const descriptors=event.files.slice(0,5).map((file:Record<string,unknown>)=>({id:file?.id,name:file?.name,size:file?.size,url:file?.url_private_download??file?.url_private}));
+    // Parsing/URL validation remains in the existing pure file transport. Only
+    // descriptors from this authenticated durable frame enter the trusted seam.
+    const missing=descriptors.filter((file:{id:unknown})=>typeof file.id!=='string'||!this.options.db.select({file:bridgeFiles.file}).from(bridgeFiles).where(and(eq(bridgeFiles.connection,row.id),eq(bridgeFiles.file,file.id))).get());
+    if(!missing.length)return;
+    pendingFiles.set(incoming.id,missing);return false;
+   })===64;}finally{
     // Drain owns its per-event transactions; even a later malformed receipt may
     // follow earlier successful commits. Publish and signal only committed ids.
     this.notify();
@@ -186,6 +198,20 @@ export class SharedBridges {
       .where(and(sql`${inbox}.rowid > ${before}`,eq(bridgeIncoming.connection,row.id))).all().map(item=>item.id);
      if(ids.length){try{this.options.inboxCommitted?.(ids);}catch{this.report();}}
     }
+   }
+   // Frame and Inbox delivery have committed. Keep the original raw receipt
+   // until cached files exist, so a restart can retry without a second spool.
+   for(const [incoming,files] of pendingFiles){
+    if(!current())return;
+    const message=this.options.db.select().from(bridgeIncoming).where(and(eq(bridgeIncoming.id,incoming),eq(bridgeIncoming.connection,row.id),eq(bridgeIncoming.state,'delivered'))).get();
+    if(!message)continue;
+    const permit:SlackFilesPermit={agent:row.agent,venue:row.id,workspace:row.workspace,channel:message.channel,delivery:incoming,files,current};
+    const fetched=await slackFiles({id:row.id,platform:'slack',agent:row.agent,workspace:row.workspace,bot:row.botUser,tokenSecret:row.tokenSecret,appSecret:row.appSecret??undefined,enabled:row.enabled,only:[],ignore:[],botRoles:[]},permit,life.secrets,current,this.options.request).fetch();
+    try{
+     if(!current())return;
+     for(const file of fetched)this.files.store({connection:row.id,file:file.id,incoming,name:file.name,contents:file.bytes});
+     life.again=true;
+    }finally{for(const file of fetched)file.bytes.fill(0);}
    }
   }).catch(()=>this.report()).finally(()=>{
    life.pumping=undefined;

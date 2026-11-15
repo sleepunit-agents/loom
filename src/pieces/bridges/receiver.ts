@@ -94,7 +94,7 @@ export class BridgeReceiver {
    * one transaction. Held rows are retried against current household rules. A
    * malformed message throws, leaving its receipt/writes intact for inspection;
    * composition must report the failure, rather than spin an immediate retry. */
-  drain(connection: string, limit = 64): number {
+  drain(connection: string, limit = 64, delivered?: (row: ReturnType<BridgeIncoming['receive']>, raw: Buffer) => boolean | void): number {
     const source = this.connection(connection);
     return this.events.drain(connection, (_id, raw, receivedAt) => {
       const payload = this.parse(raw);
@@ -116,7 +116,9 @@ export class BridgeReceiver {
         message = normalizeSlack(source, frame.payload, channel);
       }
       if (!message) return;
-      return this.incoming.receive(message, true, receivedAt).state !== 'held';
+      const row=this.incoming.receive(message,true,receivedAt);
+      if(row.state==='held')return false;
+      return row.state==='delivered'?delivered?.(row,raw):undefined;
     }, limit);
   }
 

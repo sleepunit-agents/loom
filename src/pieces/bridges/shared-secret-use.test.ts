@@ -78,3 +78,6 @@ it('isolates stable fingerprints by configured name and invalidates replacement 
   replacement=true;await expect(use.withValue(changed,async()=>{})).rejects.toThrow('unavailable');await expect(use.withValue(changed==='TOKEN'?'APP':'TOKEN',async()=>{})).rejects.toThrow('unavailable');
  }
 });
+it('close immediately erases bytes held by stalled post-read generation verification',async()=>{
+ const f=fixture();let entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.generation.mockResolvedValueOnce(generation).mockImplementationOnce(()=>{entered();return new Promise<string>(()=>{});});const pending=f.use.withValue('TOKEN',async()=>{}),refused=expect(pending).rejects.toThrow('unavailable');await started;expect(f.buffers[0].some(byte=>byte!==0)).toBe(true);f.use.close();expect(f.buffers[0].every(byte=>byte===0)).toBe(true);f.clock.advance(5000);await refused;
+});
