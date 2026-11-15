@@ -116,7 +116,7 @@ it('releases home ownership even when a synchronous reader shutdown fails', asyn
   await expect(app.close()).rejects.toThrow('injected reader close');
   const restarted=await start(h);await restarted.close();
 });
-it('reads a direct target beyond the bounded list and closes transports before reader callbacks and database', async()=>{
+it('reads the complete list and a direct target, then closes transports before reader callbacks and database', async()=>{
   const h=home();await store(h);const path=join(h,'commons/knowledge.db');
   const {default:Database}=await import('better-sqlite3');const source=new Database(path);
   source.prepare("UPDATE pages SET updated='2000-01-01T00:00:00Z'").run();
@@ -125,7 +125,7 @@ it('reads a direct target beyond the bounded list and closes transports before r
   const observe=(app:ReturnType<typeof createFoundation>)=>app.onClose(()=>{expect(existsSync(touchSocketPath(join(h,'commons')))).toBe(false);expect(app.db.open).toBe(true);observed=true;});
   const app=await start(h,{install:observe});
   const list=app.operations.call('direct',owner,'mind.knowledgeList',{});expect(list).toMatchObject({ok:true});
-  if(list.ok)expect((list.value as {pages:Array<{slug:string}>}).pages.some(p=>p.slug==='fact')).toBe(false);
+  if(list.ok)expect((list.value as {pages:Array<{slug:string}>}).pages.some(p=>p.slug==='fact')).toBe(true);
   const ws=new WebSocket(app.url.replace('http:','ws:')+'/live');await once(ws,'open');const reply=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'knowledge',scope:'fact'}));
   expect(JSON.parse((await reply)[0].toString())).toMatchObject({records:[{id:'fact',title:'A fact'}]});ws.close();
   await app.close();expect(observed).toBe(true);observed=false;

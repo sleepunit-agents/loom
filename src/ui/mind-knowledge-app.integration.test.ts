@@ -1,9 +1,9 @@
 /** One two-window proof; CI alone runs Chrome and retains six look/width images. */
 import { expect, it } from 'vitest';
-import { existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { chromium } from 'playwright-core';
+import { chromium, type Route } from 'playwright-core';
 import { startLoom } from '../foundation.js';
 import { createFoundation } from '../core/app.js';
 import { FakeClock } from '../core/clock.js';
@@ -28,7 +28,12 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
+    const manifest=JSON.parse(readFileSync(join(root,'.vite/manifest.json'),'utf8')) as Record<string,{file:string}>;
+    const barAsset=manifest['src/pieces/attention/bar.tsx']?.file;
+    if(!barAsset)throw Error('Knowledge fixture needs the lazy status bar asset');
+    let holdBar=true;const barRequests:Route[]=[];
     const a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});
+    await b.route(`**/app/${barAsset}`,route=>{if(holdBar)barRequests.push(route);else return route.continue();});
     // Keep fixture diagnostics only on failure; never include sign-in links or cookies.
     const diagnostics:string[]=[];
     for(const [name,page] of [['desktop',a],['phone',b]] as const){
@@ -47,7 +52,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
       const signedIn=a.waitForResponse(response=>response.request().method()==='POST');
       await a.getByRole('button',{name:'Sign in',exact:true}).click();
       expect((await signedIn).status()).toBe(303);
-      await Promise.all([a.goto(`${app.url}/p/knowledge-preview`),b.goto(`${app.url}/p/knowledge-preview`)]);
+      await Promise.all([a.goto(`${app.url}/p/knowledge-preview`),b.goto(`${app.url}/p/knowledge-preview`,{waitUntil:'domcontentloaded'})]);
     };
     await signIn();
     const row=(p:typeof a,title:string)=>p.locator('[data-split-row]').filter({hasText:title});
@@ -65,7 +70,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     expect(await b.locator('article dd').textContent()).toContain('Six voices');
     await a.getByRole('button',{name:'Still true',exact:true}).click();
     await expect.poll(()=>b.getByText('Last check by owner',{exact:true}).count()).toBe(1);
-    await b.reload();await expect.poll(()=>b.getByText('Last check by owner',{exact:true}).count()).toBe(1);
+    await b.reload({waitUntil:'domcontentloaded'});await expect.poll(()=>b.getByText('Last check by owner',{exact:true}).count()).toBe(1);
     expect(await source.getVerifications('six-voices')).toHaveLength(1);
     await a.getByRole('button',{name:'Check again',exact:true}).click();
     await expect.poll(()=>b.getByText(/Asked to be checked again/).count()).toBe(1);
@@ -75,28 +80,62 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
       const link=document.querySelector('article a[href="https://loom.invalid/knowledge/clock-tempo"]');
       const trace:string[]=[];
       (window as unknown as {knowledgeClickTrace:string[]}).knowledgeClickTrace=trace;
-      const snapshot=(type:string,event:Event)=>{
-        if(trace.length>=32)return;
-        const target=event.target instanceof Element ? event.target : null;
-        const rect=link?.getBoundingClientRect();
-        const reader=link?.closest('.loom-split__reader');
-        const point=event instanceof MouseEvent ? [event.clientX,event.clientY] : undefined;
-        // Geometry and fixed role flags only: never retain text, URLs or HTML.
-        trace.push(JSON.stringify({type,citation:target?.closest('a')===link,
-          connected:!!link?.isConnected,prevented:event.defaultPrevented,
-          target:target===reader?'reader':target?.closest('.loom-prose')?'prose':target?.closest('article')?'article':'other',
-          point,rect:rect?[rect.x,rect.y,rect.width,rect.height]:null,
-          readerScroll:reader?.scrollTop,pageScroll:scrollY,
-          focused:document.activeElement===link}));
+      const tile=link?.closest('[data-tile]'),reader=link?.closest('.loom-split__reader');
+      const header=link?.closest('article')?.querySelector('header');
+      let complete=false;
+      const geometry=(element:Element|null|undefined)=>{
+        const r=element?.getBoundingClientRect();return r?[r.x,r.y,r.width,r.height]:null;
       };
-      for(const type of ['pointerdown','mousedown','focusin','pointerup','mouseup','click','scroll']){
-        document.addEventListener(type,event=>{
+      const snapshot=(type:string,event?:Event)=>{
+        if(complete||trace.length>=32)return;
+        const target=event?.target instanceof Element?event.target:null;
+        const look=document.documentElement.dataset.look;
+        // Capture before/hover geometry, ancestor scroll, header row heights and
+        // font readiness. Link focus and tile focus are separate fixed flags.
+        trace.push(JSON.stringify({type,citation:target?.closest('a')===link,
+          connected:!!link?.isConnected,prevented:event?.defaultPrevented??false,
+          target:target===reader?'reader':target?.closest('.loom-prose')?'prose':target?.closest('article')?'article':'other',
+          point:event instanceof MouseEvent?[event.clientX,event.clientY]:undefined,rect:geometry(link),
+          readerScroll:reader?.scrollTop,pageScroll:scrollY,
+          focused:document.activeElement===link,tileFocused:tile?.hasAttribute('data-focused')??false,
+          fontsReady:document.fonts.status==='loaded',look:['neon','lowlight','daylight'].includes(look??'')?look:'other',
+          header:geometry(header),paragraphs:[...header?.querySelectorAll('p')??[]].map(geometry),
+          ancestors:['.loom-split__reader','.loom-split','.next-page','.next-tile','.next-ground'].map(selector=>{
+            const element=link?.closest(selector);return {rect:geometry(element),scroll:element?[element.scrollLeft,element.scrollTop]:null};
+          })}));
+      };
+      const observer=new MutationObserver(()=>snapshot('header mutation'));
+      if(header)observer.observe(header,{subtree:true,childList:true,characterData:true});
+      const fonts=()=>snapshot('fonts loaded');document.fonts.addEventListener('loadingdone',fonts);
+      const listeners:{type:string;handler:(event:Event)=>void}[]=[];
+      snapshot('before click');
+      for(const type of ['pointerover','pointermove','pointerdown','mousedown','focusin','pointerup','mouseup','click','scroll']){
+        const handler=(event:Event)=>{
           snapshot(type,event);
-          if(type==='click'||type==='pointerdown')queueMicrotask(()=>snapshot(`after ${type}`,event));
-        },{capture:true});
+          if(type==='click'||type==='pointerdown')queueMicrotask(()=>{
+            snapshot(`after ${type}`,event);
+            if(type==='click'){
+              complete=true;observer.disconnect();document.fonts.removeEventListener('loadingdone',fonts);
+              for(const listener of listeners)document.removeEventListener(listener.type,listener.handler,true);
+            }
+          });
+        };
+        listeners.push({type,handler});document.addEventListener(type,handler,{capture:true});
       }
     });
-    await b.locator('article a[href^="https://loom.invalid/knowledge/"]').click();
+    const citation=b.locator('article a[href^="https://loom.invalid/knowledge/"]');
+    await citation.scrollIntoViewIfNeeded();
+    await expect.poll(()=>barRequests.some(route=>!route.request().failure())).toBe(true);
+    const before=await b.locator('.next-ground').boundingBox(),hit=await citation.boundingBox();
+    if(!before||!hit)throw Error('Knowledge fixture citation is not visible');
+    await b.mouse.move(hit.x+hit.width/2,hit.y+hit.height/2);await b.mouse.down();
+    try {
+      // Force the module to arrive between press and release, without a sleep.
+      holdBar=false;await Promise.all(barRequests.splice(0).filter(route=>!route.request().failure()).map(route=>route.continue()));
+      await expect.poll(()=>b.locator('.next-status-bar').count()).toBe(1);
+      const after=await b.locator('.next-ground').boundingBox();
+      expect(after?.y).toBe(before.y);
+    } finally {await b.mouse.up();}
     await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/knowledge-preview/page/clock-tempo');
     await expect.poll(()=>b.getByRole('heading',{name:'Clock tempo',exact:true}).count()).toBe(1);
     await b.locator('article').getByRole('button',{name:'Six voices',exact:true}).click();

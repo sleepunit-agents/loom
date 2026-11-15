@@ -68,3 +68,17 @@ it('keeps moved conversations without a digest in the interval and reads more th
  f.db.update(conversations).set({member:'teammate'}).where(eq(conversations.id,cv.id)).run();
  expect(f.reader.conversation(owner,'fiction',cv.id)).toMatchObject({member:'teammate'});
 });
+
+it('schedules the earliest future digest or conversation timestamp at both skew boundaries',()=>{
+ const f=fixture(),now=Date.parse('2026-11-14T18:00:00Z');
+ expect(f.reader.nextDeadline?.(now)).toBeUndefined();
+ f.at(new Date(now+61000).toISOString());
+ const cv=f.service.open({agent:'fiction',venue:'loom',place:'fiction',label:'Future fiction'});
+ f.service.digest({conversation:cv.id,run:'future',summary:'Future fictional digest'});
+ f.db.update(conversations).set({lastAt:new Date(now+62000).toISOString()}).where(eq(conversations.id,cv.id)).run();
+ expect(f.reader.nextDeadline?.(now)).toBe(now+1000);
+ expect(f.reader.nextDeadline?.(now+1000)).toBe(now+1001);
+ expect(f.reader.nextDeadline?.(now+1001)).toBe(now+2000);
+ expect(f.reader.nextDeadline?.(now+2000)).toBe(now+2001);
+ expect(f.reader.nextDeadline?.(now+2001)).toBeUndefined();
+});
