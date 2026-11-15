@@ -98,3 +98,23 @@ it('rejects missing, duplicate or empty target inputs before acquiring any autho
  for(const targets of [[],[{id:'same',words:'a'},{id:'same',words:'b'}],[{id:'',words:'a'}],[{id:'one',words:' '}],null])await expect(nativeProtocolSmoke({...context,targets})).rejects.toThrow('targets must');
  expect(context.db.prepare("SELECT fingerprint FROM tokens WHERE label LIKE 'Native protocol fixture %'").all()).toEqual([]);
 }));
+
+it('refuses a target subset before leasing or acquiring authority',{timeout:20_000},()=>household(async context=>{
+ const id=context.example.runtime.publicJob.id;
+ await expect(nativeProtocolSmoke({...context,targets:[{id,words:'Inspect the shared garden path'}]})).rejects.toThrow('all queued Moss jobs');
+ expect(context.db.prepare("SELECT state FROM jobs WHERE agent='moss'").all()).toEqual([{state:'queued'},{state:'queued'}]);
+ expect(context.db.prepare("SELECT fingerprint FROM tokens WHERE label LIKE 'Native protocol fixture %'").all()).toEqual([]);
+}));
+it('snapshots target IDs and input words across asynchronous execution without disclosing them',{timeout:20_000},()=>household(async context=>{
+ const targets=[{id:context.example.runtime.job.id,words:'Check the shed hinges before the example rain.'},{id:context.example.runtime.publicJob.id,words:'Inspect the shared garden path'}];let changed=false;
+ const off=context.app.writes.observe(()=>{if(!changed){changed=true;targets[0].id='mutated';targets[0].words='CHANGED_PRIVATE_WORDS';targets.push({id:'another',words:'OTHER_PRIVATE_WORDS'});}});
+ let result;try{result=await nativeProtocolSmoke({...context,targets});}finally{off();}
+ expect(changed).toBe(true);expect(result.runs).toHaveLength(2);expect(result.runs.every(row=>row.hadInput)).toBe(true);
+ const evidence=JSON.stringify(result);expect(evidence).not.toContain('Check the shed hinges');expect(evidence).not.toContain('PRIVATE_WORDS');expect(evidence).not.toMatch(/(?:body_[a-f0-9]{64}|loom_[A-Za-z0-9_-]{43})/);
+}));
+it('keeps expected input and generated credentials out of forced failure diagnostics',{timeout:20_000},()=>household(async context=>{
+ const marker='DISTINCT_PRIVATE_TARGET_WORDS';let diagnostic='';
+ try{await nativeProtocolSmoke({...context,targets:[{id:context.example.runtime.job.id,words:marker},{id:context.example.runtime.publicJob.id,words:marker}]});}catch(error){diagnostic=String(error);}
+ expect(diagnostic).toContain('did not complete');expect(diagnostic).not.toContain(marker);expect(diagnostic).not.toMatch(/(?:body_[a-f0-9]{64}|loom_[A-Za-z0-9_-]{43})/);
+ restored(context.db,context.example.runtime.box);
+}));
