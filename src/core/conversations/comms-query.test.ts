@@ -3,7 +3,7 @@ import { eq, sql, type SQL } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
 import { createDataSchema } from '../data/database.js';
-import { agents, conversations, household, members, messages, threads } from '../data/schema.js';
+import { agents, conversations, household, memberAgents, members, messages, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 import { CommsQueries, commsQueryFields } from './comms-query.js';
 const clients: Database.Database[] = [];
@@ -135,4 +135,92 @@ it('never decrypts thread words at an equal whole-second stored deadline', async
   f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
   const row = f.service.messages(alice, f.thread.id, undefined, 1)[0];
   expect(await f.service.words(alice, row)).toBeNull(); expect(f.opens()).toBe(0);
+});
+
+it('filters matching thread titles before paging and counts the whole personal mailbox', async () => {
+  const f = await fixture();
+  for (let n = 0; n < 110; n++) f.comms.threads.open({ member: 'alice', agent: 'art', title: `Other ${n}` });
+  const matching = f.comms.threads.open({ member: 'alice', agent: 'mark', title: 'Needle title' });
+  const archived = f.comms.threads.open({ member: 'alice', agent: 'art', title: 'Needle archived' }); f.comms.threads.archive(archived.id, true);
+  f.comms.threads.open({ member: 'bob', agent: 'art', title: 'Needle Bob' });
+  expect(f.service.list(alice, { search: 'NEEDLE', limit: 1 }).map(row => row.id)).toEqual([matching.id]);
+  expect(f.service.list(alice, { search: 'Needle', archived: true }).map(row => row.id)).toEqual([archived.id]);
+  expect(f.service.folders(alice)).toEqual({ threads: 112, archived: 1 });
+  expect(f.service.folders(owner)).toEqual({ threads: 0, archived: 0 });
+  f.revoke(); expect(f.service.folders(alice)).toEqual({ threads: 0, archived: 0 });
+});
+it('projects a current effective word deadline without decrypting and fails closed on changed metadata or policy', async () => {
+  const f = await fixture(), row = f.service.messages(alice, f.thread.id)[0];
+  const stored = f.service.wordsKeepUntil(alice, row);
+  expect(stored).toBe('2026-11-28T18:00:00.000Z');
+  f.db.insert(household).values({ commsDays: 1 }).run();
+  expect(f.service.wordsKeepUntil(alice, row)).toBe('2026-11-15T18:00:00.000Z');
+  f.db.update(messages).set({ keepUntil: '2026-11-15T17:59:59Z' }).where(eq(messages.seq, row.seq)).run();
+  expect(f.service.wordsKeepUntil(alice, row)).toBeNull();
+  const latest = f.service.messages(alice, f.thread.id)[0];
+  expect(f.service.wordsKeepUntil(alice, latest)).toBe('2026-11-15T17:59:59.000Z');
+  expect(f.opens()).toBe(0);
+  f.revoke(); expect(f.service.wordsKeepUntil(alice, latest)).toBeNull();
+});
+it('projects Home from the current member and owned agents, counting reply threads across the whole mailbox', async () => {
+  const f = await fixture();
+  f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
+  const archived = f.comms.threads.open({ member: 'alice', agent: 'art', title: 'Archived' });
+  await f.comms.send({ thread: archived.id, sender: 'art', kind: 'reply', words: 'Archived reply' });
+  f.comms.threads.archive(archived.id, true);
+  const bob = f.comms.threads.open({ member: 'bob', agent: 'art', title: 'Other private' });
+  await f.comms.send({ thread: bob.id, sender: 'art', kind: 'reply', words: 'Other reply' });
+  const notOwned = f.comms.threads.open({ member: 'alice', agent: 'mark', title: 'Not owned now' });
+  await f.comms.send({ thread: notOwned.id, sender: 'mark', kind: 'reply', words: 'Not owned reply' });
+  const latest = f.comms.threads.open({ id: 'th:latest', member: 'alice', agent: 'art', title: 'Latest' });
+  await f.comms.send({ thread: latest.id, sender: 'art', kind: 'card', words: 'Progress is not unread' });
+  await f.comms.send({ thread: latest.id, sender: 'alice', kind: 'message', words: 'Nor is my own message' });
+  f.db.update(threads).set({ lastAt: '2026-11-14T18:02:00.000Z' }).where(eq(threads.id, latest.id)).run();
+  // More than a Comms page: Home counts unread threads, rather than replies or
+  // just the first 100 rows. Repeated replies still count once.
+  for (let n = 0; n < 101; n++) {
+    const thread = f.comms.threads.open({ id: `th:bulk${n}`, member: 'alice', agent: 'art', title: 'Older' });
+    await f.comms.send({ thread: thread.id, sender: 'art', kind: 'reply', words: 'Unread' });
+    await f.comms.send({ thread: thread.id, sender: 'art', kind: 'reply', words: 'Still one unread thread' });
+  }
+  f.db.update(threads).set({ lastAt: '2026-11-14T18:01:00.000Z' }).where(eq(threads.id, f.thread.id)).run();
+  f.statements.splice(0);
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: commsQueryFields(f.service) }) });
+  const result = await graphql({ schema, source: '{ homeComms { member agents summaries { agent unread last { thread title at } first { thread } } } }', contextValue: { viewer: alice } });
+  expect(result.errors).toBeUndefined();
+  expect(JSON.parse(JSON.stringify(result.data))).toEqual({ homeComms: { member: 'alice', agents: ['art'], summaries: [
+    { agent: 'art', unread: 102, last: { thread: latest.id, title: 'Latest', at: '2026-11-14T18:02:00.000Z' }, first: { thread: f.thread.id } },
+  ] } });
+  expect(f.opens()).toBe(0);
+  expect(f.statements.join('\n')).not.toContain('"words"');
+  expect(f.statements.filter(statement => /^\s*(insert|update|delete|replace)\b/i.test(statement))).toEqual([]);
+  f.comms.threads.read(f.thread.id, 3);
+  expect(f.service.home(alice)?.summaries[0].unread).toBe(101);
+  f.db.insert(memberAgents).values({ member: 'alice', agent: 'mark' }).run();
+  expect(f.service.home(alice)?.agents).toEqual(['art', 'mark']);
+  f.db.delete(memberAgents).run();
+  expect(f.service.home(alice)).toEqual({ member: 'alice', agents: [], summaries: [] });
+});
+it('keeps Home personal for household owners and refuses missing/nonmember viewers or revoked read policy', async () => {
+  const f = await fixture();
+  f.db.insert(memberAgents).values({ member: 'owner', agent: 'art' }).run();
+  expect(f.service.home(owner)).toEqual({ member: 'owner', agents: ['art'], summaries: [{ agent: 'art', unread: 0, last: null, first: null }] });
+  f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
+  f.revoke();
+  expect(f.service.home(alice)?.summaries).toEqual([{ agent: 'art', unread: 0, last: null, first: null }]);
+  for (const viewer of [{ kind: 'member', id: 'missing' }, { kind: 'agent', id: 'art' }, { kind: 'runner', id: 'box' }, { kind: 'service', id: 'service' }] as const) expect(f.service.home(viewer)).toBeNull();
+});
+
+it('orders Home by instant across timestamp precision and ignores replies from another sender', async () => {
+  const f = await fixture();
+  f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
+  const newer = f.comms.threads.open({ id: 'th:newer', member: 'alice', agent: 'art', title: 'Newer' });
+  const wrongSender = f.comms.threads.open({ id: 'th:wrong', member: 'alice', agent: 'art', title: 'Wrong sender' });
+  await f.comms.send({ thread: newer.id, sender: 'art', kind: 'reply', words: 'Newer reply' });
+  await f.comms.send({ thread: wrongSender.id, sender: 'art', kind: 'reply', words: 'Changed sender' });
+  f.db.update(messages).set({ sender: 'mark' }).where(eq(messages.thread, wrongSender.id)).run();
+  f.db.update(threads).set({ lastAt: '2026-11-14T18:00:00Z' }).where(eq(threads.id, f.thread.id)).run();
+  f.db.update(threads).set({ lastAt: '2026-11-14T18:00:00.500Z' }).where(eq(threads.id, newer.id)).run();
+  f.db.update(threads).set({ lastAt: '2026-11-14T17:59:00Z' }).where(eq(threads.id, wrongSender.id)).run();
+  expect(f.service.home(alice)?.summaries[0]).toMatchObject({ unread: 2, last: { thread: newer.id }, first: { thread: newer.id } });
 });

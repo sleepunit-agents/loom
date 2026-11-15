@@ -5,7 +5,7 @@ import { isIP } from 'node:net';
 import type { Duplex } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { dockerEngine, DockerResponseError, type DockerEngine } from './docker-engine.js';
-import { commandWorkerExecutor, type WorkerCommand } from './worker-process.js';
+import { commandWorkerExecutor, workerRunner, type WorkerRunnerConfig, type WorkerCommand } from './worker-process.js';
 import type { WorkerAssignment, WorkerBody, WorkerExecutor } from './worker.js';
 
 export interface ContainerConfig {
@@ -87,19 +87,20 @@ function output(socket: Duplex, signal: AbortSignal) {
   return { done, tail: () => tail };
 }
 
-export function containerWorkerExecutor(config: {
-  build: WorkerCommand; buildTimeoutMs?: number; runners: Readonly<Record<string, WorkerCommand>>;
+export function containerWorkerExecutor(config: WorkerRunnerConfig & {
+  build: WorkerCommand; buildTimeoutMs?: number;
   container: ContainerConfig;
 }, dependencies: { engine?: DockerEngine; builder?: WorkerExecutor; name?: () => string } = {}): WorkerExecutor {
   const fixed = structuredClone(config);
+  const runner = workerRunner(fixed);
   const engine = dependencies.engine ?? dockerEngine(fixed.container.socket);
   const builder = dependencies.builder ?? commandWorkerExecutor(fixed);
   const setupMs = deadline(fixed.container.setupTimeoutMs, 30_000);
   const cleanupMs = deadline(fixed.container.cleanupTimeoutMs, 30_000);
   return {
-    build: (job, signal) => builder.build(job, signal),
+    build: (job, signal) => { runner(job); return builder.build(job, signal); },
     start(job, image, signal): WorkerBody {
-      const assignment = structuredClone(job), plan = fixed.runners[assignment.harness];
+      const assignment = structuredClone(job), plan = runner(assignment);
       if (!plan || signal.aborted) throw new Error('Container runner unavailable');
       const spec = createSpec(assignment, image, plan, fixed.container);
       const name = `loom-${(dependencies.name ?? randomUUID)()}`;

@@ -25,7 +25,7 @@ describe('authenticated bridge channel metadata', () => {
   it.each([1, 3])('classifies Discord direct/group DM type %s without a guild', type => {
     const cache = new BridgeChannels(), writer = cache.bind('c', { platform: 'discord', workspace: 'guild' });
     writer.put('dm', { id: 'dm', type, guild_id: null });
-    expect(cache.discord('c', 'dm')).toEqual({ id: 'dm', kind: 'dm' });
+    expect(cache.discord('c', 'dm')).toEqual({ id: 'dm', kind: 'dm', ...(type === 3 ? { group: true } : {}) });
     expect(() => writer.put('dm', { id: 'dm', type, guild_id: 'guild' })).toThrow('guild');
     expect(cache.discord('c', 'dm')).toBeUndefined();
   });

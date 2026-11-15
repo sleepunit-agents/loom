@@ -275,6 +275,28 @@ it('serves real Memory and Work through the same HTTP and socket caller, includi
   expect((await closed)[0]).toBe(4403);
 });
 
+it('mounts Measuring on both shared doors and updates current owner visibility', async () => {
+ const f = await setup();
+ f.db.insert(s.timingDays).values({day:'2026-11-14',kind:'request',name:'graphql',count:3,totalMs:12,slowestMs:6,typicalMs:4}).run();
+ f.db.insert(s.measuringSettings).values({singleton:1,on:true,sendOutside:false,keepDays:90}).run();
+ const query = '{ timingDays { kind name count } measuringSettings { on } }';
+ const post=()=>f.data.http.request('/graphql',{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({query})});
+ expect(await (await post()).json()).toEqual({data:{timingDays:[],measuringSettings:[]}});
+ const ws=await f.open();
+ const first=await read(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'measuring',payload:{query:'subscription($query:String!){observe(query:$query){revision patches{path value removed}}}',variables:{query}}})));
+ expect(first.payload.data.observe.patches[0].value).toEqual({timingDays:[],measuringSettings:[]});
+ const changed=await read(ws,()=>f.data.writes.run(()=>f.client.prepare("UPDATE members SET role='owner' WHERE id='sam'").run()));
+ expect(changed.payload.data.observe.patches).toContainEqual(expect.objectContaining({path:['timingDays',0]}));
+ expect(await (await post()).json()).toEqual({data:{timingDays:[{kind:'request',name:'graphql',count:3}],measuringSettings:[{on:true}]}});
+ f.db.insert(s.agents).values({id:'art',about:'',markBg:'#fff',markFg:'#000',faceShape:'pebble',faceEyes:'dot'}).run();
+ const agentToken='m'.repeat(64);
+ f.db.insert(s.tokens).values({fingerprint:hash(agentToken),label:'Art',kind:'agent',agent:'art',createdAt:new Date(f.clock.now()).toISOString()}).run();
+ const agent=await f.open(f.url,{authorization:`Bearer ${agentToken}`});
+ const result=await read(agent,()=>agent.send(JSON.stringify({type:'subscribe',id:'measure-agent',payload:{query:'subscription($query:String!){observe(query:$query){revision patches{path value removed}}}',variables:{query}}})));
+ expect(result.payload.data.observe.patches[0].value).toEqual({timingDays:[{kind:'request',name:'graphql',count:3}],measuringSettings:[]});
+
+});
+
 it.each(['http', 'socket', 'observe'])('retains parallel callback work through composition shutdown (%s)', async mode => {
   const { GraphQLString, GraphQLNonNull } = await import('graphql/index.js');
   let began!: () => void, release!: () => void;
@@ -347,4 +369,50 @@ it('stops late authentication database reads when the root withdraws admission d
     expect([401, 503]).toContain((await pending).status); await closing;
     expect(lateReads).toEqual([]);
   } finally { release(); spy.mockRestore(); }
+
+});
+
+it.each(['http', 'socket', 'observe'])('fences an already-selected private Task after owner demotion (%s)', async mode => {
+  let began!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const f = await setup({ heldPublic: { type: GraphQLString, async resolve() { began(); await held; return 'public'; } } });
+  f.data.writes.run(() => {
+    f.client.exec("UPDATE members SET role='owner' WHERE id='sam'; UPDATE tasks SET project=NULL,title='PRIVATE TASK LABEL' WHERE id='pump'");
+  });
+  const selectionQuery = '{ tasks { id title } heldPublic }';
+  try {
+    if (mode === 'http') {
+      const response = f.data.http.request('/graphql', { method: 'POST', headers: {
+        authorization: 'Bearer '+token, 'content-type': 'application/json',
+      }, body: JSON.stringify({ query: selectionQuery }) });
+      await started;
+      f.data.writes.run(() => f.client.exec("UPDATE members SET role='member' WHERE id='sam'"));
+      release();
+      const result = await response;
+      expect(result.status).toBe(503);
+      expect(await result.text()).not.toContain('PRIVATE TASK LABEL');
+    } else {
+      const ws = await f.open(), frames: string[] = [];
+      ws.on('message', frame => frames.push(String(frame)));
+      const ended = Promise.race([
+        once(ws, 'close').then(args => ({ kind: 'closed' as const, code: args[0] })),
+        once(ws, 'message').then(args => ({ kind: 'message' as const, frame: JSON.parse(String(args[0])) })),
+      ]);
+      ws.send(JSON.stringify(mode === 'socket'
+        ? { type: 'subscribe', id: 'private-task', payload: { query: selectionQuery } }
+        : { ...selection, payload: { ...selection.payload, variables: { query: selectionQuery } } }));
+      await started;
+      f.data.writes.run(() => f.client.exec("UPDATE members SET role='member' WHERE id='sam'"));
+      release();
+      const result = await ended;
+      if (result.kind === 'closed') expect(result.code).toBe(1012);
+      else {
+        expect(mode).toBe('observe');
+        expect(result.frame.payload.data.observe).toMatchObject({ revision: 1, patches: [{ path: [], value: { tasks: [], heldPublic: 'public' } }] });
+      }
+      expect(frames.join('')).not.toContain('PRIVATE TASK LABEL');
+    }
+    expect(await (await f.post({ authorization: 'Bearer '+token })).json()).toEqual({ data: { tasks: [] } });
+  } finally { release(); }
 });

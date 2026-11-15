@@ -1,4 +1,4 @@
-/** One two-window proof; CI alone runs Chrome and retains six look/width images. */
+/** One two-window proof; CI alone runs Chrome. LOOM_SHOTS retains six look/width images. */
 import { expect, it } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -24,7 +24,8 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
   await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-11-10T12:00:00Z',body:'Set the clock tempo with params.'});
   await source.writePage({slug:'backup',title:'Nightly backup',domain:'ours/homelab',verified_at:'2026-11-10T12:00:00Z',body:'Backups run overnight.'});
   const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
-  const app=await startLoom({home,next:true,clock,webRoot:root,sharing:()=>({members:{owner:{owner:true,agents:['art']}},projects:{},services:{}})});
+  // Aging pages must not replay a month of denied maintenance sweeps.
+  const app=await startLoom({home,next:true,clock,webRoot:root,sharing:()=>({members:{owner:{owner:true,agents:['art']}},projects:{},services:{attention:{types:['attention.ask'],operations:['attention.sweepWaits','attention.pendingWaits']}}})});
   const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   try{
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
@@ -140,13 +141,15 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await expect.poll(()=>b.getByRole('heading',{name:'Clock tempo',exact:true}).count()).toBe(1);
     await b.locator('article').getByRole('button',{name:'Six voices',exact:true}).click();
     await expect.poll(()=>b.getByRole('heading',{name:'Six voices',exact:true}).count()).toBe(1);
-    const shots=resolve('artifacts/knowledge-app');mkdirSync(shots,{recursive:true});
+    // Full-suite runs prove behavior and geometry; capture PNG evidence only
+    // when requested, as in the other shared-app browser proofs.
+    const shots=process.env.LOOM_SHOTS;if(shots)mkdirSync(shots,{recursive:true});
     for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
       const target=width<640?b:a;
       await target.setViewportSize({width,height:900});
       await target.evaluate(look=>{document.documentElement.dataset.look=look;document.documentElement.dataset.mode=look==='daylight'?'light':'dark';document.documentElement.dataset.motion='reduce';},look);
       await expect.poll(()=>target.locator('.loom-split').getAttribute('data-mode')).toBe(width<640?'one':'three');
-      await target.screenshot({path:join(shots,`knowledge-${look}-${width}.png`),fullPage:true,animations:'disabled'});
+      if(shots)await target.screenshot({path:join(shots,`knowledge-${look}-${width}.png`),fullPage:true,animations:'disabled'});
     }
     await b.setViewportSize({width:390,height:900});await b.getByRole('button',{name:'Knowledge',exact:true}).last().click();
     await expect.poll(()=>row(b,'Clock tempo').isVisible()).toBe(true);

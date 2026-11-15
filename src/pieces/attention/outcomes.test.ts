@@ -19,7 +19,8 @@ const alice:Viewer={kind:'member',id:'alice'},bob:Viewer={kind:'member',id:'bob'
 async function setup(upgrade=false, householdMembers=false) {
   const home=mkdtempSync(join(tmpdir(),'attention-outcomes-'));fixture(home);
   const clock=new FakeClock(), types=new Map<string,RecordType>();
-  const access={members:{alice:{owner:true,agents:['art']},bob:{owner:false,agents:['art']}},projects:{},services:{}};
+  // Keep installed maintenance admitted while receipt tests advance thirty days.
+  const access={members:{alice:{owner:true,agents:['art']},bob:{owner:false,agents:['art']}},projects:{},services:{attention:{types:['attention.ask'],operations:['attention.sweepWaits','attention.pendingWaits']}}};
   const app=await startLoom({home,next:true,host:'127.0.0.1',port:0,stdout:()=>{},clock,sharing:()=>access,
     authenticate:req=>({viewer:req.headers.authorization==='bob'?bob:alice,window:req.headers.authorization!=='api',valid:()=>true}),
     install:app=>{if(householdMembers)new HouseholdDatabase(app.db).change(home,raw=>{raw.members=[{person:'alice',role:'owner',agents:'*'},{person:'bob',role:'owner',agents:'*'}];delete raw.owner;});const register=app.live.register.bind(app.live);app.live.register=t=>{types.set(t.name,t);register(t);};if(upgrade){migrate(app.db,'attention',attentionMigrations.filter(m=>m.number<=6));app.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run('old',JSON.stringify({id:'old',agent:'art',ask:'Existing question',source:{kind:'piece',id:'fixture'},state:'open',createdAt:1,changedAt:1}));}installAttention(app.db,app.operations,app.live,()=>access);installTasks(app.db,app.operations,app.live,()=>access);},
@@ -72,7 +73,7 @@ it('publishes to a second window, persists across reopening, and never creates a
   expect(list()[0].readAt).toBe(firstRead);
   expect(app.db.prepare('SELECT * FROM attention_read_marks').all()).toEqual([]);
   const expected=list();await app.close();
-  const next=await startLoom({home,next:true,clock,stdout:()=>{},sharing:()=>({members:{alice:{owner:true,agents:['art']}},projects:{},services:{}})});
+  const next=await startLoom({home,next:true,clock,stdout:()=>{},sharing:()=>({members:{alice:{owner:true,agents:['art']}},projects:{},services:{attention:{types:['attention.ask'],operations:['attention.sweepWaits','attention.pendingWaits']}}})});
   cleanup.push(next.close);
   expect(next.operations.call('direct',alice,'attention.outcomes',{})).toEqual({ok:true,value:expected});
 });
@@ -129,9 +130,10 @@ it('records every advertised Tasks mutation with its real result and commit orde
 });
 it('captures a new action after retry expiry even if the old outcome remains in the newest fifty',async()=>{
   const {clock,list,socket}=await setup(),client=await socket();
+  let now=clock.now();clock.now=()=>now;
   const input={cli:true,title:'An ordinary task',goal:'goal',why:'why'};
   const before=await client.call('tasks.create',input,'reusable');expect(before).toMatchObject({ok:true,value:{result:{ok:true}}});
-  const first=list()[0];clock.advance(30*86400_000);
+  const first=list()[0];now+=30*86400_000;
   const after=await client.call('tasks.create',input,'reusable');expect(after).toMatchObject({ok:true,value:{result:{ok:true}}});
   expect(after.value.result.id).not.toBe(before.value.result.id);
   expect(list()).toHaveLength(2);expect(list()[0].id).not.toBe(first.id);expect(list()[1]).toEqual(first);
@@ -162,14 +164,15 @@ it('preserves committed action and socket result when the optional notice transa
 
 it('uses the original retry deadline when a notice is repaired late, then captures reused-id work',async()=>{
   const {app,clock,list,socket}=await setup(),client=await socket();
+  let now=clock.now();clock.now=()=>now;
   const input={cli:true,title:'Delayed notice task',goal:'goal',why:'why'};
   app.db.exec("CREATE TRIGGER reject_late_notice BEFORE INSERT ON attention_outcomes BEGIN SELECT RAISE(ABORT, 'Fixture notice failure'); END;");
   const first=await client.call('tasks.create',input,'late-repair');expect(first).toMatchObject({ok:true,value:{result:{ok:true}}});expect(list()).toEqual([]);
-  clock.advance(29*86400_000);app.db.exec('DROP TRIGGER reject_late_notice');
+  now+=29*86400_000;app.db.exec('DROP TRIGGER reject_late_notice');
   expect(await client.call('tasks.create',input,'late-repair')).toEqual(first);expect(list()).toHaveLength(1);
   const originalDeadline=app.operations.retryDeadline(alice,'late-repair','tasks.create')!;
   expect(app.db.prepare('SELECT expires FROM attention_outcome_seen').get()).toEqual({expires:originalDeadline});
-  clock.advance(86400_000);
+  now+=86400_000;
   const second=await client.call('tasks.create',input,'late-repair');expect(second.value.result.id).not.toBe(first.value.result.id);expect(list()).toHaveLength(2);
 });
 it('retains a later success for the same id after an unreceipted rejection',async()=>{
@@ -195,9 +198,12 @@ it('does not let a conflicting-input retry poison repair of the original success
 });
 it('expires unreceipted rejection deduplication at exactly thirty days',async()=>{
   const {clock,list,socket}=await setup(),client=await socket();const input={id:'absent',answer:{kind:'yes'}};
+  // Move the receipt wall clock without running thirty days of unrelated
+  // periodic jobs. Incoming real socket calls still exercise the boundary.
+  let now=clock.now();clock.now=()=>now;
   await client.call('attention.answer',input,'rejection-expiry');const first=list()[0];
-  clock.advance(30*86400_000-1);await client.call('attention.answer',input,'rejection-expiry');expect(list()).toEqual([first]);
-  clock.advance(1);await client.call('attention.answer',input,'rejection-expiry');expect(list()).toHaveLength(2);expect(list()[1]).toEqual(first);
+  now+=30*86400_000-1;await client.call('attention.answer',input,'rejection-expiry');expect(list()).toEqual([first]);
+  now+=1;await client.call('attention.answer',input,'rejection-expiry');expect(list()).toHaveLength(2);expect(list()[1]).toEqual(first);
 });
 
 it('files other apps’ actual window mutations with fixed owning links, without authored result or error words',async()=>{
