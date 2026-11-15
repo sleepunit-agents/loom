@@ -43,7 +43,7 @@ it('builds fictitious data through services, then normal startup signs in and qu
   try{
    const read=async()=>{const response=await app!.http.request(app!.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+token.token,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id } changes { id project agent } approvals { id } }'})});return response.json();};
    expect(await read()).toEqual({data:{tasks:manifest.tasks.map((id:string)=>({id})),changes:[{id:manifest.change,project:'garden',agent:'fern'}],approvals:[]}});
-   app.writes.run(()=>app!.services.household.setProject({id:'garden',name:'Example garden',members:['alex'],agents:['fern','moss'],repositories:['example-house/garden']}));
+   app.writes.run(()=>app!.services.projects.save({id:'garden',name:'Example garden',members:['alex'],agents:['fern','moss'],repositories:['github:example-house/garden']}));
    expect(await read()).toEqual({data:{tasks:[],changes:[],approvals:[]}});
   }finally{app.writes.run(()=>app!.services.signin.revoke(token.fingerprint));}
   expect(result.data.modelAccounts).toEqual([expect.objectContaining({label:'Example model subscription'})]);

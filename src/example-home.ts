@@ -25,13 +25,12 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   ] as const) house.setAgent({id,about,markBg,markFg:'#ffffff',faceShape,faceEyes:'dot'});
   house.setMember({id:'alex',role:'owner',fullOwner:true,agents:['fern','moss']});
   house.setMember({id:'robin',role:'member',agents:['moss']});
-  house.setProject({id:'garden',name:'Example garden',members:['alex','robin'],agents:['fern','moss'],repositories:['example-house/garden']});
-  house.setGithubAccounts({agent:'fern',logins:['example-fern']});
   const commsKey=await loadKey(home);
   root=sharedRoot({db,clock,commsKey,originAllowed:()=>false,reportError:error=>{throw error;},
    modelRoles:()=>[{model:'example-model',provider:'example-provider',harness:'example-harness',series:'example'}]});
   await root.ready;
   const s=root.services,actor={kind:'member' as const,id:'alex'};
+  root.writes.run(()=>{s.projects.save({id:'garden',name:'Example garden',members:['alex','robin'],agents:['fern','moss'],repositories:['github:example-house/garden']});s.householdAccess.setAccounts({agent:'fern',github:['example-fern']});});
   const thread=s.comms!.threads.open({member:'alex',agent:'fern',title:'Repair the garden pump'});
   await s.comms!.send({thread:thread.id,sender:'alex',kind:'message',words:'Please compare replacement pumps for our example garden.'});
   await s.comms!.send({thread:thread.id,sender:'fern',kind:'reply',words:'Three fit. The quiet model costs 164 example dollars.'});
