@@ -71,8 +71,8 @@ it('binds every worker report to the authenticated live machine and refuses supp
   expect((await f.call('started', { job: queued.id, build: 'image', box: 'worker' })).status).toBe(400);
   expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state).toBe('starting');
   f.root.writes.run(() => f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'worker')).run());
-  expect((await f.call('next', {})).status).toBe(403);
-  expect((await f.call('started', { job: queued.id, build: 'image' })).status).toBe(403);
+  expect((await f.call('next', {})).status).toBe(401);
+  expect((await f.call('started', { job: queued.id, build: 'image' })).status).toBe(401);
 });
 it('refuses stale claim/heartbeat replay while report receipts remain atomic and bound to current box authority', async () => {
   const f = fixture(), queued = f.send();
@@ -93,7 +93,7 @@ it('refuses stale claim/heartbeat replay while report receipts remain atomic and
   expect((await f.call('started', start, 'start')).status).toBe(403); // a terminal body cannot regain running authority
   expect(await (await f.call('heartbeat', { job: queued.id, state: 'running' }, 'new-beat')).json()).toEqual({ ok: true, value: { active: false } });
   f.root.writes.run(() => f.db.update(boxes).set({ revokedAt: f.now() }).where(eq(boxes.id, 'worker')).run());
-  expect((await f.call('started', start, 'start')).status).toBe(403); expect((await f.call('finish', finish, 'finish')).status).toBe(403);
+  expect((await f.call('started', start, 'start')).status).toBe(401); expect((await f.call('finish', finish, 'finish')).status).toBe(401);
 });
 it('retains public output with ordinary replay conflict detection', async () => {
   const f = fixture(), queued = f.send('handoff'); await f.control.next(); await f.control.started(queued.id, 'image');

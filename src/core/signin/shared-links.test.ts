@@ -177,6 +177,9 @@ it.each([false, true])('keeps one committed session and reports notification fai
 it('expires an ordinary browser after the thirty-day lifetime', async () => {
   const f = fixture(), response = await f.redeem(await f.link()), cookie = response.headers.get('set-cookie')!.split(';', 1)[0];
   expect(response.headers.get('set-cookie')).toContain('Max-Age=2592000');
+  // No runtime work is present; isolate session expiry from periodic sweeps
+  // during this simulated thirty-day jump, retaining both boundary reads.
+  f.root.services.runtime.close();
   f.clock.advance(30 * 86400_000 - 1); expect((await f.read(cookie)).status).toBe(200);
   f.clock.advance(1); expect((await f.read(cookie)).status).toBe(401);
 });
