@@ -39,7 +39,8 @@ export function sharedRoot(options: {
   let closing: Promise<void> | undefined;
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
-    receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
+    receipts: new OperationResults(db), writes: data.writes,
+    reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   registerSharedPreferences(operations, db);
   const requests = new SecretRequests(db, now);

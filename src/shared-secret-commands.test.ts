@@ -1,14 +1,15 @@
+import { DataLive } from './core/data/live.js';
 import Database from 'better-sqlite3';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { members, tokens, agents, household, secrets, secretChanges, secretWriteJournal, secretRequests, secretRules, secretRuleAgents, secretGrants, jobs } from './core/data/schema.js';
+import { members, tokens, agents, household, secrets, secretChanges, secretWriteJournal, secretRequests, secretRules, secretRuleAgents, secretGrants, jobs, operationResults, inbox } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];
-afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
-function fixture(){
+afterEach(async()=>{vi.restoreAllMocks();for(const close of clean.splice(0).reverse())await close();});
+function fixture(keyByte=7){
  const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString();
  const db=createDataSchema(client),owner='a'.repeat(64),peer='b'.repeat(64);
  for(const [id,token] of [['owner',owner],['peer',peer]]){
@@ -21,12 +22,13 @@ function fixture(){
   set:vi.fn(async(who:{writeId:string},name:string,value:Buffer)=>{held.set(name,value.toString());receipts.add(who.writeId);}),
   remove:vi.fn(async(who:{writeId:string},name:string)=>{held.delete(name);receipts.add(who.writeId);}),
   recover:vi.fn(async(who:{writeId:string}):Promise<'committed'|'undone'>=>receipts.has(who.writeId)?'committed':'undone'),};
- const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},secretWrites:{holder,fingerprintKey:Buffer.alloc(32,7)}});clean.push(()=>root.close());
+ const errors:unknown[]=[];
+ const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:error=>{errors.push(error);},secretWrites:{holder,fingerprintKey:Buffer.alloc(32,keyByte)}});clean.push(()=>root.close());
  const call=async(op:string,input:unknown,token=owner,id=randomUUID())=>{
   const response=await root.http.request(`http://loom/api/secrets/${op}`,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input,id})});
   return {status:response.status,body:await response.json()};
  };
- return {db,client,clock,at,owner,peer,holder,held,root,call};
+ return {db,client,clock,at,owner,peer,holder,held,root,call,errors};
 }
 it('admits only owners, binds the authenticated actor and stores no raw value in main data or receipts',async()=>{
  const f=fixture(),input={id:randomUUID(),name:'TOKEN',mode:'add',value:'synthetic-private-value'};
@@ -94,4 +96,92 @@ it('the mounted recovery caller releases definitively undone writes, while holde
  expect((await f.call('set',input)).status).toBe(503);
  f.holder.set.mockImplementation(async(who,name,value)=>{f.held.set(name,value.toString());});
  expect((await f.call('set',{...input,id:randomUUID()})).status).toBe(200);
+});
+
+it('denies replay of an actually successful value receipt after owner revocation',async()=>{
+ const f=fixture(),input={id:randomUUID(),name:'TOKEN',mode:'add',value:'synthetic'},receipt=randomUUID();
+ expect((await f.call('set',input,f.owner,receipt)).status).toBe(200);
+ expect(f.db.select().from(operationResults).get()?.id).toBe(receipt);
+ f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();
+ expect((await f.call('set',input,f.owner,receipt)).status).toBe(403);expect(f.holder.set).toHaveBeenCalledOnce();
+});
+it('binds both persisted fingerprints to the private key and all value-write input fields',async()=>{
+ const input={id:randomUUID(),name:'TOKEN',mode:'add',description:'A description',value:'synthetic'};
+ const run=async(keyByte:number,change:Partial<typeof input>={})=>{
+  const f=fixture(keyByte),value={...input,...change};
+  if(value.mode==='replace'){
+   await f.call('set',{id:randomUUID(),name:value.name,mode:'add',value:'old'});
+  }
+  const receipt=randomUUID();expect((await f.call('set',value,f.owner,receipt)).status).toBe(200);
+  const journal=f.db.select().from(secretWriteJournal).where(eq(secretWriteJournal.id,value.id)).get()!.inputHash;
+  const operation=f.db.select().from(operationResults).where(eq(operationResults.id,receipt)).get()!.inputHash;
+  const canonical=JSON.stringify(Object.fromEntries(Object.entries(value).sort(([a],[b])=>a.localeCompare(b))));
+  expect(operation).toBe(createHmac('sha256',Buffer.alloc(32,keyByte)).update('loom-shared-secret-operation-v1\0').update(canonical).digest('hex'));
+  expect(journal).toBe(createHmac('sha256',Buffer.alloc(32,keyByte)).update('loom-shared-secret-write-v1\0').update(JSON.stringify(['owner',value.id,value.name,value.mode,value.description,value.value])).digest('hex'));
+  return {journal,operation};
+ };
+ const baseline=await run(7);expect(await run(9)).not.toEqual(baseline);
+ for(const change of [{id:randomUUID()},{name:'OTHER'},{mode:'replace'},{description:'Different'},{value:'another-synthetic'}]){
+  const changed=await run(7,change);expect(changed.journal).not.toBe(baseline.journal);expect(changed.operation).not.toBe(baseline.operation);
+ }
+});
+it('the startup and recurring clock callbacks drive abandoned-write recovery without a request',async()=>{
+ const f=fixture();
+ const seed=()=>{const id=randomUUID();f.db.insert(secretWriteJournal).values({id,member:'owner',secret:'TOKEN',operation:'add',description:'',inputHash:'d'.repeat(64),state:'prepared',startedAt:f.at}).run();return id;};
+ const first=seed();f.clock.advance(0);expect(f.holder.recover).toHaveBeenCalledOnce();await f.root.services.secrets.reconcile();
+ expect(f.db.select().from(secretWriteJournal).where(eq(secretWriteJournal.id,first)).get()?.state).toBe('undone');
+ const second=seed();f.clock.advance(59999);expect(f.holder.recover).toHaveBeenCalledOnce();f.clock.advance(1);
+ expect(f.holder.recover).toHaveBeenCalledTimes(2);await f.root.services.secrets.reconcile();
+ expect(f.db.select().from(secretWriteJournal).where(eq(secretWriteJournal.id,second)).get()?.state).toBe('undone');
+});
+it('close waits an active recovery and fences its late metadata completion',async()=>{
+ const f=fixture(),id=randomUUID();f.db.insert(secretWriteJournal).values({id,member:'owner',secret:'TOKEN',operation:'add',description:'',inputHash:'d'.repeat(64),state:'prepared',startedAt:f.at}).run();
+ let release!:(value:'committed')=>void;f.holder.recover.mockImplementation(()=>new Promise(resolve=>{release=resolve;}));
+ f.clock.advance(0);expect(f.holder.recover).toHaveBeenCalledOnce();
+ let closed=false;const closing=f.root.close().then(()=>{closed=true;});
+ expect((await f.call('command',{action:'default',answer:'ask'})).status).toBe(503);expect(closed).toBe(false);
+ release('committed');await closing;
+ expect(f.db.select().from(secretWriteJournal).get()?.state).toBe('prepared');expect(f.db.select().from(secretChanges).all()).toEqual([]);
+});
+it('cancels a pending request and resolves the associated Inbox question',async()=>{
+ const f=fixture();await f.call('set',{id:randomUUID(),name:'TOKEN',mode:'add',value:'synthetic'});
+ f.root.writes.run(()=>f.root.services.secrets.requests.request({id:'pending',secret:'TOKEN',agent:'art',why:'Use it',minutes:5}));
+ expect(f.db.select().from(inbox).get()?.state).toBe('waiting');
+ expect((await f.call('command',{action:'cancel',id:'pending'})).status).toBe(200);
+ expect(f.db.select().from(secretRequests).get()?.state).toBe('cancelled');expect(f.db.select().from(inbox).get()?.state).toBe('resolved');
+});
+
+it('publishes a reconciliation audit through the shared live write boundary only after commit',async()=>{
+ const f=fixture(),id=randomUUID();
+ f.db.insert(secretWriteJournal).values({id,member:'owner',secret:'TOKEN',operation:'add',description:'',inputHash:'d'.repeat(64),state:'prepared',startedAt:f.at}).run();
+ f.holder.recover.mockResolvedValue('committed');
+ const seen:unknown[]=[],original=DataLive.prototype.changed;
+ vi.spyOn(DataLive.prototype,'changed').mockImplementation(function(this:DataLive){
+  seen.push({inTransaction:f.client.inTransaction,state:f.db.select().from(secretWriteJournal).get()?.state,changes:f.db.select().from(secretChanges).all().map(row=>row.action)});
+  return original.call(this);
+ });
+ await f.root.services.secrets.reconcile();
+ expect(seen).toEqual([{inTransaction:false,state:'committed',changes:['add']}]);
+});
+
+it('reports fixed notification failures without retaining a credential in diagnostics',async()=>{
+ const f=fixture(),value='synthetic-private-diagnostic';
+ vi.spyOn(DataLive.prototype,'changed').mockImplementation(()=>{throw Error(value);});
+ expect((await f.call('set',{id:randomUUID(),name:'TOKEN',mode:'add',value})).status).toBe(200);
+ expect(f.errors).toHaveLength(4);
+ const messages=f.errors.map(error=>(error as Error).message);
+ expect(messages.filter(message=>message==='Secret write notification failed')).toHaveLength(2);
+ expect(messages.filter(message=>message==='Shared operation notification failed')).toHaveLength(2);
+ expect(f.errors.map(String).join(' ')).not.toContain(value);
+});
+it('trusted installed services use an existing nonowner attribution without outside grants',async()=>{
+ const f=fixture();
+ expect(await f.root.services.secrets.values!.set({id:randomUUID(),member:'peer',name:'TOKEN',mode:'add',value:'synthetic'})).toEqual({saved:true});
+ expect(f.db.select().from(secrets).get()?.changedBy).toBe('peer');
+ f.root.writes.run(()=>{
+  f.root.services.secrets.requests.request({id:'trusted',secret:'TOKEN',agent:'art',why:'Installed caller',minutes:5});
+  f.root.services.secrets.requests.answer('trusted','peer',true);
+ });
+ expect(f.db.select().from(secretRequests).get()).toMatchObject({state:'allowed',answeredBy:'peer'});
+ expect(f.db.select().from(secretGrants).get()?.grantedBy).toBe('peer');
 });
