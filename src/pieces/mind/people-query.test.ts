@@ -127,3 +127,17 @@ it('opens supplied stores readonly and returns typed project references',async()
  const f=fixture(join(h,'absent.db'),[{agent:'fiction',memories:a.database.name}]);
  expect(await f.query('{ memoryPerson(id:"fiction:friend") { projects { agent slug name status } } }')).toMatchObject({data:{memoryPerson:{projects:[{agent:'fiction',slug:'pond',name:'Fictional pond',status:'active'}]}}});
 });
+
+it('finds all current contact and evidence deadlines without querying private content or retaining closed files',()=>{
+ const path=join(home(),'people.db'),s=store(path),now=Date.parse('2026-11-14T18:00:00Z');let at=now;
+ s.write({slug:'friend',name:'Fiction',where:{email:{value:'fiction@example.invalid',verified_at:new Date(now-14*86400000+1000).toISOString()}}});
+ s.write({slug:'archived',name:'Archived',where:{email:{value:'fiction',verified_at:new Date(now-14*86400000).toISOString()}}});s.archive({slug:'archived',reason:'Fictional',actor:'fiction'});
+ s.write({slug:'invalid',name:'Invalid',where:{email:{value:'fiction',verified_at:new Date(now).toISOString()}}});
+ s.database.prepare("UPDATE people SET card_json=json_set(card_json,'$.where.email.verified_at','invalid') WHERE slug='invalid'").run();
+ s.database.exec("CREATE TABLE memories(created TEXT,category TEXT,title TEXT,content TEXT,metadata TEXT,archived INTEGER,expires_at TEXT)");
+ const put=s.database.prepare("INSERT INTO memories VALUES('2026-11-14T00:00:00Z','feedback','Fiction','Words',?, ?, ?)");
+ put.run('{"person":"friend"}',0,new Date(now+2000).toISOString());put.run('{"person":"friend"}',1,new Date(now+1).toISOString());put.run('{}',0,new Date(now+2).toISOString());put.run('{"person":"friend"}',0,'invalid');
+ const reader=peopleReader({agents:[{agent:'fiction',memories:path}],sharing:()=>({members:{},projects:{},services:{}}),now:()=>at});closes.push(reader.close);
+ expect(reader.nextDeadline()).toBe(now+1001);at=now+1001;expect(reader.nextDeadline()).toBe(now+2000);at=now+2000;expect(reader.nextDeadline()).toBeUndefined();
+ reader.close();expect(reader.nextDeadline()).toBeUndefined();
+});
