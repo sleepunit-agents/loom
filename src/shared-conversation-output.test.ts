@@ -46,3 +46,6 @@ it('keys both private output and reported status fingerprints with the Comms key
   const receipt=f.db.select().from(s.operationResults).where(eq(s.operationResults.operation,name)).get()!;expect(receipt.inputHash).toBe(f.root.services.comms!.key.hash('body-output\0job\0'+canonical));expect(receipt.inputHash).not.toContain('PRIVATE');expect(receipt.result).not.toContain('PRIVATE');expect(receipt.result).not.toContain('Reported work');
  }
 });
+it.each(['\r','\n','\v','\f','\u0085','\u2028','\u2029'])('refuses multiline status with separator %j',async separator=>{
+ const f=await fixture();expect((await f.call('status',{state:'working',work:'First'+separator+'Second'},'multiline')).status).toBe(400);expect(f.db.select().from(s.agentStatus).all()).toEqual([]);expect(f.db.select().from(s.operationResults).all()).toEqual([]);
+});

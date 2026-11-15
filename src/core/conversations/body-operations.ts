@@ -1,13 +1,13 @@
 import { registerConversationBodyOutput } from './body-output.js';
 import { ConversationMail } from './mail.js';
 import { sameMailScope } from './body-input.js';
-import { conversationBodyScope, requireBodyScope, type BodyProof } from './body-scope.js';
+import { conversationBodyScope, requireBodyScope, bodyOperationDefaults, type BodyProof } from './body-scope.js';
 /** Reports from the currently authenticated job body. Public Viewer labels,
  * input-selected jobs and ordinary agent tokens never establish this proof. */
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
-import { OperationError, operation, type Operations } from '../operations/index.js';
+import { operation, type Operations } from '../operations/index.js';
 import { members } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
 export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean): void {
@@ -16,7 +16,7 @@ export function registerConversationBodyOperations(operations:Operations, servic
  const conversationsService=service.threads.conversations,db=service.db;
  const current=conversationBodyScope(db,proof,privateAssignment);
  const requireCurrent=requireBodyScope(current);
- const common={write:true,recheckPolicy:true,doors:['http'] as ['http'],may:(viewer:Viewer)=>!!current(viewer),inputHash:(input:string, identity:Readonly<{actor:Viewer}>)=>service.key.hash(`body-conversation\0${current(identity.actor)?.job.id ?? 'unbound'}\0${input}`)};
+ const common=bodyOperationDefaults(current,words=>service.key.hash(words),'body-conversation');
  operations.register(operation({...common,name:'conversation.turn',
   input:z.object({kind:z.enum(['reply','action','wake','note','refused']),model:z.string().min(1).max(200).optional(),outcome:z.enum(['answered','progressed','deferred','failed','none']).optional(),latencyMs:z.number().int().nonnegative().optional()}).strict(),
   output:z.object({saved:z.literal(true),conversation:z.string(),seq:z.number().int()}).strict(),
