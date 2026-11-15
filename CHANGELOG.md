@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Add shared browser-session and notification-device removal plus household token revocation.
+
 - Browser sign-in confirmation forms retain their origin check while keeping the link code out of referrers.
 
 - Add a shared-data server composition for authenticated queries, Tasks, member appearance and sign-in on one initialized database.
