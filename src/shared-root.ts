@@ -37,6 +37,8 @@ import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 import { nextData } from './next-data.js';
+import { deskTimeFields, startDeskTime } from './desk-time.js';
+import { deskSpriteFields } from './desk-sprites.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
@@ -92,7 +94,7 @@ export function sharedRoot(options: {
   const startupCleanups:Array<()=>void>=[memory.close];
   try{
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...comms?.fields, ...options.fields}, () => !closing, credentials.authenticate, work => meter?.enabled()
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...options.fields}, () => !closing, credentials.authenticate, work => meter?.enabled()
     ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work());
   startupCleanups.push(()=>{void data.close().catch(()=>report(new Error('Data startup cleanup failed')));});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
@@ -183,6 +185,8 @@ export function sharedRoot(options: {
   }); }
   catch (error) { unobserveBridges?.(); void bridgeDaemon?.close(); cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
   startupCleanups.push(()=>tempo.close());
+  const stopDeskTime = startDeskTime(clock, data.changed, options.reportError);
+  startupCleanups.push(stopDeskTime);
   measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
   }, db).then(value => { meter = value; return value; });
@@ -258,6 +262,7 @@ export function sharedRoot(options: {
       runtime.close();
       unobserveBridges?.();const bridgesStopped=bridgeDaemon?.close();
       // Install shared completion before synchronous detach/abort callbacks.
+      stopDeskTime();
       tempo.close();
       cancelSecretRecovery?.(); values?.close(); startup?.close();
       const deliveryStopped = delivery?.close();
