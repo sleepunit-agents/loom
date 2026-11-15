@@ -51,10 +51,27 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
    expect((await page.getByText(/^Due:/).textContent())?.replace(/\s+/g,' ')).toBe(`Due: ${due} · America/Chicago`.replace(/\s+/g,' '));
    expect(await page.getByText('Check the pump shipment',{exact:true}).count()).toBe(1);
   }
+  app.writes.run(()=>{
+   for(const words of ['PRIVATE FIRST NOTICE','PRIVATE SECOND NOTICE'])app.services.conversations.send({toKind:'person',to:'owner',member:'owner',source:'notice',fromKind:'agent',words});
+  });
+  clock.advance(4999);
+  for(const page of [a,b])expect(await page.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
+  clock.advance(1);
+  for(const page of [a,b]){
+   await expect.poll(()=>page.getByRole('status',{name:'Inbox notification'}).count()).toBe(1);
+   expect(await page.getByRole('status',{name:'Inbox notification'}).textContent()).toContain('2 items are waiting in your Inbox');
+   expect(await page.getByRole('status',{name:'Inbox notification'}).textContent()).not.toContain('PRIVATE');
+  }
+  await a.getByRole('button',{name:'Dismiss Inbox notification',exact:true}).click();
+  expect(await a.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
+  expect(await b.getByRole('status',{name:'Inbox notification'}).count()).toBe(1);
   const paused=await context.request.post(url+'/api/tempo/pause',{data:{id:'pause',input:{agent:'art'}}});expect(paused.status()).toBe(200);
   for(const page of [a,b])await expect.poll(()=>page.getByText(/Held · agent paused/).count()).toBeGreaterThan(0);
   app.writes.run(()=>db.update(tokens).set({revokedAt:now()}).run());
-  for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Check pump delivery',exact:true}).count()).toBe(0);
+  for(const page of [a,b]){
+   await expect.poll(()=>page.getByRole('heading',{name:'Check pump delivery',exact:true}).count()).toBe(0);
+   await expect.poll(()=>page.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
+  }
  } finally {
   await browser?.close();detach();await app.close();server.closeAllConnections();await new Promise<void>(ok=>server.close(()=>ok()));client.close();
  }
