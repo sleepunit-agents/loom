@@ -13,6 +13,8 @@ import { tempoCommandAllowed } from './shared-tempo-access.js';
 import { Jobs } from './runtime/jobs.js';
 
 export interface SharedTempoOptions {
+  /** Register area contributors/schedules before startup; return their teardown. */
+  beforeStart?:(tempo:ReturnType<typeof import('./core/tempo/tempo.js').createTempo>)=>(()=>void)|void;
   admit?: TempoOptions['admit'];
   operation?: TempoOptions['operation'];
   instructions?: TempoOptions['instructions'];
@@ -24,7 +26,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
   conversations: Conversations, changed: () => void, options: SharedTempoOptions = {}) {
   const jobs = new Jobs(db, () => new Date(clock.now()).toISOString());
   return installTempoComposition({ db, clock, writes, operations,
-    contributors: options.contributors,
+    contributors: options.contributors,beforeStart:options.beforeStart,
     delivery: { conversations, changed, instructions: options.instructions, changeRevision: options.changeRevision,
       admit: options.admit ?? ((who, items) => {
         if (who.kind === 'person') { changed(); return true; }

@@ -14,6 +14,7 @@ import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
 import {sharedMemory,type SharedMemoryOptions} from './shared-memory.js';
+import {installMemoryTempo} from './transport/memory-tempo.js';
 import {installMemorySignals} from './transport/memory-signals.js';
 import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 import { nextData } from './next-data.js';
@@ -36,7 +37,12 @@ export function sharedRoot(options: {
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
   let closing: Promise<void> | undefined;
-  const memory=sharedMemory(db,clock,options.memory);
+  const services = {
+    tasks: taskService(db, now),
+    approvals: approvalService(db, options.approvedOperations, now),
+    conversations: new Conversations(db, now),
+  };
+  const memory=sharedMemory(db,clock,options.memory,services.tasks);
   const startupCleanups:Array<()=>void>=[memory.close];
   try{
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
@@ -48,16 +54,17 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>operations.close());
   memory.register(operations);memorySignals=installMemorySignals(clock,memory,()=>data.changed());
   startupCleanups.push(()=>memorySignals?.close());
+  const stopMemoryWrites=data.writes.observe(()=>memorySignals!.changed());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
-  const services = {
-    tasks: taskService(db, now),
-    approvals: approvalService(db, options.approvedOperations, now),
-    conversations: new Conversations(db, now),
-  };
   registerSharedTaskCommands(operations, db, services.tasks);
-  let tempo: ReturnType<typeof installSharedTempo>;
-  try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, options.tempo); }
-  catch (error) { operations.close(); void data.close(); throw error; }
+  const tempo=installSharedTempo(db,clock,data.writes,operations,services.conversations,data.changed,{...options.tempo,beforeStart(tempo){
+    const stopOther=options.tempo?.beforeStart?.(tempo);
+    try{
+      const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;
+      return ()=>{try{stopMemory?.();}finally{stopOther?.();}};
+    }catch(error){stopOther?.();throw error;}
+  }});
+  startupCleanups.push(()=>tempo.close());
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
@@ -116,7 +123,7 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
-      memorySignals?.close();
+      stopMemoryWrites();memorySignals?.close();
       tempo.close();
       const stopped = data.close();
       const pending = [...active];

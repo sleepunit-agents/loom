@@ -14,6 +14,7 @@ export function installTempoComposition(options: {
   delivery: TempoOptions;
   commands: TempoOperationOptions;
   contributors?: readonly SweepPart[];
+  beforeStart?:(tempo:ReturnType<typeof createTempo>)=>(()=>void)|void;
 }) {
   const { db, clock } = options;
   const tempo = createTempo(db, clock, options.delivery);
@@ -22,6 +23,7 @@ export function installTempoComposition(options: {
   let stop: (() => void) | undefined;
   try {
     for (const part of [...workSweepParts(db, clock), ...options.contributors ?? []]) unregister.push(tempo.sweep.register(part));
+    const stopArea=options.beforeStart?.(tempo);if(stopArea)unregister.push(stopArea);
     registerTempoOperations(options.operations, db, tempo, options.commands);
     stop = options.writes.observe(() => tempo.committed());
     tempo.start();

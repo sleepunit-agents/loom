@@ -2,7 +2,7 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
-import {mkdtempSync,rmSync,existsSync,mkdirSync} from 'node:fs';
+import {mkdtempSync,rmSync,existsSync,mkdirSync,readFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {once} from 'node:events';
@@ -11,10 +11,11 @@ import {WebSocket} from 'ws';
 import {eq} from 'drizzle-orm';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
-import {members,tokens,agents,household,memberAgents} from './core/data/schema.js';
+import {members,tokens,agents,household,memberAgents,inbox,triggers,projects as projectRows,changes,taskLinks} from './core/data/schema.js';
 import {hasTouchedListener,touchSocketPath} from './core/touched/index.js';
 import {serveShared} from './shared-serve.js';
 import {prepareSharedMemorySources} from './shared-memory.js';
+import {SqliteKnowledgeBackend} from './backends/sqlite-knowledge.js';
 import {PeopleStore} from './backends/people.js';
 import {ProjectsStore} from './backends/projects.js';
 const cleanup:Array<()=>unknown>=[];
@@ -37,7 +38,7 @@ async function waitMessage(ws:WebSocket,action:()=>unknown){
 it('signs in on the actual shared listener and converges Memory writes, source touches, grants and revocation',async()=>{
  const f=fixture(),scheduled=vi.spyOn(f.clock,'at'),errors:unknown[]=[];
  expect(existsSync(f.sources.commons.knowledge)).toBe(false);
- const app=await serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources},originAllowed:req=>{try{return new URL(String(req.headers.origin)).host===req.headers.host;}catch{return false;}},reportError:e=>errors.push(e)});cleanup.push(()=>app.close());
+ const app=await serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources,checkingAgent:'fiction'},originAllowed:req=>{try{return new URL(String(req.headers.origin)).host===req.headers.host;}catch{return false;}},reportError:e=>errors.push(e)});cleanup.push(()=>app.close());
  expect(hasTouchedListener(f.sources.commons.directory)).toBe(true);expect(hasTouchedListener(f.sources.agents[0].directory)).toBe(true);
  const request=(path:string,body?:unknown,headers:Record<string,string>={authorization:'Bearer '+raw})=>fetch(app.url+path,{method:'POST',redirect:'manual',headers:{'content-type':'application/json',origin:app.url,...headers},...(body?{body:JSON.stringify(body)}:{})});
  const minted=await request('/api/signin/link',{input:{}});expect(minted.status).toBe(200);
@@ -68,12 +69,63 @@ it('signs in on the actual shared listener and converges Memory writes, source t
  const calls=scheduled.mock.calls.length;f.clock.advance(86400000);expect(scheduled).toHaveBeenCalledTimes(calls);expect(errors).toEqual([]);
 });
 it('releases acquired source sockets and Memory clocks when a later source bind fails',async()=>{
- const f=fixture();await prepareSharedMemorySources({sources:f.sources});
+ const f=fixture();await prepareSharedMemorySources({sources:f.sources,checkingAgent:'fiction'});
  mkdirSync(join(f.sources.agents[0].directory,'.loom-live'),{recursive:true});
  const occupied=createServer();await new Promise<void>(ok=>occupied.listen(touchSocketPath(f.sources.agents[0].directory),ok));
  cleanup.push(()=>new Promise<void>(ok=>occupied.close(()=>ok())));
  const scheduled=vi.spyOn(f.clock,'at');
- await expect(serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources},originAllowed:()=>true,reportError:()=>{}})).rejects.toThrow();
+ await expect(serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources,checkingAgent:'fiction'},originAllowed:()=>true,reportError:()=>{}})).rejects.toThrow();
  expect(hasTouchedListener(f.sources.commons.directory)).toBe(false);expect(occupied.listening).toBe(true);
  const calls=scheduled.mock.calls.length;f.clock.advance(86400000);expect(scheduled).toHaveBeenCalledTimes(calls);expect(f.tables()).toEqual(f.before);
+});
+it('leaves existing declared content files byte-for-byte unchanged during preparation',async()=>{
+ const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
+ const knowledge=new SqliteKnowledgeBackend({dbPath:f.sources.commons.knowledge});await knowledge.writePage({slug:'kept',title:'Kept fact',domain:'fiction',body:'Precious fictional words'});knowledge.close();
+ const paths=[f.sources.commons.knowledge,f.sources.commons.people,f.sources.agents[0].memories],before=paths.map(path=>readFileSync(path));
+ await prepareSharedMemorySources(memory);expect(paths.map(path=>readFileSync(path))).toEqual(before);
+});
+it('uses the current household timezone for Activity days and metadata after a committed settings change',async()=>{
+ const f=fixture(),app=await serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources,checkingAgent:'fiction'},originAllowed:()=>true,reportError:()=>{}});cleanup.push(()=>app.close());
+ app.writes.run(()=>app.services.conversations.open({agent:'fiction',venue:'wake',place:'fiction',label:'Fictional session'}));
+ const read=async()=>{const response=await app.http.request(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ memoryActivityAccess { timezone today } memoryActivity { entries { day hour } } }'})});const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
+ expect(await read()).toMatchObject({memoryActivityAccess:{timezone:'America/Chicago',today:'2026-11-14'},memoryActivity:{entries:[{day:'2026-11-14',hour:6}]}});
+ app.writes.run(()=>f.db.update(household).set({timezone:'Pacific/Kiritimati'}).run());
+ expect(await read()).toMatchObject({memoryActivityAccess:{timezone:'Pacific/Kiritimati',today:'2026-11-15'},memoryActivity:{entries:[{day:'2026-11-15',hour:2}]}});
+});
+it('registers Knowledge before the one shared Tempo starts and preserves a stopped daily sweep across restart',async()=>{
+ const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
+ const source=new SqliteKnowledgeBackend({dbPath:f.sources.commons.knowledge});await source.writePage({slug:'due-pump',title:'Fictional due pump',domain:'fiction',body:'Due fictional fact',verified_at:'2020-01-01T00:00:00Z'});source.close();
+ f.clock.advance(Date.parse('2026-11-14T13:16:59Z')-f.clock.now());
+ const options={db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{}};
+ const app=await serveShared(options);cleanup.push(()=>app.close());expect(f.db.select().from(inbox).all()).toEqual([]);
+ f.clock.advance(1000);expect(f.db.select().from(inbox).all()).toMatchObject([{to:'fiction',source:'notice',words:expect.stringContaining('due-pump')}]);
+ const facts=new Database(f.sources.commons.knowledge,{readonly:true});try{expect(facts.prepare('SELECT verified_at FROM pages').get()).toEqual({verified_at:'2020-01-01T00:00:00Z'});}finally{facts.close();}
+ app.writes.run(()=>app.services.tempo.triggers.stop('knowledge-sweep:fiction'));await app.close();f.clock.advance(86400000);
+ const again=await serveShared(options);cleanup.push(()=>again.close());
+ expect(f.db.select().from(triggers).where(eq(triggers.id,'knowledge-sweep:fiction')).get()).toMatchObject({enabled:false,state:'stopped'});
+ f.clock.advance(86400000);expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});
+it('builds project sections from current visible Tasks, Changes and Conversations without legacy roles',async()=>{
+ const f=fixture(),at=new Date(f.clock.now()).toISOString();f.db.insert(members).values({id:'other',role:'member',joinedAt:at}).run();
+ f.db.insert(agents).values({id:'other-agent',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();f.db.insert(projectRows).values([{id:'pond',name:'Pond'},{id:'hidden',name:'Hidden'}]).run();
+ const app=await serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources,checkingAgent:'fiction'},originAllowed:()=>true,reportError:()=>{}});cleanup.push(()=>app.close());
+ const cards=new ProjectsStore({dbPath:f.sources.agents[0].memories});cards.write({slug:'pond',name:'Fictional pond',links:{repos:['fiction/repo']}});cards.close();
+ app.writes.run(()=>{
+  const visible=app.services.tasks.create({title:'Pond visible task',goal:'Fictional goal',why:'Fictional reason',owner:{kind:'agent',id:'fiction'}},{kind:'member',id:'owner'});
+  const hidden=app.services.tasks.create({title:'Pond PRIVATE TASK',goal:'Fictional goal',why:'Fictional reason',owner:{kind:'member',id:'other'}},{kind:'member',id:'owner'});
+  f.db.insert(taskLinks).values({task:visible.id,dependsOn:hidden.id,type:'blocks'}).run();
+  const change={repository:'fiction/repo',number:1,body:'',url:'https://example.invalid/change',state:'open' as const,draft:false,authorLogin:'fiction',branch:'fiction',headCommit:'abc',baseBranch:'next',checks:'failing' as const,review:'required' as const,mergeable:'yes' as const,waitingOn:'ci' as const,openedAt:at,updatedAt:at};
+  f.db.insert(changes).values([{...change,id:'visible-change',title:'Visible change',agent:'fiction',project:'pond'},{...change,id:'hidden-change',number:2,title:'PRIVATE CHANGE',agent:'other-agent',project:'hidden'}]).run();
+  app.services.conversations.open({agent:'fiction',venue:'wake',place:'public',project:'pond',label:'Visible conversation'});
+  app.services.conversations.open({agent:'fiction',venue:'wake',place:'private',project:'pond',member:'other',label:'PRIVATE CONVERSATION'});
+ });
+ const read=async()=>{const response=await app.http.request(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ memoryProject(id:"fiction:pond") { changes { open failing running } sections { key available total conversationIds groups { title items { title } } items { title } } } }'})});const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
+ const owner=await read();expect(JSON.stringify(owner)).toContain('PRIVATE TASK');expect(JSON.stringify(owner)).toContain('PRIVATE CHANGE');expect(JSON.stringify(owner)).toContain('PRIVATE CONVERSATION');
+ app.writes.run(()=>{f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();f.db.insert(memberAgents).values({member:'owner',agent:'fiction'}).run();});
+ const member=await read(),words=JSON.stringify(member);expect(words).toContain('Pond visible task');expect(words).toContain('Visible change');expect(words).toContain('Visible conversation');expect(words).not.toContain('PRIVATE');
+ expect(member.memoryProject.changes).toEqual({open:1,failing:1,running:0});
+ const tasks=member.memoryProject.sections.find((section:{key:string})=>section.key==='tasks');expect(tasks.groups.map((group:{title:string})=>group.title)).toEqual(['Blocked or in progress']);
+ app.writes.run(()=>{for(let i=0;i<201;i++)app.services.conversations.open({agent:'fiction',venue:'wake',place:'many-'+i,project:'pond',label:'Visible linked conversation '+i});});
+ const complete=await read(),conversations=complete.memoryProject.sections.find((section:{key:string})=>section.key==='conversations');
+ expect(conversations.total).toBe(202);expect(conversations.conversationIds).toHaveLength(202);expect(conversations.items).toHaveLength(50);
 });
