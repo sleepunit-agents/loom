@@ -38,7 +38,7 @@ export async function bridgeSettingsAction({page,tile,out}){
   await persisted.getByText('example-garden-channel',{exact:true}).click();
   await persisted.getByText('Answers when nobody is addressed: fern',{exact:true}).waitFor();
   await persisted.getByText('Bots may talk: Yes',{exact:true}).waitFor();
-  await persisted.getByText('discord · example-discord-server',{exact:true}).waitFor();
+  await persisted.getByRole('region',{name:'Bridges: the open item',exact:true}).getByText('discord · example-discord-server',{exact:true}).waitFor();
   const screenshot='action-bridge-channel.png';await page.screenshot({path:join(out,screenshot),fullPage:true});
   return {ok:true,discordChannel:true,slackPerson:true,persistedAfterReload:true,screenshot};
  }catch(error){
