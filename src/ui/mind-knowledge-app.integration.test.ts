@@ -146,12 +146,10 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('');
     await b.getByRole('button',{name:/Due a check/}).first().click();
     await expect.poll(()=>row(b,'Clock tempo').count()).toBe(0);
-    clock.advance(31*86400_000);
-    // Aging the records also expires the real browser session. Sign in again
-    // before checking the aged projection; both windows share the new cookie.
-    await signIn();
-    await b.getByRole('searchbox',{name:'Search knowledge',exact:true}).fill('');
-    await b.getByRole('button',{name:/Due a check/}).first().click();
+    // Age this fictional source record through the same backend notification
+    // path as the archive above. Advancing the whole program by a month would
+    // replay every Runtime sweep; exact clock boundaries have Node coverage.
+    await source.writePage({slug:'clock-tempo',title:'Clock tempo',domain:'music/norns',verified_at:'2026-10-10T12:00:00Z',body:'Set the clock tempo with params.'});
     await expect.poll(()=>row(b,'Clock tempo').count()).toBe(1);
     await b.getByRole('button',{name:'Add a fact',exact:true}).click();
     await b.getByRole('textbox',{name:'Title',exact:true}).fill('A shared new fact');

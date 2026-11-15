@@ -46,7 +46,7 @@ async function memoryHttpFixture(cleanup: Array<() => unknown>) {
     admitted = true;
     const id = request.headers.get('authorization');
     return id === 'owner' || id === 'peer' ? {viewer:{kind:'member',id},valid:()=>valid} : undefined;
-  }, undefined, queries.fields);
+  }, undefined, queries.fields, {}, undefined, () => clock.now());
   const read = (query:string, token='owner', extra={}) => http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:token},body:JSON.stringify({query,...extra})});
   return {http,read,sharing,thread,knowledge,people,projects,clock,home,client,admitted:()=>admitted,end:()=>{valid=false;}};
 }
