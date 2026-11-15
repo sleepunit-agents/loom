@@ -1,7 +1,7 @@
 import { privateSecretClient } from '../pieces/secrets/private-client.js';
 /** Worker-side client for the ordinary operation door. No local retries: a lost
  * claim or report is reconciled by loom's job-silence sweep. */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { machineFacts } from './machine-facts.js';
 import type { WorkerControl } from './worker.js';
@@ -30,11 +30,12 @@ function operationCaller(input: WorkerHttpOptions) {
   if (!input.token.trim() || /[\r\n]/.test(input.token)) throw new Error('Worker token is invalid');
   const timeoutMs = input.timeoutMs ?? 30_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 60_000) throw new Error('Invalid worker request timeout');
-  async function call<T>(name: string, args: unknown, schema: z.ZodType<T>): Promise<T> {
+  async function call<T>(name: string, args: unknown, schema: z.ZodType<T>, onAbort?: () => void): Promise<T> {
     const deadline = new AbortController();
     const timer = setTimeout(() => deadline.abort(), timeoutMs);
     const signal = AbortSignal.any([input.signal, deadline.signal]);
     let response: Response | undefined;
+    if (onAbort) { signal.addEventListener('abort', onAbort, { once: true }); if (signal.aborted) onAbort(); }
     try {
       const body = JSON.stringify({ id: randomUUID(), input: args });
       if (Buffer.byteLength(body, 'utf8') > 1_048_576) throw new Error('Worker request exceeded limit');
@@ -56,6 +57,7 @@ function operationCaller(input: WorkerHttpOptions) {
           chunks.push(value);
         }
       } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+      if (signal.aborted) throw new Error('Worker request cancelled');
       const data = JSON.parse(Buffer.concat(chunks).toString('utf8'));
       return z.object({ ok: z.literal(true), value: schema }).parse(data).value;
     } catch {
@@ -63,6 +65,7 @@ function operationCaller(input: WorkerHttpOptions) {
       throw new Error(`Worker ${name} failed; outcome may be uncertain`);
     } finally {
       clearTimeout(timer);
+      if (onAbort) signal.removeEventListener('abort', onAbort);
       if (response?.body && !response.body.locked) await response.body.cancel().catch(() => {});
     }
   }
@@ -87,6 +90,20 @@ export function httpWorkerControl(input: WorkerHttpOptions & { facts?: readonly 
   const call = operationCaller(input);
   const ack = z.object({ ok: z.literal(true) });
   return {
+    enrollBody: async (job, signal) => {
+      const token = Buffer.from('body_'+randomBytes(32).toString('hex'), 'ascii');
+      const cancellation = AbortSignal.any([input.signal, signal]);
+      let erased = false;
+      const erase = () => { erased = true; token.fill(0); cancellation.removeEventListener('abort', erase); };
+      cancellation.addEventListener('abort', erase, { once: true });
+      try {
+        if (cancellation.aborted) throw new Error('Body enrollment cancelled');
+        await operationCaller({ ...input, signal: cancellation })('enrollBody',
+          { job, fingerprint: createHash('sha256').update(token).digest('hex') }, z.object({ registered: z.literal(true) }).strict(), erase);
+        if (cancellation.aborted || erased) throw new Error('Body enrollment cancelled');
+        return { origin: new URL(input.url).origin, job, token, erase };
+      } catch { erase(); throw new Error('Worker body enrollment failed; outcome may be uncertain'); }
+    },
     repositoryInput:async(job,signal)=>{const client=privateSecretClient({...input,timeoutMs:Math.min(input.timeoutMs??15000,15000),signal:AbortSignal.any([input.signal,signal])});try{return await client.repository(job);}finally{client.close();}},
     next: async () => (await call('next', facts === undefined ? {} : { facts }, workerAssignment.nullable())) ?? undefined,
     started: async (job, build) => { await call('started', { job, build }, ack); },

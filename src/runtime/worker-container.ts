@@ -1,3 +1,4 @@
+import { bodyInput } from './body-bootstrap.js';
 /** Docker bodies run only in the separate worker. Builds retain their bounded
  * configured worker command; its artifact must be an already-built image. */
 import { randomUUID } from 'node:crypto';
@@ -49,9 +50,10 @@ function createSpec(job: WorkerAssignment, image: string, plan: WorkerCommand, c
 
 /** Incremental non-TTY Docker frames; memory stays bounded even for giant frames. */
 function output(socket: Duplex, signal: AbortSignal) {
+  let privateOutput = false;
   let tail = '', header = Buffer.alloc(0), remaining = 0, stream = 0;
   const decoders = [new StringDecoder('utf8'), new StringDecoder('utf8'), new StringDecoder('utf8')];
-  const append = (text: string) => { tail = (tail + text).slice(-16_384); };
+  const append = (text: string) => { if (!privateOutput) tail = (tail + text).slice(-16_384); };
   const done = new Promise<void>((resolve, reject) => {
     const fail = () => { socket.destroy(); reject(new Error('Container output unavailable')); };
     const data = (chunk: Buffer) => {
@@ -84,7 +86,7 @@ function output(socket: Duplex, signal: AbortSignal) {
     socket.once('close', () => signal.removeEventListener('abort', fail));
   });
   void done.catch(() => {});
-  return { done, tail: () => tail };
+  return { done, tail: () => tail, discard: () => { privateOutput = true; tail = ''; } };
 }
 
 export function containerWorkerExecutor(config: WorkerRunnerConfig & {
@@ -160,12 +162,14 @@ export function containerWorkerExecutor(config: WorkerRunnerConfig & {
         } finally { if (drainTimer) clearTimeout(drainTimer); void both.catch(() => {}); }
       })();
       void exited.catch(() => {});
-      return { spawned: setup, exited,
-        async release() {
+      return { acceptsBootstrap: plan.bodyBootstrap === true, spawned: setup, exited,
+        async release(bootstrap) {
           await setup;
           if (released || abort.signal.aborted || stopping || !socket || socket.destroyed) throw new Error('Container input unavailable');
           released = true;
-          await new Promise<void>((resolve, reject) => socket!.end(JSON.stringify({ job: assignment, build: image }) + '\n',
+          if (bootstrap) logs!.discard();
+          const payload = bodyInput(assignment, image, bootstrap, plan.bodyBootstrap === true);
+          await new Promise<void>((resolve, reject) => socket!.end(JSON.stringify(payload) + '\n',
             (error?: Error | null) => error ? reject(error) : resolve()));
         },
         stop,
