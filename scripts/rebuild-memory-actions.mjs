@@ -4,7 +4,7 @@ export async function knowledgeActions({page,tile,out,connections}){
  let phase='add';
  const screenshot='action-knowledge-verified.png';
  try{
-  const initialConnections=connections.length;
+  const initialConnections=[...connections];
   const title='Example pump hose width',words='The fictional garden pump takes a 25 mm hose.';
   const submit=async(verb,click)=>{
    const response=page.waitForResponse(value=>new URL(value.url()).pathname===`/api/mind/${verb}`&&value.request().method()==='POST',{timeout:4000});
@@ -27,7 +27,7 @@ export async function knowledgeActions({page,tile,out,connections}){
   await page.screenshot({path:join(out,'action-knowledge-due.png'),fullPage:true});
   phase='verify';await submit('knowledgeVerify',()=>reader.getByRole('button',{name:'Still true',exact:true}).click());
   await reader.locator('header p').filter({hasText:/^Fresh · verified /}).waitFor();
-  if(initialConnections!==1||connections.length!==initialConnections||connections[0]!=='/graphql')throw Error('Knowledge did not use the existing single GraphQL connection');
+  if(initialConnections.length!==1||connections.size!==1||!connections.has(initialConnections[0])||new URL(initialConnections[0].url()).pathname!=='/graphql')throw Error('Knowledge did not use the existing single GraphQL connection: '+JSON.stringify({before:initialConnections.map(socket=>new URL(socket.url()).pathname),after:[...connections].map(socket=>new URL(socket.url()).pathname)}));
   await page.screenshot({path:join(out,screenshot),fullPage:true});
   phase='persisted';await page.reload();await page.locator('.next-shell').waitFor();
   const persisted=page.getByRole('region',{name:'Knowledge tile',exact:true}).locator('article').filter({has:page.getByRole('heading',{name:title,exact:true})});
