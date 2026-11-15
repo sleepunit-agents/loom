@@ -6,6 +6,9 @@ import { registerSharedSecretCommands } from './shared-secret-commands.js';
 
 /** Fresh shared composition. The caller initializes the approved schema and owns
  * the connection; this never bootstraps legacy tables or opens another store. */
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { tempoSettingsProposals } from './core/tempo/proposal.js';
+import { sharedTempoSettings, type TempoChatAuthentication } from './shared-tempo-settings.js';
 import type { IncomingMessage } from 'node:http';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -21,6 +24,7 @@ import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
+import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
@@ -31,6 +35,7 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
+  tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
   changed?(changes: Change[]): void;
@@ -39,13 +44,15 @@ export function sharedRoot(options: {
   if(options.secretWrites && (!(options.secretWrites.fingerprintKey instanceof Uint8Array) || options.secretWrites.fingerprintKey.byteLength!==32))throw Error('Invalid secret retry key');
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
+  const chat = new AsyncLocalStorage<TempoChatAuthentication>();
+  const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;
   let meter: Awaited<ReturnType<typeof installMeasuring>> | undefined;
   let measuringReady: ReturnType<typeof installMeasuring>;
   const stops: (() => void)[] = [];
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const measuringProposal = measuringSettingsProposals(db);
-  const approvedOperations = new Map(options.approvedOperations);
+  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation]);
   approvedOperations.set(measuringProposal.operation[0], card => {
     measuringProposal.operation[1](card);
     // Synchronous outer writes have committed or rolled back before this runs.
@@ -87,6 +94,16 @@ export function sharedRoot(options: {
     secrets: {requests,values,reconcile:recoverSecrets},
   };
   registerSharedTaskCommands(operations, db, services.tasks);
+  const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
+  const tempoClock: Clock = { now: () => clock.now(), at: (time, work) => clock.at(time, () => {
+    if (meter?.enabled()) meter.run('job', 'tempo.tick', work); else work();
+  }) };
+  let tempo: ReturnType<typeof installSharedTempo>;
+  try { tempo = installSharedTempo(db, tempoClock, data.writes, operations, services.conversations, data.changed, {
+    ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
+    settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
+  }); }
+  catch (error) { cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
   measuringReady = installMeasuring({ operations, live: { changed: () => data.changed() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
   }, db).then(value => { meter = value; return value; });
@@ -133,8 +150,9 @@ export function sharedRoot(options: {
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
-    const answer = await operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
-      parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid());
+    const answer = await chat.run(auth, () => operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
+      parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid()));
+
     // Execution and its final await can yield. A committed receipt remains
     // durable, but its response must not outlive the admitted credential.
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
@@ -143,7 +161,7 @@ export function sharedRoot(options: {
   return {
     measuring: measuringReady,
     ready: measuringReady.then(() => undefined),
-    http, operations, services, credentials, writes: data.writes, changed: data.changed,
+    http, operations, services: { ...services, tempo }, credentials, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);
@@ -154,6 +172,7 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
+      tempo.close();
       cancelSecretRecovery?.(); values?.close();
       const stopped = data.close();
       for (const stop of stops.splice(0).reverse()) stop();

@@ -10,7 +10,7 @@ const fingerprint = (value: string) => createHash('sha256').update(value).digest
  * over cookies, including malformed bearer input. This issues no credentials.
  */
 export function dataAuthentication(db: DataDatabase, now: () => number = Date.now) {
-  return (request: Request): Authentication | undefined => {
+  return (request: Request): (Authentication & { readonly job?: string }) | undefined => {
     const authorization = request.headers.get('authorization');
     const bearer = authorization === null ? undefined : /^Bearer ([^\s]{32,4096})$/i.exec(authorization)?.[1];
     if (authorization !== null && !bearer) return;
@@ -37,13 +37,13 @@ export function dataAuthentication(db: DataDatabase, now: () => number = Date.no
           ? { kind: 'agent' as const, id: token.agent }
           : token.kind === 'runner' && token.box && db.select({ id: boxes.id }).from(boxes).where(eq(boxes.id, token.box)).get()
             ? { kind: 'runner' as const, id: token.box } : undefined;
-      return viewer ? { viewer, expiresAt } : undefined;
+      return viewer ? { viewer, expiresAt, job: token.kind === 'agent' ? token.job ?? undefined : undefined } : undefined;
     };
     const admitted = current();
     if (!admitted) return;
     return { ...admitted, window: !!sessionId, valid() {
       const live = current();
-      return !!live && live.viewer.kind === admitted.viewer.kind && live.viewer.id === admitted.viewer.id;
+      return !!live && live.viewer.kind === admitted.viewer.kind && live.viewer.id === admitted.viewer.id && live.job === admitted.job;
     } };
   };
 }
