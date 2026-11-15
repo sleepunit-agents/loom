@@ -1,5 +1,10 @@
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
  * builds and bodies run through the executor in the separate worker program. */
+export interface WorkerRunOptions {
+  nestedContainers: boolean;
+  gpu: boolean;
+  ports: { address: string; port: number }[];
+}
 export interface WorkerAssignment {
   id: string;
   box: string;
@@ -9,6 +14,8 @@ export interface WorkerAssignment {
   account: string;
   harness: string;
   brief: string;
+  /** Current agent configuration at claim; absent means no extra capabilities. */
+  run?: WorkerRunOptions;
   house: { repository: string; file: string; branch: string };
 }
 export interface WorkerBody {
