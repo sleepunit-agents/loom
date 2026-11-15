@@ -43,18 +43,19 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
  };
  let runNowId;
  await observe('settled',async()=>{
+  const previousNotice=(await notice())?.id??null;
   const words='Walkthrough one-off notice',id=await create('Walkthrough Run now',words);
   runNowId=id;
-  assert.equal((await inbox()).filter(item=>item.refs.includes(id)).length,0);assert.equal(await notice(),null);
+  assert.equal((await inbox()).filter(item=>item.refs.includes(id)).length,0);assert.equal((await notice())?.id??null,previousNotice);
   clock.advance(2000);
   await tile.getByRole('button',{name:'Run now',exact:true}).click();await tile.getByText(/time · once · fired/).waitFor();
   const items=await inbox(),delivered=items.filter(item=>item.refs.includes(id));
   assert.equal(delivered.length,1);assert.equal(delivered[0].source,'trigger');assert.ok(delivered[0].sourceId.startsWith(id+':'));assert.equal(delivered[0].toKind,'person');assert.equal(delivered[0].to,example.members[0]);assert.equal(delivered[0].body.words,words);
-  clock.advance(4999);assert.equal(await notice(),null);
-  clock.advance(1);const settled=await notice(),waiting=items.filter(item=>item.state==='waiting'&&item.volume==='full').length;
+  clock.advance(4999);assert.equal((await notice())?.id??null,previousNotice);
+  clock.advance(1);const settled=await notice();assert.notEqual(settled?.id,previousNotice);const waiting=items.filter(item=>item.state==='waiting'&&item.volume==='full').length;
   assert.equal(settled.count,waiting);assert.ok(waiting>0);
   const notification=page.getByRole('status',{name:'Inbox notification'});await notification.waitFor();assert.ok((await notification.innerText()).includes(`${waiting} items are waiting in your Inbox`));
-  return {delivered:1,source:'trigger',recipient:example.members[0],noticeBeforeDeadline:null,settleMilliseconds:5000,notifiedItems:waiting};
+  return {delivered:1,source:'trigger',recipient:example.members[0],noticeBeforeDeadline:previousNotice,settleMilliseconds:5000,notifiedItems:waiting};
  });
  await observe('cancelled',async()=>{
   const id=await create('Walkthrough cancel future work','This cancelled notice must not arrive');
