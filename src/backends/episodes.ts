@@ -162,19 +162,7 @@ export function episodeRows(contextDir: string, opts: TapeOptions = {}): Episode
   const db = openMemoriesDb(contextDir, opts.memorySelection);
   if (!db) return [];
   try {
-    const now = opts.nowMs ?? Date.now();
-    const since = new Date(now - (opts.hours ?? DEFAULT_HOURS) * HOUR_MS).toISOString();
-    const nowIso = new Date(now).toISOString();
-    // A store holding only conversations so far (a turn came before any memory) has no episodes.
-    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories'").get()) return [];
-    return db
-      .prepare(
-        `SELECT title, content, created, project, metadata FROM memories
-         WHERE category = ? AND archived = 0 AND created >= ?
-           AND (expires_at IS NULL OR expires_at > ?)
-         ORDER BY created ASC`,
-      )
-      .all(EPISODE_CATEGORY, since, nowIso) as EpisodeRow[];
+    return episodesOnConnection(db,opts);
   } finally {
     db.close();
   }
@@ -195,4 +183,22 @@ export function digestRows(contextDir: string, opts: TapeOptions = {}): TapeDige
   const since = new Date(now - (opts.hours ?? DEFAULT_HOURS) * HOUR_MS).toISOString();
   if (opts.onlyConversation === null) return [];
   return tapeDigests(contextDir, since, new Date(now).toISOString(), opts.onlyConversation, opts.memorySelection);
+}
+
+/** Read-only episodes from the caller's declared private source; no discovery. */
+export function episodesOnConnection(db:Database,opts:TapeOptions={}):EpisodeRow[] {
+    const now = opts.nowMs ?? Date.now();
+    const since = new Date(now - (opts.hours ?? DEFAULT_HOURS) * HOUR_MS).toISOString();
+    const nowIso = new Date(now).toISOString();
+    // A store holding only conversations so far (a turn came before any memory) has no episodes.
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories'").get()) return [];
+    return db
+      .prepare(
+        `SELECT title, content, created, project, metadata FROM memories
+         WHERE category = ? AND archived = 0 AND julianday(created) >= julianday(?)
+           AND julianday(created) <= julianday(?) AND (expires_at IS NULL OR julianday(expires_at) > julianday(?))
+         ORDER BY julianday(created),created`,
+      )
+      .all(EPISODE_CATEGORY, since, nowIso, nowIso) as EpisodeRow[];
+
 }

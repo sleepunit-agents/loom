@@ -22,7 +22,7 @@ function fixture() {
     };
     return Response.json({ ok: true, value: values[path as keyof typeof values] });
   });
-  const options = { args: ['config'], read: async () => JSON.stringify({ command: '/native/claude', cwd: '/house' }), stdin: async () => input, env: { ACCOUNT_PROFILE: '/private/profile' }, signal: abort.signal, fetch: fetcher, native, error };
+  const options = { args: ['config'], read: async () => JSON.stringify({ command: '/native/claude', cwd: '/house' }), stdin: async () => input, env: { ACCOUNT_PROFILE: '/private/profile' }, signal: abort.signal, fetch: fetcher, native,loadMemory:async()=>null,error };
   return { options, input, native, error, calls, abort, stop: () => { stopRequested = true; } };
 }
 it('accepts within the child, confirms before native execution, and reports actual response/action models', async () => {
