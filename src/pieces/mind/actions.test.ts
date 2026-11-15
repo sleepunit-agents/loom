@@ -15,7 +15,8 @@ import { verifyKnowledgePages, deriveSlaClass } from '../../backends/knowledge-v
 import { installMindKnowledgeActions } from './actions.js';
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
-const sharing: Sharing = { members: { owner: { owner: true, agents: ['art'] }, partial: { owner: false, agents: ['art'] } }, projects: {}, services: { reader: { types: ['knowledge'], operations: [] } } };
+// Keep installed maintenance admitted while action receipts age thirty days.
+const sharing: Sharing = { members: { owner: { owner: true, agents: ['art'] }, partial: { owner: false, agents: ['art'] } }, projects: {}, services: { attention: { types: ['attention.ask'], operations: ['attention.sweepWaits', 'attention.pendingWaits'] }, reader: { types: ['knowledge'], operations: [] } } };
 const owner: Viewer = { kind: 'member', id: 'owner' };
 async function fixture(missing = false) {
   const home = mkdtempSync(join(tmpdir(), 'mind-actions-'));
