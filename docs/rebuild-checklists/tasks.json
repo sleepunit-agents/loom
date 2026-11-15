@@ -31,7 +31,11 @@
     {
       "id": "tasks-005",
       "promise": "Every task has an owner. Its project, or else its owner, decides who sees it.",
-      "source": "docs/how-it-works/site/tasks.html#con-h"
+      "source": "docs/how-it-works/site/tasks.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
     },
     {
       "id": "tasks-006",
@@ -80,17 +84,29 @@
     {
       "id": "tasks-014",
       "promise": "a Every task has an owner. A member, an agent or the household. There is no task without one.",
-      "source": "docs/how-it-works/site/tasks.html#see-h"
+      "source": "docs/how-it-works/site/tasks.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
     },
     {
       "id": "tasks-015",
       "promise": "b Who sees it. Its project's people when it has a project. Otherwise its owner, and for an agent's task, that agent's owners. Household owners always.",
-      "source": "docs/how-it-works/site/tasks.html#see-h"
+      "source": "docs/how-it-works/site/tasks.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
     },
     {
       "id": "tasks-016",
       "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read tasks without asking.",
-      "source": "docs/how-it-works/site/tasks.html#see-h"
+      "source": "docs/how-it-works/site/tasks.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
     },
     {
       "id": "tasks-017",

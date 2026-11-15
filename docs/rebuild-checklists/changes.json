@@ -129,12 +129,20 @@
     {
       "id": "changes-015",
       "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees changes in their projects and changes opened by agents they own.",
-      "source": "docs/how-it-works/site/changes.html#see-h"
+      "source": "docs/how-it-works/site/changes.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
     },
     {
       "id": "changes-016",
       "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
-      "source": "docs/how-it-works/site/changes.html#see-h"
+      "source": "docs/how-it-works/site/changes.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
     },
     {
       "id": "changes-017",
