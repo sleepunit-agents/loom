@@ -70,7 +70,7 @@ export async function* walkthroughSteps(output) {
   await page.keyboard.press('Escape');
   yield {phase:'ready',report:safeReport(report)};
   const ready=label=>{const tile=[...document.querySelectorAll('[data-tile]')].find(node=>node.getAttribute('aria-label')===label);const body=tile?.querySelector('.next-page');return !!body?.textContent?.trim()&&!/Opening [^\n]*…|Loading[^\n]*…|Connecting[^\n]*…/.test(body.textContent);};
-  const details={'Tasks':['Goal'],'Approvals':['Exactly what this allows'],'Changes':['Description'],'Inbox':['If yes'],'Tempo':['Words'],'Comms':['Spend up to 180 example dollars on the pump?','Compare garden pumps · t-1 · in_progress'],'Agents':['DESCRIPTION']};
+  const details={'Tasks':['Goal'],'Approvals':['Exactly what this allows'],'Changes':['Description'],'Inbox':['If yes'],'Tempo':['Words'],'Comms':['Spend up to 180 example dollars on the pump?'],'Agents':['DESCRIPTION']};
   const selections={'Tasks':'Measure the hose','Approvals':'Inspect the example pump','Changes':'Plan the pump repair (t-1)','Inbox':'Spend up to 180 example dollars on the pump?','Tempo':'Continue the pump inspection','Comms':'Repair the garden pump','Agents':'Fern'};
   for(const [index,title] of titles.entries()) {
    const start={console:consoleErrors.length,page:pageErrors.length,network:networkErrors.length,frames:frames.length};
@@ -89,6 +89,7 @@ export async function* walkthroughSteps(output) {
       await tile.getByText(selections[title],{exact:true}).first().click();
       await page.waitForFunction(ready,`${title} tile`);
       for(const text of details[title]??[])await tile.getByText(text,{exact:true}).first().waitFor();
+      if(title==='Comms')await tile.getByRole('region',{name:'Work in this conversation',exact:true}).getByText('Compare garden pumps',{exact:false}).waitFor();
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
