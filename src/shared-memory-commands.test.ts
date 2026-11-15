@@ -11,6 +11,7 @@ import {once} from 'node:events';
 import {WebSocket} from 'ws';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
+import {bodyCommandClient} from './runtime/body-command-client.js';
 const owned=vi.hoisted(()=>({connections:[] as Connection[],failLoad:false}));
 vi.mock('better-sqlite3',async importOriginal=>{
  const original=await importOriginal<{default:typeof Database}>();
@@ -151,6 +152,17 @@ it('archives, restores and forgets one own opaque ID with private notes, replay 
  f.db.$client.exec('DROP TRIGGER fail_forget_core');const forgotten=await f.call('forget',{id},'forget-one');expect(forgotten.status).toBe(200);expect(forgotten.result.value.ids).toEqual([id]);expect(await f.call('forget',{id},'forget-one')).toEqual(forgotten);
  expect(f.source.prepare('SELECT content,op FROM memory_deletions').all()).toEqual([{content:words,op:'forget'}]);expect((await f.call('restore',{id},'restore-forgotten')).status).toBe(404);
  for(const privateText of [words,title,note,f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(privateText))).toBe(false);
+});
+it('consumes canonical Memory through the production body command and GraphQL client',async()=>{
+ const f=await fixture(),client=bodyCommandClient({url:f.url,token:raw.body,signal:new AbortController().signal,clock:f.clock});clean.push(client.close);
+ const catalog=await client.command('runtime.commandCatalog',{name:'memory.remember'},'consumer-catalog');expect(catalog).toMatchObject({ok:true,value:{commands:[{name:'memory.remember'}]}});
+ const remembered=await client.command('memory.remember',input,'consumer-remember');expect(remembered.ok).toBe(true);if(!remembered.ok)throw Error('Missing consumer result');
+ const {ids:[id]}=z.object({ids:z.array(z.string()).length(1)}).parse(remembered.value);expect(JSON.stringify(remembered)).not.toContain(words);
+ expect(await client.query({query:'query($id:String!){memoryProjectMemory(id:$id){content title}}',variables:{id}})).toEqual({data:{memoryProjectMemory:{content:words,title}}});
+ expect(await client.command('memory.recall',{query:'alpha'},'consumer-recall')).toMatchObject({ok:true,value:{ids:[id]}});
+ for(const verb of ['archive','restore','forget'])expect(await client.command('memory.'+verb,{id},'consumer-'+verb)).toMatchObject({ok:true,value:{ids:[id]}});
+ expect(await client.query({query:'query($id:String!){memoryProjectMemory(id:$id){content}}',variables:{id}})).toEqual({data:{memoryProjectMemory:null}});
+ f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());expect(await client.command('memory.remember',input,'consumer-remember')).toMatchObject({ok:false,code:'denied'});
 });
 it('rolls back restore embedding after authority loss and rolls back archive on source receipt failure',async()=>{
  const f=await fixture(),id=(await f.call('remember',input,'make-rollback')).result.value.ids[0];
