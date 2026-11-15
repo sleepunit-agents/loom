@@ -17,6 +17,9 @@ const day=86400000;
 const days=(ms:number)=>{const n=Math.floor(Math.max(0,ms)/day);return `${n} day${n===1?'':'s'}`;};
 const has=(db:Database,name:string)=>!!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name);
 const latest=(times:string[])=>times.sort((a,b)=>Date.parse(b)-Date.parse(a))[0];
+interface ProjectsReader {access(viewer:Viewer):{id:string;allowed:boolean;agents:string[]};close():void}
+const readers=new WeakMap<Operations,ProjectsReader>();
+export const installedMindProjects=(operations:Operations)=>readers.get(operations);
 export function installMindProjects(operations:Operations,live:Live,options:{agents:Array<{agent:string;memories:string}>;sharing():Sharing;people?:Mind;tasks?:ProjectSectionRole;notes?:ProjectSectionRole;conversations?:ProjectSectionRole;changes?:ProjectSectionRole}){
  const sources=new Map<string,Database>();
  try{for(const a of options.agents)if(existsSync(a.memories))sources.set(a.agent,new BetterSqlite3(a.memories,{readonly:true,fileMustExist:true,timeout:0}));}catch(e){for(const db of sources.values())db.close();throw e;}
@@ -107,6 +110,9 @@ export function installMindProjects(operations:Operations,live:Live,options:{age
  };
  operations.register(operation({name:'mind.projectMemoryRead',input:z.object({id:z.string().min(3).max(300)}).strict(),output:z.unknown(),may:(v,i)=>maySee(v,{type:'memory',agent:i.id.split(':')[0]},options.sharing()),run:(ctx,i)=>memoryRead(i.id,ctx.viewer)??{ok:false,code:'not-found',message:'Memory not found'}}));
  live.register({name:'project.memory',ids:scope=>scope?[scope]:[],read:memoryRead,inScope:(r,s)=>r.id===s,refreshOn:c=>c.type==='memory',expires:r=>(r as ProjectMemory).expires});
- live.register({name:'projects.access',ids:()=>['projects'],read:(_id,v)=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)}),inScope:()=>true});
- return {close(){for(const db of sources.values())db.close();}};
+ const access=(v:Viewer)=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)});
+ live.register({name:'projects.access',ids:()=>['projects'],read:(_id,v)=>access(v),inScope:()=>true});
+ let closed=false;
+ const reader={access,close(){if(closed)return;closed=true;if(readers.get(operations)===reader)readers.delete(operations);for(const db of sources.values())db.close();}};
+ readers.set(operations,reader);return reader;
 }

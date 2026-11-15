@@ -86,7 +86,7 @@ import { signin, installSignin, sameOrigin, relyingParty } from './core/signin/i
 import { signinRoutes } from './core/signin/routes.js';
 import { mindSources } from './pieces/mind/sources.js';
 import { mindTouchSources, mindTouchResolver } from './pieces/mind/binding.js';
-import { installMindProjects } from './pieces/mind/projects.js';
+import { installMindProjects, installedMindProjects } from './pieces/mind/projects.js';
 import { projectTasks, projectChanges } from './pieces/mind/projects-roles.js';
 import { tasksRole } from './pieces/tasks/role.js';
 import { mindRole } from './pieces/mind/role.js';
@@ -268,7 +268,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const activity = installedMindActivity(app.operations);
     if (!activity) throw new Error('Memory queries require the installed Activity reader');
     const queries = memoryQueryFields(sharedMemory, {sources: inventory, sharing, now: () => app.operations.clock.now(),
-      mind: mindRole(app.operations), activity, conversationHref,
+      mind: mindRole(app.operations), activity, projectAccess:installedMindProjects(app.operations)?.access, conversationHref,
       projectHref: (agent, slug) => `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}`});
     memoryQueries.set(app, queries);
     app.onClose(() => { queries.close(); memoryQueries.delete(app); });

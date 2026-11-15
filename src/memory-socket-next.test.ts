@@ -399,3 +399,24 @@ it('rearms Activity from injected conversation expiry discovered by the initial 
   expect(changed).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining([{path:['memoryActivityEntry'],removed:false,value:null},{path:['memoryActivity','entries',0],removed:true,value:null}])}}}});
  }finally{await f.close();}
 },2000);
+
+it('projects existing Memory capabilities on GraphQL and updates them after a committed demotion',async()=>{
+ const f=await setup();let legacy:WebSocket|undefined;
+ const selection='{ memoryKnowledgeAccess { allowed canAdd canVerify canRecheck } memoryPeopleAccess { allowed directory canAdd agents } memoryProjectsAccess { allowed agents } memoryActivityAccess { allowed agents owner timezone today windows expires } }';
+ const http=async(who:'owner'|'peer')=>{const response=await fetch(f.loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credentials[who],'content-type':'application/json'},body:JSON.stringify({query:selection})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
+ try{
+  const expected=await http('owner');expect(expected).toMatchObject({memoryKnowledgeAccess:{allowed:true,canAdd:true},memoryPeopleAccess:{allowed:true,directory:true,agents:['fiction']},memoryProjectsAccess:{allowed:true,agents:['fiction']},memoryActivityAccess:{allowed:true,agents:['fiction'],today:'2026-11-14'}});
+  // Both transports delegate the same capability projection, not two policies.
+  legacy=new WebSocket(f.loom.url.replace('http:','ws:')+'/live');await once(legacy,'open');
+  for(const [type,field] of [['knowledge.access','memoryKnowledgeAccess'],['people.access','memoryPeopleAccess'],['projects.access','memoryProjectsAccess'],['activity.access','memoryActivityAccess']]){
+   const frame=await message(legacy,()=>legacy!.send(JSON.stringify({kind:'subscribe',type}))) as unknown as {records:Record<string,unknown>[]};
+   expect(Object.fromEntries(Object.keys(expected[field]).map(key=>[key,frame.records[0][key]]))).toEqual(expected[field]);
+  }
+  const peer=await http('peer');for(const value of Object.values(peer) as Array<{allowed:boolean}>)expect(value.allowed).toBe(false);
+  const ws=await f.open();expect(await message(ws,()=>ws.send(JSON.stringify({id:'capabilities',type:'subscribe',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection}}})))).toMatchObject({payload:{data:{observe:{patches:[{value:expected}]}}}});
+  f.loom.operations.register({name:'fiction.demoteCapabilities',write:true,input:z.object({}),output:z.null(),may:()=>true,run(ctx){ctx.db.prepare("UPDATE members SET role='member' WHERE id='owner'").run();f.sharing.members.owner.owner=false;ctx.changed('core.access','owner');return null;}});
+  const changed=await message(ws,()=>expect(f.loom.operations.call('direct',{kind:'member',id:'owner'},'fiction.demoteCapabilities',{},'demote-capabilities')).toEqual({ok:true,value:null}));
+  expect(changed).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining(['memoryKnowledgeAccess','memoryPeopleAccess','memoryProjectsAccess','memoryActivityAccess'].map(field=>({path:[field,'allowed'],removed:false,value:false})))}}}});
+  const after=await http('owner');for(const value of Object.values(after) as Array<{allowed:boolean}>)expect(value.allowed).toBe(false);
+ }finally{legacy?.terminate();await f.close();}
+},2000);

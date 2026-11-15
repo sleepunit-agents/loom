@@ -26,6 +26,7 @@ const ownership=new GraphQLObjectType({name:'MemoryPersonOwnership',fields:{owne
 const revision=new GraphQLObjectType({name:'MemoryPersonRevision',fields:{id:{type:GraphQLInt},op:requiredText,replacedAt:requiredText,actor:text,card:{type:card}}});
 const conversation=new GraphQLObjectType({name:'MemoryPersonConversation',fields:{id:requiredText,title:requiredText,href:requiredText}});
 const conversations=new GraphQLObjectType({name:'MemoryPersonConversations',fields:{available:{type:new GraphQLNonNull(GraphQLBoolean)},rows:{type:list(conversation)}}});
+const access=new GraphQLObjectType({name:'MemoryPeopleAccess',fields:{allowed:{type:new GraphQLNonNull(GraphQLBoolean)},directory:{type:new GraphQLNonNull(GraphQLBoolean)},canAdd:{type:new GraphQLNonNull(GraphQLBoolean)},agents:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))}}});
 export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:PeopleConversations}): {fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;nextDeadline():number|undefined;close():void} {
  let reader:ReturnType<typeof peopleReader>|undefined=peopleReader(options);
  const visible=(context:MemoryQueryContext,agent?:string)=>!!context?.viewer&&mayReadPerson(context.viewer,agent,options.sharing());
@@ -42,6 +43,7 @@ export function peopleQueryFields(options:PeopleReaderOptions & {conversations?:
   }},
  }});
  return {nextDeadline:()=>reader?.nextDeadline(),fields:{
+  memoryPeopleAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?reader?.access(context.viewer)??null:null},
   memoryPeople:{type:new GraphQLList(new GraphQLNonNull(person)),resolve:(_source,_args,context)=>anyVisible(context)?safe(()=>reader?.list(context.viewer)??[]):[]},
   memoryPerson:{type:person,args:{id:{type:new GraphQLNonNull(GraphQLString)}},resolve:(_source,args,context)=>{
    const colon=(args.id as string).indexOf(':');if(colon<1)return null;

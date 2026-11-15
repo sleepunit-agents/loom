@@ -14,6 +14,7 @@ export interface PeopleReaderOptions {
 }
 /** Direct file projection shared by GraphQL and the retiring record transport. */
 export interface PeopleReader {
+ access(viewer:Viewer):{id:string;allowed:boolean;directory:boolean;agents:string[];canAdd:boolean};
  nextDeadline():number|undefined;
  read(id:string,viewer:Viewer):PersonRecord|undefined;
  ids(scope?:string):string[];
@@ -113,6 +114,8 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
     return next===Infinity?undefined:next;
   }
   return {
+    access(v){return {id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
+      agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent),canAdd:mayAct(v,{type:'person'},options.sharing(),'act','mind.personAdd')};},
     nextDeadline,read, ids, sources, allowed,
     list(viewer:Viewer) {
       for(const source of failed)if(allowed(viewer,source==='commons'?undefined:source))available(source);
@@ -149,8 +152,6 @@ export function installMindPeople(operations:Operations,live:Live,options:Omit<P
     },
   });
   live.register({name:'people.conversations',ids,read:(id,v)=>{const person=read(id,v);return person ? {id,...(options.conversations?.list(v,person.slug) ?? {available:false,rows:[]})} : undefined;},inScope:(r,scope)=>scope===undefined || r.id===scope,refreshOn:c=>c.type==='person' || c.type==='attention.conversation' || c.type.startsWith('comms.')});
-  live.register({name:'people.access',ids:()=>['people'],read:(_id,v)=>({id:'people',allowed:allowed(v)||options.agents.some(a=>allowed(v,a.agent)),directory:allowed(v),
-    agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent),
-    canAdd:mayAct(v,{type:'person'},options.sharing(),'act','mind.personAdd')}),inScope:()=>true});
+  live.register({name:'people.access',ids:()=>['people'],read:(_id,v)=>reader.access(v),inScope:()=>true});
   return {close:reader.close};
 }

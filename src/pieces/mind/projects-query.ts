@@ -47,7 +47,8 @@ const memory = new GraphQLObjectType({ name: 'MemoryProjectMemory', fields: {
  category: requiredText, created: requiredText, updated: requiredText, expires: { type: GraphQLFloat },
 } });
 
-export function projectsQueryFields(mind: Mind, deadlines?:QueryDeadlines, now:()=>number=Date.now): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
+const access=new GraphQLObjectType({name:'MemoryProjectsAccess',fields:{allowed:{type:new GraphQLNonNull(GraphQLBoolean)},agents:{type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))}}});
+export function projectsQueryFields(mind: Mind, deadlines?:QueryDeadlines, now:()=>number=Date.now,capabilities?: (viewer:Viewer)=>{allowed:boolean;agents:string[]}): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
  const read = (context: { viewer: Viewer }, verb: string, input: Record<string, unknown>, absent: unknown) => {
   if (!context?.viewer) return absent;
   try {
@@ -67,6 +68,7 @@ export function projectsQueryFields(mind: Mind, deadlines?:QueryDeadlines, now:(
  };
  const id = { type: new GraphQLNonNull(GraphQLString) };
  return {
+  memoryProjectsAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?capabilities?.(context.viewer)??null:null},
   memoryProjects: { type: new GraphQLList(new GraphQLNonNull(project)), resolve: (_source, _args, context) => read(context, 'projectsList', {}, []) },
   memoryProject: { type: project, args: { id }, resolve: (_source, args, context) => read(context, 'projectRead', { id: args.id }, null) },
   memoryProjectMemory: { type: memory, args: { id }, resolve: (_source, args, context) => read(context, 'projectMemoryRead', { id: args.id }, null) },
