@@ -14,24 +14,31 @@ vi.mock('../../kit', () => Object.fromEntries(['Split','Row','Empty','Error','Lo
 import CommsApp from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { await act(async () => tree?.unmount()); vi.useRealTimers(); f.requests = []; f.call.mockReset(); f.queued.mockReset(); });
+afterEach(async () => { await act(async () => tree?.unmount()); vi.useRealTimers(); f.requests = []; f.call.mockReset(); f.queued.mockReset(); vi.unstubAllGlobals(); });
 const thread = (extra = {}) => ({ id: 'th:pump', conversation: 'cv-pump', title: 'Private pump', agent: 'art', member: 'alice', pinned: false, archivedAt: null, lastAt: '2026-11-14T18:00:00Z', readSeq: 0, working: true, stopRequested: false, ...extra });
 const message = (extra = {}) => ({ thread: 'th:pump', seq: 1, kind: 'reply', sender: 'art', at: '2026-11-14T18:00:00Z', words: 'PRIVATE REPLY', wordsKeepUntil: new Date(Date.now()+60000).toISOString(), ...extra });
 function setup() {
   f.status = 'live'; f.requests = []; f.records.mockClear();
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+    const name = url.replace('/api/','').replace('/','.');
+    const body = JSON.parse(String(init.body));
+    const result = await f.call(name, body.input).result;
+    return { ok: result.ok, json: async () => result };
+  }));
   for (const call of [f.call, f.queued]) call.mockImplementation(() => ({ result: Promise.resolve({ ok: true, value: { saved: true } }) }));
   f.data = { homeComms: { member: 'alice', agents: ['art'] }, commsFolders: { threads: 120, archived: 13 }, commsThreads: [thread()], commsThread: thread(), commsMessages: [message()], commsRefs: [] };
 }
 const named = (label: string) => tree.root.findAllByType('Button').find((b: { props: { children: ReactNode } }) => Children.toArray(b.props.children).join('') === label);
 const text = () => JSON.stringify(tree.toJSON());
 async function draw(path = '/p/comms-preview/thread/pump', go = vi.fn()) { await act(async () => { tree = create(h(CommsApp, { path, go })); }); return go; }
-it('mounts the shared Comms app, queues reads and sends through authenticated shared operations', async () => {
+it('mounts the shared Comms app, records reads and sends through authenticated shared HTTP operations', async () => {
   setup(); await draw(); expect(text()).toContain('PRIVATE REPLY'); expect(f.records).not.toHaveBeenCalled();
-  expect(f.queued).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'read', seq: 1 });
+  expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'read', seq: 1 });
   const input = tree.root.findAllByType('Textarea').find((n: { props: { 'aria-label': string } }) => n.props['aria-label'] === 'Message art');
   await act(async () => { input.props.onChange({ target: { value: 'Find a pump' } }); });
   await act(async () => { named('Send').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('comms.send', { thread: 'th:pump', words: 'Find a pump', clientId: expect.any(String) });
+  expect(fetch).toHaveBeenCalledWith('/api/comms/send', expect.objectContaining({ method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: expect.any(String) }));
   await act(async () => { named('Pin').props.onClick(); });
   expect(f.call).toHaveBeenCalledWith('comms.change', { thread: 'th:pump', change: 'pin', pinned: true });
 });
@@ -39,7 +46,7 @@ it('creates conversations for owned agents without passing a member identity', a
   setup(); const go = await draw('/p/comms-preview');
   expect(named('Chat with art')).toBeDefined(); expect(named('Chat with bob')).toBeUndefined();
   await act(async () => { named('Chat with art').props.onClick(); });
-  expect(f.queued).toHaveBeenCalledWith('comms.open', { agent: 'art', thread: expect.stringMatching(/^th:/) });
+  expect(f.call).toHaveBeenCalledWith('comms.open', { agent: 'art', thread: expect.stringMatching(/^th:/) });
   expect(go).toHaveBeenCalledWith(expect.stringMatching(/^\/p\/comms-preview\/thread\//));
 });
 it('uses server counts, search and thread/message pages without caching old private words', async () => {
@@ -69,7 +76,7 @@ it('expires private message wording locally at its effective server deadline', a
 });
 it('keeps another member’s owner-visible thread read-only', async () => {
   setup(); f.data.commsThread = thread({ member: 'bob' }); await draw();
-  expect(text()).toContain('PRIVATE REPLY'); expect(named('Send')).toBeUndefined(); expect(named('Delete')).toBeUndefined(); expect(f.queued).not.toHaveBeenCalled();
+  expect(text()).toContain('PRIVATE REPLY'); expect(named('Send')).toBeUndefined(); expect(named('Delete')).toBeUndefined(); expect(f.call).not.toHaveBeenCalled();
 });
 it('answers the exact shared Inbox question inline', async () => {
   setup(); f.data.commsMessages = [message({ kind: 'ask', inboxItem: 'in-ask' })];

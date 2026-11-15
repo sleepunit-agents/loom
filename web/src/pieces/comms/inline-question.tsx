@@ -17,7 +17,7 @@ export function InlineQuestion({ id, go, writable }: { id: string; go(path: stri
   const now = useDeadline(item ? [item.bodyKeepUntil, item.answerKeepUntil] : []);
 
   const actions: InboxActions | undefined = item && writable ? {
-    read: item => mutate('inbox.read', { item }, true),
+    read: item => mutate('inbox.read', { item }),
     answer: (item, answer, words) => mutate('inbox.answer', { item, answer, ...(words ? { words } : {}) }),
     openSource: inboxSourcePath(item) ? item => { const path = inboxSourcePath(item); if (path) go(path); } : undefined,
   } : undefined;

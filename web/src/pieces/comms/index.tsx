@@ -28,9 +28,9 @@ export default function CommsApp({ path: shellPath, go }: { path?: string; go?(p
   const now = useDeadline(live ? data.messages.map(row => row.wordsKeepUntil) : []);
 
   const actions: CommsActions | undefined = live ? {
-    open: (agent, thread) => mutate('comms.open', { agent, thread }, true),
+    open: (agent, thread) => mutate('comms.open', { agent, thread }),
     send: (thread, words, clientId) => mutate('comms.send', { thread, words, clientId }),
-    read: (thread, seq) => mutate('comms.change', { thread, change: 'read', seq }, true),
+    read: (thread, seq) => mutate('comms.change', { thread, change: 'read', seq }),
     change: async (thread, change) => { await mutate('comms.change', { thread, ...change }); if (change.change === 'delete') select(); },
   } : undefined;
   const messages = live ? data.messages.slice(-50).map(row => retainedCommsMessage(row, now)) : [];
