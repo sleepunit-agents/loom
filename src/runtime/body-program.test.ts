@@ -114,8 +114,8 @@ it('waits for an outstanding serialized status beat before publishing or releasi
 });
 
 it.each(['missing-ref','foreign-platform','unsupported-venue'])('refuses a %s bridge route before native execution',async mode=>{
- const f=fixture(),fetcher=f.options.fetch,value=JSON.parse(f.input.toString());value.job.venue=mode==='unsupported-venue'?'unhandled':'slack';value.job.thread=null;const bytes=Buffer.from(JSON.stringify(value));
- expect(await bodyProgram({...f.options,stdin:async()=>bytes,fetch:async(url,options)=>{
+ const f=fixture(),fetcher=f.options.fetch,startup=vi.fn(async()=>{}),value=JSON.parse(f.input.toString());value.job.venue=mode==='unsupported-venue'?'unhandled':'slack';value.job.thread=null;const bytes=Buffer.from(JSON.stringify(value));
+ expect(await bodyProgram({...f.options,stdin:async()=>bytes,...(mode==='unsupported-venue'?{startup}:{}),fetch:async(url,options)=>{
   const response=await fetcher(url,options);if(!String(url).endsWith('/take'))return response;
   const batch=await response.json();Object.assign(batch.value.items[0],{source:mode==='foreign-platform'?'discord':'slack',refs:mode==='missing-ref'?[]:['bi:fixture']});return Response.json(batch);
  }})).toBe(1);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(bytes.every(byte=>byte===0)).toBe(true);
