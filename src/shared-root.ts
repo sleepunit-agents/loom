@@ -13,6 +13,7 @@ import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
 import type { SecretValueSource } from './pieces/secrets/role.js';
 import { sharedSecretInputRoutes } from './shared-secret-inputs.js';
 import { recordActionResult } from './shared-action-results.js';
+import {conversationQuestionPolicy} from './shared-conversation-questions.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { sql } from 'drizzle-orm';
 import { secretChanges } from './core/data/schema.js';
@@ -127,7 +128,7 @@ export function sharedRoot(options: {
   const memory=sharedMemory(db,clock,options.memory,tasks);
   const startupCleanups:Array<()=>void>=[memory.close];
   try{
-  const notices = settledNotices(db, () => data.changed());
+  const notices = settledNotices(db, () => data.changed(),conversationQuestionPolicy(db).visibility);
   startupCleanups.push(notices.close);
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields, ...deskTimeFields(db, clock), ...deskSpriteFields(db), ...comms?.fields, ...notices.fields, ...options.fields, ...workQueryFields(db,!!options.changes)}, () => !closing, credentials.authenticate, work => meter?.enabled()
@@ -206,7 +207,7 @@ export function sharedRoot(options: {
   });
   startupCleanups.push(()=>{unobserveBridges?.();void bridgeDaemon?.close().catch(()=>report(new Error('Bridge startup cleanup failed')));});
   comms?.install(operations);
-  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
+  if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)),comms.authorizeQuestion);
   const services = {
     bridges: {daemon:bridgeDaemon,settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks,
