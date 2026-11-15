@@ -5,7 +5,7 @@ import { bodyLimit } from 'hono/body-limit';
  * the HTTP door binds that token to the authenticated bearer. */
 import { createHash, randomBytes } from 'node:crypto';
 import { eq } from 'drizzle-orm';
-import { Hono, type MiddlewareHandler } from 'hono';
+import { Hono, type Context, type MiddlewareHandler } from 'hono';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
 import { sessions, signinLinks, tokens } from '../data/schema.js';
@@ -52,13 +52,13 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
 
 /** Public identity door, using the same connection and committed notifications
  * as queries/commands. No session cookie or raw link enters retry receipts. */
-export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock; writes: DataWrites; publicOrigin?: string; admitted(): boolean; reportError(error: unknown): void; authenticate(request:Request):Authentication|undefined }) {
+export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock; writes: DataWrites; publicOrigin?: string; admitted(): boolean; reportError(error: unknown): void; issueProgram?(input:unknown):{token:string;fingerprint:string}; authenticate(request:Request):Authentication|undefined }) {
   const signin = sharedSigninLinks(options.db, options.clock);
   const authenticate = options.authenticate;
   const routes = new Hono();
   const rp=options.publicOrigin?new URL(options.publicOrigin):undefined;
   const passkeys=rp&&(rp.protocol==='https:'||rp.hostname==='localhost')?sharedPasskeys(options.db,options.clock,{origin:rp.origin,rpId:rp.hostname}):undefined;
-  for(const path of ['/api/signin/link','/api/signin/token','/login/*','/passkeys','/passkeys/options','/logout'])routes.use(path,bodyLimit({maxSize:32768}));
+  for(const path of ['/api/signin/link','/api/signin/token','/api/signin/program','/login/*','/passkeys','/passkeys/options','/logout'])routes.use(path,bodyLimit({maxSize:32768,...(path==='/api/signin/program'?{onError:(c:Context)=>c.json({error:'Request too large'},413)}:{})}));
   const guard: MiddlewareHandler = async (c, next) => {
     c.header('cache-control', 'no-store'); c.header('referrer-policy', 'no-referrer');
     c.header('x-content-type-options', 'nosniff');
@@ -70,7 +70,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     }
     await next();
   };
-  routes.use('/api/signin/token', guard); routes.use('/api/signin/link', guard); routes.use('/login/*', guard);
+  routes.use('/api/signin/token', guard); routes.use('/api/signin/program',guard); routes.use('/api/signin/link', guard); routes.use('/login/*', guard);
   for(const path of ['/login/passkey/options','/login/passkey','/passkeys/options','/passkeys'])routes.use(path,guard);
   routes.use('/auth/session', guard); routes.use('/logout', guard);
   routes.onError(() => Response.json({ error: 'Sign-in could not complete' }, { status: 401, headers: { 'cache-control': 'no-store' } }));
@@ -83,24 +83,30 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     const secure = (options.publicOrigin ?? new URL(url).origin).startsWith('https:');
     return `loom_ui=${cookie}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${secure ? '; Secure' : ''}`;
   };
-  routes.post('/api/signin/token', async c => {
-    const input = sharedTokenInput.safeParse(await c.req.json().catch(() => null));
-    const auth = authenticate(c.req.raw);
-    if (!auth?.valid() || !sharedTokenOwner(options.db, auth.viewer)) return c.json({ error: 'Household owner required' }, 403);
-    if (!input.success) return c.json({ error: 'Invalid token request' }, 400);
-    try { const value = write(() => {
-      if(!auth.valid() || !sharedTokenOwner(options.db, auth.viewer))throw new OperationError('denied','Household owner required');
-      return sharedTokens(options.db, options.clock).issue(input.data);
-    });
+  const issueForOwner=async(c:Context,issue:(input:unknown)=>{token:string;fingerprint:string})=>{
+    const input=await c.req.json().catch(()=>null),auth=authenticate(c.req.raw);
+    if(!auth?.valid()||!sharedTokenOwner(options.db,auth.viewer))return c.json({error:'Household owner required'},403);
+    try{
+      const value=write(()=>{
+        if(!auth.valid()||!sharedTokenOwner(options.db,auth.viewer))throw new OperationError('denied','Household owner required');
+        return issue(input);
+      });
       if(!options.admitted())return c.json({error:'Sign-in unavailable'},503);
-      if(!auth.valid() || !sharedTokenOwner(options.db,auth.viewer))return c.json({error:'Household owner required'},403);
+      if(!auth.valid()||!sharedTokenOwner(options.db,auth.viewer))return c.json({error:'Household owner required'},403);
       return c.json({ok:true,value});
-    }
-    catch (error) {
-      if (error instanceof OperationError) return c.json({ error: error.message }, error.code === 'denied' ? 403 : error.code === 'conflict' ? 409 : 400);
+    }catch(error){
+      if(error instanceof OperationError)return c.json({error:error.message},({denied:403,conflict:409,invalid:400,'not-found':404,unavailable:503} as const)[error.code]);
       throw error;
     }
-  });
+  };
+  routes.post('/api/signin/token',c=>issueForOwner(c,input=>{
+    const parsed=sharedTokenInput.safeParse(input);if(!parsed.success)throw new OperationError('invalid','Invalid token request');
+    return sharedTokens(options.db,options.clock).issue(parsed.data);
+  }));
+  routes.post('/api/signin/program',c=>issueForOwner(c,input=>{
+    if(!options.issueProgram)throw new OperationError('unavailable','Program tokens are unavailable');
+    return options.issueProgram(input);
+  }));
   routes.post('/api/signin/link', c => {
     const bearer = /^Bearer ([^\s]{32,4096})$/i.exec(c.req.header('authorization') ?? '')?.[1];
     const auth = authenticate(c.req.raw);
