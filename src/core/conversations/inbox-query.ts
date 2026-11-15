@@ -12,7 +12,7 @@ import type { WordsKey } from './words.js';
 type Item = typeof inbox.$inferSelect;
 type Body = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
 export type InboxQueryPolicy = (viewer: Viewer, fields: Record<string, AnyColumn>) => SQL;
-export type InboxFilter = { folder?: 'needs' | 'alerts' | 'answered' | 'fyi' | 'all'; state?: Item['state']; source?: Item['source']; agent?: string; limit?: number; offset?: number; search?: string };
+export type InboxFilter = { folder?: 'needs' | 'alerts' | 'answered' | 'fyi' | 'all'; state?: Item['state']; source?: Item['source']; agent?: string; conversation?: string; limit?: number; offset?: number; search?: string };
 
 export class InboxQueries {
   constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly policy: InboxQueryPolicy,
@@ -66,7 +66,8 @@ export class InboxQueries {
       ne(inbox.volume, 'mute'),
       filter.state ? eq(inbox.state, filter.state) : undefined,
       filter.source ? eq(inbox.source, filter.source) : undefined,
-      filter.agent ? eq(inbox.agent, filter.agent) : undefined);
+      filter.agent ? eq(inbox.agent, filter.agent) : undefined,
+      filter.conversation ? eq(inbox.conversation, filter.conversation) : undefined);
   }
   private mailbox(viewer: Viewer, filter: InboxFilter) {
     return this.db.select().from(inbox).where(this.mailboxWhere(viewer, filter))
@@ -266,7 +267,7 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
     resolve: (_row, args, context) => service.results(context.viewer, args.limit),
   }, inboxItems: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(item))),
-    args: { folder: { type: GraphQLString }, search: { type: GraphQLString }, state: { type: GraphQLString }, source: { type: GraphQLString }, agent: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 50 }, offset: { type: GraphQLInt, defaultValue: 0 } },
+    args: { folder: { type: GraphQLString }, search: { type: GraphQLString }, state: { type: GraphQLString }, source: { type: GraphQLString }, agent: { type: GraphQLString }, conversation: { type: GraphQLString }, limit: { type: GraphQLInt, defaultValue: 50 }, offset: { type: GraphQLInt, defaultValue: 0 } },
     resolve: (_row, args, context) => args.search === undefined ? service.list(context.viewer, args) : service.search(context.viewer, args, until => keepReadUntil(context, until)),
   } };
 }

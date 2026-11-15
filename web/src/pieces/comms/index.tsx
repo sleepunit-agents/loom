@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { conversationOperation as mutate } from './operations';
 import { useSelection } from '../../data/graphql/selection';
 import { InlineQuestion } from './inline-question';
+import { ConversationQuestions } from './conversation-questions';
 import { SharedWork } from './shared-work';
 import { CommsView } from '../comms-view';
 import type { CommsActions } from '../comms-view/model';
@@ -45,7 +46,7 @@ function SharedCommsApp({ path: shellPath, go, visible = true }: { path?: string
     navigation={{ archived, search, offset, hasNext: (data?.threads.length ?? 0) > 50,
       folder(value) { setArchived(value); setOffset(0); }, query(value) { setSearch(value); setOffset(0); },
       previous() { setOffset(value => Math.max(0,value-50)); }, next() { setOffset(value => value+50); } }}
-    cards={{ question: id => <InlineQuestion key={id} id={id} go={navigate} readVisible={readingVisible} writable={data?.thread?.member === data?.home?.member} />, work: (refs, conversation) => <SharedWork key={conversation} refs={refs} conversation={conversation} go={navigate} /> }}
+    cards={{ question: id => <InlineQuestion key={id} id={id} go={navigate} readVisible={readingVisible} writable={data?.thread?.member === data?.home?.member} />, work: (refs, conversation) => <div key={conversation}><SharedWork refs={refs} conversation={conversation} go={navigate} />{data?.thread?.member === data?.home?.member && <ConversationQuestions conversation={conversation} go={navigate} readVisible={readingVisible} />}</div> }}
     messageNavigation={{ earlier: () => setBefore(messages[0]?.seq), latest: () => setBefore(undefined), hasEarlier: (data?.messages.length ?? 0) > 50, before }} />;
 }
 export { CommsView } from '../comms-view';
