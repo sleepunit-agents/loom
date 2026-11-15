@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema, dataDatabase } from '../../core/data/database.js';
-import { agents, jobs, members, secrets, secretUses } from '../../core/data/schema.js';
+import { agents, jobs, members, secrets, secretChanges, secretUses } from '../../core/data/schema.js';
 import { SecretRequests } from './requests.js';
 import { SecretDelivery, type SecretDeliveryHolder } from './delivery.js';
 
@@ -16,6 +16,7 @@ function fixture() {
   db.insert(members).values({ id: 'owner', role: 'owner', joinedAt: now() }).run();
   for (const id of ['art', 'mark']) db.insert(agents).values({ id, about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
   db.insert(secrets).values({ name: 'github-token', description: '', changedAt: now(), changedBy: 'owner' }).run();
+  db.insert(secretChanges).values({ id: 'initial', secret: 'github-token', action: 'add', by: 'owner', at: now() }).run();
   for (const [id, agent] of [['j-art', 'art'], ['j-mark', 'mark']]) db.insert(jobs).values({ id, agent, title: id, state: 'running', brief: '', model: 'test', startedByKind: 'agent', startedBy: agent, houseRepository: '', houseFile: '', houseBranch: '', queuedAt: now() }).run();
   const requests = new SecretRequests(db, now);
   const allow = (job?: string) => {

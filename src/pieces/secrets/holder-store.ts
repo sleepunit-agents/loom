@@ -24,6 +24,9 @@ export interface HolderStore {
   /** Positive evidence only: false does not exclude an in-flight commit. The
    * caller must durably bind this id to full input before using it to reconcile. */
   hasReceipt(who: HolderWrite): boolean;
+  /** Resolve an abandoned reservation atomically. Undone durably forbids any
+   * late mutation under this member/id, including encryption already in flight. */
+  recover(who: HolderWrite): 'committed' | 'undone';
   read(name: string): Promise<Uint8Array>;
   /** Opaque public lifetime marker; never derived from a value. */
   generation(): string;
@@ -89,14 +92,16 @@ export async function openHolderStore(directory: string, identityFile: string, f
     const historySchema = z.array(z.string().regex(/^[a-f0-9]{64}$/)).min(1);
 
     db.transaction(() => {
-      const hadStore = !!db!.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('holder_config','holder_values','holder_receipts','holder_generation','holder_key_history')").get();
+      const hadStore = !!db!.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name IN ('holder_config','holder_values','holder_receipts','holder_generation','holder_key_history','holder_aborted_writes')").get();
       const hadHistory = !!db!.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='holder_key_history'").get();
       db!.exec(`CREATE TABLE IF NOT EXISTS holder_config (id INTEGER PRIMARY KEY CHECK(id=1), verifier TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS holder_generation (id INTEGER PRIMARY KEY CHECK(id=1), generation TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS holder_key_history (id INTEGER PRIMARY KEY CHECK(id=1), bindings TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS holder_values (name TEXT PRIMARY KEY, ciphertext BLOB NOT NULL);
         CREATE TABLE IF NOT EXISTS holder_receipts (member TEXT NOT NULL, write_id TEXT NOT NULL,
-          fingerprint TEXT NOT NULL, PRIMARY KEY(member, write_id));`);
+          fingerprint TEXT NOT NULL, PRIMARY KEY(member, write_id));
+        CREATE TABLE IF NOT EXISTS holder_aborted_writes (member TEXT NOT NULL, write_id TEXT NOT NULL,
+          PRIMARY KEY(member, write_id));`);
       const old = db!.prepare('SELECT verifier FROM holder_config WHERE id=1').get() as {verifier:string} | undefined;
       const saved = db!.prepare('SELECT bindings FROM holder_key_history WHERE id=1').get() as {bindings:string} | undefined;
       if ((hadStore && !old) || (hadHistory && !saved)) throw unavailable();
@@ -120,6 +125,7 @@ export async function openHolderStore(directory: string, identityFile: string, f
       return hmac.digest('hex');
     };
     const replay = (who: HolderWrite, hashes: string[]) => {
+      if (store.prepare('SELECT 1 FROM holder_aborted_writes WHERE member=? AND write_id=?').get(who.member, who.writeId)) throw unavailable();
       const old = store.prepare('SELECT fingerprint FROM holder_receipts WHERE member=? AND write_id=?')
         .get(who.member, who.writeId) as {fingerprint: string} | undefined;
       if (old && !hashes.includes(old.fingerprint)) throw unavailable();
@@ -167,6 +173,19 @@ export async function openHolderStore(directory: string, identityFile: string, f
         try {
           check(); who = context.parse(who);
           return !!store.prepare('SELECT 1 FROM holder_receipts WHERE member=? AND write_id=?').get(who.member, who.writeId);
+        } catch { throw unavailable(); }
+      },
+      recover(who) {
+        try {
+          check(); who = context.parse(who);
+          return store.transaction(() => {
+            const committed = !!store.prepare('SELECT 1 FROM holder_receipts WHERE member=? AND write_id=?').get(who.member, who.writeId);
+            const aborted = !!store.prepare('SELECT 1 FROM holder_aborted_writes WHERE member=? AND write_id=?').get(who.member, who.writeId);
+            if (committed && aborted) throw unavailable();
+            if (committed) return 'committed' as const;
+            if (!aborted) store.prepare('INSERT INTO holder_aborted_writes VALUES (?,?)').run(who.member, who.writeId);
+            return 'undone' as const;
+          }).immediate();
         } catch { throw unavailable(); }
       },
       generation() {

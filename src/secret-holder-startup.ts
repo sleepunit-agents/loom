@@ -98,6 +98,7 @@ export async function startPersistentHolder(file:string,owned=false) {
       set:(...args:Parameters<HolderStore['set']>)=>ready().set(...args),
       remove:(...args:Parameters<HolderStore['remove']>)=>ready().remove(...args),
       hasReceipt:(...args:Parameters<HolderStore['hasReceipt']>)=>ready().hasReceipt(...args),
+      recover:(...args:Parameters<HolderStore['recover']>)=>ready().recover(...args),
     },authority);
     if(config.handoff)handoff=await listenHolderHandoff(config.handoff.listen,
       {read:name=>ready().read(name)},config.daemonFingerprint,async id=>available?routes!.authority(id):null);
