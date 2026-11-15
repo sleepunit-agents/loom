@@ -9,9 +9,9 @@ import {members,agents,memberAgents,tokens,sessions,agentAccounts,changes} from 
 import {sharedRoot} from './shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const visual={about:'Fictional agent',markBg:'#000000',markFg:'#ffffff',faceShape:'pebble' as const,faceEyes:'dot' as const};
-function fixture(hold?:()=>Promise<string>){
+function fixture(hold?:()=>Promise<string>,fullOwner=false){
  const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString()),hash=(value:string)=>createHash('sha256').update(value).digest('hex'),raw={owner:'a'.repeat(64),sam:'b'.repeat(64)};
- db.insert(members).values([{id:'owner',role:'owner',joinedAt:at},{id:'sam',role:'member',joinedAt:at}]).run();db.insert(agents).values([{id:'art',...visual},{id:'mark',...visual}]).run();
+ db.insert(members).values([{id:'owner',role:'owner',fullOwner,joinedAt:at},{id:'sam',role:'member',joinedAt:at}]).run();db.insert(agents).values([{id:'art',...visual},{id:'mark',...visual}]).run();
  for(const member of ['owner','sam'] as const)db.insert(tokens).values({fingerprint:hash(raw[member]),kind:'owner',member,label:member==='sam'?'PRIVATE TOKEN LABEL':'Owner',createdAt:at}).run();
  db.insert(sessions).values({id:hash('c'.repeat(64)),token:hash(raw.sam),device:'Private other browser',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
  const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},fields:hold?{hold:{type:GraphQLString,resolve:hold}}:undefined});clean.push(()=>root.close());
@@ -61,4 +61,9 @@ it('rolls a new agent and its full-owner grants back if receipt persistence fail
 it('permits trusted roster/account and browser helpers without an outside owner gate',()=>{
  const f=fixture();f.root.writes.run(()=>f.root.services.householdAccess.setAccounts({agent:'art',github:['bot']}));expect(f.root.services.householdAccess.read().agents.find(agent=>agent.id==='art')?.github).toEqual(['bot']);
  const ref=f.root.services.householdAccess.read().sessions[0].ref;f.root.writes.run(()=>f.root.services.householdAccess.revokeSession(ref));expect(f.db.select().from(sessions).all()).toEqual([]);
+});
+
+it('materializes declared full ownership for preexisting rows when the shared program starts',()=>{
+ const f=fixture(undefined,true);expect(f.db.select().from(memberAgents).where(eq(memberAgents.member,'owner')).all().map(row=>row.agent).sort()).toEqual(['art','mark']);
+ expect(f.root.services.household.members().find(member=>member.id==='owner')).toMatchObject({fullOwner:true,agents:['art','mark']});
 });

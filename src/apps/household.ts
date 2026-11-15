@@ -18,6 +18,7 @@ export class HouseholdError extends Error {
 }
 export function householdService(db: DataDatabase, now: () => string) {
   return {
+    synchronizeFullOwners(){db.insert(memberAgents).select(db.select({member:members.id,agent:agents.id}).from(members).crossJoin(agents).where(eq(members.fullOwner,true))).onConflictDoNothing().run();},
     setMember(input: z.input<typeof memberInput>) {
       const value = memberInput.parse(input);
       return db.transaction(() => {
