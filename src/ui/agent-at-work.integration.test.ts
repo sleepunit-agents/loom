@@ -16,7 +16,7 @@ import { startHttpServer, type HttpServeHandle } from '../transport/http-server.
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { parseLoomBlock, runtimePieces } from '../cli/pieces-managed.js';
 import { createConversationTables } from '../backends/conversations.js';
-import { titleFromAgent } from '../comms.js';
+import { setTitle, threadFor } from '../comms.js';
 import { parseTurn, recordTurn } from '../backends/conversations.js';
 import { atWorkFor } from './handler.js';
 import type { PieceInfo } from './pieces.js';
@@ -123,7 +123,7 @@ describe.skipIf(!hasAge)('an agent at work in a Comms thread', () => {
       body: JSON.stringify({ agent: 'mark', id: 'aaaaaaaaaaaaaaab', text: 'Can you plan the garden?' }) });
     expect(r.status).toBe(200);
     const thread = ((await r.json()) as { thread: { id: string; conversation: string } }).thread;
-    titleFromAgent(h.home, 'mark', thread.conversation, 'Plan the garden');
+    setTitle(h, threadFor(h, h.members.find(member=>member.person==='jonathan'), thread.id), 'Plan the garden', 'agent');
     const quiet = await card(tok.jonathan, 'mark');
     expect(quiet).toMatchObject({ state: 'available', doing: [] });
 

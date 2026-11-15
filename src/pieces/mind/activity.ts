@@ -131,7 +131,7 @@ export function createActivityReader(clock:Pick<Clock,'now'>,options:ActivityOpt
  // Metadata only: all active episode deadlines, regardless of the current
  // viewer or list limit. The listener owns one timer for every projection.
  function nextDeadline():number|undefined {
-  if(closed)return;
+  if(closed||!options.agents.length)return;
   const now=clock.now();
   let next=startOf(dayBefore(isoDay(now,tz()),-1),tz());
   try{const at=options.conversations?.nextDeadline?.(now);if(at!==undefined&&Number.isFinite(at)&&at>now)next=Math.min(next,at);}catch{/* Conversation source failures are reported by the reader. */}

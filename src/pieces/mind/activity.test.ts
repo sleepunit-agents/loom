@@ -8,7 +8,7 @@ import {WebSocket} from 'ws';
 import {startLoom} from '../../foundation.js';
 import {FakeClock,type Sharing,type Viewer} from '../../core/index.js';
 import {installTouched} from '../../core/touched/index.js';
-import {installMindActivity} from './activity.js';
+import {installMindActivity,createActivityReader} from './activity.js';
 import {dayBefore,startOf,oneLine,whatOf,venueKey,refsIn,type ActivityWindow,type ActivityOpen} from './activity-model.js';
 import type {ActivityConversations,ActivityRun,ActivityConversation} from './activity-role.js';
 const homes:string[]=[],closes:Array<()=>void|Promise<void>>=[];
@@ -27,6 +27,10 @@ it('keeps calendar windows bounded across DST and classifies pure text without o
  expect(dayBefore('2026-03-01')).toBe('2026-02-28');expect(startOf('2026-11-01','America/Chicago')).toBe(Date.parse('2026-11-01T05:00:00Z'));expect(startOf('2026-11-02','America/Chicago')-startOf('2026-11-01','America/Chicago')).toBe(25*3600000);
  expect(startOf('2026-03-09','America/Chicago')-startOf('2026-03-08','America/Chicago')).toBe(23*3600000);expect(startOf('2026-11-13','Asia/Kolkata')).toBe(Date.parse('2026-11-12T18:30:00Z'));
  expect(oneLine('Shipped the household activity screen. More words.')).toBe('Shipped the household activity screen.');expect(oneLine('x'.repeat(250))).toHaveLength(200);expect(venueKey('loom')).toBe('comms');expect(venueKey('schedule')).toBe('wakes');expect(whatOf({title:'Disk nearly full'})).toBe('system');expect(whatOf({title:'Release',line:'Merged loom#941'})).toBe('work');expect(refsIn('t-12 t-12 https://github.com/sleepunit-agents/loom/pull/941 loom#941','sleepunit-agents')).toMatchObject({tasks:['t-12'],prs:[{label:'loom#941'}]});
+});
+it('does not arm Activity or inspect Conversations when no agent source is configured',()=>{
+ let scans=0;const reader=createActivityReader(new FakeClock(now),{agents:[],sharing:()=>sharing,conversations:{...conv,nextDeadline(){scans++;return now+1000;}}});
+ try{expect(reader.allowed(owner)).toBe(false);expect(reader.window('recent',owner)).toBeUndefined();expect(reader.nextDeadline()).toBeUndefined();expect(scans).toBe(0);}finally{reader.close();}
 });
 it('reads active episodes only and keeps absent files absent, with explicit missing conversation owner',async()=>{
  const a=source();a.add('m-visible');a.add('m-expired',{expires_at:new Date(now).toISOString()});a.add('m-archived',{archived:1});a.add('m-fact',{category:'project'});a.add('m-old',{created:'2026-10-01T00:00:00Z'});

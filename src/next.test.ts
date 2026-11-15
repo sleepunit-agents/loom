@@ -300,3 +300,23 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
     clock.advance(3600000);
   } finally { ws?.terminate(); await loom.close(); rmSync(home,{recursive:true,force:true}); }
 });
+
+
+it('owns a rejected upgrade socket through a peer reset', async () => {
+  const home=mkdtempSync(join(tmpdir(),'loom-next-reset-'));fixture(home);
+  let rejected: import('node:net').Socket | undefined;
+  const loom=await startLoom({home,next:true,staging:true,clock:new FakeClock(),stdout:()=>{},
+    authenticate:req=>{rejected=req.socket;return undefined;}});
+  const url=new URL(loom.url),peer=createConnection({host:url.hostname,port:Number(url.port)});
+  peer.on('error',()=>{});
+  try {
+    await once(peer,'connect');
+    const response=once(peer,'data');
+    peer.write('GET /live HTTP/1.1\r\nHost: '+url.host+'\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n');
+    expect(String((await response)[0])).toContain('401 Unauthorized');
+    expect(rejected).toBeDefined();
+    // Model the reset emitted by TCP after HTTP handed this socket to upgrade.
+    expect(()=>rejected!.emit('error',Object.assign(new Error('read ECONNRESET'),{code:'ECONNRESET'}))).not.toThrow();
+    expect(rejected!.destroyed).toBe(true);
+  } finally {peer.destroy();await loom.close();rmSync(home,{recursive:true,force:true});}
+});

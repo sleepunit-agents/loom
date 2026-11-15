@@ -26,6 +26,8 @@ export function taskVisibility(viewer: Viewer): QueryVisibility {
     taskComments: f => parent(f.task),
     // Both ends are part of this row, even when the caller selects only IDs.
     taskLinks: f => sql`${parent(f.task)} and ${parent(f.dependsOn)}`,
+    // Membership IDs are part of a visible project, not a member directory.
+    projectMembers: f => sql`${owner} or ${project(f.project)}`,
     projects: f => sql`${owner} or ${project(f.id)}`,
     agents: f => sql`${owner} or ${agent(f.id)} or exists (select 1 from ${projectAgents} where ${projectAgents.agent} = ${f.id} and ${project(projectAgents.project)})`,
   };

@@ -37,6 +37,13 @@ describe('createLoomServer', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+it('never advertises retired Comms names even when a piece descriptor supplies them directly',async()=>{
+ const {server}=createLoomServer({...makeConfig(tmpDir),tools:['comms_title','comms_thread'].map(name=>({name,description:'Retired fixture',inputSchema:{type:'object'},call:async()=>({text:'Must never be offered'})}))});
+ const client=new Client({name:'retired-comms',version:'1'}),[a,b]=InMemoryTransport.createLinkedPair();
+ try{await server.connect(a);await client.connect(b);const names=(await client.listTools()).tools.map(tool=>tool.name);expect(names).not.toContain('comms_title');expect(names).not.toContain('comms_thread');}
+ finally{await client.close();await server.close();}
+});
+
   it('creates a server without errors', () => {
     const config = makeConfig(tmpDir);
     const { server } = createLoomServer(config);
@@ -126,8 +133,6 @@ describe('createLoomServer', () => {
     project_hub: { readOnlyHint: true, openWorldHint: false },
     project_orphans: { readOnlyHint: true, openWorldHint: false },
     conversation_digest: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    comms_title: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    comms_thread: { readOnlyHint: true, openWorldHint: false },
     describe_self: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     conversations: { readOnlyHint: true, openWorldHint: false },
     conversation: { readOnlyHint: true, openWorldHint: true },
