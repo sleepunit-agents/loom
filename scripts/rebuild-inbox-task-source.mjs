@@ -30,6 +30,7 @@ export async function inboxTaskSource({page,tile,app,example,out,approval,open})
    const screenshot='action-inboxTaskSource-missing-link.png';let captured=false;
    try{await page.screenshot({path:join(out,screenshot),fullPage:true});captured=true;}catch{}
    evidence.inboxTaskArrival={ok:false,error:'The task question rendered its inline answer controls but did not offer a source link.',task:task.id,item:items[0].id,...(captured?{screenshot}:{})};
+   stage='inboxTaskSettlement'; // A later fallback failure must retain the observed missing link.
    // An ordinary manual visit can still measure outcome settlement. It is not
    // evidence that the missing Inbox source navigation worked.
    tasks=await open('Tasks');const back=tasks.locator('.loom-split__back:visible');if(await back.count())await back.click();
