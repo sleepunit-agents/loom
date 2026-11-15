@@ -87,3 +87,15 @@ it('forwards durable Changes revisions and extra sweep contributors into the ins
  const summaries=f.root.services.tempo.sweep.run({kind:'agent',id:'art'},'extra');
  expect(summaries).toMatchObject([{part:'Extra',count:1}]);
 });
+
+it('rolls a Tempo write back when the actual shared receipt insert fails',async()=>{
+ const f=fixture();
+ f.client.exec("CREATE TRIGGER reject_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT, 'receipt failed'); END");
+ expect((await f.call('tempo.set',f.trigger,'set')).status).toBe(503);
+ expect(f.client.prepare('SELECT id FROM triggers').all()).toEqual([]);
+ expect(f.db.select().from(inbox).all()).toEqual([]);
+ f.clock.advance(5000);expect(f.db.select().from(jobs).all()).toEqual([]);
+ f.client.exec('DROP TRIGGER reject_receipt');
+ expect((await f.call('tempo.set',{...f.trigger,times:f.now()},'set')).status).toBe(200);
+ expect(f.db.select().from(inbox).all()).toHaveLength(1);
+});

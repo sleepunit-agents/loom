@@ -39,7 +39,10 @@ it('starts settled admission only after an outer shared commit; rolls back do no
 it('recovers answered sources through the shared commit boundary and stops late callbacks on close',()=>{
   const f=fixture();
   f.tempo.triggers.set({id:'watch',ownerKind:'household',sourceKind:'answer',watches:'question:q',lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'The answer arrived',note:'Answer'});
-  f.writes.run(()=>f.db.insert(inbox).values({id:'q',toKind:'person',to:'owner',source:'thread',fromKind:'agent',state:'answered',answers:'yes-no',words:'Ready?',answer:'yes',answeredAt:f.now(),at:f.now(),changedAt:f.now()}).run());
+  const answer=()=>f.db.insert(inbox).values({id:'q',toKind:'person',to:'owner',source:'thread',fromKind:'agent',state:'answered',answers:'yes-no',words:'Ready?',answer:'yes',answeredAt:f.now(),at:f.now(),changedAt:f.now()}).run();
+  expect(()=>f.writes.run(()=>{f.writes.run(answer);expect(f.db.select().from(inbox).all().filter(i=>i.source==='trigger')).toEqual([]);throw Error('outer rollback');})).toThrow();
+  expect(f.db.select().from(inbox).all()).toEqual([]);
+  f.writes.run(answer);
   expect(f.db.select().from(inbox).all().filter(i=>i.source==='trigger')).toMatchObject([{words:'The answer arrived'}]);
   f.clock.advance(5000);expect(f.admitted).toHaveBeenCalledOnce();
   f.tempo.close();f.admitted.mockClear();
@@ -56,5 +59,5 @@ it('registers real work contributors: an empty sweep sends nothing and open task
   f.db.insert(approvals).values({id:'approval',kind:'command',target:'test',what:'test',why:'test',agent:'art',askedFrom:'test',actingFor:'owner',state:'pending',minutes:1,ask:'Run?',ifYes:'Run',ifNo:'Stop',details:'',askedAt:f.now()}).run();
   expect(f.tempo.sweep.run({kind:'agent',id:'art'},'open')).toMatchObject([{part:'Tasks',count:1},{part:'Changes',count:1}]);
   expect(f.tempo.sweep.run({kind:'person',id:'owner'},'open')).toMatchObject([{part:'Approvals',count:1}]);
-  expect(f.db.select().from(inbox).all()).toMatchObject([{to:'art',words:expect.stringContaining('Tasks: 1 open')}]);
+  expect(f.db.select().from(inbox).all()).toMatchObject([{to:'art',words:expect.stringContaining('Tasks: 1 open')},{to:'owner',words:expect.stringContaining('Approvals: 1 open')}]);
 });

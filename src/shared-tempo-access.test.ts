@@ -69,3 +69,15 @@ it('rejects hidden Changes, Jobs, Approvals and secret-request watches despite o
   expect(f.can('member','owner',access)).toBe(true);
  }
 });
+
+it('lets the owning agent control its operation trigger without inventing a recipient',()=>{
+ const f=fixture();
+ f.client.prepare(`INSERT INTO triggers(id,owner_kind,owner,source_kind,lifespan,target_kind,target,note,enabled,state,created_at,changed_at) VALUES('operation','agent','art','time','until-stopped','operation','custom','Operation',1,'standing',?,?)`).run(f.now(),f.now());
+ const trigger=f.db.select().from(triggers).get()!;
+ for(const action of ['stop','runNow'] as const){
+  expect(f.can('agent','art',{action,trigger})).toBe(true);
+  expect(f.can('member','sam',{action,trigger})).toBe(true);
+  expect(f.can('agent','mark',{action,trigger})).toBe(false);
+  expect(f.can('member','other',{action,trigger})).toBe(false);
+ }
+});
