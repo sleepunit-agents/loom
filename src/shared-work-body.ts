@@ -8,10 +8,12 @@ import {bodyOperationDefaults,requireBodyScope,type conversationBodyScope} from 
 import {operation,OperationError,type Operations} from './core/operations/index.js';
 import type {approvalService} from './apps/approvals.js';
 import {approvalRuleKind,type approvalRulesService} from './apps/approval-rules.js';
+import type {WorkAnswerAuthority} from './shared-work-commands.js';
+import {changeAnswers} from './apps/changes-answers.js';
 import {lastApprovalAnswer} from './apps/approval-answer.js';
 import type {Viewer} from './policy.js';
 
-export function registerSharedWorkBody(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>,current:ReturnType<typeof conversationBodyScope>,hash:(text:string)=>string){
+export function registerSharedWorkBody(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>,current:ReturnType<typeof conversationBodyScope>,hash:(text:string)=>string,authority?:WorkAnswerAuthority){
  const requireCurrent=requireBodyScope(current),common={...bodyOperationDefaults(current,hash,'body-work'),inputHash:(input:string,identity:Readonly<{actor:Viewer}>)=>{const bound=current(identity.actor);return hash(JSON.stringify(['body-work',bound?.job.id,bound?.cv.id,bound?.cv.agent,bound?.cv.project,bound?.cv.member,input]));}};
  const boundedText=z.string().trim().min(1).max(2000),target=z.object({kind:approvalRuleKind,target:boundedText}).strict();
  const source=(viewer:Viewer)=>{const {cv}=requireCurrent(viewer);return {agent:cv.agent,conversation:cv.id,askedFrom:cv.id,actingFor:cv.member??'unknown',project:cv.project,member:cv.member};};
@@ -20,6 +22,7 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   const context=source(viewer),match=/^(github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[1-9][0-9]*)@([a-f0-9]{40})$/.exec(value);
   const row=match&&db.select().from(changes).where(eq(changes.id,match[1])).get();
   if(!row||row.headCommit!==match![2]||row.agent!==context.agent||row.project!==context.project||open&&row.state!=='open')throw new OperationError('conflict','Merge target is not the current conversation change');
+  return {change:row,head:match![2]};
  };
  const card=(viewer:Viewer,id:string)=>{
   const context=source(viewer),row=db.select().from(approvals).where(eq(approvals.id,id)).get();
@@ -31,7 +34,19 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   input:target.extend({kind:z.enum(['merge','command']),what:boundedText,why:boundedText,ask:boundedText,ifYes:boundedText,ifNo:boundedText,minutes:z.number().int().min(1).max(1440).optional(),details:z.string().max(100000).optional()}).strict(),
   output:z.object({id:z.string(),state:z.string()}).strict(),
   may(viewer,input){try{if(!current(viewer))return false;merge(viewer,input.kind,input.target,true);return true;}catch{return false;}},
-  run(ctx,input){merge(ctx.viewer,input.kind,input.target,true);const row=service.request({...input,...source(ctx.viewer)});ctx.changed('approvals',row.id);return {id:row.id,state:row.state};},
+  run(ctx,input){
+   const binding=merge(ctx.viewer,input.kind,input.target,true);const context=source(ctx.viewer),row=service.request({...input,...context});
+   const rule=lastApprovalAnswer(db,row.agent,row.kind,row.target)?.event==='deny'?undefined:rules.resolve({kind:row.kind,target:row.target,project:row.project,actingFor:row.actingFor});
+   if(rule&&rule.tier!=='ask'){
+    const owner={kind:'member' as const,id:rule.setBy};
+    if((!authority||authority.approval(owner,row)===true)&&(!binding||!authority||authority.change(owner,binding.change,row)===true)){
+     const basis=`Standing ${rule.tier} rule ${rule.scope} for ${rule.person||'household owner'}, set by ${rule.setBy}`;
+     if(binding){changeAnswers(db,service).answer({change:binding.change.id,head:binding.head,approval:row.id,member:rule.setBy,allow:true,basis});ctx.changed('changes',binding.change.id);}
+     else service.allow(row.id,rule.setBy,basis);
+    }
+   }
+   ctx.changed('approvals',row.id);return {id:row.id,state:service.get(row.id).state};
+  },
  }));
  operations.register(operation({...common,write:false,name:'approvals.rule',input:target,
   output:z.object({tier:z.enum(['ask','tell','do']),scope:z.string().nullable(),person:z.string().nullable()}).strict(),

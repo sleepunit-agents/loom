@@ -74,13 +74,13 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
     list() {
       return db.transaction(() => db.select().from(approvals).orderBy(asc(approvals.askedAt), asc(approvals.id)).all().map(expire));
     },
-    allow(id: string, member: string) {
+    allow(id: string, member: string, basis?: string) {
       return db.transaction(() => {
         const row = get(id);
         if (row.state !== 'pending') throw new Error('Approval is already answered');
         const at = now(), expiresAt = new Date(Date.parse(at) + row.minutes * 60000).toISOString();
         db.update(approvals).set({ state: 'allowed', decidedBy: member, decidedAt: at, expiresAt }).where(eq(approvals.id, id)).run();
-        record(row, 'allow', member);
+        record(row, 'allow', basis ?? member);
         if (row.operation) {
           const execute = operations.get(row.operation);
           if (!execute) throw new Error('Unknown approved operation');
