@@ -44,5 +44,5 @@ export function conversationQuestionPolicy(db:DataDatabase){
  };
  // Additional source constraint only; callers still establish recipient authority.
  const sourceAllowsItem=(viewer:Viewer,id:string)=>!!db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.id,id),sourceVisibility(viewer,getTableColumns(inbox)))).get();
- return {visibility,ask,sourceAllowsItem};
+ return {visibility,ask,sourceAllowsItem,sourceVisibility};
 }

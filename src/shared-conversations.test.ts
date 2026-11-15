@@ -1,3 +1,4 @@
+import { inboxQuery } from '../web/src/pieces/attention/inbox-query.js';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -5,7 +6,7 @@ import { and, eq } from 'drizzle-orm';
 import { generateX25519Identity } from 'age-encryption';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, household, inbox, memberAgents, members, messages, operationResults, threads, tokens, sessions, turns } from './core/data/schema.js';
+import { agents, household, inbox, inboxRefs, inboxReads, memberAgents, members, messages, operationResults, threads, tokens, sessions, turns } from './core/data/schema.js';
 import { DataLive } from './core/data/live.js';
 import { DataWrites } from './core/data/writes.js';
 import { sharedRoot } from './shared-root.js';
@@ -15,7 +16,8 @@ const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 async function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields'],initialTime=Date.parse('2026-11-14T18:00:00Z')) {
-  const client = new Database(':memory:'); cleanup.push(() => { if (client.open) client.close(); });
+  const statements:string[]=[];
+  const client = new Database(':memory:',{verbose:s=>{if(/^select\b/i.test(s)&&/InboxQueries|readInboxSet|readInboxVolume/.test(new Error().stack??''))statements.push(s);}}); cleanup.push(() => { if (client.open) client.close(); });
   const clock = new FakeClock(initialTime), now = () => new Date(clock.now()).toISOString();
   const db = createDataSchema(client, now);
   for (const [id, role] of [['alice','member'],['bob','member'],['owner','owner']] as const) db.insert(members).values({ id, role, joinedAt: now() }).run();
@@ -35,11 +37,11 @@ async function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields'],initi
   const post = (name: string, input: object, id: string, person = 'alice', bearer = false) => root.http.request(`/api/${name.replace('.','/')}`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...(bearer ? { authorization: `Bearer ${credentials[person].token}` } : { cookie: `loom_ui=${credentials[person].cookie}` }) }, body: JSON.stringify({ input, id }),
   });
-  const query = async (source: string, person = 'alice') => {
-    const response = await root.http.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json', cookie: `loom_ui=${credentials[person].cookie}` }, body: JSON.stringify({ query: source }) });
+  const query = async (source: string, person = 'alice',variables:Record<string,unknown>={}) => {
+    const response = await root.http.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json', cookie: `loom_ui=${credentials[person].cookie}` }, body: JSON.stringify({ query: source,variables }) });
     return { response, body: await response.json() as { data?: Record<string, unknown>; errors?: unknown[] } };
   };
-  return { client, db, clock, root, errors, credentials, post, query, gate: (fn: () => Promise<void>) => { seal = fn; }, openGate: (fn: () => Promise<void>) => { open = fn; } };
+  return { client, db, clock, root, errors, credentials, post, query, statements, gate: (fn: () => Promise<void>) => { seal = fn; }, openGate: (fn: () => Promise<void>) => { open = fn; } };
 }
 it('mounts actual shared private reads and cookie writes with metadata-only receipts and current ownership', async () => {
   const f = await fixture();
@@ -259,4 +261,35 @@ it.each(['dim','mute'] as const)('real ordinary and encrypted answers lift dim b
   expect(f.root.services.conversations.item(id)).toMatchObject({state:'answered',volume:level==='dim'?'full':'mute',quietUntil:level==='dim'?null:quiet});
  }
  expect(JSON.stringify(f.db.select().from(inbox).all())).not.toContain('PRIVATE');
+});
+
+
+it('bounds SQL for the full actual Inbox selection with two and ten private questions',async()=>{
+  const f=await fixture(),comms=f.root.services.comms!;
+  const thread=comms.threads.open({id:'th:growth',member:'alice',agent:'art',title:'Private growth fixture'});
+  const variables={folder:'all',search:'',agent:null,offset:0,id:'',hasItem:false,onlyErrors:false};
+  const read=async()=>{
+    f.statements.length=0;
+    const result=await f.query(inboxQuery,'alice',variables);
+    expect(result.body.errors).toBeUndefined();
+    expect(result.response.status).toBe(200);
+    return {rows:result.body.data!.inboxItems as {body:{words:string}|null;refs:string[];read:boolean}[],count:f.statements.length};
+  };
+  let small=0,smallSearch=0;
+  for(let n=0;n<10;n++){
+    const ask=await comms.ask(thread.id,'art','growth-'+n,{words:'PRIVATE QUESTION '+n,answers:'words'});
+    f.db.insert(inboxRefs).values([{item:ask.inboxItem!,ref:'z-ref'},{item:ask.inboxItem!,ref:'a-ref'}]).run();
+    f.db.insert(inboxReads).values({item:ask.inboxItem!,member:'alice',readAt:new Date(f.clock.now()).toISOString()}).run();
+    if(n===1){const result=await read();expect(result.rows).toHaveLength(2);small=result.count;f.statements.length=0;const search=await f.query(inboxQuery,'alice',{...variables,search:'PRIVATE QUESTION'});expect(search.body.errors).toBeUndefined();expect(search.body.data!.inboxItems).toHaveLength(2);expect(JSON.stringify(search.body.data!.inboxItems)).toContain('PRIVATE QUESTION');smallSearch=f.statements.length;}
+  }
+  const large=await read();expect(large.rows).toHaveLength(10);
+  expect(large.count).toBe(small);
+  expect(large.count).toBe(18);
+  expect(large.rows.every(row=>row.body?.words.startsWith('PRIVATE QUESTION'))).toBe(true);
+  for(const row of large.rows){expect(row.refs).toEqual(['a-ref','z-ref']);expect(row.read).toBe(true);}
+  f.statements.length=0;const search=await f.query(inboxQuery,'alice',{...variables,search:'PRIVATE QUESTION'});expect(search.body.errors).toBeUndefined();expect(f.statements.length).toBe(smallSearch);expect(search.body.data!.inboxItems).toHaveLength(10);expect((search.body.data!.inboxItems as {body:{words:string}}[]).every(row=>row.body.words.startsWith('PRIVATE QUESTION'))).toBe(true);
+  let changed=false;
+  f.openGate(async()=>{if(!changed){changed=true;f.root.writes.run(()=>f.db.update(inbox).set({member:'bob'}).where(eq(inbox.thread,thread.id)).run());}});
+  const revoked=await f.query(inboxQuery,'alice',variables);
+  expect(JSON.stringify(revoked.body)).not.toContain('PRIVATE QUESTION');
 });
