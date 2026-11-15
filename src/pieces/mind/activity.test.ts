@@ -168,3 +168,16 @@ it('uses the current member for the legacy owner filter, with household owner fa
  expect(list(app,{kind:'agent',id:'art'}).entries.find(e=>e.id==='d~art~dg-household')?.owner).toBe(true);
  const ws=new WebSocket(app.url.replace('http:','ws:')+'/live?partial');closes.push(()=>ws.close());await once(ws,'open');const initial=once(ws,'message');ws.send(JSON.stringify({kind:'subscribe',type:'activity.access'}));expect(JSON.parse((await initial)[0].toString()).records[0].owner).toBe('Partial');
 });
+
+it('derives the earliest episode deadline without visibility or list caps and closes it with the reader',async()=>{
+ const a=source();a.add('expires',{expires_at:new Date(now+2000).toISOString()});
+ a.add('future',{created:new Date(now+61000).toISOString()});
+ a.add('archived',{archived:1,expires_at:new Date(now+1).toISOString()});
+ a.add('invalid',{expires_at:'invalid'});
+ const app=await fixture(a.path),reader=(await import('./activity.js')).installedMindActivity(app.operations)!;
+ expect(reader.nextDeadline()).toBe(now+1000);
+ (app.operations.clock as FakeClock).advance(1000);expect(reader.nextDeadline()).toBe(now+1001);
+ (app.operations.clock as FakeClock).advance(1);expect(reader.nextDeadline()).toBe(now+2000);
+ (app.operations.clock as FakeClock).advance(999);expect(reader.nextDeadline()).toBe(startOf('2026-11-14','America/Chicago'));
+ reader.close();expect(reader.nextDeadline()).toBeUndefined();
+});

@@ -232,3 +232,135 @@ it('searches each remaining question body field and a long literal passage', asy
   const item = f.comms.threads.conversations.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', member: 'alice', words: passage });
   expect((await f.service.search(alice, { search: passage })).map(i => i.id)).toEqual([item.id]);
 });
+
+it('orders mailbox pages and action notices by actual time across timestamp precision', async () => {
+  const f = await fixture(), cvs = f.comms.threads.conversations;
+  const older = cvs.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', words: 'Older', member: 'alice' });
+  const newer = cvs.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', words: 'Newer', member: 'alice' });
+  f.db.update(inbox).set({ at: '2026-11-14T18:00:00Z' }).where(eq(inbox.id, older.id)).run();
+  f.db.update(inbox).set({ at: '2026-11-14T18:00:00.500Z' }).where(eq(inbox.id, newer.id)).run();
+  expect(f.service.list(alice, { source: 'notice', limit: 1 }).map(row => row.id)).toEqual([newer.id]);
+  expect(f.service.list(alice, { source: 'notice', limit: 1, offset: 1 }).map(row => row.id)).toEqual([older.id]);
+  f.db.insert(actionResults).values([
+    { id: 'older', member: 'alice', at: '2026-11-14T18:00:00Z', ok: true, text: 'Older', page: '/inbox' },
+    { id: 'newer', member: 'alice', at: '2026-11-14T18:00:00.500Z', ok: true, text: 'Newer', page: '/inbox' },
+  ]).run();
+  expect(f.service.results(alice, 1).map(row => row.id)).toEqual(['newer']);
+});
+it('shows retained private answer words lazily in Answered without storing plaintext in Inbox', async () => {
+  const f = await fixture();
+  await f.comms.answer(f.ask.inboxItem!, 'alice', 'words', 'Please order the smaller model');
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: inboxQueryFields(f.service) }) });
+  const contextValue = { viewer: alice };
+  const meta = await graphql({ schema, source: '{ inboxItems(state:"answered") { answer answeredBy answeredAt } }', contextValue });
+  expect(meta.errors).toBeUndefined(); expect(f.opens()).toBe(0);
+  expect(JSON.parse(JSON.stringify(meta.data))).toEqual({ inboxItems: [{ answer: 'words', answeredBy: 'alice', answeredAt: '2026-11-14T18:00:00.000Z' }] });
+  const result = await graphql({ schema, source: '{ inboxItems(state:"answered") { answerText } }' , contextValue });
+  expect(result.errors).toBeUndefined();
+  expect(JSON.parse(JSON.stringify(result.data))).toEqual({ inboxItems: [{ answerText: 'Please order the smaller model' }] });
+  expect(f.opens()).toBe(1);
+  expect(f.db.select().from(inbox).all().every(row => row.words === null && row.answerText === null)).toBe(true);
+  f.time('2026-11-29T18:00:00.000Z');
+  expect(await f.service.answerText(alice, f.ask.inboxItem!)).toBeNull(); expect(f.opens()).toBe(1);
+});
+it('withholds private answer words after current question, linkage, policy, retention or ciphertext changes', async () => {
+  for (const change of ['policy', 'question', 'message-link', 'answerer', 'message-sender', 'message-kind', 'mail-source', 'mail-sender', 'ciphertext', 'deadline', 'household', 'expiry', 'delete'] as const) {
+    const f = await fixture();
+    await f.comms.answer(f.ask.inboxItem!, 'alice', 'words', 'Private answer words');
+    f.onOpen(() => {
+      if (change === 'policy') f.revoke();
+      if (change === 'question') f.db.update(inbox).set({ state: 'resolved' }).where(eq(inbox.id, f.ask.inboxItem!)).run();
+      if (change === 'answerer') f.db.update(inbox).set({ answeredBy: 'bob' }).where(eq(inbox.id, f.ask.inboxItem!)).run();
+      if (change === 'message-link') f.db.update(messages).set({ inboxItem: null }).where(eq(messages.kind, 'answer')).run();
+      if (change === 'message-sender') f.db.update(messages).set({ sender: 'bob' }).where(eq(messages.kind, 'answer')).run();
+      if (change === 'message-kind') f.db.update(messages).set({ kind: 'reply' }).where(eq(messages.kind, 'answer')).run();
+      if (change === 'mail-source') f.db.update(inbox).set({ sourceId: 'another-question' }).where(eq(inbox.source, 'answer')).run();
+      if (change === 'mail-sender') f.db.update(inbox).set({ fromId: 'bob' }).where(eq(inbox.source, 'answer')).run();
+      if (change === 'ciphertext') f.db.update(messages).set({ words: Buffer.from('Replacement') }).where(eq(messages.kind, 'answer')).run();
+      if (change === 'deadline') f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00.000Z' }).where(eq(messages.kind, 'answer')).run();
+      if (change === 'household') f.db.insert(household).values({ commsDays: 1 }).run();
+      if (change === 'expiry') f.time('2026-11-29T18:00:00.000Z');
+      if (change === 'delete') f.comms.delete(f.thread.id);
+    });
+    expect(await f.service.answerText(alice, f.ask.inboxItem!), change).toBeNull();
+  }
+});
+it('keeps ordinary answer text, leaves unanswered/private yes-no text empty, and never caches previous reads', async () => {
+  const f = await fixture(), cvs = f.comms.threads.conversations;
+  expect(await f.service.answerText(alice, f.ask.inboxItem!)).toBeNull();
+  const plain = cvs.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', words: 'Question', answers: 'words', member: 'alice' });
+  cvs.answer(plain.id, 'alice', 'words', 'An ordinary answer');
+  expect(await f.service.answerText(alice, plain.id)).toBe('An ordinary answer');
+  await f.comms.answer(f.ask.inboxItem!, 'alice', 'words', 'First answer');
+  expect(await f.service.answerText(alice, f.ask.inboxItem!)).toBe('First answer');
+  f.db.update(messages).set({ words: Buffer.from('Current answer') }).where(eq(messages.kind, 'answer')).run();
+  expect(await f.service.answerText(alice, f.ask.inboxItem!)).toBe('Current answer');
+  f.revoke(); expect(await f.service.answerText(alice, plain.id)).toBeNull();
+  expect(await f.service.answerText(alice, f.ask.inboxItem!)).toBeNull();
+});
+
+it('reads replied answers even when append and question timestamps differ under a moving clock', async () => {
+  const f = await fixture();
+  let tick = Date.parse('2026-11-14T18:00:00.000Z');
+  const moving = new CommsMessages(f.db, f.key, () => new Date(tick++).toISOString());
+  await moving.answer(f.ask.inboxItem!, 'alice', 'replied', 'My reply in words');
+  const question = f.service.item(alice, f.ask.inboxItem!)!;
+  const answerMessage = f.db.select().from(messages).where(eq(messages.kind, 'answer')).get()!;
+  expect(answerMessage.at).not.toBe(question.answeredAt);
+  expect(await f.service.answerText(alice, f.ask.inboxItem!)).toBe('My reply in words');
+});
+it('rechecks answer-only access and retention at the final await boundary', async () => {
+  for (const change of ['answer-policy', 'household', 'expiry', 'thread-link'] as const) {
+    const f = await fixture();
+    await f.comms.answer(f.ask.inboxItem!, 'alice', 'words', 'Answer');
+    let answerAllowed = true;
+    const service = new InboxQueries(f.db, f.key, (v, fields) => sql`${fields.member} = ${v.id} and (${fields.source} != 'answer' or ${Number(answerAllowed)})`, () => currentTime);
+    let currentTime = '2026-11-14T18:00:00.000Z';
+    f.onOpen(() => queueMicrotask(() => queueMicrotask(() => {
+      if (change === 'answer-policy') answerAllowed = false;
+      if (change === 'thread-link') {
+        const other = f.comms.threads.conversations.open({ agent: 'art', member: 'alice', venue: 'loom', place: 'th:other', label: 'Other' });
+        f.db.update(threads).set({ conversation: other.id }).where(eq(threads.id, f.thread.id)).run();
+      }
+      if (change === 'household') f.db.insert(household).values({ commsDays: 1 }).run();
+      if (change === 'expiry') currentTime = '2026-11-29T18:00:00.000Z';
+    })));
+    expect(await service.answerText(alice, f.ask.inboxItem!), change).toBeNull();
+    expect(f.opens()).toBe(1);
+  }
+});
+
+it('erases expired private answer ciphertext while preserving question and answer metadata', async () => {
+  const f = await fixture();
+  await f.comms.answer(f.ask.inboxItem!, 'alice', 'words', 'Private retained reply');
+  f.time('2026-11-28T18:00:00.000Z');
+  expect(f.comms.expire()).toBe(2);
+  expect(f.db.select().from(messages).all().every(row => row.words === null)).toBe(true);
+  expect(f.service.item(alice, f.ask.inboxItem!)).toMatchObject({ state: 'answered', answer: 'words', answeredBy: 'alice', answeredAt: '2026-11-14T18:00:00.000Z' });
+  expect(await f.service.answerText(alice, f.ask.inboxItem!)).toBeNull(); expect(f.opens()).toBe(0);
+});
+it('rejects initially mismatched answer bindings rather than returning another question answer', async () => {
+  for (const mismatch of ['source', 'sender', 'kind', 'link'] as const) {
+    const f = await fixture();
+    await f.comms.answer(f.ask.inboxItem!, 'alice', 'words', 'First answer');
+    const other = await f.comms.ask(f.thread.id, 'art', 'ask-other', { words: 'Other?', answers: 'words' });
+    await f.comms.answer(other.inboxItem!, 'alice', 'words', 'Other answer');
+    const mail = f.db.select().from(inbox).where(eq(inbox.sourceId, f.ask.inboxItem!)).get()!;
+    if (mismatch === 'source') f.db.update(inbox).set({ sourceId: 'unrelated' }).where(eq(inbox.id, mail.id)).run();
+    if (mismatch === 'sender') f.db.update(messages).set({ sender: 'bob' }).where(eq(messages.seq, mail.messageSeq!)).run();
+    if (mismatch === 'kind') f.db.update(messages).set({ kind: 'reply' }).where(eq(messages.seq, mail.messageSeq!)).run();
+    if (mismatch === 'link') f.db.update(messages).set({ inboxItem: null }).where(eq(messages.seq, mail.messageSeq!)).run();
+    expect(await f.service.answerText(alice, f.ask.inboxItem!), mismatch).toBeNull(); expect(f.opens()).toBe(0);
+    expect(await f.service.answerText(alice, other.inboxItem!)).toBe('Other answer');
+  }
+});
+
+it('withholds question, answer and search wording at a whole-second stored deadline', async () => {
+  const f = await fixture();
+  await f.comms.answer(f.ask.inboxItem!, 'alice', 'words', 'Expired answer');
+  f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
+  expect(await f.service.body(alice, f.ask.inboxItem!)).toBeNull();
+  expect(await f.service.answerText(alice, f.ask.inboxItem!)).toBeNull();
+  expect(await f.service.search(alice, { search: 'private pump' })).toEqual([]);
+  expect(f.opens()).toBe(0);
+});

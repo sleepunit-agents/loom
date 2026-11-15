@@ -1,4 +1,4 @@
-import { execute, getOperationAST, parse, validate, type GraphQLSchema } from 'graphql/index.js';
+import { execute, getOperationAST, parse, validate, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
 
 /** Paths address the selected GraphQL result, including aliases. Values are
  * transport data, never opaque database records. A missing value means remove. */
@@ -35,8 +35,23 @@ export function dataDiff(before: unknown, after: unknown, path: (string | number
 export class DataLive {
   private listeners = new Set<() => void>();
   private stopped = false;
+  private executions = new Set<Promise<void>>();
   changed() { for (const listener of [...this.listeners]) listener(); }
   close() { this.stopped = true; this.changed(); this.listeners.clear(); }
+
+  /** After stopping admission, wait for actual resolvers, including executions
+   * whose consumer already cancelled. Cancellation cannot cancel their IO. */
+  async drain() { while (this.executions.size) await Promise.all([...this.executions]); }
+
+  private async read(args: ExecutionArgs) {
+    if (this.stopped) throw new Error('Live data access ended');
+    let finish!: () => void;
+    const done = new Promise<void>(resolve => { finish = resolve; });
+    // Retain before invoking user resolvers: they can synchronously reenter close.
+    this.executions.add(done);
+    try { return await execute(args); }
+    finally { this.executions.delete(done); finish(); }
+  }
 
   watch(options: {
     schema: GraphQLSchema;
@@ -74,7 +89,7 @@ export class DataLive {
           // settles. The losing execution stays observed, including rejection.
           const cancellation = new Promise<typeof cancelled>(resolve => { cancel = () => resolve(cancelled); });
           const result = await Promise.race([
-            execute({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }),
+            this.read({ schema: options.schema, document, variableValues: options.variables, operationName: options.operationName, contextValue: options.contextValue }),
             cancellation,
           ]);
           cancel = undefined;
