@@ -1,7 +1,7 @@
 # A running body's Memory commands
 
 The shared root registers memory.remember, memory.recall, memory.archive,
-memory.restore and memory.forget on its existing
+memory.restore, memory.forget, memory.propose and memory.ratify on its existing
 command door. The runtime command catalogue supplies their input schemas.
 All require a currently authenticated body and select the file declared
 for that body's agent. Inputs cannot select another agent or a path.
@@ -16,6 +16,14 @@ from recall; restore rebuilds its embedding. Forget records the deletion in
 the private source before removing the memory. Forget is final; restore
 applies to archived memories. Replaying a completed change returns its
 original IDs, including after the forgotten row no longer exists.
+
+Propose stages a private draft without embedding or making it recallable. It
+returns a distinct scoped proposal ID, such as art:proposal:<uuid>. Ratify
+accepts that ID and optional title, content, category, project or TTL edits;
+normal authored validation and episode defaults apply before it becomes a
+real memory. The memory write and draft removal share the source receipt
+transaction. Failure retains the draft; successful replay works after its
+removal.
 
 Results contain opaque scoped IDs, such as art:<uuid>, and recall scores.
 Read title and content with the existing GraphQL field
@@ -36,11 +44,10 @@ Startup and recovery do not upgrade an existing source. An unprepared
 source remains readable and its semantic commands return unavailable until
 the separate data move prepares it.
 
-This is the canonical command/source side. The general native MCP
-consumer is built on t-2241. Exposing the remaining semantic changes
-(proposals and ratification) through that path is
-still on t-2243; their existing core/stdio helpers remain. No installed
-service or real source is changed by this implementation.
+The default native MCP consumer invokes these registered commands through
+loom_command. Pending proposal browsing remains part of the Memory task;
+recall never returns those drafts. No installed service or real source is
+changed by this implementation.
 
 ## Native private cards
 

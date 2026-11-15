@@ -10,6 +10,7 @@ import {createEmbeddingProvider} from '../../backends/index.js';
 import {semanticMemoryReady,semanticCardsReady} from './semantic-schema.js';
 import {opaqueCardReference} from './card-references.js';
 import {prepareMemoryInput} from '../../tools/remember.js';
+import {proposeOnConnection,ratifyOnConnection} from '../../backends/proposals.js';
 import type {MindSources} from './sources.js';
 import {PeopleStore} from '../../backends/people.js';
 import {ProjectsStore} from '../../backends/projects.js';
@@ -80,6 +81,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  const base={write:true,recheckPolicy:true,doors:['http'] as const,inputHash:(words:string)=>options.hash(words),recover,admit:reserve,may:(viewer:Viewer)=>!!selected(viewer),run(){throw new OperationError('unavailable','Memory command did not commit');}};
  const opaque=(db:Database.Database,ref:string)=>{const row=db.prepare('SELECT uuid FROM memories WHERE ref=?').get(ref) as {uuid:string}|undefined;if(!row)throw new OperationError('unavailable','Memory result is absent');return row.uuid;};
  const scopedId=z.string().regex(/^[^:]+:[a-f0-9-]{36}$/);
+ const proposalId=z.string().regex(/^[^:]+:proposal:[a-f0-9-]{36}$/);
  const ids=z.array(scopedId).describe('Opaque scoped memory IDs. Read words through memoryProjectMemory(id: id) on GraphQL.');
  operations.register({...base,doors:[...base.doors],name:'memory.remember',input:remember.describe('Remember in your own declared source. Returns opaque IDs; select memoryProjectMemory(id: id) on GraphQL to read words.'),output:z.object({ids}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>({ids:[opaque(db,(await backend.remember(prepareMemoryInput(input))).ref)]}))});
  operations.register({...base,doors:[...base.doors],name:'memory.recall',input:recall.describe('Recall your memories by meaning, adding heat. Returns opaque IDs and scores; select memoryProjectMemory(id: id) on GraphQL for title and content.'),output:z.object({ids,matches:z.array(z.object({id:scopedId,score:z.number()}))}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{const matches=(await backend.recall(input)).map(row=>({id:opaque(db,row.path),score:row.relevance}));return {ids:matches.map(row=>row.id),matches};})});
@@ -99,6 +101,15 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>withCard(db,viewer,'project',config=>new ProjectsStore(config),store=>store.write(input)))});
  operations.register({...cardBase,doors:[...base.doors],name:'memory.personRestoreRevision',input:z.object({slug:z.string().min(1).max(64),revision_id:z.number().int().positive().max(2147483647)}).strict().describe('Restore one retained person-card revision in your own source. Read revision IDs with memoryPerson(id:){history{id}}.'),output:cardIds,
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>withCard(db,viewer,'person',config=>new PeopleStore(config),store=>store.revisionRestore(input)))});
+ operations.register({...base,doors:[...base.doors],name:'memory.propose',input:remember.extend({category:authored.max(100),source:authored.max(200).optional()}).describe('Stage a private draft in your own source. Recall cannot see it until ratification.'),output:z.object({ids:z.array(proposalId)}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>({ids:['proposal:'+proposeOnConnection(db,input).uuid]}))});
+ const overrides=remember.pick({title:true,content:true,category:true,project:true,ttl:true}).partial();
+ operations.register({...base,doors:[...base.doors],name:'memory.ratify',input:z.object({id:proposalId,overrides:overrides.optional()}).strict().describe('Ratify one own draft by opaque proposal ID. Optional authored edits apply before it becomes recallable.'),output:z.object({ids}).strict(),prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{
+  const prefix=viewer.id+':proposal:';if(viewer.kind!=='agent'||!input.id.startsWith(prefix))throw new OperationError('denied','Current body draft required');
+  const row=db.prepare("SELECT id FROM proposals WHERE uuid=? AND status='pending'").get(input.id.slice(prefix.length)) as {id:number}|undefined;
+  if(!row)throw new OperationError('not-found','Draft is absent');
+  const ref=await ratifyOnConnection(db,row.id,input.overrides??{},async raw=>{const parsed=remember.safeParse(raw);if(!parsed.success)throw new OperationError('invalid','Draft needs authored edits');return backend.remember(prepareMemoryInput(parsed.data));});
+  return {ids:[opaque(db,ref.ref)]};
+ })});
  const target=z.object({id:scopedId}).strict();
  const ownTarget=(db:Database.Database,viewer:Viewer,id:string)=>{
   if(viewer.kind!=='agent'||!id.startsWith(viewer.id+':'))throw new OperationError('denied','Current body Memory required');

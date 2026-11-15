@@ -1,3 +1,4 @@
+import {handoffEnvelope,handoffDeadline} from './handoff-words.js';
 import { wordsDeadline } from './retention.js';
 /** Unified Inbox reads for the generated query composition. The authenticated
  * door supplies current SQL visibility; no default policy or new transport. */
@@ -113,6 +114,9 @@ export class InboxQueries {
     const matches: { item: Item; metadata?: true; fromAnswer?: true; state?: ReturnType<typeof privateState> }[] = [];
     for (const item of candidates) {
       if (metadata(item)) { matches.push({ item, metadata: true }); continue; }
+      // Handoffs are agent mail. Their wording is delivered only by take,
+      // while this personal mailbox search can match their metadata.
+      if(item.source==='handoff')continue;
       const state = item.thread ? privateState(item) : undefined;
       const body = await this.body(viewer, item.id);
       if (body && [body.words, body.why, body.ifYes, body.ifNo, body.link].some(value => value?.toLocaleLowerCase().includes(query))) matches.push({ item, state });
@@ -178,6 +182,7 @@ export class InboxQueries {
   }
   bodyKeepUntil(viewer: Viewer, id: string): string | null {
     const item = this.current(viewer, id);
+    if(item?.source==='handoff'){const until=viewer.kind==='member'?handoffDeadline(item,this.keepDays()):-Infinity;return Number.isFinite(until)&&until>Date.parse(this.now())?new Date(until).toISOString():null;}
     if (!item?.thread || !item.conversation) return null;
     const message = this.db.select({ at: messages.at, keepUntil: messages.keepUntil }).from(messages)
       .innerJoin(threads, eq(threads.id, messages.thread)).where(and(eq(messages.thread, item.thread),
@@ -207,6 +212,16 @@ export class InboxQueries {
   async body(viewer: Viewer, id: string, retainedUntil?: (at: number) => void): Promise<Body | null> {
     const item = this.current(viewer, id);
     if (!item) return null;
+    if(item.source==='handoff'){
+      if(viewer.kind!=='member')return null;
+      const days=this.keepDays(),until=handoffDeadline(item,days);
+      if(!(until>Date.parse(this.now())))return null;
+      const envelope=handoffEnvelope(item.words);if(!envelope)return null;
+      const words=await this.key.open(Buffer.from(envelope.cipher,'base64'));
+      const current=this.current(viewer,id);
+      if(!current||JSON.stringify(current)!==JSON.stringify(item)||this.keepDays()!==days||handoffDeadline(current,days)<=Date.parse(this.now()))return null;
+      retainedUntil?.(until);return {words};
+    }
     if (!item.thread) return item.words === null ? null : { words: item.words, why: item.why, ifYes: item.ifYes, ifNo: item.ifNo, link: item.link };
     const row = () => this.db.select({ message: messages, conversation: threads.conversation }).from(messages)
       .innerJoin(threads, eq(threads.id, messages.thread))

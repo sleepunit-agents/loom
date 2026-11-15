@@ -1,3 +1,4 @@
+import {sealHandoff} from './core/conversations/handoff-words.js';
 /** Real Root/body protocol, no provider or child process. */
 import {afterEach,expect,it} from 'vitest';
 import {eq} from 'drizzle-orm';
@@ -9,6 +10,7 @@ afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();}
 it.each([['wake',false],['handoff',false],['wake',true],['handoff',true]] as const)('completes actual %s Inbox mail without Comms (authored digest %s)',async(venue,authored)=>{
  const f=await bodyFixture(clean),conversation=f.thread.conversation,token='body_'+'d'.repeat(64);
  f.root.writes.run(()=>{
+  if(venue==='handoff'){f.db.insert(s.memberAgents).values({member:'alice',agent:'mark'}).run();f.db.insert(s.projectAgents).values({project:'pond',agent:'mark'}).run();}
   f.db.delete(s.threads).where(eq(s.threads.id,f.thread.id)).run();
   f.db.update(s.conversations).set({venue,member:null,place:venue==='wake'?'nightly':'parent-job'}).where(eq(s.conversations.id,conversation)).run();
   f.db.update(s.jobs).set({member:null}).where(eq(s.jobs.id,'job')).run();
@@ -16,7 +18,8 @@ it.each([['wake',false],['handoff',false],['wake',true],['handoff',true]] as con
   f.db.delete(s.tokens).where(eq(s.tokens.fingerprint,old.fingerprint)).run();
   f.db.insert(s.tokens).values({...old,fingerprint:credentialHash(token),label:'Background body'}).run();
  });
- const mail=f.root.services.comms!.threads.conversations.send({conversation,toKind:'agent',to:'art',source:venue==='wake'?'trigger':'handoff',fromKind:venue==='wake'?'schedule':'agent',fromId:venue==='wake'?null:'mark',words:'Compare three fictitious pumps'});
+ const brief=venue==='handoff'?await sealHandoff(f.key,'Compare three fictitious pumps',new Date(f.clock.now()).toISOString(),14):'Compare three fictitious pumps';
+ const mail=f.root.services.comms!.threads.conversations.send({conversation,toKind:'agent',to:'art',source:venue==='wake'?'trigger':'handoff',fromKind:venue==='wake'?'schedule':'agent',fromId:venue==='wake'?null:'mark',words:brief});
  const job={id:'job',box:'box',agent:'art',conversation,thread:null,venue,model:'requested',account:'fixture-account',harness:'claude',brief:'',house:{repository:'fixture',file:'Housefile',branch:'next'}};
  const bytes=Buffer.from(JSON.stringify({job,build:'fixture-image',bootstrap:{origin:'https://loom.example',job:'job',token}}));
  const errors:string[]=[];

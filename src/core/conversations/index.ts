@@ -1,3 +1,4 @@
+import {handoffEnvelope} from './handoff-words.js';
 /** The trusted conversation service. External callers enter through the data API;
  * built-in producers share this interface and the same tables, in every venue. */
 import { inboxContentChanged, type Recipient } from '../tempo/volume.js';
@@ -63,6 +64,7 @@ export class Conversations {
       }
       const conversation = input.conversation ? this.conversation(input.conversation) : undefined;
       if (conversation && input.toKind === 'agent' && input.to !== conversation.agent) throw new Error('Recipient differs from conversation agent');
+      if(input.source==='handoff'&&input.words!=null&&!handoffEnvelope(input.words))throw new Error('Handoff briefs must be encrypted');
       const at = this.now();
       const seq = conversation ? (this.db.select({ seq: max(inbox.seq) }).from(inbox).where(eq(inbox.conversation, conversation.id)).get()?.seq ?? 0) + 1 : null;
       const { refs = [], ...values } = input;

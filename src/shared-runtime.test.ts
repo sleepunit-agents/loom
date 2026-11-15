@@ -1,3 +1,4 @@
+import {sealHandoff} from './core/conversations/handoff-words.js';
 import Database from 'better-sqlite3';
 import { EventEmitter } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
@@ -10,7 +11,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions, boxFacts, jobNeeds, turns, digests, threads, messages } from './core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions, boxFacts, jobNeeds, turns, digests, threads, messages, conversations } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { httpWorkerControl } from './runtime/worker-http.js';
 import { workerProgram } from './runtime/worker-program.js';
@@ -43,9 +44,10 @@ function fixture(tempo?: Parameters<typeof sharedRoot>[0]['tempo'], commsKey?: P
   const errors = vi.fn(); let roles = [{ model: 'model', provider: 'provider', harness: 'codex', series: 'series' }];
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: errors, tempo, commsKey, modelRoles: () => roles, runtimeJobEnded: ended });
   cleanup.push(() => root.close());
-  const send = (venue: 'loom' | 'handoff' = 'loom', place = 'thread') => {
+  const send = (venue: 'loom' | 'handoff' | 'wake' = 'loom', place = 'thread', words = 'Private work instructions') => {
+    if(venue==='handoff'){db.insert(agents).values({id:'mark',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).onConflictDoNothing().run();db.insert(memberAgents).values([{member:'owner',agent:'art'},{member:'owner',agent:'mark'}]).onConflictDoNothing().run();}
     const conversation = root.services.conversations.open({ agent: 'art', venue, place, label: place });
-    const mail = root.services.conversations.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Private work instructions' });
+    const mail = root.services.conversations.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: venue === 'handoff' ? 'handoff' : venue === 'wake' ? 'trigger' : 'thread', fromKind: venue==='handoff'?'agent':'person', fromId: venue==='handoff'?'mark':'owner', words });
     expect(root.services.runtime.admit({ kind: 'agent', id: 'art' }, [mail])).toBe(true);
     return db.select().from(jobs).where(eq(jobs.conversation, conversation.id)).get()!;
   };
@@ -105,7 +107,7 @@ it('refuses stale claim/heartbeat replay while report receipts remain atomic and
   expect((await f.call('started', start, 'start')).status).toBe(401); expect((await f.call('finish', finish, 'finish')).status).toBe(401);
 });
 it('retains public output with ordinary replay conflict detection', async () => {
-  const f = fixture(), queued = f.send('handoff'); await f.control.next(); await f.control.started(queued.id, 'image');
+  const f = fixture(), queued = f.send('wake'); await f.control.next(); await f.control.started(queued.id, 'image');
   const finish = { job: queued.id, exitCode: 0, logTail: 'public-output' };
   expect((await f.call('finish', finish, 'public')).status).toBe(200);
   expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.logTail).toBe('public-output');
@@ -163,7 +165,7 @@ it('competing real polls cannot both receive one queued job', async () => {
   expect(f.db.select().from(jobs).all()).toHaveLength(1);
 });
 it('all queued jobs respect the same current account capacity rather than a per-job copy', async () => {
-  const f = fixture(); f.send('handoff', 'one'); f.send('handoff', 'two'); f.send('handoff', 'three');
+  const f = fixture(); f.send('wake', 'one'); f.send('wake', 'two'); f.send('wake', 'three');
   const observed = { accounts: f.db.select().from(modelAccounts).all(), windows: f.db.select().from(modelAccountWindows).all() };
   const first = await f.control.next(), second = await f.control.next();
   expect(first).toBeDefined(); expect(second).toBeDefined(); expect(second?.id).not.toBe(first?.id);
@@ -188,7 +190,7 @@ it('feeds actual Tempo job watches after worker completion and after root silenc
 it('admits mail through the actual shared write/Tempo lifecycle without direct runtime admission', async () => {
   const f = fixture();
   f.root.services.tempo.volume.setTimings({ kind: 'agent', id: 'art' }, { settleSeconds: 0 });
-  const conversation = f.root.services.conversations.open({ agent: 'art', venue: 'handoff', place: 'settled', label: 'Settled work' });
+  const conversation = f.root.services.conversations.open({ agent: 'art', venue: 'wake', place: 'settled', label: 'Settled work' });
   f.root.writes.run(() => f.root.services.conversations.send({ toKind: 'agent', to: 'art', conversation: conversation.id,
     source: 'thread', fromKind: 'person', fromId: 'owner', words: 'Work after settling' }));
   f.clock.advance(1);
@@ -236,7 +238,7 @@ it('requires the current bearer runner proof rather than a runner-labelled cooki
 });
 
 it('reports local worker facts through default HTTP and uses them in the same poll placement', async () => {
-  const f = fixture(), job = f.send('handoff');
+  const f = fixture(), job = f.send('wake');
   f.db.insert(jobNeeds).values({ job: job.id, need: 'gpu:5090' }).run();
   f.db.insert(boxFacts).values([{ box: 'worker', fact: 'rack:attic', fromOwner: true }, { box: 'worker', fact: 'gpu:old', fromOwner: false }, { box: 'other', fact: 'gpu:other', fromOwner: false }]).run();
   expect(await f.control.next()).toBeUndefined(); expect(f.db.select().from(jobs).get()?.state).toBe('queued');
@@ -337,7 +339,7 @@ for (const change of ['delete', 'rebind']) it(`refuses retained health authentic
 it('enrolls through the canonical Root then uses the private child credential for accepted mail and observed turns', async () => {
   // Public fictitious identity shared with test/fixtures/conversation-body.ts.
   const key = wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR');
-  const f = fixture(undefined, key), queued = f.send('handoff'), accepted: string[] = [];
+  const f = fixture(undefined, key), queued = f.send('handoff','thread',await sealHandoff(key,'Private work instructions',f.now(),14)), accepted: string[] = [];
   const requests: { path: string; body: string; status?: number }[] = [];
   const fetcher: typeof fetch = async (input, init) => {
     const request = new Request(input, init), record = { path: new URL(request.url).pathname, body: await request.clone().text(), status: 0 }; requests.push(record);
@@ -370,7 +372,7 @@ it('enrolls through the canonical Root then uses the private child credential fo
     }),
   } });
   expect(result).toBe('finished'); expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()?.state, JSON.stringify(requests.map(({path,status}) => ({path,status})))).toBe('done'); expect(accepted).toEqual(['Private work instructions']); expect(owned!.every(byte => byte === 0)).toBe(true);
-  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', logTail: '', model: 'model' });
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', logTail: null, model: 'model' });
   expect(f.db.select().from(turns).where(eq(turns.run, queued.id)).get()).toMatchObject({ run: queued.id, model: 'observed-native-model' });
   expect(f.db.select().from(tokens).where(eq(tokens.fingerprint, hash(raw))).get()).toMatchObject({ kind: 'agent', agent: 'art', job: queued.id, member: null, box: null, madeFrom: hash(credential) });
   expect(proof!.valid()).toBe(false); expect(f.root.credentials.body(proof!.viewer)).toBeUndefined();
@@ -442,7 +444,7 @@ it('rejects ambiguous current model configuration without claiming a job or keep
 it('enrolls and completes a handoff body without manufacturing a Comms reply surface',async()=>{
  const key=wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR'),f=fixture(undefined,key);
  f.setRoles([{model:'model',provider:'provider',harness:'claude',series:'series'}]);
- const queued=f.send('handoff'),signal=new AbortController().signal;
+ const queued=f.send('handoff','thread',await sealHandoff(key,'Private work instructions',f.now(),14)),signal=new AbortController().signal;
  const assigned=(await f.control.next())!;expect(assigned.thread).toBeNull();const bootstrap=await f.control.enrollBody!(queued.id,signal);await f.control.started(queued.id,'image');
  const native=vi.fn(async()=>({text:'Handoff completed',model:'observed',actions:[]})),fetcher=vi.fn<typeof fetch>(async(url,init)=>f.root.http.fetch(new Request(url,init))),error=vi.fn();
  expect(await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),
@@ -454,4 +456,13 @@ it('enrolls and completes a handoff body without manufacturing a Comms reply sur
  expect(f.db.select().from(threads).all()).toEqual([]);expect(f.db.select().from(messages).all()).toEqual([]);
  bootstrap.token.fill(0);bootstrap.erase?.();
  await f.control.finish(queued.id,0,'');expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()?.state).toBe('done');
+});
+
+it.each(['wake','discord','slack'] as const)('keeps member-private %s stdout and brief out of durable jobs and guessable receipts',async venue=>{
+ const f=fixture(),queued=f.send('wake');
+ f.root.writes.run(()=>{f.db.update(conversations).set({venue,member:'owner'}).where(eq(conversations.id,queued.conversation!)).run();f.db.update(jobs).set({member:'owner'}).where(eq(jobs.id,queued.id)).run();});
+ expect((await f.control.next())?.brief).toBe('');await f.control.started(queued.id,'image');
+ const input={job:queued.id,exitCode:0,logTail:'PRIVATE NONCOMMS STDOUT'};expect((await f.call('finish',input,'private-'+venue)).status).toBe(200);
+ expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()?.logTail).toBeNull();
+ expect(f.db.select().from(operationResults).where(eq(operationResults.operation,'runtime.finish')).get()?.inputHash).not.toBe(hash(JSON.stringify({exitCode:0,job:queued.id,logTail:input.logTail})));
 });

@@ -20,7 +20,7 @@ import BetterSqlite3, { type Database } from 'better-sqlite3';
 import { resolveSqliteDbPath, type MemorySelection } from '../config.js';
 import { runMigrations } from './migrations.js';
 import { remember } from '../tools/remember.js';
-import type { MemoryRef } from './types.js';
+import type { MemoryInput, MemoryRef } from './types.js';
 import { retryWrite } from './retry.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ function openProposalsDb(contextDir: string, selection?: MemorySelection): Datab
  * title + content + category so the row is at least shaped like a memory.
  * Hard validation is deferred to ratify.
  */
-export function propose(contextDir: string, input: ProposalInput, selection?: MemorySelection): ProposalRef {
+function validateProposal(input:ProposalInput){
   if (typeof input.title !== 'string' || input.title.trim() === '') {
     throw new Error('proposal title is required and cannot be empty');
   }
@@ -113,8 +113,8 @@ export function propose(contextDir: string, input: ProposalInput, selection?: Me
     throw new Error('proposal category is required and cannot be empty');
   }
 
-  const db = openProposalsDb(contextDir, selection);
-  try {
+}
+function writeProposal(db:Database,input:ProposalInput):ProposalRef {
     const uuid = randomUUID();
     const created = new Date().toISOString();
     const result = retryWrite(() =>
@@ -137,9 +137,16 @@ export function propose(contextDir: string, input: ProposalInput, selection?: Me
         ),
     );
     return { id: Number(result.lastInsertRowid), uuid };
-  } finally {
-    db.close();
-  }
+}
+/** A command supplies its independently owned source transaction; no file is opened. */
+export function proposeOnConnection(db:Database,input:ProposalInput):ProposalRef {
+  if(!db.inTransaction)throw Error('Proposal command needs its source transaction');
+  validateProposal(input);return writeProposal(db,input);
+}
+export function propose(contextDir:string,input:ProposalInput,selection?:MemorySelection):ProposalRef {
+  validateProposal(input);
+  const db=openProposalsDb(contextDir,selection);
+  try{return writeProposal(db,input);}finally{db.close();}
 }
 
 /** All pending proposals, newest first. */
@@ -214,20 +221,11 @@ export async function ratifyProposal(
   const proposal = getProposal(contextDir, id, selection);
   if (!proposal) throw new UnknownProposalError(id);
 
-  const metadata = parseMetadata(proposal.metadata);
-
   // remember() validates (validateMemoryInput) and throws on an invalid write
   // BEFORE anything is committed — so an invalid proposal is refused with its
   // typed reason and, because the throw happens before the delete below, the
   // proposal stays pending for a later fix.
-  const ref = await remember(contextDir, {
-    category: overrides.category ?? proposal.category ?? '',
-    title: overrides.title ?? proposal.title ?? '',
-    content: overrides.content ?? proposal.content ?? '',
-    project: overrides.project ?? proposal.project ?? undefined,
-    ttl: overrides.ttl ?? proposal.ttl ?? undefined,
-    metadata,
-  }, selection);
+  const ref = await remember(contextDir, proposalInput(proposal,overrides), selection);
 
   // Committed as canon — drop the staging row.
   const db = openProposalsDb(contextDir, selection);
@@ -237,6 +235,19 @@ export async function ratifyProposal(
     db.close();
   }
 
+  return ref;
+}
+
+function proposalInput(proposal:ProposalRow,overrides:ProposalOverrides):MemoryInput {
+  return {category:overrides.category??proposal.category??'',title:overrides.title??proposal.title??'',content:overrides.content??proposal.content??'',project:overrides.project??proposal.project??undefined,ttl:overrides.ttl??proposal.ttl??undefined,metadata:parseMetadata(proposal.metadata)};
+}
+/** Memory effect, draft removal and the caller's receipt share this transaction. */
+export async function ratifyOnConnection(db:Database,id:number,overrides:ProposalOverrides,write:(input:MemoryInput)=>Promise<MemoryRef>):Promise<MemoryRef> {
+  if(!db.inTransaction)throw Error('Ratification needs its source transaction');
+  const proposal=db.prepare("SELECT * FROM proposals WHERE id=? AND status='pending'").get(id) as ProposalRow|undefined;
+  if(!proposal)throw new UnknownProposalError(id);
+  const ref=await write(proposalInput(proposal,overrides));
+  db.prepare("DELETE FROM proposals WHERE id=? AND status='pending'").run(id);
   return ref;
 }
 
