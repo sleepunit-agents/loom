@@ -307,7 +307,7 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       const before=words.prepare('SELECT count(*) AS n FROM comms_messages WHERE thread=?').get(thread.id);
       for(const [path,body]of [
         ['comms/adapter',{op:'post',place:thread.id,agent:'art',text:'MUST NOT BE WRITTEN'}],
-        ['comms/adapter',{op:'status',place:thread.id,agent:'art'}],
+        ['comms/adapter',{op:'status',status:'working',place:thread.id,agent:'art'}],
         ['comms/activity',{conversation:thread.conversation,run:'invented',cards:[{id:'step',tool:'Read',summary:'MUST NOT BE WRITTEN',state:'done'}]}],
       ] as const)for(const token of [tok.runtime,tok.jonathan]){
         const response=await fetch(base+'/api/loom/'+path,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify(body)});
