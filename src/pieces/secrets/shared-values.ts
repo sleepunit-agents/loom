@@ -91,7 +91,8 @@ export class SecretValues {
       this.available();
       const who = this.holderIdentity(row);
       const found: unknown = await this.holder.hasReceipt(who);
-      if (this.closed || typeof found !== 'boolean') throw unavailable();
+      this.available();
+      if (typeof found !== 'boolean') throw unavailable();
       if (!found) {
         let bytes: Buffer | undefined;
         try {

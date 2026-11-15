@@ -229,3 +229,35 @@ it('a negative receipt cannot release a lost-ack reservation whose holder commit
   expect(f.values.get('API')).toBe(f.input.value);
   expect(f.db.select().from(secretChanges).all()).toHaveLength(1); expect(f.holder.set).toHaveBeenCalledTimes(1);
 });
+it.each(['set', 'remove'] as const)('refuses %s if an unrelated transaction starts during receipt lookup', async kind => {
+  const f = fixture(); if (kind === 'remove') await f.service.set(f.input);
+  const priorSets = vi.mocked(f.holder.set).mock.calls.length;
+  let release!: (found: boolean) => void, entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  vi.mocked(f.holder.hasReceipt).mockImplementation(() => { entered(); return new Promise(resolve => { release = resolve; }); });
+  const pending = kind === 'set' ? f.service.set(f.input) : f.service.remove({ id: randomUUID(), member: 'owner', name: 'API' });
+  await started; f.client.exec('BEGIN'); release(false);
+  try { await expect(pending).rejects.toThrow(/^Secret write awaits reconciliation$/); }
+  finally { f.client.exec('ROLLBACK'); }
+  expect(f.holder.set).toHaveBeenCalledTimes(priorSets); expect(f.holder.remove).not.toHaveBeenCalled();
+  expect(f.db.select().from(secretWriteJournal).all().filter(row => row.state === 'prepared')).toHaveLength(1);
+});
+it('a second connection sees the exact durable prepared binding before every holder contact', async () => {
+  const f = fixture(true), reader = new Database(f.path); clients.push(reader);
+  let expected = { id: f.input.id, member: f.input.member, secret: f.input.name, operation: 'add', input_hash: createHmac('sha256', f.key).update('loom-shared-secret-write-v1\0').update(JSON.stringify([f.input.member, f.input.id, f.input.name, f.input.mode, f.input.description, f.input.value])).digest('hex') };
+  const observed: string[] = [];
+  const check = (contact: string) => {
+    expect(f.client.inTransaction).toBe(false);
+    expect(reader.prepare("SELECT id,member,secret,operation,input_hash,state FROM secret_write_journal WHERE state='prepared'").all()).toEqual([{ ...expected, state: 'prepared' }]);
+    observed.push(contact);
+  };
+  const actualSet = vi.mocked(f.holder.set).getMockImplementation()!, actualRemove = vi.mocked(f.holder.remove).getMockImplementation()!;
+  vi.mocked(f.holder.hasReceipt).mockImplementation(async () => { check('receipt'); return false; });
+  vi.mocked(f.holder.set).mockImplementation(async (...args) => { check('set'); await actualSet(...args); });
+  vi.mocked(f.holder.remove).mockImplementation(async (...args) => { check('remove'); await actualRemove(...args); });
+  await f.service.set(f.input);
+  const input = { id: randomUUID(), member: 'owner', name: 'API' };
+  expected = { id: input.id, member: input.member, secret: input.name, operation: 'remove', input_hash: createHmac('sha256', f.key).update('loom-shared-secret-write-v1\0').update(JSON.stringify([input.member, input.id, input.name, 'remove'])).digest('hex') };
+  await f.service.remove(input);
+  expect(observed).toEqual(['receipt', 'set', 'receipt', 'remove']);
+});
