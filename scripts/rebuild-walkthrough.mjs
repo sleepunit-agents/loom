@@ -1,4 +1,6 @@
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
+import {createServer} from 'node:http';
+import {WebSocketServer} from 'ws';
 import {chromium} from 'playwright-core';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -6,21 +8,52 @@ import {join,resolve} from 'node:path';
 import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
 
-export async function walkthrough(output) {
+export const redact=text=>String(text).replace(/(\/login\/)[^\s"'<>\\)]+/g,'$1[redacted]').replace(/(Bearer\s+|loom_ui=)[^\s;"'<>\\)]+/gi,'$1[redacted]').replace(/AGE-SECRET-KEY-[A-Z0-9-]+/g,'[private key redacted]');
+export const safeReport=report=>JSON.parse(JSON.stringify(report,(_key,value)=>typeof value==='string'?redact(value):value));
+/** Browser HTTP/WS may reach only this newly started loopback listener. */
+export function localRequest(url,origin){try{return new URL(url).origin===origin||/^(data:|blob:|about:)/.test(url);}catch{return false;}}
+/** A second disposable loopback listener proves both browser guards before
+ * the sign-in link is opened. It contains no data and receives no credentials. */
+async function verifyIsolation(page){
+ let http=0,websocket=0;
+ const trap=createServer((_request,response)=>{http++;response.setHeader('access-control-allow-origin','*');response.end('local isolation trap');});
+ const ws=new WebSocketServer({server:trap});ws.on('connection',socket=>{websocket++;socket.close();});
+ await new Promise(resolve=>trap.listen(0,'127.0.0.1',resolve));
+ try{
+  const origin=`http://127.0.0.1:${trap.address().port}`;
+  await page.evaluate(async origin=>{
+   console.error('Walkthrough console capture probe');
+   await new Promise(resolve=>{const socket=new WebSocket(origin.replace(/^http/,'ws'));socket.onerror=()=>resolve();socket.onclose=()=>resolve();socket.onopen=()=>{socket.close();resolve();};});
+  },origin);
+  await page.goto(origin).catch(()=>{});
+  if(http||websocket)throw Error('Browser isolation failed: a request reached the second local listener');
+  return {http:'blocked',websocket:'blocked'};
+ }finally{ws.close();trap.closeAllConnections();await new Promise(resolve=>trap.close(resolve));}
+}
+export async function* walkthroughSteps(output) {
  const out=resolve(output);mkdirSync(out,{recursive:true});
  const parent=mkdtempSync(join(tmpdir(),'loom-walkthrough-')),home=join(parent,'home');
- const report={version:1,startedAt:new Date().toISOString(),example:await exampleHome(home),signin:{ok:false},apps:[],errors:[]};
+ const report={version:1,startedAt:new Date().toISOString(),example:{gaps:[]},signin:{ok:false},apps:[],errors:[]};
  let app,browser,page;
- const save=()=>writeFileSync(join(out,'walkthrough.json'),JSON.stringify(report,null,2)+'\n');
+ const consoleErrors=[],pageErrors=[],networkErrors=[],frames=[],subscriptions=[];
+ const save=()=>writeFileSync(join(out,'walkthrough.json'),JSON.stringify(safeReport(report),null,2)+'\n');
  try {
+  report.example=await exampleHome(home);
   let link='';app=await startSharedHome({home,port:0,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});
-  const context=await browser.newContext({viewport:{width:1600,height:1000}});page=await context.newPage();page.setDefaultTimeout(8000);
-  const consoleErrors=[],pageErrors=[],networkErrors=[],frames=[];
+  const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:'block'});
+  await context.route('**/*',route=>localRequest(route.request().url(),app.url)?route.continue():route.abort('blockedbyclient'));
+  const socketOrigin=app.url.replace(/^http/,'ws');
+  await context.routeWebSocket(url=>new URL(url).origin!==socketOrigin,route=>route.close({code:1008,reason:'Walkthrough is local only'}));
+  page=await context.newPage();page.setDefaultTimeout(8000);
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
   page.on('pageerror',error=>pageErrors.push(error.message));
   page.on('requestfailed',request=>{const url=new URL(request.url());networkErrors.push({path:url.pathname.startsWith('/login/')?'/login/[redacted]':url.pathname,error:request.failure()?.errorText});});
-  page.on('websocket',socket=>{if(new URL(socket.url()).pathname!=='/graphql')return;socket.on('framereceived',event=>{try{const frame=JSON.parse(String(event.payload));frames.push({type:frame.type,id:frame.id,hasData:!!frame.payload?.data,errors:frame.payload?.errors??(frame.type==='error'?frame.payload:undefined)});}catch{frames.push({type:'unparseable'});}});});
+  page.on('websocket',socket=>{if(new URL(socket.url()).pathname!=='/graphql')return;socket.on('framesent',event=>{try{const frame=JSON.parse(String(event.payload));if(frame.type==='subscribe')subscriptions.push({id:frame.id,query:frame.payload?.variables?.query??frame.payload?.query});}catch{}});socket.on('framereceived',event=>{try{const frame=JSON.parse(String(event.payload));frames.push({type:frame.type,id:frame.id,hasData:!!frame.payload?.data,errors:frame.payload?.errors??(frame.type==='error'?frame.payload:undefined)});}catch{frames.push({type:'unparseable'});}});});
+  const isolationErrors=consoleErrors.length;
+  const probe=await context.newPage();probe.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
+  try{report.isolation=await verifyIsolation(probe);}finally{await probe.close();}
+  report.isolation.consoleErrors=consoleErrors.splice(isolationErrors);
   await page.goto(app.url);await page.getByRole('heading',{name:'Sign in to loom',exact:true}).waitFor();
   await page.screenshot({path:join(out,'00-signin.png'),fullPage:true});
   await page.goto(link);await page.getByRole('button',{name:'Sign in',exact:true}).click();
@@ -33,6 +66,9 @@ export async function walkthrough(output) {
   if(await launcher.getByRole('button',{name:'Open your account',exact:true}).count()&&!titles.includes('Your account'))titles.push('Your account');
   report.inventory=titles;
   await page.keyboard.press('Escape');
+  yield {phase:'ready',report:safeReport(report)};
+  const ready=label=>{const tile=[...document.querySelectorAll('[data-tile]')].find(node=>node.getAttribute('aria-label')===label);const body=tile?.querySelector('.next-page');return !!body?.textContent?.trim()&&!/Opening [^\n]*…|Loading[^\n]*…|Connecting[^\n]*…/.test(body.textContent);};
+  const details={'Tasks':['Goal'],'Approvals':['Exactly what this allows'],'Changes':['Description'],'Inbox':['If yes'],'Tempo':['Words'],'Comms':['Spend up to 180 example dollars on the pump?','Compare garden pumps · t-1 · in_progress'],'Agents':['DESCRIPTION']};
   const selections={'Tasks':'Measure the hose','Approvals':'Inspect the example pump','Changes':'Plan the pump repair (t-1)','Inbox':'Spend up to 180 example dollars on the pump?','Tempo':'Continue the pump inspection','Comms':'Repair the garden pump','Agents':'Fern'};
   for(const [index,title] of titles.entries()) {
    const start={console:consoleErrors.length,page:pageErrors.length,network:networkErrors.length,frames:frames.length};
@@ -42,33 +78,36 @@ export async function walkthrough(output) {
     const button=title==='Your account'?launcher.getByRole('button',{name:'Open your account',exact:true}):launcher.locator('.loom-lapp').filter({has:page.locator('.loom-lapp__nm',{hasText:new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')}$`)})});
     await button.click();
     const tile=page.getByRole('region',{name:`${title} tile`,exact:true});await tile.waitFor();
-    // Let React commit its initial subscribed snapshot; no fixed sleep.
-    await page.waitForFunction(label=>{const tile=[...document.querySelectorAll('[data-tile]')].find(node=>node.getAttribute('aria-label')===label);return tile&&!/^.*(?:Opening [^\n]*…|Loading[^\n]*…|Connecting[^\n]*…)/s.test(tile.innerText);},`${title} tile`);
-    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    await page.waitForFunction(ready,`${title} tile`);
     row.opened=true;row.text=await tile.innerText();row.path=new URL(page.url()).pathname;
     row.unavailable=/unavailable|couldn.t load/i.test(row.text);
     if(selections[title]){
      row.selection=selections[title];
      try{
       await tile.getByText(selections[title],{exact:true}).first().click();
-      await page.waitForFunction(label=>{const node=[...document.querySelectorAll('[data-tile]')].find(node=>node.getAttribute('aria-label')===label);return node&&!/Opening [^\n]*…|Loading[^\n]*…|Connecting[^\n]*…/.test(node.innerText);},`${title} tile`);
-      row.detailText=await tile.innerText();
+      await page.waitForFunction(ready,`${title} tile`);
+      for(const text of details[title]??[])await tile.getByText(text,{exact:true}).first().waitFor();
      }catch(error){row.selectionError=String(error);}
+     row.detailText=await tile.innerText();
     }
     await page.screenshot({path:join(out,row.screenshot),fullPage:true});
-   }catch(error){row.error=String(error);await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
+   }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
-   row.live={frames:frames.slice(start.frames),dataReceived:frames.slice(start.frames).some(frame=>frame.hasData),errors:frames.slice(start.frames).flatMap(frame=>frame.errors??[])};
-   report.apps.push(row);save();
+   const visitFrames=frames.slice(start.frames);
+   row.live={frames:visitFrames,subscriptions:subscriptions.filter(sub=>visitFrames.some(frame=>frame.id===sub.id)),scope:'Connection activity during this visit, including shell and other tiles; not app-specific proof',connectionDataReceived:visitFrames.some(frame=>frame.hasData),errors:visitFrames.flatMap(frame=>frame.errors??[])};
+   report.apps.push(row);save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
   }
-  report.consoleErrors=consoleErrors;report.pageErrors=pageErrors;report.networkErrors=networkErrors;
-  report.live={frames:frames.length,dataFrames:frames.filter(frame=>frame.hasData).length,errors:frames.flatMap(frame=>frame.errors??[])};
  }catch(error){report.fatal=String(error);}
- finally{await browser?.close();await app?.close();rmSync(parent,{recursive:true,force:true});report.finishedAt=new Date().toISOString();save();}
- return report;
+ finally{report.consoleErrors=consoleErrors;report.pageErrors=pageErrors;report.networkErrors=networkErrors;report.live={frames:frames.length,dataFrames:frames.filter(frame=>frame.hasData).length,errors:frames.flatMap(frame=>frame.errors??[]),subscriptions};await browser?.close().catch(error=>report.errors.push(String(error)));await app?.close().catch(error=>report.errors.push(String(error)));rmSync(parent,{recursive:true,force:true});report.finishedAt=new Date().toISOString();save();}
+ return safeReport(report);
+}
+export async function walkthrough(output){
+ const steps=walkthroughSteps(output);let step;
+ do{step=await steps.next();}while(!step.done);
+ return step.value;
 }
 if(process.argv[1]&&resolve(process.argv[1])===new URL(import.meta.url).pathname){
  const report=await walkthrough(process.argv[2]??'walkthrough-artifacts');
- console.log(JSON.stringify({signin:report.signin,apps:report.apps.map(({title,opened,unavailable,error})=>({title,opened,unavailable,error})),live:report.live,fatal:report.fatal},null,2));
+ console.log(JSON.stringify({signin:report.signin,apps:report.apps.map(({title,opened,unavailable,error})=>({title,opened,unavailable,error})),live:report.live?{frames:report.live.frames,dataFrames:report.live.dataFrames,errors:report.live.errors}:undefined,fatal:report.fatal},null,2));
  if(report.fatal||!report.apps.length)process.exitCode=1;
 }
