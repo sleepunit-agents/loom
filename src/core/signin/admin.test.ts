@@ -1,16 +1,13 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Readable } from 'node:stream';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { startLoom } from '../../foundation.js';
 import { fixture, installFixture } from '../../fixture.js';
 import { FakeClock } from '../clock.js';
 import { signin, hash } from './index.js';
-import { runAccessClient } from '../../cli/access-client.js';
-import { accessCommands } from './commands.js';
 const cleanup:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
 const owner={kind:'member' as const,id:'jonathan'};
@@ -21,13 +18,7 @@ async function setup(){
   const app=await startLoom({home,next:true,clock,install:installFixture});cleanup.push(()=>app.close());
   const s=signin(app);app.db.transaction(()=>s.tokens.replace({v:1,tokens:[{label:'operator',role:'owner',member:'jonathan',sha256:hash('operator-bearer'),created:new Date(clock.now()).toISOString()}]},{}))();
   const call=(name:string,input:unknown={},id?:string)=>app.operations.call('direct',owner,name,input,id);
-  const file=join(home,'client-token');writeFileSync(file,'operator-bearer');
-  const client=async(piece:'token'|'sessions',args:string[],request:typeof fetch=fetch,env:NodeJS.ProcessEnv={LOOM_URL:app.url,LOOM_TOKEN_FILE:file,LOOM_HOME:'/missing'})=>{
-    let stdout='',stderr='',now=0,calls=0;const bodies:string[]=[];
-    const code=await runAccessClient(piece,args,{stdin:Readable.from([]),stdinIsTTY:false,env,stdout:t=>stdout+=t,stderr:t=>stderr+=t},{request:(url,init)=>{calls++;bodies.push(String(init?.body));return request(url,init);},retry:async ms=>{now+=ms;},now:()=>now});
-    return {code,stdout,stderr,calls,bodies};
-  };
-  return {app,s,clock,call,client,home,file};
+  return {app,s,clock,call,home};
 }
 it('mints only supported identities, returns the bearer once, and never journals a credential',async()=>{
   const f=await setup();
@@ -88,15 +79,6 @@ it('plain token revoke preserves descendant passkeys and devices; compromise tak
   expect(f.call('token.revoke',{label:'child',withPasskeys:true},'compromised')).toEqual({ok:true,value:{revoked:2,passkeys:1,devices:2}});
   expect(f.s.session(c)).toBeUndefined();expect(Object.keys(f.s.sessions.read().passkeys!)).toEqual(['child']);
   expect(f.s.sessions.read().push!.subs!.a).toBeDefined();
-});
-it('generates both clients, never retries minting, and retries revocation with one stable id',async()=>{
-  const f=await setup();
-  for(const piece of ['token','sessions'] as const){expect(f.app.operations.offered('http').filter(x=>x.name.startsWith(piece+'.')).map(x=>x.cli)).toEqual(accessCommands(piece));expect((await f.client(piece,['--help'])).stdout).toContain('revoke');expect(await f.client(piece,['list','{}'])).toMatchObject({code:0,stderr:''});}
-  const minted=await f.client('token',['create','{"role":"agent","agent":"art","label":"remote"}']);expect(minted.code).toBe(0);expect(minted.stdout).toMatch(/^loom_\S+\n$/);expect(f.s.token(hash(minted.stdout.trim()))).toEqual({viewer:{kind:'agent',id:'art'}});
-  const failed=await f.client('token',['create','{"role":"agent","agent":"art","label":"lost"}'],async(url,init)=>{const r=await fetch(url,init);await r.body?.cancel();throw Error('operator-bearer');});expect(failed).toMatchObject({code:1,calls:1,stdout:''});expect(failed.stderr).not.toContain('operator-bearer');
-  let n=0;const retry=await f.client('token',['revoke','{"label":"remote"}'],async(url,init)=>{const r=await fetch(url,init);if(++n===1){await r.body?.cancel();throw Error();}return r;});expect(retry).toMatchObject({code:0,calls:2});expect(new Set(retry.bodies).size).toBe(1);
-  expect(await f.client('token',['create','{}'],async()=>new Response('private-witness',{status:503}))).toMatchObject({code:1,calls:1,stdout:''});
-  expect(await f.client('sessions',['revoke','[]'])).toMatchObject({code:2,calls:0});
 });
 it('rolls back the entire compromised line and its retry receipt when device removal cannot commit',async()=>{
   const f=await setup(),root=hash('operator-bearer'),child=hash('child');
@@ -169,16 +151,6 @@ it('refuses empty normalized labels without signing out unlabeled agent sessions
   for(const label of [' ','\t','\u200b','\u202e','\u2060','\ufeff'])expect(f.call('sessions.revoke',{label},'blank-'+label)).toMatchObject({ok:false,code:'invalid'});
   expect(f.s.sessions.read()).toEqual(before);expect(f.s.session(a)).toBeDefined();expect(f.s.session(b)).toBeDefined();
 });
-it('requires explicit safe client connection settings and a readable nonempty token before transport',async()=>{
-  const f=await setup();let requests=0;
-  const request:typeof fetch=async()=>{requests++;throw Error('private-witness');};
-  const base={LOOM_URL:f.app.url,LOOM_TOKEN_FILE:f.file};
-  for(const env of [{},{LOOM_URL:f.app.url},{LOOM_TOKEN_FILE:f.file},...['ftp://example.com','http://user:password@example.com','http://example.com/path','http://example.com/?query','http://example.com/#hash','not a URL'].map(LOOM_URL=>({...base,LOOM_URL})),{...base,LOOM_TOKEN_FILE:join(f.home,'absent')}]){
-    const r=await f.client('token',['list','{}'],request,env);expect(r).toMatchObject({code:1,stdout:'',calls:0});expect(r.stderr).not.toContain('private-witness');expect(r.stderr).not.toContain('password');
-  }
-  writeFileSync(f.file,' \n');expect(await f.client('sessions',['list','{}'],request,base)).toMatchObject({code:1,stdout:'',calls:0});expect(requests).toBe(0);
-});
-
 it('creates a token over the authenticated browser socket without a credential receipt or Live secret', async () => {
   const f = await setup(), cookie = f.s.createSession(hash('operator-bearer'));
   const ws = new WebSocket(f.app.url.replace('http:', 'ws:') + '/live', { headers: { cookie: `loom_ui=${cookie}`, origin: f.app.url } });

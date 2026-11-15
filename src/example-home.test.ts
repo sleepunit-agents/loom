@@ -45,12 +45,20 @@ it('builds fictitious data through services, then normal startup signs in and qu
   expect((await answer()).status).toBe(200);expect((await answer()).status).toBe(200);
   expect(app.services.tasks.get(draft.id)).toMatchObject({status:'closed',closeReason:'cancelled'});
   expect(app.services.approvals.record(card.id).map(row=>row.event)).toEqual(['request','allow','use']);
+  for(const stale of ['summary','state']){
+   const next=app.writes.run(()=>app!.services.tasks.create({title:'Fictitious guarded draft',goal:'Reject stale approvals.',why:'Verify before/after guards.',owner:{kind:'household'}},{kind:'member',id:'alex'})).value;
+   const request=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${next.id}`,operation:'example.discardDraft',changeSummary:stale==='summary'?'Wrong before/after':`Draft ${next.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',what:'Discard guarded draft',why:'Exercise stale refusal.',ask:'Discard guarded draft?',ifYes:'Cancel.',ifNo:'Keep.'})).value;
+   if(stale==='state')app.writes.run(()=>app!.services.tasks.close(next.id,'Already finished.'));
+   const before=app.services.tasks.get(next.id),audit=app.services.approvals.record(request.id);
+   const refused=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'stale-'+stale,input:{id:request.id,answer:'allow'}})});
+   expect(refused.status).toBe(503);expect(app.services.tasks.get(next.id)).toEqual(before);expect(app.services.approvals.get(request.id).state).toBe('pending');expect(app.services.approvals.record(request.id)).toEqual(audit);
+  }
   expect(result.data.changes).toEqual([{id:manifest.change,project:'garden',agent:'fern'}]);
   const token=app.writes.run(()=>app!.services.signin.issue({kind:'owner',member:'robin',label:'Fictitious sharing proof'})).value;
   try{
    const read=async()=>{const response=await app!.http.request(app!.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+token.token,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id } changes { id project agent } approvals { id } }'})});return response.json();};
    expect(await read()).toEqual({data:{tasks:manifest.tasks.map((id:string)=>({id})),changes:[{id:manifest.change,project:'garden',agent:'fern'}],approvals:[]}});
-   app.writes.run(()=>app!.services.household.setProject({id:'garden',name:'Example garden',members:['alex'],agents:['fern','moss'],repositories:['example-house/garden']}));
+   app.writes.run(()=>app!.services.projects.save({id:'garden',name:'Example garden',members:['alex'],agents:['fern','moss'],repositories:['github:example-house/garden']}));
    expect(await read()).toEqual({data:{tasks:[],changes:[],approvals:[]}});
   }finally{app.writes.run(()=>app!.services.signin.revoke(token.fingerprint));}
   expect(result.data.modelAccounts).toEqual([expect.objectContaining({label:'Example model subscription'})]);
