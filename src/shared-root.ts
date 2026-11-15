@@ -9,6 +9,8 @@ import { OperationResults } from './core/data/operation-results.js';
 import type { Clock } from './core/clock.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
 import { taskService } from './apps/tasks.js';
+import { changeService, type PullRequestReader, type MergeRuleReader } from './apps/changes.js';
+import { pollChanges } from './apps/changes-polling.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
@@ -23,6 +25,7 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
+  changes?: { read: PullRequestReader; rule: MergeRuleReader };
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
 }) {
@@ -33,11 +36,18 @@ export function sharedRoot(options: {
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
+  const commit = <T>(run: () => T): T => {
+    const result = data.writes.run(run);
+    for (const error of result.notificationErrors) { try { options.reportError(error); } catch { /* reporting cannot undo a source commit */ } }
+    return result.value;
+  };
   const services = {
     tasks: taskService(db, now),
+    changes: changeService(db, options.changes?.rule ?? (() => undefined), now, commit),
     approvals: approvalService(db, options.approvedOperations, now),
     conversations: new Conversations(db, now),
   };
+  const changePolling = options.changes ? pollChanges(services.changes, options.changes.read, clock) : undefined;
   registerSharedTaskCommands(operations, db, services.tasks);
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
@@ -85,7 +95,7 @@ export function sharedRoot(options: {
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   return {
-    http, operations, services, writes: data.writes, changed: data.changed,
+    http, operations, services, refreshChanges: changePolling?.refresh, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);
@@ -96,7 +106,7 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
-      const stopped = data.close();
+      const stopped = changePolling ? changePolling.stop().then(() => data.close()) : data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
       void Promise.allSettled([stopped, ...pending.map(entry => entry.done)]).then(results => {

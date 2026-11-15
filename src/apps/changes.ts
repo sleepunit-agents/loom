@@ -17,7 +17,8 @@ const order = ['you', 'agent', 'ci', 'reviewer', 'author', 'done'];
  * rendering and sorting read this cache only. Merge answers belong to Approvals,
  * and this module never merges a PR itself.
  */
-export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () => string = () => new Date().toISOString()) {
+export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () => string = () => new Date().toISOString(),
+  commit: <T>(run: () => T) => T = run => db.transaction(run)) {
   const get = (id: string): ChangeRow => {
     const row = db.select().from(changes).where(eq(changes.id, id)).get();
     if (!row) throw new Error('Change not found');
@@ -66,7 +67,7 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
     return get(id);
   };
   return {
-    put(input: Change) { return db.transaction(() => store(input)); },
+    put(input: Change) { return commit(() => store(input)); },
     get(id: string): ChangeDetail {
       return { ...get(id), checksDetail: db.select().from(changeChecks).where(eq(changeChecks.change, id)).all(),
         people: db.select().from(changePeople).where(eq(changePeople.change, id)).orderBy(asc(changePeople.role), asc(changePeople.login)).all(),
@@ -87,13 +88,13 @@ export function changeService(db: DataDatabase, rule: MergeRuleReader, now: () =
             rows.push(c);
           }
         }
-        return db.transaction(() => {
+        return commit(() => {
           const stored = rows.map(store);
           db.insert(changeSync).values({ readAt: now(), failed: false, nextAt }).onConflictDoUpdate({ target: changeSync.singleton, set: { readAt: now(), failed: false, nextAt } }).run();
           return stored;
         });
       } catch {
-        db.insert(changeSync).values({ failed: true, nextAt }).onConflictDoUpdate({ target: changeSync.singleton, set: { failed: true, nextAt } }).run();
+        commit(() => db.insert(changeSync).values({ failed: true, nextAt }).onConflictDoUpdate({ target: changeSync.singleton, set: { failed: true, nextAt } }).run());
         throw new Error('GitHub read unavailable');
       }
     },
