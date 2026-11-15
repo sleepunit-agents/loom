@@ -3,7 +3,8 @@ import {keepReadUntil} from '../../core/data/read-lease.js';
 import { GraphQLBoolean, GraphQLError, GraphQLFloat, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../core/index.js';
 import type {ProjectsReader} from './projects.js';
-export type ProjectQueryReader=Pick<ProjectsReader,'list'|'read'|'memoryRead'|'access'>;
+import {retainedQueryFields} from './retained-query.js';
+export type ProjectQueryReader=Pick<ProjectsReader,'list'|'read'|'memoryRead'|'retained'|'access'>;
 import {projectDeadline} from './project-deadlines.js';
 import type {QueryDeadlines} from './query-deadlines.js';
 import type { ProjectRecord, ProjectMemory, ProjectCard, ProjectSection } from './projects-model.js';
@@ -73,6 +74,7 @@ export function projectsQueryFields(source: ProjectQueryReader, deadlines?:Query
  };
  const id = { type: new GraphQLNonNull(GraphQLString) };
  return {
+  ...retainedQueryFields(source),
   memoryProjectsAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?source.access(context.viewer):null},
   memoryProjects: { type: new GraphQLList(new GraphQLNonNull(project)), resolve: (_source, _args, context) => read(context, 'projectsList', {}, []) },
   memoryProject: { type: projectDetail, args: { id }, resolve: (_source, args, context) => read(context, 'projectRead', { id: args.id }, null) },
