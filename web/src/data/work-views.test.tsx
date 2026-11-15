@@ -5,7 +5,7 @@ import { act, create } from 'react-test-renderer';
 import type { ApprovalsResult, ChangesResult } from './work-query';
 const feed = vi.hoisted(() => ({ status: 'live', owner:false, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
 vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: feed.status, data: query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
-vi.mock('../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.list, props.reader] : []))])));
+vi.mock('../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode; listTop?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.listTop, props.list, props.reader] : []))])));
 import { approvalsApp } from '../pieces/approvals/registration';
 import { changesApp } from '../pieces/changes/registration';
 import { ApprovalsApp, ChangesApp, LiveApprovalCard, LiveChangeCard } from './work-views';
@@ -230,7 +230,10 @@ it('offers merge answers only for the current head, agent and project request an
   feed.approvals.approvals=[{...feed.approvals.approvals[0],id:'a-merge',kind:'merge',target:`${change.id}@${change.headCommit}`,agent:change.agent!,project:change.project,operation:null} as typeof feed.approvals.approvals[number]];
   await act(async () => tree.update(h(ChangesApp,{})));
   expect(tree.root.findAllByType('Button').map((button:{props:{children:string}})=>button.props.children)).toEqual(['Yes, merge it','Not yet']);
-  feed.approvals.approvals[0]={...feed.approvals.approvals[0],target:`${change.id}@other-head`};
-  await act(async () => tree.update(h(ChangesApp,{})));
-  expect(tree.root.findAllByType('Button')).toHaveLength(0);
+  const matching=feed.approvals.approvals[0];
+  for (const mismatch of [{target:`${change.id}@other-head`},{agent:'other-agent'},{project:'other-project'},{operation:'not-a-merge'}]) {
+    feed.approvals.approvals=[{...matching,...mismatch} as typeof matching];
+    await act(async () => tree.update(h(ChangesApp,{})));
+    expect(tree.root.findAllByType('Button')).toHaveLength(0);
+  }
 });

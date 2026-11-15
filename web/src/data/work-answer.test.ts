@@ -6,7 +6,9 @@ it('uses the actual same-origin envelope, omits actor metadata and reuses one im
   const request = vi.fn<typeof fetch>(success).mockRejectedValueOnce(new Error('Response lost'));
   await expect(sendWorkAnswer({...answer,actor:'not-sent'} as WorkAnswer,request)).rejects.toThrow('Could not confirm');
   expect(request).toHaveBeenCalledTimes(1);
-  await sendWorkAnswer(answer,request);
+  vi.resetModules();
+  const fresh=(await import('./work-answer')).sendWorkAnswer;
+  await fresh(answer,request);
   const bodies = request.mock.calls.map(([,init])=>JSON.parse(String(init!.body)));
   expect(bodies[0]).toEqual({input:{id:'a-1',answer:'allow'},id:expect.stringMatching(/^work-[a-f0-9]{64}$/)});
   expect(bodies[1]).toEqual(bodies[0]);
