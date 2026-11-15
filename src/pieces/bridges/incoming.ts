@@ -3,7 +3,7 @@
 import { and, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../../core/data/database.js';
 import { Conversations } from '../../core/conversations/index.js';
-import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, inbox } from '../../core/data/schema.js';
+import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeIncoming, inbox, inboxRefs } from '../../core/data/schema.js';
 
 export interface IncomingMessage {
   /** Stable platform message id, scoped to this connection by the service. */
@@ -13,6 +13,8 @@ export interface IncomingMessage {
   parent?: string;
   thread?: string;
   isDm: boolean;
+  /** Authenticated channel kind; group DMs are not private to one sender. */
+  groupDm?: boolean;
   user: string;
   text: string;
   postedAt: string;
@@ -50,6 +52,7 @@ export class BridgeIncoming {
       const link = this.db.select().from(bridgePeople).where(and(eq(bridgePeople.platform, connection.platform), eq(bridgePeople.workspace, connection.workspace), eq(bridgePeople.user, message.user))).get();
       let state: 'held' | 'dropped' | 'delivered' = 'delivered';
       let reason: string | null = null;
+      let matchedMember = sender ? null : link?.member ?? null;
       if (!connection.enabled) { state = 'held'; reason = 'Connection disabled'; }
       else if (filters.some(f => f.rule === 'ignore' && f.channel === channel) || (filters.some(f => f.rule === 'only') && !filters.some(f => f.rule === 'only' && f.channel === channel))) { state = 'dropped'; reason = 'Channel filtered'; }
       else if (message.user === connection.botUser) { state = 'dropped'; reason = 'Own message'; }
@@ -62,24 +65,41 @@ export class BridgeIncoming {
       const at = this.now();
       const row = existing ?? this.db.insert(bridgeIncoming).values({ id, connection: connection.id, channel: message.channel, thread: message.thread, isDm: message.isDm, user: message.user, text: message.text, postedAt: message.postedAt, receivedAt: receivedAt ?? at, state: 'pending' }).returning().get();
       let conversation: string | null = null;
+      let deliveredAt = at;
       if (state === 'delivered') {
         // Include workspace and the real channel even for DMs: outside user ids
         // and thread ids are not globally unique. Never accept a claimed member.
-        const place = JSON.stringify([connection.workspace, message.channel, message.thread ?? null]);
-        const opened = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label: message.thread ?? message.channel, member: message.isDm && !sender ? link?.member : null });
-        conversation = opened.id;
-        const fromKind = sender ? 'agent' : link ? 'person' : 'unknown';
-        const fromId = sender?.agent ?? link?.member ?? null;
-        // Two connections can speak for the same agent in the same place.
-        // Record both receipts, but deliver the platform message only once.
         const sourceId = JSON.stringify([connection.workspace, message.channel, message.id]);
         const delivered = this.db.select().from(inbox).where(and(eq(inbox.toKind, 'agent'), eq(inbox.to, connection.agent), eq(inbox.source, connection.platform), eq(inbox.sourceId, sourceId))).get();
+        const fromKind = sender ? 'agent' : link ? 'person' : 'unknown';
+        const fromId = sender?.agent ?? link?.member ?? null;
+        if (delivered) {
+          if (!delivered.conversation) throw Error('Bridge delivery scope missing');
+          const original = this.db.select({ id: bridgeIncoming.id, connection: bridgeIncoming.connection, user: bridgeIncoming.user,
+            channel: bridgeIncoming.channel, thread: bridgeIncoming.thread, isDm: bridgeIncoming.isDm, text: bridgeIncoming.text, postedAt: bridgeIncoming.postedAt })
+            .from(inboxRefs).innerJoin(bridgeIncoming, eq(bridgeIncoming.id, inboxRefs.ref))
+            .where(and(eq(inboxRefs.item, delivered.id), eq(bridgeIncoming.state, 'delivered'))).all()
+            .find(row => row.id === `bi:${JSON.stringify([row.connection, message.id])}`);
+          if (!original || original.user !== message.user || original.channel !== message.channel
+            || original.thread !== (message.thread ?? null) || original.isDm !== message.isDm
+            || original.text !== message.text || original.postedAt !== message.postedAt) throw Error('Bridge delivery identity changed');
+          deliveredAt = delivered.at;
+          conversation = delivered.conversation;
+          matchedMember = delivered.fromKind === 'person' ? delivered.fromId : null;
+        } else {
+          const member = message.isDm && !message.groupDm && !sender ? matchedMember : null;
+          // Future messages after a person-link change receive a new private
+          // place; duplicate delivery always keeps its original recorded scope.
+          const place = JSON.stringify([connection.workspace, message.channel, message.thread ?? null,
+            ...(message.isDm ? [message.groupDm ? ['group'] : ['member', member]] : [])]);
+          conversation = this.conversations.open({ agent: connection.agent, venue: connection.platform, place, label: message.thread ?? message.channel, member }).id;
+        }
         if (!delivered) {
           this.conversations.turn({ conversation, kind: 'message', fromKind, fromId });
           this.conversations.send({ toKind: 'agent', to: connection.agent, conversation, source: connection.platform, sourceId, fromKind, fromId, words: message.text, refs: [id] });
         }
       }
-      return this.db.update(bridgeIncoming).set({ state, reason, member: sender ? null : link?.member ?? null, conversation, deliveredAt: state === 'delivered' ? at : null }).where(eq(bridgeIncoming.id, row.id)).returning().get()!;
+      return this.db.update(bridgeIncoming).set({ state, reason, member: matchedMember, conversation, deliveredAt: state === 'delivered' ? deliveredAt : null }).where(eq(bridgeIncoming.id, row.id)).returning().get()!;
     });
   }
 }

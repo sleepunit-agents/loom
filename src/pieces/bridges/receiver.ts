@@ -66,7 +66,7 @@ export class BridgeReceiver {
    * channel-kind evidence. No receipt is consumed or delivered here. Root owns
    * authenticated fetches, cache lifetime and bounded retry scheduling; call
    * drain after filling the cache. Malformed frames throw as in drain(). */
-  missingChannels(connection: string, limit = 64): string[] {
+  missingChannels(connection: string, limit = 64, rotate = false): string[] {
     const source = this.connection(connection);
     const missing = new Set<string>();
     this.events.drain(connection, (_id, raw) => {
@@ -86,7 +86,7 @@ export class BridgeReceiver {
         }
       }
       return false;
-    }, limit);
+    }, limit, rotate ? 'inspect' : 'peek');
     return [...missing];
   }
 

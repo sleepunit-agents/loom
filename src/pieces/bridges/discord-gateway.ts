@@ -16,6 +16,7 @@ export interface DiscordGatewayOptions {
   clock: Clock;
   /** Outside-effect/lifetime check, including after deferred holder acquisition. */
   beforeConnect(): boolean;
+  state?(state: 'connecting' | 'connected' | 'backoff' | 'disconnected'): void;
   /** Private identity/credential-generation-bound storage. Never expose session
    * IDs as records. A replacement credential must never reuse this store. */
   load(): DiscordCheckpoint | undefined;
@@ -47,6 +48,7 @@ const fatal = new Set([4004, 4010, 4011, 4012, 4013, 4014]);
  * Invalid sessions can lose events Discord no longer retains: no history replay. */
 export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<void> } {
   const { clock } = o;
+  const state = (value: 'connecting' | 'connected' | 'backoff' | 'disconnected') => { try { o.state?.(value); } catch { /* state reporting never leaks upstream diagnostics */ } };
   const dial = o.socket ?? ((url, options) => new WebSocket(gateway(url), options));
   let closed = false, stopped = false, generation = 0, failures = 0, pending = 0;
   let socket: Socket | undefined, checkpoint: DiscordCheckpoint | undefined;
@@ -70,6 +72,7 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
   function reconnect(epoch: number, reset = false, terminal = false, minimum = 0) {
     if (!alive(epoch)) return;
     if (terminal) stopped = true;
+    state(terminal ? 'disconnected' : 'backoff');
     retire();
     const next = generation;
     const delay = Math.max(minimum, Math.min(60_000, 1000 * 2 ** Math.min(failures++,6)));
@@ -93,6 +96,7 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
   async function connect() {
     if (closed || stopped) return;
     const epoch = ++generation;
+    state('connecting');
     try {
       if (!o.beforeConnect()) throw Error();
       checkpoint = o.load();
@@ -186,7 +190,7 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
             if (!alive(epoch)) return;
             await o.commit(event,next,bytes);
             checkpoint = next;
-            if (alive(epoch)) { deadline(); failures = 0; }
+            if (alive(epoch)) { deadline(); failures = 0; if (event.type === 'READY' || event.type === 'RESUMED') state('connected'); }
           }).catch(() => reconnect(epoch)).finally(() => { pending--; }));
         } catch { reconnect(epoch); }
       });
@@ -198,7 +202,7 @@ export function discordGateway(o: DiscordGatewayOptions): { close(): Promise<voi
   let closing: Promise<void> | undefined;
   return {close() {
     if (closing) return closing;
-    closed = true; retire();
+    closed = true; retire(); state('disconnected');
     return closing = Promise.allSettled([...active]).then(() => {});
   }};
 }
