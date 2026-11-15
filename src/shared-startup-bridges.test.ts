@@ -44,6 +44,10 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
  const realFetch=globalThis.fetch,platform=vi.fn<typeof fetch>(async(input,init)=>{
   const url=new URL(input instanceof Request?input.url:String(input));
   if(url.hostname==='127.0.0.1')return realFetch(input,init);
+  if(url.origin==='https://files.slack.com'){
+   expect(url.pathname).toBe('/files-pri/TWORK-FGARDEN/garden');expect(new Headers(init?.headers).get('authorization')).toBe('Bearer '+botToken);
+   return new Response('FICTITIOUS_ATTACHMENT',{headers:{'content-type':'application/octet-stream'}});
+  }
   expect(url.origin).toBe('https://slack.com');expect(new Headers(init?.headers).get('authorization')).toBe('Bearer '+botToken);
   if(url.pathname==='/api/auth.test')return Response.json({ok:true,user_id:'UBOT',team_id:'TWORK',bot_id:'BBOT'});
   if(url.pathname==='/api/bots.info')return Response.json({ok:true,bot:{id:'BBOT',user_id:'UBOT',app_id:'AAPP',deleted:false}});
@@ -68,12 +72,13 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
  const config={action:'connection',id:'slack-example',platform:'slack',workspace:'TWORK',botUser:'UBOT',agent:'assistant',tokenSecret:'TOKEN',appSecret:'APP',enabled:true,only:[],ignore:[]};
  await command('bridges/command',config);await connected(1);expect(transport!.beforeConnect()).toBe(true);
  await transport!.secrets.withValue('APP',async value=>{expect(value).toBe('FICTITIOUS_APP_TOKEN');});
- const raw=Buffer.from(JSON.stringify({type:'events_api',envelope_id:'ack',payload:{type:'event_callback',event_id:'incoming',team_id:'TWORK',event:{type:'message',channel:'CROOM',user:'UUSER',text:'A fictitious garden question',ts:'1794765600.000001'}}}));
+ const raw=Buffer.from(JSON.stringify({type:'events_api',envelope_id:'ack',payload:{type:'event_callback',event_id:'incoming',team_id:'TWORK',event:{type:'message',channel:'CROOM',user:'UUSER',text:'A fictitious garden question',ts:'1794765600.000001',files:[{id:'FGARDEN',name:'garden',size:20,url_private:'https://files.slack.com/files-pri/TWORK-FGARDEN/garden'}]}}}));
  await transport!.receive({},raw);clock.advance(0);await daemon.idle();
  const incoming=db.select().from(s.bridgeIncoming).get()!;
  expect(incoming).toMatchObject({state:'delivered',member:program.signinMember,connection:'slack-example'});
  expect(db.select().from(s.inbox).all().filter(row=>row.source==='slack')).toHaveLength(1);
  expect(db.select().from(s.conversations).where(eq(s.conversations.id,incoming.conversation!)).get()).toMatchObject({agent:'assistant',venue:'slack'});
+ const attachment=db.select().from(s.bridgeFiles).get()!;expect(attachment).toMatchObject({connection:'slack-example',incoming:incoming.id,file:'FGARDEN',contents:Buffer.from('FICTITIOUS_ATTACHMENT')});
  daemon.sends.queue({id:'reply',incoming:incoming.id,text:'A fictitious garden reply'});daemon.changed();await daemon.idle();
  expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'reply')).get()).toMatchObject({state:'sent',postedId:'1794765600.000009'});
  const old=transport!;botToken='FICTITIOUS_REPLACEMENT_TOKEN';
@@ -102,6 +107,12 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
  expect(()=>daemon.sends.queue({id:'after-close',incoming:incoming.id,text:'Must not leave'})).toThrow('closed');
  expect(db.$client.open).toBe(true);expect(db.$client.prepare('select count(*) as n from bridge_connections').get()).toEqual({n:1});expect(settled).toBe(false);
  release();await stopping;expect(db.$client.open).toBe(false);expect(closed).toHaveBeenCalledTimes(5);
+ // Restart owns the persisted file deadline without simulating fourteen days
+ // of unrelated periodic work on the stopped app.
+ const expiry=new FakeClock(Date.parse(attachment.fetchedAt)+14*86400000-1);
+ const restarted=await startSharedHome({home,webRoot,clock:expiry,port:0,stdout:()=>{}});clean.push(()=>restarted.close());const fresh=restarted.services.comms!.db;
+ expect(fresh.select().from(s.bridgeFiles).get()?.contents).toEqual(Buffer.from('FICTITIOUS_ATTACHMENT'));
+ expiry.advance(1);expect(fresh.select().from(s.bridgeFiles).all()).toEqual([]);expect(fresh.select().from(s.bridgeIncoming).where(eq(s.bridgeIncoming.id,incoming.id)).get()).toBeDefined();
 });
 it('keeps explicit bridge ports and joins holder cleanup after the actual server has closed',async()=>{
  const {home,webRoot,clock}=files();await initializeSharedHome(home,clock);
@@ -124,24 +135,47 @@ it('keeps explicit bridge ports and joins holder cleanup after the actual server
  expect(db.$client.open).toBe(true);expect(settled).toBe(false);
  release();await stopping;expect(db.$client.open).toBe(false);
 });
-it('uses the native Discord gateway leaf with the owned holder and no custom adapter',async()=>{
- const {home,webRoot,clock}=files();let link='';
+it('delivers Discord through normal startup and records confirmed, uncertain and owner-reviewed replies',async()=>{
+ const {home,webRoot,clock}=files();let link='',loseReply=false,posts=0;
  const closed=vi.fn(async()=>{});wire.discord.mockImplementation(options=>{options.state?.('connected');return{close:closed};});
  const realFetch=globalThis.fetch;vi.stubGlobal('fetch',vi.fn<typeof fetch>(async(input,init)=>{
   const url=new URL(input instanceof Request?input.url:String(input));if(url.hostname==='127.0.0.1')return realFetch(input,init);
   expect(url.origin).toBe('https://discord.com');expect(new Headers(init?.headers).get('authorization')).toBe('Bot FICTITIOUS_DISCORD_TOKEN');
   if(url.pathname==='/api/v10/users/@me')return Response.json({id:'123456789012345678',bot:true});
   if(url.pathname==='/api/v10/guilds/223456789012345678')return Response.json({id:'223456789012345678',unavailable:false});
+  if(url.pathname==='/api/v10/channels/323456789012345678')return Response.json({id:'323456789012345678',guild_id:'223456789012345678',type:0,name:'garden'});
+  if(url.pathname==='/api/v10/channels/323456789012345678/messages'){
+   posts++;expect(init?.method).toBe('POST');expect(JSON.parse(String(init?.body))).toMatchObject({allowed_mentions:{parse:[],replied_user:false}});
+   if(loseReply)throw Error('Fictitious lost Discord receipt');return Response.json({id:'623456789012345678',channel_id:'323456789012345678'});
+  }
   throw Error('Unexpected platform endpoint');
  }));
  const app=await startSharedHome({home,webRoot,clock,port:0,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());
  expect(JSON.parse(readFileSync(join(home,'program.json'),'utf8')).adapters).toBeUndefined();
- const command=await commands(app,link),daemon=app.services.bridges.daemon!,owner=wire.owners[0];
+ const command=await commands(app,link),daemon=app.services.bridges.daemon!,owner=wire.owners[0],db=app.services.comms!.db,program=JSON.parse(readFileSync(join(home,'program.json'),'utf8'));
  await command('secrets/set',{id:randomUUID(),name:'TOKEN',value:'FICTITIOUS_DISCORD_TOKEN',mode:'add'});
+ await command('bridges/command',{action:'channel',platform:'discord',workspace:'223456789012345678',channel:'323456789012345678',answers:'assistant',botsMayTalk:false});
+ await command('bridges/command',{action:'person',platform:'discord',workspace:'223456789012345678',user:'423456789012345678',member:program.signinMember});
  await command('bridges/command',{action:'connection',id:'discord-example',platform:'discord',workspace:'223456789012345678',botUser:'123456789012345678',agent:'assistant',tokenSecret:'TOKEN',appSecret:null,enabled:true,only:[],ignore:[]});
  await daemon.idle();clock.advance(5000);await owner.source.generation();await daemon.idle();clock.advance(5000);
  await expect.poll(()=>wire.discord.mock.calls.length).toBe(1);await daemon.idle();
  const options=wire.discord.mock.calls[0][0];expect(options.bot).toBe('123456789012345678');expect(options.beforeConnect()).toBe(true);
  expect(app.services.comms!.db.select().from(s.bridgeConnections).get()?.state).toBe('connected');expect(wire.slack).not.toHaveBeenCalled();
- await app.close();expect(options.beforeConnect()).toBe(false);expect(closed).toHaveBeenCalledOnce();
+ const data={id:'523456789012345678',channel_id:'323456789012345678',guild_id:'223456789012345678',type:0,timestamp:new Date(clock.now()).toISOString(),content:'A fictitious Discord garden question',author:{id:'423456789012345678',bot:false},mentions:[],mention_roles:[]};
+ const raw=Buffer.from(JSON.stringify({op:0,t:'MESSAGE_CREATE',s:1,d:data})),checkpoint={session:'fictitious-session',seq:1,url:'wss://gateway.discord.gg'};
+ await options.commit({type:'MESSAGE_CREATE',seq:1,data},checkpoint,raw);clock.advance(0);await daemon.idle();
+ const incoming=db.select().from(s.bridgeIncoming).get()!;expect(incoming).toMatchObject({state:'delivered',member:program.signinMember,connection:'discord-example'});
+ expect(db.select().from(s.inbox).all().filter(row=>row.source==='discord')).toHaveLength(1);expect(db.select().from(s.conversations).where(eq(s.conversations.id,incoming.conversation!)).get()).toMatchObject({agent:'assistant',venue:'discord'});
+ await options.commit({type:'MESSAGE_CREATE',seq:1,data},checkpoint,raw);clock.advance(0);await daemon.idle();expect(db.select().from(s.bridgeIncoming).all()).toHaveLength(1);
+ daemon.sends.queue({id:'discord-confirmed',incoming:incoming.id,text:'A fictitious Discord reply'});daemon.changed();await daemon.idle();expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'discord-confirmed')).get()).toMatchObject({state:'sent',postedId:'623456789012345678'});
+ loseReply=true;daemon.sends.queue({id:'discord-uncertain',incoming:incoming.id,text:'A fictitious uncertain reply'});daemon.changed();await daemon.idle();expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'discord-uncertain')).get()?.state).toBe('uncertain');loseReply=false;
+ daemon.changed();await daemon.idle();expect(posts).toBe(2);
+ expect(options.beforeConnect()).toBe(false);await daemon.idle();clock.advance(5000);await owner.source.generation();await daemon.idle();clock.advance(5000);
+ await expect.poll(()=>wire.discord.mock.calls.length).toBe(2);await daemon.idle();const resumed=wire.discord.mock.calls[1][0];expect(resumed.beforeConnect()).toBe(true);
+ await command('bridges/command',{action:'review',id:'discord-uncertain',decision:'dismiss'});expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'discord-uncertain')).get()?.state).toBe('dismissed');
+ daemon.sends.queue({id:'discord-held',incoming:incoming.id,text:'A fictitious held reply',held:true});daemon.changed();await daemon.idle();expect(posts).toBe(2);
+ await command('bridges/command',{action:'review',id:'discord-held',decision:'release'});await daemon.idle();expect(db.select().from(s.bridgeSends).where(eq(s.bridgeSends.id,'discord-held')).get()?.state).toBe('sent');expect(posts).toBe(3);
+ expect(db.$client.serialize().includes(Buffer.from('FICTITIOUS_DISCORD_TOKEN'))).toBe(false);
+ await app.close();expect(resumed.beforeConnect()).toBe(false);expect(closed).toHaveBeenCalledTimes(2);
+ await expect(resumed.commit({type:'MESSAGE_CREATE',seq:1,data},checkpoint,raw)).rejects.toThrow();expect(posts).toBe(3);
 });
