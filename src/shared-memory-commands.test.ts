@@ -1,6 +1,7 @@
 /** Native command authority, source receipts and the actual shared HTTP/socket door. */
 import {afterEach,expect,it,vi} from 'vitest';
-import Database from 'better-sqlite3';
+import Database,{type Database as Connection} from 'better-sqlite3';
+import {createHash} from 'node:crypto';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
@@ -10,6 +11,16 @@ import {once} from 'node:events';
 import {WebSocket} from 'ws';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
+const owned=vi.hoisted(()=>({connections:[] as Connection[],failLoad:false}));
+vi.mock('better-sqlite3',async importOriginal=>{
+ const original=await importOriginal<{default:typeof Database}>();
+ return {default:new Proxy(original.default,{construct(target,args,newTarget){const db=Reflect.construct(target,args,newTarget) as Connection;owned.connections.push(db);return db;}})};
+});
+vi.mock('sqlite-vec',async importOriginal=>{
+ const original=await importOriginal<typeof import('sqlite-vec')>();
+ return {...original,load:(db:Connection)=>{if(owned.failLoad)throw Error('injected extension setup failure');return original.load(db);}};
+});
+const releases:Array<()=>void>=[];
 const embed=vi.hoisted(()=>({gate:undefined as undefined|(()=>Promise<void>),calls:0}));
 vi.mock('./backends/fastembed.js',()=>({FastEmbedProvider:class{
  readonly dimensions=4;
@@ -21,11 +32,11 @@ import {prepareSharedMemorySources} from './shared-memory.js';
 import {ProjectsStore} from './backends/projects.js';
 import * as s from './core/data/schema.js';
 const clean:Array<()=>void|Promise<void>>=[];
-afterEach(async()=>{embed.gate=undefined;for(const close of clean.splice(0).reverse())await close();vi.useRealTimers();vi.restoreAllMocks();});
+afterEach(async()=>{owned.failLoad=false;embed.gate=undefined;for(const release of releases.splice(0))release();for(const close of clean.splice(0).reverse())await close();vi.useRealTimers();vi.restoreAllMocks();});
 const words='alpha NATIVE_PRIVATE_MEMORY_WORDS',title='PRIVATE_MEMORY_TITLE';
 const input={category:'project',title,content:words,project:'pond'};
 async function fixture(){
- const home=mkdtempSync(join(tmpdir(),'native-memory-fiction-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));
+ const home=mkdtempSync(join(tmpdir(),'native-memory-fiction-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));clean.push(()=>{for(const db of owned.connections.splice(0))if(db.open)db.close();});
  const common=join(home,'commons'),directory=join(home,'agents/art'),other=join(home,'agents/mark');
  const memory={checkingAgent:'art',sources:{commons:{directory:common,knowledge:join(common,'knowledge.db'),people:join(common,'people.db')},agents:[{agent:'art',directory,memories:join(directory,'memories.db')},{agent:'mark',directory:other,memories:join(other,'memories.db')}]}};
  await prepareSharedMemorySources(memory);const project=new ProjectsStore({dbPath:memory.sources.agents[0].memories});project.write({slug:'pond',name:'Fictional pond'});project.close();
@@ -41,7 +52,7 @@ async function fixture(){
  return {...f,home,path,source,url,call,query,count,other:memory.sources.agents[1].memories};
 }
 async function next(ws:WebSocket,action:()=>unknown){const pending=once(ws,'message');await action();return JSON.parse(String((await pending)[0]));}
-function hold(){let entered!:()=>void,release!:()=>void;const began=new Promise<void>(resolve=>entered=resolve),blocked=new Promise<void>(resolve=>release=resolve);embed.gate=async()=>{entered();await blocked;};return {began,release};}
+function hold(){let entered!:()=>void,release!:()=>void;const began=new Promise<void>(resolve=>entered=resolve),blocked=new Promise<void>(resolve=>release=resolve);embed.gate=async()=>{entered();await blocked;};releases.push(release);return {began,release};}
 it('binds commands to the actual body, publishes committed content, and reads opaque results through current GraphQL authority',async()=>{
  const f=await fixture(),ws=new WebSocket(f.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw.body}});clean.push(()=>ws.terminate());await once(ws,'open');
  expect((await next(ws,()=>ws.send(JSON.stringify({type:'connection_init'})))).type).toBe('connection_ack');
@@ -50,9 +61,10 @@ it('binds commands to the actual body, publishes committed content, and reads op
 
  const initial=await next(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'memory',payload:{query:'subscription($query:String!){observe(query:$query){patches{path value removed}}}',variables:{query:'{memoryProject(id:"art:pond"){sections{key total items{title body}}}}'}}})));
  expect(initial.type).toBe('next');expect(JSON.stringify(initial)).toContain('memories');
- const publication=new Promise<any>(resolve=>{const message=(raw:import('ws').RawData)=>{ws.off('close',closed);resolve(JSON.parse(String(raw)));},closed=(code:number)=>{ws.off('message',message);resolve({closed:code});};ws.once('message',message);ws.once('close',closed);});
+ type Frame={id?:string;type:string;payload?:unknown};
+ const publication=new Promise<Frame|{closed:number}>(resolve=>{const message=(raw:import('ws').RawData)=>{ws.off('close',closed);resolve(JSON.parse(String(raw)) as Frame);},closed=(code:number)=>{ws.off('message',message);resolve({closed:code});};ws.once('message',message);ws.once('close',closed);});
  const remembered=await f.call('remember',input,'remember');expect(remembered.status).toBe(200);let changed=await publication;
- if(changed.closed!==undefined){
+ if('closed' in changed){
   // Guarded publication may request a fresh snapshot if a committed write
   // overtook frame serialization. The canonical client reconnects on1012.
   expect(changed.closed).toBe(1012);
@@ -66,6 +78,10 @@ it('binds commands to the actual body, publishes committed content, and reads op
  const before=embed.calls;expect(await f.call('recall',{query:'alpha',limit:1},'recall')).toEqual(recall);expect(embed.calls).toBe(before);
  for(const token of [raw.agent,raw.member,raw.runner])expect((await f.call('remember',input,'wrong-'+token[0],token)).status).toBe(403);
  expect((await f.call('remember',{...input,agent:'mark'},'choose-agent')).status).toBe(400);expect((await f.call('remember',{...input,path:f.other},'choose-path')).status).toBe(400);
+ const canonical=JSON.stringify({category:input.category,content:input.content,project:input.project,title:input.title}),fingerprint=f.key.hash(canonical);
+ expect(fingerprint).not.toBe(createHash('sha256').update(canonical).digest('hex'));
+ expect(f.db.select().from(s.operationResults).all().find(row=>row.id==='remember')?.inputHash).toBe(fingerprint);
+ expect(f.source.prepare('SELECT input_hash FROM memory_command_receipts WHERE id=?').get('remember')).toEqual({input_hash:fingerprint});
  expect(f.count()).toBe(1);expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(words))).toBe(false);expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(title))).toBe(false);
 });
 it('recovers the committed private result after shared receipt failure and reserves the id against unrelated writes',async()=>{
@@ -116,4 +132,22 @@ it('keeps the original retry deadline after recovery and leaves existing unprepa
  expect(f.source.prepare('SELECT expires FROM memory_command_receipts').get()).toEqual({expires:deadline});
  f.source.exec('DROP TABLE memory_command_schema');const before=f.source.serialize();
  expect((await f.call('remember',input,'unprepared')).status).toBe(503);expect(f.source.serialize()).toEqual(before);
+});
+
+it('closes an acquired native connection if extension setup fails and closes execution failures after rollback',async()=>{
+ const f=await fixture(),before=new Set(owned.connections);owned.failLoad=true;
+ expect((await f.call('remember',input,'constructor')).status).toBe(503);owned.failLoad=false;
+ const constructor=owned.connections.filter(db=>!before.has(db)&&db.name===f.path);expect(constructor.length).toBeGreaterThan(0);expect(constructor.every(db=>!db.open)).toBe(true);expect(f.count()).toBe(0);
+ const opened=new Set(owned.connections);embed.gate=async()=>{throw Error('injected asynchronous embedding failure');};
+ expect((await f.call('remember',input,'async-failure')).status).toBe(503);embed.gate=undefined;
+ const execution=owned.connections.filter(db=>!opened.has(db)&&db.name===f.path);expect(execution.length).toBeGreaterThan(0);expect(execution.every(db=>!db.open)).toBe(true);expect(f.count()).toBe(0);
+ expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name IN ('memories','vec_memories')").all()).toEqual([]);
+ expect((await f.call('remember',input,'async-failure')).status).toBe(200);
+});
+it('drains an active command on shutdown, rolls back its source and releases command and reader connections',async()=>{
+ const f=await fixture(),before=new Set(owned.connections),readers=owned.connections.filter(db=>db.name===f.path&&db.readonly&&db.open),gate=hold(),pending=f.call('remember',input,'shutdown');await gate.began;
+ const active=owned.connections.filter(db=>!before.has(db)&&db.name===f.path&&db.open);expect(active).toHaveLength(1);expect(readers.length).toBeGreaterThan(0);
+ const closing=f.root.close();gate.release();expect([401,403,503]).toContain((await pending).status);await closing;
+ expect(active.every(db=>!db.open)).toBe(true);expect(readers.every(db=>!db.open)).toBe(true);expect(f.count()).toBe(0);
+ expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name IN ('memories','vec_memories')").all()).toEqual([]);
 });
