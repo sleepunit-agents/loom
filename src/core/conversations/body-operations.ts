@@ -1,3 +1,4 @@
+import { registerConversationBodyOutput } from './body-output.js';
 import { ConversationMail } from './mail.js';
 import { sameMailScope } from './body-input.js';
 import { conversationBodyScope, type BodyProof } from './body-scope.js';
@@ -11,6 +12,7 @@ import { members } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
 export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean): void {
  if(operations.db!==service.db.$client)throw Error('Body reports need the shared connection');
+ registerConversationBodyOutput(operations,service,proof,privateAssignment);
  const conversationsService=service.threads.conversations,db=service.db;
  const current=conversationBodyScope(db,proof,privateAssignment);
  const requireCurrent=(viewer:Viewer)=>{const found=current(viewer);if(!found)throw new OperationError('denied','Current conversation body required');return found;};
