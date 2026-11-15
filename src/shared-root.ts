@@ -11,6 +11,7 @@ import { Operations, failure, type Change } from './core/operations/index.js';
 import { taskService } from './apps/tasks.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
+import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { nextData } from './next-data.js';
 
 class BodyTooLarge extends Error {}
@@ -37,6 +38,7 @@ export function sharedRoot(options: {
     approvals: approvalService(db, options.approvedOperations, now),
     conversations: new Conversations(db, now),
   };
+  registerSharedTaskCommands(operations, db, services.tasks);
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
