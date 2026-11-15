@@ -25,6 +25,7 @@ jobs:
           npx playwright-core install --with-deps chromium
       - name: Sign in and visit every launcher app
         run: |
+          set -euo pipefail
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           test -x "$LOOM_TEST_CHROME"
           export LOOM_TEST_SHOTS="$RUNNER_TEMP/rebuild-walkthrough"
@@ -33,6 +34,6 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: rebuild-walkthrough-${{ github.event.pull_request.head.sha || github.sha }}
+          name: rebuild-walkthrough-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/rebuild-walkthrough/
           if-no-files-found: error

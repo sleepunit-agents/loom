@@ -1,6 +1,6 @@
 import {expect,it} from 'vitest';
 import {readFileSync} from 'node:fs';
-import {ciPassed,type CiResults} from './check-ci-results.js';
+import {ciPassed,type CiResults} from './ci-results.js';
 const passing:CiResults={test:'success',package:'success',walkthrough:'success',required:true};
 const ci=readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url),'utf8'),browser=readFileSync(new URL('../.github/workflows/rebuild-walkthrough.yml',import.meta.url),'utf8');
 it.each(['failure','cancelled','skipped',undefined])('a %s built walkthrough cannot pass next CI results',walkthrough=>{
@@ -13,14 +13,24 @@ it('requires tests and packaging, refuses missing scope/results, and preserves i
  expect(ciPassed({...passing,required:false,walkthrough:'skipped'})).toBe(true);
  expect(ciPassed({...passing,required:false,walkthrough:'failure'})).toBe(false);
 });
+function block(text:string,header:string):string{
+ const lines=text.split('\n'),start=lines.indexOf(header);if(start<0)throw Error('Workflow block missing: '+header);
+ const depth=header.length-header.trimStart().length;let end=start+1;
+ for(;end<lines.length;end++){if(!lines[end].trim()||lines[end].trimStart().startsWith('#'))continue;if(lines[end].length-lines[end].trimStart().length<=depth)break;}
+ return lines.slice(start,end).join('\n');
+}
 it('wires the hosted browser into the required result with the exact next scope and no path filters',()=>{
- const scope="github.base_ref == 'next' || github.ref == 'refs/heads/next'";
- expect(ci).toContain('needs: [test, package, walkthrough]');expect(ci).toContain('uses: ./.github/workflows/rebuild-walkthrough.yml');
- expect(ci).toContain('WALKTHROUGH_RESULT: ${{ needs.walkthrough.result }}');expect(ci).toContain('if: '+scope);expect(ci).toContain('REBUILD_REQUIRED: ${{ '+scope+' }}');
- expect(ci).toContain('run: node scripts/check-ci-results.ts');
+ const scope="github.base_ref == 'next' || github.ref == 'refs/heads/next'",call=block(ci,'  walkthrough:'),results=block(ci,'  results:'),gate=block(ci,'      - name: Require every shard, deploy build and next walkthrough to pass');
+ expect(results).toContain('needs: [test, package, walkthrough]');expect(call).toContain('uses: ./.github/workflows/rebuild-walkthrough.yml');expect(call).toContain('if: '+scope);
+ expect(gate).toContain('WALKTHROUGH_RESULT: ${{ needs.walkthrough.result }}');expect(gate).toContain('REBUILD_REQUIRED: ${{ '+scope+' }}');expect(gate).toMatch(/^        run: node scripts\/ci-results.ts$/m);
  expect(browser).toContain('workflow_call:');expect(browser).toContain('runs-on: ubuntu-latest');
  for(const workflow of [ci,browser])expect(workflow).not.toMatch(/^\s+paths(?:-ignore)?:/m);
- expect(browser).toContain('test -x "$LOOM_TEST_CHROME"');expect(browser).toContain('test -s "$LOOM_TEST_SHOTS/report.json"');
+});
+it('fails an empty or failed browser suite in the actual proof step, and names rerun artifacts separately',()=>{
+ const proof=block(browser,'      - name: Sign in and visit every launcher app'),lines=proof.split('\n').map(line=>line.trim());
+ const executable=lines.indexOf('test -x "$LOOM_TEST_CHROME"'),run=lines.indexOf('nice -n 19 npx vitest run src/ui/rebuild-walkthrough.integration.test.ts --maxWorkers=1'),report=lines.indexOf('test -s "$LOOM_TEST_SHOTS/report.json"');
+ expect(executable).toBeGreaterThan(0);expect(run).toBeGreaterThan(executable);expect(report).toBeGreaterThan(run);expect(lines).toContain('set -euo pipefail');expect(proof).not.toMatch(/continue-on-error|^\s+if:/m);expect(browser).not.toMatch(/^\s*continue-on-error:/m);expect(block(ci,'  walkthrough:')).not.toMatch(/^\s*continue-on-error:/m);
+ const upload=block(browser,'      - uses: actions/upload-artifact@v7');expect(upload).toContain('name: rebuild-walkthrough-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}');
 });
 function group(text:string,workflow:string,event:string,pull:number|undefined,ref:string):string{
  const template=/^concurrency:\n  group: (.*)$/m.exec(text)?.[1];if(!template)throw Error('No concurrency group');

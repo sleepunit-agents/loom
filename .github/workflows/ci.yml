@@ -279,4 +279,4 @@ jobs:
           PACKAGE_RESULT: ${{ needs.package.result }}
           WALKTHROUGH_RESULT: ${{ needs.walkthrough.result }}
           REBUILD_REQUIRED: ${{ github.base_ref == 'next' || github.ref == 'refs/heads/next' }}
-        run: node scripts/check-ci-results.ts
+        run: node scripts/ci-results.ts

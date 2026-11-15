@@ -13,3 +13,9 @@ it.each([[0,false],[1,true],[2,false]] as const)('counts every delivery row, not
 it('refuses a receipt for another thread even when that receipt has its own stored delivery',()=>{
  const db=fixture(1,'th:other');try{expect(commsDeliveryEvidence(db,expected,{...receipt,thread:'th:other'}).ok).toBe(false);}finally{db.close();}
 });
+it('binds the receipt item instead of accepting a different stored item at the same message',()=>{
+ const db=fixture(1);try{expect(commsDeliveryEvidence(db,expected,{...receipt,item:'not-the-stored-item'}).ok).toBe(false);}finally{db.close();}
+});
+it.each([['conversation','other-conversation'],['to_kind','person'],['to','moss'],['source','notice']] as const)('refuses a delivery with the wrong %s', (column,value)=>{
+ const db=fixture(1);try{db.prepare('UPDATE inbox SET "'+column+'"=?').run(value);expect(commsDeliveryEvidence(db,expected,receipt).ok).toBe(false);}finally{db.close();}
+});
