@@ -56,6 +56,7 @@ export class TriggerEngine {
     this.open();
     const v = triggerInput.parse(value);
     if ((v.ownerKind === 'household') !== !v.owner) throw new Error('Trigger needs its owner');
+    if (!!v.toKind !== !!v.to) throw new Error('A recipient needs both kind and id');
     if (v.targetKind === 'inbox' && (!v.toKind || !v.to)) throw new Error('Inbox target needs a recipient');
     if (v.targetKind === 'operation' && !v.target) throw new Error('Operation target needs a name');
     if (v.sourceKind !== 'time' && !v.watches) throw new Error('Event trigger needs what it watches');

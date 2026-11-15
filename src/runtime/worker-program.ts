@@ -4,10 +4,15 @@ import { signInAccount } from './account-signin.js';
 import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js';
 import { httpWorkerControl } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
+import { containerWorkerExecutor } from './worker-container.js';
 const command = z.object({ command: z.string().min(1), args: z.array(z.string()), cwd: z.string().min(1), env: z.record(z.string(), z.string()) }).strict();
+const containerDeadline = z.number().int().min(1).max(300_000);
 const configSchema = z.object({
   url: z.string(), box: z.string().min(1), tokenFile: z.string().min(1),
   build: command, buildTimeoutMs: z.number().int().min(1).max(3_600_000).optional(), runners: z.record(z.string(), command),
+  container: z.object({ socket: z.string().startsWith('/'), nestedSocket: z.string().startsWith('/').optional(),
+    setupTimeoutMs: containerDeadline.optional(),
+    cleanupTimeoutMs: containerDeadline.optional() }).strict().optional(),
 }).strict();
 const accountCommand = z.object({
   command,
@@ -26,6 +31,7 @@ export async function workerProgram(input: {
   signIn?: typeof signInAccount;
   usage?: typeof commandUsageProvider;
   run?: typeof runWorker; control?: typeof httpWorkerControl; executor?: typeof commandWorkerExecutor;
+  containerExecutor?: typeof containerWorkerExecutor;
 }): Promise<number> {
   const abort = new AbortController();
   const stop = () => abort.abort();
@@ -58,7 +64,9 @@ export async function workerProgram(input: {
     const token = (await input.read(config.tokenFile)).trim();
     await (input.run ?? runWorker)({ box: config.box, signal: abort.signal,
       control: (input.control ?? httpWorkerControl)({ url: config.url, token, signal: abort.signal }),
-      executor: (input.executor ?? commandWorkerExecutor)(config),
+      executor: config.container
+        ? (input.containerExecutor ?? containerWorkerExecutor)({ ...config, container: config.container })
+        : (input.executor ?? commandWorkerExecutor)(config),
     });
     return 0;
   } catch {
