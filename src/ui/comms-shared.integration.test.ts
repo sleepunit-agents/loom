@@ -52,6 +52,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, s
     const context = await browser.newContext({serviceWorkers:'block'}); context.setDefaultTimeout(10_000);
     await context.addCookies([{name:'loom_ui',value:cookie,url}]);
     const a = await context.newPage(), b = await context.newPage();
+    for(const page of [a,b]) { page.on('pageerror',error=>console.info('Fixture page error:',error.message)); page.on('console',msg=>{if(msg.type()==='error')console.info('Fixture console:',msg.text());}); }
     await a.goto(`${url}/p/comms-preview`); console.info('Comms: loaded registered screen');
     await a.getByText('New conversation',{exact:true}).click();
     await a.getByRole('button',{name:'Chat with art',exact:true}).click();
@@ -87,6 +88,6 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('shipped Comms opens, s
     composition.writes.run(() => client.prepare('UPDATE tokens SET revoked_at=? WHERE fingerprint=?').run(now(),hash(token)));
     for (const page of [a,b]) for (const words of ['PRIVATE PUMP QUESTION','PRIVATE PERSON MESSAGE','PRIVATE AGENT REPLY']) await expect.poll(() => page.getByText(words,{exact:true}).count()).toBe(0);
   } finally {
-    console.info('Proof: closing browser'); await browser?.close(); console.info('Proof: closing root'); detach(); await composition.close(); console.info('Proof: closing listener'); await new Promise<void>(ok => server.close(() => ok())); client.close();
+    if(browser) for(const context of browser.contexts()) for(const page of context.pages()) console.info('Fixture visible text:',await page.locator('body').innerText().catch(()=>'')); console.info('Proof: closing browser'); await browser?.close(); console.info('Proof: closing root'); detach(); await composition.close(); console.info('Proof: closing listener'); await new Promise<void>(ok => server.close(() => ok())); client.close();
   }
 }, 60_000);
