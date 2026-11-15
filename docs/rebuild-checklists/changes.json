@@ -7,7 +7,11 @@
     {
       "id": "changes-001",
       "promise": "Pull requests the household cares about. A change is one pull request, read from GitHub and kept as a copy.",
-      "source": "docs/how-it-works/site/changes.html"
+      "source": "docs/how-it-works/site/changes.html",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-002",
@@ -17,32 +21,56 @@
     {
       "id": "changes-003",
       "promise": "Says who each one is waiting on.",
-      "source": "docs/how-it-works/site/changes.html"
+      "source": "docs/how-it-works/site/changes.html",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-004",
       "promise": "Shows its checks, its review and the tasks it mentions.",
-      "source": "docs/how-it-works/site/changes.html"
+      "source": "docs/how-it-works/site/changes.html",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-005",
       "promise": "Takes your answer on a merge. The agent does the merging.",
-      "source": "docs/how-it-works/site/changes.html"
+      "source": "docs/how-it-works/site/changes.html",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-006",
       "promise": "Its repository files it under a project. An agent's GitHub login says which agent opened it.",
-      "source": "docs/how-it-works/site/changes.html#con-h"
+      "source": "docs/how-it-works/site/changes.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-007",
       "promise": "Linked to the tasks its title, branch or description mention.",
-      "source": "docs/how-it-works/site/changes.html#con-h"
+      "source": "docs/how-it-works/site/changes.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-008",
       "promise": "Merging needs an approval, or a merge rule that already answers it.",
-      "source": "docs/how-it-works/site/changes.html#con-h"
+      "source": "docs/how-it-works/site/changes.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-009",
@@ -52,27 +80,47 @@
     {
       "id": "changes-010",
       "promise": "For each change loom works out who it is waiting on: you, an agent, the checks, a reviewer or its author. The list is ordered that way, with finished ones last.",
-      "source": "docs/how-it-works/site/changes.html#how-h"
+      "source": "docs/how-it-works/site/changes.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-011",
       "promise": "Loom reads the pull requests in each project's repositories and keeps a copy, so the desk shows what is waiting without asking GitHub each time.",
-      "source": "docs/how-it-works/site/changes.html#how-h"
+      "source": "docs/how-it-works/site/changes.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-012",
       "promise": "Loom keeps the state of a change's checks and review, plus the names of the checks that are failing or still running.",
-      "source": "docs/how-it-works/site/changes.html#how-h"
+      "source": "docs/how-it-works/site/changes.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-013",
       "promise": "A change lists the GitHub logins on it and the part each plays.",
-      "source": "docs/how-it-works/site/changes.html#how-h"
+      "source": "docs/how-it-works/site/changes.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-014",
       "promise": "a Two labels. A change gets its project from its repository, and its agent when an agent opened it.",
-      "source": "docs/how-it-works/site/changes.html#see-h"
+      "source": "docs/how-it-works/site/changes.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "changes-015",
