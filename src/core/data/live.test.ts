@@ -88,15 +88,15 @@ it('ends a waiting selection when the data source closes', async () => {
 });
 
 function heldSelection(update = false) {
-  let release!: (value: string) => void;
-  const result = new Promise<string>(resolve => { release = resolve; });
+  let release!: (value: string) => void, reject!: (error: Error) => void;
+  const result = new Promise<string>((resolve, fail) => { release = resolve; reject = fail; });
   let first = true;
   const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
     title: { type: GraphQLString, resolve: () => { if (update && first) { first = false; return 'Initial'; } return result; } },
   } }) });
   const live = new DataLive(); clean.push(() => { release('Late result'); live.close(); });
   const stream = live.watch({ schema, query: '{ title }', valid: () => true });
-  return { live, stream, release };
+  return { live, stream, release, reject };
 }
 
 it.each([false, true])('releases an executing selection on return before its resolver completes (update=%s)', async update => {
@@ -124,4 +124,18 @@ it.each([false, true])('ends an executing selection on close before its resolver
 it('refuses a new selection after shutdown', () => {
   const { live, watch } = setup(); live.close();
   expect(() => watch()).toThrow('access ended');
+});
+
+it.each(['resolve', 'reject'])('drains an underlying %s execution after its consumer cancels', async outcome => {
+  const { live, stream, release, reject } = heldSelection();
+  const pending = stream.next();
+  await stream.return?.();
+  expect(await pending).toEqual({ done: true, value: undefined });
+  let drained = false;
+  const closing = live.drain().then(() => { drained = true; });
+  await Promise.resolve();
+  expect(drained).toBe(false);
+  if (outcome === 'resolve') release('Late result'); else reject(new Error('Late failure'));
+  await closing;
+  expect(drained).toBe(true);
 });

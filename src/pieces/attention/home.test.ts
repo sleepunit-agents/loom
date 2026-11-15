@@ -40,7 +40,7 @@ it('refreshes an already subscribed roster on ownership changes, deleting remove
   expect(JSON.stringify(messages)).not.toContain('pond-bot');
 });
 
-it('installs only records in next mode: no scheduled Attention work, retention or outside effects',async()=>{
+it('folds old metadata in next mode without network work or outside effects',async()=>{
   const home=mkdtempSync(join(tmpdir(),'attention-home-startup-'));homes.push(home);fixture(home);
   const clock=new FakeClock(Date.parse('2026-11-13T08:00:00Z'));
   const network=vi.spyOn(globalThis,'fetch');
@@ -50,8 +50,8 @@ it('installs only records in next mode: no scheduled Attention work, retention o
     expect(old.ok).toBe(true);
     clock.advance(2*86_400_000);
     expect(network).not.toHaveBeenCalled();
-    expect(app.db.prepare('SELECT * FROM attention_turns').all()).toHaveLength(1);
-    expect(app.db.prepare('SELECT * FROM attention_days').all()).toEqual([]);
+    expect(app.db.prepare('SELECT * FROM attention_turns').all()).toEqual([]);
+    expect(app.db.prepare('SELECT * FROM attention_days').all()).toHaveLength(1);
     expect(app.db.prepare('SELECT * FROM core_effects').all()).toEqual([]);
   }finally{network.mockRestore();}
 });
