@@ -117,3 +117,16 @@ it('marks an unread item only when its mounted tile becomes visible', async () =
 it('keeps another recipient’s visible item readable without offering an answer',async()=>{
  setup(row({canAnswer:false}));await act(async()=>{tree=create(h(InboxApp,{path:'/p/inbox-preview/ask/in-1',go:vi.fn()}));});expect(JSON.stringify(tree.toJSON())).toContain('Buy the pump?');expect(button('Yes')).toBeUndefined();expect(button('Record answer')).toBeUndefined();expect(f.call).toHaveBeenCalledWith('inbox.read',{item:'in-1'});
 });
+
+it('offers recipient volume independently of managed answers through the current cookie door',async()=>{
+ setup(row({source:'approval',canAnswer:false,canSetVolume:true,read:true}));
+ const props={path:'/p/inbox-preview/ask/in-1',go:vi.fn()};
+ await act(async()=>{tree=create(h(InboxApp,props));});
+ expect(button('Yes')).toBeUndefined();
+ await act(async()=>{button('Mute').props.onClick();});
+ expect(fetch).toHaveBeenCalledWith('/api/inbox/volume',expect.objectContaining({method:'POST',credentials:'same-origin'}));
+ expect(f.call).toHaveBeenCalledWith('inbox.volume',{item:'in-1',volume:'mute'});
+ f.data.inboxItem=row({canAnswer:false,canSetVolume:false,read:true});
+ await act(async()=>{tree.update(h(InboxApp,props));});
+ expect(button('Mute')).toBeUndefined();
+});

@@ -1,7 +1,7 @@
 import { InboxActionNotices, type InboxResultsSnapshot } from './outcomes';
 export { InboxActionNotices } from './outcomes';
 export type { InboxActionResult, InboxResultsSnapshot } from './outcomes';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Split, Row, Empty, Error, Loading, Button, Input, Textarea, type SplitFolder } from '../../kit';
 import { managed, rows, type InboxActions, type InboxAnswer, type InboxItem, type InboxSnapshot } from './model';
 export type { InboxActions, InboxItem, InboxSnapshot } from './model';
@@ -10,7 +10,7 @@ const time = (at: string) => `${new Date(at).toLocaleString('en-US', { timeZone:
 
 /** The same reader can appear inline or in the Inbox tile. Mutations belong to
  * the authenticated operation client supplied by composition. */
-function QuestionReader({ item, actions, inline }: { item: InboxItem; actions?: InboxActions; inline?: boolean }) {
+function QuestionReader({ item, actions, inline, sourceCard }: { item: InboxItem; actions?: InboxActions; inline?: boolean; sourceCard?: ReactNode }) {
   const [draft, setDraft] = useState(''), [busy, setBusy] = useState(false), [error, setError] = useState(false);
   const lock = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -27,6 +27,13 @@ function QuestionReader({ item, actions, inline }: { item: InboxItem; actions?: 
     catch { if (mounted.current) setError(true); }
     finally { lock.current = false; if (mounted.current) setBusy(false); }
   };
+  const volume = async (value: InboxItem['volume']) => {
+    if (lock.current || !item.canSetVolume || !actions?.volume) return;
+    lock.current = true; setBusy(true); setError(false);
+    try { await actions.volume(item.id, value); }
+    catch { if (mounted.current) setError(true); }
+    finally { lock.current = false; if (mounted.current) setBusy(false); }
+  };
   const waiting = item.state === 'waiting';
   return <article aria-label="Inbox item" className="grid gap-4 p-4">
     <p>{item.agent ?? item.fromId ?? 'Loom'} · {item.state} · <time dateTime={item.at}>{time(item.at)}</time>{item.project && ` · ${item.project}`}</p>
@@ -34,23 +41,28 @@ function QuestionReader({ item, actions, inline }: { item: InboxItem; actions?: 
     {item.body?.why && <p>{item.body.why}</p>}
     {(item.body?.ifYes || item.body?.ifNo) && <dl>{item.body.ifYes && <><dt>If yes</dt><dd>{item.body.ifYes}</dd></>}{item.body.ifNo && <><dt>If no</dt><dd>{item.body.ifNo}</dd></>}</dl>}
     {safeLink(item.body?.link) && <a href={safeLink(item.body?.link)} target="_blank" rel="noreferrer">Open linked page</a>}
+    {item.canSetVolume && actions?.volume && <section aria-label="Item volume" className="grid gap-2">
+      <p>Volume: {item.volume}{item.volume !== 'full' && item.quietUntil && <> · returns to full <time dateTime={item.quietUntil}>{time(item.quietUntil)}</time></>}</p>
+      <div>{(['full', 'dim', 'mute'] as const).map(value => <Button key={value} disabled={busy || value === item.volume} onClick={() => void volume(value)}>{value === 'full' ? 'Full' : value === 'dim' ? 'Dim' : 'Mute'}</Button>)}</div>
+    </section>}
     {item.refs.length > 0 && <p>About: {item.refs.join(' · ')}</p>}
-    {waiting && managed(item) && <p>Answer this at its source.</p>}
-    {waiting && managed(item) && actions?.openSource && <Button onClick={() => actions.openSource!(item)}>Open {item.waitsOnKind ?? (item.source === 'approval' ? 'Approvals' : item.source === 'task' ? 'task' : 'Secrets')}</Button>}
+    {waiting && managed(item) && !sourceCard && <p>Answer this at its source.</p>}
+    {waiting && managed(item) && !sourceCard && actions?.openSource && <Button onClick={() => actions.openSource!(item)}>Open {item.waitsOnKind ?? (item.source === 'approval' ? 'Approvals' : item.source === 'task' ? 'task' : 'Secrets')}</Button>}
     {waiting && item.answers && item.body && !managed(item) && actions?.answer && <section aria-label="Record your answer" className="grid gap-2">
       {item.answers === 'yes-no' && <div><Button disabled={busy} onClick={() => void answer('yes')}>{inline ? 'Allow' : 'Yes'}</Button><Button disabled={busy} onClick={() => void answer('no')}>{inline ? 'Deny' : 'No'}</Button></div>}
       <Textarea aria-label="Answer in your own words" value={draft} onChange={event => setDraft(event.target.value)} disabled={busy} />
       <div><Button disabled={busy || !draft.trim()} onClick={() => void answer('words', draft)}>Record answer</Button><Button disabled={busy} onClick={() => void answer('done')}>Mark done</Button><Button disabled={busy} onClick={() => void answer('dismiss')}>Dismiss</Button></div>
     </section>}
+    {sourceCard}
     {item.answer && <section><h3>Answer</h3><p>{item.answer} · {item.answeredBy}{item.answeredAt && ` · ${time(item.answeredAt)}`}</p>{item.answerText && <p className="whitespace-pre-wrap">{item.answerText}</p>}</section>}
     {item.resolution && <p>{item.resolution}</p>}
     {error && <Error text="Could not save. Try again." />}
   </article>;
 }
 
-export function InboxQuestionCard({ id, snapshot, actions, inline }: { id: string; snapshot: InboxSnapshot; actions?: InboxActions; inline?: boolean }) {
+export function InboxQuestionCard({ id, snapshot, actions, inline, sourceCard }: { id: string; snapshot: InboxSnapshot; actions?: InboxActions; inline?: boolean; sourceCard?: ReactNode }) {
   const item = snapshot.status === 'live' ? snapshot.items.find(row => row.id === id) : undefined;
-  return item ? <QuestionReader key={item.id} item={item} actions={actions} inline={inline} /> : <Empty title="Item is unavailable" />;
+  return item ? <QuestionReader key={item.id} item={item} actions={actions} inline={inline} sourceCard={sourceCard} /> : <Empty title="Item is unavailable" />;
 }
 
 export function InboxView({ snapshot, selected, select, detail, actions, results, dismissResult, navigation }: {

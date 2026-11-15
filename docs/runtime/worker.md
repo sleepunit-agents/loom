@@ -208,3 +208,30 @@ most 128 distinct trimmed nonempty single-line labels, each up to 256 characters
 Invalid configuration is refused before token reads or execution. Poll replay is
 still refused, so an old receipt cannot overwrite newer facts; receipt failure
 rolls back facts and health along with any job claim.
+
+## Private body bootstrap
+
+A runner command may set `"bodyBootstrap":true` when its fixed child implements
+the private bootstrap envelope. Ordinary envelope commands receive no body token.
+The parent completes the build and observes child spawn, then generates a
+`body_` token locally and calls the canonical `runtime.enrollBody` metadata door
+with only `{job,fingerprint}`. This requires the coordinator's enrollment door;
+it does not create another issuer in the worker or return raw bytes from Loom.
+The metadata acknowledgement must be `{registered:true}`.
+
+After the ordinary running acknowledgement, stdin contains
+`{job,build,bootstrap:{origin,job,token}}`. The child must keep bootstrap out of its
+model prompt, argv, environment, stored configuration and diagnostics. The raw
+token belongs only to that current job. The parent erases its byte buffer after
+stdin acceptance and on cancellation/failure. A late enrollment or running
+acknowledgement never releases private input after cancellation. Uncertain
+enrollment is not retried.
+
+Credential-bearing body output is drained without keeping a job log tail in
+both process and container adapters. The outer worker also sends an empty tail,
+including for an injected adapter. Body replies and tool cards use their private
+current-body producers instead. This parent transport does not implement a native
+child consumer: the configured command must implement the envelope and use the
+canonical body/Secrets clients. The full enrollment-to-child integration remains
+part of the machines/models task until the canonical server and consumer are
+connected and tested together.
