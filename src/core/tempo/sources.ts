@@ -105,7 +105,10 @@ export class TempoSources {
     if (this.closed) return;
     const row = this.db.select().from(inbox).where(eq(inbox.id, id)).get();
     if (!row?.answeredAt || row.state !== 'answered') return;
-    this.engine.event('answer', tempoWatch.question(id), JSON.stringify(['question', id, row.answeredAt, row.answer, row.answerText]));
+    // A question has one durable answer. Its occurrence is metadata, never
+    // answer words: this id is copied into logs and delivered source ids.
+    const event = createHash('sha256').update(JSON.stringify(['question', id, row.answeredAt, row.answeredBy])).digest('hex');
+    this.engine.event('answer', tempoWatch.question(id), `question:${event}`);
   }
 
   secret(id: string): void {
