@@ -60,7 +60,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='conversations':
   add('Sending in Comms persists the message after reload and creates one Inbox delivery item.','',{'kind':'action','action':'commsSend'})
   add('A question answered in Inbox becomes answered inline in Comms.','',{'kind':'action','action':'commsAnswer'})
+ if f.stem=='bridges':add('The owner can save a Discord channel rule and a Slack person link in Bridges and inspect both after reload.','',{'kind':'action','action':'bridgeSettings'})
  if f.stem=='inbox':add('Answering Yes records who answered and adds exactly one item for the agent.','',{'kind':'action','action':'inboxAnswer'})
+ if f.stem=='memory':add('Create a provisional Knowledge fact, manually mark it due, verify it with Still true, then retain its words and Fresh state after reload.','',{'kind':'action','app':'Knowledge'})
  if f.stem=='signing-in':add('A first-run one-time link signs the browser in.','',{'kind':'signin'})
  if f.stem=='data':add('The real GraphQL websocket carries data after sign-in without protocol errors.','',{'kind':'live'})
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})

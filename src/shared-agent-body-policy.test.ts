@@ -100,9 +100,9 @@ it('accepts128 and rejects129 entries, allows the same denial for guests and eve
 
 it('preserves household authorization records and canonical decisions after configuring outside tier3',async()=>{
  const f=fixture();f.db.insert(members).values({id:'bob',role:'member',joinedAt:f.now()}).run();
- const state=()=>({members:f.db.select().from(members).all(),owners:f.db.select().from(memberAgents).all(),tokens:f.db.select().from(tokens).all()}),decisions=()=>['owner','bob'].flatMap(id=>(['agent-setup','household']as const).map(action=>mayAct({kind:'member',id},{type:'runtime.agent-body-policy',agent:'art'},sharedSharing(f.db),action)));
+ const state=()=>({members:f.db.select().from(members).all(),owners:f.db.select().from(memberAgents).all(),tokens:f.db.select().from(tokens).all().map(({lastUsedAt: _usage,...authority})=>authority)}),decisions=()=>['owner','bob'].flatMap(id=>(['agent-setup','household']as const).map(action=>mayAct({kind:'member',id},{type:'runtime.agent-body-policy',agent:'art'},sharedSharing(f.db),action)));
  const before=state(),allowed=decisions();expect(allowed).toEqual([true,true,false,false]);
- expect((await f.settings({people:[{platform:'discord',workspace:'w',user:'bob',tier:3}]})).status).toBe(200);expect(state()).toEqual(before);expect(decisions()).toEqual(allowed);
+ expect((await f.settings({people:[{platform:'discord',workspace:'w',user:'bob',tier:3}]})).status).toBe(200);expect(state()).toEqual(before);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(ownerCredential))).get()?.lastUsedAt).toBe(f.now());expect(decisions()).toEqual(allowed);
  const rows=f.db.select().from(agentPeople).all();expect(rows).toEqual([{agent:'art',person:'["discord","w","bob"]',tier:3}]);
 });
 

@@ -151,7 +151,7 @@ jobs:
             # 2026-11-14 seven unwired web modules merged past src/ui/web-reach.test.ts within the hour.
             # They are few and quick, so one shard always runs them.
             if [ "${{ matrix.shard }}" = 1 ]; then
-              mapfile -t guards < <(git ls-files 'src/**/*.test.ts' 'scripts/*.test.ts' 'web/src/**/*.test.ts' 'web/src/**/*.test.tsx' | grep -i -E 'reach|seam|architect|purity|no-side-effects|boundar|scripts/ci-')
+              mapfile -t guards < <(git ls-files 'src/**/*.test.ts' 'scripts/*.test.ts' 'scripts/*.test.mjs' 'web/src/**/*.test.ts' 'web/src/**/*.test.tsx' | grep -i -E 'reach|seam|architect|purity|no-side-effects|boundar|scripts/ci-')
               echo "Tree guards: ${guards[*]}"
               [ "${#guards[@]}" = 0 ] || npx vitest run "${guards[@]}" --passWithNoTests
             fi
@@ -216,10 +216,16 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  # Same required result as the shards: a separate failing workflow cannot be ignored.
+  walkthrough:
+    name: built program walkthrough
+    if: github.base_ref == 'next' || github.ref == 'refs/heads/next'
+    uses: ./.github/workflows/rebuild-walkthrough.yml
+
   results:
     name: CI results
     if: always()
-    needs: [test, package]
+    needs: [test, package, walkthrough]
     # Fork safety (the one runs-on that may name self-hosted; scripts/ci-runners.test.ts holds it to
     # exactly this). Our own runners take only trusted runs: a push or a merge-queue group, which only
     # people with write access can start, or a pull request from a branch in this repository that a person
@@ -265,9 +271,11 @@ jobs:
           name: ci-merged-${{ github.run_attempt }}
           path: merged/
           retention-days: 14
-      - name: Require every shard and the deploy build to pass
+      - name: Require every shard, deploy build and next walkthrough to pass
         if: always()
         env:
           RESULT: ${{ needs.test.result }}
           PACKAGE: ${{ needs.package.result }}
-        run: test "$RESULT" = success && test "$PACKAGE" = success
+          WALKTHROUGH: ${{ needs.walkthrough.result }}
+          REBUILD_REQUIRED: ${{ github.base_ref == 'next' || github.ref == 'refs/heads/next' }}
+        run: node scripts/check-ci-results.mjs
