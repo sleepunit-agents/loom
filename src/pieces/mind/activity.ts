@@ -11,6 +11,7 @@ const conversationSchema=z.object({id:z.string(),agent:z.string(),venue:z.string
 const runSchema=z.object({kind:z.enum(['digest','conversation']),key:z.string().min(1).max(300),at:z.string().datetime({offset:true}),conversation:conversationSchema,summary:z.string().optional(),turns:z.number().int().nonnegative().optional(),replies:z.number().int().nonnegative().optional(),asked:z.array(z.string()),decided:z.array(z.string()),tasks:z.array(z.string()),references:z.array(z.string()).optional(),links:z.array(link),steps:z.array(z.object({label:z.string(),state:z.string(),tool:z.string()}).strict()).optional(),needs:z.string().optional(),needsHref:z.string().optional(),needsForMember:z.string().optional(),expires:z.number().finite().optional(),more:z.array(z.object({id:z.string(),at:z.string(),title:z.string()}).strict())}).strict();
 interface ActivityFailure {[key:string]:unknown;id:string;state:'error'|'unavailable';message:string}
 interface ActivityReader {
+ nextDeadline():number|undefined;
  window(scope:string,viewer:Viewer):ActivityWindow|undefined;
  read(id:string,viewer:Viewer):ActivityOpen|ActivityFailure|undefined;
 }
@@ -127,7 +128,28 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
  live.register({name:'activity.window',ids:s=>s?[s]:[],read:window,inScope:(r,s)=>r.id===s,refreshOn:changed,expires:r=>(r as ActivityWindow).expires});
  live.register({name:'activity.entry',ids:s=>s?[s]:[],read,inScope:(r,s)=>r.id===s,refreshOn:changed,expires:r=>Math.min((r as ActivityOpen).expires??Infinity,startOf(dayBefore(isoDay(operations.clock.now(),tz),-1),tz))});
  live.register({name:'activity.access',ids:()=>['activity'],read:(_id,v)=>{const today=isoDay(operations.clock.now(),tz);return {id:'activity',allowed:agents(v).length>0,agents:agents(v).map(a=>a.agent),owner:ownerLabel(v),timezone:tz,today,windows:Array.from({length:11},(_,i)=>dayBefore(today,i*3)),expires:startOf(dayBefore(today,-1),tz)};},inScope:()=>true,refreshOn:changed,expires:r=>r.expires as number});
- const reader={window,read,close(){if(readers.get(operations)===reader)readers.delete(operations);for(const db of sources.values())db.close();}};
+ let closed=false;
+ // Metadata only: all active episode deadlines, regardless of the current
+ // viewer or list limit. The listener owns one timer for every projection.
+ function nextDeadline():number|undefined {
+  if(closed)return;
+  const now=operations.clock.now();
+  let next=startOf(dayBefore(isoDay(now,tz),-1),tz);
+  for(const db of sources.values())try{
+   if(!has(db))continue;
+   for(const raw of db.prepare("SELECT created,expires_at FROM memories WHERE category='episode' AND archived=0").iterate()){
+    const row=raw as {created:string;expires_at:string|null};
+    const expiry=row.expires_at===null?undefined:Date.parse(row.expires_at);
+    if(expiry!==undefined&&(!Number.isFinite(expiry)||expiry<=now))continue;
+    if(expiry!==undefined)next=Math.min(next,expiry);
+    // Reads allow one minute of clock skew; windows use an exclusive end.
+    const enters=Date.parse(row.created)-60000;
+    for(const at of [enters,enters+1])if(Number.isFinite(at)&&at>now)next=Math.min(next,at);
+   }
+  }catch{/* A failed source remains an explicit reader error, not a timer failure. */}
+  return next;
+ }
+ const reader={window,read,nextDeadline,close(){closed=true;if(readers.get(operations)===reader)readers.delete(operations);for(const db of sources.values())db.close();}};
  readers.set(operations,reader);
  return reader;
 }
