@@ -139,6 +139,15 @@
           "Dismiss"
         ]
       }
+    },
+    {
+      "id": "inbox-024",
+      "promise": "Answering Yes records who answered and adds exactly one item for the agent.",
+      "source": "docs/how-it-works/site/inbox.html",
+      "probe": {
+        "kind": "action",
+        "action": "inboxAnswer"
+      }
     }
   ],
   "modelTables": [
