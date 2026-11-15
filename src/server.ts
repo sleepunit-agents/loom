@@ -1,3 +1,4 @@
+import { isRetiredMcpTool } from './offers.js';
 import type { KnowledgeSelection, MemorySelection } from './config.js';
 import type { PeopleSelection } from './tools/person.js';
 import { IDENTITY_SECTIONS } from './identity/sections.js';
@@ -75,7 +76,7 @@ import { knowledgeFreshness } from './tools/knowledge-list.js';
 import { ConversationError, findingsOf, resolveProjectName, writeDigest } from './backends/conversations.js';
 import { conversationsList, conversationView, homeFor, type ConversationSelection } from './conversations.js';
 import { houseConversation } from './household-store.js';
-import { agentThreadRead, CommsError, threadOfAgentConversation, titleFromAgent } from './comms.js';
+import { threadOfAgentConversation } from './comms.js';
 import { aboutAskOf, householdOf, setAbout, setAboutAsk } from './household.js';
 
 /** The agent a context dir is: its household name, else its directory's name. */
@@ -566,6 +567,7 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
   );
 
   for (const t of config.tools ?? []) {
+    if (isRetiredMcpTool(t.name)) continue;
     // A name already registered (core's own, should one ever slip past install's check) is left out, never the session.
     try { server.registerTool(
       t.name,
@@ -1588,83 +1590,6 @@ export function createLoomServer(config: LoomServerConfig): LoomServerInstance {
       setAbout(mine.household, mine.agent, t);
       setAboutAsk(mine.household, mine.agent, null);
       return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, description: t }) }] };
-    },
-  );
-
-  server.registerTool(
-    'comms_title',
-    {
-      description:
-      'Name this Comms thread (a conversation in loom\'s own app, venue loom), once you know what it\'s about: a short ' +
-      'title of at most 60 characters on one line, written for its owner to read in their thread list. For the ' +
-      'conversation given to identity; refused anywhere else, and once the owner has named the thread themselves.',
-      inputSchema: z.object({
-        title: z.string().max(60).describe('The thread\'s title: at most 60 characters, one line, plain words.'),
-      }).strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async ({ title }) => {
-      if (config.conversationSelection !== undefined) {
-        const error = "Comms needs the loom daemon API; unavailable over offline stdio";
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error }) }], isError: true };
-      }
-      const home = homeFor(contextDir);
-      // Whose body this is: the server's own agent dir, never anything the caller sends.
-      const self = householdOf(contextDir)?.agent;
-      if (!here || !home || !self) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'call identity with this body\'s conversation and run first' }) }], isError: true };
-      // From a body's house, only the conversation it holds (t-2061), as conversation_digest.
-      const notHeld = houseWriteProblem(contextDir, config.caller, here.conversation, config.conversationSelection);
-      if (notHeld) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: notHeld }) }], isError: true };
-      try {
-        const t = titleFromAgent(home, self, here.conversation, title);
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, thread: t.id, title: t.title }) }] };
-      } catch (e) {
-        if (e instanceof CommsError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };
-        throw e;
-      }
-    },
-  );
-
-  server.registerTool(
-    'comms_thread',
-    {
-      description:
-      'Read a Comms thread of your own agent\'s (a conversation in loom\'s own app, venue loom): its messages as its ' +
-      'owner sees them, oldest first, with the owner\'s words, your replies, tool cards and any error card such as ' +
-      '"your reply couldn\'t be shown". Words go after the household\'s comms_days (14 at most); the message stays. With no thread, the one ' +
-      'of the conversation given to identity. Never another agent\'s thread. Read only.',
-      inputSchema: z.object({
-        thread: z.string().max(20).optional().describe('A thread id of yours, th:… (its place). Left off: this body\'s own thread.'),
-        before: z.number().int().positive().optional().describe('Only messages before this seq: scrolling back.'),
-        limit: z.number().int().min(1).max(100).optional().describe('How many of the newest messages (default 30, at most 100).'),
-      }).strict(),
-      annotations: { readOnlyHint: true, openWorldHint: false },
-    },
-    async ({ thread, before, limit }) => {
-      if (config.conversationSelection !== undefined) {
-        const error = "Comms needs the loom daemon API; unavailable over offline stdio";
-        return { content: [{ type: 'text' as const, text: JSON.stringify({ error }) }], isError: true };
-      }
-      const home = homeFor(contextDir);
-      // Whose thread: the server's own agent dir, never anything the caller sends.
-      const self = householdOf(contextDir)?.agent;
-      if (!home || !self) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: 'no household here' }) }], isError: true };
-      // From a body's house, only the thread of the conversation that house holds (t-2061): a thread's words are its
-      // conversation's transcript, and a sibling's (or a guest's house) never reads another's.
-      const held = bodyHouseConversation(contextDir, config.caller, config.conversationSelection);
-      if (held !== undefined) {
-        const mine = held ? threadOfAgentConversation(home, self, held)?.id : undefined;
-        if (!held || !mine || (thread !== undefined && thread !== mine)) {
-          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `${config.caller?.house} reads only the thread of the conversation it holds` }) }], isError: true };
-        }
-      }
-      try {
-        const r = await agentThreadRead(home, process.env, self, { conversation: held ?? here?.conversation, thread, before, limit });
-        return { content: [{ type: 'text' as const, text: JSON.stringify(r) }] };
-      } catch (e) {
-        if (e instanceof CommsError) return { content: [{ type: 'text' as const, text: JSON.stringify({ error: e.message }) }], isError: true };
-        throw e;
-      }
     },
   );
 
