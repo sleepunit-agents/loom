@@ -59,3 +59,16 @@ it('publishes only the final automatic answer, audit and resolved question throu
   const patches=JSON.parse(String((await next)[0])).payload.data.observe.patches;expect(patches).toContainEqual({path:['approvals',0],value:{id:result.id,state:'allowed'},removed:false});expect(patches).toContainEqual({path:['approvalRecord',0],value:{event:'request'},removed:false});expect(patches).toContainEqual({path:['approvalRecord',1],value:{event:'allow'},removed:false});expect(patches).toContainEqual({path:['inboxItems',0],value:{state:'resolved'},removed:false});expect(patches).toContainEqual({path:['changes',0,'waitingOn'],value:'agent',removed:false});expect(JSON.stringify(patches)).not.toContain('pending');expect(JSON.stringify(patches)).not.toContain('"state":"waiting"');
  }finally{socket.terminate();detach();server.closeAllConnections();await new Promise<void>(ok=>server.close(()=>ok()));}
 });
+
+it.each(['box:box:echo ',' box:box:echo','\tbox:box:echo\u00a0'])('resolves command rules against the canonical stored target: %j',async padded=>{
+ const f=await fixture();for(const [scope,tier] of [['box:box:echo','ask'],['box:box:echo *','do']] as const)f.root.services.approvalRules.set({kind:'command',scope,person:'alice',tier},'pat');
+ const input={...request,kind:'command',target:padded},result=await f.ask('canonical',input);expect(result.state).toBe('pending');expect(f.root.services.approvals.get(result.id)).toMatchObject({target:'box:box:echo',state:'pending'});expect(f.db.select().from(s.approvalRecord).all().map(row=>row.event)).toEqual(['request']);expect((await (await f.call('rule',{kind:'command',target:padded})).json()).value).toEqual({tier:'ask',scope:'box:box:echo',person:'alice'});
+});
+it('refuses blank targets at the outside schema before any request or standing answer',async()=>{
+ const f=await fixture();f.root.services.approvalRules.set({kind:'command',scope:'*',person:'alice',tier:'do'},'pat');expect((await f.call('request',{...request,kind:'command',target:' \t '})).status).toBe(400);expect((await f.call('rule',{kind:'command',target:' \t '})).status).toBe(400);expect(f.db.select().from(s.approvals).all()).toEqual([]);
+});
+
+it.each(['approval','change'] as const)('requires explicit true from a configured %s callback',async gate=>{
+ // A JavaScript adapter can violate the static boolean contract at runtime.
+ const missing=undefined as unknown as boolean,f=await fixture({approval:()=>gate==='approval'?missing:true,change:()=>gate==='change'?missing:true});f.grant('do');expect((await f.ask()).state).toBe('pending');expect(f.db.select().from(s.approvalRecord).all().map(row=>row.event)).toEqual(['request']);
+});

@@ -14,13 +14,14 @@ import type {Viewer} from './policy.js';
 
 export function registerSharedWorkBody(operations:Operations,db:DataDatabase,service:ReturnType<typeof approvalService>,rules:ReturnType<typeof approvalRulesService>,current:ReturnType<typeof conversationBodyScope>,hash:(text:string)=>string,authority?:WorkAnswerAuthority){
  const requireCurrent=requireBodyScope(current),common={...bodyOperationDefaults(current,hash,'body-work'),inputHash:(input:string,identity:Readonly<{actor:Viewer}>)=>{const bound=current(identity.actor);return hash(JSON.stringify(['body-work',bound?.job.id,bound?.cv.id,bound?.cv.agent,bound?.cv.project,bound?.cv.member,input]));}};
- const boundedText=z.string().min(1).max(2000),target=z.object({kind:approvalRuleKind,target:boundedText}).strict();
+ const boundedText=z.string().trim().min(1).max(2000),target=z.object({kind:approvalRuleKind,target:boundedText}).strict();
  const source=(viewer:Viewer)=>{const {cv}=requireCurrent(viewer);return {agent:cv.agent,conversation:cv.id,askedFrom:cv.id,actingFor:cv.member??'unknown',project:cv.project,member:cv.member};};
  const merge=(viewer:Viewer,kind:string,value:string,open=false)=>{
   if(kind!=='merge')return;
   const context=source(viewer),match=/^(github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[1-9][0-9]*)@([a-f0-9]{40})$/.exec(value);
   const row=match&&db.select().from(changes).where(eq(changes.id,match[1])).get();
   if(!row||row.headCommit!==match![2]||row.agent!==context.agent||row.project!==context.project||open&&row.state!=='open')throw new OperationError('conflict','Merge target is not the current conversation change');
+  return {change:row,head:match![2]};
  };
  const card=(viewer:Viewer,id:string)=>{
   const context=source(viewer),row=db.select().from(approvals).where(eq(approvals.id,id)).get();
@@ -33,14 +34,13 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   output:z.object({id:z.string(),state:z.string()}).strict(),
   may(viewer,input){try{if(!current(viewer))return false;merge(viewer,input.kind,input.target,true);return true;}catch{return false;}},
   run(ctx,input){
-   merge(ctx.viewer,input.kind,input.target,true);const context=source(ctx.viewer),row=service.request({...input,...context});
-   const rule=rules.resolve({...input,project:context.project,actingFor:context.actingFor});
+   const binding=merge(ctx.viewer,input.kind,input.target,true);const context=source(ctx.viewer),row=service.request({...input,...context});
+   const rule=rules.resolve({kind:row.kind,target:row.target,project:row.project,actingFor:row.actingFor});
    if(rule&&rule.tier!=='ask'){
-    const owner={kind:'member' as const,id:rule.setBy},match=input.kind==='merge'?/^(.*)@([a-f0-9]{40})$/.exec(input.target):null;
-    const change=match?db.select().from(changes).where(eq(changes.id,match[1])).get():undefined;
-    if((authority?.approval(owner,row)??true)&&(!match||change&&(authority?.change(owner,change,row)??true))){
+    const owner={kind:'member' as const,id:rule.setBy};
+    if((!authority||authority.approval(owner,row)===true)&&(!binding||!authority||authority.change(owner,binding.change,row)===true)){
      const basis=`Standing ${rule.tier} rule ${rule.scope} for ${rule.person||'household owner'}, set by ${rule.setBy}`;
-     if(match){changeAnswers(db,service).answer({change:match[1],head:match[2],approval:row.id,member:rule.setBy,allow:true,basis});ctx.changed('changes',match[1]);}
+     if(binding){changeAnswers(db,service).answer({change:binding.change.id,head:binding.head,approval:row.id,member:rule.setBy,allow:true,basis});ctx.changed('changes',binding.change.id);}
      else service.allow(row.id,rule.setBy,basis);
     }
    }
