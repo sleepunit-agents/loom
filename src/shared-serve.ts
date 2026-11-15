@@ -4,10 +4,11 @@ import { createServer } from 'node:http';
 import type { Socket } from 'node:net';
 import { getRequestListener } from '@hono/node-server';
 import {listenForTouchSources} from './core/touched/group.js';
-import {prepareSharedMemorySources} from './shared-memory.js';
+import {prepareSharedMemorySources,validateSharedMemoryOptions} from './shared-memory.js';
 import { sharedRoot } from './shared-root.js';
 
 export async function serveShared(options: Parameters<typeof sharedRoot>[0] & { host?: string; port?: number }) {
+  validateSharedMemoryOptions(options.db,options.memory);
   await prepareSharedMemorySources(options.memory);
   const root = sharedRoot(options);
   const sockets = new Set<Socket>();

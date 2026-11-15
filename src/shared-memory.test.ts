@@ -129,3 +129,9 @@ it('builds project sections from current visible Tasks, Changes and Conversation
  const complete=await read(),conversations=complete.memoryProject.sections.find((section:{key:string})=>section.key==='conversations');
  expect(conversations.total).toBe(202);expect(conversations.conversationIds).toHaveLength(202);expect(conversations.items).toHaveLength(50);
 });
+
+it('rejects an unconfigured checking recipient before creating source files',async()=>{
+ const f=fixture();
+ await expect(serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources,checkingAgent:'absent'},originAllowed:()=>true,reportError:()=>{}})).rejects.toThrow('configured checking agent');
+ expect(existsSync(f.sources.commons.knowledge)).toBe(false);expect(existsSync(f.sources.agents[0].memories)).toBe(false);expect(f.tables()).toEqual(f.before);
+});
