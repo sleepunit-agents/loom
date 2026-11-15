@@ -127,3 +127,64 @@ it('keeps existing precious source bytes unchanged through failed and complete s
  const write=await fetch(app.url+'/api/mind/knowledgeAdd',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'unprepared',input:{title:'No upgrade',domain:'fiction',body:'Fiction',source:''}})});expect(await write.json()).toMatchObject({ok:false,code:'unavailable'});
  await app.close();expect(unchanged()).toBe(true);
 });
+
+it('runs file triggers, pauses, notices and recipient volume through the normal CLI program',async()=>{
+ const f=await fixture(),repository=join(f.home,'routine-repository');
+ mkdirSync(join(repository,'routines'),{recursive:true});
+ const routine=join(repository,'routines','tempo.md');writeFileSync(routine,'ORIGINAL ROUTINE WORDS');
+ writeFileSync(f.config,JSON.stringify({...f.program,repository}),{mode:0o600});
+ const prepared=new Database(f.program.database);
+ prepared.prepare('INSERT INTO tempo_settings(who_kind,who,settle_seconds) VALUES (?,?,?)').run('person','owner',0);prepared.close();
+ const printed:string[]=[],errors:string[]=[];let ready!:(url:string)=>void;
+ const started=new Promise<string>(resolve=>{ready=resolve;});
+ const pending=run(['--http','--home',f.home,'--host','127.0.0.1','--port','0'],{
+  stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:text=>printed.push(text),
+  stderr:text=>{errors.push(text);const match=/shared app on (\S+)/.exec(text);if(match)ready(match[1]);},
+ });
+ cleanups.push(async()=>{process.emit('SIGTERM');expect(await pending).toBe(0);});
+ const url=await Promise.race([started,pending.then(code=>{throw Error(`CLI stopped (${code}): ${errors.join('')}`);})]);
+ const login=await fetch(printed[0].trim(),{method:'POST',redirect:'manual',headers:{origin:url}});
+ expect(login.status).toBe(303);const cookie=login.headers.get('set-cookie')!.split(';',1)[0];
+ const headers={cookie,origin:url,'content-type':'application/json'};
+ const command=async(name:string,input:unknown,id:string)=>{
+  const response=await fetch(url+'/api/'+name.replace('.','/'),{method:'POST',headers,body:JSON.stringify({input,id})});
+  const result=await response.json();expect(response.status,name+': '+JSON.stringify(result)).toBe(200);expect(result).toMatchObject({ok:true});
+ };
+ const query=async(query:string,variables:Record<string,unknown>={})=>{
+  const response=await fetch(url+'/graphql',{method:'POST',headers,body:JSON.stringify({query,variables})});
+  expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;
+ };
+ const rows=()=>query('{triggers{id state enabled} inboxItems(source:"trigger"){id body{words}}}');
+ const base={ownerKind:'household',sourceKind:'time',lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fiction',note:'Normal entry routine'};
+ const future=new Date(Date.now()+3600000).toISOString();
+ await command('tempo.pause',{agent:'fiction'},'normal-pause');
+ await command('tempo.set',{...base,id:'normal-paused',times:future,instructions:'HELD AGENT WORDS'},'normal-paused');
+ let state=await rows();expect(state.triggers.find((row:{id:string})=>row.id==='normal-paused')).toMatchObject({state:'held'});
+ await command('tempo.resume',{agent:'fiction'},'normal-resume');
+ expect((await rows()).triggers.find((row:{id:string})=>row.id==='normal-paused')).toMatchObject({state:'standing'});
+ await command('tempo.runNow',{id:'normal-paused'},'normal-agent-now');
+ expect((await rows()).triggers.find((row:{id:string})=>row.id==='normal-paused')).toMatchObject({state:'fired'});
+ // The personal Inbox reads its own notice; agent mail has a separate recipient.
+ await command('tempo.set',{...base,toKind:'person',to:'owner',id:'normal-file',times:future,file:'routines/tempo.md'},'normal-file');
+ expect((await rows()).inboxItems.some((row:{body?:{words:string}})=>row.body?.words==='ORIGINAL ROUTINE WORDS')).toBe(false);
+ writeFileSync(routine,'CURRENT ROUTINE WORDS');
+ await command('tempo.runNow',{id:'normal-file'},'normal-file-now');
+ state=await rows();expect(state.triggers.find((row:{id:string})=>row.id==='normal-file')).toMatchObject({state:'fired'});
+ expect(state.inboxItems.filter((row:{body?:{words:string}})=>row.body?.words==='CURRENT ROUTINE WORDS')).toHaveLength(1);
+ await command('tempo.set',{...base,id:'normal-cancel',times:future,instructions:'CANCELLED ROUTINE WORDS'},'normal-cancel');
+ await command('tempo.stop',{id:'normal-cancel'},'normal-stop');
+ await command('tempo.set',{...base,id:'normal-person',times:future,toKind:'person',to:'owner',instructions:'NORMAL PERSON NOTICE'},'normal-person');
+ await command('tempo.runNow',{id:'normal-person'},'normal-now');
+ await expect.poll(async()=> (await query('{settledInboxNotice{id count}}')).settledInboxNotice?.count).toBe(2);
+ state=await rows();expect(state.triggers.find((row:{id:string})=>row.id==='normal-cancel')).toMatchObject({state:'stopped',enabled:false});
+ const item=state.inboxItems.find((row:{body?:{words:string}})=>row.body?.words==='NORMAL PERSON NOTICE');expect(item).toBeDefined();
+ const readItem=async()=> (await query('query($id:String!){inboxItem(id:$id){volume quietUntil}}',{id:item.id})).inboxItem;
+ for(const volume of ['dim','mute','full']){
+  await command('inbox.volume',{item:item.id,volume},'normal-volume-'+volume);
+  const current=await readItem();expect(current.volume).toBe(volume);
+  if(volume==='mute')expect(Math.ceil((Date.parse(current.quietUntil)-Date.now())/86400000)).toBe(7);
+  if(volume==='full')expect(current.quietUntil).toBeNull();
+ }
+ expect((await fetch(url+'/api/clock/in',{method:'POST',headers,body:JSON.stringify({input:{},id:'retired'})})).status).toBe(404);
+ expect(errors).toEqual([`loom: shared app on ${url}\n`]);
+});
