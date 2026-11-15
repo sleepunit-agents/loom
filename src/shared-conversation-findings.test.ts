@@ -40,3 +40,7 @@ it('lets the newly enrolled current body review its own conversation agent turn 
  expect((await runtime('enrollBody',{job:'reviewer-job',fingerprint:hash(token)})).status).toBe(200);expect((await f.call('finding',finding,'not-running',token)).status).toBe(403);
  expect((await runtime('started',{job:'reviewer-job',build:'fixture-reviewer'})).status).toBe(200);expect((await f.call('finding',finding,'earlier-run',token)).status).toBe(200);expect(f.db.select().from(s.turns).get()?.run).toBe('job');expect(f.db.select().from(s.conversations).get()?.job).toBe('reviewer-job');expect(f.db.select().from(s.findings).get()).toMatchObject({conversation:f.thread.conversation,turnSeq:1,score:4});expect((await f.call('finding',finding,'old-body')).status).toBe(401);
 });
+it.each(['measure','text'] as const)('counts Unicode characters in the complete 200-character %s boundary through the SDK',async field=>{
+ const f=await fixture(),client=bodyConversationClient({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(url,init))});clean.push(()=>client.close());
+ expect(await client.finding({...finding,[field]:'🙂'.repeat(200)},'unicode-200')).toEqual({saved:true,day:'2026-11-14'});expect(f.db.select().from(s.findings).get()?.[field]).toBe('🙂'.repeat(200));await expect(client.finding({...finding,[field]:'🙂'.repeat(201)},'unicode-201')).rejects.toThrow();expect(f.db.select().from(s.findings).all()).toHaveLength(1);
+});

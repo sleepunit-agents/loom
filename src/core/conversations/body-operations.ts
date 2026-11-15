@@ -23,9 +23,9 @@ export function registerConversationBodyOperations(operations:Operations, servic
   output:z.object({saved:z.literal(true),conversation:z.string(),seq:z.number().int()}).strict(),
   run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer);const turn=conversationsService.turn({conversation:cv.id,fromKind:'agent',fromId:cv.agent,run:job.id,...input});ctx.changed('turns',`${cv.id}:${turn.seq}`);ctx.changed('conversations',cv.id);return {saved:true as const,conversation:cv.id,seq:turn.seq};},
  }));
- const oneLine=z.string().trim().min(1).refine(text=>!/[\p{C}\u2028\u2029]/u.test(text),'Use printable characters on one line');
+ const findingLine=z.string().trim().min(1).max(400).refine(text=>[...text].length<=200,'Use at most 200 characters').refine(text=>!/[\p{C}\u2028\u2029]/u.test(text),'Use printable characters on one line');
  operations.register(operation({...common,name:'conversation.finding',
-  input:z.object({turnSeq:z.number().int().positive(),measure:oneLine.pipe(z.string().max(200)),score:z.number().int().min(1).max(5),text:oneLine.pipe(z.string().max(200))}).strict(),
+  input:z.object({turnSeq:z.number().int().positive(),measure:findingLine,score:z.number().int().min(1).max(5),text:findingLine}).strict(),
   output:z.object({saved:z.literal(true),day:z.string().regex(/^\d{4}-\d{2}-\d{2}$/)}).strict(),
   run(ctx,input){
    const {cv}=requireCurrent(ctx.viewer);
