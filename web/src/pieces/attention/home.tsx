@@ -1,3 +1,4 @@
+import { useDeskRecentActivity } from './recent-activity';
 import { useDeskAgentDirectory } from './agent-directory';
 import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
@@ -6,7 +7,6 @@ import { agentPath } from './home-model';
 import { HomeSteps } from './home-steps';
 import { CurrentJobs } from './current-jobs';
 import { LastAnswer } from './last-answer';
-import type { ActivityWindow } from '../activity/model';
 import { HomeConversations, HomeComposer, useHomeComms, threadPath } from './home-comms';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import './home.css';
@@ -23,7 +23,7 @@ function Unavailable({ status, label }: { status: Snapshot['status']; label: str
 }
 export default function Home({ go = path => location.assign(path) }: { go?: (path:string)=>void } = {}) {
   const roster = useDeskRoster();
-  const activity = useRecords<ActivityWindow>('activity.window', 'recent');
+  const activity = useDeskRecentActivity();
   const displays = useAgentDisplays();
   const { reading:conversations, status:threadStatus } = useHomeComms();
   const [phone,setPhone] = useState(()=>globalThis.window?.matchMedia?.('(max-width: 1023px)').matches ?? false);

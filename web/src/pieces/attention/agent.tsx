@@ -1,3 +1,4 @@
+import { useDeskRecentActivity } from './recent-activity';
 import { useDeskAgentDirectory } from './agent-directory';
 import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
@@ -7,7 +8,6 @@ import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import { agentPath, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents } from './home-model';
 import { HomeSteps } from './home-steps';
 import { useHomeComms, threadPath } from './home-comms-data';
-import type { ActivityWindow } from '../activity/model';
 import type { Ask } from './model';
 import './home.css';
 interface Profile extends LiveRecord { agent: string; description?: string; requestedAt?: string; canEdit: boolean }
@@ -16,7 +16,7 @@ export default function AgentApp({ path = '/p/agents-preview', go = p => locatio
   const roster=useDeskRoster(), people=useDeskAgentDirectory();
   const profiles=useRecords<Profile>('household.profile'), statuses=useDeskAgentStatuses();
   const asks=useRecords<Ask>('attention.ask'), comms=useHomeComms();
-  const activity=useRecords<ActivityWindow>('activity.window','recent'), displays=useAgentDisplays();
+  const activity=useDeskRecentActivity(), displays=useAgentDisplays();
   const agents=orderedAgents(namedAgents(roster.status==='live'?roster.records:[],people.status==='live'?people.records:[]));
   const pathname=new URL(path,'http://loom').pathname, prefix='/p/agents-preview/agent/';
   let id:string|undefined;
