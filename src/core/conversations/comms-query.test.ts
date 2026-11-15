@@ -121,3 +121,10 @@ it('returns the existing private question envelope intact and performs no writes
   expect(f.statements.filter(statement => /^\s*(insert|update|delete|replace|create|alter|drop)\b/i.test(statement))).toEqual([]);
   expect(f.service.thread(alice, f.thread.id)?.readSeq).toBe(0);
 });
+
+it('never decrypts thread words at an equal whole-second stored deadline', async () => {
+  const f = await fixture();
+  f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
+  const row = f.service.messages(alice, f.thread.id, undefined, 1)[0];
+  expect(await f.service.words(alice, row)).toBeNull(); expect(f.opens()).toBe(0);
+});
