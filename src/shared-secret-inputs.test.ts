@@ -1,3 +1,4 @@
+import {DataLive} from './core/data/live.js';
 import {httpWorkerControl} from './runtime/worker-http.js';
 import {SecretPrivateInputs} from './pieces/secrets/private-inputs.js';
 import {privateSecretClient} from './pieces/secrets/private-client.js';
@@ -173,4 +174,17 @@ it.each(['revoke','expiry'] as const)('refreshes grants after pending startup co
  try{const pending=recipient.startup();await waiting;for(let i=0;i<32;i++)await Promise.resolve();const grant=f.db.select().from(secretGrants).where(eq(secretGrants.secret,'TOKEN')).get()!;
  f.root.writes.run(()=>{if(change==='revoke')f.root.services.secrets.requests.revoke(grant.request!);else f.db.update(secretGrants).set({expiresAt:new Date(f.clock.now()).toISOString()}).where(eq(secretGrants.id,grant.id)).run();const id='q-start-'+createHash('sha256').update(JSON.stringify(['body','REPO'])).digest('hex');f.root.services.secrets.requests.answer(id,'owner',true);});f.clock.advance(1000);const result=await pending;expect([...result.keys()]).toEqual(['REPO_ALIAS']);for(const bytes of result.values())bytes.fill(0);expect(f.source.read).toHaveBeenCalledExactlyOnceWith('REPO');expect(f.db.select().from(secretUses).all().map(row=>row.secret)).toEqual(['REPO']);
  }finally{recipient.close();}
+});
+it('reads private-handoff status only for its current body through the real metadata door',async()=>{
+ const f=fixture();f.grant();const response=await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'}),use=response.headers.get('x-loom-secret-use')!;expect(response.status).toBe(200);
+ const status=async(token:string)=>f.root.http.request('http://loom/api/secrets/useStatus',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id:use}})});
+ expect(await(await status(raw.body)).json()).toEqual({ok:true,value:{id:use,state:'started'}});for(const token of [raw.other,raw.agent,raw.runner,raw.owner])expect((await status(token)).status).toBe(403);
+ await f.post('confirm',{use});expect(await(await status(raw.body)).json()).toEqual({ok:true,value:{id:use,state:'released'}});
+});
+it('publishes the private audit before source IO and never publishes an aborted insert',async()=>{
+ const f=fixture();f.grant();const events:{transaction:boolean;states:string[]}[]=[],original=DataLive.prototype.changed;
+ const spy=vi.spyOn(DataLive.prototype,'changed').mockImplementation(function(this:DataLive){events.push({transaction:f.client.inTransaction,states:f.db.select().from(secretUses).all().map(row=>row.state)});return original.call(this);});
+ try{f.source.read.mockImplementationOnce(async()=>{expect(events).toContainEqual({transaction:false,states:['started']});return Buffer.from('PRIVATE_SOURCE_VALUE');});const response=await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'}),use=response.headers.get('x-loom-secret-use')!;expect(response.status).toBe(200);await f.post('confirm',{use});expect(events.some(event=>event.states.includes('released'))).toBe(true);expect(events.every(event=>!event.transaction)).toBe(true);
+ events.length=0;f.client.exec("CREATE TRIGGER fail_private_audit BEFORE INSERT ON secret_uses BEGIN SELECT RAISE(ABORT,'synthetic failure'); END");expect((await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'})).status).toBe(503);expect(f.source.read).toHaveBeenCalledOnce();expect(f.db.select().from(secretUses).all()).toHaveLength(1);expect(events.every(event=>event.states.every(state=>state==='released'))).toBe(true);
+ }finally{spy.mockRestore();}
 });
