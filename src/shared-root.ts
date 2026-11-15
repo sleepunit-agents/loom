@@ -1,3 +1,6 @@
+import { SecretDelivery, type SecretDeliveryHolder } from './pieces/secrets/delivery.js';
+import { SecretStartup } from './pieces/secrets/shared-startup.js';
+import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
 import { registerSharedSecretCommands } from './shared-secret-commands.js';
@@ -30,6 +33,8 @@ export function sharedRoot(options: {
   approvedOperations?: ApprovedOperations;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
+  /** Authenticated private holder-to-worker sink; values never enter this root. */
+  secretDelivery?: SecretDeliveryHolder;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
 }) {
@@ -45,11 +50,16 @@ export function sharedRoot(options: {
   });
   registerSharedPreferences(operations, db);
   const requests = new SecretRequests(db, now);
+  const secretCommit = <T>(write: () => T): T => {
+    const result = data.writes.run(write);
+    for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
+    return result.value;
+  };
   const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,
-    options.secretWrites.fingerprintKey, write => {
-      const result = data.writes.run(write);
-      for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
-    });
+    options.secretWrites.fingerprintKey, secretCommit);
+  const delivery = options.secretDelivery && new SecretDelivery(db, now, options.secretDelivery, secretCommit);
+  const startup = delivery && new SecretStartup(db, requests, delivery, secretCommit);
+  registerSharedSecretAgentCommands(operations, db, requests, delivery, viewer => credentials.body(viewer));
   registerSharedSecretCommands(operations, db, requests, values && {
     values, fingerprintKey:options.secretWrites!.fingerprintKey,
   });
@@ -69,7 +79,7 @@ export function sharedRoot(options: {
     tasks: taskService(db, now),
     approvals: approvalService(db, options.approvedOperations, now),
     conversations: new Conversations(db, now),
-    secrets: {requests,values,reconcile:recoverSecrets},
+    secrets: {requests,values,delivery,startup,reconcile:recoverSecrets},
   };
   registerSharedTaskCommands(operations, db, services.tasks);
   const authenticate = credentials.authenticate;
@@ -130,11 +140,12 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
-      cancelSecretRecovery?.(); values?.close();
+      cancelSecretRecovery?.(); values?.close(); startup?.close();
+      const deliveryStopped = delivery?.close();
       const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, deliveryStopped, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { operations.close(); } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
