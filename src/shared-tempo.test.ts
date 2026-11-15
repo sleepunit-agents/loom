@@ -54,7 +54,7 @@ it('holds paused triggers, resumes through shared commands, then stops timers be
 
 it('fails settings closed without chat provenance and forwards configured adapters from trusted composition',async()=>{
  const f=fixture();
- expect((await f.call('tempo.proposeSettings',{who:{kind:'agent',id:'art'},patch:{settleSeconds:60}},'settings')).status).toBe(503);
+ expect((await f.call('tempo.proposeSettings',{who:{kind:'agent',id:'art'},patch:{settleSeconds:60}},'settings')).status).toBe(403);
  const settings=vi.fn(()=>({id:'proposal'})),admit=vi.fn(()=>true),operation=vi.fn(),instructions=vi.fn(()=> 'From repository');
  const g=fixture({settings,admit,operation,instructions});
  expect(await (await g.call('tempo.proposeSettings',{who:{kind:'agent',id:'art'},patch:{settleSeconds:60}},'settings')).json()).toEqual({ok:true,value:{id:'proposal'}});
