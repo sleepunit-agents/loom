@@ -1,3 +1,4 @@
+import {evaluate} from './rebuild-report.mjs';
 import {it,expect} from 'vitest';
 import {Encrypter,generateX25519Identity,identityToRecipient} from 'age-encryption';
 import {encryptedStorage,retentionFailure,ObservedRetentionFailure} from './rebuild-retention.mjs';
@@ -9,5 +10,5 @@ it('requires authenticated ciphertext readable with the right key and rejected w
 });
 it('distinguishes observed retention failures from incomplete measurement',()=>{
  expect(retentionFailure(new ObservedRetentionFailure('Stored ciphertext survived its deadline'))).toEqual({ok:false,error:expect.stringContaining('survived')});
- expect(retentionFailure(new Error('fetch or browser evaluation failed'))).toMatchObject({inconclusive:true});
+ const failure=retentionFailure(new Error('fetch or browser evaluation failed'));expect(failure).toMatchObject({inconclusive:true});expect(evaluate({probe:{kind:'action',action:'conversationRetention'}},{actions:{conversationRetention:failure}}).status).toBe('not checkable yet');
 });
