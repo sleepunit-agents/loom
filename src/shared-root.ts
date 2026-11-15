@@ -113,6 +113,7 @@ export function sharedRoot(options: {
   const roles = () => modelCatalog(options.modelRoles?.() ?? []);
   roles(); // Refuse invalid startup configuration before opening services.
   const { db, clock } = options;
+  householdService(db,()=>new Date(clock.now()).toISOString()).synchronizeFullOwners();
   const now = () => new Date(clock.now()).toISOString();
   const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;

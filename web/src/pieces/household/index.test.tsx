@@ -19,10 +19,16 @@ it.each(['inactive','offline','denied'] as const)('clears a returned credential 
  await act(async()=>{release(Response.json({ok:true,value:{token:'PRIVATE_BEARER',fingerprint:'a'.repeat(64)}}));});
  await act(async()=>{f.feed.status='live';f.feed.data=original;tree.update(h(Setup,{active:true}));});expect(JSON.stringify(tree.toJSON())).not.toContain('PRIVATE_BEARER');expect(fetch).toHaveBeenCalledOnce();
 });
-it('clears a delivered credential on offline/inactive/denial and on unmount, and never retries failed issuance',async()=>{
+
+it.each(['inactive','offline','denied'] as const)('clears an already delivered credential across %s and reauthorization',async reason=>{
  const fetch=vi.fn().mockResolvedValue(Response.json({ok:true,value:{token:'PRIVATE_BEARER',fingerprint:'a'.repeat(64)}}));vi.stubGlobal('fetch',fetch);
  await act(async()=>{tree=create(h(Setup));});await act(async()=>tree.root.findByProps({'aria-label':'Create token'}).props.onSubmit(tokenForm()));expect(JSON.stringify(tree.toJSON())).toContain('PRIVATE_BEARER');
- await act(async()=>{tree.update(h(Setup,{active:false}));});expect(JSON.stringify(tree.toJSON())).not.toContain('PRIVATE_BEARER');await act(async()=>tree.unmount());await act(async()=>{tree=create(h(Setup));});expect(JSON.stringify(tree.toJSON())).not.toContain('PRIVATE_BEARER');
- fetch.mockRejectedValueOnce(Error('network'));await act(async()=>tree.root.findByProps({'aria-label':'Create token'}).props.onSubmit(tokenForm()));expect(fetch).toHaveBeenCalledTimes(2);expect(JSON.stringify(tree.toJSON())).toContain('may have completed');
+ await act(async()=>{if(reason==='offline')f.feed.status='offline';if(reason==='denied')f.feed.data={householdSetup:null,boxes:[]};tree.update(h(Setup,{active:reason!=='inactive'}));});
+ await act(async()=>{f.feed.status='live';f.feed.data=original;tree.update(h(Setup,{active:true}));});expect(JSON.stringify(tree.toJSON())).not.toContain('PRIVATE_BEARER');expect(fetch).toHaveBeenCalledOnce();
+});
+it('never retries uncertain issuance on a timer, render or remount',async()=>{
+ vi.useFakeTimers();const fetch=vi.fn().mockRejectedValue(Error('network'));vi.stubGlobal('fetch',fetch);
+ try{await act(async()=>{tree=create(h(Setup));});await act(async()=>tree.root.findByProps({'aria-label':'Create token'}).props.onSubmit(tokenForm()));expect(JSON.stringify(tree.toJSON())).toContain('may have completed');
+ await act(async()=>{await vi.advanceTimersByTimeAsync(10000);tree.update(h(Setup));});await act(async()=>tree.unmount());await act(async()=>{tree=create(h(Setup));});expect(fetch).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).not.toContain('PRIVATE_BEARER');}finally{vi.useRealTimers();}
 });
 it('shows no owner data for the actual live denial shape',async()=>{f.feed.data={householdSetup:null,boxes:[]};await act(async()=>{tree=create(h(Setup));});expect(JSON.stringify(tree.toJSON())).not.toContain('Fixture token');expect(tree.root.findAllByType('form')).toHaveLength(0);});
