@@ -13,6 +13,7 @@ export async function accessAction({page,tile,title,app,out}){
    const before=db.prepare('SELECT COUNT(*) AS n FROM signin_links').get().n;
    await saved('/api/signin/link',()=>tile.getByRole('button',{name:'Make sign-in link',exact:true}).click());
    await tile.locator('[data-signin-link]').waitFor();check(db.prepare('SELECT COUNT(*) AS n FROM signin_links').get().n===before+1,'No one-time sign-in link persisted');
+   check(db.prepare('SELECT COUNT(*) AS n FROM signin_links l JOIN tokens t ON t.fingerprint=l.token WHERE t.member=?').get('alex').n===before+1,'Link belongs to another member');
    // Never put the delivered credential into evidence or screenshots.
    await tile.getByRole('button',{name:'Hide sign-in link',exact:true}).click();await tile.locator('[data-signin-link]').waitFor({state:'hidden'});
   }else if(title==='Household setup'){
@@ -29,10 +30,10 @@ export async function accessAction({page,tile,title,app,out}){
    check(db.prepare('SELECT name FROM projects WHERE id=?').get('walkthrough-sharing')?.name==='Walkthrough sharing','Project was not persisted');
    check(db.prepare('SELECT member FROM project_members WHERE project=?').all('walkthrough-sharing').some(row=>row.member==='alex'),'Project membership was not persisted');
   }else throw Error('Unknown access page');
-  await page.screenshot({path:join(out,screenshot),fullPage:true,mask:[page.locator('[data-signin-link], [aria-label="Token value"]')]});return {ok:true,screenshot};
+  await page.screenshot({path:join(out,screenshot),fullPage:true});return {ok:true,screenshot};
  }catch(error){
   // The Account may still contain a delivered link after a failed hide.
-  if(title!=='Your account')await page.screenshot({path:join(out,screenshot),fullPage:true,mask:[page.locator('[data-signin-link], [aria-label="Token value"]')]}).catch(()=>{});
+  if(title!=='Your account')await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});
   return {ok:false,error:String(error),...(title==='Your account'?{}:{screenshot})};
  }
 }
