@@ -79,6 +79,8 @@ it('answers the same private Inbox item through real HTTP and denies other peopl
   expect(f.client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({n:0});
   expect(f.db.select().from(operationResults).where(eq(operationResults.id,'other-read')).all()).toEqual([]);
   const visibleOwner = await f.query(`{inboxItem(id:"${question.inboxItem}"){body{words}}}`,'owner');
+  expect((await f.query(`{inboxItem(id:"${question.inboxItem}"){canAnswer}}`,'owner')).body.data?.inboxItem).toEqual({canAnswer:false});
+  expect((await f.query(`{inboxItem(id:"${question.inboxItem}"){canAnswer}}`)).body.data?.inboxItem).toEqual({canAnswer:true});
   expect(visibleOwner.body.errors).toBeUndefined(); expect(visibleOwner.body.data?.inboxItem).toEqual({body:{words:'PRIVATE QUESTION'}});
   expect((await f.post('inbox.read',{item:question.inboxItem!},'owner-read','owner')).status).toBe(200);
   expect(f.client.prepare('SELECT member FROM inbox_reads').all()).toEqual([{member:'owner'}]);
