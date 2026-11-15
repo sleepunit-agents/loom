@@ -47,9 +47,9 @@ export async function bodyProgram(input: {
     if (job.harness !== 'claude' || !job.conversation || (!bridge&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge) || input.signal.aborted) throw new Error();
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
       job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
-    let work='Preparing startup inputs',state:'working'|'waiting'='working';
+    let work='Preparing startup inputs',state:'working'|'waiting'='working',secretWaiting=false;
     let reporting:ReturnType<NonNullable<typeof client>['status']>|undefined;
-    const report=()=>reporting??(reporting=client!.status({state,work}).finally(()=>{reporting=undefined;}));
+    const report=()=>reporting??(reporting=client!.status(secretWaiting&&state!=='waiting'?{state:'waiting',work:'Waiting for a Secret decision'}:{state,work}).finally(()=>{reporting=undefined;}));
     const observe=(value:{stopRequested:boolean})=>{if(value.stopRequested){stopped=true;erase();nativeAbort.abort();}};
     observe(await report());
     if(stopped){await client.status({state:'idle',work:'',seenStop:true});return 0;}
@@ -80,9 +80,10 @@ export async function bodyProgram(input: {
     if (started.stopRequested) { await stopBeats(); erase(); nativeAbort.abort(); await client.status({state:'idle',work:'',seenStop:true}); return 0; }
     if(bridge&&!incoming.length)throw new Error();
     if(!input.native){
-      programTools=bodyProgramTools({url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch,
+      const privateRoot={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch};
+      programTools=bodyProgramTools({...privateRoot,
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{if(value.state!=='working'&&value.state!=='waiting')throw new Error();state=value.state;work=value.work;}});
-      tools=await bodySecretTools({url:bootstrap.origin,token:parsed.bootstrap.token,job:job.id,conversation:job.conversation,signal,clock:input.clock,fetch:input.fetch,extraTools:programTools.extensions,waiting:value=>{state=value?'waiting':'working';work=value?'Waiting for a Secret decision':'Working on accepted mail';}});
+      tools=await bodySecretTools({...privateRoot,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});
     }
     if(signal.aborted)throw new Error();
     const native = input.native ?? claudeBody({ ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
@@ -100,12 +101,12 @@ export async function bodyProgram(input: {
     await client.status({ state: 'idle', work: '' });
     return 0;
   } catch {
-    nativeAbort.abort(); secrets.close(); erase();
-    await stopBeats();
+    nativeAbort.abort(); programTools?.close(); secrets.close(); erase();
+    await tools?.close(); await stopBeats();
     if(stopped&&!unavailable&&!input.signal.aborted&&client){
       try{await client.status({state:'idle',work:'',seenStop:true});return 0;}catch{}
     }
     input.error('Body stopped: invalid input or unavailable execution\n'); return 1;
   }
-  finally { nativeAbort.abort(); programTools?.close(); secrets.close(); erase(); await stopBeats(); await tools?.close(); client?.close(); input.signal.removeEventListener('abort', erase); }
+  finally { nativeAbort.abort(); programTools?.close(); secrets.close(); erase(); await tools?.close(); await stopBeats(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }
