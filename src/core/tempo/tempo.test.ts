@@ -1,3 +1,4 @@
+import { Conversations } from '../conversations/index.js';
 import { expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
@@ -224,4 +225,64 @@ it.each(['changed', 'start'] as const)('suppresses publication when %s admission
     clock.advance(60_000);
     expect(admissions).toBe(1);
   } finally { tempo.close(); if (client.open) client.close(); }
+});
+
+it('does not admit or publish provisional trigger writes before the shared receipt transaction commits', () => {
+  const client = new Database(':memory:'), clock = new FakeClock(), db = createDataSchema(client);
+  const now = () => new Date(clock.now()).toISOString();
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  const admissions: string[][] = [], published: number[] = [];
+  const tempo = createTempo(db, clock, { conversations: new Conversations(db, now),
+    admit(_, items) { expect(client.inTransaction).toBe(false); admissions.push(items.map(i => i.words!)); return true; },
+    operation() {}, changed() { expect(client.inTransaction).toBe(false); published.push(1); } });
+  const trigger = { ownerKind: 'agent' as const, owner: 'art', sourceKind: 'time' as const, times: now(), lifespan: 'once' as const,
+    targetKind: 'inbox' as const, toKind: 'agent' as const, to: 'art', instructions: 'Committed work', note: 'Receipt' };
+  try {
+    tempo.volume.setTimings({ kind: 'agent', id: 'art' }, { settleSeconds: 0 });
+    tempo.start(); published.length = 0;
+    expect(() => db.transaction(() => {
+      tempo.triggers.set({ ...trigger, id: 'rollback' });
+      expect(db.select().from(inbox).all()).toEqual([]);
+      expect(admissions).toEqual([]); expect(published).toEqual([]);
+      throw new Error('receipt failed');
+    })).toThrow('receipt failed');
+    clock.advance(0);
+    expect(db.select().from(inbox).all()).toEqual([]); expect(admissions).toEqual([]);
+    db.transaction(() => {
+      tempo.triggers.set({ ...trigger, id: 'commit' });
+      expect(db.select().from(inbox).all()).toEqual([]);
+      expect(admissions).toEqual([]); expect(published).toEqual([]);
+    });
+    tempo.committed();
+    expect(admissions).toEqual([['Committed work']]);
+    expect(published.length).toBeGreaterThan(0);
+    expect(db.select().from(triggers).all()).toMatchObject([{ id: 'commit', state: 'fired' }]);
+    tempo.committed();
+    expect(admissions).toHaveLength(1);
+    expect(() => db.transaction(() => tempo.committed())).toThrow('after commit');
+  } finally { tempo.close(); client.close(); }
+});
+
+it('refreshes watched answers after shared commits without repeating a durable occurrence', () => {
+  const client = new Database(':memory:'), db = createDataSchema(client), clock = new FakeClock();
+  const now = () => new Date(clock.now()).toISOString();
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#fff', markFg: '#000', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(approvals).values({ id: 'a', kind: 'command', target: 'test', what: 'test', why: 'test', agent: 'art', askedFrom: 'test', actingFor: 'art', state: 'pending', minutes: 1, ask: 'Run?', ifYes: 'Run', ifNo: 'Stop', details: '', askedAt: now() }).run();
+  const occurrences: string[] = [];
+  const tempo = createTempo(db, clock, { conversations: new Conversations(db, now), admit: () => false,
+    operation(_, _trigger, occurrence) { expect(client.inTransaction).toBe(true); occurrences.push(occurrence); } });
+  try {
+    tempo.triggers.set({ id: 'wait', ownerKind: 'agent', owner: 'art', sourceKind: 'answer', watches: 'approval:a', lifespan: 'until-stopped', targetKind: 'operation', target: 'test', note: 'Answer' });
+    tempo.start();
+    expect(() => db.transaction(() => {
+      db.update(approvals).set({ state: 'allowed', decidedAt: now() }).where(eq(approvals.id, 'a')).run();
+      tempo.sources.approval('a');
+      expect(occurrences).toEqual([]);
+      throw new Error('rollback');
+    })).toThrow('rollback');
+    tempo.committed(); expect(occurrences).toEqual([]);
+    db.transaction(() => db.update(approvals).set({ state: 'allowed', decidedAt: now() }).where(eq(approvals.id, 'a')).run());
+    tempo.committed(); expect(occurrences).toHaveLength(1);
+    tempo.committed(); expect(occurrences).toHaveLength(1);
+  } finally { tempo.close(); client.close(); }
 });

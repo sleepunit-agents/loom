@@ -8,7 +8,7 @@ import { localDate, nextTime } from './calendar.js';
 
 export type Trigger = typeof triggers.$inferSelect;
 const text = z.string().min(1);
-const input = z.object({
+export const triggerInput = z.object({
   id: text.optional(), ownerKind: z.enum(['member', 'agent', 'household']), owner: text.nullable().optional(),
   sourceKind: z.enum(['time', 'pull-request', 'answer', 'job']), watches: text.nullable().optional(),
   times: text.nullable().optional(), days: text.nullable().optional(), lifespan: z.enum(['until-stopped', 'today', 'once']),
@@ -16,7 +16,7 @@ const input = z.object({
   toKind: z.enum(['person', 'agent']).nullable().optional(), to: text.nullable().optional(), project: text.nullable().optional(),
   instructions: z.string().nullable().optional(), file: text.nullable().optional(), note: text,
 });
-export type NewTrigger = z.input<typeof input>;
+export type NewTrigger = z.input<typeof triggerInput>;
 export interface TriggerEffects {
   /** Synchronous shared-database writes only; both callbacks run in the trigger's
    * transaction. The delivery id is the inbox source_id. Never start a body. */
@@ -54,7 +54,7 @@ export class TriggerEngine {
   }
   set(value: NewTrigger): Trigger {
     this.open();
-    const v = input.parse(value);
+    const v = triggerInput.parse(value);
     if ((v.ownerKind === 'household') !== !v.owner) throw new Error('Trigger needs its owner');
     if (v.targetKind === 'inbox' && (!v.toKind || !v.to)) throw new Error('Inbox target needs a recipient');
     if (v.targetKind === 'operation' && !v.target) throw new Error('Operation target needs a name');
@@ -124,6 +124,10 @@ export class TriggerEngine {
     // Built-in operations can change triggers in the firing transaction. Finish
     // that transaction before another scan can observe or fire its rows.
     if (this.ticking) { this.again = true; return; }
+    // A command may still be saving its receipt in the shared outer
+    // transaction. Its commit hook will rescan; a rollback must not admit work
+    // or publish provisional data, or replace the last committed timer.
+    if (this.db.$client.inTransaction) return;
     this.ticking = true;
     try {
       do { this.again = false; this.scan(); } while (this.again && !this.closed);

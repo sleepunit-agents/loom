@@ -1,4 +1,4 @@
-import { and, eq, lte, ne } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { inbox, tempoSettings } from '../data/schema.js';
 import type { Clock } from '../clock.js';
@@ -54,7 +54,12 @@ export class InboxVolume {
   /** Run at startup and each quiet deadline. Returns the next deadline;
    * notify subscriptions after an expiration actually changes stored volume. */
   expire(changed?: () => void): number | undefined {
-    const expired = this.db.update(inbox).set({ volume: 'full', quietUntil: null }).where(and(ne(inbox.volume, 'full'), lte(inbox.quietUntil, new Date(this.clock.now()).toISOString()))).run().changes;
+    // Shared UTC columns allow both whole seconds and milliseconds. Compare
+    // instants: lexical ordering would leave 18:00:00Z after 18:00:00.000Z,
+    // repeatedly arming the timer at an already elapsed quiet deadline.
+    const expired = this.db.update(inbox).set({ volume: 'full', quietUntil: null }).where(and(ne(inbox.volume, 'full'),
+      sql`julianday(${inbox.quietUntil}) <= julianday(${new Date(this.clock.now()).toISOString()})`,
+    )).run().changes;
     const next = this.db.select({ until: inbox.quietUntil }).from(inbox).where(ne(inbox.volume, 'full')).all()
       .reduce<number | undefined>((next, row) => row.until === null ? next : Math.min(next ?? Infinity, Date.parse(row.until)), undefined);
     if (expired) changed?.();

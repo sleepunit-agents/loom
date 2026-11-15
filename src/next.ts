@@ -1,5 +1,6 @@
 import { nextData } from './next-data.js';
 import type { Viewer } from './core/index.js';
+import {installMemorySignals} from './transport/memory-signals.js';
 import { memoryQueryFields } from './transport/memory-queries.js';
 import { sharedActivityConversations } from './pieces/mind/activity-conversations.js';
 import { dataDatabase } from './core/data/database.js';
@@ -267,8 +268,10 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!memoryQueries.has(app)) {
     const activity = installedMindActivity(app.operations);
     if (!activity) throw new Error('Memory queries require the installed Activity reader');
+    const projects=installedMindProjects(app.operations);
+    if(!projects)throw new Error('Memory queries require the installed Projects reader');
     const queries = memoryQueryFields(sharedMemory, {sources: inventory, sharing, now: () => app.operations.clock.now(),
-      mind: mindRole(app.operations), activity, projectAccess:installedMindProjects(app.operations)?.access, conversationHref,
+      mind: projects, activity, conversationHref,
       projectHref: (agent, slug) => `/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}`});
     memoryQueries.set(app, queries);
     app.onClose(() => { queries.close(); memoryQueries.delete(app); });
@@ -370,12 +373,10 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   const sockets = new Set<Socket>();
   let data: ReturnType<typeof nextData> | undefined;
   let stopDataChanges: (() => void) | undefined;
-  let stopMemoryDeadlines: (() => void) | undefined;
-  let stopDataDeadline: (() => void) | undefined;
+  let memorySignals: ReturnType<typeof installMemorySignals> | undefined;
   const close = async () => {
     stopDataChanges?.();
-    stopDataDeadline?.();
-    stopMemoryDeadlines?.();
+    memorySignals?.close();
     await data?.close();
     detaches.forEach(detach => detach());
     for (const socket of sockets) socket.destroy();
@@ -395,21 +396,10 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
     const memory=memoryQueries.get(app);
     data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memory?.fields);
-    // One owned timer spans all addresses and projections. A query can discover
-    // an earlier deadline after a source commit or its initial execution.
-    const scheduleDeadline = () => {
-      stopDataDeadline?.(); stopDataDeadline = undefined;
-      const at = memory?.nextDeadline();
-      if (at !== undefined) stopDataDeadline = app.operations.clock.at(at, () => {
-        stopDataDeadline = undefined;
-        data!.changed(); scheduleDeadline();
-      });
-    };
+    memorySignals=installMemorySignals(app.operations.clock,memory,()=>data!.changed());
     // Legacy operation commits include private source touches until shared
     // command composition takes over their committed-write signal.
-    stopDataChanges=app.live.observe(()=>{data!.changed();scheduleDeadline();});
-    stopMemoryDeadlines=memory?.observeDeadlines(scheduleDeadline);
-    scheduleDeadline();
+    stopDataChanges=app.live.observe(()=>memorySignals!.changed());
     routes.all('/graphql', c => data!.http.fetch(c.req.raw));
     routes.route('/', signinRoutes(app));
     routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
