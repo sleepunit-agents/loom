@@ -57,7 +57,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer), ...tempoVisibility(viewer),
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
     },
-  }), { ...fields, ...ownFields, ...accounts.fields,
+  }), { ...fields, ...ownFields, ...tempoQueryFields(db, viewer), ...accounts.fields,
     // Jobs carry the same agent/project/private-member labels as Approvals.
     // Reuse its canonical SQL rather than maintain another sharing policy.
     ...jobSummaryFields(new JobSummaries(db, () => ({ jobs: workVisibility(viewer).approvals }))),
