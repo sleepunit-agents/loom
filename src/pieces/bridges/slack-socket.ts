@@ -60,23 +60,29 @@ export function slackSocket(options: SlackSocketOptions): { close(): Promise<voi
       if (!options.beforeConnect()) throw Error();
       abort = new AbortController();
       const signal = abort.signal;
-      cancelDeadline = clock.at(clock.now() + 15_000, () => disconnect(epoch));
-      // Acquire through the current SERVICE grant on EVERY connection attempt.
+      const deadlineAt = clock.now() + 15_000;
+      cancelDeadline = clock.at(deadlineAt, () => disconnect(epoch));
+      const fresh = () => !closed && epoch === generation && !signal.aborted
+        && clock.now() < deadlineAt && options.beforeConnect();
+      // Reacquire on every attempt; a deferred holder must not outlive it.
       const url = await options.secrets.withValue(options.appSecret, async token => {
+        if (!fresh()) throw Error();
         const response = await (options.request ?? fetch)('https://slack.com/api/apps.connections.open', {
           method: 'POST', redirect: 'error', signal,
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/x-www-form-urlencoded' },
         });
-        if (!response.ok || !response.body) throw Error();
-        const reader = response.body.getReader();
+        const reader = response.body?.getReader();
         const chunks: Uint8Array[] = []; let size = 0;
         try {
+          if (!fresh() || !response.ok || response.redirected || !reader) throw Error();
           for (;;) {
-            const part = await reader.read(); if (part.done) break;
+            const part = await reader.read();
+            if (!fresh()) throw Error();
+            if (part.done) break;
             size += part.value.byteLength; if (size > 16_384) throw Error();
             chunks.push(part.value);
           }
-        } finally { await reader.cancel(); }
+        } finally { try { void reader?.cancel().catch(() => {}); } catch { /* private upstream diagnostics */ } }
         const data: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         if (!object(data) || data.ok !== true || typeof data.url !== 'string') throw Error();
         const target = new URL(data.url);
@@ -84,8 +90,7 @@ export function slackSocket(options: SlackSocketOptions): { close(): Promise<voi
           || target.username || target.password || target.port || target.hash) throw Error();
         return target.href;
       });
-      if (closed || epoch !== generation) return;
-      if (!options.beforeConnect()) throw Error();
+      if (!fresh()) throw Error();
       const socket = dial(url); current = socket;
       let queue = Promise.resolve(), pending = 0, hello = false;
       socket.on('error', () => disconnect(epoch));

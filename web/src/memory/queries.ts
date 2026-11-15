@@ -25,6 +25,7 @@ const selection = <T>(field: string, query: string, variables: Record<string,str
 });
 const nullable = <T>(decode: (value: any) => T) => (value: any): T | null => value === null ? null : decode(value);
 const portable = <T>(value: unknown): T => optional(value) as T;
+export interface KnowledgeAccess {allowed:boolean;canAdd:boolean;canVerify:boolean;canRecheck:boolean}
 export interface KnowledgeIndex { total:number;checkDays:number;recentDays:number;pages:KnowledgeRow[] }
 export interface KnowledgePage extends KnowledgeOpen { history:Array<{id:number;slug:string;body:string;op:string;replacedAt:string;actor?:string}> }
 const knowledgeRow = 'slug title domain updated verified_at fresh by recent';
@@ -69,6 +70,7 @@ const entryFields = 'id agent at day hour title line venue where what owner expi
 const activityOpen = `${entryFields} asked decided story needs steps { label state tool } more { id at title } tasks { label href } prs { label href } links { label href }`;
 
 export const memoryQueries = {
+  knowledgeAccess:()=>selection<KnowledgeAccess|null>('memoryKnowledgeAccess','query MemoryKnowledgeAccess { memoryKnowledgeAccess { allowed canAdd canVerify canRecheck } }',{},nullable(portable<KnowledgeAccess>)),
   knowledge: () => selection<KnowledgeIndex | null>('memoryKnowledge', `query MemoryKnowledge { memoryKnowledge { total checkDays recentDays pages { ${knowledgeRow} } } }`, {}, nullable(portable<KnowledgeIndex>)),
   page: (slug:string) => selection<KnowledgePage | null>('memoryKnowledgePage', `query MemoryKnowledgePage($slug:String!) { memoryKnowledgePage(slug:$slug) { ${knowledgePage} } }`, {slug}, nullable(portable<KnowledgePage>)),
   people: () => selection<PersonRecord[]>('memoryPeople', `query MemoryPeople { memoryPeople { ${personFields} } }`, {}, raw => raw.map(person)),

@@ -1744,6 +1744,7 @@ export const operationResults = sqliteTable('operation_results', {
   caller: text('caller').notNull(),
   id: text('id').notNull(),
   operation: text('operation').notNull(),
+  inputHash: text('input_hash').notNull(),
   result: blob('result', { mode: 'buffer' }).notNull(),
   expiresAt: text('expires_at').notNull(),
 }, t => [
