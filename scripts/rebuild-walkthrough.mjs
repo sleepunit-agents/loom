@@ -1,3 +1,4 @@
+import {modelAccountActions} from './rebuild-model-actions.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {taskQuestions,taskInlineQuestion} from './rebuild-task-questions.mjs';
 import {prepareAcceptanceHome} from './rebuild-acceptance-adapter.mjs';
@@ -154,6 +155,7 @@ export async function* walkthroughSteps(output) {
     }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Project sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
+    if(title==='Your account')Object.assign(report.actions,await modelAccountActions({page,tile,example:report.example,subscriptions,out}));
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
     if(title==='Settings'){
      const savedDefault=await secretDefaultAction({page,tile,out,deferReload:true});
