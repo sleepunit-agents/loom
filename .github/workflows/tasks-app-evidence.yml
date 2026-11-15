@@ -35,12 +35,12 @@ jobs:
       - name: Prove the shared Tasks forms
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
-          export LOOM_TEST_SHOTS="$PWD/artifacts/tasks-app"
+          export LOOM_TEST_SHOTS="$RUNNER_TEMP/tasks-app"
           nice -n 19 npx vitest run src/ui/tasks-app.integration.test.ts --maxWorkers=1
-          test "$(find artifacts/tasks-app -name '*.png' | wc -l)" -eq 6
+          test "$(find "$LOOM_TEST_SHOTS" -name '*.png' | wc -l)" -eq 6
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: tasks-app-${{ github.event.pull_request.head.sha }}
-          path: artifacts/tasks-app/
+          path: ${{ runner.temp }}/tasks-app/
           if-no-files-found: error

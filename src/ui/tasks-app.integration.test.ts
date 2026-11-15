@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
 import { join, extname, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
 import { getRequestListener } from '@hono/node-server';
 import { eq, and } from 'drizzle-orm';
 import { chromium } from 'playwright-core';
@@ -131,7 +132,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     expect(await form.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await form.getByRole('button', { name: 'Add comment', exact: true }).click();
     await expect.poll(() => a.getByText('Wide form comment', { exact: true }).count()).toBe(1);
-    const shots = process.env.LOOM_TEST_SHOTS ?? resolve('artifacts/tasks-app'); mkdirSync(shots, { recursive: true });
+    const shots = process.env.LOOM_TEST_SHOTS ?? join(tmpdir(), 'loom-tasks-app'); mkdirSync(shots, { recursive: true });
     for (const look of ['neon','daylight']) for (const width of [390,1280,1920]) {
       await a.setViewportSize({ width, height: 900 });
       await a.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; }, look);
