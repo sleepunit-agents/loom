@@ -315,3 +315,20 @@ it('drains socket work without closing independent watchers on its shared live h
   f.client.exec("UPDATE tasks SET title='Still live'"); f.live.changed();
   expect((await pending).value.patches).toEqual([{ path: ['tasks', 0, 'title'], value: 'Still live' }]);
 });
+
+it('fences validation callbacks synchronously when a literal callback closes the socket', async () => {
+  const f = await setup(), ws = await f.open();
+  let began!: () => void, closing!: Promise<void>, late = 0;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const input = new GraphQLScalarType({ name: 'ShutdownInput', serialize: v => v, parseValue: v => v, parseLiteral(node) {
+    if ('value' in node && node.value === 'stop') { closing = f.socket.close(); began(); }
+    else { late++; f.client.prepare('SELECT title FROM tasks').all(); }
+    return 'x';
+  } });
+  f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    value: { type: GraphQLString, args: { input: { type: input } }, resolve: () => 'value' },
+  } }) }));
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'literal', payload: { query: '{ a:value(input:"stop") b:value(input:"late") }' } }));
+  await started; await closing;
+  expect(late).toBe(0);
+});

@@ -60,8 +60,9 @@ export class DataLive {
     valid(): boolean;
   }): AsyncIterableIterator<DataDelta> {
     if (this.stopped) throw new Error('Live data access ended');
+    instrumentExecution(options.schema);
     const document = parse(options.query);
-    const errors = validate(options.schema, document);
+    const errors = this.executions.scope(() => !this.stopped, () => validate(options.schema, document));
     if (errors.length) throw errors[0];
     if (getOperationAST(document, options.operationName)?.operation !== 'query') throw new Error('A live selection must be a query');
     let ended = false, dirty = true, previous: unknown, revision = 0, reading = false;

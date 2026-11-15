@@ -2,7 +2,7 @@ import type { Server, IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, WebSocket } from 'ws';
 import { useServer } from 'graphql-ws/use/ws';
-import { execute, subscribe, GraphQLError, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
+import { execute, subscribe, validate, GraphQLError, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
@@ -52,6 +52,7 @@ export function dataSocket(options: {
       // execution. Neither variables nor connectionParams supply this context.
       return Object.freeze({ viewer: auth.viewer });
     },
+    validate: (...args) => run(() => validate(...args)),
     execute: (args: ExecutionArgs) => run(() => execute(args)),
     subscribe: (args: ExecutionArgs) => run(async () => {
       const result = await subscribe(args);

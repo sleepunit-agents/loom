@@ -47,10 +47,13 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     writes,
     close() {
       if (closing) return closing;
-      http.stop(); live.close();
+      // Publish before stopping admission; callbacks cannot create a second close.
       closing = Promise.resolve().then(async () => {
-        try { await socket.close(); } finally { await http.drain(); }
+        try { await socketClosing; } finally { await http.drain(); }
       });
+      http.stop();
+      const socketClosing = socket.close();
+      live.close();
       return closing;
     },
   };
