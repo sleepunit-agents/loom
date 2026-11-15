@@ -118,6 +118,16 @@ it('keeps another recipient’s visible item readable without offering an answer
  setup(row({canAnswer:false}));await act(async()=>{tree=create(h(InboxApp,{path:'/p/inbox-preview/ask/in-1',go:vi.fn()}));});expect(JSON.stringify(tree.toJSON())).toContain('Buy the pump?');expect(button('Yes')).toBeUndefined();expect(button('Record answer')).toBeUndefined();expect(f.call).toHaveBeenCalledWith('inbox.read',{item:'in-1'});
 });
 
+it('hides retained private words when a canonical result cannot be decoded',async()=>{
+  setup(row({thread:'th:private',read:true,body:{words:'Private fictional question'},bodyKeepUntil:new Date(Date.now()+60000).toISOString()}));
+  await act(async()=>{tree=create(h(InboxApp,{path:'/p/inbox-preview/ask/in-1',go:()=>{}}));});
+  expect(text()).toContain('Private fictional question');
+  f.data={...f.data,inboxFolders:null};
+  await act(async()=>tree.update(h(InboxApp,{path:'/p/inbox-preview/ask/in-1',go:()=>{}})));
+  expect(text()).not.toContain('Private fictional question');
+  expect(f.records).not.toHaveBeenCalled();
+});
+
 it('offers recipient volume independently of managed answers through the current cookie door',async()=>{
  setup(row({source:'approval',canAnswer:false,canSetVolume:true,read:true}));
  const props={path:'/p/inbox-preview/ask/in-1',go:vi.fn()};

@@ -1,8 +1,9 @@
+import {keepReadUntil} from '../../core/data/read-lease.js';
 /** Activity projections composed into the shared query schema. No endpoint or store of their own. */
 import {GraphQLBoolean,GraphQLError,GraphQLFloat,GraphQLInt,GraphQLList,GraphQLNonNull,GraphQLObjectType,GraphQLString,type GraphQLFieldConfigMap} from 'graphql/index.js';
 import type {QueryDeadlines} from './query-deadlines.js';
 import type {Viewer} from '../../core/index.js';
-import type {installMindActivity} from './activity.js';
+import type {createActivityReader} from './activity.js';
 
 const text={type:GraphQLString}, requiredText={type:new GraphQLNonNull(GraphQLString)};
 const strings={type:new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(GraphQLString)))};
@@ -19,9 +20,10 @@ const access=new GraphQLObjectType({name:'MemoryActivityAccess',fields:{allowed:
 
 /** The authenticated outside door supplies the viewer; the existing reader
  * rechecks current sharing, conversation scope and expiry on every read. */
-export function activityQueryFields(reader:Pick<ReturnType<typeof installMindActivity>,'window'|'read'> & Partial<Pick<ReturnType<typeof installMindActivity>,'access'>>,deadlines?:QueryDeadlines):GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
+export function activityQueryFields(reader:Pick<ReturnType<typeof createActivityReader>,'window'|'read'> & Partial<Pick<ReturnType<typeof createActivityReader>,'access'>>,deadlines?:QueryDeadlines):GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
  const safe=<T>(read:()=>T):T=>{try{return read();}catch{throw new GraphQLError('Activity is unavailable');}};
  const track=<T extends {expires?:number}>(value:T|undefined,context:{viewer:Viewer},kind:string,id:string)=>{
+  if(value?.expires!==undefined)keepReadUntil(context,value.expires);
   deadlines?.set(JSON.stringify([context.viewer.kind,context.viewer.id,kind,id]),value?.expires);return value??null;
  };
  return {
