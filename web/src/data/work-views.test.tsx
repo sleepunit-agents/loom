@@ -29,7 +29,7 @@ it('the registered lazy tiles actually render the generated shared rows', async 
   await selectRow();
   expect(words()).toContain('Keep one day?');
   expect(words()).toContain('Measuring settings change');
-  expect(tree.root.findAllByType('Button')).toHaveLength(0);
+  expect(tree.root.findAllByType('Button')).toHaveLength(2);
   await act(async () => tree.update(h(Suspense, { fallback: 'Opening' }, h(changesApp.Screen, {}))));
   expect(words()).toContain('Current change');
   await selectRow();
@@ -65,4 +65,17 @@ it('tile and inline cards follow the same current answer/head and clear retained
       expect(tree.root.findAllByType('Button')).toHaveLength(0);
     }
   }
+});
+
+it('answers a Measuring card through the mounted authenticated API without changing its local state', async () => {
+ fixture();
+ const request = vi.fn(async (_url:string,_options:RequestInit) => ({ok:true,json:async()=>({ok:true})}));
+ vi.stubGlobal('fetch', request);
+ try {
+  await draw(h(LiveApprovalCard, {id:'a-one'}));
+  await act(async()=>{tree.root.findAllByType('Button')[0].props.onClick();});
+  expect(request).toHaveBeenCalledWith('/api/measuring/answer', expect.objectContaining({method:'POST',credentials:'same-origin'}));
+  expect(JSON.parse(String(request.mock.calls[0][1].body))).toMatchObject({input:{id:'a-one',allow:true}});
+  expect(feed.approvals.approvals[0].state).toBe('pending');
+ } finally {vi.unstubAllGlobals();}
 });

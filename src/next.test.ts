@@ -243,6 +243,7 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
       app.db.function('loom_now', () => new Date(app.operations.clock.now()).toISOString());
       app.db.exec(readFileSync(new URL('../assets/data/schema.sql', import.meta.url), 'utf8'));
       app.db.prepare('INSERT INTO members (id,role,joined_at) VALUES (?,?,?)').run('sam','owner',at);
+      app.db.prepare('INSERT INTO measuring_settings(singleton, "on", send_outside, outside_address, keep_days) VALUES (1,1,0,NULL,90)').run();
       app.db.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(createHash('sha256').update(token).digest('hex'),'Sam','owner','sam',at,new Date(expiry).toISOString());
       app.db.prepare('INSERT INTO tasks (id,title,owner_kind,owner,created_by_kind,created_by,created_at,changed_at) VALUES (?,?,?,?,?,?,?,?)').run('pump','Pump','member','sam','member','sam',at,at);
     },
@@ -253,6 +254,11 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
   try {
     const request = (authorization: string) => fetch(loom.url+'/graphql',{method:'POST',headers:{authorization,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id title } approvals { id } memoryKnowledge { total } }'})});
     expect((await request('legacy')).status).toBe(401);
+    await fetch(loom.url+'/health');
+    const timings = await fetch(loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:'{ timingDays { kind name count } measuringSettings { on } }'})});
+    const measured = await timings.json() as {data:{timingDays:unknown[];measuringSettings:unknown[]}};
+    expect(measured.data.measuringSettings).toEqual([{on:true}]);
+    expect(measured.data.timingDays).toContainEqual(expect.objectContaining({kind:'request',name:'web',count:1}));
     expect(await (await request('Bearer '+token)).json()).toEqual({data:{tasks:[{id:'pump',title:'Pump'}],approvals:[],memoryKnowledge:{total:0}}});
     ws = new WebSocket(loom.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+token}});
     await once(ws,'open');

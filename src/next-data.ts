@@ -1,3 +1,4 @@
+import { measuringVisibility } from './core/measuring/visibility.js';
 /** Shared-data transport composition. No schema creation or legacy credentials. */
 import type { IncomingMessage } from 'node:http';
 import type { Viewer } from './policy.js';
@@ -21,8 +22,8 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
     tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
-      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync'],
-    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer) },
+      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'timingDays', 'measuringSettings'],
+    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...measuringVisibility(viewer) },
   }), fields);
   const socket = dataSocket({ live, clock, originAllowed,
     authenticate(request) {

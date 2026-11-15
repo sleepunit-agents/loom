@@ -11,6 +11,7 @@ interface ChangePresentation { renderChange?: RenderApprovalChange }
  * Always is offered only when that door supplies its concrete scope and action.
  */
 export interface ApprovalActions {
+  supports?(approval: Approval): boolean;
   allow(id: string): Promise<void>;
   deny(id: string): Promise<void>;
   always?: { label: string; approval: string; run(id: string): Promise<void> };
@@ -29,7 +30,7 @@ function Answer({ approval, actions }: { approval: Approval; actions?: ApprovalA
     finally { active.current = false; setBusy(false); }
   }
   return <>
-    {approval.state === 'pending' && actions && <div role="group" aria-label="Answer approval" className="flex flex-wrap gap-2">
+    {approval.state === 'pending' && actions && (!actions.supports || actions.supports(approval)) && <div role="group" aria-label="Answer approval" className="flex flex-wrap gap-2">
       <Button disabled={busy} onClick={() => void send(() => actions.allow(approval.id))}>Allow</Button>
       {actions.always?.approval === approval.id && <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.always!.run(approval.id))}>{actions.always.label}</Button>}
       <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.deny(approval.id))}>Deny</Button>
