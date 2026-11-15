@@ -1,6 +1,7 @@
 /** Memory stays in declared source files. Existing store/action modules own
  * their schema and retry receipts; this creates no legacy loom tables. */
-import {existsSync,mkdirSync} from 'node:fs';
+import {mkdirSync,openSync,closeSync} from 'node:fs';
+import Database from 'better-sqlite3';
 import {dirname} from 'node:path';
 import type {DataDatabase} from './core/data/database.js';
 import {eq} from 'drizzle-orm';
@@ -26,6 +27,7 @@ import {createPersonHalf} from './backends/people-creation.js';
 import type {TaskService} from './apps/tasks.js';
 import {sharedProjectSections} from './shared-memory-projects.js';
 import {sharedSharing} from './shared-sharing.js';
+import {migrateMindReceipts} from './pieces/mind/receipt-schema.js';
 export interface SharedMemoryOptions {
  sources:MindSources;
  checkingAgent:string;
@@ -36,16 +38,21 @@ export interface SharedMemoryOptions {
 export async function prepareSharedMemorySources(options:SharedMemoryOptions|undefined){
  if(!options)return;
  const {commons,agents}=options.sources;
+ const prepareReceipts=(path:string)=>{const db=new Database(path,{fileMustExist:true});try{migrateMindReceipts(db);}finally{db.close();}};
+ const fresh=async(path:string,initialise:()=>void|Promise<void>)=>{
+  try{closeSync(openSync(path,'wx',0o600));}catch(error){if((error as NodeJS.ErrnoException).code==='EEXIST')return;throw error;}
+  await initialise();prepareReceipts(path);
+ };
  for(const path of [commons.knowledge,commons.people,...agents.map(a=>a.memories)])mkdirSync(dirname(path),{recursive:true});
- if(!existsSync(commons.knowledge)){
+ await fresh(commons.knowledge,async()=>{
   const knowledge=new SqliteKnowledgeBackend({dbPath:commons.knowledge});
   try{await knowledge.getPage('bootstrap-probe');}finally{knowledge.close();}
- }
- if(!existsSync(commons.people))new PeopleStore({dbPath:commons.people}).close();
- for(const agent of agents)if(!existsSync(agent.memories)){
+ });
+ await fresh(commons.people,()=>{new PeopleStore({dbPath:commons.people}).close();});
+ for(const agent of agents)await fresh(agent.memories,()=>{
   new PeopleStore({dbPath:agent.memories,actor:agent.agent}).close();
   new ProjectsStore({dbPath:agent.memories}).close();
- }
+ });
 }
 export function validateSharedMemoryOptions(db:DataDatabase,options:SharedMemoryOptions|undefined){
  if(options&&(typeof options.checkingAgent!=='string'||!options.checkingAgent.trim()||!db.select().from(agentRows).where(eq(agentRows.id,options.checkingAgent)).get()))throw new Error('Memory needs an explicit configured checking agent');
