@@ -23,12 +23,12 @@ export async function bodyProgram(input: {
 }): Promise<number> {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
   let client: ReturnType<typeof bodyConversationClient> | undefined;
-  const context: string[] = [];
+  const context: string[] = [], incoming:string[]=[];
   const secrets = bodyStartupSecrets(input.env, {fetch:input.fetch,clock:input.clock});
   let pending: Promise<void> | undefined, cancel: (()=>void) | undefined, stopped=false, unavailable=false;
   const stopBeats=async()=>{cancel?.();cancel=undefined;await pending;};
   const nativeAbort = new AbortController(), signal = AbortSignal.any([input.signal,nativeAbort.signal]);
-  const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; };
+  const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; incoming.length=0; };
   input.signal.addEventListener('abort', erase, { once: true });
   try {
     if (input.args.length !== 1 || input.signal.aborted) throw new Error();
@@ -39,7 +39,8 @@ export async function bodyProgram(input: {
     bytes.fill(0); bytes = undefined;
     bootstrap = { ...parsed.bootstrap, token: Buffer.from(parsed.bootstrap.token, 'ascii') };
     const { job } = bodyInput(parsed.job, parsed.build, bootstrap, true);
-    if (job.harness !== 'claude' || !job.conversation || !job.thread || input.signal.aborted) throw new Error();
+    const bridge=job.venue==='discord'||job.venue==='slack';
+    if (job.harness !== 'claude' || !job.conversation || (!bridge&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge) || input.signal.aborted) throw new Error();
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
       job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
     let work='Preparing startup inputs';
@@ -59,6 +60,11 @@ export async function bodyProgram(input: {
     const batch = await client.takeAndAccept(async (item, sinkSignal) => {
       if (sinkSignal.aborted || signal.aborted) throw new Error();
       // This is the receiving body's context, never a parent's pipe queue.
+      if(bridge&&(item.source==='discord'||item.source==='slack')){
+        const refs=item.refs.filter(ref=>ref.startsWith('bi:'));
+        if(item.source!==job.venue||refs.length!==1)throw new Error();
+        if(item.words!==null)incoming.push(refs[0]);
+      }
       if (item.words !== null) context.push(item.words);
     });
     if (batch.stopRequested) { await stopBeats(); erase(); nativeAbort.abort(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
@@ -68,6 +74,7 @@ export async function bodyProgram(input: {
     if(signal.aborted)throw new Error();
     const started = await report();
     if (started.stopRequested) { await stopBeats(); erase(); nativeAbort.abort(); await client.status({state:'idle',work:'',seenStop:true}); return 0; }
+    if(bridge&&!incoming.length)throw new Error();
     const native = input.native ?? claudeBody({ ...plan, env: input.env });
     let answer: Awaited<ReturnType<typeof native>> | undefined;
     try { answer = await native(job, context.join('\n\n'), signal); }
@@ -77,7 +84,8 @@ export async function bodyProgram(input: {
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
-    await client.reply({ clientId: randomUUID(), words: answer.text, model: answer.model, outcome: 'progressed' });
+    if(bridge)await client.bridgeReply({incoming:incoming.at(-1)!,text:answer.text,model:answer.model,outcome:'progressed'});
+    else await client.reply({ clientId: randomUUID(), words: answer.text, model: answer.model, outcome: 'progressed' });
     await client.status({ state: 'idle', work: '' });
     return 0;
   } catch {

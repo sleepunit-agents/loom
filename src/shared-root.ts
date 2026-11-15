@@ -169,7 +169,6 @@ export function sharedRoot(options: {
     const latest=lastSecretChange(),credentialsChanged=latest!==secretChange;secretChange=latest;
     bridgeDaemon.changed(credentialsChanged);
   });
-  if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,viewer=>credentials.body(viewer),options.bridges!.effectsAllowed);
   comms?.install(operations);
   if(comms)registerConversationBodyOperations(operations,comms.service,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const services = {
@@ -188,6 +187,7 @@ export function sharedRoot(options: {
     runtime,
     secrets: {requests,values,inputs:privateInputs,reconcile:recoverSecrets},
   };
+  if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,services.conversations,bodyScope,options.bridges!.effectsAllowed);
   registerSharedHouseholdMembers(operations, db, services.household);
   registerSharedTaskCommands(operations, db, services.tasks);
   registerSharedBridgeCommands(operations,db,services.bridges.settings);
