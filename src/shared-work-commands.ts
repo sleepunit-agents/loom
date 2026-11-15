@@ -13,6 +13,7 @@ import type { ChangeRow } from './apps/changes.js';
 type Member = Extract<Viewer, { kind: 'member' }>;
 export interface WorkAnswerAuthority {
   approval(viewer: Member, approval: Readonly<Approval>): boolean;
+  /** Additional gate on the current PR, used by both merge-answer doors. */
   change(viewer: Member, change: Readonly<ChangeRow>, approval: Readonly<Approval>): boolean;
 }
 const id = z.string().trim().min(1);
@@ -21,40 +22,72 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   const approval = (id: string) => db.select().from(approvals).where(eq(approvals.id, id)).get();
   const change = (id: string) => db.select().from(changes).where(eq(changes.id, id)).get();
   const answers = changeAnswers(db, service);
-  const notify = (ctx: Context, id: string) => {
-    ctx.changed('approvals', id); ctx.changed('approvalRecord', id); ctx.changed('inbox', id);
+  const mergeTarget = (row: Approval) => {
+    if (row.kind !== 'merge') return;
+    const match = /^(github:[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#[1-9][0-9]*)@([0-9a-f]{40})$/.exec(row.target);
+    if (!match) throw new OperationError('conflict', 'The merge request changed. Open it again.');
+    return { id: match[1], head: match[2] };
   };
-  operations.register({ name: 'approvals.answer', write: true, recheckPolicy: true,
-    input: z.object({ id, answer: z.enum(['allow', 'deny']) }).strict(), output: z.object({ id }).strict(),
-    may(viewer, input) { const row = approval(input.id); return viewer.kind === 'member' && !!row && authority.approval(viewer, row); },
-    run(ctx, input) {
-      if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
-      try { input.answer === 'allow' ? service.allow(input.id, ctx.viewer.id) : service.deny(input.id, ctx.viewer.id); }
-      catch (error) {
-        if (error instanceof Error && ['Approval is already answered', 'Approval cannot be denied now'].includes(error.message))
-          throw new OperationError('conflict', 'This approval cannot be answered now. Open it again.');
-        throw error;
-      }
-      notify(ctx, input.id); return { id: input.id };
-    },
-  });
   const currentHead = (input: { id: string; head: string }) => {
     if (change(input.id)?.headCommit !== input.head) throw new OperationError('conflict', 'The change head moved. Open it again.');
   };
-  operations.register({ name: 'changes.answer', write: true, recheckPolicy: true,
-    input: z.object({ id, head: z.string().regex(/^[0-9a-f]{40}$/), approval: id, answer: z.enum(['yes', 'no']) }).strict(), output: z.object({ id }).strict(),
-    may(viewer, input) { const row = change(input.id), request = approval(input.approval); return viewer.kind === 'member' && !!row && !!request && authority.change(viewer, row, request); },
-    validateReplay(_viewer, input) { currentHead(input); },
+  const mayMerge = (viewer: Member, request: Approval, id: string) => {
+    const row = change(id);
+    return !!row && authority.change(viewer, row, request);
+  };
+  const answerMerge = (ctx: Context, input: { id: string; head: string; approval: string; allow: boolean }) => {
+    if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
+    currentHead(input);
+    try { answers.answer({ change: input.id, head: input.head, approval: input.approval, member: ctx.viewer.id, allow: input.allow }); }
+    catch (error) {
+      if (error instanceof Error && ['Change is no longer open', 'Change head has changed', 'Approval does not match this change', 'Approval is already answered', 'Approval cannot be denied now'].includes(error.message))
+        throw new OperationError('conflict', 'The merge request changed. Open it again.');
+      throw error;
+    }
+    // DataWrites publishes all audit/Inbox effects in this same transaction.
+    ctx.changed('approvals', input.approval); ctx.changed('changes', input.id);
+  };
+  operations.register({ name: 'approvals.answer', write: true, recheckPolicy: true,
+    input: z.object({ id, answer: z.enum(['allow', 'deny']) }).strict(), output: z.object({ id }).strict(),
+    may(viewer, input) {
+      const row = approval(input.id);
+      if (viewer.kind !== 'member' || !row || !authority.approval(viewer, row)) return false;
+      const merge = mergeTarget(row);
+      return !merge || mayMerge(viewer, row, merge.id);
+    },
+    validateReplay(_viewer, input) {
+      const row = approval(input.id);
+      if (!row) throw new OperationError('conflict', 'The approval changed. Open it again.');
+      const merge = mergeTarget(row); if (merge) currentHead(merge);
+    },
     run(ctx, input) {
       if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
-      currentHead(input);
-      try { answers.answer({ change: input.id, head: input.head, approval: input.approval, member: ctx.viewer.id, allow: input.answer === 'yes' }); }
-      catch (error) {
-        if (error instanceof Error && ['Change is no longer open', 'Change head has changed', 'Approval does not match this change', 'Approval is already answered', 'Approval cannot be denied now'].includes(error.message))
-          throw new OperationError('conflict', 'The merge request changed. Open it again.');
-        throw error;
+      const row = approval(input.id);
+      if (!row) throw new OperationError('conflict', 'The approval changed. Open it again.');
+      const merge = mergeTarget(row);
+      if (merge) answerMerge(ctx, { ...merge, approval: row.id, allow: input.answer === 'allow' });
+      else {
+        try { input.answer === 'allow' ? service.allow(input.id, ctx.viewer.id) : service.deny(input.id, ctx.viewer.id); }
+        catch (error) {
+          if (error instanceof Error && ['Approval is already answered', 'Approval cannot be denied now'].includes(error.message))
+            throw new OperationError('conflict', 'This approval cannot be answered now. Open it again.');
+          throw error;
+        }
+        ctx.changed('approvals', input.id);
       }
-      notify(ctx, input.approval); ctx.changed('changes', input.id); return { id: input.id };
+      return { id: input.id };
+    },
+  });
+  operations.register({ name: 'changes.answer', write: true, recheckPolicy: true,
+    input: z.object({ id, head: z.string().regex(/^[0-9a-f]{40}$/), approval: id, answer: z.enum(['yes', 'no']) }).strict(), output: z.object({ id }).strict(),
+    may(viewer, input) {
+      const request = approval(input.approval);
+      return viewer.kind === 'member' && !!request && authority.approval(viewer, request) && mayMerge(viewer, request, input.id);
+    },
+    validateReplay(_viewer, input) { currentHead(input); },
+    run(ctx, input) {
+      answerMerge(ctx, { ...input, allow: input.answer === 'yes' });
+      return { id: input.id };
     },
   });
 }

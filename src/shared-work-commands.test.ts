@@ -35,7 +35,8 @@ function fixture(install = true, permissive = false) {
   cleanup.push(() => root.close());
   const request = () => root.writes.run(() => root.services.approvals.request({ kind: 'merge', target: `${changeId}@${head}`, agent: 'art', project: 'pond', what: 'Merge pump', why: 'Ready', askedFrom: 'loom', actingFor: 'owner', ask: 'Merge?', ifYes: 'Agent merges this head', ifNo: 'Wait' })).value;
   const send = (piece: string, input: unknown, id = 'answer') => root.http.request(`http://loom/api/${piece}/answer`, { method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie }, body: JSON.stringify({ input, id }) });
-  const seedChange = () => db.insert(changes).values({ id: changeId, repository: 'house/pond', number: 1, title: 'Pump', body: '', url: 'https://github.com/house/pond/pull/1', state: 'open', draft: false, authorLogin: 'art', project: 'pond', agent: 'art', branch: 'pump', headCommit: head, baseBranch: 'next', checks: 'passing', review: 'approved', mergeable: 'yes', waitingOn: 'you', openedAt: at, updatedAt: at }).run();
+  const seedChange = () => db.insert(changes).values({ id: changeId, repository: 'house/pond', number: 1, title: 'Pump', body: '', url: 'https://github.com/house/pond/pull/1', state: 'open', draft: false, authorLogin: 'art', project: 'pond', agent: 'art', branch: 'pump', headCommit: head, baseBranch: 'next', checks: 'passing', review: 'approved', mergeable: 'yes', waitingOn: 'you', openedAt: at, updatedAt: at }).onConflictDoNothing().run();
+  seedChange();
   return { db, root, request, send, seedChange };
 }
 
@@ -144,4 +145,24 @@ it('binds the No merge reply, revokes the allowance and preserves a current CI b
   expect(f.root.services.approvals.get(first.id)).toMatchObject({ state: 'denied', overriddenBy: denial.id });
   expect(f.db.select().from(changes).get()).toMatchObject({ waitingOn: 'ci', checks: 'running' });
   expect(f.db.select().from(operationResults).all()).toHaveLength(2);
+});
+
+it('refuses stale merge heads through the Approvals door for fresh calls and cached replay', async () => {
+  const f = fixture(), first = f.request(), second = f.request();
+  const input = { id: first.id, answer: 'allow' };
+  expect((await f.send('approvals', input)).status).toBe(200);
+  f.root.writes.run(() => f.db.update(changes).set({ headCommit: 'c'.repeat(40) }).run());
+  expect((await f.send('approvals', input)).status).toBe(409);
+  expect((await f.send('approvals', { id: second.id, answer: 'allow' }, 'fresh-stale')).status).toBe(409);
+  expect(f.root.services.approvals.get(second.id).state).toBe('pending');
+  expect(f.root.services.approvals.get(first.id).target).toBe(`${changeId}@${head}`);
+  expect(f.db.select().from(operationResults).all()).toHaveLength(1);
+});
+
+it('keeps non-merge approvals independent of the Changes cache', async () => {
+  const f = fixture();
+  const request = f.root.writes.run(() => f.root.services.approvals.request({ kind: 'command', target: 'runner:fixture:command', agent: 'art', what: 'Run a command', why: 'Needed', askedFrom: 'loom', actingFor: 'owner', ask: 'Run it?', ifYes: 'The agent may run it', ifNo: 'Wait' })).value;
+  f.root.writes.run(() => f.db.delete(changes).run());
+  expect((await f.send('approvals', { id: request.id, answer: 'allow' })).status).toBe(200);
+  expect(f.root.services.approvals.get(request.id)).toMatchObject({ state: 'allowed', decidedBy: 'sam' });
 });
