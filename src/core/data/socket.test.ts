@@ -332,3 +332,16 @@ it('fences validation callbacks synchronously when a literal callback closes the
   await started; await closing;
   expect(late).toBe(0);
 });
+
+it('does not build a schema after activity synchronously stops admission', async () => {
+  let activity: (() => void) | undefined, built = 0;
+  const f = await setup(() => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => true, activity: () => activity?.() }));
+  const ws = await f.open();
+  f.setSchema(() => { built++; return dataQueries(f.client, { tables: ['tasks'], visibility: taskVisibility({ kind: 'member', id: 'sam' }) }); });
+  let began!: () => void, closing!: Promise<void>;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  activity = () => { closing = f.socket.close(); began(); };
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'activity', payload: { query: '{ tasks { id } }' } }));
+  await started; await closing;
+  expect(built).toBe(0);
+});

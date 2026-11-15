@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { defaultFieldResolver, isObjectType, isInterfaceType, isUnionType, isScalarType, isEnumType, type GraphQLSchema } from 'graphql/index.js';
+import { defaultFieldResolver, defaultTypeResolver, type ExecutionArgs, isObjectType, isInterfaceType, isUnionType, isScalarType, isEnumType, type GraphQLSchema } from 'graphql/index.js';
 
 type Tracked<T> = T extends { then: (...args: never[]) => unknown } ? Promise<Awaited<T>> : T;
 type Scope = { drain: ExecutionDrain; admitted(): boolean };
@@ -45,8 +45,8 @@ export class ExecutionDrain {
   async drain() { while (this.active) await new Promise<void>(resolve => this.waiters.add(resolve)); }
 }
 
-function wrap(target: object, key: string, fallback?: typeof defaultFieldResolver) {
-  const record = target as Record<string, unknown>, original = record[key] ?? fallback;
+function wrap(target: object, key: string) {
+  const record = target as Record<string, unknown>, original = record[key];
   if (typeof original !== 'function' || wrappers.get(target)?.get(key) === original) return;
   const wrapped = function(this: unknown, ...args: unknown[]) {
     const active = scopes.getStore();
@@ -67,7 +67,7 @@ export function instrumentExecution(schema: GraphQLSchema) {
     if (type.name.startsWith('__')) continue;
     if (isObjectType(type) || isInterfaceType(type)) {
       for (const field of Object.values(type.getFields())) {
-        wrap(field, 'resolve', defaultFieldResolver);
+        wrap(field, 'resolve');
         wrap(field, 'subscribe');
       }
     }
@@ -77,4 +77,19 @@ export function instrumentExecution(schema: GraphQLSchema) {
       for (const key of ['serialize', 'parseValue', 'parseLiteral']) wrap(type, key);
     }
   }
+}
+
+/** Defaults belong to this execution, so a later unscoped installed caller can
+ * still supply its own field/type resolver on the same schema. */
+export function executionArguments<T extends ExecutionArgs>(args: T): T {
+  const tracked = <F extends (...args: never[]) => unknown>(callback: F): F =>
+    function(this: unknown, ...values: never[]) {
+      const active = scopes.getStore();
+      const call = () => Reflect.apply(callback, this, values);
+      return active?.length ? invoke(active, call) : call();
+    } as F;
+  return { ...args, fieldResolver: tracked(args.fieldResolver ?? defaultFieldResolver),
+    typeResolver: tracked(args.typeResolver ?? defaultTypeResolver),
+    subscribeFieldResolver: tracked((args as T & { subscribeFieldResolver?: typeof defaultFieldResolver }).subscribeFieldResolver ?? defaultFieldResolver),
+  };
 }

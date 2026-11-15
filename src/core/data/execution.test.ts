@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { execute, parse, GraphQLSchema, GraphQLObjectType, GraphQLNonNull, GraphQLString, GraphQLScalarType, GraphQLInterfaceType } from 'graphql/index.js';
-import { ExecutionDrain, instrumentExecution } from './execution.js';
+import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
 
 it('assimilates a query thenable once and preserves synchronous results/errors', async () => {
   const drain = new ExecutionDrain(); let calls = 0;
@@ -63,4 +63,32 @@ it.each(['isTypeOf', 'resolveType'])('retains an asynchronous %s callback after 
   expect(result.errors).toBeDefined(); open = false;
   let closed = false; const closing = drain.drain().then(() => { closed = true; });
   await Promise.resolve(); expect(closed).toBe(false); release(); await closing; expect(closed).toBe(true);
+});
+
+it('preserves executor-supplied resolvers for unscoped installed callers', async () => {
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    value: { type: GraphQLString },
+  } }) });
+  instrumentExecution(schema);
+  const result = await execute({ schema, document: parse('{ value }'), fieldResolver: () => 'custom' });
+  expect(result.data?.value).toBe('custom');
+});
+
+it('retains an execution-supplied resolver after a sibling non-null failure', async () => {
+  const drain = new ExecutionDrain(); let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    slow: { type: GraphQLString }, broken: { type: new GraphQLNonNull(GraphQLString) },
+  } }) });
+  instrumentExecution(schema);
+  const result = await drain.scope(() => true, () => execute(executionArguments({
+    schema, document: parse('{ slow broken }'), fieldResolver: async (_s, _a, _c, info) => {
+      if (info.fieldName === 'broken') throw Error('broken');
+      await held; return 'slow';
+    },
+  })));
+  expect(result.errors).toBeDefined();
+  let drained = false; const closing = drain.drain().then(() => { drained = true; });
+  await Promise.resolve(); expect(drained).toBe(false);
+  release(); await closing; expect(drained).toBe(true);
 });

@@ -6,7 +6,7 @@ import { execute, subscribe, validate, GraphQLError, type ExecutionArgs, type Gr
 import type { Viewer } from '../../policy.js';
 import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
-import { ExecutionDrain, instrumentExecution } from './execution.js';
+import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
 import { DataLive } from './live.js';
 import { dataSubscriptions } from './subscriptions.js';
 
@@ -34,12 +34,13 @@ export function dataSocket(options: {
   const protocol = useServer({
     isProd: true,
     connectionInitWaitTimeout: 0, // the owned clock below bounds admission
-    onConnect(ctx) { return !stopping && admitted.get(ctx.extra.socket)?.valid() === true; },
+    onConnect(ctx) { return !stopping && admitted.get(ctx.extra.socket)?.valid() === true && !stopping; },
     schema(ctx) {
       if (stopping) throw new Error('Data access ended');
       const auth = admitted.get(ctx.extra.socket);
-      if (!auth?.valid()) throw new Error('Authentication ended');
+      if (stopping || !auth?.valid() || stopping) throw new Error('Authentication ended');
       auth.activity?.();
+      if (stopping || !auth.valid() || stopping) throw new Error('Data access ended');
       const schema = dataSubscriptions(options.schema(auth.viewer), options.live, () => !stopping && auth.valid());
       instrumentExecution(schema);
       return schema;
@@ -47,15 +48,15 @@ export function dataSocket(options: {
     context(ctx) {
       if (stopping) throw new Error('Data access ended');
       const auth = admitted.get(ctx.extra.socket);
-      if (!auth?.valid()) throw new Error('Authentication ended');
+      if (stopping || !auth?.valid() || stopping) throw new Error('Authentication ended');
       // The same server-resolved principal feeds direct reads and every live
       // execution. Neither variables nor connectionParams supply this context.
       return Object.freeze({ viewer: auth.viewer });
     },
     validate: (...args) => run(() => validate(...args)),
-    execute: (args: ExecutionArgs) => run(() => execute(args)),
+    execute: (args: ExecutionArgs) => run(() => execute(executionArguments(args))),
     subscribe: (args: ExecutionArgs) => run(async () => {
-      const result = await subscribe(args);
+      const result = await subscribe(executionArguments(args));
       if (stopping && Symbol.asyncIterator in result) {
         await result[Symbol.asyncIterator]().return?.();
         throw new Error('Data access ended');
@@ -86,8 +87,8 @@ export function dataSocket(options: {
       let auth: Authentication | undefined;
       try { auth = options.authenticate(request); } catch { /* fail closed */ }
       const protocols = request.headers['sec-websocket-protocol']?.split(',').map(s => s.trim());
-      if (!auth?.valid() || auth.viewer.kind === 'service' || auth.viewer.kind === 'runner' ||
-          (auth.window && !request.headers.origin) || !options.originAllowed(request) || !protocols?.includes('graphql-transport-ws')) {
+      if (stopping || !auth?.valid() || stopping || auth.viewer.kind === 'service' || auth.viewer.kind === 'runner' ||
+          (auth.window && !request.headers.origin) || !options.originAllowed(request) || stopping || !protocols?.includes('graphql-transport-ws')) {
         socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return;
       }
       const authentication = auth;
@@ -97,7 +98,7 @@ export function dataSocket(options: {
         // between execution and ws.send; recheck even buffered initial results.
         const send = socket.send.bind(socket);
         socket.send = ((...args: Parameters<WebSocket['send']>) => {
-          if (stopping || !authentication.valid()) {
+          if (stopping || !authentication.valid() || stopping) {
             socket.close(4403, 'Authentication ended');
             const callback = args.at(-1);
             if (typeof callback === 'function') callback(new Error('Authentication ended'));

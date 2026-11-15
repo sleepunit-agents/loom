@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { GraphQLObjectType, GraphQLSchema, GraphQLInterfaceType, GraphQLUnionType, GraphQLList, GraphQLNonNull, type GraphQLType, type GraphQLNamedType, type GraphQLFieldConfigMap } from 'graphql/index.js';
+import { GraphQLObjectType, GraphQLSchema, GraphQLInterfaceType, GraphQLUnionType, GraphQLList, GraphQLNonNull, type execute, type GraphQLType, type GraphQLNamedType, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import { bodyLimit } from 'hono/body-limit';
 import type { Viewer } from '../../policy.js';
 import { createYoga } from 'graphql-yoga';
@@ -8,7 +8,7 @@ import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
 import { dataAuthentication } from './authentication.js';
 import type { DataDatabase } from './database.js';
-import { ExecutionDrain, instrumentExecution } from './execution.js';
+import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
 
 /** Authenticated GraphQL HTTP door on the shared connection. Authentication is
  * supplied by the composition's session/token resolver, never a request viewer.
@@ -55,7 +55,10 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
         onRequest({ requestHandler, setRequestHandler }) {
           setRequestHandler((...args) => executions.scope(() => !stopping, () => requestHandler(...args)));
         },
-        onExecute() { if (stopping || !auth!.valid() || stopping) throw new Error('Authentication ended'); },
+        onExecute({ executeFn, setExecuteFn }: { executeFn: typeof execute; setExecuteFn(fn: typeof execute): void }) {
+          if (stopping || !auth!.valid() || stopping) throw new Error('Authentication ended');
+          setExecuteFn(args => executeFn(executionArguments(args)));
+        },
         onSubscribe() { throw new Error('Use the websocket for subscriptions'); },
       }],
     });

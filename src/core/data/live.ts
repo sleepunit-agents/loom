@@ -1,4 +1,4 @@
-import { ExecutionDrain, instrumentExecution } from './execution.js';
+import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
 import { execute, getOperationAST, parse, validate, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
 
 /** Paths address the selected GraphQL result, including aliases. Values are
@@ -47,7 +47,7 @@ export class DataLive {
   private async read(args: ExecutionArgs) {
     if (this.stopped) throw new Error('Live data access ended');
     instrumentExecution(args.schema);
-    return this.executions.scope(() => !this.stopped, () => execute(args));
+    return this.executions.scope(() => !this.stopped, () => execute(executionArguments(args)));
   }
 
   watch(options: {
@@ -94,7 +94,7 @@ export class DataLive {
           if (ended) break;
           if (this.stopped || result === cancelled) throw new Error('Live data access ended');
           if (result.errors?.length) throw result.errors[0];
-          if (!options.valid()) throw new Error('Live data access ended');
+          if (!options.valid() || this.stopped) throw new Error('Live data access ended');
           // The generator resolves asynchronously. A commit while execution
           // yielded invalidates that result before any words leave this stream.
           if (dirty) continue;
