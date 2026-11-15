@@ -34,24 +34,28 @@ export function validateMemoryInput(input: MemoryInput): string | null {
   return null;
 }
 
-export async function remember(
-  contextDir: string,
-  input: MemoryInput,
-  selection?: MemorySelection,
-): Promise<MemoryRef> {
+/** The same validation and episode defaults apply at every write door. */
+export function prepareMemoryInput(input:MemoryInput):MemoryInput {
   const reason = validateMemoryInput(input);
   if (reason !== null) {
     // Rejected pre-commit: nothing is opened or written. The thrown reason is
     // the typed rejection (dispatch wraps it into a typed envelope at the edge).
     throw new Error(`Error: ${reason}`);
   }
-  const backend = createBackend(contextDir, selection);
   // An episode is short-term by definition: without an explicit ttl it gets the
   // tier default, so a body can never accidentally leave a permanent episode.
   const isEpisode = input.category === EPISODE_CATEGORY;
-  if (isEpisode && !input.ttl) {
-    input = { ...input, ttl: EPISODE_DEFAULT_TTL };
-  }
+  return isEpisode&&!input.ttl?{...input,ttl:EPISODE_DEFAULT_TTL}:input;
+}
+
+export async function remember(
+  contextDir: string,
+  input: MemoryInput,
+  selection?: MemorySelection,
+): Promise<MemoryRef> {
+  input=prepareMemoryInput(input);
+  const backend = createBackend(contextDir, selection);
+  const isEpisode=input.category===EPISODE_CATEGORY;
   try {
     const ref = await backend.remember(input);
     // Record health only for episode writes — that's the path identity.ts monitors.
