@@ -31,28 +31,26 @@ export class InboxQueries {
     // The personal app always shows its recipient's mailbox. Other apps may
     // use the generated table projection for visible records addressed elsewhere.
     if (viewer.kind !== 'member' && viewer.kind !== 'agent') return [];
+    return this.mailbox(viewer, filter).limit(limit).offset(offset).all();
+  }
+  private mailbox(viewer: Viewer, filter: InboxFilter) {
     return this.db.select().from(inbox).where(and(this.allowed(viewer), eq(inbox.to, viewer.id),
       eq(inbox.toKind, viewer.kind === 'member' ? 'person' : 'agent'),
       filter.state ? eq(inbox.state, filter.state) : undefined,
       filter.source ? eq(inbox.source, filter.source) : undefined,
       filter.agent ? eq(inbox.agent, filter.agent) : undefined))
-      .orderBy(desc(inbox.at), desc(inbox.id)).limit(limit).offset(offset).all();
+      .orderBy(desc(inbox.at), desc(inbox.id));
   }
+
   /** Search the recipient's whole mailbox before paging. Private text is opened
    * only through body(), and is never indexed or written back to the database. */
   async search(viewer: Viewer, filter: InboxFilter = {}): Promise<Item[]> {
     const query = filter.search?.trim().toLocaleLowerCase() ?? '';
-    if (query.length > 500) throw new Error('Invalid Inbox search');
     // Validate the same page bounds even for an empty or unauthorized mailbox.
     this.list(viewer, filter);
     if (!query) return this.list(viewer, filter);
     if (viewer.kind !== 'member' && viewer.kind !== 'agent') return [];
-    const candidates = this.db.select().from(inbox).where(and(this.allowed(viewer), eq(inbox.to, viewer.id),
-      eq(inbox.toKind, viewer.kind === 'member' ? 'person' : 'agent'),
-      filter.state ? eq(inbox.state, filter.state) : undefined,
-      filter.source ? eq(inbox.source, filter.source) : undefined,
-      filter.agent ? eq(inbox.agent, filter.agent) : undefined))
-      .orderBy(desc(inbox.at), desc(inbox.id)).all();
+    const candidates = this.mailbox(viewer, filter).all();
     const privateState = (item: Item) => {
       const message = item.thread ? this.db.select().from(messages).where(and(eq(messages.thread, item.thread),
         eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, item.id))).get() : undefined;

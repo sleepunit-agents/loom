@@ -181,7 +181,7 @@ it('searches retained private wording without persisting it and never searches a
   expect(f.opens()).toBe(opened);
 });
 it('withdraws earlier matches when later decrypts revoke access or let private matches expire', async () => {
-  for (const change of ['policy', 'expiry', 'ciphertext', 'linkage'] as const) {
+  for (const change of ['policy', 'expiry', 'ciphertext', 'linkage', 'household', 'deadline'] as const) {
     const f = await fixture();
     await f.comms.ask(f.thread.id, 'art', 'ask-2', { words: 'Another private question', answers: 'yes-no' });
     let count = 0;
@@ -189,6 +189,8 @@ it('withdraws earlier matches when later decrypts revoke access or let private m
       if (++count !== 2) return;
       if (change === 'policy') f.revoke();
       if (change === 'expiry') f.time('2026-11-29T18:00:00.000Z');
+      if (change === 'household') f.db.insert(household).values({ commsDays: 1 }).run();
+      if (change === 'deadline') f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00.000Z' }).run();
       if (change === 'ciphertext') f.db.update(messages).set({ words: Buffer.from('Changed') }).run();
       if (change === 'linkage') f.db.update(threads).set({ conversation: f.comms.threads.conversations.open({ agent: 'art', venue: 'loom', place: 'other', member: 'alice', label: 'Other' }).id }).where(eq(threads.id, f.thread.id)).run();
     });
@@ -197,7 +199,7 @@ it('withdraws earlier matches when later decrypts revoke access or let private m
 });
 it('validates search and paging bounds and treats metacharacters literally', async () => {
   const f = await fixture();
-  await expect(f.service.search(alice, { search: 'x'.repeat(501) })).rejects.toThrow('Invalid Inbox search');
+  expect(await f.service.search(alice, { search: 'x'.repeat(501) })).toEqual([]);
   await expect(f.service.search(alice, { search: 'private', limit: 101 })).rejects.toThrow('Invalid Inbox page');
   await expect(f.service.search(alice, { search: 'private', offset: -1 })).rejects.toThrow('Invalid Inbox page');
   expect(await f.service.search(alice, { search: '%_' })).toEqual([]);
@@ -218,4 +220,14 @@ it('searches answered items and individual metadata fields, without crossing fie
   expect((await f.service.search(alice, { search: 'matched', state: 'answered' })).map(i => i.id)).toEqual([first.id]);
   for (const search of [first.id, 'task', 'unique-source', 'author']) expect((await f.service.search(alice, { search })).map(i => i.id)).toContain(first.id);
   expect(await f.service.search(alice, { search: 'alpha beta' })).toEqual([]);
+});
+
+it('searches each remaining question body field and a long literal passage', async () => {
+  const f = await fixture();
+  for (const search of ['Order it', 'Skip it', 'https://example.test/private-question']) {
+    expect((await f.service.search(alice, { search })).map(i => i.id)).toEqual([f.ask.inboxItem]);
+  }
+  const passage = 'a'.repeat(501);
+  const item = f.comms.threads.conversations.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', member: 'alice', words: passage });
+  expect((await f.service.search(alice, { search: passage })).map(i => i.id)).toEqual([item.id]);
 });
