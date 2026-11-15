@@ -12,6 +12,7 @@ import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
 import {maskCredentialScreenshots} from './rebuild-credential-evidence.mjs';
 import {accessAction} from './rebuild-access-actions.mjs';
+
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
@@ -20,6 +21,7 @@ import {inboxActions} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
 import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {approvalInbox} from './rebuild-approval-inbox.mjs';
 
 
 import {tmpdir} from 'node:os';
@@ -32,8 +34,10 @@ import {exampleHome} from '../dist/example-home.js';
 import {conversationRecords} from './rebuild-conversation-records.mjs';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {deskActions} from './rebuild-desk-actions.mjs';
+import {appearanceActions} from './rebuild-appearance-actions.mjs';
 import {tempoWalkthrough} from './rebuild-tempo.mjs';
 import {FakeClock} from '../dist/core/clock.js';
+
 
 export const redact=text=>String(text).replace(/(\/login\/)[^\s"'<>\\)]+/g,'$1[redacted]').replace(/(Bearer\s+|loom_ui=)[^\s;"'<>\\)]+/gi,'$1[redacted]').replace(/AGE-SECRET-KEY-[A-Z0-9-]+/g,'[private key redacted]');
 export const safeReport=report=>JSON.parse(JSON.stringify(report,(_key,value)=>typeof value==='string'?redact(value):value));
@@ -186,11 +190,16 @@ export async function* walkthroughSteps(output) {
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
   Object.assign(report.actions,await deskActions({page,out,inventory:report.inventory}));
+
   save();yield {phase:'desk',actions:safeReport(report.actions)};
+  Object.assign(report.actions,await appearanceActions({page,app,out}));
+  save();yield {phase:'appearance',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out}));
   save();yield {phase:'data',actions:safeReport(report.actions)};
   Object.assign(report.actions,await conversationVisibilityActions({page,browser,app,home,out,verifyIsolation}));
   save();yield {phase:'visibility',actions:safeReport(report.actions)};
+  report.actions.approvalInbox=await approvalInbox({page,tile:await openApp('Inbox'),app,example:report.example,out});
+  save();yield {phase:'approval-source',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}
