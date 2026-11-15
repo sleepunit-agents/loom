@@ -17,6 +17,7 @@ function seed(){f.reading={status:'live',data:{members:[{id:'owner',role:'owner'
 it('clears retained administration forms when loading, offline, denied or current owner role is lost',async()=>{
  seed();await act(async()=>{tree=create(h(Setup));});expect(tree.root.findAllByType('form')).toHaveLength(3);
  for(const status of ['loading','offline','denied']){f.reading={...f.reading,status};await act(async()=>tree.update(h(Setup)));expect(tree.root.findAllByType('form')).toHaveLength(0);expect(JSON.stringify(tree.toJSON())).not.toContain('Fixture biography');}
+ seed();await act(async()=>tree.update(h(Setup)));expect(tree.root.findAllByType('form')).toHaveLength(3);
  f.reading={status:'live',data:{...f.reading.data,members:[f.reading.data.members[1]]}};await act(async()=>tree.update(h(Setup)));expect(tree.root.findAllByType('form')).toHaveLength(0);
 });
 it('keeps household role separate from every-agent ownership and sends the existing canonical member input',async()=>{
@@ -30,6 +31,9 @@ it('keeps household role separate from every-agent ownership and sends the exist
  await act(async()=>form().props.onSubmit({preventDefault(){},currentTarget:{}}));
  expect(f.save).toHaveBeenCalledWith('household.setMember',{id:'peer',role:'owner',fullOwner:false,agents:['art']});
  expect(JSON.stringify(form().toJSON?.()??tree.toJSON())).toContain('Saved');
+ await act(async()=>form().findAllByType('input').find((input:any)=>input.props.checked!==undefined).props.onChange({target:{checked:true}}));
+ await act(async()=>form().props.onSubmit({preventDefault(){},currentTarget:{}}));
+ expect(f.save).toHaveBeenLastCalledWith('household.setMember',{id:'peer',role:'owner',fullOwner:true,agents:['art']});
 });
 it('shows success only for the exact acknowledged member ID',async()=>{
  seed();await act(async()=>{tree=create(h(Setup));});
