@@ -124,6 +124,10 @@ export class TriggerEngine {
     // Built-in operations can change triggers in the firing transaction. Finish
     // that transaction before another scan can observe or fire its rows.
     if (this.ticking) { this.again = true; return; }
+    // A command may still be saving its receipt in the shared outer
+    // transaction. Its commit hook will rescan; a rollback must not admit work
+    // or publish provisional data, or replace the last committed timer.
+    if (this.db.$client.inTransaction) return;
     this.ticking = true;
     try {
       do { this.again = false; this.scan(); } while (this.again && !this.closed);
