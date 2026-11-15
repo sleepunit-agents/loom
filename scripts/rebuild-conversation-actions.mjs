@@ -2,10 +2,8 @@
  * Reads inspect only its disposable example store; writes use visible controls. */
 import {join} from 'node:path';
 import {commsDeliveryEvidence} from '../dist/rebuild/comms-delivery-evidence.js';
-export async function conversationActions({page,app,example,out,open,actions=['commsSend','commsSendReload','inboxAnswer','commsAnswer'],previous={}}){
- const activate=async button=>{await button.waitFor({state:'visible'});await button.focus();await button.press('Enter');};
- const readyButton=async button=>{const enabled=button.and(page.locator(':enabled'));await enabled.waitFor({state:'visible'});await enabled.focus();return enabled;};
- const select=async tile=>{
+const activate=async button=>{await button.waitFor({state:'visible'});await button.focus();await button.press('Enter');};
+export async function selectExampleConversation(page,tile){
   const heading=tile.getByRole('heading',{name:'Repair the garden pump',exact:true});
   const row=tile.locator('[data-split-row]:visible').filter({hasText:'Repair the garden pump'}).first();
   const back=tile.getByRole('button',{name:/Back to conversations/});
@@ -13,7 +11,10 @@ export async function conversationActions({page,app,example,out,open,actions=['c
   if(await heading.isVisible())return;
   if(await back.isVisible())await activate(back);
   await activate(row);await heading.waitFor({state:'visible'});
- };
+ }
+export async function conversationActions({page,app,example,out,open,actions=['commsSend','commsSendReload','inboxAnswer','commsAnswer'],previous={}}){
+ const readyButton=async button=>{const enabled=button.and(page.locator(':enabled'));await enabled.waitFor({state:'visible'});await enabled.focus();return enabled;};
+ const select=tile=>selectExampleConversation(page,tile);
  const visibleComms=async()=>{
   const tile=page.getByRole('region',{name:'Comms tile',exact:true});
   return await tile.isVisible()?tile:open('Comms');
@@ -25,6 +26,7 @@ export async function conversationActions({page,app,example,out,open,actions=['c
  const response=path=>{const pending=page.waitForResponse(value=>new URL(value.url()).pathname===path&&value.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});return pending;};
  const result=async pending=>{const value=await pending,body=await value.json();if(value.status()!==200||body.ok!==true)throw Error('Browser action was not accepted');return {body:body.value,input:value.request().postDataJSON().input};};
  if(actions.includes('commsSend'))await attempt('commsSend',async()=>{
+  const approvalCountBefore=app.services.approvals.list().length;
   phase='open-comms';let tile=await open('Comms');phase='select-conversation';await select(tile);
   phase='fill-message';await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(words);
   phase='prepare-send-button';const send=await readyButton(tile.getByRole('button',{name:'Send',exact:true}));
@@ -33,7 +35,8 @@ export async function conversationActions({page,app,example,out,open,actions=['c
   const receipt={thread:sent.body.thread,seq:sent.body.seq,item:sent.body.item};
   const {ok,count:inboxCopies}=commsDeliveryEvidence(app.services.comms.db.$client,{thread:example.thread,conversation:example.conversation,agent:'fern'},receipt);
   const screenshot='action-comms-send-before-reload.png';await tile.screenshot({path:join(out,screenshot)});
-  return{ok:false,inconclusive:ok,receiptVerified:ok,reason:ok?'Send receipt verified; reload has not yet been observed.':'Send receipt differed from its delivery.',persistedAfterReload:false,receipt,inboxCopies,screenshot};
+  const approvalCountAfter=app.services.approvals.list().length,ordinaryVerified=approvalCountBefore===approvalCountAfter;
+  return{ok:false,inconclusive:ok&&ordinaryVerified,receiptVerified:ok,ordinaryVerified,approvalCountBefore,approvalCountAfter,reason:!ordinaryVerified?'Ordinary send created an approval.':ok?'Send receipt verified; reload has not yet been observed.':'Send receipt differed from its delivery.',persistedAfterReload:false,receipt,inboxCopies,screenshot};
  });
  if(actions.includes('commsSendReload'))await attempt('commsSend',async()=>{
   const sent=evidence.commsSend;if(!sent?.receipt)throw Error('Send did not return an accepted receipt');
@@ -42,7 +45,7 @@ export async function conversationActions({page,app,example,out,open,actions=['c
   phase='persisted-message-visible';await tile.getByText(words,{exact:true}).waitFor();
   const {ok,count:inboxCopies}=commsDeliveryEvidence(app.services.comms.db.$client,{thread:example.thread,conversation:example.conversation,agent:'fern'},sent.receipt);
   const screenshot='action-comms-send.png';await tile.screenshot({path:join(out,screenshot)});
-  return{ok:sent.receiptVerified===true&&ok,persistedAfterReload:true,receipt:sent.receipt,inboxCopies,screenshot,sendDurationMs:sent.durationMs};
+  return{ok:sent.receiptVerified===true&&sent.ordinaryVerified===true&&ok,ordinaryVerified:sent.ordinaryVerified,approvalCountBefore:sent.approvalCountBefore,approvalCountAfter:sent.approvalCountAfter,persistedAfterReload:true,receipt:sent.receipt,inboxCopies,screenshot,sendDurationMs:sent.durationMs};
  });
  if(actions.includes('inboxAnswer'))await attempt('inboxAnswer',async()=>{
   const tile=await open('Inbox');await activate(tile.getByRole('button',{name:'Go to Inbox',exact:true}));await activate(tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(question,{exact:true})}));

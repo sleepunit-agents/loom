@@ -763,12 +763,17 @@ describe('criterion 9: one decrypt path', () => {
     // may name the review key or import the audit module; keep the allowlist exact.
     const library = all.filter((f) => /from\s+['"]age-encryption['"]|import\(\s*['"]age-encryption['"]|require\(\s*['"]age-encryption['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
     expect(library).toEqual(['../scripts/rebuild-retention.mjs', '../scripts/rebuild-secret-holder.mjs', 'comms.ts', 'core/household/backup-bundle.ts', 'core/household/backup-image.ts', 'core/household/backup-restore.ts', 'core/household/backup-schema.ts', 'pieces/comms/crypto.ts', 'pieces/secrets/age-source.ts', 'pieces/secrets/holder-store.ts', 'shared-holder-storage.ts']);
-    // The disposable retention proof uses only its own generated Comms identity.
-    expect(code(join(repoRoot, 'scripts/rebuild-retention.mjs'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js/);
-    // The owned holder bootstrap only generates independent keys; decrypt stays in HolderStore.
+    // Acceptance-only expiry checks use their fresh home's Comms identity, never review keys.
+    const retentionProof=code(join(repoRoot,'scripts/rebuild-retention.mjs'));
+    expect(retentionProof).toMatch(/readKey\(join\(home,\s*['"]comms\.key['"]\)\)/);
+    expect(retentionProof.match(/\breadKey\s*\(/g)).toHaveLength(1);
+    expect(retentionProof).not.toMatch(/\b(?:REVIEW_KEY|decryptAuditText|homedir|readFileSync|process)\b|review\.key|audit\.js/);
+    const acceptanceHolder=code(join(repoRoot,'scripts/rebuild-secret-holder.mjs'));
+    expect(acceptanceHolder).toMatch(/import\s*\{\s*generateIdentity\s*\}\s*from\s*['"]age-encryption['"]/);
+    expect(acceptanceHolder.match(/['"]age-encryption['"]/g)).toHaveLength(1);
+    expect(acceptanceHolder).not.toMatch(/\b(?:Encrypter|Decrypter|decrypt|addIdentity|identityToRecipient|setPassphrase|REVIEW_KEY)\b|review\.key|audit\.js/);
     expect(code(join(srcDir, 'shared-holder-storage.ts'))).not.toMatch(/\b(?:Decrypter|decrypt|addIdentity|setPassphrase|REVIEW_KEY)\b|review\.key|audit\.js/);
-    // The disposable holder adapter generates its own identity; decryption stays in the store.
-    expect(code(join(repoRoot, 'scripts/rebuild-secret-holder.mjs'))).not.toMatch(/\b(?:Decrypter|decrypt|addIdentity|setPassphrase|REVIEW_KEY)\b|review\.key|audit\.js/);
+
     expect(code(join(repoRoot, 'test/fixtures/shared-ui-program.ts'))).not.toMatch(/\b(?:Decrypter|decrypt|addIdentity|setPassphrase|REVIEW_KEY)\b|review\.key|audit\.js/);
     expect(code(join(srcDir, 'core/household/backup-image.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js|node:fs|node:child_process|node:crypto|\bgenerate[A-Z]\w*\b/);
     expect(code(join(srcDir, 'core/household/backup-bundle.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js|node:fs|node:child_process|\bgenerate[A-Z]\w*\b/);

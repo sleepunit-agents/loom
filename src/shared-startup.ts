@@ -35,7 +35,7 @@ const programSchema=z.object({
 type RootOptions=Parameters<typeof sharedRoot>[0];
 /** A trusted local module supplies existing outside-service ports. No request
  * or database row chooses code, credentials, checking agent, or source paths. */
-export type SharedStartupAdapters=Pick<RootOptions,'changes'|'workAnswerAuthority'|'tempo'|'secretWrites'|'secretInputs'|'bridges'|'modelRoles'|'runtimeJobEnded'>&{close?():void|Promise<void>};
+export type SharedStartupAdapters=Pick<RootOptions,'changes'|'workAnswerAuthority'|'tempo'|'secretWrites'|'secretInputs'|'bridges'|'modelRoles'|'runtimeJobEnded'|'approvedOperations'>&{close?():void|Promise<void>};
 export type SharedStartupFactory=(context:{db:DataDatabase;clock:Clock;home:string})=>SharedStartupAdapters|Promise<SharedStartupAdapters>;
 const fingerprint=(value:string)=>createHash('sha256').update(value).digest('hex');
 function schema(client:Database.Database){return client.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();}
@@ -96,7 +96,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    originAllowed:sameOrigin,publicOrigin,
    changes,workAnswerAuthority:adapters.workAnswerAuthority,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
-   secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,
+   secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,approvedOperations:adapters.approvedOperations,
    reportError:options.reportError??(()=>{}),host:options.host,port:options.port,webRoot,
   });
   const signin=sharedSigninLinks(db,clock);
