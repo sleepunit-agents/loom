@@ -306,18 +306,19 @@ export function sharedRoot(options: {
     try {
       if (!meter) await measuringReady;
       if (closing) return c.json(failure('unavailable', 'Loom is closing'), 503);
-      const auth=authenticate(c.req.raw);
-      if(auth&&credentials.program(auth.viewer)){
+      if(credentials.isProgramRequest(c.req.raw)){
+        const auth=authenticate(c.req.raw);
+        if(!auth||!credentials.program(auth.viewer))return c.json(failure('denied','Permission denied'),403);
         const path=new URL(c.req.url).pathname;
         const command=/^\/api\/([^/]+)\/([^/]+)$/.exec(path);
         // No credential ceremonies, private channels or alternate transport can
         // turn a restricted program into an unrestricted member/browser.
-        if(path!=='/graphql'&&(!command||['signin','token','sessions','account'].includes(command[1])||!credentials.allows(auth.viewer,`${command[1]}.${command[2]}`)))return c.json(failure('denied','Permission denied'),403);
+        if(path!=='/graphql'&&(!command||!credentials.allows(auth.viewer,`${command[1]}.${command[2]}`)))return c.json(failure('denied','Permission denied'),403);
       }
       await next();
     } finally { active.delete(entry); finished(); }
   });
-  http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate }));
+  http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate:request=>{const auth=authenticate(request);return auth&&!credentials.program(auth.viewer)?auth:undefined;} }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));

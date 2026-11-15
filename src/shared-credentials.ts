@@ -32,6 +32,12 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
     return found?.valid() ? found : undefined;
   };
   return {
+    /** Pure routing hint only; authority still requires authenticate(). */
+    isProgramRequest(request:Request):boolean {
+      if(!admitted())return false;
+      const raw=/^Bearer ([^\s]{32,4096})$/i.exec(request.headers.get('authorization')??'')?.[1];
+      return !!raw&&!!programSnapshot(programs,hash(raw));
+    },
     current(viewer: Viewer): boolean { return !!proof(viewer); },
     authenticate(request: Request): Authentication | undefined {
       if (!admitted()) return;

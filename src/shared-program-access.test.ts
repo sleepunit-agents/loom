@@ -1,11 +1,12 @@
 import Database from 'better-sqlite3';
+import {eq} from 'drizzle-orm';
 import {createHash} from 'node:crypto';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {getRequestListener} from '@hono/node-server';
 import {WebSocket} from 'ws';
 import {GraphQLString} from 'graphql/index.js';
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import {z} from 'zod';
 import {FakeClock} from './core/clock.js';
 import {createDataSchema} from './core/data/database.js';
@@ -115,8 +116,9 @@ it('rechecks receipt replay inside its transaction even if a synchronous hashing
  const f=fixture();let withdraw=false,effects=0;
  f.grants.set(hash(raw.program),{records:[],operations:['fixture.replay']});
  f.root.operations.register({name:'fixture.replay',write:true,recheckPolicy:true,input:z.object({}).strict(),output:z.object({saved:z.literal(true)}),may:()=>true,inputHash:()=>{if(withdraw)f.grants.set(hash(raw.program),{records:[],operations:[]});return 'same';},run(){effects++;return{saved:true};}});
- expect((await f.call('fixture.replay',{},'replay')).status).toBe(200);withdraw=true;
- expect((await f.call('fixture.replay',{},'replay')).status).toBe(403);expect(effects).toBe(1);
+ const viewer=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.program}}))!.viewer;
+ expect(f.root.operations.call('http',viewer,'fixture.replay',{},'replay')).toMatchObject({ok:true});withdraw=true;
+ expect(f.root.operations.call('http',viewer,'fixture.replay',{},'replay')).toMatchObject({ok:false,code:'denied'});expect(effects).toBe(1);
 });
 it('does not begin prepared IO when post-commit admission observers withdraw its grant',async()=>{
  const f=fixture();let prepares=0;
@@ -124,4 +126,24 @@ it('does not begin prepared IO when post-commit admission observers withdraw its
  f.root.operations.register({name:'fixture.io',write:true,recheckPolicy:true,input:z.object({}).strict(),output:z.object({saved:z.literal(true)}),may:()=>true,prepare:async()=>{prepares++;},run(){return{saved:true};}});
  const stop=f.root.writes.observe(()=>f.grants.set(hash(raw.program),{records:[],operations:[]}));
  try{expect((await f.call('fixture.io',{},'io')).status).toBe(403);expect(prepares).toBe(0);}finally{stop();}
+});
+
+it('leaves rejected/unrelated ordinary requests untouched and authenticates an ordinary query only once',async()=>{
+ const f=fixture(),initial=f.db.select().from(sessions).get()!.seenAt;f.db.update(sessions).set({token:hash(raw.sam)}).run();f.clock.advance(1000);
+ const authenticate=vi.spyOn(f.root.credentials,'authenticate');
+ try{
+  const headers={authorization:'Bearer '+raw.sam,'content-type':'application/json',origin:'https://other.example'};
+  expect((await f.root.http.request('http://loom/api/tasks/command',{method:'POST',headers,body:'{}'})).status).toBe(403);
+  expect((await f.root.http.request('http://loom/api/tasks/command',{method:'POST',headers:{authorization:'Bearer '+raw.sam,'content-type':'text/plain'},body:'{}'})).status).toBe(415);
+  expect((await f.root.http.request('http://loom/not-a-route',{headers:{cookie:'loom_ui='+raw.cookie}})).status).toBe(404);
+  expect(authenticate).not.toHaveBeenCalled();expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.sam))).get()?.lastUsedAt).toBeNull();expect(f.db.select().from(sessions).get()?.seenAt).toBe(initial);
+  expect((await(await f.read('{ tasks { title } }','sam')).json()).errors).toBeUndefined();expect(authenticate).toHaveBeenCalledOnce();
+ }finally{authenticate.mockRestore();}
+});
+it('cannot enter a credential ceremony if the owner restricts its token while the request body is awaited',async()=>{
+ const f=fixture();let began!:()=>void,release!:()=>void;const started=new Promise<void>(r=>began=r),held=new Promise<void>(r=>release=r);
+ const body=new ReadableStream<Uint8Array>({async pull(controller){began();await held;controller.enqueue(new TextEncoder().encode(JSON.stringify({kind:'owner',member:'sam',label:'Forbidden new bearer'})));controller.close();}},{highWaterMark:0});
+ const pending=f.root.http.request(new Request('http://loom/api/signin/token',{method:'POST',headers:{authorization:'Bearer '+raw.owner,'content-type':'application/json'},body,duplex:'half'} as RequestInit));
+ await started;f.grants.set(hash(raw.owner),{records:[],operations:['signin.token']});release();
+ expect((await pending).status).toBe(403);expect(f.db.select().from(tokens).all().some(row=>row.label==='Forbidden new bearer')).toBe(false);
 });
