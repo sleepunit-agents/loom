@@ -28,7 +28,8 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
  const app=sharedRoot({db,clock,originAllowed:()=>true,commsKey:{seal:async words=>Buffer.from(words),open:async blob=>Buffer.from(blob).toString(),hash},reportError(error){throw error;}});
  const bodyToken='tempo-browser-body-'.repeat(4);
  db.insert(boxes).values({id:'browser-box',name:'Fixture box',owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
- const chat=app.services.conversations.open({agent:'art',venue:'loom',place:'browser-settings',member:'owner',label:'Tempo settings'});
+ const thread=app.services.comms!.threads.open({id:'th:tempo-settings',agent:'art',member:'owner',title:'Tempo settings'});
+ const chat=app.services.conversations.conversation(thread.conversation);
  db.insert(jobs).values({id:'browser-body',box:'browser-box',agent:'art',conversation:chat.id,member:'owner',title:'Settings body',state:'running',brief:'',model:'fixture',startedByKind:'agent',startedBy:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
  db.update(conversations).set({job:'browser-body'}).where(eq(conversations.id,chat.id)).run();
  db.insert(tokens).values({fingerprint:hash(bodyToken),label:'Fixture body',kind:'agent',agent:'art',job:'browser-body',createdAt:now()}).run();
@@ -116,14 +117,14 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   await a.getByRole('button',{name:'Full',exact:true}).click();
   await expect.poll(()=>client.prepare('SELECT volume,quiet_until AS quietUntil FROM inbox WHERE id=?').get(notice.id)).toEqual({volume:'full',quietUntil:null});
   mark('settings card');
-  await a.getByRole('button',{name:'Open Approvals',exact:true}).click();
+  await a.goto(url+'/p/comms-preview/thread/tempo-settings');
   for(const [allow,seconds] of [[true,60],[false,120]] as const){
    const proposal=await context.request.post(url+'/api/tempo/proposeSettings',{headers:{authorization:'Bearer '+bodyToken},data:{id:'timing-'+seconds,input:{who:{kind:'person',id:'owner'},patch:{settleSeconds:seconds}}}});expect(proposal.status()).toBe(200);
-   await a.getByRole('button',{name:/Tempo for person owner: settle/}).click();
-   expect(await a.getByRole('heading',{name:'Before',exact:true}).count()).toBe(1);expect(await a.getByRole('heading',{name:'After',exact:true}).count()).toBe(1);
-   expect(await a.getByText(seconds+' seconds',{exact:true}).count()).toBe(1);
-   await a.getByRole('button',{name:allow?'Allow':'Deny',exact:true}).click();
-   await expect.poll(()=>a.getByRole('button',{name:'Allow',exact:true}).count()).toBe(0);
+   const card=a.getByRole('article',{name:'Inbox item',exact:true}).filter({has:a.getByText(seconds+' seconds',{exact:true})});
+   await expect.poll(()=>card.count()).toBe(1);
+   expect(await card.getByRole('heading',{name:'Before',exact:true}).count()).toBe(1);expect(await card.getByRole('heading',{name:'After',exact:true}).count()).toBe(1);
+   await card.getByRole('button',{name:allow?'Allow':'Deny',exact:true}).click();
+   await expect.poll(()=>card.getByRole('button',{name:'Allow',exact:true}).count()).toBe(0);
    expect(app.services.tempo.volume.timings({kind:'person',id:'owner'}).settleSeconds).toBe(60);
   }
   await a.getByRole('button',{name:'Open Tempo',exact:true}).click();
