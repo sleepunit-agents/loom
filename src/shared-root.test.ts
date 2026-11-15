@@ -201,7 +201,7 @@ it('serves the fresh root through the production listener and shuts down a withh
   expect(JSON.parse(String((await message)[0])).payload.data.observe.patches).toEqual([{ path: ['tasks', 0], value: { id: 't-1' }, removed: false }]);
   const { createConnection } = await import('node:net');
   const url = new URL(server.url), held = createConnection({ host: url.hostname, port: Number(url.port) });
-  cleanup.push(() => held.destroy()); await once(held, 'connect');
+  cleanup.push(() => { held.destroy(); }); await once(held, 'connect');
   held.write('GET /graphql HTTP/1.1\r\nHost: loom\r\n');
   const connectionErrors: string[] = [];
   held.on('error', error => connectionErrors.push((error as NodeJS.ErrnoException).code ?? error.message));
