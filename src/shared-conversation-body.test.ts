@@ -57,5 +57,12 @@ it('refuses member-private non-Comms questions before plaintext storage and keep
  f.root.writes.run(()=>f.db.update(s.conversations).set({venue:'loom'}).where(eq(s.conversations.id,f.thread.conversation)).run());
  expect((await f.call('digest',input,'private')).status).toBe(200);
  const receipt=f.db.select().from(s.operationResults).get()!;
- for(const guess of [JSON.stringify(input),`body-conversation\0job\0${JSON.stringify(input)}`])expect(receipt.inputHash).not.toBe(hash(guess));
+ const canonical='{"question":{"answers":"words","to":"alice","words":"PRIVATE WAKE QUESTION"},"summary":"Work"}';
+ for(const guess of [canonical,`body-conversation\0job\0${canonical}`])expect(receipt.inputHash).not.toBe(hash(guess));
+ expect(receipt.inputHash).toBe(f.root.services.comms!.key.hash(`body-conversation\0job\0${canonical}`));
+});
+it('reports a memberless conversation through its assigned body without borrowing a private recipient',async()=>{
+ const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set({member:null,venue:'wake'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null}).where(eq(s.jobs.id,'job')).run();});
+ expect((await f.call('turn',{kind:'note'},'public-turn')).status).toBe(200);expect((await f.call('digest',{summary:'Public scheduled work'},'public-digest')).status).toBe(200);
+ expect(f.db.select().from(s.turns).get()).toMatchObject({conversation:f.thread.conversation,run:'job',fromId:'art'});expect(f.db.select().from(s.digests).get()).toMatchObject({run:'job',summary:'Public scheduled work',inboxItem:null});
 });
