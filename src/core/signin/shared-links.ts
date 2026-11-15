@@ -106,6 +106,9 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
   });
   routes.get('/login/:code', c => {
     if (!/^[0-9a-f]{64}$/.test(c.req.param('code'))) return c.notFound();
+    // no-referrer also nulls a native form's Origin (Fetch section 3.2).
+    // Keep the code path out of referrers while retaining same-origin POSTs.
+    c.header('referrer-policy', 'strict-origin');
     c.header('content-security-policy', "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'");
     return c.html('<!doctype html><html><head><title>Sign in to loom</title></head><body><h1>Sign in to loom</h1><form method="post"><button>Sign in</button></form></body></html>');
   });
