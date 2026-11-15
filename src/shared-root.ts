@@ -13,6 +13,9 @@ import type { Clock } from './core/clock.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
 import { taskService } from './apps/tasks.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
+import { sharedConversations } from './shared-conversations.js';
+import { conversationLifetime } from './core/conversations/lifetime.js';
+import type { WordsKey } from './core/conversations/words.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
@@ -30,6 +33,10 @@ export function sharedRoot(options: {
   approvedOperations?: ApprovedOperations;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
+
+  /** Trusted startup loads the household key, never an outside request. */
+  commsKey?: WordsKey;
+
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
 }) {
@@ -38,7 +45,8 @@ export function sharedRoot(options: {
   const now = () => new Date(clock.now()).toISOString();
   let closing: Promise<void> | undefined;
   const credentials = sharedCredentials(db, clock, () => !closing);
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, options.fields, () => !closing, credentials.authenticate);
+  const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...options.fields }, () => !closing, credentials.authenticate);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes,
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
@@ -65,14 +73,18 @@ export function sharedRoot(options: {
     return secretRecovery;
   };
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
+  comms?.install(operations);
   const services = {
     tasks: taskService(db, now),
     approvals: approvalService(db, options.approvedOperations, now),
-    conversations: new Conversations(db, now),
+    conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
+    comms: comms?.service,
     secrets: {requests,values,reconcile:recoverSecrets},
   };
   registerSharedTaskCommands(operations, db, services.tasks);
+  const commsLifetime = comms ? conversationLifetime(db, clock, comms.service, data.writes, options.reportError) : undefined;
   const authenticate = credentials.authenticate;
+
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
   const bodyRequest = (request: Request, abort: AbortController, limited = false) => {
@@ -129,6 +141,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      commsLifetime?.close();
       // Install shared completion before synchronous detach/abort callbacks.
       cancelSecretRecovery?.(); values?.close();
       const stopped = data.close();

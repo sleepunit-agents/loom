@@ -1,0 +1,215 @@
+import Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
+import { afterEach, expect, it, vi } from 'vitest';
+import { and, eq } from 'drizzle-orm';
+import { generateX25519Identity } from 'age-encryption';
+import { FakeClock } from './core/clock.js';
+import { createDataSchema } from './core/data/database.js';
+import { agents, household, inbox, memberAgents, members, messages, operationResults, threads, tokens, sessions, turns } from './core/data/schema.js';
+import { DataLive } from './core/data/live.js';
+import { DataWrites } from './core/data/writes.js';
+import { sharedRoot } from './shared-root.js';
+import { GraphQLScalarType } from 'graphql/index.js';
+import { wordsKey } from './pieces/comms/crypto.js';
+const cleanup: (() => void | Promise<void>)[] = [];
+afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
+const hash = (value: string) => createHash('sha256').update(value).digest('hex');
+async function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields']) {
+  const client = new Database(':memory:'); cleanup.push(() => { if (client.open) client.close(); });
+  const clock = new FakeClock(Date.parse('2026-11-14T18:00:00Z')), now = () => new Date(clock.now()).toISOString();
+  const db = createDataSchema(client, now);
+  for (const [id, role] of [['alice','member'],['bob','member'],['owner','owner']] as const) db.insert(members).values({ id, role, joinedAt: now() }).run();
+  db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
+  db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
+  const credentials = Object.fromEntries(['alice','bob','owner'].map((member, n) => {
+    const token = String(n+1).repeat(64), cookie = String(n+4).repeat(64);
+    db.insert(tokens).values({ fingerprint: hash(token), label: member, kind: 'owner', member, createdAt: now() }).run();
+    db.insert(sessions).values({ id: hash(cookie), token: hash(token), device: 'Browser', via: 'token', isAgent: false, issuedAt: now(), seenAt: now(), provedAt: now() }).run();
+    return [member, { token, cookie }];
+  }));
+  let seal: (() => Promise<void>) | undefined, open: (() => Promise<void>) | undefined;
+  const key = wordsKey(await generateX25519Identity());
+  const errors: unknown[] = [];
+  const root = sharedRoot({ db, clock, fields, originAllowed: () => true, commsKey: { ...key, async seal(words) { await seal?.(); return key.seal(words); }, async open(blob) { await open?.(); return key.open(blob); } }, reportError: error => errors.push(error) });
+  cleanup.push(() => root.close());
+  const post = (name: string, input: object, id: string, person = 'alice', bearer = false) => root.http.request(`/api/${name.replace('.','/')}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', ...(bearer ? { authorization: `Bearer ${credentials[person].token}` } : { cookie: `loom_ui=${credentials[person].cookie}` }) }, body: JSON.stringify({ input, id }),
+  });
+  const query = async (source: string, person = 'alice') => {
+    const response = await root.http.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json', cookie: `loom_ui=${credentials[person].cookie}` }, body: JSON.stringify({ query: source }) });
+    return { response, body: await response.json() as { data?: Record<string, unknown>; errors?: unknown[] } };
+  };
+  return { client, db, clock, root, errors, credentials, post, query, gate: (fn: () => Promise<void>) => { seal = fn; }, openGate: (fn: () => Promise<void>) => { open = fn; } };
+}
+it('mounts actual shared private reads and cookie writes with metadata-only receipts and current ownership', async () => {
+  const f = await fixture();
+  expect(await (await f.post('comms.open', { thread: 'th:pump', agent: 'art', title: 'Pump' }, 'open')).json()).toMatchObject({ ok: true, value: { thread: 'th:pump' } });
+  const input = { thread: 'th:pump', clientId: 'message-1', words: 'PRIVATE PERSON MESSAGE' };
+  const sent = await (await f.post('comms.send', input, 'send')).json(); expect(sent).toMatchObject({ ok: true });
+  expect(await (await f.post('comms.send', input, 'send')).json()).toEqual(sent);
+  const query = '{homeComms{member agents} commsThreads{id} commsMessages(thread:"th:pump"){seq words wordsKeepUntil} inboxFolders{needs alerts all} recentConversations(agent:"art"){id agent label lastAnswer{words}}}';
+  const read = await f.query(query); expect(read.body.errors).toBeUndefined(); expect(JSON.stringify(read.body.data)).toContain('PRIVATE PERSON MESSAGE');
+  expect(read.body.data?.recentConversations).toEqual([{id:expect.any(String),agent:'art',label:'Pump',lastAnswer:null}]);
+  expect((await f.query(query,'bob')).body.data?.commsThreads).toEqual([]);
+  expect((await f.query('{commsThread(id:"th:pump"){id}}','owner')).body.data?.commsThread).toEqual({ id: 'th:pump' });
+  expect((await f.post('comms.send', { ...input, clientId:'owner' }, 'owner-send','owner')).status).toBe(403);
+  expect((await f.post('comms.open',{thread:'th:bob',agent:'art',title:'Bob'},'bob-open','bob')).status).toBe(403);
+  expect((await f.post('comms.change',{thread:'th:pump',change:'rename',title:'Owner changed it'},'owner-change','owner')).status).toBe(403);
+  expect(f.db.select().from(threads).all()).toMatchObject([{id:'th:pump',title:'Pump'}]);
+  for (const id of ['bob-open','owner-change']) expect(f.db.select().from(operationResults).where(eq(operationResults.id,id)).all()).toEqual([]);
+  expect((await f.post('comms.send', { ...input, clientId:'bearer' }, 'bearer','alice',true)).status).toBe(403);
+  f.root.writes.run(() => f.db.insert(memberAgents).values({member:'bob',agent:'art'}).run());
+  const hidden = await f.query(`{commsThread(id:"th:pump"){id title} commsMessages(thread:"th:pump"){seq words} inboxItem(id:"${sent.value.item}"){body{words}}}`,'bob');
+  expect(hidden.body.errors).toBeUndefined(); expect(hidden.body.data).toEqual({commsThread:null,commsMessages:[],inboxItem:null});
+
+  expect(JSON.stringify(f.db.select().from(inbox).all())).not.toContain('PRIVATE PERSON MESSAGE');
+  expect(JSON.stringify(f.db.select().from(operationResults).all())).not.toContain('PRIVATE PERSON MESSAGE');
+  expect(f.db.select().from(messages).all()).toHaveLength(1);
+  f.root.writes.run(() => f.db.delete(memberAgents).run());
+  expect((await f.post('comms.send', input, 'send')).status).toBe(403);
+  expect((await f.query(query)).body.data?.homeComms).toEqual({ member: 'alice', agents: [] });
+  expect(f.errors).toEqual([]);
+});
+it('answers the same private Inbox item through real HTTP and denies other people or stale sessions', async () => {
+  const f = await fixture(), comms = f.root.services.comms!;
+  const thread = comms.threads.open({ member:'alice',agent:'art',title:'Pump' });
+  const question = await comms.ask(thread.id,'art','ask',{words:'PRIVATE QUESTION',answers:'words'});
+  expect((await f.post('inbox.answer',{item:question.inboxItem!,answer:'words',words:'PRIVATE ANSWER'},'other','bob')).status).toBe(403);
+  expect((await f.post('inbox.read',{item:question.inboxItem!},'other-read','bob')).status).toBe(403);
+  expect(f.client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({n:0});
+  expect(f.db.select().from(operationResults).where(eq(operationResults.id,'other-read')).all()).toEqual([]);
+  const visibleOwner = await f.query(`{inboxItem(id:"${question.inboxItem}"){body{words}}}`,'owner');
+  expect(visibleOwner.body.errors).toBeUndefined(); expect(visibleOwner.body.data?.inboxItem).toEqual({body:{words:'PRIVATE QUESTION'}});
+  for (const [name,input,id] of [
+    ['inbox.read',{item:question.inboxItem!},'owner-read'],
+    ['inbox.answer',{item:question.inboxItem!,answer:'words',words:'OWNER ANSWER'},'owner-answer'],
+  ] as const) {
+    expect((await f.post(name,input,id,'owner')).status).toBe(403);
+    expect(f.db.select().from(operationResults).where(eq(operationResults.id,id)).all()).toEqual([]);
+  }
+  expect(f.client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({n:0});
+  const plain = f.root.services.conversations.send({toKind:'person',to:'alice',source:'discord',sourceId:'plain-owner-test',fromKind:'agent',fromId:'art',member:'alice',agent:'art',words:'PUBLIC SOURCE QUESTION',answers:'yes-no'});
+  expect((await f.query(`{inboxItem(id:"${plain.id}"){body{words}}}`,'owner')).body.data?.inboxItem).toEqual({body:{words:'PUBLIC SOURCE QUESTION'}});
+  expect((await f.post('inbox.answer',{item:plain.id,answer:'yes'},'owner-plain-answer','owner')).status).toBe(403);
+  expect(f.db.select().from(inbox).where(eq(inbox.id,plain.id)).get()?.state).toBe('waiting');
+  expect(f.db.select().from(operationResults).where(eq(operationResults.id,'owner-plain-answer')).all()).toEqual([]);
+  expect((await f.post('inbox.read',{item:question.inboxItem!},'read')).status).toBe(200);
+  expect((await f.post('inbox.answer',{item:question.inboxItem!,answer:'words',words:'PRIVATE ANSWER'},'answer')).status).toBe(200);
+  const read = await f.query(`{inboxItem(id:"${question.inboxItem}"){read state body{words} answerText bodyKeepUntil answerKeepUntil}}`);
+  expect(read.body.errors).toBeUndefined(); expect(read.body.data?.inboxItem).toMatchObject({read:true,state:'answered',body:{words:'PRIVATE QUESTION'},answerText:'PRIVATE ANSWER'});
+  const durable = JSON.stringify([f.db.select().from(inbox).all(),f.db.select().from(operationResults).all()]);
+  expect(durable).not.toContain('PRIVATE QUESTION'); expect(durable).not.toContain('PRIVATE ANSWER');
+  f.root.writes.run(() => f.db.delete(sessions).where(eq(sessions.id,hash(f.credentials.alice.cookie))).run());
+  expect((await f.post('inbox.answer',{item:question.inboxItem!,answer:'words',words:'PRIVATE ANSWER'},'answer')).status).toBe(401);
+});
+it('rechecks current ownership after private encryption yields and commits no stale effect or receipt', async () => {
+  const f = await fixture();
+  expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'New conversation'},'open')).status).toBe(200);
+  let release!: () => void, entered!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  f.gate(() => { entered(); return new Promise<void>(resolve => { release = resolve; }); });
+  const pending = f.post('comms.send',{thread:'th:pump',clientId:'message',words:'PRIVATE DELAYED'},'send');
+  await waiting; f.root.writes.run(() => f.db.delete(memberAgents).run()); release();
+  expect((await pending).status).toBe(403); expect(f.db.select().from(messages).all()).toEqual([]);
+  expect(f.db.select().from(operationResults).where(eq(operationResults.id,'send')).all()).toEqual([]);
+});
+it('owns household-shortened expiry and daily history rollup, and removes its timer on close', async () => {
+  const f = await fixture();
+  expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'New conversation'},'open')).status).toBe(200);
+  expect((await f.post('comms.send',{thread:'th:pump',clientId:'message',words:'PRIVATE EXPIRING'},'send')).status).toBe(200);
+  f.clock.advance(2*86400000);
+  expect(f.db.select().from(messages).get()?.words).not.toBeNull();
+  f.root.writes.run(() => f.db.insert(household).values({commsDays:1}).run());
+  f.clock.advance(0); expect(f.db.select().from(messages).get()?.words).toBeNull();
+  f.clock.advance(90*86400000);
+  expect(f.db.select().from(turns).all()).toEqual([]);
+  expect(f.client.prepare('SELECT messages FROM conversation_days').get()).toEqual({messages:1});
+  await f.root.close(); f.client.close(); expect(() => f.clock.advance(100*86400000)).not.toThrow();
+});
+
+it('schedules ciphertext removal at a stored deadline between daily sweeps', async () => {
+  const f = await fixture();
+  expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'Pump'},'open')).status).toBe(200);
+  expect((await f.post('comms.send',{thread:'th:pump',clientId:'one',words:'PRIVATE EARLY DEADLINE'},'send')).status).toBe(200);
+  f.root.writes.run(() => f.db.update(messages).set({keepUntil:'2026-11-14T18:00:01Z'}).run());
+  f.clock.advance(999); expect(f.db.select().from(messages).get()?.words).not.toBeNull();
+  f.clock.advance(1); expect(f.db.select().from(messages).get()?.words).toBeNull();
+});
+it('unsubscribes and cancels the lifecycle timer before downstream query shutdown', async () => {
+  const events: string[] = [], activeTimers = new Set<symbol>();
+  const at = FakeClock.prototype.at, observe = DataWrites.prototype.observe, close = DataLive.prototype.close;
+  vi.spyOn(FakeClock.prototype,'at').mockImplementation(function (this: FakeClock, time, fn) {
+    const key = Symbol(); activeTimers.add(key);
+    const cancel = at.call(this,time,()=>{activeTimers.delete(key);fn();});
+    return () => { activeTimers.delete(key); events.push('timer-cancel'); cancel(); };
+  });
+  let activeObservers = 0;
+  vi.spyOn(DataWrites.prototype,'observe').mockImplementation(function (this: DataWrites, callback) {
+    activeObservers++; const stop = observe.call(this,callback);
+    return () => { activeObservers--; events.push('observer-stop'); stop(); };
+  });
+  vi.spyOn(DataLive.prototype,'close').mockImplementation(function (this: DataLive) { events.push('data-close'); return close.call(this); });
+  const f = await fixture(); expect(activeObservers).toBe(1); expect(activeTimers.size).toBeGreaterThan(0);
+  await f.root.close();
+  expect(activeObservers).toBe(0); expect(activeTimers.size).toBe(0);
+  expect(events.indexOf('observer-stop')).toBeLessThan(events.indexOf('data-close'));
+  expect(events.indexOf('timer-cancel')).toBeLessThan(events.indexOf('data-close'));
+});
+
+it('withholds private metadata when read authority changes while a sibling decrypt yields', async () => {
+  const f=await fixture();
+  expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'PRIVATE THREAD LABEL'},'open')).status).toBe(200);
+  expect((await f.post('comms.send',{thread:'th:pump',clientId:'one',words:'PRIVATE WORDS'},'send')).status).toBe(200);
+  let entered!:()=>void,release!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  f.openGate(()=>{entered();return new Promise<void>(resolve=>{release=resolve;});});
+  const pending=f.query('{commsThread(id:"th:pump"){title} commsMessages(thread:"th:pump"){words}}','owner');
+  await started; f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run()); release();
+  const read=await pending;
+  expect(read.response.status).toBe(503); expect(JSON.stringify(read.body)).not.toContain('PRIVATE THREAD LABEL'); expect(JSON.stringify(read.body)).not.toContain('PRIVATE WORDS');
+  const retry=await f.query('{commsThread(id:"th:pump"){title} commsMessages(thread:"th:pump"){words}}','owner');
+  expect(retry.response.status).toBe(200); expect(retry.body.data).toEqual({commsThread:null,commsMessages:[]});
+});
+
+it.each(['comms','inbox','answer','summary','search'].flatMap(kind => ['stored','household'].map(bound => ({kind,bound}))))('withholds $kind wording at the $bound deadline before the expiry timer runs', async ({kind,bound}) => {
+  const now=Date.parse('2026-11-14T18:00:00Z');let time=now,advanced=false;
+  const clockStep=new GraphQLScalarType({name:'DeadlineClockStep',serialize:()=>({toJSON(){advanced=true;time=now+1000;return 'public';}})});
+  const f=await fixture({lateClock:{type:clockStep,resolve:()=>true}});
+  vi.spyOn(f.clock,'now').mockImplementation(()=>time);
+  expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'Pump'},'open')).status).toBe(200);
+  const comms=f.root.services.comms!;
+  const question=await comms.ask('th:pump','art','ask',{words:'PRIVATE FINAL WORDS',answers:'words'});
+  if(kind==='answer') expect((await f.post('inbox.answer',{item:question.inboxItem!,answer:'words',words:'PRIVATE FINAL WORDS'},'answer')).status).toBe(200);
+  if(kind==='summary') await comms.send({thread:'th:pump',kind:'reply',sender:'art',words:'PRIVATE FINAL WORDS'});
+  f.root.writes.run(()=>{
+    if(bound==='household') { f.db.insert(household).values({commsDays:1}).run(); f.db.update(messages).set({at:'2026-11-13T18:00:01Z',keepUntil:'2026-11-28T18:00:00Z'}).run(); }
+    else f.db.update(messages).set({keepUntil:'2026-11-14T18:00:01Z'}).run();
+  });
+  const source=kind==='comms'?'{commsMessages(thread:"th:pump"){words}}'
+    :kind==='summary'?'{recentConversations(agent:"art"){lastAnswer{words}}}'
+    :kind==='search'?'{inboxItems(search:"PRIVATE FINAL WORDS"){id}}'
+    :`{inboxItem(id:"${question.inboxItem}"){${kind==='answer'?'answerText':'body{words}'}}}`;
+  const read=await f.query(source.slice(0,-1)+' lateClock}');expect(advanced).toBe(true);expect(read.response.status).toBe(503);
+  expect(JSON.stringify(read.body)).not.toContain('PRIVATE FINAL WORDS');
+  expect(f.db.select().from(messages).get()?.words).not.toBeNull();
+  const retry=await f.query(source);expect(retry.response.status).toBe(200);expect(JSON.stringify(retry.body)).not.toContain('PRIVATE FINAL WORDS');
+});
+
+it('withdraws a returned but unread HTTP response after the owner loses read access', async () => {
+  const f=await fixture();
+  expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'PRIVATE BUFFERED LABEL'},'open')).status).toBe(200);
+  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:`loom_ui=${f.credentials.owner.cookie}`},body:JSON.stringify({query:'{commsThread(id:"th:pump"){title}}'})});
+  expect(response.status).toBe(200);
+  f.root.writes.run(()=>f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run());
+  await expect(response.text()).rejects.toThrow('Data access ended');
+});
+it('withdraws a returned but unread HTTP word response at its deadline without a data commit', async () => {
+  const f=await fixture(),now=f.clock.now();let time=now;
+  vi.spyOn(f.clock,'now').mockImplementation(()=>time);
+  const comms=f.root.services.comms!,thread=comms.threads.open({member:'alice',agent:'art',title:'Pump'});
+  await comms.send({thread:thread.id,kind:'reply',sender:'art',words:'PRIVATE BUFFERED WORDS'});
+  f.root.writes.run(()=>f.db.update(messages).set({keepUntil:'2026-11-14T18:00:01Z'}).run());
+  const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:`loom_ui=${f.credentials.alice.cookie}`},body:JSON.stringify({query:`{commsMessages(thread:"${thread.id}"){words}}`})});
+  expect(response.status).toBe(200);time=now+1000;
+  await expect(response.text()).rejects.toThrow('Data access ended');
+});
