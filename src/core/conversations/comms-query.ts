@@ -1,3 +1,4 @@
+import { readCommsHome } from '../data/comms-home.js';
 import { wordsDeadline } from './retention.js';
 /** Shared Comms read projection. Composition owns current SQL sharing and the
  * authenticated query door; metadata never loads private ciphertext. */
@@ -55,21 +56,9 @@ export class CommsQueries {
   /** Home is the signed-in member's own mailbox, including only agents they
    * can give work to. Reply metadata suffices; no private words are loaded. */
   home(viewer: Viewer) {
-    if (viewer.kind !== 'member' || !this.db.select({ id: members.id }).from(members).where(eq(members.id, viewer.id)).get()) return null;
-    const owned = this.db.select({ id: agents.id }).from(memberAgents).innerJoin(agents, eq(agents.id, memberAgents.agent))
-      .where(eq(memberAgents.member, viewer.id)).orderBy(asc(agents.id)).all().map(row => row.id);
-    const summaries = owned.map(agent => {
-      const unread = sql<boolean>`exists(select 1 from ${messages} where ${messages.thread} = ${threads.id}
-        and ${messages.kind} = 'reply' and ${messages.sender} = ${conversations.agent} and ${messages.seq} > ${threads.readSeq})`;
-      const rows = this.db.select({ thread: threads.id, title: threads.title, at: threads.lastAt, unread }).from(threads)
-        .innerJoin(conversations, eq(conversations.id, threads.conversation))
-        .where(and(this.allowed(viewer), eq(conversations.member, viewer.id), eq(conversations.agent, agent), isNull(threads.archivedAt)))
-        .orderBy(desc(sql`julianday(${threads.lastAt})`), asc(threads.id)).all();
-      return { agent, unread: rows.filter(row => row.unread).length,
-        last: rows[0] ?? null, first: rows.find(row => row.unread) ?? null };
-    });
-    return { member: viewer.id, agents: owned, summaries };
+    return readCommsHome(this.db, viewer, this.allowed(viewer));
   }
+
   thread(viewer: Viewer, id: string) {
     return this.db.select(threadFields).from(threads).innerJoin(conversations, eq(conversations.id, threads.conversation))
       .where(and(eq(threads.id, id), this.allowed(viewer))).get() ?? null;
