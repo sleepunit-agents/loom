@@ -1,4 +1,3 @@
-import {registerMachineRegistry} from './shared-machine-registry.js';
 import { sharedTokens, registerSharedTokenAdmin } from './core/signin/shared-tokens.js';
 import { registerSharedCommandCatalog } from './shared-command-catalog.js';
 import { registerAgentBodyPolicy } from './shared-agent-body-policy.js';
@@ -6,6 +5,7 @@ import { registerAgentBodyPolicy } from './shared-agent-body-policy.js';
 import { registerAgentRunSettings } from './shared-agent-run-settings.js';
 
 import { registerBoxSettings } from './shared-box-settings.js';
+import {registerMachineRegistry} from './shared-machine-registry.js';
 import { registerAgentModels } from './shared-agent-models.js';
 
 import { registerModelAccountAdmin } from './shared-model-account-admin.js';
