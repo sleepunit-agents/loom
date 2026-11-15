@@ -263,14 +263,18 @@ it('a second connection sees the exact durable prepared binding before every hol
 });
 it('rejects incorrect add/replace/remove modes before reservation so valid later writes can proceed', async () => {
   const f = fixture();
-  await expect(f.service.set({ ...f.input, mode: 'replace' })).rejects.toThrow('Unknown secret value');
+  const calls = () => [vi.mocked(f.holder.hasReceipt).mock.calls.length, vi.mocked(f.holder.set).mock.calls.length, vi.mocked(f.holder.remove).mock.calls.length];
+  const rejected = async (run: () => Promise<unknown>, message: string) => {
+    const before = calls(); await expect(run()).rejects.toThrow(message); expect(calls()).toEqual(before);
+  };
+  await rejected(() => f.service.set({ ...f.input, mode: 'replace' }), 'Unknown secret value');
   expect(f.db.select().from(secretWriteJournal).all()).toEqual([]);
   await f.service.set(f.input);
-  await expect(f.service.set({ ...f.input, id: randomUUID() })).rejects.toThrow('already exists');
+  await rejected(() => f.service.set({ ...f.input, id: randomUUID() }), 'already exists');
   await f.service.set({ ...f.input, id: randomUUID(), mode: 'replace', value: 'NEXT' });
   await f.service.remove({ id: randomUUID(), name: 'API', member: 'owner' });
-  await expect(f.service.set({ ...f.input, id: randomUUID(), mode: 'replace' })).rejects.toThrow('Unknown secret value');
-  await expect(f.service.remove({ id: randomUUID(), name: 'API', member: 'owner' })).rejects.toThrow('Unknown secret value');
+  await rejected(() => f.service.set({ ...f.input, id: randomUUID(), mode: 'replace' }), 'Unknown secret value');
+  await rejected(() => f.service.remove({ id: randomUUID(), name: 'API', member: 'owner' }), 'Unknown secret value');
   await f.service.set({ ...f.input, id: randomUUID(), value: 'NEW' });
   expect(f.values.get('API')).toBe('NEW');
   expect(f.db.select().from(secretWriteJournal).all().every(row => row.state === 'committed')).toBe(true);
@@ -299,4 +303,25 @@ it.each(['extra-add', 'extra-removes'] as const)('rejects inconsistent %s audit 
   const before = f.db.select().from(secretWriteJournal).all();
   await expect(f.service.set({ ...f.input, id: randomUUID(), mode: 'replace' })).rejects.toThrow('Invalid secret presence history');
   expect(f.db.select().from(secretWriteJournal).all()).toEqual(before); expect(f.holder.set).toHaveBeenCalledTimes(1);
+});
+it('recovered lost-ack removal keeps presence unavailable through reopen and permits an audited re-add', async () => {
+  const f = fixture(true); await f.service.set(f.input);
+  const actual = vi.mocked(f.holder.remove).getMockImplementation()!;
+  vi.mocked(f.holder.remove).mockImplementation(async (...args) => { await actual(...args); throw Error('lost acknowledgement'); });
+  await expect(f.service.remove({ id: randomUUID(), member: 'owner', name: 'API' })).rejects.toThrow('reconciliation');
+  f.service.close(); f.client.close();
+  const client = new Database(f.path); clients.push(client); client.pragma('foreign_keys = ON');
+  const db = dataDatabase(client, f.now), writes = new DataWrites(db, { refreshAccess() {}, changed() {} });
+  const service = new SecretValues(db, f.now, f.holder, f.key, write => { writes.run(write); });
+  await service.reconcilePending();
+  expect(db.select().from(secretChanges).all().map(row => row.action)).toEqual(['add', 'removed']);
+  const requests = new SecretRequests(db, f.now);
+  expect(() => requests.request({ id: 'after-recovery', secret: 'API', agent: 'art', why: 'Use it', minutes: 5 })).toThrow('Unknown secret');
+  expect(requests.grantFor('API', 'art')).toBeUndefined();
+  vi.mocked(f.holder.set).mockImplementation(async (who, name, bytes) => {
+    expect(client.inTransaction).toBe(false); f.values.set(name, Buffer.from(bytes).toString()); f.receipts.add(JSON.stringify(who));
+  });
+  await expect(service.set({ ...f.input, id: randomUUID(), value: 'AFTER-REMOVAL' })).resolves.toEqual({ saved: true });
+  expect(f.values.get('API')).toBe('AFTER-REMOVAL');
+  expect(db.select().from(secretChanges).all().map(row => row.action)).toEqual(['add', 'removed', 'add']);
 });
