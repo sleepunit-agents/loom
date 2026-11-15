@@ -10,6 +10,7 @@ export async function taskQuestions({page,tile,app,example,out}){
     const task=s.create({title:`Decide the ${answer} example`,goal:'Record the person’s choice.',why:'Prove the task question path.',owner:{kind:'agent',id:'fern'},source:{kind:'conversation',id:example.conversation}},actor);
     s.ask(task.id,{to:{kind:'member',id:'alex'},ask,ifYes:'Fern proceeds.',ifNo:'Fern waits.',answers:answer==='words'?'words':'yes-no'},actor);return task;
    }).value;
+   const back=tile.locator('.loom-split__back:visible');if(await back.count())await back.click();
    await tile.getByText(ask,{exact:true}).first().click();
    const card=tile.getByRole('article',{name:'Inbox item',exact:true});
    await card.getByText('Fern proceeds.',{exact:true}).waitFor();await card.getByText('Fern waits.',{exact:true}).waitFor();
