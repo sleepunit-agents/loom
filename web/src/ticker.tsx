@@ -40,7 +40,7 @@ export function Ticker({ live, parts, go }: { live: boolean; parts: TickPart[]; 
     let on = true;
     void document.fonts?.ready.then(() => { if (on) measure(); });
     return () => { on = false; ro.disconnect(); };
-  }, [key, reduced]);
+  }, [key, reduced, live]);
   useEffect(() => {
     const f = () => setHidden(document.visibilityState === 'hidden');
     document.addEventListener('visibilitychange', f);
@@ -48,7 +48,7 @@ export function Ticker({ live, parts, go }: { live: boolean; parts: TickPart[]; 
   }, []);
   const words = (copy: boolean) => (
     <span ref={copy ? undefined : line} className="loom-tick__line" aria-hidden={copy || undefined}>
-      <span className="loom-tick__live" data-off={live ? undefined : ''}>{live ? 'live' : 'offline'}</span>
+      <span className="loom-tick__live" data-off={live ? undefined : ''}>{live ? 'live' : 'data unavailable'}</span>
       {parts.map((p, i) => (go && p.href
         // The copy that follows it round is the same words again: out of the tab order, and not read twice.
         ? <a key={i} href={p.href} className="loom-tick__part" data-tone={p.tone} tabIndex={copy ? -1 : undefined}

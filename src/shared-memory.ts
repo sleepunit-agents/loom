@@ -69,7 +69,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
   const people=peopleReader({directory:sources?.commons.people,agents,sharing,now:()=>clock.now(),projectHref});closers.push(people.close);
   const projects=createProjectsReader(clock,{agents,sharing,people,...sharedProjectSections(db,tasks),...options?.sections});closers.push(projects.close);
   const activity=createActivityReader(clock,{agents,sharing,timezone:()=>db.select().from(household).get()?.timezone??'UTC',github:settings?.githubOwner,conversations:sharedActivityConversations(db,{sharing,conversationHref})});closers.push(activity.close);
-  const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),mind:projects,activity,conversationHref,projectHref});closers.push(queries.close);
+  const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const touches=mindTouchSources(sources);
   return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:queries.fields,nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,
    register(operations:Operations){
