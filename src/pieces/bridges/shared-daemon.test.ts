@@ -171,3 +171,13 @@ it('does not retry failed authentication from its own backoff publication',async
  f.clock.advance(5000);await f.daemon.idle();
  expect(f.transports).toHaveLength(1);expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
 });
+
+it('starts a re-enabled connection from changed inputs without waiting for its poll',async()=>{
+ const f=fixture();await f.daemon.ready();await f.daemon.idle();
+ const at=f.clock.now();expect(f.transports).toHaveLength(1);
+ f.writes.run(()=>f.db.update(bridgeConnections).set({enabled:false}).run());f.daemon.changed();await f.daemon.idle();
+ expect(f.closed).toHaveBeenCalledOnce();
+ f.writes.run(()=>f.db.update(bridgeConnections).set({enabled:true}).run());f.daemon.changed();await f.daemon.idle();
+ expect(f.clock.now()).toBe(at);expect(f.transports).toHaveLength(2);
+ expect(f.db.select().from(bridgeConnections).get()?.state).toBe('connected');
+});

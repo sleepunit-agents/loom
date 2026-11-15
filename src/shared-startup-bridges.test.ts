@@ -106,10 +106,10 @@ it('uses the owned holder for Slack receipt, confirmed/uncertain sends, credenti
 it('keeps explicit bridge ports and joins holder cleanup after the actual server has closed',async()=>{
  const {home,webRoot,clock}=files();await initializeSharedHome(home,clock);
  const adapter=join(home,'configured.mjs'),programPath=join(home,'program.json');
- writeFileSync(adapter,'export let observed=0; export default()=>({bridges:{source:{generation:async()=>{observed++;return "00000000-0000-4000-8000-000000000000";},read:async()=>{throw Error("No configured value");}},effectsAllowed:()=>false}});',{mode:0o600});
+ writeFileSync(adapter,'export let observed=0; export default()=>({bridges:{source:{generation:async()=>{observed++;return "00000000-0000-4000-8000-000000000000";},read:async()=>{throw Error("No configured value");}},effectsAllowed:()=>true}});',{mode:0o600});
  const program=JSON.parse(readFileSync(programPath,'utf8'));program.adapters=adapter;writeFileSync(programPath,JSON.stringify(program),{mode:0o600});
- const realServe=serving.serveShared;let served:Awaited<ReturnType<typeof realServe>>|undefined;
- vi.spyOn(serving,'serveShared').mockImplementation(async options=>{served=await realServe(options);return served;});
+ const realServe=serving.serveShared;let served:Awaited<ReturnType<typeof realServe>>|undefined,bridgeGate:(()=>boolean)|undefined;
+ vi.spyOn(serving,'serveShared').mockImplementation(async options=>{bridgeGate=options.bridges?.effectsAllowed;served=await realServe(options);return served;});
  const app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});clean.push(()=>app.close());
  const module=await import(pathToFileURL(adapter).href);
  expect(module.observed).toBe(1);expect(wire.owners[0].source.generation).not.toHaveBeenCalled();expect(app.services.bridges.daemon).toBeDefined();expect(wire.slack).not.toHaveBeenCalled();
@@ -117,7 +117,9 @@ it('keeps explicit bridge ports and joins holder cleanup after the actual server
  let release!:()=>void,began!:()=>void;
  const held=new Promise<void>(yes=>{release=yes;}),started=new Promise<void>(yes=>{began=yes;});clean.push(()=>release());
  vi.spyOn(owner,'close').mockImplementation(async()=>{await realClose();began();await held;});
+ expect(bridgeGate!()).toBe(true);
  let settled=false;const stopping=app.close().then(()=>{settled=true;});
+ expect(serverClose).not.toHaveBeenCalled();expect(bridgeGate!()).toBe(false);
  await started;expect(serverClose).toHaveBeenCalledOnce();await serverClose.mock.results[0].value;
  expect(db.$client.open).toBe(true);expect(settled).toBe(false);
  release();await stopping;expect(db.$client.open).toBe(false);

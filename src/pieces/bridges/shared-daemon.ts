@@ -85,6 +85,10 @@ export class SharedBridges {
   if(this.lives.get(life.connection.id)===life)this.lives.delete(life.connection.id);
   if(life.transport)this.track(Promise.resolve().then(()=>life.transport!.close()));
  }
+ private configurationSnapshot(){
+  const rows=this.options.db.select().from(bridgeConnections).orderBy(asc(bridgeConnections.id)).all();
+  return{rows,key:JSON.stringify(rows.map(configuration))};
+ }
  /** Root invokes after committed config/rule/link edits. Known value writes may
   * retire credentials immediately, without waiting for the metadata poll. */
  changed(credentials=false){
@@ -94,7 +98,7 @@ export class SharedBridges {
   // State publications reenter Root's write observer. Only changed input
   // settings or credentials may restart reconciliation; retrying our own
   // backoff state would starve the generation poll with microtasks.
-  const key=JSON.stringify(this.options.db.select().from(bridgeConnections).orderBy(asc(bridgeConnections.id)).all().map(configuration));
+  const {key}=this.configurationSnapshot();
   if(credentials||retired||key!==this.settingsKey)void this.reconcile();
   else for(const life of this.lives.values())this.pump(life);
   this.track(this.sends.flush());
@@ -108,8 +112,8 @@ export class SharedBridges {
    if(this.closed)return;
    for(const life of this.lives.values())if(!this.current(life))this.retire(life);
    const generation=this.credentials.current();
-   const rows=this.options.db.select().from(bridgeConnections).orderBy(asc(bridgeConnections.id)).all();
-   this.settingsKey=JSON.stringify(rows.map(configuration));
+   const {rows,key}=this.configurationSnapshot();
+   this.settingsKey=key;
    for(const row of rows){
     if(!row.enabled||!generation||!this.options.effectsAllowed()){
      this.state(row.id,row.enabled?'backoff':'disconnected');continue;
