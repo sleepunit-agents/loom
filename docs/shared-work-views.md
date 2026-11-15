@@ -24,8 +24,7 @@ Global rules/sync may be owner-only under those policies.
 
 Commands remain optional injected `ApprovalActions` / `ChangeActions` and must
 recheck current authority and the exact request or change head at execution.
-The default registered tiles show no answer controls until root composition
-supplies those callbacks. There is no optimistic answer or legacy-operation
+Measuring cards bind their mounted authenticated HTTP answer callback by default; unrelated commands still require the supplied callbacks. There is no optimistic answer or legacy-operation
 fallback. Root also mounts the live cards inside conversations and supplies
 household timezone where available (otherwise the browser timezone is used).
 
