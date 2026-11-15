@@ -36,11 +36,11 @@ export class BridgeReceiver {
   }
 
   /** The checkpoint must be the authenticated transport's cursor for this frame. */
-  discord(connection: string, raw: Buffer, checkpoint: BridgeCheckpoint): void {
+  discord(connection: string, raw: Buffer, checkpoint: BridgeCheckpoint, persistCheckpoint = true): void {
     this.connection(connection, 'discord');
     const frame = discordFrame.parse(this.parse(raw));
     if (frame.s !== checkpoint.sequence) throw Error('Discord frame does not match checkpoint');
-    this.events.retain(connection, JSON.stringify([checkpoint.session, frame.s]), raw, checkpoint);
+    this.events.retain(connection, JSON.stringify([checkpoint.session, frame.s]), raw, persistCheckpoint ? checkpoint : undefined);
   }
 
   slack(connection: string, raw: Buffer): void {
@@ -66,7 +66,7 @@ export class BridgeReceiver {
    * channel-kind evidence. No receipt is consumed or delivered here. Root owns
    * authenticated fetches, cache lifetime and bounded retry scheduling; call
    * drain after filling the cache. Malformed frames throw as in drain(). */
-  missingChannels(connection: string, limit = 64): string[] {
+  missingChannels(connection: string, limit = 64, rotate = false): string[] {
     const source = this.connection(connection);
     const missing = new Set<string>();
     this.events.drain(connection, (_id, raw) => {
@@ -86,7 +86,7 @@ export class BridgeReceiver {
         }
       }
       return false;
-    }, limit);
+    }, limit, rotate ? 'inspect' : 'peek');
     return [...missing];
   }
 
@@ -94,7 +94,7 @@ export class BridgeReceiver {
    * one transaction. Held rows are retried against current household rules. A
    * malformed message throws, leaving its receipt/writes intact for inspection;
    * composition must report the failure, rather than spin an immediate retry. */
-  drain(connection: string, limit = 64): number {
+  drain(connection: string, limit = 64, delivered?: (row: ReturnType<BridgeIncoming['receive']>, raw: Buffer) => boolean | void): number {
     const source = this.connection(connection);
     return this.events.drain(connection, (_id, raw, receivedAt) => {
       const payload = this.parse(raw);
@@ -116,7 +116,9 @@ export class BridgeReceiver {
         message = normalizeSlack(source, frame.payload, channel);
       }
       if (!message) return;
-      return this.incoming.receive(message, true, receivedAt).state !== 'held';
+      const row=this.incoming.receive(message,true,receivedAt);
+      if(row.state==='held')return false;
+      return row.state==='delivered'?delivered?.(row,raw):undefined;
     }, limit);
   }
 
