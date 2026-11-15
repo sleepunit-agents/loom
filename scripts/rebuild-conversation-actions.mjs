@@ -2,19 +2,19 @@
  * Reads inspect only its disposable example store; writes use visible controls. */
 import {join} from 'node:path';
 export async function conversationActions({page,app,example,out,open}){
- page.setDefaultTimeout(4000);
  const select=async tile=>{const heading=tile.getByRole('heading',{name:'Repair the garden pump',exact:true}),row=tile.locator('[data-split-row]:visible').filter({hasText:'Repair the garden pump'});await heading.or(row).first().waitFor({state:'visible'});if(!await heading.isVisible())await row.click();};
+ let phase='';
  const evidence={},question='Spend up to 180 example dollars on the pump?';
- const attempt=async(name,run)=>{try{evidence[name]=await run();}catch(error){const screenshot='action-'+name+'-failed.png';await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});evidence[name]={ok:false,error:String(error),screenshot};}};
+ const attempt=async(name,run)=>{try{phase=name;evidence[name]=await run();}catch(error){const screenshot='action-'+name+'-failed.png';await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});const panes=await page.locator('[aria-label="Comms tile"]').evaluateAll(tiles=>tiles.map(tile=>({hidden:tile.hidden,inert:tile.inert,headings:[...tile.querySelectorAll('h2')].map(h=>h.textContent),text:tile.innerText.slice(0,160)}))).catch(()=>[]);evidence[name]={ok:false,phase,error:String(error),screenshot,panes};}};
  const response=path=>{const pending=page.waitForResponse(value=>new URL(value.url()).pathname===path&&value.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});return pending;};
  const result=async pending=>{const value=await pending,body=await value.json();if(value.status()!==200||body.ok!==true)throw Error('Browser action was not accepted');return {body:body.value,input:value.request().postDataJSON().input};};
  await attempt('commsSend',async()=>{
-  let tile=await open('Comms');await select(tile);
+  phase='open-comms';let tile=await open('Comms');phase='select-conversation';await select(tile);
   const words='Fictitious walkthrough follow-up: compare the hose again.';
-  await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(words,{timeout:4000});
-  const pending=response('/api/comms/send');await tile.getByRole('button',{name:'Send',exact:true}).click();const sent=await result(pending);
-  await tile.getByText(words,{exact:true}).waitFor({timeout:4000});
-  await page.reload();await page.locator('.next-shell').waitFor();tile=await open('Comms');await select(tile);await tile.getByText(words,{exact:true}).waitFor({timeout:4000});
+  phase='fill-message';await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(words);
+  phase='send-message';const pending=response('/api/comms/send');await tile.getByRole('button',{name:'Send',exact:true}).click();const sent=await result(pending);
+  phase='sent-message-visible';await tile.getByText(words,{exact:true}).waitFor();
+  phase='reload';await page.reload();await page.locator('.next-shell').waitFor();phase='reopen-after-reload';tile=await open('Comms');phase='select-after-reload';await select(tile);phase='persisted-message-visible';await tile.getByText(words,{exact:true}).waitFor();
   const rows=app.services.comms.db.$client.prepare('SELECT id,conversation,to_kind,"to",source,thread,message_seq FROM inbox WHERE id=?').all(sent.body.item);
   const ok=rows.length===1&&rows[0].conversation===example.conversation&&rows[0].to_kind==='agent'&&rows[0].to==='fern'&&rows[0].source==='thread'&&rows[0].thread===example.thread&&rows[0].message_seq===sent.body.seq;
   const screenshot='action-comms-send.png';await page.screenshot({path:join(out,screenshot),fullPage:true});
