@@ -34,7 +34,7 @@ export function CommPortrait({agent,messages,connected,working,thinking,on}:{age
   motion.addEventListener('change',stop);return()=>motion.removeEventListener('change',stop);
  },[]);
  // A new destination mounts a new player: do not replay the prior player's request there.
- useEffect(()=>{setRun(null);setReady(null);},[into,display?.sprite?.base,display?.sprite?.v,pixel]);
+ useEffect(()=>{setRun(null);setReady(null);},[into,display?.sprite?.agent,display?.sprite?.v,pixel]);
  // Baseline on first live snapshot and reconnect: retained history never replays.
  useEffect(()=>{
   if(!connected){seen.current=undefined;setRun(null);return;}

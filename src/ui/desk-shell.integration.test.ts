@@ -19,6 +19,9 @@ import {InboxQueries,inboxQueryFields} from '../core/conversations/inbox-query.j
 import {ConversationSummaries,conversationSummaryFields} from '../core/conversations/summaries.js';
 import {wordsKey} from '../pieces/comms/crypto.js';
 import {serveShared} from '../shared-serve.js';
+import {storeDeskSprite} from '../desk-sprites.js';
+import {manifestFromPixelLab} from '../household.js';
+import {sheet} from './pixel-sheet.fixture.js';
 const enabled=process.env.LOOM_DESK_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
 if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))))throw Error('Desk evidence needs Chrome and the built app');
 it.runIf(enabled)('shared desk applies live appearance, renders owned cards and opens actual Inbox rows at three looks and sizes',async()=>{
@@ -31,6 +34,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
  db.insert(memberAgents).values(ids.map(agent=>({member:'owner',agent}))).run();
  db.insert(agentStatus).values(ids.map(agent=>({agent,state:agent==='art'?'working' as const:'idle' as const,work:agent==='art'?'Rebuilding the shared desk':'',changedAt:now()}))).run();
  db.insert(tokens).values({fingerprint,label:'Disposable desk fixture',kind:'owner',member:'owner',createdAt:now()}).run();
+ const picture=sheet(),layout=manifestFromPixelLab(JSON.parse(picture.json.toString()));storeDeskSprite(db,'art',layout,{'sheet.png':picture.png});
  const key=wordsKey(await generateX25519Identity()),messages=new CommsMessages(db,key,now);
  const thread=messages.threads.open({member:'owner',agent:'art',title:'Desk fixture conversation'});
  await messages.send({thread:thread.id,sender:'art',kind:'reply',words:'The shared desk reader is ready.'});
@@ -43,8 +47,8 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
  try {
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   const context=await browser.newContext({viewport:{width:1280,height:900},serviceWorkers:'block'});
-  const a=await context.newPage(),b=await context.newPage(),errors:string[]=[],connections=new Map<Page,number>();let maximumConnections=0,legacyConnections=0;
-  for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame())connections.set(page,0);});page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/graphql'){const count=(connections.get(page)??0)+1;connections.set(page,count);maximumConnections=Math.max(maximumConnections,count);}else if(new URL(socket.url()).pathname==='/live')legacyConnections++;});}
+  const a=await context.newPage(),b=await context.newPage(),errors:string[]=[],connections=new Map<Page,number>();let maximumConnections=0,legacyConnections=0,faceRequests=0;
+  for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('request',request=>{if(new URL(request.url()).pathname.startsWith('/faces/'))faceRequests++;if(request.isNavigationRequest()&&request.frame()===page.mainFrame())connections.set(page,0);});page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/graphql'){const count=(connections.get(page)??0)+1;connections.set(page,count);maximumConnections=Math.max(maximumConnections,count);}else if(new URL(socket.url()).pathname==='/live')legacyConnections++;});}
   const issued=await app.http.request(app.url+'/api/signin/link',{method:'POST',headers:{authorization:'Bearer '+raw}});
   expect(issued.status).toBe(200);const link=await issued.json() as {ok:boolean;value:{path:string}};
   await a.goto(app.url+link.value.path);
@@ -70,6 +74,15 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
    await expect.poll(()=>page.locator('html').getAttribute('data-contrast')).toBe('more');await expect.poll(()=>page.locator('html').getAttribute('data-ground')).toBe('wash');
    expect(await page.locator('meta[name=viewport]').getAttribute('content')).not.toContain('user-scalable=no');
   }
+  const painted=async(page:Page)=>page.locator('.desk-home-card .loom-pixel-face canvas').evaluateAll(nodes=>nodes.some(node=>{const canvas=node as HTMLCanvasElement,pixels=canvas.getContext('2d')?.getImageData(0,0,canvas.width,canvas.height).data;return pixels?.some((value,index)=>index%4===3&&value>0);}));
+  for(const page of [a,b])await expect.poll(()=>painted(page)).toBe(true);
+  await set({pixel:false},'pixel-off');for(const page of [a,b]){await expect.poll(()=>page.locator('.desk-home-card .loom-pixel-face').count()).toBe(0);await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);}
+  await set({pixel:true},'pixel-on');for(const page of [a,b])await expect.poll(()=>painted(page)).toBe(true);
+  // Validly stored but undecodable bytes use the drawn fallback; a later valid
+  // version recovers through the same query connection, without an asset route.
+  app.writes.run(()=>storeDeskSprite(db,'art',layout,{'sheet.png':picture.png.subarray(0,8)}));
+  for(const page of [a,b])await expect.poll(()=>page.locator('.desk-home-card [data-slot=agent-face]').count()).toBe(5);
+  app.writes.run(()=>storeDeskSprite(db,'art',layout,{'sheet.png':picture.png}));for(const page of [a,b])await expect.poll(()=>painted(page)).toBe(true);
   app.writes.run(()=>db.update(agents).set({about:'Keeps the shared desk readable.'}).where(eq(agents.id,'art')).run());
   for(const page of [a,b]){await page.goto(app.url+'/p/agents-preview/agent/art');await expect.poll(()=>page.getByText('Keeps the shared desk readable.',{exact:true}).count()).toBe(1);expect(await page.getByRole('button',{name:'Edit profile in Setup',exact:false}).count()).toBe(0);}
   expect(legacyConnections).toBe(0);
@@ -107,7 +120,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   // status rows remain visible. This is an actual same-root write + socket read.
   await b.goto(app.url);app.writes.run(()=>db.delete(memberAgents).run());
   await expect.poll(()=>b.getByText('No agents of your own',{exact:true}).count()).toBe(1);expect(db.select().from(agents).all()).toHaveLength(5);
-  expect(maximumConnections).toBe(1);expect(connections.get(a)).toBe(1);expect(connections.get(b)).toBe(1);
+  expect(faceRequests).toBe(0);expect(maximumConnections).toBe(1);expect(connections.get(a)).toBe(1);expect(connections.get(b)).toBe(1);
   expect((await fetch(app.url+'/manifest.webmanifest')).status).toBe(200);expect((await fetch(app.url+'/sw.js')).headers.get('service-worker-allowed')).toBe('/');
   app.writes.run(()=>db.update(tokens).set({revokedAt:now()}).where(eq(tokens.fingerprint,fingerprint)).run());
   for(const page of [a,b])await expect.poll(()=>page.getByText('OK to run the backup now?',{exact:true}).count()).toBe(0);
