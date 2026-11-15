@@ -1,3 +1,4 @@
+import {changeService} from './apps/changes.js';
 import {afterEach,expect,it} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {eq} from 'drizzle-orm';
@@ -94,6 +95,24 @@ it('keeps the exact-head owner answer across a fresh Changes read, while preserv
  f.db.update(s.approvals).set({state:'allowed',expiresAt:new Date(f.clock.now()+60000).toISOString()}).where(eq(s.approvals.id,asked.id)).run();
  expect(f.root.services.changes.put({...rawChange,checks:{...rawChange.checks,state:'running'}}).waitingOn).toBe('ci');
  expect(f.root.services.changes.put({...rawChange,head:{...rawChange.head,id:'b'.repeat(40)}}).waitingOn).toBe('you');
+ for(const state of ['allowed','used'] as const){
+  f.db.update(s.approvals).set({state,project:'other'}).where(eq(s.approvals.id,asked.id)).run();expect(f.root.services.changes.put(rawChange).waitingOn).toBe('you');
+ }
+ f.db.update(s.approvals).set({state:'allowed',project:'pond'}).where(eq(s.approvals.id,asked.id)).run();
  f.root.services.changes.put(rawChange);expect((await f.call('answer',{id:asked.id,answer:'deny'},'deny',f.owner)).status).toBe(200);
- f.grant('do');expect(f.root.services.changes.put(rawChange).waitingOn).toBe('you');
+ for(const tier of ['do','tell'] as const)expect(changeService(f.db,()=>({tier}),()=>new Date(f.clock.now()).toISOString()).put(rawChange).waitingOn).toBe('you');
+});
+it('expires an unused allowance and publishes the waiting group at its deadline without a body command or forge read',async()=>{
+ const f=await fixture(),asked=await f.ask();await f.call('answer',{id:asked.id,answer:'allow'},'allow',f.owner);
+ const seen:string[]=[];const stop=f.root.writes.observe(()=>{const row=f.db.select().from(s.approvals).where(eq(s.approvals.id,asked.id)).get();seen.push(row!.state);});
+ f.clock.advance(30*60_000-1);expect(f.db.select().from(s.approvals).get()?.state).toBe('allowed');
+ f.clock.advance(1);expect(f.db.select().from(s.approvals).get()?.state).toBe('expired');expect(f.db.select().from(s.changes).get()?.waitingOn).toBe('you');expect(seen).toContain('expired');stop();
+ const query=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+f.owner},body:JSON.stringify({query:'{approvals{id state} changes{waitingOn}}'})});expect((await query.json()).data).toEqual({approvals:[{id:asked.id,state:'expired'}],changes:[{waitingOn:'you'}]});
+ await f.root.close();f.clock.advance(60*60_000);
+});
+it('does not expire a spent allowance or replace a later exact-target answer at the old deadline',async()=>{
+ const f=await fixture(),first=await f.ask('first');await f.call('answer',{id:first.id,answer:'allow'},'first-yes',f.owner);await f.call('use',{id:first.id,kind:request.kind,target:request.target});
+ f.clock.advance(10*60_000);const second=f.root.writes.run(()=>{const next=f.root.services.approvals.request({...f.root.services.approvals.get(first.id)});f.root.services.approvals.allow(next.id,'pat');return next;}).value;
+ f.clock.advance(20*60_000);expect(f.db.select().from(s.approvals).where(eq(s.approvals.id,first.id)).get()?.state).toBe('used');expect(f.db.select().from(s.approvals).where(eq(s.approvals.id,second.id)).get()?.state).toBe('allowed');expect(f.db.select().from(s.changes).get()?.waitingOn).toBe('agent');
+ f.clock.advance(10*60_000);expect(f.db.select().from(s.approvals).where(eq(s.approvals.id,second.id)).get()?.state).toBe('expired');expect(f.db.select().from(s.changes).get()?.waitingOn).toBe('you');
 });
