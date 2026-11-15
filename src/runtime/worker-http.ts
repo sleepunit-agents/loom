@@ -67,7 +67,14 @@ function operationCaller(input: WorkerHttpOptions) {
   }
   return call;
 }
-export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: { account: string; owner: string; provider: string; windows: readonly QuotaWindow[] }) {
+export interface WorkerAccountIdentity { account: string; owner: string; provider: string }
+export function readWorkerAccountBasis(input: WorkerHttpOptions, identity: WorkerAccountIdentity) {
+  return operationCaller(input)('accountUsageBasis', identity, z.object({ basis: z.uuid() }).strict());
+}
+export function reportWorkerAccountUnavailable(input: WorkerHttpOptions, observation: WorkerAccountIdentity & { basis: string }) {
+  return operationCaller(input)('accountUnavailable', observation, z.object({ recorded: z.boolean() }).strict());
+}
+export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: WorkerAccountIdentity & { windows: readonly QuotaWindow[]; basis: string }) {
   return operationCaller(input)('accountUsage', observation, z.object({ recorded: z.boolean() }).strict());
 }
 export function httpWorkerControl(input: WorkerHttpOptions): WorkerControl {

@@ -20,7 +20,7 @@ function fixture(mode: '--account-signin' | '--account-usage', timeoutMs?: numbe
   const kill = vi.spyOn(process, 'kill').mockReturnValue(true);
   const handlers = new Map<string, () => void>();
   const config = { command, account: identity, ...(mode === '--account-signin' ? { box: 'worker' } : {}), ...(timeoutMs === undefined ? {} : { timeoutMs }) };
-  const input = { args: [mode, '/config'], read: vi.fn<(path: string) => Promise<string>>(async path => { if (path !== '/config') throw Error('Unexpected local read'); return JSON.stringify(config); }), output: vi.fn(), error: vi.fn(),
+  const input = { usageBasis: vi.fn(async () => ({ basis: '00000000-0000-4000-8000-000000000001' })), usageUnavailable: vi.fn(async () => ({ recorded: true })), args: [mode, '/config'], read: vi.fn<(path: string) => Promise<string>>(async path => { if (path !== '/config') throw Error('Unexpected local read'); return JSON.stringify(config); }), output: vi.fn(), error: vi.fn(),
     on: (name: string, callback: () => void) => { handlers.set(name, callback); },
     off: (name: string) => { handlers.delete(name); }, control: vi.fn(), run: vi.fn() };
   return { child, input, handlers, kill, config, sent, stdin: () => stdin };
@@ -126,7 +126,7 @@ it('reports a successful configured quota read before acknowledging local comple
   f.child.stdout.emit('data', JSON.stringify(windows)); f.child.emit('close', 0, null);
   await vi.advanceTimersByTimeAsync(0);
   expect(await pending).toBe(0);
-  expect(report).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ url: 'https://loom.example', token: 'worker-credential' }), { ...identity, windows });
+  expect(report).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ url: 'https://loom.example', token: 'worker-credential' }), { ...identity, windows, basis: '00000000-0000-4000-8000-000000000001' });
   expect(f.input.read.mock.calls.map(call => call[0])).toEqual(['/config', '/token']);
 });
 it('does not retry or print a success after an uncertain quota report', async () => {
@@ -149,12 +149,13 @@ it('waits for a configured report and suppresses a late success after SIGTERM', 
   f.handlers.get('SIGTERM')!(); expect(signal.aborted).toBe(true);
   release({ recorded: true }); expect(await pending).toBe(1); expect(f.input.output).not.toHaveBeenCalled();
 });
-for (const output of ['invalid-json', '[{"name":"week","usage":2}]']) it('does not access a reporting token or endpoint after a failed provider read', async () => {
+for (const output of ['invalid-json', '[{"name":"week","usage":2}]']) it('reports unavailability rather than successful usage after a failed provider read', async () => {
   const f = fixture('--account-usage'), report = vi.fn();
-  f.input.read.mockResolvedValue(JSON.stringify({ ...f.config, report: { url: 'https://loom.example', tokenFile: '/token' } }));
+  configureReporting(f);
   const pending = workerProgram({ ...f.input, reportUsage: report }); await spawned(f);
   f.child.stdout.emit('data', output); f.child.emit('close', 0, null); await vi.advanceTimersByTimeAsync(0);
-  expect(await pending).toBe(1); expect(report).not.toHaveBeenCalled(); expect(f.input.read).toHaveBeenCalledExactlyOnceWith('/config');
+  expect(await pending).toBe(1); expect(report).not.toHaveBeenCalled(); expect(f.input.read.mock.calls.map(call => call[0])).toEqual(['/config', '/token']);
+  expect(f.input.usageUnavailable).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ token: 'worker-credential' }), { ...identity, basis: '00000000-0000-4000-8000-000000000001' });
 });
 it('prints a local success only after the reporting promise acknowledges', async () => {
   const f = fixture('--account-usage'); let release!: (value: { recorded: boolean }) => void;
@@ -165,4 +166,35 @@ it('prints a local success only after the reporting promise acknowledges', async
   expect(report).toHaveBeenCalledOnce(); expect(f.input.output).not.toHaveBeenCalled();
   release({ recorded: true }); expect(await pending).toBe(0);
   expect(f.input.output).toHaveBeenCalledExactlyOnceWith(JSON.stringify({ ...identity, windows }) + '\n');
+});
+it('does not launch a provider after cancellation during the witness request', async () => {
+  const f = fixture('--account-usage'); configureReporting(f); let release!: (value: { basis: string }) => void;
+  const usageBasis = vi.fn(() => new Promise<{ basis: string }>(resolve => { release = resolve; }));
+  const pending = workerProgram({ ...f.input, usageBasis }); await flush(); expect(usageBasis).toHaveBeenCalledOnce(); expect(spawn).not.toHaveBeenCalled();
+  f.handlers.get('SIGTERM')!(); release({ basis: '00000000-0000-4000-8000-000000000001' });
+  expect(await pending).toBe(1); expect(spawn).not.toHaveBeenCalled(); expect(f.input.usageUnavailable).not.toHaveBeenCalled();
+});
+it('does not retry an uncertain failure acknowledgement or leak provider diagnostics', async () => {
+  const f = fixture('--account-usage'); configureReporting(f); const usageUnavailable = vi.fn(async () => { throw Error('private upstream failure'); });
+  const pending = workerProgram({ ...f.input, usageUnavailable }); await spawned(f); f.child.emit('close', 1, null); await vi.advanceTimersByTimeAsync(0);
+  expect(await pending).toBe(1); expect(usageUnavailable).toHaveBeenCalledOnce(); expect(f.input.output).not.toHaveBeenCalled();
+  expect(f.input.error).toHaveBeenCalledExactlyOnceWith('Worker stopped: invalid configuration or unavailable execution\n');
+});
+
+it('does not request a witness after cancellation during its token file read', async () => {
+  const f = fixture('--account-usage'); let release!: (value: string) => void;
+  f.input.read.mockImplementation(async path => path === '/config'
+    ? JSON.stringify({ ...f.config, report: { url: 'https://loom.example', tokenFile: '/token' } })
+    : new Promise<string>(resolve => { release = resolve; }));
+  const pending = workerProgram(f.input); await flush(); expect(f.input.read).toHaveBeenCalledTimes(2);
+  f.handlers.get('SIGTERM')!(); release('worker-credential'); expect(await pending).toBe(1);
+  expect(f.input.usageBasis).not.toHaveBeenCalled(); expect(spawn).not.toHaveBeenCalled();
+});
+
+it('does not report either outcome after cancelling an active reporting provider', async () => {
+  const f = fixture('--account-usage'); configureReporting(f); const reportUsage = vi.fn();
+  const pending = workerProgram({ ...f.input, reportUsage }); await spawned(f);
+  f.handlers.get('SIGTERM')!(); await vi.advanceTimersByTimeAsync(0);
+  expect(await pending).toBe(1); expect(f.input.usageBasis).toHaveBeenCalledOnce();
+  expect(reportUsage).not.toHaveBeenCalled(); expect(f.input.usageUnavailable).not.toHaveBeenCalled(); expect(f.input.output).not.toHaveBeenCalled();
 });
