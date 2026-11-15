@@ -33,7 +33,7 @@ export async function initializeSharedHome(home:string,clock:Clock){
   client.close();client=undefined;
   await loadKey(stage);
   const commons=join(home,'commons'),agent=join(home,'agents/assistant');
-  const program={database:join(home,'loom.db'),commsKey:join(home,'comms.key'),signinMember:member,memory:{checkingAgent:'assistant',sources:{
+  const program={secretHolder:true,database:join(home,'loom.db'),commsKey:join(home,'comms.key'),signinMember:member,memory:{checkingAgent:'assistant',sources:{
    commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},
    agents:[{agent:'assistant',directory:agent,memories:join(agent,'memories.db')}],
   }}};
