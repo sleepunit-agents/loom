@@ -60,9 +60,9 @@ it('submits the selected connection through the registered tile and never render
  try{
   await draw('/p/bridges-preview/item/connections/connection');
   const forms=tree.root.findAllByType('form'),form=forms[forms.length-1];
-  await act(async()=>{const event={preventDefault(){},currentTarget:{fields:{platform:'slack',workspace:'w',agent:'art',botUser:'bot',tokenSecret:'BOT_NAME',appSecret:'APP_NAME',enabled:'on',only:'one\ntwo',ignore:'noise'}}};form.props.onSubmit(event);form.props.onSubmit(event);});
+  await act(async()=>{const event={preventDefault(){},currentTarget:{fields:{platform:'slack',workspace:'w',agent:'forged-agent',botUser:'bot',tokenSecret:'BOT_NAME',appSecret:'APP_NAME',enabled:'on',only:'one\ntwo',ignore:'noise'}}};form.props.onSubmit(event);form.props.onSubmit(event);});
   expect(request).toHaveBeenCalledOnce();const [url,options]=request.mock.calls[0] as unknown as [string,RequestInit];expect(url).toBe('/api/bridges/command');expect(options.credentials).toBe('same-origin');
-  expect(JSON.parse(String(options.body))).toMatchObject({input:{action:'connection',id:'connection',platform:'slack',tokenSecret:'BOT_NAME',appSecret:'APP_NAME',only:['one','two'],ignore:['noise'],enabled:true}});
+  expect(JSON.parse(String(options.body))).toMatchObject({input:{action:'connection',id:'connection',platform:'slack',workspace:'Pond workspace',agent:'art',botUser:'U-BOT',tokenSecret:'BOT_NAME',appSecret:'APP_NAME',only:['one','two'],ignore:['noise'],enabled:true}});
   expect(text()).toContain('Change not confirmed');expect(text()).not.toContain('PRIVATE upstream');
  }finally{vi.unstubAllGlobals();}
 });
@@ -84,7 +84,7 @@ it.each(['connections','channels','people'] as const)('creates %s through its re
  const initial=data();feed.query={status:'live',data:{...initial,bridgeReader:{id:'jonathan',manage:true}}};
  const request=vi.fn(async(_url:RequestInfo|URL,_options?:RequestInit)=>new Response(JSON.stringify({ok:true,value:{saved:true}})));vi.stubGlobal('fetch',request);vi.stubGlobal('FormData',class{constructor(private form:{fields:Record<string,string>}){}get(name:string){return this.form.fields[name]??null;}has(name:string){return name in this.form.fields;}});
  try{
-  await draw('/p/bridges-preview/'+folder);await act(async()=>tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){},currentTarget:{fields:{platform:'discord',workspace:'w',agent:'art',botUser:'bot',tokenSecret:'BOT_NAME',enabled:'on',channel:'room',answers:'art',user:'outside',member:'jonathan'}}}));
+  await draw('/p/bridges-preview/'+folder);await act(async()=>tree.root.findAllByType('form')[0].props.onSubmit({preventDefault(){},currentTarget:{fields:{platform:'discord',workspace:'w',agent:'forged-agent',botUser:'bot',tokenSecret:'BOT_NAME',enabled:'on',channel:'room',answers:'art',user:'outside',member:'jonathan'}}}));
   const envelope=JSON.parse(String(request.mock.calls[0][1]?.body));expect(envelope.id).toMatch(/^[0-9a-f-]{36}$/);expect(envelope.input.action).toBe(folder==='connections'?'connection':folder==='channels'?'channel':'person');expect(envelope.input.workspace).toBe('w');if(folder==='connections')expect(envelope.input.id).not.toBe('connection');expect(text()).toContain('Saved.');
  }finally{vi.unstubAllGlobals();}
 });
@@ -97,4 +97,9 @@ it.each(['Disconnect','Remove channel rule','Remove person link','Release send',
   const input=JSON.parse(String(request.mock.calls[0][1]?.body)).input;
   expect(input).toEqual(label==='Disconnect'?{action:'disconnect',id:'connection'}:label==='Remove channel rule'?{action:'removeChannel',platform:'discord',workspace:'w',channel:'room'}:label==='Remove person link'?{action:'removePerson',platform:'discord',workspace:'w',user:'outside'}:{action:'review',id:'send',decision:label==='Release send'?'release':'dismiss'});expect(text()).toContain('Saved.');
  }finally{vi.unstubAllGlobals();}
+});
+
+it('locks existing connection identity while leaving new connection identity fields editable',async()=>{
+ const initial=data();feed.query={status:'live',data:{...initial,bridgeReader:{id:'jonathan',manage:true}}};await draw('/p/bridges-preview/item/connections/connection');const forms=tree.root.findAllByType('form');expect(forms).toHaveLength(2);
+ for(const [form,fixed] of [[forms[0],false],[forms[1],true]] as const){expect(form.findAllByType('select')[0].props.disabled).toBe(fixed);for(const name of ['workspace','agent','botUser'])expect(form.findAllByType('input').find((input:any)=>input.props.name===name).props.readOnly).toBe(fixed);}
 });

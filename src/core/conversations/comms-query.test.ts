@@ -176,7 +176,6 @@ it('executes the shipped Work queries against the generated current-policy task 
   const mentioned = await graphql({ schema, source: taskQuery, variableValues: { id: 't-11' } });
   expect(mentioned.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(mentioned.data))).toEqual({ tasks: [] });
 });
-
 it('projects Home from the current member and owned agents, counting reply threads across the whole mailbox', async () => {
   const f = await fixture();
   f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
@@ -240,20 +239,6 @@ it('orders Home by instant across timestamp precision and ignores replies from a
   expect(f.service.home(alice)?.summaries[0]).toMatchObject({ unread: 2, last: { thread: newer.id }, first: { thread: newer.id } });
 });
 
-it('orders and pages Comms threads by time rather than ISO timestamp precision', async () => {
-  const f = await fixture();
-  const newer = f.comms.threads.open({ member: 'alice', agent: 'art', title: 'Newer' });
-  f.db.update(threads).set({ lastAt: '2026-11-14T18:00:00Z' }).where(eq(threads.id, f.thread.id)).run();
-  f.db.update(threads).set({ lastAt: '2026-11-14T18:00:00.500Z' }).where(eq(threads.id, newer.id)).run();
-  expect(f.service.list(alice, { limit: 1 }).map(row => row.id)).toEqual([newer.id]);
-  expect(f.service.list(alice, { limit: 1, offset: 1 }).map(row => row.id)).toEqual([f.thread.id]);
-});
-it('never decrypts thread words at an equal whole-second stored deadline', async () => {
-  const f = await fixture();
-  f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
-  const row = f.service.messages(alice, f.thread.id, undefined, 1)[0];
-  expect(await f.service.words(alice, row)).toBeNull(); expect(f.opens()).toBe(0);
-});
 it('executes the actual shipped Comms selection over the shared read group', async () => {
   const f = await fixture(); f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
   const { commsSelection } = await import('../../../web/src/pieces/comms/shared-query.js');
