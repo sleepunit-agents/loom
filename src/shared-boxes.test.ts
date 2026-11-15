@@ -21,7 +21,7 @@ function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields']) {
   db.insert(members).values(['alice','bob','house'].map(id => ({id, role:id==='house'?'owner' as const:'member' as const,joinedAt:now()}))).run();
   db.insert(agents).values({id:'art',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();
   db.insert(memberAgents).values({member:'bob',agent:'art'}).run();
-  for (const [id,owner] of [['alice-box','alice'],['bob-box','bob'],['retired','alice']]) db.insert(boxes).values({id,owner,name:id,sameMachineAsLoom:false,hostsAny:true,reportOnly:false,alwaysOn:false,enrolledAt:now(),revokedAt:id==='retired'?now():null}).run();
+  for (const [id,owner] of [['alice-box','alice'],['bob-box','bob'],['house-box','house'],['retired','alice']]) db.insert(boxes).values({id,owner,name:id,sameMachineAsLoom:false,hostsAny:true,reportOnly:false,alwaysOn:false,enrolledAt:now(),revokedAt:id==='retired'?now():null}).run();
   db.insert(boxAgents).values({box:'alice-box',agent:'art',lent:true}).run();
   for (const [id,key] of Object.entries(keys)) db.insert(tokens).values({fingerprint:createHash('sha256').update(key).digest('hex'),label:id,kind:id==='art'?'agent':id==='worker'?'runner':'owner',box:id==='worker'?'alice-box':null,agent:id==='art'?'art':null,member:id==='art'||id==='worker'?null:id,createdAt:now()}).run();
   const root=sharedRoot({db,clock,fields,originAllowed:()=>true,reportError:()=>{}});cleanup.push(()=>root.close());
@@ -30,7 +30,7 @@ function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields']) {
 }
 it('mounts exact ticker fields with member ownership and current household-owner precedence',async()=>{
   const f=fixture();
-  for(const [who,ids] of [['alice',['alice-box','retired']],['bob',['bob-box']],['house',['alice-box','bob-box','retired']],['art',[]]] as const){
+  for(const [who,ids] of [['alice',['alice-box','retired']],['bob',['bob-box']],['house',['alice-box','bob-box','house-box','retired']],['art',[]]] as const){
     const response=await f.post(who);expect(response.status).toBe(200);const body=await response.json();expect(body.errors).toBeUndefined();expect(body.data.boxes.map((row:{id:string})=>row.id)).toEqual(ids);
   }
   expect((await f.post('worker')).status).toBe(403);
@@ -57,15 +57,17 @@ for(const withdrawal of ['ownership','household-role'] as const) it(`updates the
   };
   ws.send(JSON.stringify({type:'subscribe',id:'boxes',payload:{query:`subscription { observe(query:${JSON.stringify(query)}) { revision patches { path value removed } } }`}}));
   let retained=apply((await next)[0],undefined);
-  expect(retained).toEqual({boxes:who==='alice'?[{id:'alice-box',revokedAt:null},{id:'retired',revokedAt:f.now()}]:[{id:'alice-box',revokedAt:null},{id:'bob-box',revokedAt:null},{id:'retired',revokedAt:f.now()}]});
+  expect(retained).toEqual({boxes:who==='alice'?[{id:'alice-box',revokedAt:null},{id:'retired',revokedAt:f.now()}]:[{id:'alice-box',revokedAt:null},{id:'bob-box',revokedAt:null},{id:'house-box',revokedAt:null},{id:'retired',revokedAt:f.now()}]});
   next=once(ws,'message');f.root.writes.run(()=>f.db.update(boxes).set({revokedAt:f.now()}).where(eq(boxes.id,'alice-box')).run());
   retained=apply((await next)[0],retained);
   expect((retained as {boxes:{id:string;revokedAt:string}[]}).boxes.find(row=>row.id==='alice-box')?.revokedAt).toBe(f.now());
   next=once(ws,'message');f.root.writes.run(()=>withdrawal==='ownership'
     ?f.db.update(boxes).set({owner:'bob'}).where(eq(boxes.owner,'alice')).run()
     :f.db.update(members).set({role:'member'}).where(eq(members.id,'house')).run());
-  retained=apply((await next)[0],retained);expect(retained).toEqual({boxes:[]});
-  expect((await(await f.post(who)).json()).data.boxes).toEqual([]);
+  retained=apply((await next)[0],retained);
+  const remaining=withdrawal==='ownership'?[]:[{id:'house-box',revokedAt:null}];
+  expect(retained).toEqual({boxes:remaining});
+  expect((await(await f.post(who)).json()).data.boxes).toEqual(remaining);
 });
 it('withholds a held HTTP response if ownership changes before publication',async()=>{
   let began!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{began=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
