@@ -13,7 +13,8 @@ export async function inboxTaskSource({page,tile,app,example,out,approval}){
    app.services.tasks.ask(created.id,{to:{kind:'member',id:'alex'},ask,ifYes:'Fern continues.',ifNo:'Fern waits.',answers:'yes-no'},actor);return created;
   }).value;
   const db=app.services.comms.db.$client;
-  const items=db.prepare('SELECT * FROM inbox WHERE source=\'task\' AND source_id=? AND to_kind=\'person\' AND "to"=\'alex\'').all(task.id);
+  // source_id identifies this question's revision; waits_on_id names the task.
+  const items=db.prepare('SELECT * FROM inbox WHERE source=\'task\' AND waits_on_kind=\'task\' AND waits_on_id=? AND to_kind=\'person\' AND "to"=\'alex\'').all(task.id);
   check(items.length===1&&items[0].state==='waiting'&&items[0].waits_on_id===task.id,'The task did not produce one linked waiting question for Alex');
   const back=tile.locator('.loom-split__back:visible');if(await back.count())await back.click();
   await tile.getByRole('button',{name:/^Needs you(?:\s|$)/}).first().click();
