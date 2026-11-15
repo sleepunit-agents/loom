@@ -30,6 +30,11 @@ it('builds fictitious data through services, then normal startup signs in and qu
   expect(database.prepare('select id,name,owner,same_machine_as_loom,hosts_any,report_only,always_on,last_seen_at from boxes').all()).toEqual([{id:manifest.runtime.box,name:'Example workshop',owner:'alex',same_machine_as_loom:1,hosts_any:0,report_only:0,always_on:0,last_seen_at:manifest.createdAt}]);
   expect(database.prepare('select box,agent,lent from box_agents order by agent').all()).toEqual([{box:manifest.runtime.box,agent:'fern',lent:0},{box:manifest.runtime.box,agent:'moss',lent:0}]);
   expect(database.prepare('select fact,from_owner from box_facts order by fact').all()).toEqual([{fact:'arch:example',from_owner:0},{fact:'cpu:example',from_owner:1}]);
+  expect(database.prepare('select agent,model,position from agent_models order by agent,position').all()).toEqual([{agent:'fern',model:'example-model',position:0},{agent:'moss',model:'example-model',position:0}]);
+  expect(database.prepare('select agent,box,position from agent_boxes order by agent,position').all()).toEqual([{agent:'fern',box:manifest.runtime.box,position:0},{agent:'moss',box:manifest.runtime.box,position:0}]);
+  expect(database.prepare('select agent,house_repository,house_file,house_branch,nested_containers,gpu from agent_run_settings order by agent').all()).toEqual(['fern','moss'].map(agent=>({agent,house_repository:'https://example.invalid/house.git',house_file:'Housefile',house_branch:'next',nested_containers:0,gpu:0})));
+  expect(database.prepare("select count(*) as n from inbox where source='trigger' and from_kind='schedule'").get()).toEqual({n:1});
+
   expect(database.prepare('select agent,model,member,conversation,state,box,brief from jobs where id=?').get(manifest.runtime.job.id)).toEqual({agent:'moss',model:'example-model',member:'alex',conversation:manifest.runtime.conversation,state:'queued',box:null,brief:''});
 
   expect(database.prepare("select operation,id from operation_results where id='example-account'").get()).toEqual({operation:'runtime.accountCreate',id:'example-account'});}finally{database.close();}
@@ -66,11 +71,11 @@ it('revokes the temporary setup credential when the outside operation fails',asy
  }finally{rmSync(parent,{recursive:true,force:true});}
 });
 
-it('revokes both temporary setup credentials when worker reporting is refused',async()=>{
+it.each(['runtime.boxSettingsSet','runtime.health','tempo.set']as const)('revokes temporary setup authority when %s is refused',async operation=>{
  const parent=mkdtempSync(join(tmpdir(),'loom-example-runtime-failed-')),home=join(parent,'home'),call=Operations.prototype.callAsync;
- vi.spyOn(Operations.prototype,'callAsync').mockImplementation(async function(this:Operations,...args:Parameters<Operations['callAsync']>){if(args[2]==='runtime.health')return{ok:false as const,code:'denied' as const,message:'Fictitious health refusal'};return call.apply(this,args);});
+ vi.spyOn(Operations.prototype,'callAsync').mockImplementation(async function(this:Operations,...args:Parameters<Operations['callAsync']>){if(args[2]===operation)return{ok:false as const,code:'denied' as const,message:'Fictitious health refusal'};return call.apply(this,args);});
  try{
-  await expect(exampleHome(home)).rejects.toThrow('Worker health failed');
-  const database=new Database(join(home,'app.db'),{readonly:true});try{expect(database.prepare("select label,revoked_at from tokens where label in ('Example setup','Example worker setup') order by label").all()).toEqual([{label:'Example setup',revoked_at:expect.any(String)},{label:'Example worker setup',revoked_at:expect.any(String)}]);}finally{database.close();}
+  await expect(exampleHome(home)).rejects.toThrow(operation==='runtime.health'?'Worker health failed':'Example Runtime setup failed at '+operation);
+  const database=new Database(join(home,'app.db'),{readonly:true});try{expect(database.prepare("select label,revoked_at from tokens where label in ('Example setup','Example worker setup') order by label").all()).toEqual(operation==='runtime.boxSettingsSet'?[{label:'Example setup',revoked_at:expect.any(String)}]:[{label:'Example setup',revoked_at:expect.any(String)},{label:'Example worker setup',revoked_at:expect.any(String)}]);}finally{database.close();}
  }finally{rmSync(parent,{recursive:true,force:true});}
 });
