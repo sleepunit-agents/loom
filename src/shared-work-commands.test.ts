@@ -64,9 +64,37 @@ it('keeps an exact-head merge answer atomic and refuses stale replay after the h
   expect(await (await f.send('changes', input)).json()).toEqual({ ok: true, value: { id: changeId } });
   expect(f.db.select().from(changes).get()?.waitingOn).toBe('agent');
   expect((await f.send('changes', input)).status).toBe(200);
+  f.root.writes.run(() => f.db.update(members).set({ role: 'member' }).where(eq(members.id, 'sam')).run());
+  expect((await f.send('changes', input)).status).toBe(403);
+  f.root.writes.run(() => f.db.update(members).set({ role: 'owner' }).where(eq(members.id, 'sam')).run());
   f.root.writes.run(() => f.db.update(changes).set({ headCommit: 'c'.repeat(40) }).run());
   expect((await f.send('changes', input)).status).toBe(409);
   expect((await f.send('changes', input, 'fresh-stale')).status).toBe(409);
   expect(f.root.services.approvals.get(request.id).target).toBe(`${changeId}@${head}`);
   expect(f.db.select().from(operationResults).all()).toHaveLength(1);
+});
+
+it('denies through the shared HTTP door, revokes the earlier allowance and never reapplies a cached Allow', async () => {
+  const f = fixture(), first = f.request();
+  const allow = { id: first.id, answer: 'allow' };
+  expect((await f.send('approvals', allow, 'allow')).status).toBe(200);
+  const denial = f.request();
+  expect((await f.send('approvals', { id: denial.id, answer: 'deny' }, 'deny')).status).toBe(200);
+  expect(f.root.services.approvals.get(first.id)).toMatchObject({ state: 'denied', overriddenBy: denial.id });
+  expect(f.root.services.approvals.get(denial.id)).toMatchObject({ state: 'denied', decidedBy: 'sam' });
+  expect((await f.send('approvals', allow, 'allow')).status).toBe(200);
+  expect(f.root.services.approvals.get(first.id).state).toBe('denied');
+  expect(f.db.select().from(operationResults).all()).toHaveLength(2);
+});
+
+it('rolls a failed merge answer and its audit and receipt back without leaking the storage failure', async () => {
+  const f = fixture(); f.seedChange(); const request = f.request();
+  f.db.$client.exec("CREATE TRIGGER broken_change BEFORE UPDATE ON changes BEGIN SELECT RAISE(ABORT, 'private storage failure'); END");
+  const response = await f.send('changes', { id: changeId, head, approval: request.id, answer: 'yes' });
+  expect(response.status).toBe(503);
+  expect(await response.text()).not.toContain('private storage failure');
+  expect(f.root.services.approvals.get(request.id).state).toBe('pending');
+  expect(f.db.select().from(approvalRecord).all().map(row => row.event)).toEqual(['request']);
+  expect(f.db.select().from(operationResults).all()).toEqual([]);
+  expect(f.db.select().from(changes).get()?.waitingOn).toBe('you');
 });
