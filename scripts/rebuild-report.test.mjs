@@ -103,3 +103,9 @@ it('can disprove a one-query-door promise without claiming the converse proves i
 });
 
 it('keeps an explicitly incomplete action unknown even if partial checks passed',()=>{expect(evaluate({probe:{kind:'action',action:'partial'}},{actions:{partial:{ok:true,inconclusive:true,reason:'A new app has no query signature yet.'}}})).toMatchObject({status:'not checkable yet',reason:'A new app has no query signature yet.'});});
+
+it.each(['Unexpected task question','Expected private question'])('does not infer a UI verdict from an unobserved intended selection (%s)',text=>{
+ const run={apps:[{title:'Inbox',opened:true,text,detailText:text,selectionError:'The selected detail was hidden',screenshot:'wrong-reader.png'}],actions:{knownFailure:{ok:false,error:'Observed missing source link'}}};
+ expect(evaluate({probe:{kind:'ui',app:'Inbox',contains:['Expected private question']}},run)).toMatchObject({status:'not checkable yet',evidence:'wrong-reader.png'});
+ expect(evaluate({probe:{kind:'action',action:'knownFailure'}},run)).toMatchObject({status:'not met',reason:'Observed missing source link'});
+});
