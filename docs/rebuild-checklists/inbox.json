@@ -1,0 +1,150 @@
+{
+  "page": "inbox",
+  "title": "Inbox",
+  "ownerTask": "t-2237",
+  "sourceSha256": "1df6c5260a890f7f2ffa6bc1ea485d01ecd635f68ac1bf053128823d6b4259e4",
+  "promises": [
+    {
+      "id": "inbox-001",
+      "promise": "One inbox for everything sent to anyone, person or agent. The Inbox app is a person's side of it: the items addressed to you that are waiting.",
+      "source": "docs/how-it-works/site/inbox.html"
+    },
+    {
+      "id": "inbox-002",
+      "promise": "Lists what needs you, with what happens on yes and on no.",
+      "source": "docs/how-it-works/site/inbox.html"
+    },
+    {
+      "id": "inbox-003",
+      "promise": "Takes a yes, a no, or an answer in your own words.",
+      "source": "docs/how-it-works/site/inbox.html"
+    },
+    {
+      "id": "inbox-004",
+      "promise": "Sends you to Approvals or the task when the answer belongs there.",
+      "source": "docs/how-it-works/site/inbox.html"
+    },
+    {
+      "id": "inbox-005",
+      "promise": "Marks what you have read and keeps what was answered.",
+      "source": "docs/how-it-works/site/inbox.html"
+    },
+    {
+      "id": "inbox-006",
+      "promise": "Every item has one recipient: a person or an agent.",
+      "source": "docs/how-it-works/site/inbox.html#con-h"
+    },
+    {
+      "id": "inbox-007",
+      "promise": "The conversation it belongs to. An agent's messages, wakes and handoffs arrive the same way.",
+      "source": "docs/how-it-works/site/inbox.html#con-h"
+    },
+    {
+      "id": "inbox-008",
+      "promise": "A task's question arrives as an item, with a link to the task.",
+      "source": "docs/how-it-works/site/inbox.html#con-h"
+    },
+    {
+      "id": "inbox-009",
+      "promise": "A pending approval arrives as an item, and is answered in Approvals.",
+      "source": "docs/how-it-works/site/inbox.html#con-h"
+    },
+    {
+      "id": "inbox-010",
+      "promise": "A trigger that fires drops an item in the recipient's inbox.",
+      "source": "docs/how-it-works/site/inbox.html#con-h"
+    },
+    {
+      "id": "inbox-011",
+      "promise": "Each incoming message becomes one item.",
+      "source": "docs/how-it-works/site/inbox.html#con-h"
+    },
+    {
+      "id": "inbox-012",
+      "promise": "A pending request for a secret arrives as an item.",
+      "source": "docs/how-it-works/site/inbox.html#con-h"
+    },
+    {
+      "id": "inbox-013",
+      "promise": "A subagent's brief arrives as an item; its conversation's place is the parent job.",
+      "source": "docs/how-it-works/site/inbox.html#con-h"
+    },
+    {
+      "id": "inbox-014",
+      "promise": "Every item has a recipient. An agent's body takes the items addressed to it, in order. A person's Inbox app is the items addressed to them that are waiting.",
+      "source": "docs/how-it-works/site/inbox.html#how-h"
+    },
+    {
+      "id": "inbox-015",
+      "promise": "An item that is a question says how it is answered, with yes or no or in words, and what happens on each answer. The answer, who gave it and when are recorded on the item. Loom also adds a new item for the agent in the same conversation, with answer as its source and the question as its source id.",
+      "source": "docs/how-it-works/site/inbox.html#how-h"
+    },
+    {
+      "id": "inbox-016",
+      "promise": "A question can name an approval or a task whose outcome settles it. When that finishes, the item resolves and records why.",
+      "source": "docs/how-it-works/site/inbox.html#how-h"
+    },
+    {
+      "id": "inbox-017",
+      "promise": "Opening an item marks it read for that member. An item lists the tasks, approvals, pull requests or conversations it is about.",
+      "source": "docs/how-it-works/site/inbox.html#how-h"
+    },
+    {
+      "id": "inbox-018",
+      "promise": "a The recipient. An item is for one person or one agent. A person's Inbox shows the waiting items addressed to them.",
+      "source": "docs/how-it-works/site/inbox.html#see-h"
+    },
+    {
+      "id": "inbox-019",
+      "promise": "b Who else sees it. An item also carries the usual labels: a project's people, an agent's owners, or one member alone. A household owner sees everything, including what is private to another member. Private to a member means that member plus household owners.",
+      "source": "docs/how-it-works/site/inbox.html#see-h"
+    },
+    {
+      "id": "inbox-020",
+      "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
+      "source": "docs/how-it-works/site/inbox.html#see-h"
+    },
+    {
+      "id": "inbox-021",
+      "promise": "The same inbox table is drawn from the agent's side on the Conversations page. Volume (full, dim, mute) is explained on the Tempo page.",
+      "source": "docs/how-it-works/site/inbox.html"
+    },
+    {
+      "id": "inbox-022",
+      "promise": "The waiting question displays reason and yes/no outcomes.",
+      "source": "docs/how-it-works/site/inbox.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Inbox",
+        "contains": [
+          "Spend up to 180",
+          "If yes",
+          "If no",
+          "The example pump is available."
+        ]
+      }
+    },
+    {
+      "id": "inbox-023",
+      "promise": "The question offers Yes, No, a written answer, done and dismiss.",
+      "source": "docs/how-it-works/site/inbox.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Inbox",
+        "contains": [
+          "Yes",
+          "No",
+          "Record answer",
+          "Mark done",
+          "Dismiss"
+        ]
+      }
+    }
+  ],
+  "modelTables": [
+    "inbox",
+    "inbox_refs",
+    "inbox_reads",
+    "action_results"
+  ]
+}

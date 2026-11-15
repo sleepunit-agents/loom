@@ -55,7 +55,8 @@ export function registerConversationBodyOutput(operations:Operations,service:Com
    db.insert(agentStatus).values({agent:found.cv.agent,state:input.state,work:input.work,changedAt:at}).onConflictDoUpdate({target:agentStatus.agent,set:{state:input.state,work:input.work,changedAt:at}}).run();
    const thread=found.cv.venue==='loom'?db.select().from(threads).where(eq(threads.conversation,found.cv.id)).get():undefined;
    let stopRequested=false;
-   if(thread){service.threads.working(thread.id,input.state==='working');stopRequested=thread.stopRequested;if(input.seenStop)service.threads.takeStop(thread.id);ctx.changed('threads',thread.id);}
+   // Waiting still owns a live body: the thread must keep its Stop control.
+   if(thread){service.threads.working(thread.id,input.state==='working'||input.state==='waiting');stopRequested=thread.stopRequested;if(input.seenStop)service.threads.takeStop(thread.id);ctx.changed('threads',thread.id);}
    ctx.changed('agent_status',found.cv.agent);return {saved:true as const,stopRequested};
   },
  }));
