@@ -20,6 +20,9 @@ import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActions} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {approvalInbox} from './rebuild-approval-inbox.mjs';
+
+
 import {tmpdir} from 'node:os';
 import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
@@ -191,6 +194,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'data',actions:safeReport(report.actions)};
   Object.assign(report.actions,await conversationVisibilityActions({page,browser,app,home,out,verifyIsolation}));
   save();yield {phase:'visibility',actions:safeReport(report.actions)};
+  report.actions.approvalInbox=await approvalInbox({page,tile:await openApp('Inbox'),app,example:report.example,out});
+  save();yield {phase:'approval-source',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}
