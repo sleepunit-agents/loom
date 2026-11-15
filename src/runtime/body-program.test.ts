@@ -164,7 +164,7 @@ it.each(['wake','handoff'] as const)('finishes %s mail without a Comms thread, r
  expect(await bodyProgram({...f.options,stdin:async()=>bytes,native})).toBe(0);
  expect(native).toHaveBeenCalledWith(assigned,'PRIVATE MAIL',expect.any(AbortSignal));
  expect(f.calls.filter(row=>row.path==='turn').map(row=>row.body.input)).toEqual([{kind:'action',model:'actual-tool-model',outcome:'progressed'},{kind:'reply',model:'actual-background-model',outcome:'progressed'}]);
- expect(f.calls.find(row=>row.path==='digest')?.body.input).toEqual({summary:'Result '.repeat(120).slice(0,600)});
+ expect(f.calls.find(row=>row.path==='digest')?.body.input).toEqual({summary:'Result '.repeat(120).slice(0,600),ifAbsent:true});
  expect(f.calls.some(row=>row.path==='message')).toBe(false);
  expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});
  expect(bytes.every(byte=>byte===0)).toBe(true);expect(f.error).not.toHaveBeenCalled();

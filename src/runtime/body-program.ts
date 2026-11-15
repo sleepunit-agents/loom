@@ -103,7 +103,7 @@ export async function bodyProgram(input: {
     if(bridge)await client.bridgeReply({incoming:replyTo!,text:answer.text,model:answer.model,outcome:'progressed'});
     else if(background){
       await client.turn({kind:'reply',model:answer.model,outcome:'progressed'});
-      await client.digest({summary:answer.text.slice(0,600)});
+      await client.digest({summary:answer.text.slice(0,600),ifAbsent:true});
     }
     else await client.reply({ clientId: randomUUID(), words: answer.text, model: answer.model, outcome: 'progressed' });
     await client.status({ state: 'idle', work: '' });
