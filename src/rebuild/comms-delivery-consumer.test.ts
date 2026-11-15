@@ -2,7 +2,7 @@
 import {expect,it} from 'vitest';
 import Database from 'better-sqlite3';
 import {conversationActions} from '../../scripts/rebuild-conversation-actions.mjs';
-it.each([[1,'one',true],[2,'one',false],[1,'wrong-item',false]] as const)('binds the actual action receipt with %s stored copies and item %s',async(count,item,ok)=>{
+it.each([[1,'one',true,0],[2,'one',false,0],[1,'wrong-item',false,0],[1,'one',false,1]] as const)('requires %s receipt copies, item %s, valid %s and %s unexpected approvals',async(count,item,ok,created)=>{
  const db=new Database(':memory:');
  try{
   db.exec('CREATE TABLE inbox(id TEXT,conversation TEXT,to_kind TEXT,"to" TEXT,source TEXT,thread TEXT,message_seq INTEGER)');
@@ -11,7 +11,8 @@ it.each([[1,'one',true],[2,'one',false],[1,'wrong-item',false]] as const)('binds
   const tile={getByRole:()=>control,getByText:()=>control,locator:()=>control,async screenshot(){}};
   const response={url:()=> 'https://fiction.invalid/api/comms/send',status:()=>200,json:async()=>({ok:true,value:{thread:'th:fiction',seq:1,item}}),request:()=>({method:()=> 'POST',postDataJSON:()=>({input:{thread:'th:fiction',words:'Fictitious input',clientId:'fiction'}})})};
   const page={getByRole:()=>control,locator:()=>control,async reload(){},async screenshot(){},async waitForResponse(predicate:(value:typeof response)=>boolean){expect(predicate(response)).toBe(true);return response;}};
-  const result=await conversationActions({page,app:{services:{comms:{db:{$client:db}}}},example:{thread:'th:fiction',conversation:'fictional-cv'},out:'/fictional-artifacts',open:async(title:string)=>{if(title!=='Comms')throw Error('Other action is outside this focused proof');return tile;}});
+  let approvalReads=0;
+  const result=await conversationActions({page,app:{services:{approvals:{list:()=>Array.from({length:approvalReads++===0?0:created},()=>({id:'unexpected-approval'}))},comms:{db:{$client:db}}}},example:{thread:'th:fiction',conversation:'fictional-cv'},out:'/fictional-artifacts',open:async(title:string)=>{if(title!=='Comms')throw Error('Other action is outside this focused proof');return tile;}});
   expect(result).toMatchObject({commsSend:{ok,inboxCopies:count,persistedAfterReload:true}});
  }finally{db.close();}
 });

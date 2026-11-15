@@ -12,6 +12,7 @@ export async function conversationActions({page,app,example,out,open}){
  const response=path=>{const pending=page.waitForResponse(value=>new URL(value.url()).pathname===path&&value.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});return pending;};
  const result=async pending=>{const value=await pending,body=await value.json();if(value.status()!==200||body.ok!==true)throw Error('Browser action was not accepted');return {body:body.value,input:value.request().postDataJSON().input};};
  await attempt('commsSend',async()=>{
+  const approvalCountBefore=app.services.approvals.list().length;
   phase='open-comms';let tile=await open('Comms');phase='select-conversation';await select(tile);
   const words='Fictitious walkthrough follow-up: compare the hose again.';
   phase='fill-message';await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(words);
@@ -19,7 +20,7 @@ export async function conversationActions({page,app,example,out,open}){
   phase='sent-message-visible';await tile.getByText(words,{exact:true}).waitFor();
   const {ok,count:inboxCopies}=commsDeliveryEvidence(app.services.comms.db.$client,{thread:example.thread,conversation:example.conversation,agent:'fern'},sent.body);
   const screenshot='action-comms-send.png';await tile.screenshot({path:join(out,screenshot)});
-  sentWords=words;validSend=ok;return{ok:false,persistedAfterReload:false,inboxCopies,screenshot,error:'Reload persistence has not been observed yet.'};
+  const approvalCountAfter=app.services.approvals.list().length;sentWords=words;validSend=ok&&approvalCountBefore===approvalCountAfter;return{ok:false,persistedAfterReload:false,inboxCopies,approvalCountBefore,approvalCountAfter,screenshot,error:'Reload persistence has not been observed yet.'};
  });
  await attempt('inboxAnswer',async()=>{
   const tile=await open('Inbox');await activate(tile.getByRole('button',{name:'Go to Inbox',exact:true}));await activate(tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(question,{exact:true})}));

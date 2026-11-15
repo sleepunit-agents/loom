@@ -126,8 +126,17 @@
       "promise": "When a person asks an agent in chat to change a setting or do something dangerous, the agent proposes it. Loom shows an approval card inline, with exactly what will change, before and after. On Allow loom makes the change itself and records it. Ordinary work needs no card.",
       "source": "docs/how-it-works/site/approvals.html#how-h",
       "probe": {
-        "kind": "action",
-        "action": "approvalPreparedChanges"
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "approvalPreparedChanges"
+          },
+          {
+            "kind": "action",
+            "action": "commsSend"
+          }
+        ]
       }
     },
     {

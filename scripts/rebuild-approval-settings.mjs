@@ -48,6 +48,14 @@ export async function approvalRulesAndExpiry({page,tile,app,example,out,clock}){
   await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText('Fictitious reported inspection',{exact:true})}).click();
   const history=tile.locator('section').filter({has:page.getByRole('heading',{name:'Permanent record',exact:true})}).last();
   const words=await history.innerText();check(/\brequest\b/.test(words)&&/\ballow\b/.test(words)&&/\buse\b/.test(words)&&words.includes('Fern performed the fictitious inspection.'),'Browser permanent history omitted request/answer/use/report');
+  const draft=write(()=>s.tasks.create({title:'Fictitious order draft',goal:'Discard an unused draft only on approval.',why:'Prove a prepared dangerous action.',owner:{kind:'household'}},{kind:'member',id:'alex'}));
+  const deniedDraft=write(()=>s.approvals.request({agent:'fern',askedFrom:example.conversation,actingFor:'alex',conversation:example.conversation,member:'alex',kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,what:'Discard the fictitious order draft',why:'A fictitious prepared change.',ask:'Discard the fictitious order draft?',ifYes:'Loom cancels this draft.',ifNo:'Loom keeps the draft.'}));
+  await tile.getByRole('button',{name:'Go to Approvals',exact:true}).click();
+  await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(deniedDraft.what,{exact:true})}).click();
+  const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
+  await tile.getByRole('group',{name:'Answer approval',exact:true}).getByRole('button',{name:'Deny',exact:true}).click();const response=await pending;
+  check(response.ok()&&(await response.json()).ok===true&&s.approvals.get(deniedDraft.id).state==='denied'&&s.tasks.get(draft.id).status==='open','Deny changed the prepared draft or answered another card');
+  example.preparedDraft=draft.id;example.deniedDraftApproval=deniedDraft.id;
   await page.screenshot({path:join(out,screenshot),fullPage:true});return {approvalRulesAndExpiry:{ok:true,screenshot}};
  }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return {approvalRulesAndExpiry:{ok:false,error:String(error),screenshot}};}
 }
@@ -64,11 +72,6 @@ export async function approvalPreparedChanges({page,tile,app,example,out,clock})
    const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/answer'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
    await activate(active.getByRole('button',{name:button,exact:true}));const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Prepared operation answer refused');
   };
-  const beforeCards=s.approvals.list().length,ordinary='Ordinary fictitious note without an approval.';
-  await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(ordinary);
-  const ordinaryReply=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/comms/send'&&r.request().method()==='POST',{timeout:4000});void ordinaryReply.catch(()=>{});
-  await activate(tile.getByRole('button',{name:'Send',exact:true}));const ordinaryResponse=await ordinaryReply;check(ordinaryResponse.ok()&&(await ordinaryResponse.json()).ok===true&&s.approvals.list().length===beforeCards,'Ordinary conversation work required an approval');
-  await tile.getByText(ordinary,{exact:true}).waitFor();
   const before=s.tempo.volume.timings(who).settleSeconds;clock.advance(1);
   const deniedSetting=write(()=>tempoSettingsProposals(s.comms.db,clock).request(s.approvals,who,{settleSeconds:before+1},context));
   await answer(deniedSetting,'Deny');check(s.tempo.volume.timings(who).settleSeconds===before,'Deny applied a proposed setting');clock.advance(1);
@@ -80,10 +83,9 @@ export async function approvalPreparedChanges({page,tile,app,example,out,clock})
   await answer(setting,'Allow');
   check(s.tempo.volume.timings(who).settleSeconds===before+1&&s.approvals.get(setting.id).state==='used','Allow did not apply the prepared settings itself');
   check(s.approvals.record(setting.id).map(row=>row.event).join(',')==='request,allow,use','Prepared settings record incomplete');
-  const draft=write(()=>s.tasks.create({title:'Fictitious order draft',goal:'Discard an unused draft only on approval.',why:'Prove a prepared dangerous action.',owner:{kind:'household'}},{kind:'member',id:'alex'}));
+  const draft=s.tasks.get(example.preparedDraft);check(draft.status==='open'&&s.approvals.get(example.deniedDraftApproval).state==='denied','The tile Deny was not preserved before inline Allow');
   const propose=()=>{clock.advance(1);return write(()=>s.approvals.request({...context,kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,what:'Discard the fictitious order draft',ask:'Discard the fictitious order draft?',ifYes:'Loom cancels this draft.',ifNo:'Loom keeps the draft.'}));};
-  const denied=propose();await tile.getByText(`Draft ${draft.id}: open → cancelled`,{exact:true}).first().waitFor();await answer(denied,'Deny');check(s.tasks.get(draft.id).status==='open','Deny changed the draft');
-  const allowed=propose();await answer(allowed,'Allow');
+  const allowed=propose();await tile.getByText(`Draft ${draft.id}: open → cancelled`,{exact:true}).first().waitFor();await answer(allowed,'Allow');
   check(s.tasks.get(draft.id).status==='closed'&&s.tasks.get(draft.id).closeReason==='cancelled'&&s.approvals.get(allowed.id).state==='used','Allow did not perform the exact dangerous action');
   const merge=write(()=>s.approvals.request({...context,kind:'merge',target:`${example.change}@${s.changes.get(example.change).headCommit}`,what:'Fictitious exact-head merge',ask:'Merge the fictitious head?',ifYes:'Fern merges it.',ifNo:'Leave it open.'}));
   check(['command','merge','setting','dangerous'].every(kind=>s.approvals.list().some(card=>card.kind===kind)),'Not all four approval kinds were represented');
