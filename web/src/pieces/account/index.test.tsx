@@ -9,8 +9,8 @@ vi.mock('../../kit',()=>Object.fromEntries(['AppFrame','Button','Input','Empty',
 import Account from './index';
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
-beforeEach(()=>{vi.clearAllMocks();f.feed.status='live';f.operation.mockResolvedValue({});});
-afterEach(async()=>{await act(async()=>tree?.unmount());});
+beforeEach(()=>{vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({viewer:{id:'sam'}})));vi.clearAllMocks();f.feed.status='live';f.operation.mockResolvedValue({});});
+afterEach(async()=>{await act(async()=>tree?.unmount());vi.unstubAllGlobals();});
 it('renders shared account metadata and sends only the selected opaque personal reference',async()=>{
  await act(async()=>{tree=create(h(Account));});
  expect(JSON.stringify(tree.toJSON())).toContain('Chrome on Mac');
@@ -22,3 +22,5 @@ it('disables account actions when inactive or disconnected and hides retained me
  for(const [status,active] of [['offline',true],['live',false]] as const){f.feed.status=status;await act(async()=>{tree=create(h(Account,{active}));});expect(tree.root.findAllByType('button').every((node:{props:{disabled?:boolean}})=>node.props.disabled)).toBe(true);await act(async()=>tree.unmount());}
  const saved=f.feed.data;f.feed.data=undefined;await act(async()=>{tree=create(h(Account));});expect(JSON.stringify(tree.toJSON())).not.toContain('Chrome on Mac');f.feed.data=saved;
 });
+
+it('replaces stale account UI after this browser revokes its own session',async()=>{f.operation.mockRejectedValue(Error('Could not save'));vi.stubGlobal('fetch',vi.fn().mockResolvedValue(Response.json({viewer:null})));vi.stubGlobal('location',{reload:vi.fn()});await act(async()=>{tree=create(h(Account));});await act(async()=>tree.root.findAllByType('button').find((node:{props:{children:unknown}})=>node.props.children==='Sign out browser').props.onClick());expect(location.reload).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).not.toContain('Could not save');expect(f.operation).toHaveBeenCalledExactlyOnceWith('account.revokeSession',{ref:'b'.repeat(64)});});

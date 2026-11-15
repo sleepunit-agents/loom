@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import {createServer} from 'node:http';
 import {sharedSigninLinks} from '../core/signin/shared-links.js';
 import {createHash} from 'node:crypto';
-import {existsSync,mkdirSync} from 'node:fs';
+import {existsSync,mkdirSync,writeFileSync} from 'node:fs';
 import {join,resolve} from 'node:path';
 import {chromium} from 'playwright-core';
 import {FakeClock} from '../core/clock.js';
@@ -42,9 +42,12 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   await expect.poll(()=>a.getByRole('heading',{name:'Fixture notification browser',exact:true}).count()).toBe(0);
   const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
   await a.screenshot({path:join(shots,'account-shared.png'),animations:'disabled',mask:[a.locator('[data-signin-link]')]});
+  const self=a.getByRole('heading',{name:'Current browser',exact:true}).locator('..');await self.getByRole('button',{name:'Sign out browser',exact:true}).click();
+  await a.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();expect(db.select().from(sessions).all()).toEqual([]);expect((await context.request.get(app.url+'/auth/session')).ok()).toBe(true);expect(await (await context.request.get(app.url+'/auth/session')).json()).toMatchObject({viewer:null});
   expect(legacy).toBe(0);expect(errors).toEqual([]);
  }catch(error){throw Error(String(error).replace(/\/login\/[a-zA-Z0-9_-]+/g,'/login/[redacted]'));}
  finally{await browser.close();await app.close();client.close();}
+ writeFileSync(resolve('artifacts/household-account/account-session.json'),JSON.stringify({completed:true,anotherBrowserRevoked:true,notificationEnabled:true,notificationRemoved:true,currentBrowserRevoked:true,signInScreenRestored:true,identityConfirmedSignedOut:true,oneTimeLinkMadeAndHidden:true},null,2));
 });
 
 it.runIf(enabled)('registers and uses a real browser passkey against the shared sign-in door',async()=>{
@@ -98,4 +101,5 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
   expect(errors).toEqual([]);
  }catch(error){throw Error(String(error).replace(/\/login\/[a-zA-Z0-9_-]+/g,'/login/[redacted]'));}
  finally{await browser?.close();await app.close();if(trap)await new Promise<void>(resolve=>trap!.close(()=>resolve()));client.close();}
+ writeFileSync(resolve('artifacts/household-account/passkey.json'),JSON.stringify({completed:true,realPasskeyRegistered:true,realPasskeySignin:true,counterIncreased:true,passkeyRemoved:true,oneTimeLinkRedeemedOnce:true,deviceLogout:true},null,2));
 });
