@@ -7,18 +7,17 @@ interface Account { member:string;passkeys:Array<{ref:string;label:string;create
 const query=`{ account { member passkeys { ref label createdAt lastUsedAt ended } sessions { ref device issuedAt seenAt ended } } }`;
 const enc=(buf:ArrayBuffer)=>btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 async function post(path:string,input:unknown){const r=await fetch(path,{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify(input),redirect:'error'});const value=await r.json();if(!r.ok)throw Error(value.error??'Sign-in request refused');return value;}
-const csrf=()=>undefined;
 function Registration({enabled}:{enabled:boolean}){
   const [busy,setBusy]=useState(false),[message,say]=useState('');
   const submit=async(event:FormEvent<HTMLFormElement>)=>{
     event.preventDefault();if(!enabled||busy)return;
     const label=String(new FormData(event.currentTarget).get('label')??'').trim();setBusy(true);say('');
     try{
-      const _csrf=csrf(),o=await post('/passkeys/options',{_csrf});
+      const o=await post('/passkeys/options',{});
       const c=await navigator.credentials.create({publicKey:{...o,user:{...o.user,id:dec(o.user.id)},challenge:dec(o.challenge),excludeCredentials:o.excludeCredentials.map((x:{id:string})=>({type:'public-key',id:dec(x.id)})),attestation:'none'}}) as PublicKeyCredential|null;
       if(!c)throw Error('Passkey creation cancelled');const r=c.response as AuthenticatorAttestationResponse;
       if(!r.getPublicKey||!r.getAuthenticatorData||!r.getPublicKey())throw Error('This browser cannot register a passkey here');
-      await post('/passkeys',{_csrf,label,id:enc(c.rawId),clientDataJSON:enc(r.clientDataJSON),authenticatorData:enc(r.getAuthenticatorData()),publicKey:enc(r.getPublicKey()!),publicKeyAlgorithm:r.getPublicKeyAlgorithm()});say('Passkey added.');
+      await post('/passkeys',{label,id:enc(c.rawId),clientDataJSON:enc(r.clientDataJSON),authenticatorData:enc(r.getAuthenticatorData()),publicKey:enc(r.getPublicKey()!),publicKeyAlgorithm:r.getPublicKeyAlgorithm()});say('Passkey added.');
     }catch(e){say(e instanceof Error?e.message:'Could not add the passkey');}finally{setBusy(false);}
   };
   return <form aria-label="Add a passkey" className="grid gap-3" onSubmit={event=>void submit(event)}><p>Add a passkey within ten minutes of signing in. Your device asks for its lock.</p><fieldset disabled={!enabled||busy} className="flex flex-wrap gap-2"><label className="grid gap-1">Passkey name<Input name="label" maxLength={60} required /></label><Button disabled={!enabled||busy} type="submit">{busy?'Waiting for device…':'Add a passkey'}</Button></fieldset>{message&&<p role="status">{message}</p>}</form>;

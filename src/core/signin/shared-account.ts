@@ -26,8 +26,8 @@ export function sharedAccount(db: DataDatabase, clock: Clock) {
       db.delete(passkeys).where(eq(passkeys.id,key.id)).run();
       return {removed:true as const};
     },
-    revokeSession(member: string, reference: string, owner = false) {
-      const own = new Set(ownTokens(member).map(t=>t.fingerprint)), session = db.select().from(sessions).all().find(s=>ref('session',s.id)===reference&&(owner||own.has(s.token)));
+    revokeSession(member: string, reference: string) {
+      const own = new Set(ownTokens(member).map(t=>t.fingerprint)), session = db.select().from(sessions).all().find(s=>ref('session',s.id)===reference&&own.has(s.token));
       if(!session)throw new OperationError('not-found','Browser not found');
       db.delete(notificationDevices).where(eq(notificationDevices.session,session.id)).run();
       db.delete(sessions).where(eq(sessions.id,session.id)).run();

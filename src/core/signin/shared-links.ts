@@ -7,9 +7,9 @@ import { eq } from 'drizzle-orm';
 import { Hono, type MiddlewareHandler } from 'hono';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
-import { members, notificationDevices, sessions, signinLinks, tokens } from '../data/schema.js';
+import { notificationDevices, sessions, signinLinks, tokens } from '../data/schema.js';
 import { dataAuthentication } from '../data/authentication.js';
-import { sharedTokens, sharedTokenInput, sharedTokenOwner } from './shared-tokens.js';
+import { sharedTokens, sharedTokenInput, sharedTokenOwner, activeMemberToken } from './shared-tokens.js';
 import { OperationError } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
 
@@ -24,13 +24,7 @@ function browserDevice(ua: string): { device: string; isAgent: boolean } {
   return { device: system ? `${browser} on ${system}` : browser, isAgent };
 }
 export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
-  const token = (id: string) => {
-    const value = db.select().from(tokens).where(eq(tokens.fingerprint, id)).get();
-    if (!value || value.kind !== 'owner' || !value.member || value.revokedAt ||
-      (value.expiresAt && Date.parse(value.expiresAt) <= clock.now()) ||
-      !db.select({ id: members.id }).from(members).where(eq(members.id, value.member)).get()) throw new Error('Sign-in refused');
-    return value;
-  };
+  const token = (id: string) => activeMemberToken(db,clock,id);
   return {
     makeLink(id: string) {
       const current = token(id), code = secret();
@@ -63,7 +57,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
   const routes = new Hono();
   const rp=options.publicOrigin?new URL(options.publicOrigin):undefined;
   const passkeys=rp&&(rp.protocol==='https:'||rp.hostname==='localhost')?sharedPasskeys(options.db,options.clock,{origin:rp.origin,rpId:rp.hostname}):undefined;
-  routes.use('*',bodyLimit({maxSize:32768}));
+  for(const path of ['/api/signin/link','/api/signin/token','/login/*','/passkeys','/passkeys/options','/logout'])routes.use(path,bodyLimit({maxSize:32768}));
   const guard: MiddlewareHandler = async (c, next) => {
     c.header('cache-control', 'no-store'); c.header('referrer-policy', 'no-referrer');
     c.header('x-content-type-options', 'nosniff');
