@@ -33,9 +33,9 @@ async function message(ws: WebSocket, action: () => unknown): Promise<Message> {
 const observe = (ws: WebSocket) => message(ws, () => ws.send(JSON.stringify({id:'live',type:'subscribe',payload:{
   query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }', variables:{query},
 }})));
-async function setup(host?: string[]) {
+async function setup(host?: string[], now=Date.parse('2026-11-14T18:00:00Z')) {
   const home = mkdtempSync(join(tmpdir(),'memory-socket-next-'));
-  const clock = new FakeClock(Date.parse('2026-11-14T18:00:00Z')), at = new Date(clock.now()).toISOString();
+  const clock = new FakeClock(now), at = new Date(clock.now()).toISOString();
   const client = new Database(join(home,'loom.db')), db = createDataSchema(client);
   db.insert(members).values([{id:'owner',role:'owner',joinedAt:at},{id:'peer',role:'member',joinedAt:at}]).run();
   db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
@@ -279,5 +279,38 @@ it('refreshes Knowledge at exact clock boundaries without writes and cancels its
     // Shutdown owns the timer too, rather than leaving a read of a closed store.
     const at=vi.spyOn(f.clock,'at');await f.loom.close();at.mockClear();
     f.clock.advance(day);expect(at).not.toHaveBeenCalled();at.mockRestore();
+  } finally {writer.close();await f.close();}
+},2000);
+
+it('refreshes Activity expiry and household midnight on the shared GraphQL clock',async()=>{
+  const midnight=Date.parse('2026-11-15T00:00:00Z');
+  const f=await setup(['127.0.0.1','127.0.0.2'],midnight-2000);
+  const writer=new Database(join(f.home,'agents/fiction/memories.db'));
+  writer.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');
+  try {
+    const put=writer.prepare("INSERT INTO memories VALUES(?,?,?, ?,NULL,'{\"where\":\"terminal\"}',?,'episode',0)");
+    put.run('expiry','Expires soon','Fictional expiry',new Date(f.clock.now()).toISOString(),new Date(midnight-1000).toISOString());
+    put.run('rolling','Leaves recent','Fictional earlier day','2026-11-12T18:00:00Z',null);
+    const scheduled=vi.spyOn(f.clock,'at');touched(join(f.home,'agents/fiction'),'memory','expiry',f.clock);
+    await vi.waitFor(()=>expect(scheduled).toHaveBeenCalledWith(midnight-1000,expect.any(Function)));scheduled.mockRestore();
+    const selection='{ memoryActivity { days entries { id title } } memoryActivityEntry(id:"e~fiction~expiry") { title } }';
+    const subscribe=(ws:WebSocket)=>message(ws,()=>ws.send(JSON.stringify({id:'activity-time',type:'subscribe',payload:{
+      query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection},
+    }})));
+    const a=await f.open(),b=await f.open('owner',{},f.loom.url.replace('127.0.0.1','127.0.0.2'));
+    const initial=await subscribe(a);await subscribe(b);
+    expect(JSON.stringify(initial)).toContain('Expires soon');expect(JSON.stringify(initial)).toContain('Leaves recent');
+    const frames:Message[]=[];a.on('message',raw=>frames.push(JSON.parse(String(raw))));
+    f.clock.advance(999);await Promise.resolve();expect(frames).toEqual([]);
+    const expired=await message(b,()=>f.clock.advance(1));
+    expect(expired).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining([{path:['memoryActivityEntry'],removed:false,value:null}])}}}});
+    await vi.waitFor(()=>expect(frames).toHaveLength(1));expect(frames[0]).toEqual(expired);
+    const rolled=await message(b,()=>f.clock.advance(1000));
+    expect(rolled).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining([{path:['memoryActivity','days',0],removed:false,value:'2026-11-15'}])}}}});
+    await vi.waitFor(()=>expect(frames).toHaveLength(2));expect(frames[1]).toEqual(rolled);
+    const response=await fetch(f.loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credentials.owner,'content-type':'application/json'},body:JSON.stringify({query:selection})});
+    const current=await response.json();expect(current.errors).toBeUndefined();expect(current.data.memoryActivityEntry).toBeNull();
+    expect(current.data.memoryActivity.days).toEqual(['2026-11-15','2026-11-14','2026-11-13']);
+    expect(JSON.stringify(current)).not.toContain('Leaves recent');expect(JSON.stringify(current)).not.toContain('Expires soon');
   } finally {writer.close();await f.close();}
 },2000);

@@ -12,7 +12,7 @@ import { sharedPeopleConversations } from '../pieces/mind/people-conversations.j
 
 export function memoryQueryFields(db: DataDatabase, options: {
   sources?: MindSources; sharing(): Sharing; now(): number;
-  mind: Mind; activity: Pick<ReturnType<typeof installMindActivity>, 'window' | 'read'>;
+  mind: Mind; activity: Pick<ReturnType<typeof installMindActivity>, 'window' | 'read'> & {nextDeadline?():number|undefined};
   conversationHref(id: string): string; projectHref(agent: string, slug: string): string;
 }) {
   const knowledge = knowledgeQueryFields({path: options.sources?.commons.knowledge, sharing: options.sharing, now: options.now});
@@ -21,7 +21,7 @@ export function memoryQueryFields(db: DataDatabase, options: {
       sharing: options.sharing, now: options.now, projectHref: options.projectHref,
       conversations: db.$client.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='conversations'").get()
         ? sharedPeopleConversations(db, options.sharing, options.conversationHref) : undefined});
-    return {nextDeadline:knowledge.nextDeadline,fields: {...knowledge.fields, ...people.fields, ...projectsQueryFields(options.mind), ...activityQueryFields(options.activity)},
+    return {nextDeadline(){const deadlines=[knowledge.nextDeadline(),options.activity.nextDeadline?.()].filter((at):at is number=>at!==undefined);return deadlines.length?Math.min(...deadlines):undefined;},fields: {...knowledge.fields, ...people.fields, ...projectsQueryFields(options.mind), ...activityQueryFields(options.activity)},
       close() { people.close(); knowledge.close(); }};
   } catch (error) { knowledge.close(); throw error; }
 }
