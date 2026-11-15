@@ -28,7 +28,7 @@ function fixture(){
  return {client,db,clock,root,source,transports,closed,request,call,receive,admitted};
 }
 it('mounts actual intake, committed Tempo admission, body reply door and current-credential network send',async()=>{
- const f=fixture(),incoming=await f.receive();expect(f.db.select().from(inbox).get()?.conversation).toBe(incoming.conversation);expect(f.db.select().from(conversations).get()?.venue).toBe('slack');f.clock.advance(5000);await f.root.services.bridges.daemon!.idle();expect(f.admitted).toHaveBeenCalled();
+ const f=fixture();f.root.services.tempo.volume.setTimings({kind:'agent',id:'art'},{settleSeconds:0});const incoming=await f.receive();expect(f.db.select().from(inbox).get()?.conversation).toBe(incoming.conversation);expect(f.db.select().from(conversations).get()?.venue).toBe('slack');expect(f.admitted).toHaveBeenCalledOnce();
  f.root.writes.run(()=>f.db.update(jobs).set({conversation:incoming.conversation}).where(eq(jobs.id,'body')).run());
  const input={id:randomUUID(),incoming:incoming.id,text:'Reply'},receipt=randomUUID();expect((await f.call('bridges','reply',input,token.other,receipt)).status).toBe(403);expect((await f.call('bridges','reply',input,token.owner,receipt)).status).toBe(403);expect((await f.call('bridges','reply',{...input,job:'other'})).status).toBe(400);
  expect((await f.call('bridges','reply',input,token.body,receipt)).status).toBe(200);await f.root.services.bridges.daemon!.idle();expect(f.db.select().from(bridgeSends).get()).toMatchObject({state:'sent',postedId:'1794432000.000009'});

@@ -42,7 +42,7 @@ export interface SharedBridgeOptions {
  discord?:typeof discordGateway;
  slack?:typeof bridgeSlackSocket;
 }
-type Life={connection:Connection;key:string;generation:string;active:boolean;
+type Life={connection:Connection;key:string;generation:string;active:boolean;authenticated:boolean;
  secrets:ReturnType<typeof sharedBridgeSecretUse>;channels?:ReturnType<BridgeChannels['bind']>;
  transport?:{close():Promise<void>};pumping?:Promise<void>;retry?:()=>void;again?:boolean};
 const configuration=(row:Connection)=>JSON.stringify([row.id,row.platform,row.workspace,row.botUser,row.agent,row.tokenSecret,row.appSecret,row.enabled]);
@@ -120,7 +120,7 @@ export class SharedBridges {
     const old=this.lives.get(row.id);
     if(old){this.pump(old);continue;}
     const life={} as Life;
-    Object.assign(life,{connection:row,key:configuration(row),generation,active:true,
+    Object.assign(life,{connection:row,key:configuration(row),generation,active:true,authenticated:false,
      secrets:sharedBridgeSecretUse({source:this.options.source,clock:this.options.clock,generation,
       names:[row.tokenSecret,...(row.appSecret?[row.appSecret]:[])],current:()=>this.current(life),
       invalidate:()=>{const valid=this.current(life);this.retire(life);if(valid){try{this.state(row.id,'backoff');}catch{this.report();}}}})});
@@ -140,6 +140,7 @@ export class SharedBridges {
     secrets:life.secrets,clock:this.options.clock,current,request:this.options.request}).authenticate();
    if(!current()||!proof)throw Error();
    life.channels=this.channels.bind(row.id,{platform:row.platform,workspace:row.workspace});
+   life.authenticated=true;
    const state=(value:Connection['state'])=>{if(current()){this.state(row.id,value);if(value==='connected')this.track(this.sends.flush());}};
    if(row.platform==='discord'){
     const receipts=this.options.resume(row,bridgeCredentialBinding(row,life.generation),this.receiver);
@@ -166,7 +167,7 @@ export class SharedBridges {
  }
  async idle(){for(;;){const active=[...this.active];if(!active.length)return;await Promise.allSettled(active);}}
  private pump(life:Life){
-  if(life.pumping||!this.current(life))return;
+  if(life.pumping||!life.authenticated||!life.channels||!this.current(life))return;
   life.retry?.();life.retry=undefined;life.again=false;let more=false;
   life.pumping=this.track(Promise.resolve().then(async()=>{
    const row=life.connection,current=()=>this.current(life);
