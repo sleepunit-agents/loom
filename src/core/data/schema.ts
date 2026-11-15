@@ -180,8 +180,8 @@ export const programTokens = sqliteTable('program_tokens', {
 });
 export const programRecordGrants = sqliteTable('program_record_grants', {
   token: text('token').notNull().references((): AnySQLiteColumn => programTokens.token, {onDelete:'cascade'}),
-  record: text('record_type').notNull(),
-}, t => [primaryKey({columns:[t.token,t.record]}),check('program_record_grants_name',sql`length(${t.record}) between 1 and 200`)]);
+  recordType: text('record_type').notNull(),
+}, t => [primaryKey({columns:[t.token,t.recordType]}),check('program_record_grants_name',sql`length(${t.recordType}) between 1 and 200`)]);
 export const programOperationGrants = sqliteTable('program_operation_grants', {
   token: text('token').notNull().references((): AnySQLiteColumn => programTokens.token, {onDelete:'cascade'}),
   operation: text('operation').notNull(),
