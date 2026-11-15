@@ -20,7 +20,7 @@ import {bodyFixture,bodyCredentials as raw,credentialHash} from '../test/fixture
 import {prepareSharedMemorySources} from './shared-memory.js';
 import {ProjectsStore} from './backends/projects.js';
 import * as s from './core/data/schema.js';
-const clean:Array<()=>unknown|Promise<unknown>>=[];
+const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{embed.gate=undefined;for(const close of clean.splice(0).reverse())await close();vi.useRealTimers();vi.restoreAllMocks();});
 const words='alpha NATIVE_PRIVATE_MEMORY_WORDS',title='PRIVATE_MEMORY_TITLE';
 const input={category:'project',title,content:words,project:'pond'};
@@ -34,7 +34,7 @@ async function fixture(){
  const server=createServer(getRequestListener(request=>f.root.http.fetch(request))),detach=f.root.attach(server);
  await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();if(!address||typeof address==='string')throw Error('No fixture address');const url=`http://127.0.0.1:${address.port}`;
  clean.push(async()=>{detach();server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));});
- const path=memory.sources.agents[0].memories,source=new Database(path,{fileMustExist:true});clean.push(()=>source.close());
+ const path=memory.sources.agents[0].memories,source=new Database(path,{fileMustExist:true});clean.push(()=>{source.close();});
  const call=async(verb:string,value:unknown,id:string,token=raw.body)=>{const response=await fetch(url+'/api/memory/'+verb,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:value,id})});return {status:response.status,result:await response.json()};};
  const query=async(query:string,token=raw.body)=>{const response=await fetch(url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query})});const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
  const count=()=>source.prepare("SELECT 1 FROM sqlite_schema WHERE name='memories'").get()? (source.prepare('SELECT count(*) AS n FROM memories').get() as {n:number}).n:0;
@@ -45,6 +45,9 @@ function hold(){let entered!:()=>void,release!:()=>void;const began=new Promise<
 it('binds commands to the actual body, publishes committed content, and reads opaque results through current GraphQL authority',async()=>{
  const f=await fixture(),ws=new WebSocket(f.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw.body}});clean.push(()=>ws.terminate());await once(ws,'open');
  expect((await next(ws,()=>ws.send(JSON.stringify({type:'connection_init'})))).type).toBe('connection_ack');
+ const catalog=await fetch(f.url+'/api/runtime/commandCatalog',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{name:'memory.recall'}})});expect(catalog.status).toBe(200);
+ const definition=(await catalog.json()).value.commands[0];expect(definition.name).toBe('memory.recall');expect(definition.inputSchema.description).toContain('opaque IDs');expect(definition.inputSchema.properties).not.toHaveProperty('agent');expect(definition.inputSchema.additionalProperties).toBe(false);
+
  const initial=await next(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'memory',payload:{query:'subscription($query:String!){observe(query:$query){patches{path value removed}}}',variables:{query:'{memoryProject(id:"art:pond"){sections{key total items{title body}}}}'}}})));
  expect(initial.type).toBe('next');expect(JSON.stringify(initial)).toContain('memories');
  const publication=new Promise<any>(resolve=>{const message=(raw:import('ws').RawData)=>{ws.off('close',closed);resolve(JSON.parse(String(raw)));},closed=(code:number)=>{ws.off('message',message);resolve({closed:code});};ws.once('message',message);ws.once('close',closed);});

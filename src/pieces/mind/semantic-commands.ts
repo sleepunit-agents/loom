@@ -16,15 +16,16 @@ const remember=z.object({category,title:z.string().min(1).max(200),content:z.str
 const recall=z.object({query:z.string().min(1).max(4000),category:category.optional(),project:z.string().min(1).max(200).optional(),limit:z.number().int().min(1).max(50).default(10)}).strict();
 export function registerSemanticMemory(operations:Operations,options:{sources?:MindSources;now():number;hash(words:string):string;body(viewer:Viewer):Readonly<{agent:string}>|undefined}){
  const sources=new Map<string,{path:string;db:Database.Database}>();let closed=false;
- try{for(const source of options.sources?.agents??[])if(existsSync(source.memories))sources.set(source.agent,{path:source.memories,db:new Database(source.memories,{readonly:true,fileMustExist:true,timeout:0})});}
+ try{for(const source of options.sources?.agents??[]){if(sources.has(source.agent))throw Error('Duplicate Memory source agent');if(existsSync(source.memories))sources.set(source.agent,{path:source.memories,db:new Database(source.memories,{readonly:true,fileMustExist:true,timeout:0})});}}
  catch(error){for(const source of sources.values())source.db.close();throw error;}
  const close=()=>{if(closed)return;closed=true;for(const source of sources.values())source.db.close();sources.clear();};
  const selected=(viewer:Viewer)=>{if(closed)return;const body=options.body(viewer);return body?sources.get(body.agent):undefined;};
  const current=(viewer:Viewer)=>{const source=selected(viewer);return source&&semanticMemoryReady(source.db)?source:undefined;};
  const check=(prior:Identity,receipt:Readonly<WriteReceipt>)=>{if(prior.name!==receipt.name||prior.input_hash!==receipt.inputHash)throw new OperationError('conflict','Operation id already used for different input');};
  const recover=(ctx:Context)=>{
-  if(closed||!ctx.receipt)return;
-  for(const {db} of sources.values()){
+  if(closed||!ctx.receipt||ctx.viewer.kind!=='agent')return;
+  const own=sources.get(ctx.viewer.id);if(!own)return;
+  for(const {db} of [own]){
    if(!semanticMemoryReady(db))continue;
    const args=[ctx.receipt.viewer,ctx.receipt.id,ctx.now];
    const done=db.prepare('SELECT name,input_hash,result,expires FROM memory_command_receipts WHERE viewer=? AND id=? AND expires>?').get(...args) as Stored|undefined;
