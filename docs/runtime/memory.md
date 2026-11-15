@@ -78,6 +78,7 @@ Missing or undeclared sources return null; an existing source with a missing
 table returns an empty page. Reads never create or upgrade either.
 
 Archive entries expose their retained note and archive time as well as the
-memory's original expiry. Proposal IDs use `agent:proposal:<uuid>`, distinct from
+memory's original expiry. `expiresAt` preserves the stored timestamp text; it
+is not the numeric freshness deadline returned by active-memory reads. Proposal IDs use `agent:proposal:<uuid>`, distinct from
 active memory IDs. This read surface does not add proposal authoring or ratification
 to the native command catalogue.

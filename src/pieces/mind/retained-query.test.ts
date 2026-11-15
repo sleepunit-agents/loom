@@ -23,18 +23,18 @@ function fixture(legacy=false){
  const query=(source:string,viewer:Viewer=owner,variables?:Record<string,unknown>)=>graphql({schema,source,contextValue:{viewer},variableValues:variables});
  return {home,path,db,backend,missing,sharing,schema,query,reader};
 }
-it('paginates archived memories and pending drafts from their declared file without changing it',async()=>{
+it('paginates archived memories and pending proposals from their declared file without changing it',async()=>{
  const f=fixture(),backend=f.backend!,refs:string[]=[];
  for(let i=0;i<3;i++){const made=await backend.remember({category:'project',title:'PRIVATE_ARCHIVE_'+i,content:'Archive words '+i});refs.push(made.ref);await backend.archive({ref:made.ref,note:'Reason '+i});}
  const active=await backend.remember({category:'project',title:'Active only',content:'Active words'});
- const first=propose(f.home,{category:'rough category',title:'PRIVATE_DRAFT_ONE',content:'Draft words one',source:'fiction'},null),second=propose(f.home,{category:'project',title:'PRIVATE_DRAFT_TWO',content:'Draft words two'},null);
+ const first=propose(f.home,{category:'rough category',title:'PRIVATE_PROPOSAL_ONE',content:'Proposal words one',source:'fiction'},null),second=propose(f.home,{category:'project',title:'PRIVATE_PROPOSAL_TWO',content:'Proposal words two'},null);
  const before=f.db.serialize();vi.stubEnv('LOOM_SQLITE_DB_PATH',f.missing);
  const a=await f.query('{memoryArchive(agent:"fiction",first:2){entries{id ref title content note archivedAt} nextBefore}}');expect(a.errors).toBeUndefined();const page=a.data!.memoryArchive as {entries:{id:string;ref:string;note:string}[];nextBefore:string};expect(page.entries.map(row=>row.ref)).toEqual([refs[2],refs[1]]);expect(page.entries[0].id).toMatch(/^fiction:[a-f0-9-]{36}$/);expect(page.entries[0].note).toBe('Reason 2');
  const rest=await f.query('query($before:String!){memoryArchive(agent:"fiction",first:2,before:$before){entries{ref} nextBefore}}',owner,{before:page.nextBefore});expect(rest.errors).toBeUndefined();expect(rest.data).toEqual({memoryArchive:{entries:[{ref:refs[0]}],nextBefore:null}});
- const d=await f.query('{memoryProposals(agent:"fiction",first:1){entries{id title content category source} nextBefore}}');expect(d.errors).toBeUndefined();const draft=d.data!.memoryProposals as {entries:{id:string;title:string}[];nextBefore:string};expect(draft.entries).toMatchObject([{id:'fiction:proposal:'+second.uuid,title:'PRIVATE_DRAFT_TWO'}]);
- expect((await f.query('query($cursor:String!){memoryProposals(agent:"fiction",before:$cursor){entries{id title} nextBefore}}',owner,{cursor:draft.nextBefore})).data).toEqual({memoryProposals:{entries:[{id:'fiction:proposal:'+first.uuid,title:'PRIVATE_DRAFT_ONE'}],nextBefore:null}});
+ const d=await f.query('{memoryProposals(agent:"fiction",first:1){entries{id title content category source} nextBefore}}');expect(d.errors).toBeUndefined();const proposal=d.data!.memoryProposals as {entries:{id:string;title:string}[];nextBefore:string};expect(proposal.entries).toMatchObject([{id:'fiction:proposal:'+second.uuid,title:'PRIVATE_PROPOSAL_TWO'}]);
+ expect((await f.query('query($cursor:String!){memoryProposals(agent:"fiction",before:$cursor){entries{id title} nextBefore}}',owner,{cursor:proposal.nextBefore})).data).toEqual({memoryProposals:{entries:[{id:'fiction:proposal:'+first.uuid,title:'PRIVATE_PROPOSAL_ONE'}],nextBefore:null}});
  expect(f.db.serialize()).toEqual(before);expect(existsSync(f.missing)).toBe(false);expect((await backend.recall({query:'words'})).map(row=>row.path)).toEqual([active.ref]);
- expect(rejectProposal(f.home,second.id,null)).toBe(true);expect((await f.query('{memoryProposals(agent:"fiction"){entries{title}}}')).data).toEqual({memoryProposals:{entries:[{title:'PRIVATE_DRAFT_ONE'}]}});
+ expect(rejectProposal(f.home,second.id,null)).toBe(true);expect((await f.query('{memoryProposals(agent:"fiction"){entries{title}}}')).data).toEqual({memoryProposals:{entries:[{title:'PRIVATE_PROPOSAL_ONE'}]}});
 });
 it('checks current Memory visibility rather than project membership and never creates a missing source',async()=>{
  const f=fixture();const made=await f.backend!.remember({category:'project',title:'PRIVATE_OWNER_WORDS',content:'Private words'});await f.backend!.archive({ref:made.ref});
@@ -59,4 +59,14 @@ it('keeps explicit retained words outside current-memory freshness leases withou
  const source='{memoryArchive(agent:"fiction"){entries{content}} memoryProposals(agent:"fiction"){entries{content}}}',context={viewer:owner};
  const selected=await graphql({schema:f.schema,source,contextValue:context});expect(selected.errors).toBeUndefined();expect(selected.data).toEqual({memoryArchive:{entries:[{content:'Retained words'}]},memoryProposals:{entries:[{content:'Proposed words'}]}});expect(readDeadline(context)).toBeUndefined();
  keepReadUntil(context,123);expect((await graphql({schema:f.schema,source,contextValue:context})).errors).toBeUndefined();expect(readDeadline(context)).toBe(123);
+});
+
+it('returns fifty records by default, follows the remaining page, and accepts the two-hundred maximum',async()=>{
+ const f=fixture(true);f.db.exec('CREATE TABLE memories(id INTEGER PRIMARY KEY,title TEXT,archived INTEGER);CREATE TABLE proposals(id INTEGER PRIMARY KEY,title TEXT,status TEXT)');
+ f.db.transaction(()=>{for(let i=1;i<=51;i++){f.db.prepare('INSERT INTO memories VALUES(?,?,1)').run(i,'Archived '+i);f.db.prepare("INSERT INTO proposals VALUES(?,?,'pending')").run(i,'Proposal '+i);}})();const before=f.db.serialize();
+ for(const field of ['memoryArchive','memoryProposals']){
+  const first=await f.query(`{${field}(agent:"fiction"){entries{title} nextBefore}}`);expect(first.errors).toBeUndefined();const page=first.data![field] as {entries:{title:string}[];nextBefore:string};expect(page.entries).toHaveLength(50);expect(page.nextBefore).toBe('2');
+  const last=await f.query(`{${field}(agent:"fiction",before:"2"){entries{title} nextBefore}}`);expect(last.errors).toBeUndefined();expect(last.data![field]).toEqual({entries:[{title:field==='memoryArchive'?'Archived 1':'Proposal 1'}],nextBefore:null});
+  const maximum=await f.query(`{${field}(agent:"fiction",first:200){entries{title} nextBefore}}`);expect(maximum.errors).toBeUndefined();const complete=maximum.data![field] as {entries:unknown[];nextBefore:null};expect(complete.entries).toHaveLength(51);expect(complete.nextBefore).toBeNull();
+ }expect(f.db.serialize()).toEqual(before);
 });

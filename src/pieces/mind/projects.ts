@@ -116,7 +116,7 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
   const page=rows.slice(0,first);
   return {entries:page.map(({cursor:_cursor,uuid,archiveNote,...row})=>{
    let note=archiveNote,archivedAt:string|null=null;
-   try{const parsed:unknown=JSON.parse(archiveNote??'null');if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)){const value=parsed as Record<string,unknown>;note=typeof value.note==='string'?value.note:null;archivedAt=typeof value.archived_at==='string'?value.archived_at:null;}}catch{/* Older plain-text archive reasons stay readable. */}
+   try{const parsed:unknown=JSON.parse(archiveNote??'null');if(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)){const value=parsed as Record<string,unknown>;note=typeof value.note==='string'?value.note:null;archivedAt=typeof value.archived_at==='string'?value.archived_at:null;}}catch{/* Unparsed archive notes stay readable without source changes. */}
    return {...row,id:uuid&&/^[a-f0-9-]{36}$/.test(uuid)?`${agent}:${kind==='proposal'?'proposal:':''}${uuid}`:null,note,archivedAt};
   }),nextBefore:rows.length>first?page.at(-1)!.cursor:null};
  };
