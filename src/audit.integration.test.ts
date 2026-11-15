@@ -762,7 +762,12 @@ describe('criterion 9: one decrypt path', () => {
     // Backup configuration only validates public recipients with Encrypter. None
     // may name the review key or import the audit module; keep the allowlist exact.
     const library = all.filter((f) => /from\s+['"]age-encryption['"]|import\(\s*['"]age-encryption['"]|require\(\s*['"]age-encryption['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
-    expect(library).toEqual(['../scripts/rebuild-secret-holder.mjs', 'comms.ts', 'core/household/backup-bundle.ts', 'core/household/backup-image.ts', 'core/household/backup-restore.ts', 'core/household/backup-schema.ts', 'pieces/comms/crypto.ts', 'pieces/secrets/age-source.ts', 'pieces/secrets/holder-store.ts']);
+    expect(library).toEqual(['../scripts/rebuild-retention.mjs', '../scripts/rebuild-secret-holder.mjs', 'comms.ts', 'core/household/backup-bundle.ts', 'core/household/backup-image.ts', 'core/household/backup-restore.ts', 'core/household/backup-schema.ts', 'pieces/comms/crypto.ts', 'pieces/secrets/age-source.ts', 'pieces/secrets/holder-store.ts']);
+    // Acceptance-only expiry checks use their fresh home's Comms identity, never review keys.
+    const retentionProof=code(join(repoRoot,'scripts/rebuild-retention.mjs'));
+    expect(retentionProof).toMatch(/readKey\(join\(home,\s*['"]comms\.key['"]\)\)/);
+    expect(retentionProof.match(/\breadKey\s*\(/g)).toHaveLength(1);
+    expect(retentionProof).not.toMatch(/\b(?:REVIEW_KEY|decryptAuditText|homedir|readFileSync|process)\b|review\.key|audit\.js/);
     const acceptanceHolder=code(join(repoRoot,'scripts/rebuild-secret-holder.mjs'));
     expect(acceptanceHolder).toMatch(/import\s*\{\s*generateIdentity\s*\}\s*from\s*['"]age-encryption['"]/);
     expect(acceptanceHolder.match(/['"]age-encryption['"]/g)).toHaveLength(1);
