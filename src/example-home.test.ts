@@ -28,7 +28,7 @@ it('builds fictitious data through services, then normal startup signs in and qu
   expect(database.prepare('select id,owner from model_accounts').all()).toEqual([{id:manifest.account.id,owner:'alex'}]);
   expect(database.prepare("select operation,id from operation_results where id='example-account'").get()).toEqual({operation:'runtime.accountCreate',id:'example-account'});}finally{database.close();}
   expect(readFileSync(join(home,'program.json'),'utf8')).not.toContain('loom_');expect(JSON.stringify(manifest)).not.toContain('loom_');expect(readFileSync(join(home,'example.json'),'utf8')).not.toContain('loom_');
-  expect(manifest.tasks).toHaveLength(4);expect(manifest.gaps.map((g:{page:string})=>g.page)).toEqual(['people','machines']);
+  expect(manifest.tasks).toHaveLength(4);expect(manifest.gaps.map((g:{page:string})=>g.page)).toEqual(['machines']);
   const before=readFileSync(join(home,'app.db'));
   await expect(exampleHome(home)).rejects.toThrow();expect(readFileSync(join(home,'app.db'))).toEqual(before);
   mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
@@ -38,9 +38,17 @@ it('builds fictitious data through services, then normal startup signs in and qu
   expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
   const post=async(path:string,input:unknown)=>{const response=await fetch(app!.url+path,{method:'POST',redirect:'error',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify(input)});expect(response.status).toBe(200);return response.json();};
   const read=async(query:string,variables:Record<string,unknown>={})=>{const result=await post('/graphql',{query,variables});expect(result.errors).toBeUndefined();return result.data;};
-  const result={data:await read('{ tasks { id title status } approvals { id state } triggers { id } modelAccounts { ... on RuntimeAccountDetail { id label } } }')};
+  const result={data:await read('{ tasks { id title status } approvals { id state } changes { id project agent } triggers { id } modelAccounts { ... on RuntimeAccountDetail { id label } } }')};
   expect(result.data.tasks).toHaveLength(4);expect(result.data.tasks.map((t:{status:string})=>t.status)).toContain('in_progress');
   expect(result.data.approvals).toEqual([expect.objectContaining({state:'pending'})]);
+  expect(result.data.changes).toEqual([{id:manifest.change,project:'garden',agent:'fern'}]);
+  const token=app.writes.run(()=>app!.services.signin.issue({kind:'owner',member:'robin',label:'Fictitious sharing proof'})).value;
+  try{
+   const read=async()=>{const response=await app!.http.request(app!.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+token.token,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id } changes { id project agent } approvals { id } }'})});return response.json();};
+   expect(await read()).toEqual({data:{tasks:manifest.tasks.map((id:string)=>({id})),changes:[{id:manifest.change,project:'garden',agent:'fern'}],approvals:[]}});
+   app.writes.run(()=>app!.services.projects.save({id:'garden',name:'Example garden',members:['alex'],agents:['fern','moss'],repositories:['github:example-house/garden']}));
+   expect(await read()).toEqual({data:{tasks:[],changes:[],approvals:[]}});
+  }finally{app.writes.run(()=>app!.services.signin.revoke(token.fingerprint));}
   expect(result.data.modelAccounts).toEqual([expect.objectContaining({label:'Example model subscription'})]);
   const command=async(name:string,input:unknown,id:string)=>{expect(await post('/api/'+name.replace('.','/'),{id,input})).toMatchObject({ok:true});};
   const trigger=()=>read('query Watch($id:String!){triggers(where:{id:{eq:$id}}){state lastFiredAt} triggerLog(where:{trigger:{eq:$id}}){event}}',{id:manifest.trigger});
