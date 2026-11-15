@@ -47,3 +47,15 @@ it('sends asset invalidation over the existing root socket and exposes the new m
  const changed=JSON.parse(String((await message)[0]));expect(changed.payload.data.observe.patches).toContainEqual({path:['deskSprite'],value:null,removed:false});
  const metadata=await fetch(f.app.url+'/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.member},body:JSON.stringify({query:deskAgentDisplaysQuery})});expect((await metadata.json()).data.agents[0].spriteVersion).toBe(version);
 });
+
+it('rolls back the complete bundle when the subsequent metadata version update fails',()=>{
+ const client=new Database(':memory:');cleanups.push(()=>client.close());const db=createDataSchema(client,()=> '2026-11-14T00:00:00Z');
+ db.insert(agents).values({id:'art',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();
+ const version=storeDeskSprite(db,'art',manifest,{'sheet.png':sample.png}),before=db.select().from(agentSprites).get()!;
+ // This isolated startup-store check has no outer DataWrites transaction: it
+ // discriminates the writer's own atomicity if its transaction is removed.
+ client.exec("CREATE TRIGGER reject_sprite_metadata BEFORE UPDATE OF sprite_version ON agents BEGIN SELECT RAISE(ABORT,'fixture metadata failure'); END");
+ expect(()=>storeDeskSprite(db,'art',{...manifest,scale:.85},{'sheet.png':sample.png})).toThrow('fixture metadata failure');
+ const after=db.select().from(agentSprites).get()!;expect(after.layout).toBe(before.layout);expect(after.sheets.equals(before.sheets)).toBe(true);
+ expect(db.select().from(agents).get()?.spriteVersion).toBe(version);
+});

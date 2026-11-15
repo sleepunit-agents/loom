@@ -3,15 +3,16 @@
 import {GraphQLFloat,GraphQLNonNull,GraphQLObjectType,GraphQLString,type GraphQLFieldConfigMap} from 'graphql/index.js';
 import type {DataDatabase} from './core/data/database.js';
 import type {Clock} from './core/clock.js';
-import {household} from './core/data/schema.js';
-import {maySee,type Viewer} from './policy.js';
-import {sharedSharing} from './shared-sharing.js';
+import {household,members} from './core/data/schema.js';
+import {eq,sql} from 'drizzle-orm';
+import type {Viewer} from './policy.js';
 export function deskTimeFields(db:DataDatabase,clock:Clock):GraphQLFieldConfigMap<unknown,{viewer:Viewer}>{
  const minute=new GraphQLObjectType({name:'DeskTime',fields:{at:{type:new GraphQLNonNull(GraphQLFloat)},timezone:{type:new GraphQLNonNull(GraphQLString)}}});
  return {deskTime:{type:minute,resolve(_row,_args,{viewer}){
-  // The existing personal-row rule, read against current shared household facts.
-  if(viewer.kind!=='member'||!maySee(viewer,{member:viewer.id},sharedSharing(db)))return null;
-  return {at:Math.floor(clock.now()/60000)*60000,timezone:db.select({timezone:household.timezone}).from(household).get()?.timezone??'UTC'};
+  if(viewer.kind!=='member')return null;
+  // Constrain the personal row in SQL, including when no household row exists.
+  const row=db.select({timezone:household.timezone}).from(members).leftJoin(household,sql`true`).where(eq(members.id,viewer.id)).get();
+  return row?{at:Math.floor(clock.now()/60000)*60000,timezone:row.timezone??'UTC'}:null;
  }}};
 }
 /** A jump publishes the current minute once; queued callbacks stop at close. */

@@ -11,7 +11,9 @@ it('reads only the current personal household time and applies current member re
   db.insert(members).values({id:'sam',role:'member',joinedAt:new Date(clock.now()).toISOString()}).run();db.insert(household).values({timezone:'America/Chicago'}).run();
   const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:deskTimeFields(db,clock)})});
   const read=(viewer:object)=>graphql({schema,source:'{ deskTime { at timezone } }',contextValue:{viewer}});
+  const prepared=vi.spyOn(client,'prepare');
   expect(await read({kind:'member',id:'sam'})).toMatchObject({data:{deskTime:{at:Date.parse('2026-11-14T18:41:00Z'),timezone:'America/Chicago'}}});
+  expect(prepared.mock.calls).toHaveLength(1);expect(prepared.mock.calls[0][0]).toMatch(/from "members" left join "household".*where "members"\."id" = \?/);prepared.mockRestore();
   expect(await read({kind:'agent',id:'sam'})).toMatchObject({data:{deskTime:null}});expect(await read({kind:'member',id:'missing'})).toMatchObject({data:{deskTime:null}});
   db.delete(members).run();expect(await read({kind:'member',id:'sam'})).toMatchObject({data:{deskTime:null}});
  }finally{client.close();}
