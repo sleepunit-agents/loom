@@ -56,10 +56,11 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
  const exerciseTempo=async(command:(operation:string,input:unknown,id:string)=>Promise<unknown>,query:(input:Record<string,unknown>)=>Promise<unknown>)=>{
   const who={kind:'person' as const,id:'alice'},timing=()=>f.root.services.tempo.volume.timings(who);
   const answer=async(id:string,allow:boolean)=>{
-   const result=await fetch(url+'/api/approvals/answer',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id,answer:allow?'allow':'deny'}})});
+   const result=await fetch(url+'/api/approvals/answer',{method:'POST',redirect:'error',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id,answer:allow?'allow':'deny'}})});
    expect(result.status).toBe(200);expect(await result.json()).toEqual({ok:true,value:{id}});
   };
-  const readCard=async(id:string)=>{const result=await query({query:'query Card($id:String!){approvals(where:{id:{eq:$id}},limit:1){id state details changeSummary}}',variables:{id}}) as {errors?:unknown;data?:{approvals:unknown[]}};expect(result.errors).toBeUndefined();expect(result.data).toBeDefined();return result.data!.approvals;};
+  const cardSelection='query Card($id:String!){approvals(where:{id:{eq:$id}},limit:1){id state details changeSummary}}';
+  const readCard=async(id:string)=>{const response=await fetch(url+'/graphql',{method:'POST',redirect:'error',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({query:cardSelection,variables:{id}})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data.approvals;};
   expect(timing()).toEqual({settleSeconds:5,dimDays:3,muteDays:9});
   for(const [seconds,allow]of [[60,true],[120,false]]as const){
    const before=timing(),after={...before,settleSeconds:seconds},result=await command('tempo.proposeSettings',{who,patch:{settleSeconds:seconds}},randomUUID());
@@ -70,6 +71,8 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
    expect(card.changeSummary).toBe(`Tempo for person alice: settle ${before.settleSeconds} → ${seconds} seconds; dim 3 → 3 days; mute 9 → 9 days`);
    expect(timing()).toEqual(before);
    expect(await readCard(id)).toEqual([{id,state:'pending',details:card.details,changeSummary:card.changeSummary}]);
+   // Filing a private card gives the body no generic read of a person's records.
+   expect(await query({query:cardSelection,variables:{id}})).toMatchObject({data:{approvals:[]}});
    const question=f.db.select().from(s.inbox).all().find(item=>item.toKind==='person'&&item.to==='alice'&&item.source==='approval'&&item.waitsOnId===id)!;
    expect(question).toMatchObject({conversation:f.thread.conversation});
    await answer(id,allow);expect(timing()).toEqual({settleSeconds:60,dimDays:3,muteDays:9});
@@ -79,6 +82,12 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
   }
   expect(await command('tempo.proposeSettings',{who:{kind:'person',id:'bob'},patch:{settleSeconds:120}},randomUUID())).toMatchObject({ok:false,code:'denied'});
   expect(f.db.select().from(s.approvals).all()).toHaveLength(2);
+  const id='native-'+randomUUID();
+  expect(await command('tempo.set',{id,ownerKind:'agent',owner:'art',sourceKind:'time',times:new Date(f.clock.now()+3600000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Ordinary native Tempo work',note:'Native read proof'},randomUUID())).toMatchObject({ok:true,value:{id}});
+  const selection={query:'query NativeTrigger($id:String!){tempoTimezone triggers(where:{id:{eq:$id}},limit:1){id state enabled}}',variables:{id}};
+  expect(await query(selection)).toMatchObject({data:{tempoTimezone:expect.any(String),triggers:[{id,state:'standing',enabled:true}]}});
+  expect(await command('tempo.stop',{id},randomUUID())).toMatchObject({ok:true,value:{id}});
+  expect(await query(selection)).toMatchObject({data:{triggers:[{id,state:'stopped',enabled:false}]}});
  };
  // The Tempo variant retains bodyProgram's default factory and Claude adapter.
  // Only its provider process is mocked; MCP and Root remain real loopback HTTP.
@@ -102,7 +111,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
     expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['request_secret','use_secret']));
     expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['loom_commands','loom_command','loom_query']));
     const decoded=(value:unknown)=>JSON.parse((value as {content:{text:string}[]}).content[0].text);
-    const call=async(name:string,input:Record<string,unknown>)=>{expect(allowed).toContain('mcp__loom_secrets__'+name);actions.push({name,input});return decoded(await protocol.callTool({name,arguments:input}));};
+    const call=async(name:string,input:Record<string,unknown>)=>{expect(allowed).toContain('mcp__loom_secrets__'+name);actions.push({name,input});const result=decoded(await protocol.callTool({name,arguments:input}));if(name==='loom_query')expect(result.errors).toBeUndefined();return result;};
     const catalogue=await call('loom_commands',{});
     expect(catalogue.ok).toBe(true);
     expect(catalogue.value.commands.map((entry:{name:string})=>entry.name)).toEqual(expect.arrayContaining(['tempo.set','tempo.stop','tempo.runNow','tempo.pause','tempo.resume','tempo.proposeSettings','inbox.volume']));
