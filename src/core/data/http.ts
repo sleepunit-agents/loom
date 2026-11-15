@@ -22,7 +22,7 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
   const executions = new ExecutionDrain();
   let stopping = false;
   app.use('*', bodyLimit({ maxSize: 1024 * 1024 }));
-  app.use('*', async (c, next) => { await next(); c.header('cache-control', 'no-store'); });
+  app.use('*', async (c, next) => { await next(); c.res.headers.set('cache-control', 'no-store'); });
   app.onError(() => Response.json({ errors: [{ message: 'Data request could not complete' }] }, { status: 503, headers: { 'cache-control': 'no-store' } }));
   app.all('/graphql', async c => {
     if (stopping) return c.json({ errors: [{ message: 'Data request could not complete' }] }, 503);
@@ -79,6 +79,7 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
     if (stopping) return c.json({ errors: [{ message: 'Data request could not complete' }] }, 503);
     if (!auth.valid() || stopping) return c.json({ errors: [{ message: 'Authentication ended' }] }, 401);
     if (!current()) return c.json({ errors: [{ message: 'Data changed; retry the query' }] }, 503);
+    const guardedResponse = (): Response => {
     let buffered: string | undefined = body;
     const available = () => !stopping && auth!.valid() && !stopping && current();
     // Zero buffering keeps the release check after every outer fetch/middleware
@@ -95,7 +96,16 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
       },
       cancel() { buffered = undefined; },
     }, { highWaterMark: 0 });
-    return new Response(stream, { status: response.status, headers: response.headers });
+    const result = new Response(stream, { status: response.status, headers: response.headers });
+    // Native clone tees and eagerly pulls the stream. Keep ordinary server
+    // middleware clones lazy too; each copy checks before releasing any bytes.
+    result.clone = () => {
+      if (result.bodyUsed) throw new TypeError('Body has already been consumed');
+      return guardedResponse();
+    };
+    return result;
+    };
+    return guardedResponse();
   });
   return Object.assign(app, { stop() { stopping = true; }, drain: () => executions.drain() });
 }
