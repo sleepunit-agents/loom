@@ -16,7 +16,7 @@ import type { DataWrites } from '../data/writes.js';
 
 const fingerprint = (secret: string) => createHash('sha256').update(secret).digest('hex');
 const secret = () => randomBytes(32).toString('hex');
-const LINK_MS = 5 * 60_000;
+const LINK_MS = 5 * 60_000, PROOF_MS = 10 * 60_000;
 const PERSON_MS = 30 * 86400_000, AGENT_MS = 6 * 3600_000;
 function browserDevice(ua: string): { device: string; isAgent: boolean } {
   const isAgent = /HeadlessChrome\//.test(ua);
@@ -111,7 +111,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
       const session = cookie ? options.db.select().from(sessions).where(eq(sessions.id, fingerprint(cookie))).get() : undefined;
       const proved = session ? Date.parse(session.provedAt) : NaN;
       return !!session && session.token === token && !session.isAgent && Number.isFinite(proved)
-        && proved <= options.clock.now() && proved + 600000 > options.clock.now();
+        && proved <= options.clock.now() && proved + PROOF_MS > options.clock.now();
     };
     if (!freshBrowser()) return c.json({error:'Sign in again before making a sign-in link'},403);
     // Request input cannot choose a token/member or impersonate an agent.

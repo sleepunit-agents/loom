@@ -24,3 +24,8 @@ it.each([401,403])('asks for fresh sign-in on a %s response without retrying or 
  await act(async()=>{tree=create(h(DeviceLink,{enabled:true,member:'sam'}));});await act(async()=>tree.root.findByType('button').props.onClick());
  expect(fetch).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).toContain('Sign in again');expect(JSON.stringify(tree.toJSON())).not.toContain('PRIVATE DETAILS');
 });
+it('handles a non-JSON sign-in refusal without retrying',async()=>{
+ const fetch=vi.fn().mockResolvedValue(new Response('PRIVATE PROXY BODY',{status:401}));vi.stubGlobal('fetch',fetch);
+ await act(async()=>{tree=create(h(DeviceLink,{enabled:true,member:'sam'}));});await act(async()=>tree.root.findByType('button').props.onClick());
+ expect(fetch).toHaveBeenCalledOnce();expect(JSON.stringify(tree.toJSON())).toContain('Sign in again');expect(JSON.stringify(tree.toJSON())).not.toContain('PRIVATE');
+});

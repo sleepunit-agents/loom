@@ -281,3 +281,25 @@ it('rechecks browser proof inside the admitted link write',async()=>{
  expect((await f.mint({cookie})).status).toBe(401);
  expect(f.db.select().from(signinLinks).all()).toEqual([]);
 });
+
+it('uses the exact presented browser proof rather than another fresh session for the same member',async()=>{
+ const f=fixture(), first=await f.redeem(await f.link()), stale=first.headers.get('set-cookie')!.split(';',1)[0];
+ f.db.update(sessions).set({provedAt:new Date(f.clock.now()-660000).toISOString()}).run();
+ const second=await f.redeem(await f.link()), fresh=second.headers.get('set-cookie')!.split(';',1)[0];
+ expect((await f.mint({cookie:stale})).status).toBe(403);
+ f.db.update(sessions).set({provedAt:new Date(f.clock.now()-599999).toISOString()}).where(eq(sessions.id,hash(fresh.slice(8)))).run();
+ expect((await f.mint({cookie:fresh})).status).toBe(200);
+});
+it.each(['revoke','expire'])('rechecks token %s inside the browser link write',async how=>{
+ const f=fixture(), signed=await f.redeem(await f.link()), cookie=signed.headers.get('set-cookie')!.split(';',1)[0];
+ const original=f.root.writes.run.bind(f.root.writes);
+ vi.spyOn(f.root.writes,'run').mockImplementationOnce(action=>{
+  f.db.update(tokens).set(how==='revoke'?{revokedAt:new Date(f.clock.now()).toISOString()}:{expiresAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(credential))).run();
+  return original(action);
+ });
+ expect((await f.mint({cookie})).status).toBe(401);expect(f.db.select().from(signinLinks).all()).toEqual([]);
+});
+it('cannot persist malformed browser proof timestamps in the shared schema',()=>{
+ const f=fixture();
+ expect(()=>f.db.insert(sessions).values({id:hash('bad-proof'),token:hash(credential),device:'fixture',via:'link',isAgent:false,issuedAt:new Date(f.clock.now()).toISOString(),seenAt:new Date(f.clock.now()).toISOString(),provedAt:'not-a-time'}).run()).toThrow(/sessions_proved_at_utc/);
+});
