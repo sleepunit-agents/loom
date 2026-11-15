@@ -64,3 +64,12 @@ it('rolls back the entire HTTP confirmation batch when its second delivery updat
  expect((await f.call('confirm',{items:ids},'atomic')).status).toBe(503);expect(f.db.select().from(s.inbox).all().map(row=>row.state)).toEqual(['taken','taken']);expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['sending','sending']);expect(f.db.select().from(s.operationResults).all().some(row=>row.operation==='conversation.confirm')).toBe(false);
  f.db.$client.exec('DROP TRIGGER fail_second_confirmation');expect((await f.call('confirm',{items:ids},'atomic')).status).toBe(200);expect(f.db.select().from(s.inbox).all().map(row=>row.state)).toEqual(['done','done']);
 });
+it.each(['token','ownership','conversation','cipher','refs','shutdown'] as const)('withdraws unread original and wrapped-clone take responses after %s changes',async change=>{
+ const f=await fixture();await f.send('PRIVATE UNREAD','one');const response=await take(f);expect(response.status).toBe(200);const wrapped=new Response(response.body,response),copy=wrapped.clone();await Promise.resolve();
+ if(change==='shutdown')await f.root.close();else f.root.writes.run(()=>{
+  if(change==='token')f.db.update(s.tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(s.tokens.fingerprint,hash(raw.body))).run();
+  if(change==='ownership')f.db.delete(s.memberAgents).run();if(change==='conversation')f.db.update(s.conversations).set({member:'bob'}).run();
+  if(change==='cipher')f.db.update(s.messages).set({words:Buffer.from('different')}).run();if(change==='refs')f.db.insert(s.inboxRefs).values({item:f.db.select().from(s.inbox).get()!.id,ref:'t-later'}).run();
+ });
+ await expect(copy.text()).rejects.toThrow('Data access ended');await expect(wrapped.text()).rejects.toThrow('Data access ended');expect(f.db.select().from(s.inbox).get()?.state).toBe('taken');expect(f.db.select().from(s.messages).get()?.delivery).toBe('sending');
+});

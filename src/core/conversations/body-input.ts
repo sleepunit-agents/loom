@@ -45,6 +45,9 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
   const committed=options.writes.run(prepared),deliveries=committed.value;
   for(const _error of committed.notificationErrors){try{options.reportError(new Error('Body input notification failed'));}catch{}}
   if(!active()||options.version()!==expected)return refuse(503,'Mail changed; take it again');
+  // The HTTP response projection stays next to its publication lease so every
+  // private output field contributes its deadline before any bytes are released.
+  // ConversationMail remains reusable by trusted in-process callers.
   const refs=deliveries.length?db.select().from(inboxRefs).where(inArray(inboxRefs.item,deliveries.map(row=>row.item.id))).all():[];
   const days=db.select({days:household.commsDays}).from(household).get()?.days??14;
   let until=Infinity;
