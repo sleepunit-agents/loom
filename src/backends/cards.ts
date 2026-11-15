@@ -15,6 +15,14 @@ import type { Database } from 'better-sqlite3';
 import { pathSegmentError } from '../path-safety.js';
 import { retryWrite } from './retry.js';
 
+/** Borrow an already prepared source inside its caller-owned transaction.
+ * The caller owns commit notification, rollback and connection cleanup. */
+export interface CardConnection {
+  database: Database;
+  now?: () => number;
+  actor?: string;
+}
+
 // ─── Errors ──────────────────────────────────────────────────────────────────
 
 /** Every rejection a card surface makes. The message names the path. */
@@ -291,7 +299,9 @@ export class CardTable<R extends CardRowBase> {
     private readonly spec: { table: string; revisions: string; extraColumns?: readonly string[]; noun: CardNoun },
     private readonly actor: string | null,
     private readonly committed?: (slug: string) => void,
+    private readonly callerTransaction = false,
   ) {
+    if(callerTransaction&&committed)throw Error('Caller-owned cards must publish after their source commit');
     // The base columns' order is load-bearing: write-race tests hook the
     // row read by its `SELECT slug, name, card_json` prefix.
     this.columns = [...BASE_COLUMNS, ...(spec.extraColumns ?? [])];
@@ -346,7 +356,8 @@ export class CardTable<R extends CardRowBase> {
   /** One BEGIN IMMEDIATE transaction around `fn`, retried as a whole on SQLITE_BUSY. */
   mutate<T>(fn: () => T): T {
     const parent = this.changes;
-    if (this.db.inTransaction && !parent) throw new Error('Card mutations must own the outer transaction');
+    if(this.callerTransaction&&!this.db.inTransaction)throw Error('Card mutations require the caller source transaction');
+    if (this.db.inTransaction && !parent && !this.callerTransaction) throw new Error('Card mutations must own the outer transaction');
     const changes = new Set<string>();
     this.changes = changes;
     try {

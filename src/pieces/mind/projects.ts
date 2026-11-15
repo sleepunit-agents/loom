@@ -5,6 +5,7 @@ import {z} from 'zod';
 import {maySee,type Viewer,type Sharing} from '../../core/index.js';
 import type {Clock} from '../../core/clock.js';
 import {projectDeadline} from './project-deadlines.js';
+import {resolveCardReference} from './card-references.js';
 import type {PersonRecord} from './people-model.js';
 import type {ProjectCard,ProjectRecord,ProjectSection,ProjectItem,ProjectMemory} from './projects-model.js';
 import type {ProjectSectionRole,ProjectQuery} from './projects-roles.js';
@@ -50,8 +51,9 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  }
  function read(id:string,viewer:Viewer,readingHub=false):ProjectRecord|undefined{
   const colon=id.indexOf(':');if(colon<1)return;
-  const agent=id.slice(0,colon),asked=id.slice(colon+1),db=sources.get(agent);
+  const agent=id.slice(0,colon),reference=id.slice(colon+1),db=sources.get(agent);
   if(!allowed(viewer,agent)||!db||!has(db,'projects'))return;
+  const asked=resolveCardReference(db,'project',reference);
   const row=db.prepare('SELECT slug,card_json,updated,archived_at FROM projects WHERE slug=? OR (archived_at IS NULL AND slug IN (SELECT slug FROM project_names WHERE name=?)) ORDER BY CASE WHEN slug=? THEN 0 ELSE 1 END LIMIT 1').get(asked,asked,asked) as {slug:string;card_json:string;updated:string;archived_at:string|null}|undefined;
   if(!row)return;
   const card=JSON.parse(row.card_json) as ProjectCard,now=clock.now();
