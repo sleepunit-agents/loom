@@ -36,3 +36,10 @@ it('retains an unconfirmed intent across recreated screens and reload storage ha
   await taskCommandSubmitter(request, () => 'new-intent', storage)(comment);
   expect(request.mock.calls.map(([, init]) => JSON.parse(String(init!.body)).id)).toEqual(['original', 'original', 'new-intent']);
 });
+
+it('sends no untracked write when pending intent storage is unavailable', async () => {
+  const request = vi.fn<typeof fetch>();
+  const storage = { ...pendingStore(), setItem: () => { throw new Error('Browser storage details'); } };
+  await expect(taskCommandSubmitter(request, () => 'intent', storage)(input)).rejects.toThrow('Could not prepare the task. Try again.');
+  expect(request).not.toHaveBeenCalled();
+});

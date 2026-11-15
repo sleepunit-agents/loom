@@ -14,9 +14,12 @@ export function taskCommandSubmitter(request: typeof fetch = fetch, makeId = () 
   return async (input: TaskCommand): Promise<void> => {
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(input)));
     const key = 'loom:pending-task:' + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
-    const id = pending.getItem(key) ?? makeId();
-    // Persist before sending: unavailable storage must not risk an untracked write.
-    pending.setItem(key, id);
+    let id: string;
+    try {
+      id = pending.getItem(key) ?? makeId();
+      // Persist before sending: unavailable storage must not risk an untracked write.
+      pending.setItem(key, id);
+    } catch { throw new Error('Could not prepare the task. Try again.'); }
     let response: Response, result: unknown;
     try {
       response = await request('/api/tasks/command', { method: 'POST', credentials: 'same-origin',
