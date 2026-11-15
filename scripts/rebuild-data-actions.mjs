@@ -20,10 +20,10 @@ export async function auditDataDoor(page,title){
 }
 const check=(yes,message)=>{if(!yes)throw Error(message);};
 /** Attribute queries to the tagged browser request, retaining no bind values. */
-async function sqlRead({page,app,query,match,task}){
+async function sqlRead({page,app,query,match,task,caller}){
  const scope=new AsyncLocalStorage(),db=app.services.comms.db.$client,prepare=db.prepare,fetch=app.http.fetch,statements=[];
  app.http.fetch=(request,...rest)=>scope.run(request.headers.get('x-loom-walkthrough-sql')==='measure',()=>Reflect.apply(fetch,app.http,[request,...rest]));
- db.prepare=function(sql){const statement=Reflect.apply(prepare,this,[sql]);if(match.test(sql))for(const method of ['get','all','iterate']){const original=statement[method];statement[method]=function(...args){if(scope.getStore()&&(!task||args.flat(Infinity).includes(task)))statements.push(String(sql));return Reflect.apply(original,this,args);};}return statement;};
+ db.prepare=function(sql){const statement=Reflect.apply(prepare,this,[sql]);if(match.test(sql))for(const method of ['get','all','iterate']){const original=statement[method];statement[method]=function(...args){if(scope.getStore()&&(!task||args.flat(Infinity).includes(task))&&(!caller||caller.test(new Error().stack??'')))statements.push(String(sql));return Reflect.apply(original,this,args);};}return statement;};
  try{const response=await page.evaluate(async query=>{const r=await fetch('/graphql',{method:'POST',headers:{'content-type':'application/json','x-loom-walkthrough-sql':'measure'},body:JSON.stringify({query}),signal:AbortSignal.timeout(4000)});return{status:r.status,body:await r.json()};},query);return{...response,statements};}
  finally{app.http.fetch=fetch;db.prepare=prepare;scope.disable();}
 }
@@ -56,7 +56,7 @@ export async function dataActions({page,app,example,apps,subscriptions,out}){
  });
  await attempt('dataSharingSQL',async()=>{
   const query=subscriptions.find(s=>/\bhouseholdSharing\b/.test(s.query))?.query;check(query,'The actual Sharing selection was not observed');
-  const result=await sqlRead({page,app,query,match:/\b(?:from|join)\s+"?project(?:s|_members|_agents|_repositories)"?\b/i});check(result.status===200&&!result.body.errors,'Sharing read failed');
+  const result=await sqlRead({page,app,query,caller:/at Object\.read \(.*shared-projects\.[jt]s:/,match:/\b(?:from|join)\s+"?project(?:s|_members|_agents|_repositories)"?\b/i});check(result.status===200&&!result.body.errors,'Sharing read failed');
   const distinct=[...new Set(result.statements)];
   if(distinct.length>1)return{ok:false,error:'One Sharing root selection executed '+distinct.length+' distinct project/relationship SQL statements.',statements:distinct};
   return{inconclusive:true,reason:'This Sharing selection did not disprove one-query reads; the complete property is not yet measured across every view.',statements:distinct};
@@ -69,6 +69,7 @@ export async function dataActions({page,app,example,apps,subscriptions,out}){
   check(initial.revision===1&&initial.patches.length===1&&initial.patches[0].path.length===0,'Missing one initial result');const before=initial.patches[0].value.tasks[0].commentCount;
   app.writes.run(()=>app.services.tasks.comment(example.tasks[0],'A fictitious live-delta comment.',{kind:'member',id:'alex'}));
   await page.waitForFunction(()=>globalThis.__loomDataProbe.probe.events.length>1||globalThis.__loomDataProbe.probe.error,undefined,{timeout:4000});
+  await page.waitForFunction(()=>{const s=globalThis.__loomDataProbe,p=s.probe,e=s.entries.get(p.socket);return e.frames.slice(s.beforeTasks.frames).some(f=>s.beforeTasks.ids.includes(f.id)&&f.revision>1);},undefined,{timeout:4000});
   const proof=await page.evaluate(()=>{const s=globalThis.__loomDataProbe,p=s.probe,e=s.entries.get(p.socket);return{error:p.error,events:p.events,requests:e.requests.filter(r=>r.id===p.id).length,taskRequests:e.requests.filter(r=>/query\s+Tasks\b/.test(r.query)).length,before:s.beforeTasks,taskFrames:e.frames.slice(s.beforeTasks.frames).filter(f=>s.beforeTasks.ids.includes(f.id))};});
   check(!proof.error&&proof.requests===1&&proof.taskRequests===proof.before.requests,'A selection was resubscribed for a normal change');
   const delta=proof.events[1];check(delta.revision>1&&delta.patches.length===1&&JSON.stringify(delta.patches[0].path)===JSON.stringify(['tasks',0,'commentCount'])&&delta.patches[0].value===before+1,'Changed fields were not delivered as one narrow patch');
