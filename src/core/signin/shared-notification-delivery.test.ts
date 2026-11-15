@@ -1,6 +1,7 @@
 /** Real Root settlement -> enrolled device transport -> production worker.
  * The provider is in-process; no vendor or operating-system delivery claim. */
-import {expect,it} from 'vitest';
+vi.mock('./push-transport.js',()=>({pushTransport:()=>{throw Error('External push delivery is forbidden in this proof');}}));
+import {expect,it,vi} from 'vitest';
 import {runInNewContext} from 'node:vm';
 import {createHash} from 'node:crypto';
 import Database from 'better-sqlite3';

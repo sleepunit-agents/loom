@@ -1,7 +1,8 @@
 import webpush from 'web-push';
 /** One Account browser proof through the actual shared program; CI owns Chrome. */
+vi.mock('../core/signin/push-transport.js',()=>({pushTransport:()=>{throw Error('External push delivery is forbidden in this proof');}}));
 import {runInNewContext} from 'node:vm';
-import {it,expect} from 'vitest';
+import {it,expect,vi} from 'vitest';
 import Database from 'better-sqlite3';
 import {createServer} from 'node:http';
 import {sharedSigninLinks} from '../core/signin/shared-links.js';
@@ -69,7 +70,7 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
  db.insert(members).values({id:'sam',role:'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw),kind:'owner',member:'sam',label:'Sam browser fixture',createdAt:at}).run();
  db.insert(members).values({id:'other',role:'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash('g'.repeat(64)),kind:'owner',member:'other',label:'Other member fixture',createdAt:at}).run();
  const app=await serveShared({db,clock,port,publicOrigin:origin,webRoot,originAllowed:()=>true,reportError:error=>{throw error;}});
- let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined,trap:ReturnType<typeof createServer>|undefined;
+ let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined,trap:ReturnType<typeof createServer>|undefined;let privateCredentialKey='';
  try{
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   // This proof represents a person; separate route tests exercise headless six-hour sessions.
@@ -106,7 +107,7 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
   await page.goto(origin+'/p/account-preview');await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor();
   expect(db.select().from(sessions).all()).toMatchObject([{token:hash(raw),via:'passkey',isAgent:false}]);expect(db.select().from(passkeys).get()!.counter).toBeGreaterThan(registeredCounter);
   const rememberedCounter=db.select().from(passkeys).get()!.counter;
-  const {credentials}=await cdp.send('WebAuthn.getCredentials',{authenticatorId});expect(credentials.length).toBe(1);const credential=credentials[0];
+  const {credentials}=await cdp.send('WebAuthn.getCredentials',{authenticatorId});expect(credentials.length).toBe(1);const credential=credentials[0];privateCredentialKey=credential.privateKey;
   const setCounter=async(signCount:number)=>{await cdp.send('WebAuthn.removeCredential',{authenticatorId,credentialId:credential.credentialId});await cdp.send('WebAuthn.addCredential',{authenticatorId,credential:{...credential,signCount}});};
   await page.getByRole('button',{name:'Sign out this device',exact:true}).click();await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();
   await setCounter(0);const rejected=page.waitForResponse(response=>new URL(response.url()).pathname==='/login/passkey');void rejected.catch(()=>{});await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();expect((await rejected).status()).toBe(401);
@@ -116,7 +117,7 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
   const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});await page.screenshot({path:join(shots,'passkey-shared.png'),animations:'disabled',mask:[page.locator('[data-signin-link]')]});
   await page.getByRole('button',{name:'Remove passkey',exact:true}).click();await expect.poll(()=>db.select().from(passkeys).all().length).toBe(0);await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor({state:'hidden'});
   expect(errors).toEqual([]);
- }catch(error){throw Error(String(error).replace(/\/login\/[a-zA-Z0-9_-]+/g,'/login/[redacted]'));}
+ }catch(error){const message=String(error).replace(/\/login\/[a-zA-Z0-9_-]+/g,'/login/[redacted]');throw Error(privateCredentialKey?message.replaceAll(privateCredentialKey,'[virtual key redacted]'):message);}
  finally{await browser?.close();await app.close();if(trap)await new Promise<void>(resolve=>trap!.close(()=>resolve()));client.close();}
- writeFileSync(resolve('artifacts/household-account/passkey.json'),JSON.stringify({completed:true,realPasskeyRegistered:true,realPasskeySignin:true,counterIncreased:true,copiedCounterRejected:true,noSessionAfterCopiedCounter:true,passkeyRemoved:true,oneTimeLinkRedeemedOnce:true,deviceLogout:true},null,2));
+ writeFileSync(resolve('artifacts/household-account/passkey.json'),JSON.stringify({completed:true,realPasskeyRegistered:true,realPasskeySignin:true,counterIncreased:true,copiedCounterRejected:true,noSessionAfterCopiedCounter:true,restoredCounterSignin:true,passkeyRemoved:true,oneTimeLinkRedeemedOnce:true,deviceLogout:true},null,2));
 });
