@@ -67,10 +67,13 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
   const trapOrigin=`http://127.0.0.1:${trapAddress.port}`;
   await context.route('**/*',route=>{if(new URL(route.request().url()).origin===origin)return route.continue();blockedHttp++;return route.abort('blockedbyclient');});
   await context.routeWebSocket(url=>new URL(url).origin!==origin.replace(/^http/,'ws'),socket=>{blockedSocket++;socket.close();});
+  // A blocked navigation starts Chrome's error page asynchronously. Keep it
+  // on a disposable probe page, separate from the real credential ceremony.
+  const probe=await context.newPage();
+  await probe.evaluate(url=>new Promise<void>(resolve=>{const socket=new WebSocket(url);socket.onclose=()=>resolve();socket.onerror=()=>resolve();}),trapOrigin.replace(/^http/,'ws'));
+  expect(blockedSocket).toBe(1);
+  await probe.goto(trapOrigin).catch(()=>{});expect(blockedHttp).toBe(1);expect(trapped).toBe(0);await probe.close();
   const page=await context.newPage(),errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.goto(trapOrigin).catch(()=>{});expect(blockedHttp).toBe(1);await page.goto('about:blank');
-  await page.evaluate(url=>new Promise<void>(resolve=>{const socket=new WebSocket(url);socket.onclose=()=>resolve();socket.onerror=()=>resolve();}),trapOrigin.replace(/^http/,'ws'));
-  expect(blockedSocket).toBe(1);expect(trapped).toBe(0);
   const cdp=await context.newCDPSession(page);await cdp.send('WebAuthn.enable');
   await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
   // Genuine one-time link redemption; no browser cookie is seeded.
