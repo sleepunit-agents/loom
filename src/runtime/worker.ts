@@ -1,3 +1,4 @@
+import { eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 /** Work-plane execution only. Loom's control plane supplies a claimed assignment;
  * builds and bodies run through the executor in the separate worker program. */
 export interface WorkerRunPolicy {
@@ -30,7 +31,9 @@ export interface WorkerBody {
   spawned: Promise<void>;
   exited: Promise<{ exitCode: number; logTail: string }>;
   /** Releases the brief only after loom acknowledges running. */
-  release(): Promise<void>;
+  /** Only explicit fixed-child adapters receive a private credential. */
+  acceptsBootstrap?: boolean;
+  release(bootstrap?: BodyBootstrap): Promise<void>;
   /** Must stop and reap every child belonging to this attempt. Idempotent. */
   stop(): Promise<void>;
 }
@@ -43,6 +46,8 @@ export interface WorkerControl {
   next(): Promise<WorkerAssignment | undefined>;
   /** Private one-attempt input, never part of the assignment/receipt. */
   repositoryInput?(id:string,signal:AbortSignal):Promise<Uint8Array|undefined>;
+  /** Parent generates raw bytes locally; the server receives only a fingerprint. */
+  enrollBody?(id: string, signal: AbortSignal): Promise<BodyBootstrap>;
   started(id: string, build: string): Promise<void>;
   /** false means revoked/stopped/lost: cease execution without a finish report. */
   heartbeat(id: string, state: 'starting' | 'running'): Promise<boolean>;
@@ -75,7 +80,8 @@ export async function workOnce(input: {
   // Snapshot input before giving asynchronous adapters control of it.
   const assignment = structuredClone(job);
   const abort = new AbortController();
-  const cancel = () => abort.abort();
+  let bootstrap: BodyBootstrap | undefined;
+  const cancel = () => { eraseBootstrap(bootstrap); abort.abort(); };
   input.signal.addEventListener('abort', cancel, { once: true });
   if (input.signal.aborted) cancel();
   let state: 'starting' | 'running' = 'starting';
@@ -106,6 +112,10 @@ export async function workOnce(input: {
       // Attach a handler immediately: a fast exit may precede spawned/started.
       void body.exited.catch(() => {});
       await body.spawned;
+      if (body.acceptsBootstrap) {
+        if (!control.enrollBody) throw new Error('Body enrollment unavailable');
+        bootstrap = await control.enrollBody(assignment.id, abort.signal);
+      }
     } catch {
       if (abort.signal.aborted) return 'abandoned';
       // Reap a partly launched process before allowing the server's start retry.
@@ -131,16 +141,21 @@ export async function workOnce(input: {
     state = 'running';
     reporting = false;
     let result: { exitCode: number; logTail: string };
-    try { await body.release(); result = await body.exited; }
+    try {
+      try { if (bootstrap) await body.release(bootstrap); else await body.release(); }
+      finally { eraseBootstrap(bootstrap); }
+      result = await body.exited;
+    }
     catch { result = { exitCode: 1, logTail: 'Worker body failed' }; }
     // Reap the entire process group before a terminal report can admit more work.
     await body.stop();
     reporting = true;
     await heartbeat;
     if (abort.signal.aborted) return 'abandoned';
-    await control.finish(assignment.id, result.exitCode, result.logTail.slice(-16_384));
+    await control.finish(assignment.id, result.exitCode, bootstrap ? '' : result.logTail.slice(-16_384));
     return 'finished';
   } finally {
+    eraseBootstrap(bootstrap);
     dispose();
     input.signal.removeEventListener('abort', cancel);
     cancel();
