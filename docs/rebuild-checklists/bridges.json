@@ -108,6 +108,15 @@
           "Pending sends"
         ]
       }
+    },
+    {
+      "id": "bridges-020",
+      "promise": "The owner can save a Discord channel rule and a Slack person link in Bridges and inspect both after reload.",
+      "source": "docs/how-it-works/site/bridges.html",
+      "probe": {
+        "kind": "action",
+        "action": "bridgeSettings"
+      }
     }
   ],
   "modelTables": [

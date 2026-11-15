@@ -58,3 +58,18 @@ renew its lifetime; memory.restore is the separate archive restoration.
 Shared command receipts contain only opaque IDs and keyed fingerprints;
 private effects, revisions and receipts commit together and roll back if the
 current body's authority ends before commit. Draft browsing remains separate.
+A receiving body's Identity
+---------------------------------
+
+`memoryIdentity(agent: ...)` reads the declared agent folder's IDENTITY.md,
+preferences.md and self-model.md, plus an assembled top-of-mind digest and
+recent authored episodes. The current private Memory visibility rule applies;
+being on a project together does not grant access. File targets must remain
+inside the declared folder. No source is created or upgraded by this read,
+and global source/timezone overrides are ignored. Expired memories and old or
+future episodes are omitted. The response says when the snapshot was read.
+
+The receiving body loads its Identity through its ordinary authenticated query
+client after accepting mail and before calling its model. The private text
+joins only that model's input; it never becomes a shared assignment, job brief,
+status or receipt. The generic model/MCP factory remains unchanged.

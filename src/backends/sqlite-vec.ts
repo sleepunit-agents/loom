@@ -807,17 +807,19 @@ export class SqliteVecBackend implements MemoryBackend {
       category: string;
       project: string | null;
       scope: string | null;
+      ttl: string | null;
+      expires_at: string | null;
     };
     let rows: RestoreRow[] = [];
 
     if (input.ref) {
       const row = this.db
-        .prepare('SELECT id, ref, title, content, category, project, scope FROM memories WHERE ref = ? AND archived = 1')
+        .prepare('SELECT id, ref, title, content, category, project, scope, ttl, expires_at FROM memories WHERE ref = ? AND archived = 1')
         .get(input.ref) as RestoreRow | undefined;
       if (row) rows = [row];
     } else if (input.category && input.title) {
       rows = this.db
-        .prepare('SELECT id, ref, title, content, category, project, scope FROM memories WHERE category = ? AND title = ? AND archived = 1')
+        .prepare('SELECT id, ref, title, content, category, project, scope, ttl, expires_at FROM memories WHERE category = ? AND title = ? AND archived = 1')
         .all(input.category, input.title) as RestoreRow[];
     } else {
       return { restored: [] };
@@ -832,7 +834,7 @@ export class SqliteVecBackend implements MemoryBackend {
 
     const now = new Date().toISOString();
     const stmt = this.db.prepare(
-      'UPDATE memories SET archived = 0, archive_note = NULL, uniq = ?, updated = ? WHERE id = ?',
+      'UPDATE memories SET archived = 0, archive_note = NULL, uniq = ?, updated = ?, expires_at = ? WHERE id = ?',
     );
     // Delete-then-insert: legacy rows archived before delete-on-archive
     // may still hold a vector, and vec0 rowids must stay unique.
@@ -845,7 +847,11 @@ export class SqliteVecBackend implements MemoryBackend {
         // Re-derive the key: the row may carry a stale or pre-rekey one, and
         // while it sat archived the same body may have been remembered again
         // — that active row keeps the key (PR120 review).
-        stmt.run(this.claimableUniq(row.id, row), now, row.id);
+        // Explicit restoration makes an elapsed memory readable again, using
+        // its existing duration. Preserve live deadlines and authored heat.
+        const elapsed=row.expires_at&&(!Number.isFinite(Date.parse(row.expires_at))||isExpired(row.expires_at,new Date(now)));
+        const expires=elapsed?computeExpiresAt(now,row.ttl??undefined):row.expires_at;
+        stmt.run(this.claimableUniq(row.id, row), now, expires, row.id);
         delVec.run(BigInt(row.id));
         insVec.run(BigInt(row.id), toVecBuffer(vectors[i]));
       });
