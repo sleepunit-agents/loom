@@ -36,6 +36,9 @@ import { registerSharedHouseholdMembers } from './shared-household-members.js';
 import { taskService } from './apps/tasks.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { sharedConversations } from './shared-conversations.js';
+import { sameRequestOrigin } from './core/data/origin.js';
+import { takeBodyInput } from './core/conversations/body-input.js';
+import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { mayRunPrivateWork } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
@@ -97,6 +100,7 @@ export function sharedRoot(options: {
     queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); });
   });
   const credentials = sharedCredentials(db, clock, () => !closing);
+  const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
   const tasks=taskService(db,now);
   const memory=sharedMemory(db,clock,options.memory,tasks);
@@ -238,10 +242,11 @@ export function sharedRoot(options: {
   http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
+  http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
   http.route('/api/secrets/private',sharedSecretInputRoutes({db,inputs:privateInputs,credentials,available:()=>!closing,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
   http.post('/api/:piece/:operation', async c => {
-    const request = c.req.raw, origin = request.headers.get('origin'), url = new URL(request.url);
-    if (request.headers.get('sec-fetch-site') === 'cross-site' || (origin && origin !== url.origin && !(origin === options.publicOrigin && new URL(origin).host === url.host)))
+    const request = c.req.raw;
+    if (!sameRequestOrigin(request,options.publicOrigin))
       return c.json(failure('denied', 'Cross-origin request refused'), 403);
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) return c.json(failure('invalid', 'Use application/json'), 415);
     const auth = authenticate(request);

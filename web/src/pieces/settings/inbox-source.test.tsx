@@ -5,7 +5,7 @@ import {createElement as h} from 'react';
 // @ts-expect-error Existing renderer dependency has no declarations.
 import {act,create} from 'react-test-renderer';
 import {createDataSchema} from '../../../../src/core/data/database.js';
-import {members,agents,secrets,secretChanges,secretRequests,secretGrants,inbox,tokens,sessions} from '../../../../src/core/data/schema.js';
+import {members,agents,secrets,secretChanges,secretRequests,secretGrants,inbox,tokens,sessions,jobs,agentHouseSecrets} from '../../../../src/core/data/schema.js';
 import {FakeClock} from '../../../../src/core/clock.js';
 import {sharedRoot} from '../../../../src/shared-root.js';
 import {inboxSourcePath} from '../attention/inbox-query';
@@ -17,12 +17,18 @@ vi.mock('../../kit',()=>({Button:(p:any)=>h('button',p),Input:(p:any)=>h('input'
 (globalThis as typeof globalThis&{IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:any;const close:(()=>unknown|Promise<unknown>)[]=[];
 afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;vi.unstubAllGlobals();for(const stop of close.splice(0).reverse())await stop();});
-it.each([true,false])('a real pending Inbox source opens Settings and records owner allow=%s in the shared request/grant',async allow=>{
+it.each([{allow:true,startup:false},{allow:false,startup:false},{allow:true,startup:true},{allow:false,startup:true}])('a real pending Inbox opens Settings (startup=$startup, allow=$allow)',async({allow,startup})=>{
  const client=new Database(':memory:');close.push(()=>client.close());const db=createDataSchema(client),clock=new FakeClock(),at=new Date(clock.now()).toISOString(),cookie='c'.repeat(64),owner='o'.repeat(64),agent='a'.repeat(64),hash=(value:string)=>createHash('sha256').update(value).digest('hex');
  db.insert(members).values({id:'owner',role:'owner',joinedAt:at}).run();db.insert(agents).values({id:'art',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();db.insert(secrets).values({name:'API',description:'Forge access',changedAt:at,changedBy:'owner'}).run();db.insert(secretChanges).values({id:'baseline',secret:'API',action:'add',by:'owner',at}).run();
  db.insert(tokens).values([{fingerprint:hash(owner),label:'Owner',kind:'owner',member:'owner',createdAt:at},{fingerprint:hash(agent),label:'Agent',kind:'agent',agent:'art',createdAt:at}]).run();db.insert(sessions).values({id:hash(cookie),token:hash(owner),device:'Browser',via:'token',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
- const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{}});close.push(()=>root.close());const id=randomUUID();
+ const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{}});close.push(()=>root.close());let id:string=randomUUID();
+ if(startup){
+  db.insert(jobs).values({id:'startup-job',agent:'art',title:'Startup',brief:'',model:'test',state:'running',startedByKind:'agent',startedBy:'art',houseRepository:'',houseFile:'',houseBranch:'',queuedAt:at}).run();
+  db.insert(agentHouseSecrets).values({agent:'art',alias:'API_TOKEN',secret:'API'}).run();root.writes.run(()=>root.services.secrets.requests.setRule({secret:'API',answer:'ask',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
+  expect(root.services.secrets.inputs.startup('startup-job')).toEqual({aliases:[],pending:true});id=db.select().from(secretRequests).get()!.id;
+ }else{
  const asked=await root.http.request('http://loom/api/secrets/request',{method:'POST',headers:{authorization:'Bearer '+agent,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id,secret:'API',why:'Read the forge',minutes:5,scope:'agent'}})});expect(asked.status).toBe(200);
+ }
  const item=db.select().from(inbox).get()!;expect(item).toMatchObject({source:'secret-request',sourceId:id,to:'owner',state:'waiting',waitsOnId:id});const path=inboxSourcePath({...item,read:false,refs:[id]});expect(path).toBe('/p/settings-preview/requests/'+id);
  const selected=await root.http.request('http://loom/graphql',{method:'POST',headers:{cookie:'loom_ui='+cookie,'content-type':'application/json'},body:JSON.stringify({query:settingsQuery})});const query=await selected.json();expect(query.errors).toBeUndefined();feed.data=query.data;
  const sent=vi.fn<typeof fetch>(async(url,options)=>{expect(options?.credentials).toBe('same-origin');return root.http.request('http://loom'+String(url),{...options,headers:{...options?.headers,cookie:'loom_ui='+cookie}});});vi.stubGlobal('fetch',sent);

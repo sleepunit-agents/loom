@@ -1,10 +1,5 @@
+/** Tests for retained Comms helpers; retired renderer/paging adapters have been removed. */
 import { expect, it } from 'vitest';
-import { replyHtml } from '../../web/src/pieces/comms/render.js';
-it('preserves Comms reply sanitising: no HTML, images, insecure schemes, or arbitrary internal links',()=>{
- const html=replyHtml('<script>alert(1)</script> ![image](https://evil.invalid/x) [bad](javascript:alert(1)) [insecure](http://evil.invalid) [inside](https://loom.invalid/a/art/anything) [ok](https://example.com)');
- expect(html).not.toMatch(/<script|<img|href="(?:javascript:|http:|https:\/\/loom.invalid)/i);expect(html).toContain('href="https://example.com"');expect(html).toContain('noopener noreferrer');
-});
-
 import { afterEach, vi } from 'vitest';
 import { readDraft, writeDraft, editDraft, clearDraft, draftKey } from '../../web/src/pieces/comms/drafts.js';
 afterEach(()=>vi.unstubAllGlobals());
@@ -37,6 +32,37 @@ it('keeps the in-memory retry id when device storage is unavailable',()=>{
  const draft=editDraft(readDraft('jonathan','th:one'),'Unsaved locally');
  expect(()=>writeDraft('jonathan','th:one',draft)).not.toThrow();
  expect(editDraft(draft,draft.text).id).toBe(draft.id);expect(()=>clearDraft('jonathan','th:one',draft)).not.toThrow();
+});
+
+import { latestHarness, messageView, type Message } from '../../web/src/pieces/comms/message.js';
+it('maps legacy nested cards and asks while preserving current runtime records',()=>{
+ const base:Message={id:'th/1',thread:'th',seq:1,at:0,kind:'card',from:'art',text:'Ran tests'};
+ expect(messageView({...base,card:{tool:'shell',state:'done',step:{output:'passed'}}})).toMatchObject({tool:'shell',state:'done',step:{output:'passed'}});
+ expect(messageView({...base,tool:'current',state:'running',step:{body:'current'},card:{tool:'old',state:'done',step:{body:'old'}}})).toMatchObject({tool:'current',state:'running',step:{body:'current'}});
+ const ask={...base,kind:'ask',text:null,ref:'approval:one',ask:{text:'Continue?',why:'Tests passed',if_yes:'I continue',if_no:'I stop'}};
+ expect(messageView(ask).ask).toMatchObject({question:'Continue?',why:'Tests passed',yes:'I continue',no:'I stop',canAnswer:true});
+ expect(messageView({...ask,answer:{verdict:'denied',by:'jonathan'}}).ask).toMatchObject({answer:'denied',answered:true,canAnswer:false});
+ expect(messageView({...ask,ask:{ask:'Which?',answers:'words'}}).ask?.canAnswer).toBe(false);
+ expect(messageView({...ask,ref:undefined}).ask?.canAnswer).toBe(false);
+ expect(messageView({...base,text:null})).toEqual({text:null,tool:undefined,state:undefined,step:undefined,ask:undefined,nextRetry:undefined,retryStart:undefined});
+});
+
+it('shows a retained start retry time, hiding it after settlement, failure or expiry',()=>{
+ const m:Message={id:'th/2',thread:'th',seq:2,at:0,kind:'error',from:'art',text:"Art couldn't start; retrying.",step:{error:'start-retry',retry_at:'2026-11-13T05:30:00Z',reason:'private host reason'}};
+ expect(messageView(m)).toMatchObject({nextRetry:'2026-11-13T05:30:00.000Z'});
+ expect(messageView({...m,step:{...m.step as object,settled:true}}).nextRetry).toBeUndefined();
+ expect(messageView({...m,step:{error:'start-failed',retry_at:'2026-11-13T05:30:00Z'}}).nextRetry).toBeUndefined();
+ expect(messageView({...m,text:null}).nextRetry).toBeUndefined();
+ expect(messageView({...m,kind:'card'}).nextRetry).toBeUndefined();
+ for(const retry_at of ['not a date','',17,null])expect(messageView({...m,step:{error:'start-retry',retry_at}}).nextRetry).toBeUndefined();
+ // Imported error cards keep the retry metadata on card itself.
+ expect(messageView({...m,step:undefined,card:{error:'start-retry',retry_at:'2026-11-13T05:30:00Z'}}).nextRetry).toBe('2026-11-13T05:30:00.000Z');
+});
+
+it('offers final-start retry only from a retained authorized backend projection',()=>{
+ const m:Message={id:'th/2',thread:'th',seq:2,at:1,kind:'error',from:'art',text:"Art couldn't start.",step:{error:'start-failed'},retryStart:{seq:1,generation:0}};
+ expect(messageView(m).retryStart).toEqual({seq:1,generation:0});
+ for(const change of [{text:null},{retryStart:undefined},{step:{error:'start-retry'}},{retryStart:{seq:1,generation:-1}}])expect(messageView({...m,...change}).retryStart).toBeUndefined();
 });
 
 import { ReplyCursor } from '../../web/src/pieces/comms/follow.js';
@@ -74,11 +100,12 @@ it('bounds only the focused composer at visual keyboard resize/pan, ignores zoom
  viewport.dispatchEvent(new Event('resize'));viewport.dispatchEvent(new Event('scroll'));form.dispatchEvent(new Event('focusin'));win.dispatchEvent(new Event('resize'));expect(styles.size).toBe(0);
 });
 
-
-it('opens only exact Clock local-approval paths in this window, keeping arbitrary internal links inert',()=>{
- const html=replyHtml('[Review local request](/p/clock-preview/item/a-1234abcd) [external](https://example.com)');
- expect(html).toContain('href="/p/clock-preview/item/a-1234abcd"');
- expect(html).toMatch(/<a href="\/p\/clock-preview\/item\/a-1234abcd">Review local request<\/a>/);
- expect(html).toMatch(/href="https:\/\/example.com" target="_blank" rel="noopener noreferrer"/);
- for(const path of ['/p/clock-preview/item/a-1234abcd?allow=true','/p/clock-preview/item/a-1234abcd/../../settings','/p/clock-preview/item/a-1234abcD','/p/clock-preview/item/w-123456','/p/clock-preview/item/a-%31%32%33%34abcd','//evil.invalid/p/clock-preview/item/a-1234abcd','/p/approvals-preview','/p/clock-preview/item/a-1234abcd#allow'])expect(replyHtml(`[bad](${path})`)).not.toContain('<a ');
+it('shows only the latest retained reply harness, including imports, and clears on an ordinary reply',()=>{
+ const base:Message={id:'th/1',thread:'th',seq:1,at:0,kind:'reply',from:'art',text:'Reply',card:{on:'Codex'}};
+ expect(latestHarness([base])).toBe('Codex');
+ expect(latestHarness([{...base,seq:2,card:undefined},base])).toBeUndefined();
+ expect(latestHarness([base,{...base,seq:2,kind:'card',card:{on:'Other'}}])).toBe('Codex');
+ for(const on of ['<Codex>','two words','a'.repeat(25),'Codex\n',17])expect(latestHarness([{...base,card:{on}}])).toBeUndefined();
+ expect(latestHarness([{...base,text:null}])).toBeUndefined();
+ expect(latestHarness([])).toBeUndefined();
 });

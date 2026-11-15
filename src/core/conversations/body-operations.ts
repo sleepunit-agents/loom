@@ -1,30 +1,29 @@
+import { ConversationMail } from './mail.js';
+import { sameMailScope } from './body-input.js';
+import { conversationBodyScope, type BodyProof } from './body-scope.js';
 /** Reports from the currently authenticated job body. Public Viewer labels,
  * input-selected jobs and ordinary agent tokens never establish this proof. */
 import { z } from 'zod';
 import { eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import { OperationError, operation, type Operations } from '../operations/index.js';
-import { conversations, jobs, members } from '../data/schema.js';
+import { members } from '../data/schema.js';
 import type { CommsMessages } from './messages.js';
-type BodyProof = (viewer: Viewer) => Readonly<{job:string;agent:string;box:string}> | undefined;
 export function registerConversationBodyOperations(operations:Operations, service:CommsMessages, proof:BodyProof, privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean): void {
  if(operations.db!==service.db.$client)throw Error('Body reports need the shared connection');
  const conversationsService=service.threads.conversations,db=service.db;
- const current=(viewer:Viewer)=>{
-  const body=proof(viewer);if(!body)return;
-  const job=db.select().from(jobs).where(eq(jobs.id,body.job)).get();
-  if(!job?.conversation||job.state!=='running'||job.agent!==body.agent||job.box!==body.box)return;
-  const cv=db.select().from(conversations).where(eq(conversations.id,job.conversation)).get();
-  if(!cv||cv.job!==job.id||cv.agent!==job.agent||cv.member!==job.member||cv.project!==job.project)return;
-  if(cv.member&&!privateAssignment({member:cv.member,agent:cv.agent,project:cv.project??undefined}))return;
-  return {job,cv};
- };
+ const current=conversationBodyScope(db,proof,privateAssignment);
  const requireCurrent=(viewer:Viewer)=>{const found=current(viewer);if(!found)throw new OperationError('denied','Current conversation body required');return found;};
  const common={write:true,recheckPolicy:true,doors:['http'] as ['http'],may:(viewer:Viewer)=>!!current(viewer),inputHash:(input:string, identity:Readonly<{actor:Viewer}>)=>service.key.hash(`body-conversation\0${current(identity.actor)?.job.id ?? 'unbound'}\0${input}`)};
  operations.register(operation({...common,name:'conversation.turn',
   input:z.object({kind:z.enum(['reply','action','wake','note','refused']),model:z.string().min(1).max(200).optional(),outcome:z.enum(['answered','progressed','deferred','failed','none']).optional(),latencyMs:z.number().int().nonnegative().optional()}).strict(),
   output:z.object({saved:z.literal(true),conversation:z.string(),seq:z.number().int()}).strict(),
   run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer);const turn=conversationsService.turn({conversation:cv.id,fromKind:'agent',fromId:cv.agent,run:job.id,...input});ctx.changed('turns',`${cv.id}:${turn.seq}`);ctx.changed('conversations',cv.id);return {saved:true as const,conversation:cv.id,seq:turn.seq};},
+ }));
+ operations.register(operation({...common,name:'conversation.confirm',
+  input:z.object({items:z.array(z.string().min(1)).min(1).max(100)}).strict(),output:z.object({saved:z.literal(true)}).strict(),
+  may(viewer,input){const found=current(viewer);return !!found&&input.items.every(id=>{try{const item=conversationsService.item(id);return item.conversation===found.cv.id&&item.toKind==='agent'&&item.to===found.cv.agent&&item.job===found.job.id&&['taken','done'].includes(item.state)&&sameMailScope(item,found.cv);}catch{return false;}});},
+  run(ctx,input){const {job,cv}=requireCurrent(ctx.viewer),mail=new ConversationMail(service);for(const id of input.items){mail.confirm(cv.id,job.id,id);ctx.changed('inbox',id);}ctx.changed('messages',cv.id);return {saved:true as const};},
  }));
  const question=z.object({to:z.string().min(1),answers:z.enum(['yes-no','words']),words:z.string().min(1).max(100_000),why:z.string().max(100_000).optional(),ifYes:z.string().max(100_000).optional(),ifNo:z.string().max(100_000).optional(),link:z.string().max(2000).optional(),waitsOnKind:z.enum(['approval','task']).optional(),waitsOnId:z.string().min(1).optional(),refs:z.array(z.string().min(1)).max(100).optional()}).strict();
  operations.register(operation({...common,name:'conversation.digest',
