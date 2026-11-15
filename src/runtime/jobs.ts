@@ -1,3 +1,4 @@
+import {keepJobText} from './job-text.js';
 /** Trusted job lifecycle. The worker executes; this service only changes records.
  * External machine identity is checked at the API door before calling it. */
 import { mailWords } from '../core/conversations/volume.js';
@@ -28,7 +29,7 @@ export class Jobs {
     if (!job.conversation) return true;
     const conversation = this.db.select({ venue: conversations.venue, member: conversations.member }).from(conversations)
       .where(eq(conversations.id, job.conversation)).get();
-    return Boolean(conversation && !conversation.member && conversation.venue !== 'loom' && conversation.venue !== 'handoff');
+    return keepJobText(conversation);
   }
 
   /** Old queued rows may contain a plaintext brief; never send it to a worker. */
@@ -59,7 +60,7 @@ export class Jobs {
         project: conversation.project, member: conversation.member, title: conversation.label,
         // Comms and handoff words are delivered ephemerally by ConversationMail.
         // No private conversation or encrypted brief is copied into the job.
-        state: 'queued', brief: conversation.member || conversation.venue === 'loom' || conversation.venue === 'handoff' ? '' : mail.map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
+        state: 'queued', brief: !keepJobText(conversation) ? '' : mail.map(item => mailWords(item.volume, item.words) ?? '').join('\n\n'), model: model.model,
         // Inbox admission is automatic work started by the receiving agent.
         // The actual sender and source remain on each inbox item.
         startedByKind: 'agent', startedBy: conversation.agent,

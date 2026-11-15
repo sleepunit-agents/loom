@@ -1,5 +1,6 @@
 /** Real Root and receiving SDK; all bodies/people/words are fictional. */
 import {afterEach,expect,it,vi} from 'vitest';
+import {createHash} from 'node:crypto';
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {bodyFixture,bodyCredentials,credentialHash} from '../test/fixtures/conversation-body.js';
@@ -7,7 +8,7 @@ import * as s from './core/data/schema.js';
 import {bodyProgram} from './runtime/body-program.js';
 import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {bodyConversationClient} from './runtime/conversation-client.js';
-import {handoffDeadline} from './core/conversations/handoff-words.js';
+import {handoffDeadline,sealHandoff} from './core/conversations/handoff-words.js';
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const brief={agent:'mark',clientId:'brief',label:'Compare fictional pumps',words:'PRIVATE HANDOFF WORDS'};
@@ -132,6 +133,8 @@ it('runs the actual default receiving body on the produced handoff and finishes 
  expect(f.db.select().from(s.digests).where(eq(s.digests.conversation,created.conversation)).get()).toMatchObject({run:job,summary:'Completed this stretch of work.'});
  const response=await f.root.http.request('/api/runtime/finish',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+bodyCredentials.runner},body:JSON.stringify({id:'handoff-finish',input:{job,exitCode:0,logTail:'PRIVATE CHILD STDOUT'}})});expect(response.status).toBe(200);
  expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()).toMatchObject({state:'done',brief:'',logTail:null});
+ const receipt=f.db.select().from(s.operationResults).where(eq(s.operationResults.operation,'runtime.finish')).get()!;
+ expect(receipt.inputHash).not.toBe(createHash('sha256').update(JSON.stringify({exitCode:0,job,logTail:'PRIVATE CHILD STDOUT'})).digest('hex'));
  const durable=f.db.$client.serialize();for(const words of [brief.words,'PRIVATE CHILD RESULT','PRIVATE CHILD STDOUT'])expect(durable.includes(Buffer.from(words))).toBe(false);
 });
 
@@ -145,4 +148,52 @@ it.each([false,true])('rechecks the sending project assignment after sealing (pu
  let release!:()=>void,enter!:()=>void;const held=new Promise<void>(yes=>{release=yes;}),started=new Promise<void>(yes=>{enter=yes;});f.gate(async()=>{enter();await held;});
  const pending=f.call('handoff',brief,'source-assignment');await started;f.root.writes.run(()=>f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'art')).run());release();expect((await pending).status).toBe(403);
  expect(f.db.select().from(s.inbox).all()).toEqual([]);
+});
+
+it.each([false,true])('requires a current explicit shared owner for unlabelled public handoffs (assigned %s)',async assigned=>{
+ const f=await fixture();f.root.writes.run(()=>{
+  f.db.update(s.conversations).set({member:null,project:null}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null,project:null}).where(eq(s.jobs.id,'job')).run();
+  if(!assigned){f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run();f.db.insert(s.memberAgents).values({member:'bob',agent:'mark'}).run();}
+ });
+ const response=await f.call('handoff',brief,'public');expect(response.status).toBe(assigned?200:403);
+ if(assigned){const created=z.object({value:z.object({conversation:z.string()})}).parse(await response.json()).value;f.clock.advance(60_000);const {job}=receive(f,created.conversation);expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()).toMatchObject({member:null,project:null,brief:''});}
+ else expect(f.db.select().from(s.inbox).all()).toEqual([]);
+});
+it('keeps one peer/parent conversation for distinct briefs, with one item and wordless turn per brief',async()=>{
+ const f=await fixture(),first=await create(f),response=await f.call('handoff',{...brief,clientId:'second',words:'SECOND PRIVATE BRIEF'},'second');expect(response.status).toBe(200);
+ const second=z.object({value:z.object({conversation:z.string(),item:z.string()})}).parse(await response.json()).value;expect(second.conversation).toBe(first.conversation);expect(second.item).not.toBe(first.item);
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.conversation,first.conversation)).all()).toHaveLength(2);expect(f.db.select().from(s.turns).where(eq(s.turns.conversation,first.conversation)).all()).toHaveLength(2);
+});
+it('shortens an existing fourteen-day brief to the new one-day policy before publication and confirmation',async()=>{
+ const f=await fixture(),created=await create(f);f.root.writes.run(()=>f.db.insert(s.household).values({commsDays:1}).run());f.clock.advance(60_000);const {sdk}=receive(f,created.conversation);
+ const until=f.clock.now()-60_000+86400000;
+ await expect(sdk.takeAndAccept(async(item,signal)=>{expect(item.keepUntil).toBe(new Date(until).toISOString());f.clock.advance(86400000-60_000);expect(signal.aborted).toBe(true);})).rejects.toThrow();
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,created.item)).get()).toMatchObject({state:'taken',words:null});
+});
+it.each(['expiry','recipient','cipher'] as const)('withholds words when %s changes while decryption is pending',async mode=>{
+ const f=await fixture();if(mode==='expiry')f.root.writes.run(()=>f.db.insert(s.household).values({commsDays:1}).run());const created=await create(f);f.clock.advance(mode==='expiry'?86400000-1000:60_000);const {token}=receive(f,created.conversation);
+ const swapped=mode==='cipher'?await sealHandoff(f.key,'REPLACEMENT PRIVATE BRIEF',new Date(f.clock.now()).toISOString(),14):null;
+ let enter!:()=>void,release!:()=>void;const started=new Promise<void>(yes=>{enter=yes;}),held=new Promise<void>(yes=>{release=yes;});f.openGate(async()=>{enter();await held;});
+ const pending=f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});await started;
+ if(mode==='expiry')f.clock.advance(1000);
+ else f.root.writes.run(()=>{if(mode==='recipient')f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run();else f.db.update(s.inbox).set({words:swapped}).where(eq(s.inbox.id,created.item)).run();});
+ release();const response=await pending;expect(response.status).toBeGreaterThanOrEqual(400);expect(await response.text()).not.toContain(brief.words);
+});
+
+it('hides handoff envelopes from generic agent bodies/search and opens words only for an authorized member',async()=>{
+ const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set({member:null,project:null}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null,project:null}).where(eq(s.jobs.id,'job')).run();});
+ const created=await create(f),query=`{inboxItem(id:"${created.item}"){body{words} bodyKeepUntil}}`;
+ const read=async(token:string)=>f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({query})});
+ f.clock.advance(60_000);const {token}=receive(f,created.conversation);
+ const agent=await read(token);expect(await agent.json()).toMatchObject({data:{inboxItem:{body:null,bodyKeepUntil:null}}});
+ const searched=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({query:'{inboxItems(search: "loom:handoff:v1"){id body{words}}}'})});expect(await searched.json()).toMatchObject({data:{inboxItems:[]}});
+ const member=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+bodyCredentials.memberCookie},body:JSON.stringify({query})});expect(await member.json()).toMatchObject({data:{inboxItem:{body:{words:brief.words}}}});
+});
+
+it('rechecks a public shared owner after encryption and before receipt replay',async()=>{
+ const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set({member:null,project:null}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null,project:null}).where(eq(s.jobs.id,'job')).run();});
+ let release!:()=>void,enter!:()=>void;const gate=new Promise<void>(yes=>{release=yes;}),started=new Promise<void>(yes=>{enter=yes;});f.gate(async()=>{enter();await gate;});const pending=f.call('handoff',brief,'public-owner');await started;
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run());release();expect((await pending).status).toBe(403);
+ f.gate(async()=>{});f.root.writes.run(()=>f.db.insert(s.memberAgents).values({member:'alice',agent:'mark'}).run());await create(f,'public-owner');
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run());expect((await f.call('handoff',brief,'public-owner')).status).toBe(403);
 });

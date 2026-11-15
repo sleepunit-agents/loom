@@ -1,8 +1,8 @@
 /** A current native body hands a brief to another assigned agent. Labels and
  * parent place come from its live conversation, never from caller claims. */
-import {and,eq} from 'drizzle-orm';
+import {and,eq,inArray} from 'drizzle-orm';
 import {z} from 'zod';
-import {agents,household,inbox,projectAgents} from '../data/schema.js';
+import {agents,household,inbox,memberAgents,projectAgents} from '../data/schema.js';
 import {operation,OperationError,type Operations} from '../operations/index.js';
 import {bodyOperationDefaults,conversationBodyScope,requireBodyScope,type BodyProof} from './body-scope.js';
 import type {CommsMessages} from './messages.js';
@@ -16,8 +16,9 @@ export function registerConversationHandoff(operations:Operations,service:CommsM
   output:z.object({conversation:z.string(),item:z.string()}).strict(),
   may(viewer,input){
    const found=current(viewer);if(!found||input.agent===found.cv.agent||!db.select({id:agents.id}).from(agents).where(eq(agents.id,input.agent)).get())return false;
-   if(found.cv.member&&!privateAssignment({member:found.cv.member,agent:input.agent,project:found.cv.project??undefined}))return false;
-   return !found.cv.project||[found.cv.agent,input.agent].every(agent=>!!db.select().from(projectAgents).where(and(eq(projectAgents.project,found.cv.project!),eq(projectAgents.agent,agent))).get());
+   if(found.cv.member===null&&found.cv.project===null)return !!db.select().from(memberAgents).where(and(eq(memberAgents.agent,input.agent),inArray(memberAgents.member,db.select({member:memberAgents.member}).from(memberAgents).where(eq(memberAgents.agent,found.cv.agent))))).get();
+   if(found.cv.member!==null&&!privateAssignment({member:found.cv.member,agent:input.agent,project:found.cv.project??undefined}))return false;
+   return found.cv.project===null||[found.cv.agent,input.agent].every(agent=>!!db.select().from(projectAgents).where(and(eq(projectAgents.project,found.cv.project!),eq(projectAgents.agent,agent))).get());
   },
   async prepare(input){return sealHandoff(service.key,input.words,service.now(),db.select({days:household.commsDays}).from(household).get()?.days??14);},
   run(ctx,input,prepared){

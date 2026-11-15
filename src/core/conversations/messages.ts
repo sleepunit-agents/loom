@@ -1,4 +1,4 @@
-import {handoffDeadline} from './handoff-words.js';
+import {handoffExpiries} from './handoff-words.js';
 import { inboxContentChanged } from '../tempo/volume.js';
 import { randomUUID } from 'node:crypto';
 /** Trusted private-message service. External doors authenticate and authorize;
@@ -209,7 +209,7 @@ export class CommsMessages {
     if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
     const at = this.now(), cutoff = new Date(Date.parse(at) - days * 86400000).toISOString();
     let expired=0;
-    for(const item of this.db.select().from(inbox).where(and(eq(inbox.source,'handoff'),isNotNull(inbox.words))).all())if(handoffDeadline(item,days)<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
+    for(const item of handoffExpiries(this.db,days))if(item.until<=Date.parse(at)){this.db.update(inbox).set({words:null}).where(eq(inbox.id,item.id)).run();expired++;}
     return expired+this.db.update(messages).set({ words: null }).where(and(isNotNull(messages.words),
       or(sql`julianday(${messages.keepUntil}) <= julianday(${at})`, sql`julianday(${messages.at}) <= julianday(${cutoff})`))).returning({ seq: messages.seq }).all().length;
   }

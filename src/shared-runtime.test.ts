@@ -11,7 +11,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions, boxFacts, jobNeeds, turns, digests, threads, messages } from './core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, tokens, operationResults, inbox, sessions, boxFacts, jobNeeds, turns, digests, threads, messages, conversations } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 import { httpWorkerControl } from './runtime/worker-http.js';
 import { workerProgram } from './runtime/worker-program.js';
@@ -455,4 +455,13 @@ it('enrolls and completes a handoff body without manufacturing a Comms reply sur
  expect(f.db.select().from(threads).all()).toEqual([]);expect(f.db.select().from(messages).all()).toEqual([]);
  bootstrap.token.fill(0);bootstrap.erase?.();
  await f.control.finish(queued.id,0,'');expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()?.state).toBe('done');
+});
+
+it.each(['wake','discord','slack'] as const)('keeps member-private %s stdout and brief out of durable jobs and guessable receipts',async venue=>{
+ const f=fixture(),queued=f.send('wake');
+ f.root.writes.run(()=>{f.db.update(conversations).set({venue,member:'owner'}).where(eq(conversations.id,queued.conversation!)).run();f.db.update(jobs).set({member:'owner'}).where(eq(jobs.id,queued.id)).run();});
+ expect((await f.control.next())?.brief).toBe('');await f.control.started(queued.id,'image');
+ const input={job:queued.id,exitCode:0,logTail:'PRIVATE NONCOMMS STDOUT'};expect((await f.call('finish',input,'private-'+venue)).status).toBe(200);
+ expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()?.logTail).toBeNull();
+ expect(f.db.select().from(operationResults).where(eq(operationResults.operation,'runtime.finish')).get()?.inputHash).not.toBe(hash(JSON.stringify({exitCode:0,job:queued.id,logTail:input.logTail})));
 });

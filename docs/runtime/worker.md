@@ -506,8 +506,13 @@ handoff conversation per peer/parent job. Its one Inbox item enters ordinary
 Tempo settling and job admission. No Comms thread is created.
 
 Briefs remain encrypted in the existing Inbox words cell with an original
-household retention deadline of at most14 days. Only the bound recipient take
-opens them; current policy can shorten that deadline, and expiry withdraws
+household retention deadline of at most 14 days. Only the bound receiving body or a currently authorized member through the
+existing Inbox read may open them; current policy can shorten that deadline, and expiry withdraws
 original/cloned HTTP responses and acceptance before confirmation. The normal
 conversation lifetime removes ciphertext while preserving item/turn metadata.
 Handoff and member-private jobs keep no copied durable brief or stdout/stderr.
+
+For public work with neither a member nor a project, both agents must have a
+current explicit owner in common. Project work requires both agents to remain
+assigned to the project; private work requires the receiving agent to remain
+assigned to that member.
