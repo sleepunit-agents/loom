@@ -57,6 +57,10 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   for n in nodes:
    if n.tag=='p' and any(n.within(c) for c in ('stages','hub','out','inbox-flow')):add(n.text(),'')
  for app,text,contains in ui.get(f.stem,[]): add(text,'',{'kind':'ui','app':app,'contains':contains})
+ if f.stem=='conversations':
+  add('Sending in Comms persists the message after reload and creates one Inbox delivery item.','',{'kind':'action','action':'commsSend'})
+  add('A question answered in Inbox becomes answered inline in Comms.','',{'kind':'action','action':'commsAnswer'})
+ if f.stem=='inbox':add('Answering Yes records who answered and adds exactly one item for the agent.','',{'kind':'action','action':'inboxAnswer'})
  if f.stem=='signing-in':add('A first-run one-time link signs the browser in.','',{'kind':'signin'})
  if f.stem=='data':add('The real GraphQL websocket carries data after sign-in without protocol errors.','',{'kind':'live'})
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})

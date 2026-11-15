@@ -17,3 +17,10 @@ it('requires actual GraphQL data and no GraphQL errors for the live observation'
  expect(evaluate(promise,{live:{dataFrames:1,errors:['bad query']}}).status).toBe('not met');
  expect(evaluate(promise,{live:{dataFrames:1,errors:[]}}).status).toBe('met');
 });
+it('counts action evidence only when the browser observed the persisted outcome',()=>{
+ const promise={probe:{kind:'action',action:'inboxAnswer'}};
+ expect(evaluate(promise,{apps:[{title:'Inbox',opened:true,text:'Yes No'}]}).status).toBe('not checkable yet');
+ expect(evaluate(promise,{actions:{inboxAnswer:{ok:false,answeredBy:'alex',agentAnswerCopies:0}}}).status).toBe('not met');
+ expect(evaluate(promise,{actions:{inboxAnswer:{ok:true,screenshot:'action-inbox-answer.png'}}})).toMatchObject({status:'met',evidence:'action-inbox-answer.png'});
+ expect(evaluate(promise,{fatal:'Startup failed'})).toMatchObject({status:'not checkable yet',reason:'Startup failed'});
+});
