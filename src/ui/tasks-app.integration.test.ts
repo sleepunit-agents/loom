@@ -1,5 +1,5 @@
 /** Shipped Tasks form over the shared HTTP command/GraphQL door. Browser runs in CI only. */
-import { it, expect } from 'vitest';
+import { it, expect, onTestFailed } from 'vitest';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
@@ -79,11 +79,21 @@ it('executes the registered Tasks selection and real command envelope over share
 });
 
 it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.html')))('Tasks forms commit through shared HTTP and update retained windows without legacy calls', async () => {
-  const app = await fixture(), browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
+  const app = await fixture();
+  const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
+  let stage='open windows';
+  const step=(name:string)=>{stage=name;console.info('Tasks evidence:',name);};
   try {
     const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 1280, height: 900 }, reducedMotion: 'reduce' });
     await context.addCookies([{ name: 'loom_ui', value: app.cookie, url: app.url }]);
     const a = await context.newPage(), b = await context.newPage(), errors: string[] = [];
+    await context.tracing.start({screenshots:true,snapshots:true,sources:false});
+    onTestFailed(async()=>{
+      console.error('Tasks evidence failed at:',stage);
+      const dir=process.env.LOOM_TEST_SHOTS ?? join(tmpdir(),'loom-tasks-app');mkdirSync(dir,{recursive:true});
+      try {await a.screenshot({path:join(dir,'failure.png'),fullPage:true,timeout:5000});await context.tracing.stop({path:join(dir,'failure-trace.zip')});} catch(error) {console.error('Tasks diagnostic capture:',String(error));}
+      await browser.close();
+    });
     for (const page of [a,b]) page.on('pageerror', error => errors.push(error.message));
     await Promise.all([a.goto(`${app.url}/p/tasks-preview`), b.goto(`${app.url}/p/tasks-preview`)]);
     const row = (page: typeof a, name = title) => page.locator('[data-split-row]').filter({ hasText: name });
@@ -91,12 +101,14 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     for (const page of [a,b]) { await expect.poll(() => page.getByRole('link', { name:'acme/app#3', exact:true }).locator('..').textContent()).toContain('passing · approved'); expect(await page.getByRole('link', { name:'secret/app#9', exact:true }).count()).toBe(0); }
     app.data.writes.run(() => app.db.update(s.changes).set({ checks:'failing', review:'changes_requested' }).where(eq(s.changes.id,'github:acme/app#3')).run());
     for (const page of [a,b]) await expect.poll(() => page.getByRole('link', { name:'acme/app#3', exact:true }).locator('..').textContent()).toContain('failing · changes requested');
+    step('comment');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Comment', exact: true }).click();
     let form = a.getByRole('form', { name: 'Add comment', exact: true });
     await form.getByLabel('Comment', { exact: true }).fill('Shared HTTP comment');
     await form.getByRole('button', { name: 'Add comment', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('Shared HTTP comment', { exact: true }).count()).toBe(1);
     expect(app.db.select().from(s.taskComments).all()).toMatchObject([{ actor: 'sam', text: 'Shared HTTP comment' }]);
+    step('Priority');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Priority', exact: true }).click();
     form = a.getByRole('form', { name: 'Set priority', exact: true });
     await form.getByLabel('Priority', { exact: true }).selectOption('0');
@@ -104,6 +116,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     for (const page of [a,b]) await expect.poll(() => page.getByText('t-1 · P0 · open', { exact: true }).count()).toBe(1);
     await b.reload(); await expect.poll(() => b.getByText('Shared HTTP comment', { exact: true }).count()).toBe(1);
     await expect.poll(() => b.getByRole('link', {name:'acme/app#3',exact:true}).locator('..').textContent()).toContain('failing · changes requested');
+    step('Edit');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Edit', exact: true }).click();
     form = a.getByRole('form', { name: 'Edit task', exact: true });
     await form.getByLabel('Done when', { exact: true }).fill('Water flows after the browser edit');
@@ -111,6 +124,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     for (const page of [a,b]) await expect.poll(() => page.getByText('Water flows after the browser edit', { exact: true }).count()).toBe(1);
     for (const [action, relation, label] of [['Parent','parent-child','Parent task'], ['Blockers','blocks','Blocking task']] as const) {
       for (const remove of [false, true]) {
+        step(`${action} remove=${remove}`);
         await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: action, exact: true }).click();
         form = a.getByRole('form', { name: action, exact: true });
         await form.getByLabel(label, { exact: true }).selectOption('t-2');
@@ -121,18 +135,22 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       }
     }
     for (const project of ['bank','pond']) {
+      step(`project ${project}`);
       await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Project', exact: true }).click();
       form = a.getByRole('form', { name: 'Set project', exact: true });
       await form.getByLabel('Project', { exact: true }).selectOption(project);
       await form.getByRole('button', { name: 'Set project', exact: true }).click();
       for (const page of [a,b]) await expect.poll(() => page.getByText(`open · P0 · ${project}`, { exact: true }).count()).toBe(1);
     }
+    step('Claim');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Claim', exact: true }).click();
     await a.getByRole('form', { name: 'Claim task', exact: true }).getByRole('button', { name: 'Claim task', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('Assigned to member sam', { exact: true }).count()).toBe(1);
+    step('Unclaim');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Unclaim', exact: true }).click();
     await a.getByRole('form', { name: 'Unclaim task', exact: true }).getByRole('button', { name: 'Unclaim task', exact: true }).click();
     await expect.poll(() => a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Claim', exact: true }).count()).toBe(1);
+    step('Ask a person');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Ask a person', exact: true }).click();
     form = a.getByRole('form', { name: 'Ask a person', exact: true });
     await form.getByLabel('Person', { exact: true }).selectOption('sam');
@@ -140,13 +158,17 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     await form.getByRole('button', { name: 'Ask a person', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('Which pump?', { exact: true }).count()).toBe(1);
     expect(app.db.select().from(s.inbox).where(and(eq(s.inbox.source, 'task'), eq(s.inbox.waitsOnKind, 'task'), eq(s.inbox.waitsOnId, 't-1'))).all()).toEqual(expect.arrayContaining([expect.objectContaining({ to: 'sam', answers: 'yes-no' })]));
+    step('Close');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
     form = a.getByRole('form', { name: 'Close task', exact: true });
     await form.getByLabel('Reason (cancelled marks it cancelled)', { exact: true }).fill('Finished in browser');
     await form.getByRole('button', { name: 'Close task', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('Finished in browser', { exact: true }).count()).toBe(1);
+    step('Reopen');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Reopen', exact: true }).click();
     await a.getByRole('form', { name: 'Reopen task', exact: true }).getByRole('button', { name: 'Reopen task', exact: true }).click();
+    for (const page of [a,b]) await expect.poll(() => page.getByText('open · P0 · pond', {exact:true}).count()).toBe(1);
+    step('create at390');
     await a.setViewportSize({ width: 390, height: 900 });
     await a.goto(`${app.url}/p/tasks-preview`);
     await a.getByRole('button', { name: 'Create task', exact: true }).click();
@@ -161,12 +183,15 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     expect(created).toMatchObject({ project: 'pond', ownerKind: 'agent', owner: 'art', createdByKind: 'member', createdBy: 'sam' });
     await row(a, 'Browser planted task').click();
     await a.setViewportSize({ width: 1920, height: 900 });
+    step('comment');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Comment', exact: true }).click();
     form = a.getByRole('form', { name: 'Add comment', exact: true });
     await form.getByLabel('Comment', { exact: true }).fill('Wide form comment');
     expect(await form.evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
     await form.getByRole('button', { name: 'Add comment', exact: true }).click();
     await expect.poll(() => a.getByText('Wide form comment', { exact: true }).count()).toBe(1);
+    await expect.poll(() => a.getByRole('form', {name:'Add comment',exact:true}).count()).toBe(0);
+    step('responsive images');
     const shots = process.env.LOOM_TEST_SHOTS ?? join(tmpdir(), 'loom-tasks-app'); mkdirSync(shots, { recursive: true });
     for (const look of ['neon','daylight']) for (const width of [390,1280,1920]) {
       await a.setViewportSize({ width, height: 900 });
@@ -175,21 +200,26 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
       expect(await a.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
       await a.screenshot({ path: join(shots, `tasks-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
     }
+    step('comment');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Comment', exact: true }).click();
     form = a.getByRole('form', { name: 'Add comment', exact: true });
     await form.getByLabel('Comment', { exact: true }).fill('Discarded private draft');
+    step('project withdrawal');
     app.data.writes.run(() => app.db.delete(s.projectMembers).where(eq(s.projectMembers.member, 'sam')).run());
     for (const page of [a,b]) await expect.poll(() => row(page, 'Browser planted task').count()).toBe(0);
     app.data.writes.run(() => app.db.insert(s.projectMembers).values({ project: 'pond', member: 'sam' }).run());
     for (const page of [a,b]) await expect.poll(() => row(page, 'Browser planted task').count()).toBe(1);
     expect(await a.getByRole('form', { name: 'Add comment', exact: true }).count()).toBe(0);
+    step('comment');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Comment', exact: true }).click();
     form = a.getByRole('form', { name: 'Add comment', exact: true });
     expect(await form.getByLabel('Comment', { exact: true }).inputValue()).toBe('');
     await form.getByRole('button', { name: 'Cancel', exact: true }).click();
     app.data.writes.run(() => app.db.delete(s.sessions).where(eq(s.sessions.id, app.session)).run());
     for (const page of [a,b]) await expect.poll(() => row(page, 'Browser planted task').count()).toBe(0);
+    step('reconnect denied');
     await b.reload(); await expect.poll(() => b.getByText('Waiting for connection.', { exact: true }).count()).toBe(1);
-    expect(errors).toEqual([]); await context.close();
+    step('finished');
+    expect(errors).toEqual([]); await context.tracing.stop(); await context.close();
   } finally { await browser.close(); await app.close(); }
 }, 60_000);
