@@ -118,3 +118,19 @@ it('records one wordless person turn for an Inbox answer and no extra turn on re
   expect(service.conversation(cv.id).turnCount).toBe(1);
   expect(db.select().from(turns).all()).toHaveLength(1);
 });
+it.each(['dim','mute'] as const)('content resolution resets %s only according to recipient volume, never read or duplicate delivery', volume => {
+ const {db,service}=fixture(),until='2026-11-21T18:00:00.000Z';
+ const source={toKind:'person' as const,to:'jonathan',source:'approval' as const,sourceId:'approval-1',fromKind:'agent' as const,fromId:'art',answers:'yes-no' as const,words:'Allow the fixture?',waitsOnKind:'approval' as const,waitsOnId:'approval-1'};
+ const item=service.send(source);db.update(inbox).set({volume,quietUntil:until}).where(eq(inbox.id,item.id)).run();
+ service.read(item.id,'jonathan');expect(service.send({...source,words:'Duplicate contents'})).toMatchObject({words:source.words,volume,quietUntil:until});
+ const resolved=service.resolve('approval','approval-1','Allowed');expect(resolved).toHaveLength(1);expect(resolved[0]).toMatchObject({state:'resolved',resolution:'Allowed',volume:volume==='dim'?'full':'mute',quietUntil:volume==='dim'?null:until});
+ expect(service.resolve('approval','approval-1','Duplicate result')).toEqual([]);
+ const named=service.send({...source,sourceId:'approval-2',waitsOnId:'approval-2'});expect(named).toMatchObject({volume:'full',quietUntil:null});expect(service.item(item.id)).toEqual(resolved[0]);
+});
+it.each(['dim','mute'] as const)('a real public answer changes %s volume atomically and replay preserves it',volume=>{
+ const {db,service}=fixture(),until='2026-11-21T18:00:00.000Z';
+ const item=service.send({toKind:'person',to:'jonathan',source:'notice',fromKind:'agent',fromId:'art',answers:'yes-no',words:'Use fixture?'});db.update(inbox).set({volume,quietUntil:until}).where(eq(inbox.id,item.id)).run();
+ db.$client.exec('BEGIN');expect(()=>service.answer(item.id,'jonathan','yes')).not.toThrow();db.$client.exec('ROLLBACK');expect(service.item(item.id)).toMatchObject({state:'waiting',volume,quietUntil:until});
+ expect(service.answer(item.id,'jonathan','yes')).toMatchObject({state:'answered',volume:volume==='dim'?'full':'mute',quietUntil:volume==='dim'?null:until});
+ db.update(inbox).set({volume:'dim',quietUntil:until}).where(eq(inbox.id,item.id)).run();expect(service.answer(item.id,'jonathan','yes')).toMatchObject({volume:'dim',quietUntil:until});
+});
