@@ -14,9 +14,9 @@ import { wordsKey } from './pieces/comms/crypto.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); vi.restoreAllMocks(); });
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-async function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields']) {
+async function fixture(fields?: Parameters<typeof sharedRoot>[0]['fields'],initialTime=Date.parse('2026-11-14T18:00:00Z')) {
   const client = new Database(':memory:'); cleanup.push(() => { if (client.open) client.close(); });
-  const clock = new FakeClock(Date.parse('2026-11-14T18:00:00Z')), now = () => new Date(clock.now()).toISOString();
+  const clock = new FakeClock(initialTime), now = () => new Date(clock.now()).toISOString();
   const db = createDataSchema(client, now);
   for (const [id, role] of [['alice','member'],['bob','member'],['owner','owner']] as const) db.insert(members).values({ id, role, joinedAt: now() }).run();
   db.insert(agents).values({ id: 'art', about: '', markBg: '#000', markFg: '#fff', faceShape: 'pebble', faceEyes: 'dot' }).run();
@@ -113,14 +113,17 @@ it('rechecks current ownership after private encryption yields and commits no st
   expect(f.db.select().from(operationResults).where(eq(operationResults.id,'send')).all()).toEqual([]);
 });
 it('owns household-shortened expiry and daily history rollup, and removes its timer on close', async () => {
-  const f = await fixture();
+  const f = await fixture(undefined,Date.parse('2026-11-14T23:59:59Z'));
   expect((await f.post('comms.open',{thread:'th:pump',agent:'art',title:'New conversation'},'open')).status).toBe(200);
   expect((await f.post('comms.send',{thread:'th:pump',clientId:'message',words:'PRIVATE EXPIRING'},'send')).status).toBe(200);
-  f.clock.advance(2*86400000);
+  f.root.writes.run(()=>{const at=new Date(f.clock.now()-2*86400000).toISOString();f.db.update(messages).set({at}).run();f.db.update(turns).set({at}).run();});
   expect(f.db.select().from(messages).get()?.words).not.toBeNull();
   f.root.writes.run(() => f.db.insert(household).values({commsDays:1}).run());
   f.clock.advance(0); expect(f.db.select().from(messages).get()?.words).toBeNull();
-  f.clock.advance(90*86400000);
+  // Age the retained metadata rather than running unrelated 30-second Runtime
+  // sweeps for ninety virtual days. The actual next-midnight callback rolls up.
+  f.root.writes.run(()=>{const at=new Date(f.clock.now()-91*86400000).toISOString();f.db.update(messages).set({at}).run();f.db.update(turns).set({at}).run();});
+  f.clock.advance(1000);
   expect(f.db.select().from(turns).all()).toEqual([]);
   expect(f.client.prepare('SELECT messages FROM conversation_days').get()).toEqual({messages:1});
   await f.root.close(); f.client.close(); expect(() => f.clock.advance(100*86400000)).not.toThrow();
