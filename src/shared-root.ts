@@ -14,6 +14,8 @@ import { sharedCredentials } from './shared-credentials.js';
 import { OperationResults } from './core/data/operation-results.js';
 import type { Clock } from './core/clock.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
+import { householdService } from './apps/household.js';
+import { registerSharedHouseholdMembers } from './shared-household-members.js';
 import { taskService } from './apps/tasks.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
@@ -74,10 +76,12 @@ export function sharedRoot(options: {
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   const services = {
     tasks: taskService(db, now),
+    household: householdService(db, now),
     approvals: approvalService(db, new Map([...(options.approvedOperations ?? []), settings.operation]), now),
     conversations: new Conversations(db, now),
     secrets: {requests,values,reconcile:recoverSecrets},
   };
+  registerSharedHouseholdMembers(operations, db, services.household);
   registerSharedTaskCommands(operations, db, services.tasks);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   let tempo: ReturnType<typeof installSharedTempo>;
