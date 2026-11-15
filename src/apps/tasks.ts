@@ -12,7 +12,7 @@ const summary = {
   doneWhen: z.string(), description: z.string(), priority: z.number().int().min(0).max(4),
   project: z.string().min(1).nullable(),
 };
-const create = z.object({
+export const taskCreateSchema = z.object({
   ...summary, doneWhen: summary.doneWhen.default(''), description: summary.description.default(''),
   priority: summary.priority.default(2), project: summary.project.default(null),
   type: z.enum(['task', 'bug', 'feature', 'epic']).default('task'),
@@ -20,7 +20,9 @@ const create = z.object({
   source: z.object({ kind: z.string().min(1), id: z.string().min(1) }).optional(),
   parent: z.string().min(1).optional(),
 });
-export type NewTask = z.input<typeof create>;
+export const taskEditSchema = z.object(summary).partial().strict();
+export const taskAskSchema = z.object({ to: person.extend({ kind: z.literal('member') }), ask: z.string().trim().min(1), ifYes: z.string().trim().min(1), ifNo: z.string().trim().min(1), answers: z.enum(['yes-no', 'words']).default('yes-no') });
+export type NewTask = z.input<typeof taskCreateSchema>;
 export type TaskRow = typeof tasks.$inferSelect;
 export type TaskDetail = TaskRow & { comments: (typeof taskComments.$inferSelect)[]; links: (typeof taskLinks.$inferSelect)[] };
 export interface TaskService {
@@ -82,7 +84,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
   };
   return {
     create(input, actor) {
-      const value = create.parse(input); person.parse(actor);
+      const value = taskCreateSchema.parse(input); person.parse(actor);
       return db.transaction(() => {
         // Tasks are never deleted by this app, so even cancelled IDs remain reserved.
         const n = db.select({ n: sql<number>`coalesce(max(cast(substr(${tasks.id}, 3) as integer)), 0) + 1` }).from(tasks).get()!.n;
@@ -104,7 +106,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
         .orderBy(asc(tasks.priority), asc(tasks.position), asc(tasks.id)).all();
     },
     list(status) { return db.select().from(tasks).where(status ? eq(tasks.status, status) : undefined).orderBy(asc(tasks.priority), asc(tasks.position), asc(tasks.id)).all(); },
-    edit(id, input) { const patch = z.object(summary).partial().strict().parse(input); return db.transaction(() => touch(id, patch)); },
+    edit(id, input) { const patch = taskEditSchema.parse(input); return db.transaction(() => touch(id, patch)); },
     claim(id, actor) { person.parse(actor); return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'open') throw new Error('Only open work can be claimed'); return touch(id, { status: 'in_progress', assigneeKind: actor.kind, assignee: actor.id, startedAt: now() }); }); },
     unclaim(id) { return db.transaction(() => { if (row(id).ask) throw new Error('Answer the outstanding question first'); if (row(id).status !== 'in_progress') throw new Error('Task is not in progress'); return touch(id, { status: 'open', assigneeKind: null, assignee: null, startedAt: null }); }); },
     close(id, reason) { z.string().trim().min(1).parse(reason); return db.transaction(() => { const task = touch(id, { status: 'closed', closeReason: reason, closedAt: now(), ask: null, ifYes: null, ifNo: null, answers: null, askedByKind: null, askedBy: null }); mail.resolve('task', id, reason); return task; }); },
@@ -113,7 +115,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
     link(id, dependsOn, type) { db.transaction(() => link(id, dependsOn, type)); },
     unlink(id, dependsOn, type) { z.enum(['blocks', 'parent-child']).parse(type); db.transaction(() => { row(id); row(dependsOn); db.delete(taskLinks).where(and(eq(taskLinks.task, id), eq(taskLinks.dependsOn, dependsOn), eq(taskLinks.type, type))).run(); touch(id, {}); }); },
     ask(id, input, actor) {
-      const value = z.object({ to: person.extend({ kind: z.literal('member') }), ask: z.string().trim().min(1), ifYes: z.string().trim().min(1), ifNo: z.string().trim().min(1), answers: z.enum(['yes-no', 'words']).default('yes-no') }).parse(input); person.parse(actor);
+      const value = taskAskSchema.parse(input); person.parse(actor);
       return db.transaction(() => {
         if (row(id).status === 'closed') throw new Error('Closed work cannot ask a question');
         mail.resolve('task', id, 'Question replaced');

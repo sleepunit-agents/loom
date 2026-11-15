@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createDataSchema, type DataDatabase } from '../core/data/database.js';
 import { members, inbox } from '../core/data/schema.js';
 import { taskService, type TaskService } from './tasks.js';
-import { dispatchTaskCommand, type TaskCommand } from './task-command.js';
+import { dispatchTaskCommand, taskCommandSchema, type TaskCommand } from './task-command.js';
 
 let client: Database.Database, db: DataDatabase, service: TaskService;
 const actor = { kind: 'member', id: 'jonathan' } as const;
@@ -56,4 +56,37 @@ it('does not use an actor smuggled in a form command', () => {
   send(command);
   expect(service.get(task.id).assignee).toBe(actor.id);
   expect(() => send({ action: 'erase', id: task.id } as unknown as TaskCommand)).toThrow('Unknown task command');
+});
+
+it('validates every form action using the service schemas and preserves defaults', () => {
+  const command = taskCommandSchema.parse({ action: 'create', input: {
+    title: '  Pump  ', goal: 'Water', why: 'Pond', owner: { kind: 'household' },
+  } });
+  expect(command).toMatchObject({ input: { title: 'Pump', priority: 2, project: null, type: 'task', doneWhen: '', description: '' } });
+  const task = send(command)!;
+  const commands: TaskCommand[] = [
+    { action: 'edit', id: task.id, input: { priority: 1, project: null } },
+    { action: 'claim', id: task.id }, { action: 'unclaim', id: task.id },
+    { action: 'close', id: task.id, reason: 'Done' }, { action: 'reopen', id: task.id },
+    { action: 'comment', id: task.id, text: 'Ready' },
+    { action: 'link', id: task.id, dependsOn: 't-2', type: 'blocks' },
+    { action: 'unlink', id: task.id, dependsOn: 't-2', type: 'parent-child' },
+    { action: 'ask', id: task.id, input: { to: other, ask: 'Ready?', ifYes: 'Go', ifNo: 'Wait' } },
+  ];
+  for (const value of commands) expect(taskCommandSchema.safeParse(value).success).toBe(true);
+  expect(taskCommandSchema.parse(commands.at(-1))).toMatchObject({ input: { answers: 'yes-no' } });
+});
+
+it.each([
+  { action: 'erase', id: 't-1' },
+  { action: 'claim', id: ' ' },
+  { action: 'claim', id: 't-1', actor: other },
+  { action: 'edit', id: 't-1', input: { owner: other } },
+  { action: 'edit', id: 't-1', input: { priority: 5 } },
+  { action: 'comment', id: 't-1', text: ' ' },
+  { action: 'close', id: 't-1', reason: '' },
+  { action: 'link', id: 't-1', dependsOn: 't-2', type: 'other' },
+  { action: 'ask', id: 't-1', input: { to: { kind: 'agent', id: 'art' }, ask: 'Go?', ifYes: 'Go', ifNo: 'Wait' } },
+])('rejects malformed or identity-bearing command %# before dispatch', command => {
+  expect(taskCommandSchema.safeParse(command).success).toBe(false);
 });
