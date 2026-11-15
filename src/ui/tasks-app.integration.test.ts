@@ -164,11 +164,11 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     step('Ask a person');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Ask a person', exact: true }).click();
     form = a.getByRole('form', { name: 'Ask a person', exact: true });
-    await form.getByLabel('Person', { exact: true }).selectOption('sam');
+    await form.getByLabel('Person', { exact: true }).selectOption('lee');
     for (const [label,text] of [['Question','Which pump?'],['If yes','Order it'],['If no','Wait']]) await form.getByLabel(label, { exact: true }).fill(text);
     await form.getByRole('button', { name: 'Ask a person', exact: true }).click();
     for (const page of [a,b]) await expect.poll(() => page.getByText('Which pump?', { exact: true }).count()).toBe(1);
-    expect(app.db.select().from(s.inbox).where(and(eq(s.inbox.source, 'task'), eq(s.inbox.waitsOnKind, 'task'), eq(s.inbox.waitsOnId, 't-1'))).all()).toEqual(expect.arrayContaining([expect.objectContaining({ to: 'sam', answers: 'yes-no' })]));
+    expect(app.db.select().from(s.inbox).where(and(eq(s.inbox.source, 'task'), eq(s.inbox.waitsOnKind, 'task'), eq(s.inbox.waitsOnId, 't-1'))).all()).toEqual(expect.arrayContaining([expect.objectContaining({ to: 'lee', answers: 'yes-no' })]));
     step('Close');
     await a.getByRole('group', { name: 'Task actions', exact: true }).getByRole('button', { name: 'Close', exact: true }).click();
     form = a.getByRole('form', { name: 'Close task', exact: true });
