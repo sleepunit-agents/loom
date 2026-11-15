@@ -1,8 +1,9 @@
+import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
 import { useRecords, type LiveRecord } from '../../data';
 import { AppFrame, List, Row, Empty, Error, Loading, Button } from '../../kit';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
-import { agentPath, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus } from './home-model';
+import { agentPath, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson } from './home-model';
 import { HomeSteps } from './home-steps';
 import { threadPath } from './home-comms';
 import type { ActivityWindow } from '../activity/model';
@@ -13,7 +14,7 @@ interface Thread extends LiveRecord { agent: string; archived: number|null; last
 /** A record-only agent window; profile writes and deeper sections stay in their owning apps. */
 export default function AgentApp({ path = '/p/agents-preview', go = p => location.assign(p) }: {path?:string;go?:(path:string)=>void} = {}) {
   const roster=useDeskRoster(), people=useRecords<AgentPerson>('person');
-  const profiles=useRecords<Profile>('household.profile'), statuses=useRecords<AgentStatus>('attention.agent');
+  const profiles=useRecords<Profile>('household.profile'), statuses=useDeskAgentStatuses();
   const asks=useRecords<Ask>('attention.ask'), threads=useRecords<Thread>('thread');
   const activity=useRecords<ActivityWindow>('activity.window','recent'), displays=useAgentDisplays();
   const agents=orderedAgents(namedAgents(roster.status==='live'?roster.records:[],people.status==='live'?people.records:[]));

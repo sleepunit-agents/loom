@@ -1,8 +1,9 @@
+import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
 import type { ReactNode } from 'react';
 import { useRecords } from '../../data';
 import { Ticker, type TickPart } from '../../ticker';
-import { agentPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus } from './home-model';
+import { agentPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson } from './home-model';
 import type { Ask } from './model';
 import './bar.css';
 import { BarClock, BarStatus } from './bar-system';
@@ -14,7 +15,7 @@ export default function AttentionBar({ title, go, actions }: BarProps) {
   const stats = useDeskStats();
   const roster = useDeskRoster();
   const people = useRecords<AgentPerson>('person');
-  const statuses = useRecords<AgentStatus>('attention.agent');
+  const statuses = useDeskAgentStatuses();
   const asks = useRecords<Ask>('attention.ask');
   const agents = orderedAgents(namedAgents(roster.status === 'live' ? roster.records : [], people.status === 'live' ? people.records : []));
   const live = [roster, statuses, asks].every(s => s.status === 'live');

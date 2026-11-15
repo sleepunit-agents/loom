@@ -9,12 +9,13 @@ import type { Call, CallState, Result, Snapshot } from '../../data';
 // Renderer nodes carry arbitrary DOM callbacks; snapshots mix three record types for the hook fake.
 type Node={children:Array<Node|string>;props:Record<string,any>};
 const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>,listeners:new Set<()=>void>(),call:vi.fn(),once:vi.fn()}));
+vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['attention.agent'])}));
 vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:'live',data:{recentConversations:(f.snapshots['conversation.summary']?.records??[]).filter((row:any)=>row.agent===variables?.agent),agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent]);}}));
 vi.mock('../../data',()=>({useRecords:(type:string)=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]),call:f.call,callOnce:f.once}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
 import Home from './home';
 vi.mock('./member-retention',()=>({useMemberRetention:vi.fn()}));
-import { orderedAgents, reportLink } from './home-model';
+import { orderedAgents } from './home-model';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 const ask=(id:string,fields:Partial<Ask>={}):Ask=>({id,agent:'art',ask:`Question ${id}`,why:'The whole reason',if_yes:'I continue.',if_no:'I stop.',refs:['t-2205'],source:{kind:'piece',id:'test'},state:'open',createdAt:1,changedAt:1,...fields});
 const live=<T,>(records:T[])=>({records,status:'live' as const});
@@ -50,7 +51,7 @@ it('counts every central open ask, shows exactly the first three, and opens thei
 });
 it('shows the full first ask and latest status; checks at display and again before writing through Attention',async()=>{
   const first=ask('first');f.snapshots['attention.ask']=live([first]);
-  f.snapshots['attention.agent']=live<AgentStatus>([{id:'old',agent:'art',state:'idle',work:'Old work',changedAt:1,jobs:[],watched:[]},{id:'new',agent:'art',state:'working',work:'Current work',changedAt:Date.parse('2026-11-13T08:00:00Z'),jobs:[],watched:[]}]);
+  f.snapshots['attention.agent']=live<AgentStatus>([{id:'old',agent:'art',state:'idle',work:'Old work',changedAt:1},{id:'new',agent:'art',state:'working',work:'Current work',changedAt:Date.parse('2026-11-13T08:00:00Z')}]);
   const shown=request<Ask>(),fresh=request<Ask>(),write=request<Ask>();f.call.mockReturnValueOnce(shown.call).mockReturnValueOnce(fresh.call).mockReturnValueOnce(write.call);
   await draw();for(const word of ['The whole reason','I continue.','I stop.','t-2205','Current work'])expect(text()).toContain(word);expect(text()).not.toContain('Old work');expect(text()).toContain('11/13/2026, 2:00:00 AM');expect(text()).toContain(' CT');expect(buttons('Yes')).toHaveLength(0);
   await click('Check again');await shown.finish({ok:true,value:first});await click('Yes');expect(f.call).toHaveBeenLastCalledWith('attention.get',{id:'first'});
@@ -89,43 +90,12 @@ it('abandons a fresh check on ownership loss even while the same project ask rem
 });
 it('clears failed asks and statuses independently while retaining idle owned cards',async()=>{
   const first=ask('first');f.snapshots['attention.ask']=live([first]);
-  const report:AgentStatus={id:'work',agent:'art',state:'working',work:'Current secret work',changedAt:1,jobs:[],watched:[]};
+  const report:AgentStatus={id:'work',agent:'art',state:'working',work:'Current secret work',changedAt:1};
   f.snapshots['attention.agent']=live([report]);await draw();
   await publish('attention.agent',{records:[report],status:'offline'});
   expect(text()).not.toContain('Current secret work');expect(text()).toContain('Question first');expect(text()).toContain('Art card');
   await publish('attention.ask',{records:[first],status:'denied'});
   expect(text()).not.toContain('Question first');expect(text()).not.toContain('All clear.');expect(text()).toContain('Art card');expect(buttons('Check again')).toHaveLength(0);
-});
-
-it('shows only the latest visible report’s complete jobs and watches and routes new apps without a write',async()=>{
-  const report:AgentStatus={id:'current',agent:'art',state:'working',work:'Reviewing changes',changedAt:2,
-    jobs:[{id:'job',label:'Review this task',href:'/p/tasks-preview/task/t-2205'},{id:'plain',label:'Waiting for input'},{id:'empty',label:''}],
-    watched:[{id:'pr',label:'Watch the pull request',href:'https://github.com/sleepunit-agents/loom/pull/927'},{id:'unsafe',label:'Unsafe source',href:'javascript:alert(1)'},{id:'old',label:'Old source',href:'/runtime'}]};
-  f.snapshots['attention.agent']=live([{...report,id:'old',changedAt:1,jobs:[{id:'gone',label:'Superseded job'}]},report,{...report,id:'foreign',agent:'other',jobs:[{id:'hidden',label:'Other agent work'}]}]);
-  const go=await draw();
-  for(const label of ['Review this task','Waiting for input','empty','Watch the pull request','Unsafe source','Old source'])expect(text()).toContain(label);
-  for(const label of ['Superseded job','Other agent work','javascript:','/runtime'])expect(text()).not.toContain(label);
-  const external=tree!.root.findAllByType('a').find((n:Node)=>words(n)==='Watch the pull request');
-  expect(external.props).toMatchObject({href:'https://github.com/sleepunit-agents/loom/pull/927',target:'_blank',rel:'noopener noreferrer'});
-  await click('Review this task');expect(go).toHaveBeenCalledWith('/p/tasks-preview/task/t-2205');expect(f.call).not.toHaveBeenCalled();
-  await publish('attention.agent',live([{...report,changedAt:3,jobs:[],watched:[]}]));
-  expect(text()).not.toContain('Waiting for input');expect(text()).not.toContain('Watch the pull request');
-  expect(text()).toContain('No jobs reported.');expect(text()).toContain('No watched items reported.');
-  await publish('attention.agent',live([]));expect(text()).not.toContain('No jobs reported.');expect(text()).toContain('No status reported');
-});
-
-it.each(['loading','offline','denied'] as const)('removes jobs and watches on %s even when stale records remain in the snapshot',async(status)=>{
-  const report:AgentStatus={id:'work',agent:'art',state:'working',work:'Current work',changedAt:1,jobs:[{id:'job',label:'Private job',href:'/p/tasks-preview/task/t-1'}],watched:[{id:'watch',label:'Private watch'}]};
-  f.snapshots['attention.agent']=live([report]);await draw();expect(text()).toContain('Private job');
-  await publish('attention.agent',{records:[report],status});
-  expect(text()).not.toContain('Private job');expect(text()).not.toContain('Private watch');expect(text()).not.toContain('No jobs reported.');
-  expect(text()).toContain('Art card');expect(text()).toContain(status==='loading'?'Opening agent status':'Couldn’t load agent status');
-});
-
-it('keeps report destinations on new apps or explicit HTTP(S) sources',()=>{
-  expect(reportLink('/p/tasks-preview/task/t-1?tab=comments#latest')).toEqual({app:true,href:'/p/tasks-preview/task/t-1?tab=comments#latest'});
-  expect(reportLink('https://example.com/work')).toEqual({app:false,href:'https://example.com/work'});
-  for(const href of [undefined,'','javascript:alert(1)','data:text/html,hi','//evil.test/p/x','/runtime','/p/../../signin','/p/%2e%2e/signin','/p/\\evil.test','https://example.com/\nwork'])expect(reportLink(href)).toBeUndefined();
 });
 
 const person=(slug:string,name:string,extra:Record<string,unknown>={})=>({id:`commons:${slug}`,slug,name,kind:'agent',...extra});

@@ -1,3 +1,4 @@
+import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
 import { stamp } from './time';
 import { agentPath } from './home-model';
@@ -15,21 +16,11 @@ import { AskReader, type Guard } from './index';
 import { useWaitChecks } from './wait-checks';
 import { useMemberRetention } from './member-retention';
 import type { Ask } from './model';
-import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, reportLink, type AgentPerson, type AgentStatus, type ReportedItem } from './home-model';
+import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson } from './home-model';
 import { deskJobs, agentNext } from '../../../../src/pieces/clock/desk';
 import { active, time, state, type Wake, type Clock } from '../clock/model';
 function Unavailable({ status, label }: { status: Snapshot['status']; label: string }) {
   return status === 'loading' ? <Loading label={`Opening ${label}…`} /> : <Error title={`Couldn’t load ${label}`} text={status === 'denied' ? 'Sign in with access to see this.' : 'Waiting for connection.'} />;
-}
-function ReportedItems({ title, empty, items, go }: { title: string; empty: string; items: ReportedItem[]; go(path: string): void }) {
-  return <section aria-label={title} className="grid min-w-0 gap-2">
-    <h3>{title} · {items.length}</h3>
-    {!items.length ? <p>{empty}</p> : <List label={title}>{items.map((item, index) => {
-      const link = reportLink(item.href);
-      return link?.app ? <Row key={`${item.id}:${index}`} title={item.label || item.id} onClick={()=>go(link.href)} /> :
-        <p key={`${item.id}:${index}`} className="min-w-0 py-2">{link ? <a className="underline" href={link.href} target="_blank" rel="noopener noreferrer">{item.label || item.id}</a> : item.label || item.id}</p>;
-    })}</List>}
-  </section>;
 }
 export default function Home({ go = path => location.assign(path) }: { go?: (path:string)=>void } = {}) {
   const roster = useDeskRoster();
@@ -45,7 +36,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   useMemberRetention(asks.status);
   const wakes = useRecords<Wake>('wake');
   const clocks = useRecords<Clock>('clock');
-  const statuses = useRecords<AgentStatus>('attention.agent');
+  const statuses = useDeskAgentStatuses();
   const lock = useRef(false), [busy,setBusy] = useState(false);
   const guard: Guard = {lock,busy,setBusy};
   const columns = roster.records.length <= 1 ? '' : roster.records.length === 2 || roster.records.length === 4 ? 'lg:grid-cols-2' : 'lg:grid-cols-3';
@@ -97,8 +88,6 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
               <CurrentJobs agent={agent.id} name={agent.name} />
               <section aria-label={`${agent.name} reported work`} className="grid min-w-0 gap-3"><h3>Now</h3>{statuses.status !== 'live' ? <Unavailable status={statuses.status} label="agent status" /> : <><p className="whitespace-pre-wrap">{status?.work || 'Nothing right now'}</p>{status && <>
                 <p>Reported <time dateTime={new Date(status.changedAt).toISOString()}>{stamp(status.changedAt)}</time></p>
-                <ReportedItems title="Reported jobs" empty="No jobs reported." items={status.jobs} go={go} />
-                <ReportedItems title="Watching" empty="No watched items reported." items={status.watched} go={go} />
               </>}</>}</section>
                   <HomeConversations agent={agent.id} name={agent.name} reading={conversations} go={go} />
                 </div>

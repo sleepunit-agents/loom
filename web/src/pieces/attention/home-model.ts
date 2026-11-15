@@ -1,7 +1,6 @@
 import type { LiveRecord } from '../../data';
 import type { Ask } from './model';
-import { listedAsks, safeHref } from './model';
-export interface ReportedItem { id: string; label: string; href?: string }
+import { listedAsks } from './model';
 export interface OwnedAgent extends LiveRecord { name: string; position?: number }
 /** Only the shared directory identifies an agent; relationship cards are not its display identity. */
 export interface AgentPerson extends LiveRecord { slug: string; name: string; kind: 'person' | 'agent'; agent?: string }
@@ -13,18 +12,6 @@ export function namedAgents(agents: readonly OwnedAgent[], people: readonly Agen
 }
 export interface AgentStatus extends LiveRecord {
   agent: string; state: 'working' | 'waiting' | 'idle' | 'offline'; work: string; changedAt: number;
-  jobs: ReportedItem[]; watched: ReportedItem[];
-}
-/** Reports may link to a new-side app or an HTTP(S) source, never an old-side route. */
-export function reportLink(href?: string): { href: string; app: boolean } | undefined {
-  if (!href || /[\s\\]/.test(href)) return;
-  if (href.startsWith('/p/')) {
-    const url = new URL(href, 'https://loom.invalid');
-    if (url.pathname.startsWith('/p/')) return { href: url.pathname + url.search + url.hash, app: true };
-    return;
-  }
-  const external = safeHref(href);
-  if (external) return { href: external, app: false };
 }
 export const openAsks = (records: readonly Ask[]) => listedAsks(records).filter(ask => ask.state === 'open').sort((a,b) => a.createdAt-b.createdAt || a.id.localeCompare(b.id));
 export const orderedAgents = <T extends OwnedAgent>(records: readonly T[]) => [...records].sort((a,b) => (a.position ?? 0) - (b.position ?? 0) || a.id.localeCompare(b.id));
