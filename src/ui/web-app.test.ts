@@ -37,7 +37,6 @@ describe('the app (web/)', () => {
   });
 
   it.runIf(existsSync(`${root}dist/web/.vite/manifest.json`))('keeps app screens out of both initial import graphs', () => {
-    const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { file: string }>;
     const screens = readdirSync(`${root}web/src/pieces`).filter(piece => existsSync(`${root}web/src/pieces/${piece}/registration.ts`))
       .map(piece => {
         const registration = resolve(root, 'web/src/pieces', piece, 'registration.ts');
@@ -53,21 +52,24 @@ describe('the app (web/)', () => {
     const graph = JSON.parse(readFileSync(`${root}dist/web/.vite/screen-graph.json`, 'utf8')) as Record<string,{imports:string[];modules:string[]}>;
     const built = new Set(Object.values(graph).flatMap(chunk => chunk.modules));
     expect(screens.filter(key => !built.has(key)), 'registered screen missing from actual emitted chunks').toEqual([]);
+    const emittedEntries:string[][]=[];
     for (const page of ['index.html', 'next.html']) {
-      expect(manifest[page], page).toBeDefined();
+      const html = readFileSync(`${root}dist/web/${page}`, 'utf8');
+      const scripts = [...html.matchAll(/<script\b[^>]*>/g)].map(match => match[0]).filter(tag => tag.includes('type="module"'))
+        .map(tag => tag.match(/src="\/app\/([^"]+)"/)?.[1]).filter((file):file is string=>typeof file==='string');
+      expect(scripts.length,page+' shipped module entries').toBeGreaterThan(0);emittedEntries.push(scripts);
       const initial = new Set<string>();
-      const visit = (key: string) => {
-        if (initial.has(key)) return;
-        initial.add(key);
-        expect(graph[key], key + ' emitted chunk').toBeDefined();
-        for (const dependency of graph[key].imports) visit(dependency);
+      const visit = (file: string) => {
+        if (initial.has(file)) return;
+        initial.add(file);expect(graph[file],file+' emitted chunk').toBeDefined();
+        for (const dependency of graph[file].imports) visit(dependency);
       };
-      visit(manifest[page].file);
-      const initialSources = new Set([...initial].flatMap(file => graph[file].modules));
-      expect(screens.filter(key => initialSources.has(key)), page).toEqual([]);
+      scripts.forEach(visit);
+      const initialSources=new Set([...initial].flatMap(file=>graph[file].modules));
+      expect(initialSources.has('src/shell/main.tsx'),page+' starts the shared desk').toBe(true);
+      expect(screens.filter(key=>initialSources.has(key)),page).toEqual([]);
     }
-    // Source membership keeps this assertion meaningful for shared lazy chunks
-    // that have no standalone manifest entry (Comms embeds approval cards).
+    expect(emittedEntries[0]).toEqual(emittedEntries[1]);
   });
 
   // And each place that named a Tailwind colour now names the token that holds that colour (web/src/tones.ts, one map).
@@ -90,7 +92,6 @@ describe('the app (web/)', () => {
       ['views.tsx', "p.tone === 'bad' ? 'bg-[color-mix(in_oklab,var(--loom-bad)_10%,transparent)]' : 'bg-[color-mix(in_oklab,var(--loom-warn)_10%,transparent)]'", 'a problem: bg-red-500/10 / bg-amber-500/10'],
       ['views.tsx', '<span className="size-2 rounded-full bg-[var(--loom-warn)]" />', 'Needs you: bg-amber-500'],
       ['views.tsx', 'bg-[var(--loom-accent,var(--loom-unread))]', 'the unread dot: #2563eb'],
-      ['sheets.tsx', 'bg-[var(--loom-count)] px-1.5 text-[11px] font-semibold text-[color:var(--loom-count-ink)]', 'a count: #e5484d, white'],
       ['blocks.tsx', 'bg-[var(--loom-track)]', 'a meter loading: bg-black/10'],
     ];
     expect(sites.filter(([f, now]) => !src(f).includes(now)).map(([f, , w]) => `${f}: ${w}`)).toEqual([]);

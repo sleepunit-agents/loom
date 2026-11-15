@@ -229,7 +229,8 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     app.data.writes.run(() => app.db.delete(s.sessions).where(eq(s.sessions.id, app.session)).run());
     for (const page of [a,b]) await expect.poll(() => row(page, 'Browser planted task').count()).toBe(0);
     step('reconnect denied');
-    await b.reload(); await expect.poll(() => b.getByText('Waiting for connection.', { exact: true }).count()).toBe(1);
+    await b.reload(); await expect.poll(() => b.getByRole('heading', { name: 'Sign in to loom', exact: true }).count()).toBe(1);
+    expect(await row(b, 'Browser planted task').count()).toBe(0);
     step('finished');
     expect(errors).toEqual([]); await context.tracing.stop(); await context.close();
   } finally { await browser.close(); await app.close(); }

@@ -32,12 +32,20 @@
     {
       "id": "approvals-006",
       "promise": "A merge approval names a pull request at one exact commit.",
-      "source": "docs/how-it-works/site/approvals.html#con-h"
+      "source": "docs/how-it-works/site/approvals.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "changeWorkflow"
+      }
     },
     {
       "id": "approvals-007",
       "promise": "The agent asking, the project it concerns, and a member when it is private.",
-      "source": "docs/how-it-works/site/approvals.html#con-h"
+      "source": "docs/how-it-works/site/approvals.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
     },
     {
       "id": "approvals-008",
@@ -61,7 +69,20 @@
     {
       "id": "approvals-011",
       "promise": "An agent files what it wants to do, to exactly what, and why. An allowance lasts a set number of minutes and is spent once. A request can also be denied, withdrawn or expire.",
-      "source": "docs/how-it-works/site/approvals.html#how-h"
+      "source": "docs/how-it-works/site/approvals.html#how-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "approvalDecisions"
+          },
+          {
+            "kind": "action",
+            "action": "approvalRulesAndExpiry"
+          }
+        ]
+      }
     },
     {
       "id": "approvals-012",
@@ -81,17 +102,29 @@
     {
       "id": "approvals-015",
       "promise": "a Three labels. An approval carries the agent asking, the project it concerns, and a member when it is private to them.",
-      "source": "docs/how-it-works/site/approvals.html#see-h"
+      "source": "docs/how-it-works/site/approvals.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
     },
     {
       "id": "approvals-016",
       "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees approvals in their projects and approvals of agents they own. Private to a member means that member plus household owners.",
-      "source": "docs/how-it-works/site/approvals.html#see-h"
+      "source": "docs/how-it-works/site/approvals.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
     },
     {
       "id": "approvals-017",
       "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
-      "source": "docs/how-it-works/site/approvals.html#see-h"
+      "source": "docs/how-it-works/site/approvals.html#see-h",
+      "probe": {
+        "kind": "action",
+        "action": "workVisibility"
+      }
     },
     {
       "id": "approvals-018",
