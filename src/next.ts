@@ -1,3 +1,4 @@
+import { measureResponse } from './core/measuring/response.js';
 import { measuringHttp } from './core/measuring/http.js';
 import { installMeasuring } from './core/measuring/install.js';
 import { nextData } from './next-data.js';
@@ -405,7 +406,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
     const measuringApi = measuringHttp(app, sharedData);
     const memory=memoryQueries.get(app);
-    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memory?.fields, work => {
+    data = nextData(sharedData, app.operations.clock, sameOrigin, relyingParty(process.env)?.origin, memory?.fields, undefined, undefined, work => {
       const meter = measuring.get(app);
       return meter?.enabled() ? meter.runAsync('request', 'graphql.socket', async () => await work()) : work();
     });
@@ -471,7 +472,6 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     if (!hosts.length) throw new Error('next mode needs a bind host');
     for (const host of [...new Set(hosts)]) {
       const http = createServer((req: IncomingMessage, res: ServerResponse) => {
-        const meter = measuring.get(app);
         const dispatch = () => {
         if (!sameOrigin(req)) { res.writeHead(403); res.end(); return; }
         // The ephemeral credential endpoint authenticates a bearer itself. Generic
@@ -483,14 +483,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         if (req.url?.startsWith('/api/') && req.url.split('?')[0] !== '/api/signin/link') return api(req, res);
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
         };
-        if (!meter?.enabled()) { dispatch(); return; }
-        const path = (req.url ?? '/').split('?')[0];
-        const name = path === '/graphql' ? 'graphql' : path === '/mcp' ? 'mcp' : path.startsWith('/api/') ? 'api' : 'web';
-        void meter.runAsync('request', name, () => new Promise<void>(done => {
-          const finished = () => { res.off('finish', finished); res.off('close', finished); done(); };
-          res.once('finish', finished); res.once('close', finished);
-          try { dispatch(); } catch (error) { finished(); throw error; }
-        })).catch(() => { if (!res.headersSent) res.writeHead(503); res.end(); });
+        void measureResponse(measuring.get(app), req, res, dispatch)?.catch(() => { if (!res.headersSent) res.writeHead(503); res.end(); });
       });
       http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
       servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin), data.attach(http));

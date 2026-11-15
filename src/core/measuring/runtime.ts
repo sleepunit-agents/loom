@@ -6,7 +6,7 @@ import { createMeasuring, type Measuring, type MeasuringSettings, type TimingSto
  * Fence old work immediately, then drain its SDK before starting a replacement.
  * A failed replacement leaves measuring off and can be retried. */
 export function measuringRuntime(
-  read: () => Readonly<MeasuringSettings>, targets: readonly TimingTarget[], store?: TimingStore,
+  read: () => Readonly<MeasuringSettings>, targets: readonly TimingTarget[] | (() => readonly TimingTarget[]), store?: TimingStore,
   reportError: () => void = () => {}, clock: Clock = realClock,
 ): Measuring & { reload(): Promise<void> } {
   let current: Measuring | undefined;
@@ -35,7 +35,7 @@ export function measuringRuntime(
         await drained;
         if (stopped || ticket !== generation) return;
         const settings = { ...read() };
-        const replacement = await createMeasuring(settings, targets, settings.keep_days === 0 ? undefined : store, report, clock);
+        const replacement = await createMeasuring(settings, typeof targets === 'function' ? targets() : targets, settings.keep_days === 0 ? undefined : store, report, clock);
         if (stopped || ticket !== generation) await replacement.close();
         else current = replacement;
       });

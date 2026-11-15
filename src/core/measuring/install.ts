@@ -12,7 +12,8 @@ import { measuringRuntime } from './runtime.js';
 import { measuringSettingsService } from './settings.js';
 import { timingStore } from './store.js';
 
-export async function installMeasuring(app: Foundation, db: DataDatabase) {
+export type MeasuringHost = Pick<Foundation, 'operations' | 'onClose'> & { live: Pick<Foundation['live'], 'changed'> };
+export async function installMeasuring(app: MeasuringHost, db: DataDatabase) {
   const settings = measuringSettingsService(db);
   let enabled = false;
   const proposals = measuringSettingsProposals(db);
@@ -45,7 +46,7 @@ export async function installMeasuring(app: Foundation, db: DataDatabase) {
     after() { queueMicrotask(() => { void refresh().catch(() => console.warn('Measuring settings could not reload')); }); },
   });
   const store = timingStore(db);
-  const runtime = measuringRuntime(settings.read, [
+  const runtime = measuringRuntime(settings.read, () => [
     ...app.operations.timingTargets(),
     ...['graphql', 'graphql.socket', 'api', 'mcp', 'web'].map(name => ({ kind: 'request' as const, name })),
     { kind: 'job', name: 'changes.read' },
@@ -68,6 +69,6 @@ export async function installMeasuring(app: Foundation, db: DataDatabase) {
   app.operations.measureWith(runtime);
   const close = () => { stopped = true; enabled = false; app.operations.measureWith(undefined); return runtime.close(); };
   app.onClose(() => { void close(); });
-  return { ...runtime, reload, close, enabled: () => enabled,
+  return { ...runtime, reload, refresh, close, enabled: () => enabled,
     async settled() { await Promise.resolve(); await pending; } };
 }

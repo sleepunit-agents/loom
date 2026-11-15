@@ -1,5 +1,7 @@
 import { measuringVisibility } from './core/measuring/visibility.js';
 /** Shared-data transport composition. No schema creation or legacy credentials. */
+import { sql } from 'drizzle-orm';
+import { members } from './core/data/schema.js';
 import type { IncomingMessage } from 'node:http';
 import type { Viewer } from './policy.js';
 import type { Clock } from './core/clock.js';
@@ -14,16 +16,23 @@ import { taskVisibility } from './core/data/visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
 
-export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, measure?: MeasureRead) {
-  const authenticate = dataAuthentication(db, () => clock.now());
+export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>, measure?: MeasureRead) {
+  const resolve = authentication ?? dataAuthentication(db, () => clock.now());
+  const authenticate = (request: Request) => {
+    if (!admitted()) return;
+    const auth = resolve(request);
+    return auth && { ...auth, valid: () => admitted() && auth.valid() };
+  };
   const live = new DataLive(measure);
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
     tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
-      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'timingDays', 'measuringSettings'],
-    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...measuringVisibility(viewer) },
+      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', 'timingDays', 'measuringSettings'],
+    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...measuringVisibility(viewer),
+      memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
+    },
   }), fields);
   const socket = dataSocket({ live, clock, originAllowed, measure,
     authenticate(request) {
@@ -39,12 +48,23 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     schema,
   });
   const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => live.changed() });
+  const http = dataHttp(db, authenticate, publicOrigin, schema);
   let closing: Promise<void> | undefined;
   return {
-    http: dataHttp(db, authenticate, publicOrigin, schema),
+    http,
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); },
     writes,
-    close() { return closing ??= (async () => { await socket.close(); live.close(); })(); },
+    close() {
+      if (closing) return closing;
+      // Publish before stopping admission; callbacks cannot create a second close.
+      closing = Promise.resolve().then(async () => {
+        try { await socketClosing; } finally { await http.drain(); }
+      });
+      http.stop();
+      const socketClosing = socket.close();
+      live.close();
+      return closing;
+    },
   };
 }

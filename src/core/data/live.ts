@@ -1,3 +1,4 @@
+import { ExecutionDrain, instrumentExecution, executionArguments } from './execution.js';
 import { execute, getOperationAST, parse, validate, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
 
 /** Paths address the selected GraphQL result, including aliases. Values are
@@ -37,22 +38,19 @@ export class DataLive {
   constructor(private readonly measure?: MeasureRead) {}
   private listeners = new Set<() => void>();
   private stopped = false;
-  private executions = new Set<Promise<void>>();
+  private executions = new ExecutionDrain();
   changed() { for (const listener of [...this.listeners]) listener(); }
   close() { this.stopped = true; this.changed(); this.listeners.clear(); }
 
   /** After stopping admission, wait for actual resolvers, including executions
    * whose consumer already cancelled. Cancellation cannot cancel their IO. */
-  async drain() { while (this.executions.size) await Promise.all([...this.executions]); }
+  async drain() { await this.executions.drain(); }
 
   private async read(args: ExecutionArgs, initial: boolean) {
     if (this.stopped) throw new Error('Live data access ended');
-    let finish!: () => void;
-    const done = new Promise<void>(resolve => { finish = resolve; });
-    // Retain before invoking user resolvers: they can synchronously reenter close.
-    this.executions.add(done);
-    try { return await (initial && this.measure ? this.measure(() => execute(args)) : execute(args)); }
-    finally { this.executions.delete(done); finish(); }
+    instrumentExecution(args.schema);
+    return this.executions.scope(() => !this.stopped, () => initial && this.measure
+      ? this.measure(() => execute(executionArguments(args))) : execute(executionArguments(args)));
   }
 
   watch(options: {
@@ -65,8 +63,9 @@ export class DataLive {
     valid(): boolean;
   }): AsyncIterableIterator<DataDelta> {
     if (this.stopped) throw new Error('Live data access ended');
+    instrumentExecution(options.schema);
     const document = parse(options.query);
-    const errors = validate(options.schema, document);
+    const errors = this.executions.scope(() => !this.stopped, () => validate(options.schema, document));
     if (errors.length) throw errors[0];
     if (getOperationAST(document, options.operationName)?.operation !== 'query') throw new Error('A live selection must be a query');
     let initial = true;
@@ -100,7 +99,7 @@ export class DataLive {
           if (ended) break;
           if (this.stopped || result === cancelled) throw new Error('Live data access ended');
           if (result.errors?.length) throw result.errors[0];
-          if (!options.valid()) throw new Error('Live data access ended');
+          if (!options.valid() || this.stopped) throw new Error('Live data access ended');
           // The generator resolves asynchronously. A commit while execution
           // yielded invalidates that result before any words leave this stream.
           if (dirty) continue;
