@@ -185,3 +185,10 @@ it('orders Home by instant across timestamp precision and ignores replies from a
   f.db.update(threads).set({ lastAt: '2026-11-14T17:59:00Z' }).where(eq(threads.id, wrongSender.id)).run();
   expect(f.service.home(alice)?.summaries[0]).toMatchObject({ unread: 2, last: { thread: newer.id }, first: { thread: newer.id } });
 });
+
+it('never decrypts thread words at an equal whole-second stored deadline', async () => {
+  const f = await fixture();
+  f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
+  const row = f.service.messages(alice, f.thread.id, undefined, 1)[0];
+  expect(await f.service.words(alice, row)).toBeNull(); expect(f.opens()).toBe(0);
+});

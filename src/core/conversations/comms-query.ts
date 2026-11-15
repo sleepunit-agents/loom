@@ -73,7 +73,7 @@ export class CommsQueries {
       .where(and(eq(messages.thread, expected.thread), eq(messages.seq, expected.seq), this.allowed(viewer))).get();
     const days = () => this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
     const retained = (entry: ReturnType<typeof row>, keep: number) => !!entry?.message.words && !!entry.message.keepUntil
-      && Number.isInteger(keep) && keep >= 1 && keep <= 14 && entry.message.keepUntil > this.now()
+      && Number.isInteger(keep) && keep >= 1 && keep <= 14 && Date.parse(entry.message.keepUntil) > Date.parse(this.now())
       && Date.parse(entry.message.at) + keep * 86400000 > Date.parse(this.now());
     const same = (message: Message) => ['at', 'sender', 'kind', 'keepUntil', 'inboxItem'].every(key => message[key as keyof Message] === expected[key as keyof typeof expected]);
     const scope = (entry: ReturnType<typeof row>) => !!entry && entry.agent === expected.agent && entry.project === expected.project && entry.member === expected.member && entry.conversation === expected.conversation;

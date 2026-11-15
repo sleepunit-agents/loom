@@ -137,6 +137,7 @@ it('does not fetch or open sockets during receipt, drain, held retry or expiry',
   f.db.update(bridgeConnections).set({ enabled: false }).where(eq(bridgeConnections.id, 'discord')).run();
   f.receiver.discord('discord', f.discord(), f.checkpoint());
   f.receiver.slack('slack', f.slack());
+  f.receiver.missingChannels('discord'); f.receiver.missingChannels('slack');
   f.receiver.drain('discord'); f.receiver.drain('slack');
   f.db.update(bridgeConnections).set({ enabled: true }).where(eq(bridgeConnections.id, 'discord')).run();
   f.receiver.drain('discord');
@@ -191,5 +192,81 @@ it('fails malformed messages without consuming their retained bytes or writing a
   f.receiver.discord('discord', Buffer.from('{"op":0,"t":"MESSAGE_CREATE","s":1,"d":{}}'), f.checkpoint());
   expect(() => f.receiver.drain('discord')).toThrow();
   expect(f.raw()).toHaveLength(1);
+  expect(f.db.select().from(inbox).all()).toEqual([]);
+});
+
+it.each(['discord', 'slack'] as const)('discovers retained %s metadata targets after restart without consuming receipts', platform => {
+  const f = fixture(), cached = f.channels[platform];
+  f.channels[platform] = () => undefined;
+  if (platform === 'discord') f.receiver.discord(platform, f.discord(), f.checkpoint());
+  else f.receiver.slack(platform, f.slack());
+  const before = f.raw();
+  f.receiver.close();
+  const next = new BridgeReceiver(f.db, f.clock, f.channels);
+  try {
+    expect(next.missingChannels(platform)).toEqual(['room']);
+    expect(next.missingChannels(platform)).toEqual(['room']);
+    expect(f.raw()).toEqual(before);
+    expect(f.db.select().from(inbox).all()).toEqual([]);
+    expect(f.db.select().from(bridgeIncoming).all()).toEqual([]);
+    // Root fetches authenticated evidence and populates its disposable cache.
+    f.channels[platform] = cached;
+    expect(next.missingChannels(platform)).toEqual([]);
+    expect(next.drain(platform)).toBe(1);
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  } finally { next.close(); }
+});
+
+it('bounds discovery by receipts examined and deduplicates targets in arrival order', () => {
+  const f = fixture();
+  f.channels.discord = (_connection, channel) => channel === 'cached'
+    ? { id: channel, guild: 'w', kind: 'channel' } : undefined;
+  for (const [index, channel] of ['cached', 'room', 'room', 'other'].entries()) {
+    const frame = JSON.parse(f.discord(index + 1, String(index)).toString());
+    frame.d.channel_id = channel;
+    f.receiver.discord('discord', Buffer.from(JSON.stringify(frame)), f.checkpoint(index + 1));
+  }
+  expect(f.receiver.missingChannels('discord', 1)).toEqual([]);
+  expect(f.receiver.missingChannels('discord', 3)).toEqual(['room']);
+  expect(f.receiver.missingChannels('discord', 4)).toEqual(['room', 'other']);
+  expect(f.raw()).toHaveLength(4);
+  expect(f.receiver.checkpoint('discord')).toEqual(f.checkpoint(4));
+  for (const limit of [0, 65, 1.5, NaN]) expect(() => f.receiver.missingChannels('discord', limit)).toThrow('limit');
+});
+
+it('ignores non-message dispatches and Slack messages already carrying a channel type', () => {
+  const f = fixture();
+  f.channels.slack = () => undefined;
+  f.receiver.discord('discord', Buffer.from('{"op":0,"t":"RESUMED","s":1,"d":{}}'), f.checkpoint());
+  const frame = JSON.parse(f.slack().toString());
+  frame.payload.event.channel_type = 'im';
+  f.receiver.slack('slack', Buffer.from(JSON.stringify(frame)));
+  f.receiver.slack('slack', f.slack('ack2', 'ev2', 'reaction_added'));
+  expect(f.receiver.missingChannels('discord')).toEqual([]);
+  expect(f.receiver.missingChannels('slack')).toEqual([]);
+  expect(f.raw()).toHaveLength(3);
+});
+
+it('does not return expired metadata targets, and rejects closed or unknown sources', () => {
+  const f = fixture();
+  f.channels.slack = () => undefined;
+  f.receiver.slack('slack', f.slack());
+  expect(f.receiver.missingChannels('slack')).toEqual(['room']);
+  f.clock.advance(3_600_000);
+  expect(f.receiver.missingChannels('slack')).toEqual([]);
+  expect(() => f.receiver.missingChannels('unknown')).toThrow('Unknown');
+  f.receiver.close();
+  expect(() => f.receiver.missingChannels('slack')).toThrow('closed');
+});
+
+it('surfaces malformed discovery frames while preserving their bytes and refusing foreign transactions', () => {
+  const f = fixture();
+  f.receiver.discord('discord', Buffer.from('{"op":0,"t":"MESSAGE_CREATE","s":1,"d":{}}'), f.checkpoint());
+  const before = f.raw();
+  expect(() => f.receiver.missingChannels('discord')).toThrow();
+  expect(f.raw()).toEqual(before);
+  f.db.transaction(() => {
+    expect(() => f.receiver.missingChannels('discord')).toThrow('own transaction');
+  });
   expect(f.db.select().from(inbox).all()).toEqual([]);
 });
