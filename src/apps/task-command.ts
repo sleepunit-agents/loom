@@ -10,6 +10,7 @@ export type TaskCommand =
   | { action: 'close'; id: string; reason: string }
   | { action: 'comment'; id: string; text: string }
   | { action: 'link' | 'unlink'; id: string; dependsOn: string; type: 'blocks' | 'parent-child' }
+  | { action: 'answer'; id: string; question: string; answer: 'yes' | 'no' | 'words'; text?: string }
   | { action: 'ask'; id: string; input: Parameters<TaskService['ask']>[1] };
 
 const id = z.string().trim().min(1);
@@ -25,6 +26,7 @@ export const taskCommandSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('comment'), id, text: z.string().trim().min(1) }).strict(),
   z.object({ action: z.literal('link'), ...relation }).strict(),
   z.object({ action: z.literal('unlink'), ...relation }).strict(),
+  z.object({ action: z.literal('answer'), id, question: id, answer: z.enum(['yes','no','words']), text: z.string().optional() }).strict(),
   z.object({ action: z.literal('ask'), id, input: taskAskSchema }).strict(),
 ]);
 
@@ -44,6 +46,7 @@ export function dispatchTaskCommand(service: TaskService, command: TaskCommand, 
     case 'comment': return service.comment(command.id, command.text, actor);
     case 'link': return service.link(command.id, command.dependsOn, command.type);
     case 'unlink': return service.unlink(command.id, command.dependsOn, command.type);
+    case 'answer': return service.answer(command.id, command.answer, command.text ?? '', actor);
     case 'ask': return service.ask(command.id, command.input, actor);
     default: {
       const invalid: never = command;
