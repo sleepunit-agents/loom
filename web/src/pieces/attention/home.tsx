@@ -48,8 +48,8 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
         <section aria-label="Needs you" className="desk-home-needs grid min-w-0 gap-2">
           {asks.status !== 'live' ? <Unavailable status={asks.status} label="asks" /> : <>
             <h2 className="text-lg font-semibold">Needs you · {open.length}</h2>
-            {open.length ? <List label="First three asks">{open.slice(0,3).map(ask=><Row key={ask.id} layout="stack" title={ask.ask} meta={ask.why} status={ask.agent ?? 'Household'} onClick={()=>go(inboxPath(ask))} />)}</List> : <p>All clear.</p>}
-            {open.length > 3 && <Button variant="outline" onClick={()=>go(inboxPath())}>Inbox · +{open.length-3} more</Button>}
+            {open.length ? <List label="First waiting item">{open.slice(0,1).map(ask=><Row key={ask.id} layout="stack" title={ask.ask} meta={ask.why} status={ask.agent ?? 'Household'} onClick={()=>go(inboxPath(ask))} />)}</List> : <p>All clear.</p>}
+            {open.length > 1 && <Button variant="outline" onClick={()=>go(inboxPath())}>Inbox · +{open.length-1} more</Button>}
           </>}
         </section>
         {busy && <p role="status">An answer is still being checked or recorded. Other answers wait.</p>}

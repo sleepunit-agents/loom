@@ -40,13 +40,13 @@ it('keeps idle owned cards in saved position order with stable id ties, without 
   expect(text()).toContain('Nothing right now');expect(text()).not.toContain('other card');
   expect(orderedAgents([{id:'z',name:'ALPHA',position:1},{id:'a',name:'alpha',position:0},{id:'b',name:'Beta',position:2}]).map(a=>a.id)).toEqual(['a','z','b']);
 });
-it('counts every central open ask, shows exactly the first three, and opens their exact Inbox reader',async()=>{
+it('counts every central open ask, shows the first waiting item and remaining count, and opens their exact Inbox reader',async()=>{
   f.snapshots['attention.ask']=live([ask('four',{createdAt:4}),ask('done',{state:'answered'}),ask('resolved',{state:'resolved'}),ask('three',{createdAt:3}),ask('one',{createdAt:1}),ask('two',{createdAt:2})]);
   const go=await draw();expect(text()).toContain('Needs you · ');expect(text()).toContain('Inbox · +');
-  const rows=tree!.root.findByProps({'aria-label':'First three asks'}).findAllByType('button');
-  expect(rows.map((n:Node)=>words(n))).toEqual(['Question oneThe whole reasonart','Question twoThe whole reasonart','Question threeThe whole reasonart']);
-  await act(async()=>rows[1].props.onClick());expect(go).toHaveBeenLastCalledWith('/p/inbox-preview/ask/two');
-  await click('Inbox · +1 more');expect(go).toHaveBeenLastCalledWith('/p/inbox-preview');
+  const rows=tree!.root.findByProps({'aria-label':'First waiting item'}).findAllByType('button');
+  expect(rows.map((n:Node)=>words(n))).toEqual(['Question oneThe whole reasonart']);
+  await act(async()=>rows[0].props.onClick());expect(go).toHaveBeenLastCalledWith('/p/inbox-preview/ask/one');
+  await click('Inbox · +3 more');expect(go).toHaveBeenLastCalledWith('/p/inbox-preview');
   expect(text()).not.toContain('Question done');expect(text()).not.toContain('Question resolved');
 });
 it('shows the full first ask and latest status; checks at display and again before writing through Attention',async()=>{
