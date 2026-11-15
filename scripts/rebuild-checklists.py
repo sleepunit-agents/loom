@@ -94,6 +94,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
   add('Creating a project through the normal built program persists its member list.','',{'kind':'action','app':'Project sharing'})
  if f.stem=='signing-in':add('A first-run one-time link signs the browser in.','',{'kind':'signin'})
  if f.stem=='signing-in':add('Making and hiding a one-time sign-in link through Account persists one link without exposing it in evidence.','',{'kind':'action','app':'Your account'})
+ if f.stem=='conversations':
+  for row in rows:
+   if row['promise'].startswith('e Words. Message words are kept'):row['probe']={'kind':'action','action':'conversationRetention'}
  if f.stem=='data':add('The real GraphQL websocket carries data after sign-in without protocol errors.','',{'kind':'live'})
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})
  if f.stem=='inbox':

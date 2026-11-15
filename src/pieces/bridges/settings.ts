@@ -32,8 +32,9 @@ export class BridgeSettings {
      // a new connection rather than reinterpretation of old private receipts.
      if(existing&&(['platform','workspace','botUser','agent'] as const).some(key=>existing[key]!==input[key]))throw Error('Connection identity is fixed');
      const {action:_action,only,ignore,...config}=input;
-     const fields={...config,state:'disconnected' as const,stateAt:this.now()};
-     // Every edit retires the prior socket/config lifetime before reconnect.
+     const sameSocket=existing&&existing.enabled===config.enabled&&existing.tokenSecret===config.tokenSecret&&existing.appSecret===config.appSecret;
+     // Filters are read live by the receiver; they do not retire this socket.
+     const fields={...config,state:sameSocket?existing.state:'disconnected' as const,stateAt:sameSocket?existing.stateAt:this.now()};
      this.db.insert(bridgeConnections).values(fields).onConflictDoUpdate({target:bridgeConnections.id,set:fields}).run();
      this.db.delete(bridgeChannelFilters).where(eq(bridgeChannelFilters.connection,input.id)).run();
      for(const [rule,channels] of [['only',only],['ignore',ignore]] as const){

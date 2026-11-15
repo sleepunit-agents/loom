@@ -36,6 +36,8 @@ vi.mock('./backends/fastembed.js',()=>({FastEmbedProvider:class{
 import {bodyFixture,bodyCredentials as raw,credentialHash} from '../test/fixtures/conversation-body.js';
 import {prepareSharedMemorySources} from './shared-memory.js';
 import {ProjectsStore} from './backends/projects.js';
+import {PeopleStore} from './backends/people.js';
+import {mergePeople} from './backends/people-merge.js';
 import * as s from './core/data/schema.js';
 const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{owned.failLoad=false;embed.gate=undefined;for(const release of releases.splice(0))release();for(const close of clean.splice(0).reverse())await close();vi.useRealTimers();vi.restoreAllMocks();});
@@ -57,10 +59,72 @@ async function fixture(options:{unprepared?:boolean}={}){
  const call=async(verb:string,value:unknown,id:string,token=raw.body)=>{const response=await fetch(url+'/api/memory/'+verb,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:value,id})});return {status:response.status,result:await response.json()};};
  const query=async(query:string,token=raw.body)=>{const response=await fetch(url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query})});const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
  const count=()=>source.prepare("SELECT 1 FROM sqlite_schema WHERE name='memories'").get()? (source.prepare('SELECT count(*) AS n FROM memories').get() as {n:number}).n:0;
- return {...f,home,path,source,url,call,query,count,sourceBefore,other:memory.sources.agents[1].memories};
+ return {...f,home,path,source,url,call,query,count,sourceBefore,memory,other:memory.sources.agents[1].memories};
 }
 async function next(ws:WebSocket,action:()=>unknown){const pending=once(ws,'message');await action();return JSON.parse(String((await pending)[0]));}
 function hold(){let entered!:()=>void,release!:()=>void;const began=new Promise<void>(resolve=>entered=resolve),blocked=new Promise<void>(resolve=>release=resolve);embed.gate=async()=>{entered();await blocked;};releases.push(release);return {began,release};}
+it('authors private person and project cards through native commands, with typed values, aliases and bounded person revisions',async()=>{
+ const f=await fixture(),calls=embed.calls;
+ const client=bodyCommandClient({url:f.url,token:raw.body,clock:f.clock,signal:new AbortController().signal});clean.push(()=>client.close());
+ const catalog=await client.command('runtime.commandCatalog',{name:'memory.personWrite'},'card-catalog');expect(catalog).toMatchObject({ok:true,value:{commands:[{name:'memory.personWrite'}]}});if(!catalog.ok)throw Error('Missing card catalogue');
+ const person={slug:'friend',name:'PRIVATE_FRIEND',summary:'PRIVATE_CARD_SUMMARY',where:{width:{value:0},ready:{value:false},tags:{value:['one','two']}},how:{tone:'brief'},may:[{text:'A claim about being an owner',source:'A fictional conversation'}]};
+ const madePerson=await client.command('memory.personWrite',person,'person-make'),madeProject=await client.command('memory.projectWrite',{slug:'repair',name:'PRIVATE_REPAIR',summary:'PRIVATE_PROJECT_SUMMARY',goal:'Fit the hose',where:{hose:{value:'25 mm'}},links:{aliases:['garden-repair'],repos:['example/fiction']}},'project-make');
+ expect(madePerson.ok).toBe(true);expect(madeProject.ok).toBe(true);if(!madePerson.ok||!madeProject.ok)throw Error('Missing private card results');
+ const personId=(madePerson.value as {ids:string[]}).ids[0],projectId=(madeProject.value as {ids:string[]}).ids[0];expect(personId).toMatch(/^art:person:[a-f0-9-]{36}$/);expect(projectId).toMatch(/^art:project:[a-f0-9-]{36}$/);
+ expect(embed.calls).toBe(calls);
+ const selected=await f.query(`{memoryPerson(id:"${personId}"){mergedFrom card{name summary where{key value{number boolean strings}} how{key value{text}} may{text}}} memoryProject(id:"${projectId}"){id card{slug name goal links{aliases}}}}`);
+ expect(selected.memoryPerson.mergedFrom).toBeNull();expect(selected.memoryPerson.card).toMatchObject({name:'PRIVATE_FRIEND',summary:'PRIVATE_CARD_SUMMARY',where:expect.arrayContaining([{key:'width',value:{number:0,boolean:null,strings:null}},{key:'ready',value:{number:null,boolean:false,strings:null}}]),how:[{key:'tone',value:{text:'brief'}}],may:[{text:'A claim about being an owner'}]});expect(selected.memoryProject).toMatchObject({id:'art:repair',card:{slug:'repair',name:'PRIVATE_REPAIR',goal:'Fit the hose',links:{aliases:['garden-repair']}}});
+ expect((await f.call('projectWrite',{slug:'garden-repair',summary:'PRIVATE_PROJECT_EDIT'},'project-alias')).result.value.ids).toEqual([projectId]);
+ const cleared=await f.call('projectWrite',{slug:'repair',links:{aliases:null,notes:null,epic:null,repos:null,venues:null}},'project-clear-links');expect(cleared.status).toBe(200);expect(cleared.result.value.ids).toEqual([projectId]);
+ expect((await f.query(`{memoryProject(id:"${projectId}"){card{links{aliases notes epic repos venues}}}}`)).memoryProject.card.links).toEqual({aliases:null,notes:null,epic:null,repos:null,venues:null});expect((await f.query('{memoryProject(id:"art:garden-repair"){name}}')).memoryProject).toBeNull();
+ for(let i=0;i<12;i++)expect((await f.call('personWrite',{slug:'friend',summary:'PRIVATE_PERSON_EDIT_'+i},'person-edit-'+i)).status).toBe(200);
+ const revisions=(await f.query('{memoryPerson(id:"art:friend"){history{id op actor card{summary}}}}')).memoryPerson.history;expect(revisions).toHaveLength(10);expect(revisions[0]).toMatchObject({actor:'art',card:{summary:'PRIVATE_PERSON_EDIT_10'}});
+ const restored=await f.call('personRestoreRevision',{slug:'friend',revision_id:revisions[0].id},'person-revision');expect(restored.status).toBe(200);expect(restored.result.value.ids).toEqual([personId]);expect(await f.call('personRestoreRevision',{slug:'friend',revision_id:revisions[0].id},'person-revision')).toEqual(restored);
+ expect((await f.query('{memoryPerson(id:"art:friend"){card{summary} history{card{summary}}}}')).memoryPerson).toMatchObject({card:{summary:'PRIVATE_PERSON_EDIT_10'},history:expect.arrayContaining([{card:{summary:'PRIVATE_PERSON_EDIT_11'}}])});
+ expect(f.db.select().from(s.members).all().find(row=>row.id==='alice')?.role).toBe('member');expect(f.db.select().from(s.projectMembers).all()).toHaveLength(1);
+ expect(await f.query(`{memoryPerson(id:"${projectId}"){name} memoryProject(id:"${personId}"){name}}`)).toEqual({memoryPerson:null,memoryProject:null});
+ for(const value of ['friend','repair','garden-repair','PRIVATE_FRIEND','PRIVATE_REPAIR','PRIVATE_CARD_SUMMARY','PRIVATE_PROJECT_EDIT','PRIVATE_PERSON_EDIT_',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+});
+it('reports an actual private person redirect when read through the original opaque reference',async()=>{
+ const f=await fixture(),from=await f.call('personWrite',{slug:'former-friend',name:'Former friend'},'merge-from'),into=await f.call('personWrite',{slug:'current-friend',name:'Current friend'},'merge-into');expect(from.status).toBe(200);expect(into.status).toBe(200);const opaque=from.result.value.ids[0];
+ expect((await f.query(`{memoryPerson(id:"${opaque}"){mergedFrom card{slug}}}`)).memoryPerson).toEqual({mergedFrom:null,card:{slug:'former-friend'}});
+ mergePeople({contextDir:dirname(f.path),agentName:'art',actor:'art',memorySelection:null,now:()=>f.clock.now()},{from:'former-friend',into:'current-friend'});
+ expect((await f.query(`{memoryPerson(id:"${opaque}"){mergedFrom card{slug name}}}`)).memoryPerson).toMatchObject({mergedFrom:'former-friend',card:{slug:'current-friend',name:'Current friend'}});
+});
+it('restricts card writes to the current body source and keeps card claims separate from grants',async()=>{
+ const f=await fixture();
+ for(const [verb,value] of [['personWrite',{slug:'friend',name:'Friend'}],['projectWrite',{slug:'repair',name:'Repair'}],['personRestoreRevision',{slug:'friend',revision_id:1}]] as const){
+  for(const [index,token] of [raw.agent,raw.member,raw.runner].entries())expect((await f.call(verb,value,'card-weak-'+verb+'-'+index,token)).status).toBe(403);
+  for(const extra of [{agent:'mark'},{path:f.other}])expect((await f.call(verb,{...value,...extra},'card-path-'+verb+'-'+Object.keys(extra)[0])).status).toBe(400);
+  expect((await f.call(verb,{...value,slug:'../mark'},'card-escape-'+verb)).status).toBe(400);
+ }
+ expect((await f.call('personWrite',{slug:'friend',name:'Friend',where:{role:{value:'owner'}}},'card-claim')).status).toBe(200);
+ expect((await f.call('personWrite',{slug:'friend',where:{tier:{value:3}}},'card-reserved')).status).toBe(400);
+ expect(await f.query('{memoryPerson(id:"mark:friend"){name} memoryProject(id:"mark:repair"){name}}')).toEqual({memoryPerson:null,memoryProject:null});expect(f.db.select().from(s.members).all().find(row=>row.id==='alice')?.role).toBe('member');
+});
+it('rolls back card effects with their private receipts and recovers person restoration without another snapshot',async()=>{
+ const f=await fixture();expect((await f.call('personWrite',{slug:'friend',name:'PRIVATE_ORIGINAL'},'card-atomic-make')).status).toBe(200);
+ f.source.exec("CREATE TRIGGER fail_card_source BEFORE INSERT ON memory_command_receipts WHEN NEW.name IN ('memory.personWrite','memory.projectWrite') BEGIN SELECT RAISE(ABORT,'injected'); END");
+ expect((await f.call('personWrite',{slug:'friend',summary:'PRIVATE_ROLLBACK'},'card-atomic-edit')).status).toBe(503);expect((await f.query('{memoryPerson(id:"art:friend"){card{summary} history{id}}}')).memoryPerson).toEqual({card:{summary:null},history:[]});
+ expect((await f.call('projectWrite',{slug:'repair',name:'PRIVATE_PROJECT',links:{aliases:['garden-repair']}},'card-atomic-project')).status).toBe(503);expect((await f.query('{memoryProject(id:"art:garden-repair"){name}}')).memoryProject).toBeNull();
+ expect(f.source.prepare("SELECT * FROM memory_card_references WHERE kind='project'").all()).toEqual([]);
+ expect(f.source.prepare('SELECT slug FROM project_names WHERE name=?').get('garden-repair')).toBeUndefined();f.source.exec('DROP TRIGGER fail_card_source');
+ expect((await f.call('personWrite',{slug:'friend',summary:'PRIVATE_ROLLBACK'},'card-atomic-edit')).status).toBe(200);const revision=(await f.query('{memoryPerson(id:"art:friend"){history{id}}}')).memoryPerson.history[0].id;
+ f.db.$client.exec("CREATE TRIGGER fail_card_core BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");expect((await f.call('personRestoreRevision',{slug:'friend',revision_id:revision},'card-atomic-restore')).status).toBe(503);
+ const query='{memoryPerson(id:"art:friend"){card{summary} history{id card{summary}}}}',after=await f.query(query);expect(after.memoryPerson.card.summary).toBeNull();expect(after.memoryPerson.history).toHaveLength(2);
+ f.db.$client.exec('DROP TRIGGER fail_card_core');expect((await f.call('personRestoreRevision',{slug:'friend',revision_id:revision},'card-atomic-restore')).status).toBe(200);expect(await f.query(query)).toEqual(after);
+});
+it('rolls back a person card when the current body ends during its preparation',async()=>{
+ const f=await fixture(),write=PeopleStore.prototype.write;
+ vi.spyOn(PeopleStore.prototype,'write').mockImplementation(function(this:PeopleStore,value){const result=write.call(this,value);f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());return result;});
+ expect((await f.call('personWrite',{slug:'friend',name:'PRIVATE_REVOKED'},'card-revoked')).status).toBe(403);expect(f.source.prepare('SELECT slug FROM people').all()).toEqual([]);expect(f.source.prepare('SELECT * FROM person_revisions').all()).toEqual([]);
+ expect(f.source.prepare('SELECT * FROM memory_card_references').all()).toEqual([]);
+});
+it('keeps existing semantic-only preparation usable without silently preparing private card references',async()=>{
+ const f=await fixture();f.source.exec('DROP TABLE memory_card_references; DROP TABLE memory_card_schema');const before=f.source.serialize();await prepareSharedMemorySources(f.memory);expect(f.source.serialize()).toEqual(before);
+ for(const [verb,value] of [['personWrite',{slug:'friend',name:'Friend'}],['projectWrite',{slug:'repair',name:'Repair'}],['personRestoreRevision',{slug:'friend',revision_id:1}]] as const){expect((await f.call(verb,value,'older-'+verb)).status).toBe(503);expect(f.source.serialize().equals(before)).toBe(true);}
+ expect(f.source.serialize()).toEqual(before);expect((await f.call('remember',input,'older-semantic')).status).toBe(200);
+});
 it('browses retained private archive and proposal words through the actual canonical HTTP door without source or shared copies',async()=>{
  const f=await fixture(),made=await f.call('remember',{...input,ttl:'1h'},'retained-make'),id=made.result.value.ids[0];expect((await f.call('archive',{id,note:'PRIVATE_ARCHIVE_REASON'},'retained-archive')).status).toBe(200);
  const proposal=propose(dirname(f.path),{category:'rough capture',title:'PRIVATE_PROPOSAL_TITLE',content:'PRIVATE_PROPOSAL_WORDS',source:'fictional capture'},null);
@@ -179,6 +243,7 @@ it('leaves an existing unprepared source byte-for-byte unchanged through startup
  const f=await fixture({unprepared:true});expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect(await f.query('{memoryProject(id:"art:pond"){name}}')).toEqual({memoryProject:{name:'Fictional pond'}});
  expect((await f.call('remember',input,'unprepared-start')).status).toBe(503);expect((await f.call('recall',{query:'alpha'},'unprepared-recall')).status).toBe(503);
+ for(const [verb,value] of [['personWrite',{slug:'friend',name:'Friend'}],['projectWrite',{slug:'repair',name:'Repair'}],['personRestoreRevision',{slug:'friend',revision_id:1}]] as const)expect((await f.call(verb,value,'unprepared-'+verb)).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  const id='art:00000000-0000-0000-0000-000000000000';expect((await f.call('update',{id,content:'A valid edit'},'unprepared-edit')).status).toBe(503);expect((await f.call('restoreRevision',{id,revision_id:1},'unprepared-version')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'memory_command_%'").all()).toEqual([]);
 });
