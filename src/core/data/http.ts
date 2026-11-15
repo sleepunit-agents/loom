@@ -58,7 +58,7 @@ export function dataHttp(db: DataDatabase, authenticate: (request: Request) => A
 
 /** Clone output types together: connected fields may point back at the query
  * root, so replacing that root alone would create duplicate named types. */
-function withQueryFields(schema: GraphQLSchema, fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }>): GraphQLSchema {
+export function withQueryFields(schema: GraphQLSchema, fields: GraphQLFieldConfigMap<unknown, { viewer: Viewer }>): GraphQLSchema {
   if (!Object.keys(fields).length) return schema;
   const query = schema.getQueryType()!;
   const copies = new Map<GraphQLNamedType, GraphQLNamedType>();
