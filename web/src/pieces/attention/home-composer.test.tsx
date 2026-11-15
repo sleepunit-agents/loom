@@ -5,6 +5,7 @@ import { act, create } from 'react-test-renderer';
 const f=vi.hoisted(()=>({once:vi.fn()}));
 vi.mock('../../data',()=>({callOnce:f.once}));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion',()=>({useReducedMotion:()=>true}));
+vi.mock('../../data/operation',()=>({memberOperation:(name:string,input:object)=>f.once(name,input).result.then((result:any)=>{if(!result.ok)throw new Error(result.message);return result.value;})}));
 import { HomeMessageComposer } from './home-composer';
 import { readDraft, writeDraft } from '../comms/drafts';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
@@ -67,4 +68,11 @@ it('does not erase a newer draft saved by another window when an older send is a
  const newer={id:'bbbbbbbbbbbbbbbb',text:'Newer window draft'};writeDraft('sam','new:art',newer);
  await act(async()=>{held.finish(ok({thread:f.once.mock.calls[1][1].thread,seq:1}));await sending;});
  expect(readDraft('sam','new:art')).toEqual(newer);
+});
+it.each(['comms.open','comms.send'])('keeps its draft when %s acknowledges another thread',async phase=>{
+ await draw();await edit('Keep until this thread is confirmed');const sent=readDraft('sam','new:art');
+ f.once.mockImplementation((name:string,input:{thread:string})=>({result:Promise.resolve(ok({thread:name===phase?'th:other':input.thread,seq:1}))}));
+ await act(async()=>submit());
+ expect(readDraft('sam','new:art')).toEqual(sent);expect(opened).not.toHaveBeenCalled();
+ expect(f.once).toHaveBeenCalledTimes(phase==='comms.open'?1:2);
 });

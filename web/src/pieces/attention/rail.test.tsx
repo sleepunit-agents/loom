@@ -1,3 +1,4 @@
+import { deskWaitingFixture } from '../../../../src/ui/desk-waiting.fixture';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createElement as h, useMemo, useSyncExternalStore } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
@@ -13,8 +14,8 @@ function homeFixture() {
  })}}};
 }
 vi.mock('./agent-status',()=>({useDeskAgentStatuses:()=>useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots['attention.agent'])}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:{agent:string})=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskAgentDisplays')?f.snapshots['household.agentDisplay']:document.includes('DeskAgentDirectory')?f.snapshots.person:document.includes('DeskRoster')?f.snapshots['attention.ownedAgent']:document.includes('DeskHomeComms')?f.snapshots.thread:f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskAgentDisplays')?{status:f.snapshots['household.agentDisplay'].status,data:{agents:f.snapshots['household.agentDisplay'].records.map((r:any)=>({id:r.id,markBg:r.mark.bg,markFg:r.mark.fg,faceShape:r.face.shape,faceEyes:r.face.eyes}))}}:document.includes('DeskAgentDirectory')?{status:f.snapshots.person.status,data:{memoryPeopleAccess:{directory:true},memoryPeople:f.snapshots.person.records.map((p:any)=>({...p,agent:p.agent??null}))}}:document.includes('DeskHomeComms')?homeFixture():document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:f.snapshots['attention.ownedAgent'].status!=='live'?f.snapshots['attention.ownedAgent'].status:f.queryStatus,data:{homeComms:{member:'owner',agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>a.id)},agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['household.agentDisplay'],f.snapshots.person,f.snapshots.thread,f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent,f.queryStatus]);}}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['household.agentDisplay','person','thread','attention.agent','attention.ownedAgent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]))}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string,variables?:Record<string,any>)=>{useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?f.snapshots['attention.ask']:document.includes('DeskAgentDisplays')?f.snapshots['household.agentDisplay']:document.includes('DeskAgentDirectory')?f.snapshots.person:document.includes('DeskRoster')?f.snapshots['attention.ownedAgent']:document.includes('DeskHomeComms')?f.snapshots.thread:f.snapshots['generated.jobs']);return useMemo(()=>document.includes('DeskWaiting')||document.includes('DeskAgentWaiting')?deskWaitingFixture(document,variables,f.snapshots['attention.ask'],'owner'):document.includes('DeskAgentDisplays')?{status:f.snapshots['household.agentDisplay'].status,data:{agents:f.snapshots['household.agentDisplay'].records.map((r:any)=>({id:r.id,markBg:r.mark.bg,markFg:r.mark.fg,faceShape:r.face.shape,faceEyes:r.face.eyes}))}}:document.includes('DeskAgentDirectory')?{status:f.snapshots.person.status,data:{memoryPeopleAccess:{directory:true},memoryPeople:f.snapshots.person.records.map((p:any)=>({...p,agent:p.agent??null}))}}:document.includes('DeskHomeComms')?homeFixture():document.includes('DeskCurrentJobs')?{status:f.snapshots['generated.jobs'].status,data:{currentJobs:f.snapshots['generated.jobs'].records.filter((row:any)=>row.agent===variables?.agent)}}:({status:f.snapshots['attention.ownedAgent'].status!=='live'?f.snapshots['attention.ownedAgent'].status:f.queryStatus,data:{homeComms:{member:'owner',agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>a.id)},agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ask'],f.snapshots['household.agentDisplay'],f.snapshots.person,f.snapshots.thread,f.snapshots['attention.ownedAgent'],f.snapshots['generated.jobs'],f.snapshots['conversation.summary'],document,variables?.agent,f.queryStatus]);}}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>(expect(['attention.ask','household.agentDisplay','person','thread','attention.agent','attention.ownedAgent']).not.toContain(type),useSyncExternalStore(fn=>{f.listeners.add(fn);return()=>{f.listeners.delete(fn);};},()=>f.snapshots[type]))}));
 import Rail from './rail';
 import { RailContext } from '../../desk-rail';
 import DeskSignals from './desk-signals';
@@ -22,6 +23,7 @@ import DeskSignals from './desk-signals';
 let tree:ReturnType<typeof create>;
 const live=(records:object[])=>({records,status:'live' as const});
 const text=()=>JSON.stringify(tree.toJSON());
+const words=(node:any):string=>typeof node==='string'?node:(node.children??[]).map(words).join('');
 async function publish(type:string,status:Snapshot['status'],records=f.snapshots[type].records){await act(async()=>{f.snapshots[type]={status,records};f.listeners.forEach(fn=>fn());});}
 let events:EventTarget;
 beforeEach(()=>{f.queryStatus='live';events=new EventTarget();vi.stubGlobal('addEventListener',events.addEventListener.bind(events));vi.stubGlobal('removeEventListener',events.removeEventListener.bind(events));f.listeners.clear();f.snapshots={
@@ -37,7 +39,7 @@ it('keeps only the owned roster in saved order, opens the first unread thread an
  expect(tree.root.findAllByType('section').map((n:any)=>n.props['data-agent'])).toEqual(['art','mark']);
  expect(text()).toContain('Checking the backup');expect(text()).toContain('1 unread thread');
  await act(async()=>tree.root.findByProps({'aria-label':'Open Art conversation'}).props.onClick());expect(go).toHaveBeenLastCalledWith('/p/comms-preview/thread/abc');
- await act(async()=>tree.root.findByProps({className:'desk-rail-ask'}).props.onClick());expect(go).toHaveBeenLastCalledWith('/p/inbox-preview/ask/first');
+ await act(async()=>tree.root.findByProps({className:'desk-rail-ask'}).findByType('button').props.onClick());expect(go).toHaveBeenLastCalledWith('/p/inbox-preview/ask/first');
  await publish('attention.ownedAgent','live',[{id:'mark',name:'Mark'}]);expect(text()).not.toContain('Art conversation');expect(text()).not.toContain('Checking the backup');
 });
 it.each(['offline','denied','loading'] as const)('drops stale names, asks, work and private thread metadata on %s',async(status)=>{
@@ -154,13 +156,13 @@ it('shows the first waiting item and how many more, updates on answers, and clea
  await act(async()=>{tree=create(h(Rail,{go:vi.fn()}));});
  const needs=()=>tree.root.findByProps({className:'desk-rail-needs'});
  const ask=()=>tree.root.findAllByProps({className:'desk-rail-ask'})[0];
- expect(JSON.stringify(needs().children.map((n:any)=>typeof n==='string'?n:n.children))).toContain('2 more');
- expect(JSON.stringify(ask().children.map((n:any)=>typeof n==='string'?n:n.children))).toContain('1 more');
+ expect(words(needs())).toContain('2 more');
+ expect(words(ask())).toContain('1 more');
  expect(text()).not.toContain('Already answered');
  await publish('attention.ask','live',[{...first,state:'answered'}]);
  expect(text()).not.toContain(' more');expect(text()).toContain('All clear.');
  await publish('attention.ask','offline');
- expect(text()).not.toContain('All clear.');expect(text()).not.toContain(' more');expect(text()).toContain('Asks unavailable');
+ expect(text()).not.toContain('All clear.');expect(text()).not.toContain(' more');expect(text()).toContain('Waiting items unavailable');
 });
 
 it('keeps the waiting count on a folded agent card and removes it when asks disconnect',async()=>{
@@ -172,8 +174,8 @@ it('keeps the waiting count on a folded agent card and removes it when asks disc
  await act(async()=>{tree=create(h(Rail,{go:vi.fn()}),{createNodeMock:(node:any)=>node.props.className==='desk-agent-rail'?element:null});});
  const compact=tree.root.findByProps({className:'desk-rail-compact'});
  expect(compact.props['data-agent']).toBe('mark');
- expect(compact.findByProps({'aria-label':'2 waiting questions'}).children.join('')).toBe('ASK · 2');
+ expect(compact.findByProps({'aria-label':'2 waiting questions'}).children.join('')).toBe('NEEDS · 2');
  await publish('attention.ask','offline');
  expect(tree.root.findAllByProps({'aria-label':'2 waiting questions'})).toHaveLength(0);
- expect(text()).not.toContain('ASK');
+ expect(text()).not.toContain('NEEDS');
 });
