@@ -1,3 +1,4 @@
+import Database from 'better-sqlite3';
 import {it,expect} from 'vitest';
 import {mkdtempSync,rmSync,readFileSync,mkdirSync,writeFileSync,statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -13,6 +14,9 @@ it('builds fictitious data through services, then normal startup signs in and qu
   expect(await runExampleHome([home],text=>output.push(text),text=>errors.push(text))).toBe(0);
   const manifest=JSON.parse(output[0]);
   expect(statSync(join(home,'comms.key')).mode & 0o077).toBe(0);
+  const database=new Database(join(home,'app.db'),{readonly:true});
+  try{expect(database.prepare("select member,revoked_at from tokens where label='Example setup'").get()).toEqual({member:'alex',revoked_at:expect.any(String)});}finally{database.close();}
+  expect(readFileSync(join(home,'program.json'),'utf8')).not.toContain('loom_');expect(JSON.stringify(manifest)).not.toContain('loom_');
   expect(manifest.tasks).toHaveLength(4);expect(manifest.gaps.map((g:{page:string})=>g.page)).toEqual(['people','machines']);
   const before=readFileSync(join(home,'app.db'));
   await expect(exampleHome(home)).rejects.toThrow();expect(readFileSync(join(home,'app.db'))).toEqual(before);
