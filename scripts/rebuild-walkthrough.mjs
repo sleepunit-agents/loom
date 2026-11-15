@@ -1,5 +1,6 @@
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {taskQuestions,taskInlineQuestion} from './rebuild-task-questions.mjs';
+import {prepareAcceptanceHome} from './rebuild-acceptance-adapter.mjs';
 import {approvalActions} from './rebuild-approval-actions.mjs';
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
@@ -17,7 +18,7 @@ import {knowledgeActions} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActions} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
-import {mkdirSync,writeFileSync,readFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
@@ -65,10 +66,7 @@ export async function* walkthroughSteps(output) {
   report.example=await exampleHome(home);
   // Only this disposable acceptance home gets this adapter, never exampleHome
   // or installed configuration. The ordinary startup loads its existing port.
-  const adapter=join(home,'walkthrough-adapter.mjs'),programPath=join(home,'program.json');
-  writeFileSync(adapter,"export {default} from "+JSON.stringify(new URL('./rebuild-secret-holder.mjs',import.meta.url).href)+";\n",{mode:0o600,flag:'wx'});
-  const program=JSON.parse(readFileSync(programPath,'utf8'));program.adapters=adapter;
-  writeFileSync(programPath,JSON.stringify(program),{mode:0o600});
+  prepareAcceptanceHome(home);
   clock=new FakeClock(Date.parse(report.example.createdAt));
   let link='';app=await startSharedHome({home,port:0,clock,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
   retention=await prepareRetention({app,example:report.example,home});
