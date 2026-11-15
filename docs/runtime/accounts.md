@@ -77,7 +77,15 @@ accounts or change membership. Account/window writes and the acknowledgement
 receipt commit together. Older observations cannot replace newer windows.
 
 Without `report`, the command keeps its existing local-output behavior and reads
-no Loom token. Failed provider reads do not send a successful observation; remote
-failure latching and periodic refresh scheduling remain separate integration work.
+no Loom token. With reporting configured, the worker obtains an opaque observation witness
+before invoking the provider. Both successful and failed reports carry that witness; only a completion whose
+witness still describes the current quota can change admission. A failed read
+closes admission without letting an older success reopen it. It preserves usage timestamps and windows; a
+newer successful reading, including identical values, invalidates older failures.
+The witness is a concurrency check, not authority: both requests still require
+current bearer-machine proof, account membership, owner and provider. Receipt
+replays are not fresh provider completions. Restart discards witnesses; an old
+failure then makes no change and needs a new read attempt. Periodic refresh
+scheduling remains separate integration work.
 An uncertain report is not retried automatically, and no remote diagnostics are
 printed. Neither the report nor its response contains provider credentials.

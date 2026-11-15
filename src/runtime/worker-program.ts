@@ -2,7 +2,7 @@
 import { z } from 'zod';
 import { signInAccount } from './account-signin.js';
 import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js';
-import { httpWorkerControl, reportWorkerAccountUsage } from './worker-http.js';
+import { httpWorkerControl, reportWorkerAccountUsage, readWorkerAccountBasis, reportWorkerAccountUnavailable } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
 import { containerWorkerExecutor } from './worker-container.js';
 const commandString = z.string().refine(value => !value.includes('\0'));
@@ -39,6 +39,8 @@ export async function workerProgram(input: {
   signIn?: typeof signInAccount;
   usage?: typeof commandUsageProvider;
   reportUsage?: typeof reportWorkerAccountUsage;
+  usageBasis?: typeof readWorkerAccountBasis;
+  usageUnavailable?: typeof reportWorkerAccountUnavailable;
   run?: typeof runWorker; control?: typeof httpWorkerControl; executor?: typeof commandWorkerExecutor;
   containerExecutor?: typeof containerWorkerExecutor;
 }): Promise<number> {
@@ -63,11 +65,20 @@ export async function workerProgram(input: {
         const config = usageCommand.parse(raw);
         const provider = (input.usage ?? commandUsageProvider)(config.command,
           { signal: abort.signal, timeoutMs: config.timeoutMs });
-        const windows = await provider(Object.freeze({ ...config.account }));
+        const remote = config.report ? { url: config.report.url, token: (await input.read(config.report.tokenFile)).trim(), signal: abort.signal } : undefined;
         if (abort.signal.aborted) throw new Error('Cancelled');
-        if (config.report) {
-          const token = (await input.read(config.report.tokenFile)).trim();
-          await (input.reportUsage ?? reportWorkerAccountUsage)({ url: config.report.url, token, signal: abort.signal }, { ...config.account, windows });
+        const basis = remote ? await (input.usageBasis ?? readWorkerAccountBasis)(remote, config.account) : undefined;
+        if (abort.signal.aborted) throw new Error('Cancelled');
+        let windows: Awaited<ReturnType<typeof provider>>;
+        try { windows = await provider(Object.freeze({ ...config.account })); }
+        catch {
+          if (remote && basis && !abort.signal.aborted) await (input.usageUnavailable ?? reportWorkerAccountUnavailable)(remote, { ...config.account, basis: basis.basis });
+          throw new Error('Quota reader unavailable');
+        }
+        if (abort.signal.aborted) throw new Error('Cancelled');
+        if (remote) {
+          if (!basis) throw new Error('Missing quota observation witness');
+          await (input.reportUsage ?? reportWorkerAccountUsage)(remote, { ...config.account, windows, basis: basis.basis });
           if (abort.signal.aborted) throw new Error('Cancelled');
         }
         input.output(JSON.stringify({ ...config.account, windows }) + '\n');
