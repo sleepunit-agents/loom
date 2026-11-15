@@ -34,3 +34,9 @@ it.each(['assignment','ended','thread','scope'] as const)('withholds sealed outp
   if(change==='thread'){const other=f.root.services.conversations.open({agent:'art',member:'alice',project:'pond',venue:'loom',place:'other',label:'Other'});f.db.update(s.threads).set({conversation:other.id}).run();}
  });release();const response=await pending;expect([403,404,503]).toContain(response.status);expect(await response.text()).not.toContain('PRIVATE LATE');expect(f.db.select().from(s.messages).all()).toEqual([]);expect(f.db.select().from(s.turns).all()).toEqual([]);
 });
+it('isolates sender retry IDs across jobs and records no inferred model',async()=>{
+ const f=await fixture();const input={kind:'reply',clientId:'same',words:'First job'};
+ expect((await f.call('message',input,'first')).status).toBe(200);const old=f.db.select().from(s.jobs).get()!;
+ f.root.writes.run(()=>{f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,old.id)).run();f.db.insert(s.jobs).values({...old,id:'next-job',state:'running'}).run();f.db.update(s.conversations).set({job:'next-job'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.tokens).set({job:'next-job'}).where(eq(s.tokens.job,old.id)).run();});
+ expect((await f.call('message',{...input,words:'Second job'},'second')).status).toBe(200);expect(f.db.select().from(s.messages).all()).toMatchObject([{run:'job',clientId:'job:same'},{run:'next-job',clientId:'next-job:same'}]);expect(f.db.select().from(s.turns).all().map(row=>row.model)).toEqual([null,null]);
+});
