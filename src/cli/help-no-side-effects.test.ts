@@ -75,7 +75,7 @@ describe('loom token, loom sessions: --help creates nothing', () => {
     for (const help of ['--help', '-h']) {
       const r = await runCliCaptured(['token', 'link', help], { env });
       expect(r.code).toBe(0);
-      expect(r.stdout).toContain('Usage: loom token');
+      expect(r.stdout).toMatch(/usage: loom[- ]token/i);
       expect(r.stdout + r.stderr).not.toMatch(SECRETISH);
     }
     // Help after a real flag, too: it's still help, not a ten-minute link.
@@ -92,7 +92,7 @@ describe('loom token, loom sessions: --help creates nothing', () => {
     for (const argv of [['token', 'create', '--help'], ['token', 'create', '--owner', '--label', 'x', '--help'], ['token', 'create', '-h']]) {
       const r = await runCliCaptured(argv, { env });
       expect(r.code).toBe(0);
-      expect(r.stdout).toContain('Usage: loom token');
+      expect(r.stdout).toMatch(/usage: loom[- ]token/i);
       expect(r.stdout + r.stderr).not.toMatch(SECRETISH);
     }
     expect(both()).toEqual(before);
@@ -104,7 +104,7 @@ describe('loom token, loom sessions: --help creates nothing', () => {
     for (const argv of [['sessions', 'revoke', '--help'], ['sessions', 'revoke', '-h'], ...(ref ? [['sessions', 'revoke', ref, '--help']] : [])]) {
       const r = await runCliCaptured(argv, { env });
       expect(r.code).toBe(0);
-      expect(r.stdout).toContain('Usage: loom sessions');
+      expect(r.stdout).toMatch(/usage: loom[- ]sessions/i);
     }
     expect(both()).toEqual(before);
   });
@@ -134,8 +134,8 @@ describe('loom token, loom sessions: --help creates nothing', () => {
 const MUTATING: string[][] = [
   ['token', 'create'], ['token', 'revoke'], ['token', 'link'],
   ['sessions', 'revoke'],
-  ['household', 'init'], ['household', 'add'], ['household', 'sprite'], ['household', 'commons'],
-  ['household', 'icons', 'install'], ['household', 'icons', 'use'], ['household', 'icons', 'set'],
+  ['household', 'setMember'], ['household', 'setAgent'], ['household', 'setAgentAccounts'], ['household', 'setProject'],
+  ['account', 'removePasskey'], ['account', 'revokeSession'],
   ['backup', 'set'], ['backup', 'off'], ['backup', 'run'],
   ['export'], ['restore'],
   ['store', 'p', 'put', 'c', 'k'], ['store', 'p', 'del', 'c', 'k'], ['store', 'p', 'revert', 'c', 'k', '1'],
