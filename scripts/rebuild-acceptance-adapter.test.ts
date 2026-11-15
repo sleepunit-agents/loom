@@ -5,7 +5,8 @@ import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {acceptanceAdapter,prepareAcceptanceHome} from './rebuild-acceptance-adapter.mjs';
 
-async function fixture(run){
+type Fixture={home:string;file:string;base(source:string):void};
+async function fixture(run:(value:Fixture)=>Promise<void>){
  const home=mkdtempSync(join(tmpdir(),'loom-acceptance-adapter-')),file=join(home,'base.mjs');
  try{await run({home,file,base:source=>writeFileSync(file,source,{mode:0o600})});}finally{rmSync(home,{recursive:true,force:true});}
 }
@@ -20,19 +21,37 @@ it('the consumer-generated module preserves a private catalog and initializes th
  const result=await module.default({home,previous:{modelRoles,close}});
  try{expect(result.modelRoles).toBe(modelRoles);expect(result.secretWrites.holder.set).toBeTypeOf('function');}
  finally{await result.close();}
- expect(close).toHaveBeenCalledOnce();expect(result.secretWrites.fingerprintKey.every(byte=>byte===0)).toBe(true);
+ expect(close).toHaveBeenCalledOnce();expect(result.secretWrites.fingerprintKey.every((byte:number)=>byte===0)).toBe(true);
 }));
 it('preserves catalog/context and holder ports, closing both once with their own receiver',()=>fixture(async({home,file,base})=>{
  base('export default context => context.previous;');
  const order=[],modelRoles=()=>[{model:'fictional-model',provider:'fictional-provider'}];
  const previous={modelRoles,async close(){expect(this).toBe(previous);order.push('base');}};
  const added={secretWrites:{holder:'fictional-holder'},async close(){expect(this).toBe(added);order.push('holder');}};
- const context={home,previous},additional=vi.fn(async received=>{expect(received).toBe(context);return added;});
+ const context={home,previous},additional=vi.fn(async(received:typeof context)=>{expect(received).toBe(context);return added;});
  const result=await acceptanceAdapter(file,additional)(context);
  expect(result.modelRoles).toBe(modelRoles);expect(result.modelRoles()).toEqual(modelRoles());
  expect(result.secretWrites).toBe(added.secretWrites);
  const first=result.close(),second=result.close();expect(first).toBe(second);await first;
  expect(order).toEqual(['holder','base']);expect(additional).toHaveBeenCalledOnce();
+}));
+it('preserves inherited accessors and non-enumerable startup ports with their original receiver',()=>fixture(async({file,base})=>{
+ base('export default context => context.previous;');
+ const order:string[]=[],roles=[{model:'class-model',provider:'class-provider'}],holder={fixture:true},bridge={fixture:true};
+ class Previous{
+  #roles=roles;
+  get modelRoles(){return()=>this.#roles;}
+  close(){order.push('base');}
+ }
+ class Added{
+  #holder=holder;
+  get secretWrites(){return this.#holder;}
+  close(){order.push('holder');}
+ }
+ const previous=new Previous();Object.defineProperty(previous,'bridges',{value:bridge,enumerable:false});
+ const result=await acceptanceAdapter(file,async()=>new Added())({previous});
+ expect(result.modelRoles()).toBe(roles);expect(result.bridges).toBe(bridge);expect(result.secretWrites).toBe(holder);
+ await result.close();expect(order).toEqual(['holder','base']);
 }));
 it('supports a fresh home without an existing adapter',async()=>{
  const close=vi.fn(),holder={secretWrites:{},close};

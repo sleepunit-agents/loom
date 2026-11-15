@@ -22,6 +22,8 @@ function ports(value){
  if(!value||typeof value!=='object')throw new TypeError('Acceptance adapters must return startup ports');
  return value;
 }
+// The ports consumed by SharedStartupAdapters in src/shared-startup.ts.
+const startupPorts=['changes','workAnswerAuthority','tempo','secretWrites','secretInputs','bridges','modelRoles','runtimeJobEnded'];
 export function acceptanceAdapter(previousPath,additional){
  return async context=>{
   const acquired=[];
@@ -37,7 +39,9 @@ export function acceptanceAdapter(previousPath,additional){
    acquired.push(previous);
    const added=ports(await additional(context));acquired.push(added);
    let closing;
-   return {...previous,...added,close:()=>closing??=closePorts(acquired)};
+   const combined={};
+   for(const key of startupPorts){const source=key in added?added:previous;if(key in source)combined[key]=Reflect.get(source,key,source);}
+   return {...combined,close:()=>closing??=closePorts(acquired)};
   }catch(error){
    try{await closePorts(acquired);}catch(cleanup){throw new AggregateError([error,cleanup],'Acceptance adapter startup and cleanup failed');}
    throw error;
