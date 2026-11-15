@@ -42,6 +42,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   return {
     http: dataHttp(db, authenticate, publicOrigin, schema),
     attach: socket.attach,
+    changed() { socket.refreshAccess(); live.changed(); },
     writes,
     close() { return closing ??= (async () => { await socket.close(); live.close(); })(); },
   };

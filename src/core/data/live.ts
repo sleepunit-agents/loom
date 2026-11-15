@@ -43,6 +43,7 @@ export class DataLive {
     query: string;
     variables?: Record<string, unknown>;
     operationName?: string;
+    /** Trusted executor context; never derive this from query variables. */
     contextValue?: unknown;
     valid(): boolean;
   }): AsyncIterableIterator<DataDelta> {
