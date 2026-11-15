@@ -190,6 +190,7 @@ it('rejects half-specified operation recipients and holds a recipient-free opera
  for(const pair of [{toKind:null,to:'art'},{toKind:'agent' as const,to:null}]){
   expect(()=>f.engine.set({...f.base,targetKind:'operation',target:'test',...pair})).toThrow('both kind and id');
  }
+ expect(()=>f.engine.set({...f.base,toKind:null,to:null})).toThrow('Inbox target needs a recipient');
  expect(f.db.select().from(triggers).all()).toEqual([]);
  const t=f.engine.set({...f.base,targetKind:'operation',target:'test',toKind:null,to:null});
  f.engine.pause('art');expect(f.row(t.id).state).toBe('held');

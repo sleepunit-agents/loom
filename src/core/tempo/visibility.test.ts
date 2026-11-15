@@ -162,3 +162,13 @@ it('shows recipient-free agent operation triggers to that agent and its owners, 
   expect((other.data?.triggers as {id:string}[]).map(t=>t.id)).not.toContain('own-operation');
  }
 });
+it('does not turn authorship of an explicitly addressed operation into agent-owner visibility',async()=>{
+ client.prepare(`INSERT INTO triggers(id,owner_kind,owner,source_kind,lifespan,target_kind,target,to_kind,"to",project,note,enabled,state,created_at,changed_at)
+  VALUES('explicit-operation','agent','art','time','once','operation','test','agent','hidden','private','Other agent operation',1,'standing','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z')`).run();
+ client.prepare("INSERT INTO trigger_log(seq,trigger,at,event,note) VALUES(8,'explicit-operation','2026-11-14T00:00:00Z','set','Other agent operation')").run();
+ for(const viewer of [{kind:'agent',id:'art'},{kind:'member',id:'sam'}] as const){
+  const result=await graphql({schema:schemaFor(viewer),source});expect(result.errors).toBeUndefined();
+  expect((result.data?.triggers as {id:string}[]).map(t=>t.id)).not.toContain('explicit-operation');
+  expect((result.data?.triggerLog as {trigger:string}[]).map(t=>t.trigger)).not.toContain('explicit-operation');
+ }
+});
