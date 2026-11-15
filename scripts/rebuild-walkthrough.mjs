@@ -2,6 +2,7 @@
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
 import {approvalActions} from './rebuild-approval-actions.mjs';
+import {taskStructure} from './rebuild-task-structure.mjs';
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
@@ -40,7 +41,7 @@ export async function* walkthroughSteps(output) {
  const parent=mkdtempSync(join(tmpdir(),'loom-walkthrough-')),home=join(parent,'home');
  const report={version:1,source:{commit:process.env.GITHUB_SHA??null,ref:process.env.GITHUB_REF??null,repository:process.env.GITHUB_REPOSITORY??null,run:process.env.GITHUB_RUN_ID??null,attempt:process.env.GITHUB_RUN_ATTEMPT??null},startedAt:new Date().toISOString(),example:{gaps:[]},signin:{ok:false},apps:[],errors:[]};
  let app,browser,page;
- const consoleErrors=[],pageErrors=[],networkErrors=[],frames=[],subscriptions=[],connections=[];
+ const consoleErrors=[],pageErrors=[],networkErrors=[],frames=[],subscriptions=[],connections=new Set();
  const save=()=>writeFileSync(join(out,'walkthrough.json'),JSON.stringify(safeReport(report),null,2)+'\n');
  try {
   report.example=await exampleHome(home);
@@ -51,7 +52,7 @@ export async function* walkthroughSteps(output) {
   const socketOrigin=app.url.replace(/^http/,'ws');
   await context.routeWebSocket(url=>new URL(url).origin!==socketOrigin,route=>route.close({code:1008,reason:'Walkthrough is local only'}));
   page=await context.newPage();page.setDefaultTimeout(8000);
-  page.on('websocket',socket=>connections.push(new URL(socket.url()).pathname));
+  page.on('websocket',socket=>{connections.add(socket);socket.on('close',()=>connections.delete(socket));});
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
   page.on('pageerror',error=>pageErrors.push(error.message));
   page.on('requestfailed',request=>{const url=new URL(request.url());networkErrors.push({path:url.pathname.startsWith('/login/')?'/login/[redacted]':url.pathname,error:request.failure()?.errorText});});
@@ -100,8 +101,8 @@ export async function* walkthroughSteps(output) {
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
     await page.screenshot({path:join(out,row.screenshot),fullPage:true});
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
-   if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
    if(title==='Approvals'&&row.opened)report.actions={...report.actions,...await approvalActions({page,tile:page.getByRole('region',{name:'Approvals tile',exact:true}),app,example:report.example,out})};
+   if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);
    row.live={frames:visitFrames,subscriptions:subscriptions.filter(sub=>visitFrames.some(frame=>frame.id===sub.id)),scope:'Connection activity during this visit, including shell and other tiles; not app-specific proof',connectionDataReceived:visitFrames.some(frame=>frame.hasData),errors:visitFrames.flatMap(frame=>frame.errors??[])};
