@@ -304,3 +304,48 @@ for (const buildTimeoutMs of [0, -1, 1.5, Infinity, 3_600_001]) it(`rejects inva
   expect(() => commandWorkerExecutor({ build: plan, buildTimeoutMs, runners: {} }, f.runtime)).toThrow('build deadline');
   expect(f.runtime.spawn).not.toHaveBeenCalled();
 });
+
+it('selects an exact account and harness command without borrowing another account environment', async () => {
+  const f = fixture(), selected = { ...plan, command: '/private/run-a', args: ['--json'], env: { PROFILE: 'only-a' } };
+  const config = { build: plan, runners: { 'custom-runner': { ...plan, env: { PROFILE: 'shared' } } },
+    accountRunners: { sub: { 'custom-runner': selected }, other: { 'custom-runner': { ...plan, env: { PROFILE: 'only-b' } } } } };
+  const executor = commandWorkerExecutor(config, f.runtime);
+  selected.env.PROFILE = 'mutated-after-configuration'; selected.command = '/wrong'; selected.args.push('--wrong'); config.accountRunners.sub = { 'custom-runner': { ...selected, command: '/wrong-map' } };
+  const body = executor.start(job, 'image', new AbortController().signal);
+  expect(f.runtime.spawn).toHaveBeenCalledWith({ ...plan, command: '/private/run-a', env: { PROFILE: 'only-a' } });
+  f.children[0].child.emit('spawn'); await body.spawned;
+  await body.release(); expect(JSON.parse(f.children[0].input()).job).toMatchObject({ model: 'custom-model', account: 'sub', harness: 'custom-runner' });
+  f.children[0].child.emit('close', 0, null); await body.stop();
+  const other = executor.start({ ...job, account: 'other' }, 'image', new AbortController().signal);
+  expect(f.runtime.spawn).toHaveBeenLastCalledWith(expect.objectContaining({ env: { PROFILE: 'only-b' } }));
+  f.children[1].child.emit('spawn'); await other.spawned; f.children[1].child.emit('close', 0, null); await other.stop();
+  await expect(executor.build({ ...job, account: 'missing' }, new AbortController().signal)).rejects.toThrow('configured runner for account');
+  expect(() => executor.start({ ...job, harness: 'missing' }, 'image', new AbortController().signal)).toThrow('configured runner for account');
+  expect(f.runtime.spawn).toHaveBeenCalledTimes(2);
+});
+
+it('keeps account secrets out of a successful builder environment', async () => {
+  const f = fixture(), executor = commandWorkerExecutor({ build: plan, runners: {}, accountRunners: { sub: { 'custom-runner': { ...plan, env: { ACCOUNT_SECRET: 'runner-only' } } } } }, f.runtime);
+  const pending = executor.build(job, new AbortController().signal), child = f.children[0];
+  child.child.emit('spawn'); await flush(); child.child.stdout.emit('data', '{"build":"image"}'); child.child.emit('close', 0, null);
+  expect(await pending).toBe('image'); expect(f.runtime.spawn).toHaveBeenCalledExactlyOnceWith(plan);
+  expect(JSON.stringify(vi.mocked(f.runtime.spawn).mock.calls)).not.toContain('runner-only');
+});
+it('refuses inherited account and harness entries', async () => {
+  const f = fixture(), accountRunners = Object.create({ sub: { 'custom-runner': plan } });
+  accountRunners.own = Object.create({ 'custom-runner': plan });
+  const executor = commandWorkerExecutor({ build: plan, runners: { 'custom-runner': plan }, accountRunners }, f.runtime);
+  for (const account of ['sub', 'own', 'constructor', '__proto__']) await expect(executor.build({ ...job, account }, new AbortController().signal)).rejects.toThrow('configured runner');
+  expect(f.runtime.spawn).not.toHaveBeenCalled();
+});
+
+it('selects each distinct harness within the same account', async () => {
+  const f = fixture(), executor = commandWorkerExecutor({ build: plan, runners: {}, accountRunners: { sub: {
+    first: { ...plan, command: '/first', env: { PROFILE: 'first-only' } }, second: { ...plan, command: '/second', env: { PROFILE: 'second-only' } },
+  } } }, f.runtime);
+  for (const [index, harness] of ['first', 'second'].entries()) {
+    const body = executor.start({ ...job, harness }, 'image', new AbortController().signal);
+    expect(f.runtime.spawn).toHaveBeenLastCalledWith(expect.objectContaining({ command: '/'+harness, env: { PROFILE: harness+'-only' } }));
+    f.children[index].child.emit('spawn'); await body.spawned; f.children[index].child.emit('close', 0, null); await body.stop();
+  }
+});

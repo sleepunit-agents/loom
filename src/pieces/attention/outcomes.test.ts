@@ -19,7 +19,8 @@ const alice:Viewer={kind:'member',id:'alice'},bob:Viewer={kind:'member',id:'bob'
 async function setup(upgrade=false, householdMembers=false) {
   const home=mkdtempSync(join(tmpdir(),'attention-outcomes-'));fixture(home);
   const clock=new FakeClock(), types=new Map<string,RecordType>();
-  const access={members:{alice:{owner:true,agents:['art']},bob:{owner:false,agents:['art']}},projects:{},services:{}};
+  // Keep installed maintenance admitted while receipt tests advance thirty days.
+  const access={members:{alice:{owner:true,agents:['art']},bob:{owner:false,agents:['art']}},projects:{},services:{attention:{types:['attention.ask'],operations:['attention.sweepWaits','attention.pendingWaits']}}};
   const app=await startLoom({home,next:true,host:'127.0.0.1',port:0,stdout:()=>{},clock,sharing:()=>access,
     authenticate:req=>({viewer:req.headers.authorization==='bob'?bob:alice,window:req.headers.authorization!=='api',valid:()=>true}),
     install:app=>{if(householdMembers)new HouseholdDatabase(app.db).change(home,raw=>{raw.members=[{person:'alice',role:'owner',agents:'*'},{person:'bob',role:'owner',agents:'*'}];delete raw.owner;});const register=app.live.register.bind(app.live);app.live.register=t=>{types.set(t.name,t);register(t);};if(upgrade){migrate(app.db,'attention',attentionMigrations.filter(m=>m.number<=6));app.db.prepare('INSERT INTO attention_asks VALUES (?,?)').run('old',JSON.stringify({id:'old',agent:'art',ask:'Existing question',source:{kind:'piece',id:'fixture'},state:'open',createdAt:1,changedAt:1}));}installAttention(app.db,app.operations,app.live,()=>access);installTasks(app.db,app.operations,app.live,()=>access);},
@@ -72,7 +73,7 @@ it('publishes to a second window, persists across reopening, and never creates a
   expect(list()[0].readAt).toBe(firstRead);
   expect(app.db.prepare('SELECT * FROM attention_read_marks').all()).toEqual([]);
   const expected=list();await app.close();
-  const next=await startLoom({home,next:true,clock,stdout:()=>{},sharing:()=>({members:{alice:{owner:true,agents:['art']}},projects:{},services:{}})});
+  const next=await startLoom({home,next:true,clock,stdout:()=>{},sharing:()=>({members:{alice:{owner:true,agents:['art']}},projects:{},services:{attention:{types:['attention.ask'],operations:['attention.sweepWaits','attention.pendingWaits']}}})});
   cleanup.push(next.close);
   expect(next.operations.call('direct',alice,'attention.outcomes',{})).toEqual({ok:true,value:expected});
 });
