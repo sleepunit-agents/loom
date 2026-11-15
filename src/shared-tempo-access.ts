@@ -40,14 +40,16 @@ export function tempoCommandAllowed(db: DataDatabase, viewer: Viewer, access: Te
     case 'volume': return recipient(access.item.toKind, access.item.to);
     case 'settings': return recipient(access.who.kind, access.who.id);
     case 'pause': case 'resume': return ownsAgent(access.agent);
-    case 'stop': case 'runNow': return !!db.select({ id: triggers.id }).from(triggers)
+    case 'stop': case 'runNow':
+      if (access.trigger.targetKind === 'operation' && !access.trigger.toKind && access.trigger.ownerKind === 'agent' && access.trigger.owner && ownsAgent(access.trigger.owner)) return true;
+      return !!db.select({ id: triggers.id }).from(triggers)
       .where(and(eq(triggers.id, access.trigger.id), tempoVisibility(viewer).triggers!(getTableColumns(triggers)))).get();
     case 'set': {
       const t = access.trigger;
       const authored = owner || (t.ownerKind === 'agent' ? !!t.owner && ownsAgent(t.owner) :
         t.ownerKind === 'member' && viewer.kind === 'member' && t.owner === viewer.id);
       if (!authored || !sourceAllowed(t.sourceKind, t.watches)) return false;
-      if (t.project && !db.select().from(projects).where(and(eq(projects.id, t.project), taskVisibility(viewer).projects!(getTableColumns(projects)))).get()) return false;
+      if (t.project && !sharedProject(t.project)) return false;
       // Creating work for another recipient needs that recipient's owner, not
       // merely a shared project. Reading/stopping shared triggers follows the
       // site's project-sharing rule; starting new work binds its target too.
