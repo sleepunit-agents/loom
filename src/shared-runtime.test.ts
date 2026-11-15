@@ -429,3 +429,11 @@ it('runs the fixed private body entry against Root with a fake native Claude pro
   expect(JSON.stringify(f.db.select().from(operationResults).all())).not.toContain(privateDiagnostic);
   expect(JSON.stringify(launch.mock.calls)).not.toContain(privateDiagnostic);
 });
+
+it('rejects ambiguous current model configuration without claiming a job or keeping a receipt',async()=>{
+ const f=fixture(),queued=f.send(),roles=[{model:'model',provider:'provider',harness:'codex',series:'series'},{model:'model',provider:'other-provider',harness:'other-runner',series:'other-series'}];
+ f.setRoles(roles);const before=f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get();
+ await expect(f.control.next()).rejects.toThrow('Worker next failed');
+ expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()).toEqual(before);expect(f.db.select().from(operationResults).all()).toEqual([]);
+ f.setRoles([roles[0]]);expect((await f.control.next())?.id).toBe(queued.id);
+});

@@ -66,7 +66,9 @@ export class ConversationMail {
           || JSON.stringify({ ...after.message, words: null }) !== JSON.stringify({ ...before.message, words: null }))
           throw new Error('Private message changed; prepare again');
       }
-      return conversations.take(conversation, job, items.map(item => item.id)).map(item => ({ item, words: mailWords(item.volume,words.get(item.id) ?? null) }));
+      const taken=conversations.take(conversation, job, items.map(item => item.id));
+      if(taken.length)db.update(messages).set({delivery:'sending'}).where(and(eq(messages.kind,'message'),inArray(messages.inboxItem,taken.map(item=>item.id)))).run();
+      return taken.map(item => ({ item, words: mailWords(item.volume,words.get(item.id) ?? null) }));
     });
   }
 
