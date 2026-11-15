@@ -30,6 +30,7 @@ import { registerSharedTaskCommands } from './shared-task-commands.js';
 import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
+import { settledNotices } from './core/tempo/notices.js';
 import { createRuntime } from './runtime/runtime.js';
 import type { ModelRole } from './runtime/placement.js';
 import { registerSharedRuntime } from './shared-runtime.js';
@@ -62,9 +63,10 @@ export function sharedRoot(options: {
   const chat = new AsyncLocalStorage<TempoChatAuthentication>();
   const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;
+  const notices = settledNotices(db, () => data.changed());
   const credentials = sharedCredentials(db, clock, () => !closing);
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...options.fields }, () => !closing, credentials.authenticate);
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...comms?.fields, ...notices.fields, ...options.fields }, () => !closing, credentials.authenticate);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes,
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
@@ -125,10 +127,10 @@ export function sharedRoot(options: {
 
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
   try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, {
-    ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
+    ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
   }); }
-  catch (error) { cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
+  catch (error) { notices.close(); cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
   const authenticate = credentials.authenticate;
 
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
@@ -193,6 +195,7 @@ export function sharedRoot(options: {
       runtime.close();
       // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();
+      notices.close();
       cancelSecretRecovery?.(); values?.close(); startup?.close();
       const deliveryStopped = delivery?.close();
       const stopped = data.close();
