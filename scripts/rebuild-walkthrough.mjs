@@ -50,7 +50,7 @@ export async function* walkthroughSteps(output) {
   const socketOrigin=app.url.replace(/^http/,'ws');
   await context.routeWebSocket(url=>new URL(url).origin!==socketOrigin,route=>route.close({code:1008,reason:'Walkthrough is local only'}));
   page=await context.newPage();page.setDefaultTimeout(8000);
-  page.on('websocket',socket=>connections.push(new URL(socket.url()).pathname));
+  page.on('websocket',socket=>{const path=new URL(socket.url()).pathname;connections.push(path);socket.on('close',()=>{const index=connections.indexOf(path);if(index>=0)connections.splice(index,1);});});
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
   page.on('pageerror',error=>pageErrors.push(error.message));
   page.on('requestfailed',request=>{const url=new URL(request.url());networkErrors.push({path:url.pathname.startsWith('/login/')?'/login/[redacted]':url.pathname,error:request.failure()?.errorText});});

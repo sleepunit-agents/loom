@@ -1,22 +1,23 @@
 /** Measure the approved desk through the running shell; never import its layout rule. */
 import {join} from 'node:path';
 export async function deskActions({page,out,inventory}) {
- const evidence={};
+ const evidence={};let phase;
  const attempt=async(name,run)=>{
   const screenshot=`action-${name}.png`;
   try{const facts=await run();evidence[name]={ok:true,...facts,screenshot};}
-  catch(error){evidence[name]={ok:false,error:String(error),screenshot};}
+  catch(error){evidence[name]={ok:false,phase,error:String(error),screenshot};}
   await page.screenshot({path:join(out,screenshot),fullPage:true});
  };
  const check=(yes,message)=>{if(!yes)throw Error(message);};
  const launcher=page.getByRole('dialog',{name:'Apps',exact:true});
  const tile=name=>page.getByRole('region',{name:`${name} tile`,exact:true});
  const launch=async name=>{
+  phase='launch '+name+' from '+new URL(page.url()).pathname;
   await page.keyboard.press('Escape');await page.keyboard.press('Control+Shift+Space');await launcher.waitFor();
   await launcher.getByRole('textbox',{name:'Find an app',exact:true}).fill(name);
   const matches=await launcher.locator('.loom-lapp__nm').allTextContents();
   check(matches[0]===name,`First launcher match for ${name}: ${JSON.stringify(matches)}`);
-  await page.keyboard.press('Enter');await launcher.waitFor({state:'hidden'});await tile(name).waitFor();
+  await launcher.getByRole('textbox',{name:'Find an app',exact:true}).press('Enter');await launcher.waitFor({state:'hidden'});await tile(name).waitFor();
  };
  const clear=async()=>{
   await page.keyboard.press('Escape');
@@ -62,13 +63,13 @@ export async function deskActions({page,out,inventory}) {
   await tile('Inbox').getByRole('button',{name:'Make Inbox big',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('[aria-label="Inbox tile"]').getBoundingClientRect().left<document.querySelector('[aria-label="Tasks tile"]').getBoundingClientRect().left);
   const promoted=await snapshot();
-  await tile('Inbox').getByRole('button',{name:'Minimize Inbox',exact:true}).click();await tile('Inbox').waitFor({state:'hidden'});
-  await page.locator('.next-dock').getByRole('button',{name:'Open Inbox',exact:true}).click();await tile('Inbox').waitFor();
-  await tile('Inbox').getByRole('button',{name:'Close Inbox',exact:true}).click();await tile('Inbox').waitFor({state:'detached'});
+  phase='minimize Inbox';await tile('Inbox').getByRole('button',{name:'Minimize Inbox',exact:true}).click();await tile('Inbox').waitFor({state:'hidden'});
+  phase='restore Inbox from dock';await page.locator('.next-dock').getByRole('button',{name:'Open Inbox',exact:true}).click();await tile('Inbox').waitFor();
+  phase='close Inbox';await tile('Inbox').getByRole('button',{name:'Close Inbox',exact:true}).click();await tile('Inbox').waitFor({state:'detached'});
   // A two-tile screen: make Tasks older than Inbox, then open a third app.
   await page.setViewportSize({width:1100,height:1500});await launch('Inbox');await launch('Approvals');
   await tile('Tasks').waitFor({state:'hidden'});check(await tile('Inbox').isVisible()&&await tile('Approvals').isVisible(),'The most recently used tiles did not remain');
-  const evicted=await snapshot();await page.locator('.next-dock').getByRole('button',{name:'Open Tasks',exact:true}).click();await tile('Tasks').waitFor();
+  const evicted=await snapshot();phase='restore evicted Tasks';await page.locator('.next-dock').getByRole('button',{name:'Open Tasks',exact:true}).click();await tile('Tasks').waitFor();
   return{reason:'Wide and tall tile bounds filled the desk without overlap; promotion, minimize/restore, close, and least-recently-used eviction worked.',wide,tall,promoted,minimizedRestored:true,closedRemoved:true,leastRecentlyUsed:'Tasks',evicted};
  });
  await page.setViewportSize({width:1600,height:1000});
