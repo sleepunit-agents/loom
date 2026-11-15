@@ -58,7 +58,7 @@ export async function* walkthroughSteps(output) {
   report.example=await exampleHome(home);
   clock=new FakeClock(Date.parse(report.example.createdAt));
   let link='';app=await startSharedHome({home,clock,port:0,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
-  retention=await prepareRetention({app,example:report.example});
+  retention=await prepareRetention({app,example:report.example,home});
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});
   // Control and persistence evidence must not compete with motion in every retained tile.
   const context=await browser.newContext({viewport:{width:1600,height:1000},reducedMotion:'reduce',serviceWorkers:'block',userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});

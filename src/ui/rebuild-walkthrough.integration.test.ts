@@ -48,7 +48,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('measures encrypted private-word expiry on the program clock',{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('retention');
-  const result=step.value.actions?.conversationRetention;expect(typeof result?.ok).toBe('boolean');if(!result.ok)expect(result.error).toBeTruthy();
+  const result=step.value.actions?.conversationRetention;expect(result,JSON.stringify(result)).toMatchObject({ok:true,before:{encrypted:true,readable:true},after:{ciphertextErased:true,words:null,metadataRetained:true}});
 
  });
  afterAll(async()=>{
