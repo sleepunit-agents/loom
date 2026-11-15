@@ -33,7 +33,7 @@ export function attribute(c: Change, settings: Attribution) {
   const value = { ...c }; delete value.agent;
   return { ...value, mine, ...(agent ? { agent } : {}) };
 }
-export function waitsOn(c: Change, rule?: Rule): { group: typeof groups[number]; words: string } {
+export function waitsOn(c: Pick<Change,'state'|'draft'|'conflicts'|'mergeable'|'agent'|'mine'> & {checks:Pick<Change['checks'],'state'>;review:Pick<Change['review'],'state'>}, rule?: Rule): { group: typeof groups[number]; words: string } {
   const result = (group: typeof groups[number], words: string) => ({ group, words });
   if (c.state !== 'open') return result('done', c.state === 'merged' ? 'Merged' : 'Closed');
   if (c.draft) return result('author','Draft');
