@@ -52,7 +52,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('executes prepared changes through their private approval cards',{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('prepared-changes');
-  expect(step.value.report.actions?.approvalPreparedChanges,JSON.stringify(step.value.report.actions)).toMatchObject({ok:true});
+  expect(step.value.actions?.approvalPreparedChanges,JSON.stringify(step.value.actions)).toMatchObject({ok:true});
  });
  it('follows conversation PR references to their linked task',{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('change-references');
