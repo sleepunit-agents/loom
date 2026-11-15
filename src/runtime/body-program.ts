@@ -33,6 +33,7 @@ export async function bodyProgram(input: {
   const stopBeats=async()=>{cancel?.();cancel=undefined;await pending;};
   const nativeAbort = new AbortController(), signal = AbortSignal.any([input.signal,nativeAbort.signal]);
   const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; incoming.length=0; };
+  const retire=async()=>{nativeAbort.abort();programTools?.close();secrets.close();erase();await tools?.close();await stopBeats();};
   input.signal.addEventListener('abort', erase, { once: true });
   try {
     if (input.args.length !== 1 || input.signal.aborted) throw new Error();
@@ -71,18 +72,19 @@ export async function bodyProgram(input: {
       }
       const words=bodyMailContext(item);if(words!==null)context.push(words);
     });
-    if (batch.stopRequested) { await stopBeats(); erase(); nativeAbort.abort(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
+    if (batch.stopRequested) { await retire(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
     if(signal.aborted)throw new Error();
     if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.status({state:'idle',work:''});return 0;}
     await pending;
     if(signal.aborted)throw new Error();
     const started = await report();
-    if (started.stopRequested) { await stopBeats(); erase(); nativeAbort.abort(); await client.status({state:'idle',work:'',seenStop:true}); return 0; }
+    if (started.stopRequested) { await retire(); await client.status({state:'idle',work:'',seenStop:true}); return 0; }
     if(bridge&&!incoming.length)throw new Error();
+    const replyTo=incoming.at(-1);
     if(!input.native){
       const privateRoot={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch};
       programTools=bodyProgramTools({...privateRoot,
-        onStop:()=>observe({stopRequested:true}),onStatus:value=>{if(value.state!=='working'&&value.state!=='waiting')throw new Error();state=value.state;work=value.work;}});
+        onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;}});
       tools=await bodySecretTools({...privateRoot,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});
     }
     if(signal.aborted)throw new Error();
@@ -91,22 +93,21 @@ export async function bodyProgram(input: {
     let answer: Awaited<ReturnType<typeof native>> | undefined;
     try { answer = await native(job, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }
     catch { if(!stopped) throw new Error(); }
-    finally { nativeAbort.abort(); programTools?.close(); await tools?.close(); await stopBeats(); }
+    finally { await retire(); }
     if(stopped && !input.signal.aborted) { await client.status({state:'idle',work:'',seenStop:true}); return 0; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
-    if(bridge)await client.bridgeReply({incoming:incoming.at(-1)!,text:answer.text,model:answer.model,outcome:'progressed'});
+    if(bridge)await client.bridgeReply({incoming:replyTo!,text:answer.text,model:answer.model,outcome:'progressed'});
     else await client.reply({ clientId: randomUUID(), words: answer.text, model: answer.model, outcome: 'progressed' });
     await client.status({ state: 'idle', work: '' });
     return 0;
   } catch {
-    nativeAbort.abort(); programTools?.close(); secrets.close(); erase();
-    await tools?.close(); await stopBeats();
+    await retire();
     if(stopped&&!unavailable&&!input.signal.aborted&&client){
       try{await client.status({state:'idle',work:'',seenStop:true});return 0;}catch{}
     }
     input.error('Body stopped: invalid input or unavailable execution\n'); return 1;
   }
-  finally { nativeAbort.abort(); programTools?.close(); secrets.close(); erase(); await tools?.close(); await stopBeats(); client?.close(); input.signal.removeEventListener('abort', erase); }
+  finally { await retire(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }

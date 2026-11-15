@@ -35,7 +35,11 @@ async function prepare(){
  const bytes=Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.invalid',job:'job',token}}));
  return{...fixture,token,bytes,source,sourceBuffers,value};
 }
-it.each(['finish','stop','held-heartbeat','overlapping-waits'] as const)('runs canonical tools in the actual default body: %s',async mode=>{
+function runDefault(fixture:Awaited<ReturnType<typeof prepare>>,io:Pick<Parameters<typeof bodyProgram>[0],'fetch'|'schedule'|'error'|'env'>){
+ return bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),stdin:async()=>fixture.bytes,signal:new AbortController().signal,clock:fixture.clock,...io});
+}
+it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-waits'] as const)('runs canonical tools in the actual default body: %s',async mode=>{
+ const held=mode.endsWith('-held'),stop=mode==='stop'||mode==='stop-held',failed=mode==='error-held';
  const fixture=await prepare(),errors=vi.fn(),cancel=vi.fn(),pipeBuffers:Buffer[]=[],statusInputs:unknown[]=[];
  let heartbeat!:()=>void,actorEnded!:()=>void,failure:unknown,killed=false;
  let endpoint:{url:string;headers:Record<string,string>}|undefined;
@@ -45,7 +49,8 @@ it.each(['finish','stop','held-heartbeat','overlapping-waits'] as const)('runs c
  let notifySecretWait!:()=>void;const secretWaiting=new Promise<void>(resolve=>{notifySecretWait=resolve;}),at=fixture.clock.at.bind(fixture.clock);
  vi.spyOn(fixture.clock,'at').mockImplementation((time,work)=>{if(time===fixture.clock.now()+1000)notifySecretWait();return at(time,work);});
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
-  for(const name of ['request_secret','use_secret','loom_commands','loom_command','loom_query'])expect(args).toContain('mcp__loom_secrets__'+name);
+  const names=args.slice(args.indexOf('--allowedTools')+1),nextFlag=names.findIndex(name=>name.startsWith('--'));
+  expect(names.slice(0,nextFlag<0?undefined:nextFlag)).toEqual(['request_secret','use_secret','loom_commands','loom_command','loom_query'].map(name=>'mcp__loom_secrets__'+name));
   expect(JSON.stringify({args,options})).not.toContain(fixture.token);
   let words='',ended=false,started=false;
   const control=new Writable({write(bytes,_encoding,next){pipeBuffers.push(bytes);endpoint=JSON.parse(bytes.toString()).mcpServers.loom_secrets;expect(bytes.includes(Buffer.from(fixture.token))).toBe(false);next();}});
@@ -77,19 +82,17 @@ it.each(['finish','stop','held-heartbeat','overlapping-waits'] as const)('runs c
      }
      expect(decoded(await model.callTool({name:'loom_command',arguments:{operation:'conversation.status',input:{state:'waiting',work:'Canonical waiting'},id:randomUUID()}}))).toMatchObject({ok:true});
      if(pendingSecret){fixture.root.writes.run(()=>fixture.root.services.secrets.requests.answer(pendingRequest!,'bob',true));fixture.clock.advance(1000);expect(decoded(await pendingSecret).encoding).toBe('base64');}
-     if(mode==='held-heartbeat')holdHeartbeat=true;
-     heartbeat();
-     if(mode==='stop'){
-      fixture.root.writes.run(()=>fixture.root.services.comms!.threads.requestStop(fixture.thread.id));
-      await model.callTool({name:'loom_command',arguments:{operation:'conversation.status',input:{state:'working',work:'Checking Stop'},id:randomUUID()}}).catch(()=>undefined);return;
-     }
      let pendingQuery:Promise<unknown>|undefined;
-     if(mode==='held-heartbeat'){
-      await beatEntered;holdQuery=true;
+     if(held){
+      holdHeartbeat=true;heartbeat();await beatEntered;holdQuery=true;
       pendingQuery=model.callTool({name:'loom_query',arguments:{query:'{agents{id}}'}}).catch(()=>undefined);await queryEntered;
+     }else if(!stop)heartbeat();
+     if(stop){
+      fixture.root.writes.run(()=>fixture.root.services.comms!.threads.requestStop(fixture.thread.id));
+      await model.callTool({name:'loom_command',arguments:{operation:'conversation.status',input:{state:'working',work:'Checking Stop'},id:randomUUID()}}).catch(()=>undefined);expect(killed).toBe(true);await pendingQuery;return;
      }
      const session=args[args.indexOf('--session-id')+1];
-     child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:'Used canonical tools privately'}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:'Used canonical tools privately'}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);
+     if(!failed)child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:'Used canonical tools privately'}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:'Used canonical tools privately'}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',failed?1:0);
      await pendingQuery;
     }finally{await model.close();}
    })().catch(error=>{if(!killed){failure=error;child.emit('close',1);}}).finally(actorEnded);
@@ -107,22 +110,22 @@ it.each(['finish','stop','held-heartbeat','overlapping-waits'] as const)('runs c
   }
   return fixture.root.http.request(new Request(url,init));
  };
- const running=bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),stdin:async()=>fixture.bytes,env:{ACCOUNT_PROFILE:'/account'},signal:new AbortController().signal,clock:fixture.clock,fetch:fetcher,schedule:{every:(_ms,callback)=>{heartbeat=callback;return cancel;}},error:errors});
- if(mode==='held-heartbeat'){
+ const running=runDefault(fixture,{env:{ACCOUNT_PROFILE:'/account'},fetch:fetcher,schedule:{every:(_ms,callback)=>{heartbeat=callback;return cancel;}},error:errors});
+ if(held){
   try{
    expect(await Promise.race([queryAborted.then(()=>true),running.then(()=>false)])).toBe(true);
    let ended=false;void running.then(()=>{ended=true;});await Promise.resolve();expect(ended).toBe(false);
    await expect(fetch(endpoint!.url,{method:'POST',headers:endpoint!.headers,body:'{}'})).rejects.toThrow();
   }finally{releaseHeartbeat();}
  }
- expect(await running).toBe(0);await actorFinished;if(failure)throw failure;
- expect(errors).not.toHaveBeenCalled();expect(cancel).toHaveBeenCalledOnce();
+ expect(await running).toBe(failed?1:0);await actorFinished;if(failure)throw failure;
+ expect(errors).toHaveBeenCalledTimes(failed?1:0);expect(cancel).toHaveBeenCalledOnce();
  expect(fixture.bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(fixture.sourceBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
  expect(fixture.source).toHaveBeenCalledTimes(mode==='overlapping-waits'?2:1);
- expect(statusInputs.filter(value=>JSON.stringify(value)===JSON.stringify({state:'waiting',work:'Canonical waiting'}))).toHaveLength(2);
- const replies=fixture.db.select().from(schema.turns).all().filter(row=>row.kind==='reply');expect(replies).toHaveLength(mode==='stop'?0:1);
- if(mode==='stop'){expect(killed).toBe(true);expect(statusInputs).toContainEqual({state:'idle',work:'',seenStop:true});expect(fixture.db.select().from(schema.threads).get()?.stopRequested).toBe(false);}
- else expect(replies[0]).toMatchObject({model:'observed',run:'job'});
+ expect(statusInputs.filter(value=>JSON.stringify(value)===JSON.stringify({state:'waiting',work:'Canonical waiting'}))).toHaveLength(mode==='stop'?1:2);
+ const replies=fixture.db.select().from(schema.turns).all().filter(row=>row.kind==='reply');expect(replies).toHaveLength(stop||failed?0:1);
+ if(stop){expect(killed).toBe(true);expect(statusInputs).toContainEqual({state:'idle',work:'',seenStop:true});expect(fixture.db.select().from(schema.threads).get()?.stopRequested).toBe(false);}
+ else if(!failed)expect(replies[0]).toMatchObject({model:'observed',run:'job'});
  expect(fixture.db.$client.serialize().includes(Buffer.from(fixture.token))).toBe(false);expect(fixture.db.$client.serialize().includes(Buffer.from(fixture.value))).toBe(false);
  await expect(fetch(endpoint!.url,{method:'POST',headers:endpoint!.headers,body:'{}'})).rejects.toThrow();
 });
@@ -138,7 +141,7 @@ it('retires the projection on listener setup failure before a held heartbeat set
   requests++;if(hold&&String(url).endsWith('/conversation/status')){hold=false;await new Promise<void>(resolve=>{release=resolve;});}
   return fixture.root.http.request(new Request(url,init));
  };
- const errors=vi.fn(),running=bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),stdin:async()=>fixture.bytes,env:{},signal:new AbortController().signal,clock:fixture.clock,fetch:fetcher,schedule:{every:(_ms,callback)=>{heartbeat=callback;return()=>{};}},error:errors});
+ const errors=vi.fn(),running=runDefault(fixture,{env:{},fetch:fetcher,schedule:{every:(_ms,callback)=>{heartbeat=callback;return()=>{};}},error:errors});
  try{
   expect(await Promise.race([aborted.then(()=>true),running.then(()=>false)])).toBe(true);
   const before=requests;expect(await captured!.call('loom_query',{query:'{agents{id}}'})).toMatchObject({isError:true});expect(requests).toBe(before);
