@@ -2,6 +2,7 @@ import { expect, it, vi } from 'vitest';
 import * as socketModule from './core/data/socket.js';
 import { Live } from './core/live/index.js';
 import Database from 'better-sqlite3';
+import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -84,6 +85,10 @@ it('mounts the same generated and four Memory projections on HTTP, ordinary sock
     expect(await ordinary).toEqual([{id:'read',type:'next',payload:expected},{id:'read',type:'complete'}]);
     const live=await f.open('owner',{},f.loom.url.replace('127.0.0.1','127.0.0.2'));
     expect(await observe(live)).toMatchObject({type:'next',payload:{data:{observe:{revision:1,patches:[{path:[],removed:false,value:expected.data}]}}}});
+    f.loom.operations.register({name:'fiction.renameTask',input:z.object({title:z.string()}),output:z.null(),write:true,may:()=>true,
+      run(ctx,input){ctx.db.prepare('UPDATE tasks SET title=? WHERE id=?').run(input.title,'work');ctx.changed('task','work');return null;}});
+    const committed=await message(live,()=>expect(f.loom.operations.call('direct',{kind:'member',id:'owner'},'fiction.renameTask',{title:'Changed by a committed operation'},'fiction-rename')).toEqual({ok:true,value:null}));
+    expect(committed).toMatchObject({payload:{data:{observe:{patches:[{path:['tasks',0,'title'],removed:false,value:'Changed by a committed operation'}]}}}});
     await f.knowledge.writePage({slug:'pump',title:'Changed fictional pump',domain:'pond',body:'Changed fictional hose'});
     const changed=await message(live,()=>f.loom.live.changed([{type:'mind.knowledge',id:'pump'}]));
     expect(JSON.stringify(changed)).toContain('Changed fictional pump');
@@ -139,14 +144,12 @@ it('disposes the socket, pending selection and change observer on listener shutd
   } finally {await f.close();vi.restoreAllMocks();}
 });
 
-it('disposes socket resources and the change observer when a later bind fails',async()=>{
-  const home=mkdtempSync(join(tmpdir(),'memory-socket-bind-failure-'));
-  const original=socketModule.dataSocket;
+function trackSocketResources() {
+  const original=socketModule.dataSocket,observeOriginal=Live.prototype.observe;
   const attachments: import('node:http').Server[]=[];
-  let disposal: ReturnType<typeof vi.spyOn>|undefined;
   let owned: Parameters<typeof socketModule.dataSocket>[0]|undefined;
+  let disposal: ReturnType<typeof vi.spyOn>|undefined;
   let observeChanges: (()=>void)|undefined;
-  const observeOriginal=Live.prototype.observe;
   const stops: ReturnType<typeof vi.fn>[]=[];
   vi.spyOn(Live.prototype,'observe').mockImplementation(function(this:Live,fn){
     const stop=vi.fn(observeOriginal.call(this,fn));stops.push(stop);
@@ -158,38 +161,28 @@ it('disposes socket resources and the change observer when a later bind fails',a
     vi.spyOn(socket,'attach').mockImplementation(server=>{attachments.push(server);return attach(server);});
     disposal=vi.spyOn(socket,'close');return socket;
   });
-  try {
-    await expect(startLoom({home,next:true,staging:true,clock:new FakeClock(),host:['127.0.0.1','invalid host name'],stdout:()=>{}})).rejects.toThrow();
-    expect(attachments).toHaveLength(2);
-    expect(attachments.every(server=>!server.listening && server.listenerCount('upgrade')===0)).toBe(true);
-    expect(disposal).toHaveBeenCalledOnce();
-    expect(stops.length).toBeGreaterThan(0);expect(stops.at(-1)).toHaveBeenCalledOnce();
-    const changed=vi.spyOn(owned!.live,'changed');observeChanges!();expect(changed).not.toHaveBeenCalled();
-    expect(()=>owned!.live.watch({schema:owned!.schema({kind:'member',id:'owner'}),query:'{ tasks { id } }',valid:()=>true})).toThrow('Live data access ended');
-  } finally {vi.restoreAllMocks();rmSync(home,{recursive:true,force:true});}
-});
-
-
-it('cleans acquired socket resources when web asset initialization throws before binding',async()=>{
-  const home=mkdtempSync(join(tmpdir(),'memory-socket-assets-failure-'));
-  writeFileSync(join(home,'assets'),'Fictional invalid assets entry');
-  const original=socketModule.dataSocket;
-  let owned: Parameters<typeof socketModule.dataSocket>[0]|undefined;
-  let disposal: ReturnType<typeof vi.spyOn>|undefined;
-  let observeChanges: (()=>void)|undefined;
-  const observeOriginal=Live.prototype.observe;
-  const stops: ReturnType<typeof vi.fn>[]=[];
-  vi.spyOn(Live.prototype,'observe').mockImplementation(function(this:Live,fn){
-    const stop=vi.fn(observeOriginal.call(this,fn));stops.push(stop);
-    observeChanges=()=>this.changed([{type:'core.access',id:'after-assets-failure'}]);return stop;
-  });
-  vi.spyOn(socketModule,'dataSocket').mockImplementation(options=>{
-    owned=options;const socket=original(options);disposal=vi.spyOn(socket,'close');return socket;
-  });
-  try {
-    await expect(startLoom({home,next:true,staging:true,clock:new FakeClock(),webRoot:home,stdout:()=>{}})).rejects.toThrow(/ENOTDIR/);
+  return {attachments,expectDisposed(){
     expect(disposal).toHaveBeenCalledOnce();expect(stops.at(-1)).toHaveBeenCalledOnce();
     const changed=vi.spyOn(owned!.live,'changed');observeChanges!();expect(changed).not.toHaveBeenCalled();
     expect(()=>owned!.live.watch({schema:owned!.schema({kind:'member',id:'owner'}),query:'{ tasks { id } }',valid:()=>true})).toThrow('Live data access ended');
+  }};
+}
+
+it('disposes socket resources and the change observer when a later bind fails',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'memory-socket-bind-failure-')),tracked=trackSocketResources();
+  try {
+    await expect(startLoom({home,next:true,staging:true,clock:new FakeClock(),host:['127.0.0.1','invalid host name'],stdout:()=>{}})).rejects.toThrow();
+    expect(tracked.attachments).toHaveLength(2);
+    expect(tracked.attachments.every(server=>!server.listening && server.listenerCount('upgrade')===0)).toBe(true);
+    tracked.expectDisposed();
+  } finally {vi.restoreAllMocks();rmSync(home,{recursive:true,force:true});}
+});
+
+it('cleans acquired socket resources when web asset initialization throws before binding',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'memory-socket-assets-failure-')),tracked=trackSocketResources();
+  writeFileSync(join(home,'assets'),'Fictional invalid assets entry');
+  try {
+    await expect(startLoom({home,next:true,staging:true,clock:new FakeClock(),webRoot:home,stdout:()=>{}})).rejects.toThrow(/ENOTDIR/);
+    expect(tracked.attachments).toHaveLength(0);tracked.expectDisposed();
   } finally {vi.restoreAllMocks();rmSync(home,{recursive:true,force:true});}
 });
