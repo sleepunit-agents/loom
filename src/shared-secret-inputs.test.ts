@@ -1,3 +1,5 @@
+import {httpWorkerControl} from './runtime/worker-http.js';
+import {SecretPrivateInputs} from './pieces/secrets/private-inputs.js';
 import {privateSecretClient} from './pieces/secrets/private-client.js';
 import Database from 'better-sqlite3';
 import {createHash,randomUUID} from 'node:crypto';
@@ -5,7 +7,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {createDataSchema} from './core/data/database.js';
 import {FakeClock} from './core/clock.js';
-import {members,agents,boxes,jobs,secrets,secretChanges,secretUses,secretGrants,tokens,sessions,agentRunSettings,agentHouseSecrets} from './core/data/schema.js';
+import {members,agents,boxes,jobs,secrets,secretChanges,secretUses,secretGrants,tokens,sessions,agentRunSettings,agentHouseSecrets,secretWriteJournal} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 const clean:(()=>unknown|Promise<unknown>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const raw={body:'a'.repeat(64),other:'b'.repeat(64),owner:'c'.repeat(64),runner:'d'.repeat(64),foreign:'e'.repeat(64),agent:'f'.repeat(64),cookie:'g'.repeat(64)};
@@ -55,27 +57,83 @@ it('returns no repository input for a public repository and refuses changed clai
  const f=fixture();f.db.update(agentRunSettings).set({repositorySecret:null}).run();expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(204);f.db.update(agentRunSettings).set({repositorySecret:'REPO',houseRepository:'changed'}).run();expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(403);expect(f.source.read).not.toHaveBeenCalled();
 });
 it('refuses confirmation before dispatch completes and refuses another body confirmation',async()=>{
- const f=fixture();f.grant();let release!:(bytes:Buffer)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});const pending=f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'});await started;const use=f.db.select().from(secretUses).get()!.id;expect((await f.post('confirm',{use})).status).toBe(409);expect((await f.post('confirm',{use},raw.other)).status).toBe(403);release(Buffer.from('PRIVATE_SOURCE_VALUE'));const response=await pending;expect(response.status).toBe(200);expect((await f.post('confirm',{use})).status).toBe(200);
+ const f=fixture();f.grant();let release!:(bytes:Awaited<ReturnType<typeof f.source.read>>)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});const pending=f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'});await started;const use=f.db.select().from(secretUses).get()!.id;expect((await f.post('confirm',{use})).status).toBe(409);expect((await f.post('confirm',{use},raw.other)).status).toBe(403);release(Buffer.from('PRIVATE_SOURCE_VALUE'));const response=await pending;expect(response.status).toBe(200);expect((await f.post('confirm',{use})).status).toBe(200);
 });
 it('rechecks grants after the holder await, erases rejected bytes and never replays a failed attempt',async()=>{
- const f=fixture();f.grant();let release!:(bytes:Buffer)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});const input={kind:'request',id:randomUUID(),secret:'TOKEN'},pending=f.post('read',input);await started;f.root.writes.run(()=>f.db.delete(secretGrants).run());const bytes=Buffer.from('PRIVATE_SOURCE_VALUE');release(bytes);const response=await pending;expect(response.status).toBe(503);expect(bytes.every(byte=>byte===0)).toBe(true);expect(f.db.select().from(secretUses).get()?.state).toBe('failed');f.grant();expect((await f.post('read',input)).status).toBe(409);expect(f.source.read).toHaveBeenCalledOnce();
+ const f=fixture();f.grant();let release!:(bytes:Awaited<ReturnType<typeof f.source.read>>)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});const input={kind:'request',id:randomUUID(),secret:'TOKEN'},pending=f.post('read',input);await started;f.root.writes.run(()=>f.db.delete(secretGrants).run());const bytes=Buffer.from('PRIVATE_SOURCE_VALUE');release(bytes);const response=await pending;expect(response.status).toBe(503);expect(bytes.every(byte=>byte===0)).toBe(true);expect(f.db.select().from(secretUses).get()?.state).toBe('failed');f.grant();expect((await f.post('read',input)).status).toBe(409);expect(f.source.read).toHaveBeenCalledOnce();
 });
 it('bounds holder acquisition and erases a late value after root close and SQLite close',async()=>{
- const f=fixture();f.grant();let release!:(bytes:Buffer)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});const pending=f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'});await started;const closing=f.root.close();f.clock.advance(5000);await closing;await pending;f.client.close();const bytes=Buffer.from('PRIVATE_SOURCE_VALUE');release(bytes);await f.source.read.mock.results[0].value;await Promise.resolve();expect(bytes.every(byte=>byte===0)).toBe(true);
+ const f=fixture();f.grant();let release!:(bytes:Awaited<ReturnType<typeof f.source.read>>)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});const pending=f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'});await started;const closing=f.root.close();f.clock.advance(5000);await closing;await pending;f.client.close();const bytes=Buffer.from('PRIVATE_SOURCE_VALUE');release(bytes);await f.source.read.mock.results[0].value;await Promise.resolve();expect(bytes.every(byte=>byte===0)).toBe(true);
 });
 
 it('the recipient client receives and confirms real body and pre-build inputs without common value receipts',async()=>{
- const f=fixture();f.grant();f.rule('REPO');const fetch=vi.fn<typeof globalThis.fetch>((url,options)=>f.root.http.request(String(url),options));const abort=new AbortController();
+ const f=fixture();f.grant();f.rule('REPO');const fetch=vi.fn<typeof globalThis.fetch>(async(url,options)=>f.root.http.request(String(url),options));const abort=new AbortController();
  const body=privateSecretClient({url:'https://loom.test',token:raw.body,signal:abort.signal,clock:f.clock,fetch}),worker=privateSecretClient({url:'https://loom.test',token:raw.runner,signal:abort.signal,clock:f.clock,fetch});
  try{const value=await body.granted('TOKEN');expect(value.toString()).toBe('PRIVATE_SOURCE_VALUE');value.fill(0);const repo=await worker.repository('build');expect(repo?.toString()).toBe('PRIVATE_SOURCE_VALUE');repo?.fill(0);expect(f.db.select().from(secretUses).all().map(row=>row.state)).toEqual(['released','released']);expect(f.client.serialize().includes(Buffer.from('PRIVATE_SOURCE_VALUE'))).toBe(false);for(const [,options] of fetch.mock.calls)expect(options?.body).not.toContain('PRIVATE_SOURCE_VALUE');}finally{body.close();worker.close();}
 });
 it('the startup recipient erases already-confirmed buffers when a later input fails',async()=>{
  const f=fixture();f.rule();f.rule('REPO');f.db.insert(agentHouseSecrets).values({agent:'art',alias:'Z_REPO',secret:'REPO'}).run();const original=f.source.read.getMockImplementation()!;f.source.read.mockImplementation(async name=>{if(name==='REPO')throw Error('PRIVATE source diagnostic');return original(name);});
- const values:Buffer[]=[],concat=Buffer.concat;const spy=vi.spyOn(Buffer,'concat').mockImplementation((list,total)=>{const result=concat(list,total);if(result.toString()==='PRIVATE_SOURCE_VALUE')values.push(result);return result;});const recipient=privateSecretClient({url:'https://loom.test',token:raw.body,signal:new AbortController().signal,clock:f.clock,fetch:(url,options)=>f.root.http.request(String(url),options)});
+ const values:Buffer[]=[],concat=Buffer.concat;const spy=vi.spyOn(Buffer,'concat').mockImplementation((list,total)=>{const result=concat(list,total);if(result.toString()==='PRIVATE_SOURCE_VALUE')values.push(result);return result;});const recipient=privateSecretClient({url:'https://loom.test',token:raw.body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,options)=>f.root.http.request(String(url),options)});
  try{await expect(recipient.startup()).rejects.toThrow(/^Private secret input unavailable$/);expect(values.length).toBeGreaterThan(0);expect(values.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.db.select().from(secretUses).all().map(row=>row.state)).toEqual(['released','failed']);}finally{recipient.close();spy.mockRestore();}
 });
 it('recipient close erases bytes waiting for an uncertain metadata confirmation and returns no value',async()=>{
  const f=fixture();f.grant();let entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});const values:Buffer[]=[],concat=Buffer.concat;const spy=vi.spyOn(Buffer,'concat').mockImplementation((list,total)=>{const result=concat(list,total);if(result.toString()==='PRIVATE_SOURCE_VALUE')values.push(result);return result;});
- const recipient=privateSecretClient({url:'https://loom.test',token:raw.body,signal:new AbortController().signal,clock:f.clock,fetch:(url,options)=>{if(String(url).endsWith('/confirm')){entered();return new Promise<Response>(()=>{});}return f.root.http.request(String(url),options);}});
+ const recipient=privateSecretClient({url:'https://loom.test',token:raw.body,signal:new AbortController().signal,clock:f.clock,fetch:async(url,options)=>{if(String(url).endsWith('/confirm')){entered();return new Promise<Response>(()=>{});}return f.root.http.request(String(url),options);}});
  try{const pending=recipient.granted('TOKEN'),refused=expect(pending).rejects.toThrow(/^Private secret input unavailable$/);await started;expect(values.some(bytes=>bytes.some(byte=>byte!==0))).toBe(true);recipient.close();expect(values.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);await refused;expect(f.db.select().from(secretUses).get()?.state).toBe('started');expect(f.source.read).toHaveBeenCalledOnce();}finally{recipient.close();spy.mockRestore();}
+});
+
+it.each(['expiry','prepared','token','job','alias','repository'] as const)('rejects %s drift across the holder await and erases returned bytes',async drift=>{
+ const f=fixture();f.grant();f.rule();f.rule('REPO');let release!:(bytes:Awaited<ReturnType<typeof f.source.read>>)=>void,entered!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;});f.source.read.mockImplementation(()=>{entered();return new Promise(resolve=>{release=resolve;});});
+ const input=drift==='alias'?{kind:'startup',alias:'API_TOKEN'}:drift==='repository'?{kind:'repository',job:'build'}:{kind:'request',id:randomUUID(),secret:'TOKEN'};
+ const pending=f.post('read',input,drift==='repository'?raw.runner:raw.body);await started;
+ f.root.writes.run(()=>{
+  if(drift==='expiry')f.db.update(secretGrants).set({expiresAt:new Date(f.clock.now()).toISOString()}).run();
+  if(drift==='prepared')f.db.insert(secretWriteJournal).values({id:randomUUID(),secret:'TOKEN',member:'owner',inputHash:'synthetic',operation:'replace',state:'prepared',startedAt:new Date(f.clock.now()).toISOString()}).run();
+  if(drift==='token')f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(raw.body))).run();
+  if(drift==='job')f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'body')).run();
+  if(drift==='alias')f.db.update(agentHouseSecrets).set({secret:'REPO'}).run();
+  if(drift==='repository')f.db.update(agentRunSettings).set({houseBranch:'changed'}).run();
+ });const bytes=Buffer.from('PRIVATE_SOURCE_VALUE');release(bytes);expect((await pending).status).toBe(503);expect(bytes.every(byte=>byte===0)).toBe(true);expect(f.db.select().from(secretUses).get()?.state).toBe('failed');
+});
+it('an attempt id cannot be reused for a different secret even with both grants',async()=>{
+ const f=fixture();f.grant();f.grant('REPO');const id=randomUUID();expect((await f.post('read',{kind:'request',id,secret:'TOKEN'})).status).toBe(200);expect((await f.post('read',{kind:'request',id,secret:'REPO'})).status).toBe(409);expect(f.source.read).toHaveBeenCalledOnce();
+});
+it('does not confirm a captured handoff after its five minute eligibility expires',async()=>{
+ const f=fixture();f.grant();const response=await f.post('read',{kind:'request',id:randomUUID(),secret:'TOKEN'}),use=response.headers.get('x-loom-secret-use');expect(response.status).toBe(200);f.clock.advance(300000);expect(()=>f.root.services.secrets.inputs.confirm('body',use!,()=>true)).toThrow('Private secret input unavailable');expect(f.db.select().from(secretUses).get()?.state).toBe('started');
+});
+
+it('refuses dispatch inside an outer transaction before reading or writing an audit',async()=>{
+ const f=fixture();f.grant();let pending!:Promise<unknown>;
+ f.db.transaction(()=>{pending=f.root.services.secrets.inputs.dispatch({job:'body',secret:'TOKEN',attempt:'synthetic'},()=>true,()=>undefined);});
+ await expect(pending).rejects.toThrow('Private secret input unavailable');expect(f.source.read).not.toHaveBeenCalled();expect(f.db.select().from(secretUses).all()).toEqual([]);
+});
+it('a restarted engine cannot confirm or redispatch an earlier unconfirmed handoff',async()=>{
+ const f=fixture();f.grant();const id=randomUUID(),response=await f.post('read',{kind:'request',id,secret:'TOKEN'}),use=response.headers.get('x-loom-secret-use')!;expect(response.status).toBe(200);
+ const restarted=new SecretPrivateInputs(f.db,f.clock,f.source,write=>f.root.writes.run(write).value);
+ try{expect(()=>restarted.confirm('body',use,()=>true)).toThrow('Private secret input unavailable');await expect(restarted.dispatch({job:'body',secret:'TOKEN',attempt:'request:'+id},()=>true,()=>undefined)).rejects.toThrow('Private secret input unavailable');expect(f.source.read).toHaveBeenCalledOnce();expect(f.db.select().from(secretUses).get()?.state).toBe('started');}finally{await restarted.close();}
+});
+it('a configured repository and house alias alone never grant its credential',async()=>{
+ const f=fixture();expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(403);expect(f.source.read).not.toHaveBeenCalled();expect(f.db.select().from(secretUses).all()).toEqual([]);
+});
+
+it('the actual HTTP worker control receives and acknowledges the configured pre-build credential',async()=>{
+ const f=fixture();f.rule('REPO');const fetch=vi.fn<typeof globalThis.fetch>(async(url,options)=>f.root.http.request(String(url),options));const signal=new AbortController().signal;
+ const control=httpWorkerControl({url:'https://loom.test',token:raw.runner,signal,timeoutMs:30000,fetch});
+ const bytes=await control.repositoryInput!('build',signal);expect(Buffer.from(bytes!).toString()).toBe('PRIVATE_SOURCE_VALUE');bytes!.fill(0);expect(f.db.select().from(secretUses).get()).toMatchObject({job:'build',secret:'REPO',state:'released'});expect(fetch.mock.calls.map(([url])=>String(url))).toEqual(['https://loom.test/api/secrets/private/read','https://loom.test/api/secrets/private/confirm']);
+});
+
+it('a general grant cannot substitute for repository startup permission or undo its revocation',async()=>{
+ const f=fixture();f.grant('REPO','build');expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(403);f.rule('REPO');const [grant]=f.root.services.secrets.inputs.startGrants('build');f.root.writes.run(()=>f.root.services.secrets.requests.revoke(grant.request!));expect((await f.post('read',{kind:'repository',job:'build'},raw.runner)).status).toBe(403);expect(f.source.read).not.toHaveBeenCalled();
+});
+
+it.each([true,false])('the repository recipient waits on one real Inbox answer before build (allow=%s)',async allow=>{
+ const f=fixture();f.root.writes.run(()=>f.root.services.secrets.requests.setRule({secret:'REPO',answer:'ask',minutes:5,agents:[{agent:'art',when:'at_start'}]}));
+ let entered!:()=>void;const waiting=new Promise<void>(resolve=>{entered=resolve;});
+ const fetch=vi.fn<typeof globalThis.fetch>(async(url,options)=>{const response=await f.root.http.request(String(url),options);if(response.status===423)entered();return response;});
+ const recipient=privateSecretClient({url:'https://loom.test',token:raw.runner,signal:new AbortController().signal,clock:f.clock,fetch});
+ try{const pending=recipient.repository('build');const outcome=pending.then(value=>({value,error:false}),()=>({value:undefined,error:true}));await waiting;for(let i=0;i<12;i++)await Promise.resolve();expect(f.source.read).not.toHaveBeenCalled();expect(f.db.select().from(secretUses).all()).toEqual([]);
+ const request=f.root.services.secrets.inputs.requests.grantAtStart('build');expect(request).toEqual([]);
+ const id='q-start-'+createHash('sha256').update(JSON.stringify(['build','REPO'])).digest('hex');f.root.writes.run(()=>f.root.services.secrets.requests.answer(id,'owner',allow));f.clock.advance(1000);
+ const result=await outcome;expect(result.error).toBe(!allow);if(allow){expect(result.value?.toString()).toBe('PRIVATE_SOURCE_VALUE');result.value?.fill(0);expect(f.source.read).toHaveBeenCalledOnce();}else expect(f.source.read).not.toHaveBeenCalled();expect(fetch.mock.calls.filter(([url])=>String(url).endsWith('/read'))).toHaveLength(2);
+ }finally{recipient.close();}
 });

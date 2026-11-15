@@ -3,6 +3,7 @@
 import {randomUUID} from 'node:crypto';
 import {z} from 'zod';
 import {clock as systemClock,type Clock} from '../../core/clock.js';
+class PendingRepository extends Error {}
 const unavailable=()=>new Error('Private secret input unavailable');
 const aliases=z.object({aliases:z.array(z.object({alias:z.string().min(1).max(200)}).strict()).max(128)}).strict();
 export function privateSecretClient(options:{url:string;token:string;signal:AbortSignal;clock?:Clock;fetch?:typeof fetch;timeoutMs?:number}){
@@ -23,7 +24,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
   let stopped!:()=>void;
   const cancelled=new Promise<never>((_resolve,reject)=>{stopped=()=>reject(unavailable());abort.signal.addEventListener('abort',stopped,{once:true});});
   try{const value=await Promise.race([work(current,abort.signal),cancelled]);if(!current())throw unavailable();return value;}
-  catch{throw unavailable();}
+  catch(error){if(error instanceof PendingRepository)throw error;throw unavailable();}
   finally{cancel();abort.signal.removeEventListener('abort',stopped);options.signal.removeEventListener('abort',stop);controllers.delete(abort);abort.abort();}
  }
  async function post(path:string,input:object,current:()=>boolean,signal:AbortSignal,limit:number):Promise<{bytes:Buffer;response:Response}>{
@@ -34,6 +35,7 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
   const cleanup=()=>{for(const chunk of chunks)chunk.fill(0);try{if(reader)void reader.cancel().catch(()=>{});else void response.body?.cancel().catch(()=>{});}catch{}};
   signal.addEventListener('abort',cleanup,{once:true});
   try{
+   if(current()&&!response.redirected&&response.status===423&&path==='read'&&(input as {kind?:string}).kind==='repository')throw new PendingRepository();
    if(!current()||response.redirected||!response.ok)throw unavailable();
    if(response.status===204)return {bytes:Buffer.alloc(0),response};
    reader=response.body?.getReader();if(!reader)throw unavailable();
@@ -53,11 +55,22 @@ export function privateSecretClient(options:{url:string;token:string;signal:Abor
    const ack=await post('confirm',{use,...(job?{job}:{})},current,signal,4096);
    try{if(!z.object({confirmed:z.literal(true)}).strict().safeParse(JSON.parse(ack.bytes.toString('utf8'))).success||!current())throw unavailable();}finally{ack.bytes.fill(0);}
    owned.delete(value);return value;
-  });}catch{value?.fill(0);if(value)owned.delete(value);throw unavailable();}
+  });}catch(error){value?.fill(0);if(value)owned.delete(value);if(error instanceof PendingRepository)throw error;throw unavailable();}
  }
  return {
   granted(secret:string,id=randomUUID()){return read({kind:'request',secret,id}) as Promise<Buffer>;},
-  repository(job:string){return read({kind:'repository',job},job,true);},
+  async repository(job:string):Promise<Buffer|undefined>{
+   for(;;){try{return await read({kind:'repository',job},job,true);}catch(error){
+    if(!(error instanceof PendingRepository))throw error;
+    // Only an authenticated metadata-pending response is retryable. No value
+    // attempt has started; a lost read or confirmation is never retried.
+    await attempt(async(current,signal)=>{
+     let cancel!:()=>void;const stop=()=>cancel();
+     try{await new Promise<void>(resolve=>{cancel=clock.at(clock.now()+Math.min(1000,Math.max(1,Math.floor(timeout/2))),resolve);signal.addEventListener('abort',stop,{once:true});});if(!current())throw unavailable();}
+     finally{cancel();signal.removeEventListener('abort',stop);}
+    });
+   }}
+  },
   async startup():Promise<Map<string,Buffer>>{
    const result=new Map<string,Buffer>();batches.add(result);let total=0;
    try{

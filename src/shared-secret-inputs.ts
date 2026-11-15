@@ -1,3 +1,4 @@
+import {startupRequestId} from './pieces/secrets/requests.js';
 /** Private effect door, separate from common operation/result serialization.
  * Owners can write values in Settings; only the actual granted job receives
  * bytes here. Runtime parent access is limited to its configured repo input. */
@@ -5,7 +6,7 @@ import {Hono} from 'hono';
 import {and,eq} from 'drizzle-orm';
 import {z} from 'zod';
 import type {DataDatabase} from './core/data/database.js';
-import {jobs,agentHouseSecrets,agentRunSettings} from './core/data/schema.js';
+import {jobs,agentHouseSecrets,agentRunSettings,secretRequests} from './core/data/schema.js';
 import type {sharedCredentials} from './shared-credentials.js';
 import {SecretPrivateInputs,PrivateInputError} from './pieces/secrets/private-inputs.js';
 import {secretName} from './pieces/secrets/input.js';
@@ -70,7 +71,8 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
     return !!now&&now.houseRepository===job.houseRepository&&now.houseFile===job.houseFile&&now.houseBranch===job.houseBranch&&now.repositorySecret===row.repositorySecret;
    };
    if(!repositoryCurrent())throw new PrivateInputError('denied');
-   inputs.startGrants(job.id);secret=row.repositorySecret;attempt='repository';current=()=>selected.current()&&repositoryCurrent();
+   inputs.startGrants(job.id);secret=row.repositorySecret;attempt='repository';current=()=>selected.current()&&repositoryCurrent()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret));
+   if(selected.current()&&repositoryCurrent()&&!current()&&db.select().from(secretRequests).where(eq(secretRequests.id,startupRequestId(job.id,secret))).get()?.state==='pending')return c.json({pending:true},423);
   }
   if(!current())throw new PrivateInputError('denied');
   return inputs.dispatch({job:job.id,secret,attempt},current,(use,bytes)=>{const copy=Uint8Array.from(bytes);try{return new Response(copy,{

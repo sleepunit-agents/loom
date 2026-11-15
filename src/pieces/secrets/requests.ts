@@ -95,10 +95,10 @@ export class SecretRequests {
     });
   }
 
-  grantFor(secret: string, agent: string, job?: string): typeof secretGrants.$inferSelect | undefined {
+  grantFor(secret: string, agent: string, job?: string, request?: string): typeof secretGrants.$inferSelect | undefined {
     if (!secretHasValue(this.db, secret)) return;
     const at = this.now();
-    return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent), sql`julianday(${secretGrants.expiresAt}) > julianday(${at})`, sql`julianday(${secretGrants.grantedAt}) <= julianday(${at})`, or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
+    return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent), request ? eq(secretGrants.request, request) : undefined, sql`julianday(${secretGrants.expiresAt}) > julianday(${at})`, sql`julianday(${secretGrants.grantedAt}) <= julianday(${at})`, or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
   }
 
   /** Startup permissions use durable requests, so expiry, denial and explicit

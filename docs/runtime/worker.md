@@ -37,7 +37,13 @@ Worker-local command children receive only the configured environment; the worke
 are not inherited. Keep the configuration and token file private.
 
 The builder receives one JSON line on stdin with `job` (the id) and `house`
-(`repository`, `file`, `branch`). It writes only `{"build":"<artifact>"}` to
+(`repository`, `file`, `branch`). When the configured repository needs a secret,
+loom checks the assigned starting worker and its startup permission, then sends
+`repositoryInput: {encoding: "base64", value: "…"}` on that same private stdin.
+The builder decodes it for repository access and must not print or persist it.
+It is absent for public repositories. Credentials never enter command arguments,
+the assignment, build results or environment; the worker erases its input buffer
+after the build settles. It writes only `{"build":"<artifact>"}` to
 stdout, with diagnostics on stderr, and exits zero. Build stdout is limited to
 64 KiB. The runner receives one JSON line with `job` (the full assignment) and
 `build`, after loom acknowledges that the process is running. The assignment
