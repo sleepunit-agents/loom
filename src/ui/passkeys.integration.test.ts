@@ -19,7 +19,7 @@ import { createConversationTables } from '../backends/conversations.js';
 import { closeAllBackends } from '../backends/index.js';
 import { agentDir, createToken, isLive as isLiveTok, loadHousehold, loadTokens, removeMember, revokeToken, type Household } from '../household.js';
 import { migratePasskeys, PasskeyTokenLeft, passkeyToken, removePasskey } from './passkey-tokens.js';
-import { runToken } from '../cli/household.js';
+import { revokeTokenAndPasskeys } from './passkey-tokens.js';
 
 const TOKEN = 'passkey-test-token';
 const HOST = 'loom.test';
@@ -544,11 +544,7 @@ describe('passkeys in a household', () => {
     const [a, b] = [new Device(), new Device()];
     await addPasskey(cookie, a, 'A');
     await addPasskey(cookie, b, 'B');
-    const out: string[] = [];
-    const io = { stdout: (x: string) => out.push(x), stderr: (x: string) => out.push(x), env: process.env } as unknown as Parameters<typeof runToken>[1];
-    // `loom token revoke` keeps them, and says so.
-    expect(await runToken(['revoke', LINK_TOKEN], io)).toBe(0);
-    expect(out.join('')).toMatch(/2 passkeys made from it keep working/);
+    expect(revokeTokenAndPasskeys(h,LINK_TOKEN,false,false).passkeys).toBe(2);
     expect((await passkeySignIn(a)).status).toBe(200);
     // A pasted token's passkeys, taken with it.
     const pasted = createToken(h, { role: { kind: 'owner' }, label: 'laptop' }).token;
@@ -556,9 +552,7 @@ describe('passkeys in a household', () => {
     const c = new Device();
     await addPasskey(viaPaste, c, 'C');
     const cToken = sessionStore(h.home).passkeys().find((k) => k.label === 'C')!.tokenLabel!;
-    out.length = 0;
-    expect(await runToken(['revoke', 'laptop', '--with-passkeys'], io)).toBe(0);
-    expect(out.join('')).toMatch(/Removed the passkey made from it/);
+    expect(revokeTokenAndPasskeys(h,'laptop',true,false).passkeys).toBe(1);
     expect(sessionStore(h.home).passkeys().map((k) => k.label).sort()).toEqual(['A', 'B']);
     expect(tokenOf(cToken)?.revoked).toBeTruthy();
     expect((await passkeySignIn(c)).status).toBe(401);

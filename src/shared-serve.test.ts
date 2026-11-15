@@ -22,7 +22,7 @@ it('serves the built desk on the actual shared listener while keeping API failur
   expect(await (await fetch(app.url+'/app/assets/app.js')).text()).toBe('public fixture');
   const denied=await fetch(app.url+'/graphql',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:'{ agents { id } }'})});
   expect(denied.status).toBe(401);expect(await denied.text()).not.toContain('Shared desk entry');
-  for(const path of ['/api/missing','/live','/faces/missing/manifest.json','/app/missing.js'])expect((await fetch(app.url+path)).status).toBe(404);
+  for(const path of ['/api/missing','/live','/faces/missing/manifest.json','/pixel-icons/home.png','/pixel-icons','/app/missing.js'])expect((await fetch(app.url+path)).status).toBe(404);
   const post=await fetch(app.url+'/p/home-preview',{method:'POST'});expect(post.status).toBe(404);
   expect((await fetch(app.url+'/manifest.webmanifest')).headers.get('content-type')).toContain('manifest');
   expect((await fetch(app.url+'/sw.js')).headers.get('service-worker-allowed')).toBe('/');
