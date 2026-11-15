@@ -6,13 +6,15 @@ import type { DataDatabase } from '../../core/data/database.js';
 import { bridgeConnections, bridgeChannelFilters, bridgeChannels, bridgePeople, bridgeSends } from '../../core/data/schema.js';
 const text=z.string().trim().min(1).max(200), platform=z.enum(['discord','slack']);
 const address={platform,workspace:text};
-export const bridgeSetting=z.discriminatedUnion('action',[
+export const bridgeConfiguration=z.discriminatedUnion('action',[
  z.object({action:z.literal('connection'),id:text,platform,agent:text,workspace:text,botUser:text,tokenSecret:text,appSecret:text.nullable(),enabled:z.boolean(),only:z.array(text).max(200),ignore:z.array(text).max(200)}).strict(),
  z.object({action:z.literal('disconnect'),id:text}).strict(),
  z.object({action:z.literal('channel'),...address,channel:text,answers:text,botsMayTalk:z.boolean()}).strict(),
  z.object({action:z.literal('removeChannel'),...address,channel:text}).strict(),
  z.object({action:z.literal('person'),...address,user:text,member:text}).strict(),
  z.object({action:z.literal('removePerson'),...address,user:text}).strict(),
+]);
+export const bridgeSetting=z.discriminatedUnion('action',[...bridgeConfiguration.options,
  z.object({action:z.literal('review'),id:text,decision:z.enum(['release','dismiss'])}).strict(),
 ]);
 export class BridgeSettings {
