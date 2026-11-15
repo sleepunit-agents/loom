@@ -1,12 +1,13 @@
+import { useReadingVisible } from '../../data/visibility';
+import { memberOperation } from '../../data/operation';
 import { stamp } from './time';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { call, callOnce, type Call, type CallState, type Snapshot } from '../../data';
 import { Error, Loading, Button, Textarea } from '../../kit';
 import { commsThreadPath, isNotice, decisionLink, safeHref, type Ask, type Answer } from './model';
 import type { ReplyDraft } from './drafts';
-import { useQuery } from '../../data/query';
 import { InboxView, type InboxActions } from '../inbox-view';
-import { inboxSelection, inboxPageSize, inboxSourcePath, retainedInboxItem } from './inbox-query';
+import { inboxSelection, useInboxSelection, inboxPageSize, inboxSourcePath, retainedInboxItem } from './inbox-query';
 const idle: CallState<unknown> = { pending:false, status:'done' };
 const noop = () => () => {};
 function useCall<T>(request?: Call<T>) {
@@ -101,7 +102,8 @@ export function AskReader({ ask, snapshot, go, initialConfirmation, guard: share
   </article>;
 }
 const inboxBase = '/p/inbox-preview';
-export default function InboxApp({ path: shellPath, go }: { path?: string; go?: (path: string) => void } = {}) {
+export default function InboxApp({ path: shellPath, go, visible = true }: { path?: string; go?: (path: string) => void; visible?: boolean } = {}) {
+  const readingVisible = useReadingVisible(visible);
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? inboxBase : location.pathname);
   const [folder, setFolder] = useState('needs'), [search, setSearch] = useState(''), [offset, setOffset] = useState(0);
   const [now, setNow] = useState(Date.now);
@@ -109,8 +111,8 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   let selected: string | undefined;
   try { selected = path.includes('/ask/') ? decodeURIComponent(path.slice(path.indexOf('/ask/') + 5)) : undefined; } catch { /* Invalid routes select nothing. */ }
   const selection = useMemo(() => inboxSelection(folder, search, offset, selected), [folder, search, offset, selected]);
-  const reading = useQuery(selection), live = reading.status === 'live';
-  const status = reading.status === 'error' ? 'offline' : reading.status;
+  const reading = useInboxSelection(selection), live = reading.status === 'live';
+  const status = reading.status;
   const data = live ? reading.data : undefined;
   const navigate = (next: string) => {
     if (go) go(next);
@@ -132,12 +134,10 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
     return () => clearTimeout(timer);
   }, [data, now]);
   const current = data?.item ? retainedInboxItem(data.item, Math.max(now, Date.now())) : null;
-  const mutate = async (name: string, input: object) => {
-    const result = await callOnce(name, input).result;
-    if (!result.ok) throw new globalThis.Error(result.message);
-  };
+  const mutate = memberOperation;
+
   const actions: InboxActions | undefined = live ? {
-    read: async id => { const result = await call('inbox.read', { item: id }).result; if (!result.ok) throw new globalThis.Error(result.message); },
+    read: readingVisible ? id => mutate('inbox.read', { item: id }) : undefined,
     answer: (id, answer, words) => mutate('inbox.answer', { item: id, answer, ...(words ? { words } : {}) }),
     openSource: current && inboxSourcePath(current) ? row => { const target = inboxSourcePath(row); if (target) navigate(target); } : undefined,
   } : undefined;

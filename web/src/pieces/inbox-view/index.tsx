@@ -15,9 +15,10 @@ function QuestionReader({ item, actions, inline }: { item: InboxItem; actions?: 
   const lock = useRef(false), mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { setDraft(''); setError(false); }, [item.id, item.body?.words]);
+  const canRead = !!actions?.read;
   useEffect(() => {
     if (!item.read && actions?.read) void actions.read(item.id).catch(() => { if (mounted.current) setError(true); });
-  }, [item.id]);
+  }, [item.id, canRead]);
   const answer = async (verdict: InboxAnswer, words?: string) => {
     if (lock.current || item.state !== 'waiting' || !item.answers || !item.body || managed(item) || !actions) return;
     if (verdict === 'words' && !words?.trim()) return;

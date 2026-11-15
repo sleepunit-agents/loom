@@ -162,6 +162,21 @@ it('projects a current effective word deadline without decrypting and fails clos
   expect(f.opens()).toBe(0);
   f.revoke(); expect(f.service.wordsKeepUntil(alice, latest)).toBeNull();
 });
+it('executes the shipped Work queries against the generated current-policy task projection', async () => {
+  const f = await fixture();
+  const { tasks } = await import('../data/schema.js');
+  const { dataQueries } = await import('../data/queries.js');
+  const { sourceQuery, taskQuery } = await import('../../../web/src/pieces/comms/work-query.js');
+  for (const [id, owner, sourceId] of [['t-10','alice',f.thread.conversation], ['t-11','bob',f.thread.conversation], ['t-12','alice','elsewhere']]) {
+    f.db.insert(tasks).values({ id, title: id, ownerKind: 'member', owner, createdByKind: 'member', createdBy: owner, createdAt: '2026-11-14T18:00:00Z', changedAt: '2026-11-14T18:00:00Z', sourceKind: 'conversation', sourceId }).run();
+  }
+  const schema = dataQueries(f.db.$client, { tables: ['tasks'], visibility: { tasks: fields => eq(fields.owner, 'alice') } });
+  const source = await graphql({ schema, source: sourceQuery, variableValues: { conversation: f.thread.conversation, offset: 0 } });
+  expect(source.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(source.data))).toEqual({ tasks: [{ id:'t-10', title:'t-10', status:'open' }] });
+  const mentioned = await graphql({ schema, source: taskQuery, variableValues: { id: 't-11' } });
+  expect(mentioned.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(mentioned.data))).toEqual({ tasks: [] });
+});
+
 it('projects Home from the current member and owned agents, counting reply threads across the whole mailbox', async () => {
   const f = await fixture();
   f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
@@ -223,4 +238,56 @@ it('orders Home by instant across timestamp precision and ignores replies from a
   f.db.update(threads).set({ lastAt: '2026-11-14T18:00:00.500Z' }).where(eq(threads.id, newer.id)).run();
   f.db.update(threads).set({ lastAt: '2026-11-14T17:59:00Z' }).where(eq(threads.id, wrongSender.id)).run();
   expect(f.service.home(alice)?.summaries[0]).toMatchObject({ unread: 2, last: { thread: newer.id }, first: { thread: newer.id } });
+});
+
+it('orders and pages Comms threads by time rather than ISO timestamp precision', async () => {
+  const f = await fixture();
+  const newer = f.comms.threads.open({ member: 'alice', agent: 'art', title: 'Newer' });
+  f.db.update(threads).set({ lastAt: '2026-11-14T18:00:00Z' }).where(eq(threads.id, f.thread.id)).run();
+  f.db.update(threads).set({ lastAt: '2026-11-14T18:00:00.500Z' }).where(eq(threads.id, newer.id)).run();
+  expect(f.service.list(alice, { limit: 1 }).map(row => row.id)).toEqual([newer.id]);
+  expect(f.service.list(alice, { limit: 1, offset: 1 }).map(row => row.id)).toEqual([f.thread.id]);
+});
+it('never decrypts thread words at an equal whole-second stored deadline', async () => {
+  const f = await fixture();
+  f.db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
+  const row = f.service.messages(alice, f.thread.id, undefined, 1)[0];
+  expect(await f.service.words(alice, row)).toBeNull(); expect(f.opens()).toBe(0);
+});
+it('executes the actual shipped Comms selection over the shared read group', async () => {
+  const f = await fixture(); f.db.insert(memberAgents).values({ member: 'alice', agent: 'art' }).run();
+  const { commsSelection } = await import('../../../web/src/pieces/comms/shared-query.js');
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: commsQueryFields(f.service) }) });
+  const selection = commsSelection(false, '', 0, f.thread.id);
+  const result = await graphql({ schema, source: selection.query, variableValues: selection.variables, contextValue: { viewer: alice } });
+  expect(result.errors).toBeUndefined();
+  const value = selection.decode(result.data as Record<string, unknown>);
+  expect(value.home).toEqual({ member: 'alice', agents: ['art'] }); expect(value.thread?.id).toBe(f.thread.id);
+  expect(value.messages.map(row => row.words)).toEqual(['Find t-1','Answer t-2','Search done']);
+  expect(value.messages[0].wordsKeepUntil).toBe('2026-11-28T18:00:00.000Z');
+  expect(value.folders).toEqual({ threads: 1, archived: 0 });
+});
+
+it('pages the actual source-work query past fifty rows after current visibility filtering', async () => {
+  const f = await fixture(), { tasks } = await import('../data/schema.js');
+  const { dataQueries } = await import('../data/queries.js');
+  const { sourceQuery } = await import('../../../web/src/pieces/comms/work-query.js');
+  for (let n=0;n<51;n++) f.db.insert(tasks).values({id:`t-${String(n).padStart(3,'0')}`,title:`Task ${n}`,ownerKind:'member',owner:'alice',createdByKind:'member',createdBy:'alice',createdAt:'2026-11-14T18:00:00Z',changedAt:'2026-11-14T18:00:00Z',sourceKind:'conversation',sourceId:f.thread.conversation}).run();
+  const schema=dataQueries(f.db.$client,{tables:['tasks'],visibility:{tasks:fields=>eq(fields.owner,'alice')}});
+  const first=await graphql({schema,source:sourceQuery,variableValues:{conversation:f.thread.conversation,offset:0}});
+  expect(first.errors).toBeUndefined(); expect((first.data?.tasks as unknown[]).length).toBe(51);
+  const next=await graphql({schema,source:sourceQuery,variableValues:{conversation:f.thread.conversation,offset:50}});
+  expect(next.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(next.data))).toEqual({tasks:[{id:'t-050',title:'Task 50',status:'open'}]});
+});
+it('loads the mentioned pull-request card through current generated Changes visibility', async () => {
+  const f=await fixture(), { changes, memberAgents }=await import('../data/schema.js');
+  const { dataQueries }=await import('../data/queries.js'), { workVisibility }=await import('../data/work-visibility.js');
+  const { changeQuery }=await import('../../../web/src/pieces/comms/work-query.js');
+  const id='github:house/loom#7';
+  f.db.insert(memberAgents).values({member:'alice',agent:'art'}).run();
+  f.db.insert(changes).values({id,repository:'house/loom',number:7,title:'Current PR',body:'',url:'https://github.com/house/loom/pull/7',state:'open',draft:false,authorLogin:'art',agent:'art',branch:'fix',headCommit:'a'.repeat(40),baseBranch:'next',checks:'running',review:'required',mergeable:'unknown',waitingOn:'ci',openedAt:'2026-11-14T18:00:00Z',updatedAt:'2026-11-14T18:00:00Z'}).run();
+  const schema=dataQueries(f.db.$client,{tables:['changes'],visibility:workVisibility(alice)});
+  const read=()=>graphql({schema,source:changeQuery,variableValues:{id}});
+  const first=await read(); expect(first.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(first.data))).toEqual({changes:[{id,title:'Current PR',state:'open',draft:false,checks:'running',review:'required',waitingOn:'ci'}]});
+  f.db.delete(memberAgents).run(); const revoked=await read(); expect(revoked.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(revoked.data))).toEqual({changes:[]});
 });

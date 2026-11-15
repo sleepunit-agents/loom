@@ -1,5 +1,6 @@
 import { taskSegment } from '../tasks/route';
-import type { QuerySelection } from '../../data/query';
+import { useSelection } from '../../data/graphql/selection';
+import type { DataQuerySnapshot } from '../../data/graphql';
 import type { InboxFolders, InboxItem } from '../inbox-view/model';
 import type { InboxActionResult } from '../inbox-view/outcomes';
 export const inboxPageSize = 50;
@@ -11,6 +12,7 @@ export const inboxQuery = `query Inbox($folder:String!,$search:String!,$agent:St
  inboxFolders { needs alerts answered fyi all agents { id count } }
  inboxActionResults(limit:20){id at ok text page readAt}
 }`;
+interface InboxSelection { query: string; variables: Record<string, unknown>; decode(data: Record<string, unknown>): InboxReading }
 export interface InboxReading { folders: InboxFolders; items: InboxItem[]; item: InboxItem | null; results: InboxActionResult[] }
 function item(value: unknown): InboxItem {
   if (!value || typeof value !== 'object') throw Error('Invalid Inbox item');
@@ -20,7 +22,7 @@ function item(value: unknown): InboxItem {
     || row.body && typeof row.body.words !== 'string') throw Error('Invalid Inbox item');
   return row;
 }
-export function inboxSelection(folder: string, search: string, offset: number, selected?: string): QuerySelection<InboxReading> {
+export function inboxSelection(folder: string, search: string, offset: number, selected?: string): InboxSelection {
   return { query: inboxQuery, variables: { folder: folder.startsWith('agent:') || folder === 'errors' ? 'all' : folder,
     search, agent: folder.startsWith('agent:') ? folder.slice(6) : null, offset, id: selected ?? '', hasItem: !!selected, onlyErrors: folder === 'errors' },
     decode(data) {
@@ -35,6 +37,10 @@ export function inboxSelection(folder: string, search: string, offset: number, s
         }) };
     },
   };
+}
+/** Decode the selected fields over the single canonical query client. */
+export function useInboxSelection(selection: InboxSelection): DataQuerySnapshot<InboxReading> {
+  return useSelection(selection);
 }
 /** Private question and answer wording have separate deadlines. A missing or
  * invalid private deadline is unavailable, while plain Inbox text has none. */
