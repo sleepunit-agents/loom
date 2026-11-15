@@ -4,14 +4,14 @@ import {once} from 'node:events';
 import {getRequestListener} from '@hono/node-server';
 import {WebSocket} from 'ws';
 import {createHash} from 'node:crypto';
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {createDataSchema} from './core/data/database.js';
 import {FakeClock} from './core/clock.js';
 import * as s from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
-const cleanup:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();});
-function fixture(){
+const cleanup:(()=>Promise<void>)[]=[];afterEach(async()=>{for(const close of cleanup.splice(0).reverse())await close();vi.unstubAllGlobals();});
+function fixture(approvedOperations:Parameters<typeof sharedRoot>[0]['approvedOperations']=new Map()){
  const client=new Database(':memory:'),clock=new FakeClock(),at=new Date(clock.now()).toISOString();
  const db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
  db.insert(s.members).values(['pat','sam','lee'].map(id=>({id,role:id==='pat'?'owner' as const:'member' as const,joinedAt:at}))).run();
@@ -20,7 +20,7 @@ function fixture(){
  const cookie='c'.repeat(64),fingerprint='t'.repeat(64),session=createHash('sha256').update(cookie).digest('hex');
  db.insert(s.tokens).values({fingerprint,label:'Fixture',kind:'owner',member:'pat',createdAt:at}).run();
  db.insert(s.sessions).values({id:session,token:fingerprint,device:'Fixture',via:'token',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
- const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:error=>{throw error;}});
+ const root=sharedRoot({db,clock,approvedOperations,originAllowed:()=>true,reportError:error=>{throw error;}});
  cleanup.push(async()=>{await root.close();client.close();});
  const post=(input:unknown,id='rule-1')=>root.http.request('http://loom/api/approvals/setRule',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+cookie},body:JSON.stringify({input,id})});
  return {db,root,clock,post};
@@ -124,4 +124,21 @@ it('refuses non-repository merge scope text and malformed repository patterns wi
  for(const [i,scope] of ['acme/app','please allow','github:acme','github:acme/app#1','github:acme/app/extra','github:acme/','github:/app','github:acme/a?'].entries())
   expect((await f.post({kind:'merge',scope,tier:'do'},'invalid-'+i)).status).toBe(400);
  expect(f.root.services.approvalRules.list()).toEqual([]);expect(f.db.select().from(s.operationResults).all()).toEqual([]);
+});
+
+it('treats zero-literal patterns uniformly before comparing star count',()=>{
+ const f=fixture(),rules=f.root.services.approvalRules;
+ rules.set({kind:'command',scope:'*',tier:'ask'},'pat');rules.set({kind:'command',scope:'**',tier:'do'},'pat');
+ expect(rules.resolve({kind:'command',target:'run something',actingFor:'pat'})).toMatchObject({tier:'ask',scope:'*'});
+});
+it('editing and resolving never files or answers an approval, executes a callback or changes a pull request',()=>{
+ const execute=vi.fn(),request=vi.fn();vi.stubGlobal('fetch',request);
+ const f=fixture(new Map([['fixture.noexec',execute]])),rules=f.root.services.approvalRules;
+ const card=f.root.services.approvals.request({kind:'setting',operation:'fixture.noexec',changeSummary:'Before -> after',target:'fixture',agent:'art',what:'Fixture',why:'No effects proof',askedFrom:'fixture',actingFor:'pat',ask:'Apply?',ifYes:'Apply',ifNo:'Keep'});
+ const at=new Date(f.clock.now()).toISOString();
+ f.root.services.changes.put({id:'github:acme/app#1',repo:'github:acme/app',number:1,page:'',title:'Fixture',url:'https://github.com/acme/app/pull/1',state:'open',draft:false,author:{login:'art'},created:at,updated:at,closed:null,head:{ref:'work',id:'a'.repeat(40)},base:{ref:'next'},body:'',checks:{state:'passing',running:[],failing:[],total:1},review:{state:'approved',by:[]},mergeable:'yes',conflicts:false,people:[]});
+ const before={approvals:f.db.select().from(s.approvals).all(),audit:f.db.select().from(s.approvalRecord).all(),inbox:f.db.select().from(s.inbox).all(),changes:f.db.select().from(s.changes).all()};
+ for(const kind of ['merge','command','setting','dangerous'] as const){rules.set({kind,scope:'*',tier:'do'},'pat');rules.resolve({kind,target:kind==='merge'?'github:acme/app#1@'+'a'.repeat(40):'fixture',actingFor:'pat'});}
+ expect({approvals:f.db.select().from(s.approvals).all(),audit:f.db.select().from(s.approvalRecord).all(),inbox:f.db.select().from(s.inbox).all(),changes:f.db.select().from(s.changes).all()}).toEqual(before);
+ expect(f.root.services.approvals.get(card.id).state).toBe('pending');expect(execute).not.toHaveBeenCalled();expect(request).not.toHaveBeenCalled();
 });

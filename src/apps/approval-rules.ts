@@ -5,9 +5,9 @@ import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
 import { OperationError } from '../core/operations/index.js';
 import { approvalRules, members, projects } from '../core/data/schema.js';
-const kind=z.enum(['merge','command','setting','dangerous']);
+export const approvalRuleKind=z.enum(['merge','command','setting','dangerous']);
 const scope=z.string().trim().min(1).max(256).refine(value=>!/[\u0000-\u001f\u007f]/.test(value),'Invalid scope');
-export const approvalRuleInput=z.object({kind,scope,person:z.string().max(100).default(''),tier:z.enum(['ask','tell','do']).nullable()}).strict();
+export const approvalRuleInput=z.object({kind:approvalRuleKind,scope,person:z.string().max(100).default(''),tier:z.enum(['ask','tell','do']).nullable()}).strict();
 export type RuleInput=z.input<typeof approvalRuleInput>;
 type Rule=typeof approvalRules.$inferSelect;
 /** Linear-space wildcard matching; a pattern cannot introduce a regular expression. */
@@ -61,7 +61,7 @@ export function approvalRulesService(db:DataDatabase,now:()=>string){
         const project=rule.scope.startsWith('project:');
         if(project&&!db.select().from(projects).where(eq(projects.id,rule.scope.slice(8))).get())return [];
         if(project?rule.scope!==`project:${input.project}`:!matches(rule.scope,lookup))return [];
-        return [{rule,rank:project?1:rule.scope==='*'?3:rule.scope.includes('*')?2:0,literals:rule.scope.replaceAll('*','').length,stars:rule.scope.split('*').length-1}];
+        return [{rule,rank:project?1:rule.scope.includes('*')?2:0,literals:rule.scope.replaceAll('*','').length,stars:rule.scope.split('*').length-1}];
       });
       const strict={ask:0,tell:1,do:2};hits.sort((a,b)=>a.rank-b.rank||b.literals-a.literals||a.stars-b.stars||strict[a.rule.tier]-strict[b.rule.tier]||a.rule.scope.localeCompare(b.rule.scope));
       const row=hits[0]?.rule;return row&&{tier:row.tier,scope:row.scope,person:row.person,setBy:row.setBy};
