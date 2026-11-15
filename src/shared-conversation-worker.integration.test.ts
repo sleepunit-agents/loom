@@ -1,18 +1,21 @@
-/** Real builder and body children through the production worker, fictitious only. */
+/** Production worker/Root protocol with in-process receiving programs only. */
 import {afterEach,expect,it,vi} from 'vitest';
 import {createServer} from 'node:http';
-import {resolve,join} from 'node:path';
-import {mkdtemp,writeFile,rm} from 'node:fs/promises';
-import {tmpdir} from 'node:os';
+import {EventEmitter} from 'node:events';
+import {PassThrough,Writable} from 'node:stream';
+import type {ChildProcessWithoutNullStreams} from 'node:child_process';
+import {bodyProgram} from './runtime/body-program.js';
+import {claudeBody} from './runtime/claude-body.js';
+import {bodyConversationClient} from './runtime/conversation-client.js';
 import {getRequestListener} from '@hono/node-server';
 import {eq} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw,credentialHash as hash} from '../test/fixtures/conversation-body.js';
 import {httpWorkerControl} from './runtime/worker-http.js';
-import {commandWorkerExecutor} from './runtime/worker-process.js';
+import {commandWorkerExecutor,type ProcessRuntime} from './runtime/worker-process.js';
 import {workOnce} from './runtime/worker.js';
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
-it.each(['fixture','claude'] as const)('builds and runs a real %s private Comms recipient through production worker enrollment, running ACK and stdin bootstrap',async harness=>{
+it.each(['fixture','claude'] as const)('builds and runs an in-process %s private Comms recipient through production worker enrollment, running ACK and stdin bootstrap',async harness=>{
  const f=await bodyFixture(clean,{initialTime:Date.now(),modelRoles:()=>[{model:'requested-model',provider:'provider',harness,series:'series'}]});
  f.root.writes.run(()=>{
   f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.update(s.conversations).set({job:null}).run();f.db.delete(s.jobs).run();
@@ -32,31 +35,37 @@ it.each(['fixture','claude'] as const)('builds and runs a real %s private Comms 
  control.enrollBody=async(...args)=>{const result=await enroll(...args);owned=result.token;tokenCopy=Buffer.from(result.token);expect(f.db.select().from(s.jobs).get()?.state).toBe('starting');return result;};
  let acknowledged=false;const started=control.started.bind(control);control.started=async(...args)=>{expect(f.db.select().from(s.jobs).get()?.state).toBe('starting');await started(...args);expect(f.db.select().from(s.jobs).get()?.state).toBe('running');acknowledged=true;};
  const finish=vi.spyOn(control,'finish');
- const env={PATH:process.env.PATH??'',NODE_NO_WARNINGS:'1'},cwd=resolve(import.meta.dirname,'..');
- let bodyArgs=['--import','tsx','test/fixtures/conversation-worker-child.mjs'];
- if(harness==='claude'){
-  const directory=await mkdtemp(join(tmpdir(),'loom-claude-proof-'));clean.push(()=>rm(directory,{recursive:true,force:true}));
-  const provider=join(directory,'fake-claude.cjs'),config=join(directory,'body.json');
-  await writeFile(provider,[
-   '#!'+process.execPath,
-   "const args=process.argv.slice(2),session=args[args.indexOf('--session-id')+1];",
-   "if(args[args.indexOf('--model')+1]!=='requested-model'||!args.includes('--no-session-persistence'))process.exit(9);",
-   "let words='';process.stdin.setEncoding('utf8');process.stdin.on('data',part=>words+=part);",
-   "process.stdin.on('end',()=>{if(words!=='PRIVATE WORKER INPUT')process.exit(8);",
-   "process.stderr.write('PRIVATE NATIVE DIAGNOSTIC');",
-   "process.stdout.write(JSON.stringify({type:'assistant',parent_tool_use_id:null,session_id:session,message:{model:'fixture-actual-model',content:[{type:'text',text:'PRIVATE WORKER REPLY'}]}})+'\\n');",
-   "process.stdout.write(JSON.stringify({type:'result',subtype:'success',is_error:false,session_id:session,result:'PRIVATE WORKER REPLY'})+'\\n');});",
-  ].join('\n'),{mode:0o700});
-  await writeFile(config,JSON.stringify({command:provider,cwd}),{mode:0o600});
-  bodyArgs=['--import','tsx','src/body.ts',config];
- }
- const executor=commandWorkerExecutor({build:{command:process.execPath,args:['-e',"let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{const value=JSON.parse(input);if(typeof value.job!=='string'||value.bootstrap||value.house.repository!=='fixture')process.exitCode=1;else process.stdout.write(JSON.stringify({build:'fixture-image'}));});"],cwd,env},runners:{[harness]:{command:process.execPath,args:bodyArgs,cwd,env,bodyBootstrap:true}}});
- // Retain the native executor; observe its exact release boundary against the real ACK.
+ const ended=new WeakSet<ChildProcessWithoutNullStreams>(),aborts=new WeakMap<ChildProcessWithoutNullStreams,AbortController>();
+ const native=claudeBody({command:'/fake/claude',cwd:'/work',env:{},spawn:(_command,args)=>{
+  const events=new EventEmitter();let words='';const child=Object.assign(events,{stdout:new PassThrough(),stderr:new PassThrough(),kill:vi.fn(()=>true),stdin:new Writable({write(chunk,_encoding,done){words+=chunk.toString();done();},final(done){done();queueMicrotask(()=>{
+   expect(words).toBe('PRIVATE WORKER INPUT');expect(args[args.indexOf('--model')+1]).toBe('requested-model');const session=args[args.indexOf('--session-id')+1];child.stderr.emit('data',Buffer.from('PRIVATE NATIVE DIAGNOSTIC'));
+   const rows=[{type:'assistant',parent_tool_use_id:null,session_id:session,message:{model:'fixture-actual-model',content:[{type:'text',text:'PRIVATE WORKER REPLY'}]}},{type:'result',subtype:'success',is_error:false,session_id:session,result:'PRIVATE WORKER REPLY'}];child.stdout.emit('data',Buffer.from(rows.map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0,null);
+  });}})})as unknown as ChildProcessWithoutNullStreams;return child;
+ }});
+ const runtime:ProcessRuntime={spawn(plan){
+  const events=new EventEmitter(),parts:Buffer[]=[],bodyAbort=new AbortController();let child:ChildProcessWithoutNullStreams;
+  const execute=async()=>{const bytes=Buffer.concat(parts);for(const part of parts)part.fill(0);
+   try{
+    if(plan.command==='/fake/build'){const value=JSON.parse(bytes.toString());expect(value).toEqual({job:expect.any(String),house:{repository:'fixture',file:'Housefile',branch:'next'}});child.stdout.emit('data',Buffer.from('{"build":"fixture-image"}'));return 0;}
+    expect(acknowledged).toBe(true);expect(plan.command).toBe('/fake/recipient');
+    if(harness==='claude')return await bodyProgram({args:['body.json'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/work'}),stdin:async()=>bytes,env:{},signal:bodyAbort.signal,clock:f.clock,schedule:{every:()=>()=>{}},native,error:()=>{}});
+    const input=JSON.parse(bytes.toString());expect(input.job.brief).toBe('');expect(input.bootstrap.job).toBe(input.job.id);const client=bodyConversationClient({url:input.bootstrap.origin,token:input.bootstrap.token,job:input.job.id,conversation:input.job.conversation,signal:bodyAbort.signal,clock:f.clock});
+    try{await client.status({state:'working',work:'Reading fictitious input'});const batch=await client.takeAndAccept(async(item,signal)=>{expect(signal.aborted).toBe(false);expect(item.words).toBe('PRIVATE WORKER INPUT');});expect(batch.accepted).toBe(1);
+     const reply=await client.reply({clientId:'reply',words:'PRIVATE WORKER REPLY',model:'fixture-actual-model',outcome:'answered',latencyMs:23});await client.finding({turnSeq:reply.seq,measure:'useful',score:4,text:'Fictitious comparison was useful'});await client.digest({summary:'Completed fictitious worker input',items:[]});await client.status({state:'idle',work:'Fictitious work complete'});child.stdout.emit('data',Buffer.from(input.bootstrap.token+'PRIVATE WORKER INPUT'));child.stderr.emit('data',Buffer.from(input.bootstrap.token+'PRIVATE WORKER INPUT'));return 0;
+    }finally{client.close();}
+   }finally{bytes.fill(0);}
+  };
+  child=Object.assign(events,{pid:123,stdout:new PassThrough(),stderr:new PassThrough(),stdin:new Writable({write(chunk,_encoding,done){parts.push(Buffer.from(chunk));done();},final(done){done();queueMicrotask(()=>{void execute().then(code=>{ended.add(child);child.emit('close',code,null);},error=>{ended.add(child);child.emit('error',error);child.emit('close',1,null);});});}})})as unknown as ChildProcessWithoutNullStreams;
+  aborts.set(child,bodyAbort);queueMicrotask(()=>child.emit('spawn'));return child;
+ },kill(child){aborts.get(child)?.abort();if(!ended.has(child)){ended.add(child);child.emit('close',null,'SIGKILL');}}};
+ const plan={command:'/fake/build',args:[],cwd:'/work',env:{}};
+ const executor=commandWorkerExecutor({build:plan,runners:{[harness]:{...plan,command:'/fake/recipient',bodyBootstrap:true}}},runtime);
+ // Retain the production executor; observe its exact release boundary against the real ACK.
  const start=executor.start.bind(executor);executor.start=(...args)=>{const body=start(...args),release=body.release.bind(body);body.release=(...input)=>{expect(acknowledged).toBe(true);return release(...input);};return body;};
  const running=workOnce({box:'box',control,executor,signal:abort.signal,schedule:{every:()=>()=>{}}});clean.push(async()=>{abort.abort();await running.catch(()=>{});});
  expect(await running).toBe('finished');const job=f.db.select().from(s.jobs).get()!;
  expect(job).toMatchObject({state:'done',brief:'',logTail:null,exitCode:0,build:'fixture-image'});expect(finish).toHaveBeenCalledExactlyOnceWith(job.id,0,'');expect(owned?.every(byte=>byte===0)).toBe(true);
- // The callback pause before confirmation is independently asserted by the real native recipient proof.
+ // The callback pause before confirmation is independently asserted by the receiving-program proof.
  expect(f.db.select().from(s.inbox).get()).toMatchObject({state:'done',toKind:'agent',to:'art',job:job.id});expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',null]);
 expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({job:null,turnCount:2});
  if(harness==='fixture')expect(f.db.select().from(s.digests).get()).toMatchObject({run:job.id,revision:1,summary:'Completed fictitious worker input'});
