@@ -68,8 +68,9 @@ SIGINT and SIGTERM cancel active work and idle waiting. The server owns start
 retries and silence reconciliation.
 
 The fresh `sharedRoot` mounts these four authenticated runner operations on the
-same shared connection and write/receipt boundary. Only a live runner token's
-machine may claim or report its jobs; caller-supplied machine identity is refused.
+same shared connection and write/receipt boundary. The canonical current bearer
+runner proof supplies the machine identity; runner-labelled cookies are refused.
+Only that live machine may claim or report its jobs; caller-supplied machine identity is refused.
 It receives model roles from the trusted root's `modelRoles()` configuration,
 never from a worker request. A root without configured roles leaves work queued.
 `runtime.next` and heartbeat receipt replays are refused, so an old claim or
@@ -130,3 +131,54 @@ The wire format follows Docker's [Engine API](https://docs.docker.com/reference/
 create, attach, start, wait and remove endpoints. The worker uses the explicitly
 configured local Unix socket and unversioned routes; it does not start or install
 an engine.
+
+### Worker-local account runner bindings
+
+A shared `runners` command can implement account selection from the startup JSON
+itself. For separate local profiles or private runner commands, configure
+`accountRunners`, keyed first by the account ID and then by harness:
+
+```json
+{
+  "accountRunners": {
+    "subscription-a": {
+      "codex": {
+        "command": "/private/runner-a",
+        "args": [],
+        "cwd": "/work",
+        "env": {"ACCOUNT_PROFILE": "/private/profile-a"}
+      }
+    }
+  }
+}
+```
+
+When this map is present, every job needs an exact account/harness entry. Missing
+entries fail before the builder or body starts; they never fall back to the shared
+runner or another account. Plans are copied when the worker executor is created.
+The builder retains its own explicit environment, and the body receives the
+selected command's environment plus the existing account/model/harness startup
+envelope after the running acknowledgement. The same selection applies to
+container entrypoint, arguments and environment. Container paths refer to files
+inside its trusted image; this adds no host credential/profile mounts.
+
+These bindings select a configured runner. That program must still implement its
+native harness's model choice and tool restrictions; this feature does not infer
+provider CLI flags or supply an account profile that is not locally configured.
+
+## Home current-job selection
+
+The shared GraphQL door mounts `currentJobs(agent: String!)` for an agent's Home
+card. It returns only current job ID, agent, title, state, assigned box ID and
+queue time, ordered by queue time and ID. Terminal attempts disappear. Execution
+briefs, logs, account identities, build details and repository settings are not
+query fields.
+
+The query reuses the published agent/project/private-member SQL policy used by
+Approvals and bridge conversation labels: household owners see every job;
+private member jobs require that member or a household owner; other jobs are
+visible through an owned agent or project membership. Retained reads use current
+sharing facts. HTTP buffers and live socket publication use the same existing
+freshness fence as other shared selections. This field is available to the Home
+UI; its rendering is a separate consumer.
+The projection does not grant write or worker authority.

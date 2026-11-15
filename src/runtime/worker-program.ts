@@ -2,23 +2,31 @@
 import { z } from 'zod';
 import { signInAccount } from './account-signin.js';
 import { commandUsageProvider, commandWorkerExecutor } from './worker-process.js';
-import { httpWorkerControl } from './worker-http.js';
+import { httpWorkerControl, reportWorkerAccountUsage } from './worker-http.js';
 import { runWorker } from './worker-loop.js';
 import { containerWorkerExecutor } from './worker-container.js';
-const command = z.object({ command: z.string().min(1), args: z.array(z.string()), cwd: z.string().min(1), env: z.record(z.string(), z.string()) }).strict();
+const commandString = z.string().refine(value => !value.includes('\0'));
+const command = z.object({ command: commandString.min(1), args: z.array(commandString), cwd: commandString.min(1), env: z.record(commandString, commandString) }).strict();
+const containerCommand = command.extend({ cwd: commandString.startsWith('/'), env: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), commandString) });
 const containerDeadline = z.number().int().min(1).max(300_000);
 const configSchema = z.object({
   url: z.string(), box: z.string().min(1), tokenFile: z.string().min(1),
   build: command, buildTimeoutMs: z.number().int().min(1).max(3_600_000).optional(), runners: z.record(z.string(), command),
+  accountRunners: z.record(z.string().min(1), z.record(z.string().min(1), command)).optional(),
   container: z.object({ socket: z.string().startsWith('/'), nestedSocket: z.string().startsWith('/').optional(),
     setupTimeoutMs: containerDeadline.optional(),
     cleanupTimeoutMs: containerDeadline.optional() }).strict().optional(),
-}).strict();
+}).strict().superRefine((config, context) => {
+  if (!config.container) return;
+  const plans = [...Object.values(config.runners), ...Object.values(config.accountRunners ?? {}).flatMap(values => Object.values(values))];
+  if (plans.some(plan => !containerCommand.safeParse(plan).success)) context.addIssue({ code: 'custom', message: 'Invalid container runner command' });
+});
 const accountCommand = z.object({
   command,
   account: z.object({ account: z.string().trim().min(1), owner: z.string().trim().min(1), provider: z.string().trim().min(1) }).strict(),
   timeoutMs: z.number().int().min(1).max(300_000).optional(),
 }).strict();
+const usageCommand = accountCommand.extend({ report: z.object({ url: z.string(), tokenFile: z.string().min(1) }).strict().optional() });
 const signInCommand = accountCommand.extend({ box: z.string().trim().min(1) });
 export async function workerProgram(input: {
   args: readonly string[];
@@ -30,6 +38,7 @@ export async function workerProgram(input: {
   output?: (text: string) => void;
   signIn?: typeof signInAccount;
   usage?: typeof commandUsageProvider;
+  reportUsage?: typeof reportWorkerAccountUsage;
   run?: typeof runWorker; control?: typeof httpWorkerControl; executor?: typeof commandWorkerExecutor;
   containerExecutor?: typeof containerWorkerExecutor;
 }): Promise<number> {
@@ -42,7 +51,8 @@ export async function workerProgram(input: {
       if (input.args.length !== 2 || !input.output) throw new Error('Expected account command configuration');
       const raw: unknown = JSON.parse(await input.read(input.args[1]));
       // These one-shot worker commands receive only local owner configuration.
-      // They do not read a loom token, claim a job or change account membership.
+      // Local-only commands read no Loom token. Optional usage reporting reads
+      // its configured machine credential; neither mode claims jobs or changes membership.
       if (mode === '--account-signin') {
         const config = signInCommand.parse(raw);
         await (input.signIn ?? signInAccount)(config.command, { ...config.account, box: config.box },
@@ -50,11 +60,16 @@ export async function workerProgram(input: {
         if (abort.signal.aborted) throw new Error('Cancelled');
         input.output(JSON.stringify({ ...config.account, box: config.box, signedIn: true }) + '\n');
       } else {
-        const config = accountCommand.parse(raw);
+        const config = usageCommand.parse(raw);
         const provider = (input.usage ?? commandUsageProvider)(config.command,
           { signal: abort.signal, timeoutMs: config.timeoutMs });
         const windows = await provider(Object.freeze({ ...config.account }));
         if (abort.signal.aborted) throw new Error('Cancelled');
+        if (config.report) {
+          const token = (await input.read(config.report.tokenFile)).trim();
+          await (input.reportUsage ?? reportWorkerAccountUsage)({ url: config.report.url, token, signal: abort.signal }, { ...config.account, windows });
+          if (abort.signal.aborted) throw new Error('Cancelled');
+        }
         input.output(JSON.stringify({ ...config.account, windows }) + '\n');
       }
       return 0;

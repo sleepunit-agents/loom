@@ -11,7 +11,7 @@ import {eq} from 'drizzle-orm';
 import {generateX25519Identity} from 'age-encryption';
 import {FakeClock} from '../core/clock.js';
 import {createDataSchema} from '../core/data/database.js';
-import {agents,agentStatus,household,members,memberAgents,tokens} from '../core/data/schema.js';
+import {agents,agentStatus,household,members,memberAgents,tokens,jobs} from '../core/data/schema.js';
 import {workVisibility} from '../core/data/work-visibility.js';
 import {CommsMessages} from '../core/conversations/messages.js';
 import {CommsQueries,commsQueryFields} from '../core/conversations/comms-query.js';
@@ -34,6 +34,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
  db.insert(memberAgents).values(ids.map(agent=>({member:'owner',agent}))).run();
  db.insert(agentStatus).values(ids.map(agent=>({agent,state:agent==='art'?'working' as const:'idle' as const,work:agent==='art'?'Rebuilding the shared desk':'',changedAt:now()}))).run();
  db.insert(tokens).values({fingerprint,label:'Disposable desk fixture',kind:'owner',member:'owner',createdAt:now()}).run();
+ const privateBrief='PRIVATE JOB INSTRUCTIONS OMITTED';db.insert(jobs).values({id:'desk-current-job',agent:'art',member:'owner',state:'waiting',title:'Fixture current desk work',brief:privateBrief,model:'fixture-model',startedByKind:'agent',startedBy:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
  const picture=sheet(),layout=manifestFromPixelLab(JSON.parse(picture.json.toString()));storeDeskSprite(db,'art',layout,{'sheet.png':picture.png});
  const key=wordsKey(await generateX25519Identity()),messages=new CommsMessages(db,key,now);
  const thread=messages.threads.open({member:'owner',agent:'art',title:'Desk fixture conversation'});
@@ -59,6 +60,7 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
   expect(response.status()).toBe(303);
   await expect.poll(()=>a.locator('.next-shell').count()).toBe(1);await b.goto(app.url);
   for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
+  for(const page of [a,b]){await expect.poll(()=>page.getByText('Fixture current desk work',{exact:true}).count()).toBe(1);expect(await page.locator('body').innerText()).not.toContain(privateBrief);}
   await a.locator('.next-preferences summary').click();
   await a.getByRole('combobox',{name:'Look',exact:true}).selectOption('daylight');
   for(const page of [a,b])await expect.poll(()=>page.locator('html').getAttribute('data-look')).toBe('daylight');
