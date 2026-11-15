@@ -104,13 +104,13 @@ it('refuses mail arriving after Stop was observed during an outstanding take',as
  await taking;f.stop();tick();await stopped;release();expect(await running).toBe(0);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:'',seenStop:true});
 });
 it('waits for an outstanding serialized status beat before publishing or releasing its client',async()=>{
- const f=fixture(),fetcher=f.options.fetch,cancel=vi.fn();let tick!:()=>void,entered!:()=>void,finish!:()=>void,beatEntered!:()=>void,release!:()=>void,statuses=0,settled=false;
+ const f=fixture(),fetcher=f.options.fetch,cancel=vi.fn();let tick!:()=>void,entered!:()=>void,finish!:()=>void,beatEntered!:()=>void,release!:()=>void,statuses=0,settled=false,execution:AbortSignal|undefined;
  const nativeStarted=new Promise<void>(resolve=>{entered=resolve;}),nativeHeld=new Promise<void>(resolve=>{finish=resolve;}),beatStarted=new Promise<void>(resolve=>{beatEntered=resolve;}),beatHeld=new Promise<void>(resolve=>{release=resolve;});
  f.native.mockImplementation(async()=>{entered();await nativeHeld;return{text:'Answer',model:'observed',actions:[]};});
- const running=bodyProgram({...f.options,schedule:{every:(_ms,callback)=>{tick=callback;return cancel;}},fetch:async(url,init)=>{
+ const running=bodyProgram({...f.options,startup:async(_job,_bootstrap,signal)=>{execution=signal;},schedule:{every:(_ms,callback)=>{tick=callback;return cancel;}},fetch:async(url,init)=>{
   if(String(url).endsWith('/status')&&++statuses===3){beatEntered();await beatHeld;}return fetcher(url,init);
  }});void running.then(()=>{settled=true;});
- await nativeStarted;tick();tick();await beatStarted;finish();for(let i=0;i<32;i++)await Promise.resolve();expect(settled).toBe(false);expect(f.calls.some(row=>row.path==='message')).toBe(false);expect(cancel).toHaveBeenCalledOnce();release();expect(await running).toBe(0);expect(f.calls.filter(row=>row.path==='message')).toHaveLength(1);expect(cancel).toHaveBeenCalledOnce();
+ await nativeStarted;tick();tick();await beatStarted;finish();for(let i=0;i<32;i++)await Promise.resolve();expect(settled).toBe(false);expect(execution!.aborted).toBe(true);expect(f.calls.some(row=>row.path==='message')).toBe(false);expect(cancel).toHaveBeenCalledOnce();release();expect(await running).toBe(0);expect(f.calls.filter(row=>row.path==='message')).toHaveLength(1);expect(cancel).toHaveBeenCalledOnce();
 });
 
 it.each(['missing-ref','foreign-platform','unsupported-venue'])('refuses a %s bridge route before native execution',async mode=>{

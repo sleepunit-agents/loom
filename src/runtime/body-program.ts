@@ -84,7 +84,7 @@ export async function bodyProgram(input: {
     let answer: Awaited<ReturnType<typeof native>> | undefined;
     try { answer = await native(job, context.join('\n\n'), signal); }
     catch { if(!stopped) throw new Error(); }
-    finally { await stopBeats(); nativeAbort.abort(); await tools?.close(); }
+    finally { nativeAbort.abort(); await tools?.close(); await stopBeats(); }
     if(stopped && !input.signal.aborted) { await client.status({state:'idle',work:'',seenStop:true}); return 0; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();

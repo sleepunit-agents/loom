@@ -7,7 +7,7 @@ import type { Writable } from 'node:stream';
 import type { WorkerAssignment } from './worker.js';
 
 export type ClaudeSpawn = (command: string, args: readonly string[], options: {
-  cwd: string; env: NodeJS.ProcessEnv; shell: false; detached: false; stdio: 'pipe' | readonly ['pipe','pipe','pipe','pipe'];
+  cwd: string; env: NodeJS.ProcessEnv; shell: false; detached: false; stdio: 'pipe' | ['pipe','pipe','pipe','pipe'];
 }) => ChildProcessWithoutNullStreams;
 export interface ClaudeReply { text: string; model: string; actions: { model: string }[] }
 const limit = 1_048_576;

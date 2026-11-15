@@ -1,15 +1,22 @@
 import {afterEach,expect,it,vi} from 'vitest';
-import {randomUUID} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
+import {z} from 'zod';
 import {eq} from 'drizzle-orm';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {bodyFixture,bodyCredentials as raw} from '../../test/fixtures/conversation-body.js';
 import * as s from '../core/data/schema.js';
+import {EventEmitter} from 'node:events';
+import {PassThrough,Writable} from 'node:stream';
+import {spawn,type ChildProcessWithoutNullStreams} from 'node:child_process';
+import {bodyProgram} from './body-program.js';
+import type {WorkerAssignment} from './worker.js';
 import {bodySecretTools} from './body-secret-tools.js';
-const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.restoreAllMocks();});
+vi.mock('node:child_process',()=>({spawn:vi.fn()}));
+const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.restoreAllMocks();vi.clearAllMocks();});
 const privateValue='PRIVATE_TOOL_CREDENTIAL';
-async function fixture(answer:'auto'|'ask'|'never'='auto'){
- const buffers:Buffer[]=[],source=vi.fn(async()=>{const value=Buffer.from(privateValue);buffers.push(value);return value;});
+async function rootFixture(answer:'auto'|'ask'|'never'='auto',expected=Buffer.from(privateValue)){
+ const buffers:Buffer[]=[],source=vi.fn(async()=>{expect(f.db.$client.inTransaction).toBe(false);expect(f.db.select().from(s.secretUses).get()?.state).toBe('started');const value=Buffer.from(expected);buffers.push(value);return value;});
  const f=await bodyFixture(clean,{secretInputs:{source:{read:source}}});
  f.root.writes.run(()=>{
   f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
@@ -17,6 +24,10 @@ async function fixture(answer:'auto'|'ask'|'never'='auto'){
   f.root.services.secrets.requests.setRule({secret:'TOKEN',answer,minutes:5,agents:[{agent:'art',when:'on_request'}]});
  });
  const abort=new AbortController(),waiting=vi.fn(),fetcher=vi.fn<typeof fetch>(async(url,init)=>f.root.http.request(new Request(url,init)));
+ return{...f,buffers,source,abort,waiting,fetcher};
+}
+async function fixture(answer:'auto'|'ask'|'never'='auto',expected=Buffer.from(privateValue)){
+ const f=await rootFixture(answer,expected),{buffers,source,abort,waiting,fetcher}=f;
  const tools=await bodySecretTools({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:abort.signal,clock:f.clock,fetch:fetcher,waiting});clean.push(()=>tools.close());
  const config=JSON.parse(tools.config.toString()).mcpServers.loom_secrets as {url:string;headers:Record<string,string>};
  const client=new Client({name:'fictitious-native',version:'1'},{capabilities:{}});await client.connect(new StreamableHTTPClientTransport(new URL(config.url),{requestInit:{headers:config.headers}}));clean.push(()=>client.close());
@@ -24,12 +35,12 @@ async function fixture(answer:'auto'|'ask'|'never'='auto'){
  const use=(request?:string,id=randomUUID())=>client.callTool({name:'use_secret',arguments:{id,secret:'TOKEN',...(request?{request}:{})}});
  return{...f,buffers,source,abort,waiting,fetcher,tools,config,client,request,use};
 }
-function text(result:Awaited<ReturnType<Client['callTool']>>){const block=result.content?.[0];if(block?.type!=='text')throw Error('Expected text');return block.text as string;}
-it('exposes only two private tools and acquires a grant-backed value through the real Root SDK, confirming before return',async()=>{
- const f=await fixture();expect((await f.client.listTools()).tools.map(tool=>tool.name)).toEqual(['request_secret','use_secret']);expect(f.tools.config.includes(Buffer.from(raw.body))).toBe(false);expect(f.source).not.toHaveBeenCalled();
+function text(result:Awaited<ReturnType<Client['callTool']>>){return z.object({content:z.array(z.object({type:z.literal('text'),text:z.string()})).min(1)}).passthrough().parse(result).content[0].text;}
+it.each([Buffer.from(privateValue),Buffer.from('PRIVATE_BINARY_\0ÿé')])('exposes only two private tools and preserves granted bytes %j, confirming before return',async expected=>{
+ const f=await fixture('auto',expected),copies:Buffer[]=[],concat=Buffer.concat;vi.spyOn(Buffer,'concat').mockImplementation((list,total)=>{const bytes=concat(list,total);if(bytes.equals(expected))copies.push(bytes);return bytes;});expect((await f.client.listTools()).tools.map(tool=>tool.name)).toEqual(['request_secret','use_secret']);expect(f.tools.config.includes(Buffer.from(raw.body))).toBe(false);expect(f.source).not.toHaveBeenCalled();
  const id=randomUUID(),request=await f.request(id);expect(JSON.parse(text(request))).toEqual({id,state:'allowed'});
- const value=await f.use(id);expect(JSON.parse(text(value))).toEqual({encoding:'base64',value:Buffer.from(privateValue).toString('base64')});expect(f.source).toHaveBeenCalledOnce();expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.db.select().from(s.secretUses).get()).toMatchObject({agent:'art',job:'job',state:'released'});
- expect(f.db.$client.serialize().includes(Buffer.from(privateValue))).toBe(false);expect(f.db.$client.serialize().includes(Buffer.from(raw.body))).toBe(false);
+ const value=await f.use(id);expect(JSON.parse(text(value))).toEqual({encoding:'base64',value:expected.toString('base64')});expect(copies.length).toBeGreaterThan(0);expect(copies.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.source).toHaveBeenCalledOnce();expect(f.buffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.db.select().from(s.secretUses).get()).toMatchObject({agent:'art',job:'job',state:'released'});
+ expect(f.db.$client.serialize().includes(expected)).toBe(false);expect(f.db.$client.serialize().includes(Buffer.from(raw.body))).toBe(false);
 });
 it('waits on owner consent using metadata, then returns only after the existing private confirmation',async()=>{
  const f=await fixture('ask'),id=randomUUID();expect(JSON.parse(text(await f.request(id))).state).toBe('pending');let armed!:()=>void;const scheduled=new Promise<void>(resolve=>{armed=resolve;}),at=f.clock.at.bind(f.clock);
@@ -49,4 +60,54 @@ it('does not redispatch a value when the same handoff attempt is repeated',async
 it('cancels a pending decision at body shutdown without a value read or a live local capability',async()=>{
  const f=await fixture('ask'),id=randomUUID();await f.request(id);let armed!:()=>void;const scheduled=new Promise<void>(resolve=>{armed=resolve;}),at=f.clock.at.bind(f.clock);vi.spyOn(f.clock,'at').mockImplementation((time,work)=>{if(time===f.clock.now()+1000)armed();return at(time,work);});
  const pending=f.use(id),ended=pending.catch(()=>undefined);await scheduled;f.abort.abort();await f.tools.close();await ended;expect(f.source).not.toHaveBeenCalled();expect(f.tools.config.every(byte=>byte===0)).toBe(true);expect(f.waiting).toHaveBeenLastCalledWith(false);
+});
+it.each(['allow','stop'] as const)('uses the default native private pipe and real model tools while the owner decides: %s',async decision=>{
+ const f=await rootFixture('ask'),token='body_'+'f'.repeat(64),hash=(value:string)=>createHash('sha256').update(value).digest('hex');
+ f.root.writes.run(()=>{f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.insert(s.tokens).values({fingerprint:hash(token),label:'Native fixture',kind:'agent',agent:'art',job:'job',createdAt:new Date(f.clock.now()).toISOString()}).run();f.db.update(s.jobs).set({model:'requested',harness:'claude'}).where(eq(s.jobs.id,'job')).run();});
+ expect((await f.send('Use the requested credential without repeating it','native-tools')).status).toBe(200);
+ const job:WorkerAssignment={id:'job',agent:'art',box:'box',conversation:f.thread.conversation,thread:f.thread.id,venue:'loom',model:'requested',account:'account',harness:'claude',brief:'',house:{repository:'fixture',file:'HOUSE.md',branch:'next'}};
+ let tick!:()=>void,armed!:()=>void,actorEnded!:()=>void,failure:unknown,killed=false;const waiting=new Promise<void>(resolve=>{armed=resolve;}),actorDone=new Promise<void>(resolve=>{actorEnded=resolve;}),cancel=vi.fn(),at=f.clock.at.bind(f.clock);
+ vi.spyOn(f.clock,'at').mockImplementation((time,work)=>{if(time===f.clock.now()+1000)armed();return at(time,work);});
+ const pipeBuffers:Buffer[]=[];
+ vi.mocked(spawn).mockImplementation((_command,args,options)=>{
+  expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(JSON.stringify({args,options})).not.toContain(token);expect(args).toContain('mcp__loom_secrets__use_secret');
+  let config:Record<string,{url:string;headers:Record<string,string>}>|undefined,words='',ended=false,started=false;
+  const control=new Writable({write(bytes,_encoding,done){pipeBuffers.push(bytes);config=JSON.parse(bytes.toString()).mcpServers;expect(bytes.includes(Buffer.from(token))).toBe(false);done();}}),stdin=new Writable({write(bytes,_encoding,done){words+=bytes.toString();done();}});
+  const child=Object.assign(new EventEmitter(),{stdin,stdout:new PassThrough(),stderr:new PassThrough(),stdio:[stdin,null,null,control],kill:vi.fn(()=>{killed=true;child.emit('close',null);return true;})}) as unknown as ChildProcessWithoutNullStreams;
+  const start=()=>{if(started||!ended||!config)return;started=true;void(async()=>{
+   const protocol=new Client({name:'native-model-fixture',version:'1'},{capabilities:{}}),connection=config!.loom_secrets;
+   try{
+    expect(words).toBe('Use the requested credential without repeating it');expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('done');
+    await protocol.connect(new StreamableHTTPClientTransport(new URL(connection.url),{requestInit:{headers:connection.headers}}));
+    const request=randomUUID();expect(JSON.parse(text(await protocol.callTool({name:'request_secret',arguments:{id:request,secret:'TOKEN',why:'Use it privately',minutes:5}}))).state).toBe('pending');
+    const result=await protocol.callTool({name:'use_secret',arguments:{id:randomUUID(),secret:'TOKEN',request}});if(killed)return;expect(JSON.parse(text(result)).value).toBe(Buffer.from(privateValue).toString('base64'));expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');
+    const list=args as string[],session=list[list.indexOf('--session-id')+1];child.stdout.emit('data',Buffer.from([{type:'assistant',session_id:session,parent_tool_use_id:null,message:{model:'observed',content:[{type:'text',text:'Used the credential privately'}]}},{type:'result',session_id:session,is_error:false,subtype:'success',result:'Used the credential privately'}].map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0);
+   }finally{await protocol.close();}
+  })().catch(error=>{if(!killed){failure=error;child.emit('close',1);}}).finally(actorEnded);};
+  control.once('finish',start);stdin.once('finish',()=>{ended=true;start();});return child;
+ });
+ const bytes=Buffer.from(JSON.stringify({job,build:'image',bootstrap:{origin:'https://loom.invalid',job:'job',token}})),errors=vi.fn();
+ const running=bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),stdin:async()=>bytes,env:{ACCOUNT_PROFILE:'/account'},signal:f.abort.signal,clock:f.clock,fetch:f.fetcher,schedule:{every:(_ms,callback)=>{tick=callback;return cancel;}},error:errors});
+ await waiting;expect(f.source).not.toHaveBeenCalled();
+ if(decision==='allow'){
+  let published!:()=>void;const waitingStatus=new Promise<void>(resolve=>{published=resolve;}),unobserve=f.root.writes.observe(()=>{if(f.db.select().from(s.agentStatus).get()?.state==='waiting')published();});tick();await waitingStatus;unobserve();
+  const request=f.db.select().from(s.secretRequests).get()!;f.root.writes.run(()=>f.root.services.secrets.requests.answer(request.id,'alice',true));f.clock.advance(1000);
+ }else{f.root.writes.run(()=>f.root.services.comms!.threads.requestStop(f.thread.id));tick();}
+ expect(await running).toBe(0);await actorDone;if(failure)throw failure;expect(errors).not.toHaveBeenCalled();expect(cancel).toHaveBeenCalledOnce();expect(bytes.every(byte=>byte===0)).toBe(true);expect(pipeBuffers.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);expect(f.db.$client.serialize().includes(Buffer.from(token))).toBe(false);expect(f.db.$client.serialize().includes(Buffer.from(privateValue))).toBe(false);
+ if(decision==='allow'){expect(f.source).toHaveBeenCalledOnce();expect(f.db.select().from(s.secretUses).get()?.state).toBe('released');expect(f.db.select().from(s.turns).all().filter(row=>row.kind==='reply')).toMatchObject([{model:'observed',run:'job'}]);}else{expect(f.source).not.toHaveBeenCalled();expect(f.db.select().from(s.secretUses).all()).toEqual([]);expect(f.db.select().from(s.threads).get()?.stopRequested).toBe(false);}
+});
+it('rejects browser-origin requests even with the local capability, and refuses caller-selected principals',async()=>{
+ const f=await fixture();const denied=await fetch(f.config.url,{method:'POST',headers:{...f.config.headers,origin:'https://untrusted.invalid','content-type':'application/json',accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id:9,method:'tools/list'})});expect(denied.status).toBe(403);
+ await f.client.callTool({name:'use_secret',arguments:{id:randomUUID(),secret:'TOKEN',job:'other',agent:'mark'}}).catch(()=>undefined);expect(f.fetcher).not.toHaveBeenCalled();expect(f.source).not.toHaveBeenCalled();
+});
+it('does not return private source diagnostics in a model tool result',async()=>{
+ const f=await fixture(),id=randomUUID();await f.request(id);f.source.mockRejectedValue(new Error(privateValue+' '+raw.body));const result=await f.use(id);expect(result.isError).toBe(true);expect(text(result)).not.toContain(privateValue);expect(text(result)).not.toContain(raw.body);expect(f.db.select().from(s.secretUses).get()?.state).toBe('failed');
+});
+it('cancels only the disconnected model call, erases its late source, and keeps the body-local server alive',async()=>{
+ const f=await fixture(),id=randomUUID();await f.request(id);let entered!:()=>void,release!:(value:Buffer)=>void,aborted!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;}),cancelled=new Promise<void>(resolve=>{aborted=resolve;});
+ f.source.mockImplementation(()=>{entered();return new Promise<Buffer>(resolve=>{release=resolve;});});const fetcher=f.fetcher.getMockImplementation()!;
+ f.fetcher.mockImplementation((url,init)=>{if(String(url).endsWith('/private/read'))init?.signal?.addEventListener('abort',aborted,{once:true});return fetcher(url,init);});
+ const pending=f.use(id),ended=pending.catch(()=>undefined);await started;await f.client.close();await cancelled;await ended;expect(f.abort.signal.aborted).toBe(false);
+ const next=new Client({name:'reconnected-native',version:'1'},{capabilities:{}});await next.connect(new StreamableHTTPClientTransport(new URL(f.config.url),{requestInit:{headers:f.config.headers}}));clean.push(()=>next.close());expect((await next.listTools()).tools).toHaveLength(2);
+ const late=Buffer.from('PRIVATE_LATE_SOURCE');release(late);await f.tools.close();await f.root.services.secrets.inputs.close();expect(late.every(byte=>byte===0)).toBe(true);expect(f.db.select().from(s.secretUses).get()?.state).toBe('failed');
 });
