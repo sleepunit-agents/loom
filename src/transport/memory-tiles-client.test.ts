@@ -24,6 +24,7 @@ const wire=vi.hoisted(()=>({create:vi.fn(),subscribe:vi.fn(),closed:undefined as
 vi.mock('../../web/node_modules/graphql-ws/dist/index.js',()=>({createClient:(options:{on:{closed:()=>void}})=>{
  wire.create();wire.closed=options.on.closed;return {subscribe:wire.subscribe,dispose:vi.fn()};
 }}));
+vi.mock('../../web/src/memory/commands',()=>({memoryCall:wire.call}));
 vi.mock('../../web/src/data',()=>({call:wire.call,useRecords:()=>{throw Error('Memory tiles must not read legacy records');}}));
 vi.mock('../../web/src/kit',()=>({Split:(p:any)=>h('main',{'data-tile':p.label},p.list,p.reader),List:(p:any)=>h('div',null,p.children),Row:(p:any)=>h('button',{onClick:p.onClick},p.title),Empty:(p:any)=>h('p',null,p.title),Loading:(p:any)=>h('p',null,p.label),Error:(p:any)=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button',Markdown:(p:any)=>h('p',null,p.text)}));
 import Knowledge from '../../web/src/pieces/knowledge';

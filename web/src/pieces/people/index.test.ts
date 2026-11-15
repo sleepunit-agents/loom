@@ -3,7 +3,7 @@ import { createElement as h } from '../../../node_modules/react/index.js';
 import { act,create } from '../../../node_modules/react-test-renderer/index.js';
 import type { CallState,Snapshot } from '../../data/store';
 const f=vi.hoisted(()=>({feed:{records:[],status:'live'} as Snapshot,access:{records:[{id:'people',allowed:true,canAdd:true,agents:['art']}],status:'live'} as Snapshot,conversations:{records:[],status:'live'} as Snapshot,call:vi.fn()}));
-vi.mock('../../data',()=>({call:f.call}));
+vi.mock('../../memory/commands',()=>({memoryCall:f.call}));
 vi.mock('../../memory/query',()=>({useMemoryList:()=>f.feed,useMemoryRecord:(s:any)=>{
  if(s?.query.includes('MemoryPeopleAccess'))return f.access;
  const person=f.feed.records.find(p=>p.id===s?.variables.id);
