@@ -44,10 +44,15 @@ export function sharedRoot(options: {
   });
   registerSharedPreferences(operations, db);
   const roles = () => options.modelRoles?.() ?? [];
+  let tempo!: ReturnType<typeof installSharedTempo>;
   const jobEnded = (id: string) => {
-    try { options.runtimeJobEnded?.(id); } catch (error) { options.reportError(error); }
+    try {
+      tempo?.sources.job(id);
+      tempo?.capacityChanged();
+      options.runtimeJobEnded?.(id);
+    } catch (error) { options.reportError(error); }
   };
-  const runtime = createRuntime(db, clock, { roles, changed: () => data.changed(), jobEnded, error: options.reportError });
+  const runtime = createRuntime(db, clock, { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
   registerSharedRuntime(operations, db, { now, roles, jobEnded });
   const services = {
     tasks: taskService(db, now),
@@ -56,7 +61,6 @@ export function sharedRoot(options: {
     runtime,
   };
   registerSharedTaskCommands(operations, db, services.tasks);
-  let tempo: ReturnType<typeof installSharedTempo>;
   try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, options.tempo); }
   catch (error) { operations.close(); void data.close(); throw error; }
   const authenticate = dataAuthentication(db, () => clock.now());
