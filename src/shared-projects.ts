@@ -33,8 +33,11 @@ export function sharedProjects(db:DataDatabase){
 export function registerSharedProjects(operations:Operations,db:DataDatabase,service:ReturnType<typeof sharedProjects>){
  operations.register({name:'household.setProject',write:true,recheckPolicy:true,input,output:z.object({id:z.string()}).strict(),may:viewer=>sharedTokenOwner(db,viewer),run(ctx,value){const result=service.save(value);ctx.changed('core.access','household');return result;}});
 }
-export function sharedProjectFields(db:DataDatabase):GraphQLFieldConfigMap<unknown,{viewer:Viewer}>{
+export function sharedProjectQueries(db:DataDatabase){
+ const ownerReads=new WeakSet<Viewer>();
  const strings=new GraphQLList(GraphQLString),project=new GraphQLObjectType({name:'SharingProject',fields:{id:{type:GraphQLString},name:{type:GraphQLString},members:{type:strings},agents:{type:strings},repositories:{type:strings}}});
  const sharing=new GraphQLObjectType({name:'HouseholdSharing',fields:{members:{type:strings},agents:{type:strings},projects:{type:new GraphQLList(project)}}});
- const service=sharedProjects(db);return {householdSharing:{type:sharing,resolve(_row,_args,{viewer}){return sharedTokenOwner(db,viewer)?service.read():null;}}};
+ const service=sharedProjects(db);
+ const fields:GraphQLFieldConfigMap<unknown,{viewer:Viewer}>={householdSharing:{type:sharing,resolve(_row,_args,{viewer}){if(!sharedTokenOwner(db,viewer))return null;ownerReads.add(viewer);return service.read();}}};
+ return{fields,valid:(viewer:Viewer)=>!ownerReads.has(viewer)||sharedTokenOwner(db,viewer)};
 }

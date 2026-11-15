@@ -1,4 +1,6 @@
 import Database from 'better-sqlite3';
+import {GraphQLString,type GraphQLFieldConfigMap} from 'graphql/index.js';
+import type {Viewer} from './policy.js';
 import {createHash} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {afterEach,expect,it} from 'vitest';
@@ -7,12 +9,12 @@ import {createDataSchema} from './core/data/database.js';
 import {members,agents,tokens,projects,projectMembers,projectAgents,projectRepositories,changes} from './core/data/schema.js';
 import {sharedRoot} from './shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
-function fixture(){
+function fixture(fields:GraphQLFieldConfigMap<unknown,{viewer:Viewer}>={}){
  const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString());
  db.insert(members).values([{id:'owner',role:'owner',joinedAt:at},{id:'sam',role:'member',joinedAt:at}]).run();db.insert(agents).values({id:'art',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();
  const raw={owner:'a'.repeat(64),sam:'b'.repeat(64),art:'c'.repeat(64)},hash=(value:string)=>createHash('sha256').update(value).digest('hex');
  for(const member of ['owner','sam'] as const)db.insert(tokens).values({fingerprint:hash(raw[member]),kind:'owner',member,label:member,createdAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw.art),kind:'agent',agent:'art',label:'art',createdAt:at}).run();
- const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{}});clean.push(()=>root.close());
+ const root=sharedRoot({db,clock,fields,originAllowed:()=>true,reportError:()=>{}});clean.push(()=>root.close());
  const call=(input:unknown,actor:keyof typeof raw='owner',id='save')=>root.http.request('http://loom/api/household/setProject',{method:'POST',headers:{authorization:'Bearer '+raw[actor],'content-type':'application/json'},body:JSON.stringify({input,id})});
  const read=(query:string,actor:keyof typeof raw='owner')=>root.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw[actor],'content-type':'application/json'},body:JSON.stringify({query})}).then(r=>r.json());
  return{client,db,root,call,read};
@@ -67,4 +69,12 @@ it('rolls back newly added grants when saving its receipt fails',async()=>{
  f.client.exec("CREATE TRIGGER refuse_new_grants BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT, 'fixture failure'); END");
  expect((await f.call(project,'owner','new-grants')).status).toBe(503);
  expect(f.db.select().from(projectMembers).all()).toEqual([]);expect(f.db.select().from(projectAgents).all()).toEqual([]);
+});
+
+it('withdraws selected sharing metadata if its owner is demoted during an awaited sibling',async()=>{
+ let began!:()=>void,release!:()=>void;const started=new Promise<void>(r=>began=r),held=new Promise<void>(r=>release=r);
+ const f=fixture({hold:{type:GraphQLString,resolve:async()=>{began();await held;return 'Done';}}});await f.call({...project,name:'Private project label'});
+ const pending=f.read('{ householdSharing { projects { name } } hold }');await started;
+ f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();release();
+ expect(await pending).toEqual({errors:[{message:'Authentication ended'}]});
 });
