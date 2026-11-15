@@ -1,24 +1,23 @@
 /** Machine settings requested in private chat become typed inline approvals. */
 import {and,asc,eq} from 'drizzle-orm';
 import {z} from 'zod';
-import {mayAct} from './policy.js';
-import {sharedSharing} from './shared-sharing.js';
 import type {DataDatabase} from './core/data/database.js';
 import {approvals,boxes,boxAgents,boxFacts} from './core/data/schema.js';
 import {bodyOperationDefaults,type conversationBodyScope} from './core/conversations/body-scope.js';
 import {OperationError,type Operations} from './core/operations/index.js';
 import type {approvalService,Approval} from './apps/approvals.js';
-import {boxSettingsInput,validateBoxSettings,applyBoxSettings} from './shared-box-settings.js';
+import {boxSettingsInput,validateBoxSettings,applyBoxSettings,mayChangeBoxSettings} from './shared-box-settings.js';
 const operation='runtime.boxSettings';
 const details=z.object({owner:z.string(),before:boxSettingsInput,after:boxSettingsInput}).strict();
 type Setting=z.infer<typeof boxSettingsInput>;
 const canonical=(value:Setting):Setting=>({...value,agents:[...value.agents].sort((a,b)=>a.agent.localeCompare(b.agent,'en')),facts:[...value.facts].sort()});
 const target=(box:string)=>'runtime:box-settings:'+box;
-const summary=(change:z.infer<typeof details>)=>'Machine settings: '+JSON.stringify(change.before)+' → '+JSON.stringify(change.after);
+const describe=(value:Setting)=>value.name+': '+(value.reportOnly?'reports only':'runs jobs')+', '+(value.alwaysOn?'always on':'on demand')+', '+(value.hostsAny?'any agent':'selected agents')+'; agents: '+(value.agents.map(row=>row.agent+(row.lent?' (lent)':'')).join(', ')||'none')+'; capabilities: '+(value.facts.join(', ')||'none');
+const summary=(change:z.infer<typeof details>)=>'Before: '+describe(change.before)+'. After: '+describe(change.after)+'.';
 export function sharedBoxProposals(db:DataDatabase){
  const pending=new Set<string>();
  const box=(id:string)=>db.select().from(boxes).where(eq(boxes.id,id)).get();
- const allowed=(member:string,id:string)=>{const row=box(id);return !!row&&!row.revokedAt&&mayAct({kind:'member',id:member},{type:'runtime.box',member:row.owner},sharedSharing(db));};
+ const allowed=(member:string,id:string)=>mayChangeBoxSettings(db,{kind:'member',id:member},id);
  const read=(id:string):Setting=>{
   const row=box(id);if(!row||row.revokedAt)throw new OperationError('denied','Available machine required');
   return canonical({box:id,name:row.name,hostsAny:row.hostsAny,reportOnly:row.reportOnly,alwaysOn:row.alwaysOn,

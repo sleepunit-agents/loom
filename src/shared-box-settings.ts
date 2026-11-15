@@ -1,7 +1,7 @@
 /** An enrolled machine's owner controls hosting; enrollment stays with Sign-in. */
 import { and, eq, ne, isNull } from 'drizzle-orm';
 import { z } from 'zod';
-import { mayAct } from './policy.js';
+import { mayAct, type Viewer } from './policy.js';
 import { sharedSharing } from './shared-sharing.js';
 import type { DataDatabase } from './core/data/database.js';
 import { agents, boxes, boxAgents, boxFacts, memberAgents } from './core/data/schema.js';
@@ -30,15 +30,16 @@ export function applyBoxSettings(db:DataDatabase,input:z.infer<typeof boxSetting
    for(const fact of input.facts)db.insert(boxFacts).values({box:input.box,fact,fromOwner:true}).onConflictDoUpdate({target:[boxFacts.box,boxFacts.fact],set:{fromOwner:true}}).run();
 }
 
+export function mayChangeBoxSettings(db:DataDatabase,viewer:Viewer,id:string){
+ const box=db.select().from(boxes).where(eq(boxes.id,id)).get();
+ return !!box&&!box.revokedAt&&viewer.kind==='member'&&mayAct(viewer,{type:'runtime.box',member:box.owner},sharedSharing(db));
+}
 export function registerBoxSettings(operations:Operations,db:DataDatabase,changed:()=>void){
  const applied=new WeakSet<object>();
  operations.register({name:'runtime.boxSettingsSet',write:true,recheckPolicy:true,doors:['http'],
   input:boxSettingsInput,
   output:z.object({saved:z.literal(true)}).strict(),
-  may(viewer,input){
-   const box=db.select().from(boxes).where(eq(boxes.id,input.box)).get();
-   return !!box&&!box.revokedAt&&viewer.kind==='member'&&mayAct(viewer,{type:'runtime.box',member:box.owner},sharedSharing(db));
-  },
+  may:(viewer,input)=>mayChangeBoxSettings(db,viewer,input.box),
   run(ctx,input){
    applyBoxSettings(db,input);
    applied.add(input);ctx.changed('boxes',input.box);ctx.changed('boxAgents',input.box);ctx.changed('boxFacts',input.box);return{saved:true as const};

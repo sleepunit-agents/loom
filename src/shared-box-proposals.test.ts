@@ -52,3 +52,11 @@ it('rolls back proposal and Allow with receipts and notifies capacity only outsi
  f.root.writes.run(()=>f.db.update(s.boxes).set({lastSeenAt:new Date(f.clock.now()).toISOString()}).run());expect(observed).toEqual([]);
  expect((await f.answer(card.id)).status).toBe(200);expect(observed).toEqual([false]);expect((await f.answer(card.id)).status).toBe(200);expect(observed).toEqual([false]);changed.mockRestore();
 });
+
+it('lets a household owner propose for another member machine using that owner lending rules',async()=>{
+ const f=await fixture();f.db.update(s.boxes).set({owner:'bob'}).run();f.db.insert(s.memberAgents).values({member:'bob',agent:'mark'}).run();
+ const value={...f.value,agents:[{agent:'art',lent:true},{agent:'mark',lent:false}]};
+ expect((await f.propose('household-owner',value)).status).toBe(200);const card=f.db.select().from(s.approvals).get()!;
+ expect(card.changeSummary).toContain('Before: Box: runs jobs');expect(card.changeSummary).toContain('After: Workshop: runs jobs, always on');expect(card.changeSummary).not.toContain('reportOnly');
+ expect((await f.answer(card.id)).status).toBe(200);expect(f.read().box).toMatchObject({owner:'bob',name:'Workshop'});expect(f.read().agents).toMatchObject([{agent:'art',lent:true},{agent:'mark',lent:false}]);
+});
