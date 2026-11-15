@@ -19,6 +19,14 @@ export interface CommittedWrite<T> {
  */
 export class DataWrites {
   private depth = 0;
+  private observers = new Set<() => void>();
+
+  /** Trusted composition hooks, invoked only after the outer transaction commits.
+   * Unsubscribe before the composed service or connection closes. */
+  observe(committed: () => void): () => void {
+    this.observers.add(committed);
+    return () => { this.observers.delete(committed); };
+  }
 
   constructor(private readonly db: DataDatabase, private readonly notify: {
     refreshAccess(): void;
@@ -46,7 +54,7 @@ export class DataWrites {
     if (outer) {
       // Revocation takes effect before live reads are woken. Attempt both hooks
       // even when one fails; notification failure cannot roll back a commit.
-      for (const notify of [() => this.notify.refreshAccess(), () => this.notify.changed()]) {
+      for (const notify of [() => this.notify.refreshAccess(), () => this.notify.changed(), ...[...this.observers].map(observer => () => { if (this.observers.has(observer)) observer(); })]) {
         try { notify(); } catch (error) { notificationErrors.push(error); }
       }
     }
