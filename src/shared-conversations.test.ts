@@ -73,6 +73,21 @@ it('answers the same private Inbox item through real HTTP and denies other peopl
   expect((await f.post('inbox.read',{item:question.inboxItem!},'other-read','bob')).status).toBe(403);
   expect(f.client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({n:0});
   expect(f.db.select().from(operationResults).where(eq(operationResults.id,'other-read')).all()).toEqual([]);
+  const visibleOwner = await f.query(`{inboxItem(id:"${question.inboxItem}"){body{words}}}`,'owner');
+  expect(visibleOwner.body.errors).toBeUndefined(); expect(visibleOwner.body.data?.inboxItem).toEqual({body:{words:'PRIVATE QUESTION'}});
+  for (const [name,input,id] of [
+    ['inbox.read',{item:question.inboxItem!},'owner-read'],
+    ['inbox.answer',{item:question.inboxItem!,answer:'words',words:'OWNER ANSWER'},'owner-answer'],
+  ] as const) {
+    expect((await f.post(name,input,id,'owner')).status).toBe(403);
+    expect(f.db.select().from(operationResults).where(eq(operationResults.id,id)).all()).toEqual([]);
+  }
+  expect(f.client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({n:0});
+  const plain = f.root.services.conversations.send({toKind:'person',to:'alice',source:'discord',sourceId:'plain-owner-test',fromKind:'agent',fromId:'art',member:'alice',agent:'art',words:'PUBLIC SOURCE QUESTION',answers:'yes-no'});
+  expect((await f.query(`{inboxItem(id:"${plain.id}"){body{words}}}`,'owner')).body.data?.inboxItem).toEqual({body:{words:'PUBLIC SOURCE QUESTION'}});
+  expect((await f.post('inbox.answer',{item:plain.id,answer:'yes'},'owner-plain-answer','owner')).status).toBe(403);
+  expect(f.db.select().from(inbox).where(eq(inbox.id,plain.id)).get()?.state).toBe('waiting');
+  expect(f.db.select().from(operationResults).where(eq(operationResults.id,'owner-plain-answer')).all()).toEqual([]);
   expect((await f.post('inbox.read',{item:question.inboxItem!},'read')).status).toBe(200);
   expect((await f.post('inbox.answer',{item:question.inboxItem!,answer:'words',words:'PRIVATE ANSWER'},'answer')).status).toBe(200);
   const read = await f.query(`{inboxItem(id:"${question.inboxItem}"){read state body{words} answerText bodyKeepUntil answerKeepUntil}}`);
