@@ -33,6 +33,9 @@ export class Dispatcher {
       for (const job of queued) {
         if (job.retryAt && job.retryAt > at) continue;
         const needs = this.db.select().from(jobNeeds).where(eq(jobNeeds.job, job.id)).all().map(row => row.need);
+        const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, job.agent)).get();
+        // Settings may gain GPU after admission; never claim an incapable box.
+        if (settings?.gpu && !needs.includes('gpu')) needs.push('gpu');
         const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs });
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);
@@ -40,7 +43,6 @@ export class Dispatcher {
         // model on a queued job is the initial preference; this records the
         // model actually requested from the worker after current placement.
         this.db.update(jobs).set({ model: placement.model, account: placement.account, harness: placement.harness }).where(eq(jobs.id, job.id)).run();
-        const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, claimed.agent)).get();
         const ports = this.db.select({ address: agentHousePorts.address, port: agentHousePorts.port })
           .from(agentHousePorts).where(eq(agentHousePorts.agent, claimed.agent))
           .orderBy(asc(agentHousePorts.address), asc(agentHousePorts.port)).all();
