@@ -19,6 +19,7 @@ it('shares the window connection with another app and clears both readers on acc
   let tree: ReturnType<typeof create> | undefined;
   try {
     await act(async () => { tree = create(h('div', null, h(TempoApp, {timezone: 'UTC'}), h(OtherApp))); });
+    await act(async () => { await vi.dynamicImportSettled(); });
     expect(wire.create).toHaveBeenCalledOnce();
     expect(sinks.size).toBe(2);
     const push = (query: string, value: unknown) => sinks.get(query)!.next({data: {observe: {revision: 1, patches: [{path: [], removed: false, value}]}}});
