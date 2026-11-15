@@ -3,6 +3,7 @@ import {mkdtempSync,rmSync,readFileSync,mkdirSync,writeFileSync,statSync} from '
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {exampleHome,runExampleHome} from './example-home.js';
+import {FakeClock} from './core/clock.js';
 import {startSharedHome} from './shared-startup.js';
 it('builds fictitious data through services, then normal startup signs in and queries it',async()=>{
  const parent=mkdtempSync(join(tmpdir(),'loom-example-test-')),home=join(parent,'home');
@@ -17,7 +18,8 @@ it('builds fictitious data through services, then normal startup signs in and qu
   const before=readFileSync(join(home,'app.db'));
   await expect(exampleHome(home)).rejects.toThrow();expect(readFileSync(join(home,'app.db'))).toEqual(before);
   mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
-  let link='';app=await startSharedHome({home,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
+  const clock=new FakeClock(Date.now());
+  let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
   const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});
   expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
   const query=await fetch(app.url+'/graphql',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id title status } approvals { id state } triggers { id } modelAccounts { ... on RuntimeAccountDetail { id label } } }'})});
@@ -25,5 +27,17 @@ it('builds fictitious data through services, then normal startup signs in and qu
   expect(result.data.tasks).toHaveLength(4);expect(result.data.tasks.map((t:{status:string})=>t.status)).toContain('in_progress');
   expect(result.data.approvals).toEqual([expect.objectContaining({state:'pending'})]);
   expect(result.data.modelAccounts).toEqual([expect.objectContaining({label:'Example model subscription'})]);
+  const command=async(name:string,input:unknown,id:string)=>{
+   const response=await fetch(app!.url+'/api/'+name.replace('.','/'),{method:'POST',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify({id,input})});expect(response.status).toBe(200);
+  };
+  const trigger=async()=>{
+   const response=await fetch(app!.url+'/graphql',{method:'POST',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify({query:'query Watch($id:String!){triggers(where:{id:{eq:$id}}){state lastFiredAt} triggerLog(where:{trigger:{eq:$id}}){event}}',variables:{id:manifest.trigger}})});const data=await response.json();expect(data.errors).toBeUndefined();return data.data;
+  };
+  await command('tempo.pause',{agent:manifest.agents[0]},'pause-example');
+  await command('approvals.answer',{id:manifest.approval,answer:'allow'},'answer-example');
+  expect((await trigger()).triggers).toEqual([{state:'held',lastFiredAt:null}]);
+  await command('tempo.resume',{agent:manifest.agents[0]},'resume-example');
+  const fired=await trigger();expect(fired.triggers[0].state).toBe('fired');expect(fired.triggerLog.filter((row:{event:string})=>row.event==='fired')).toHaveLength(1);
+
  }finally{await app?.close();rmSync(parent,{recursive:true,force:true});}
 });
