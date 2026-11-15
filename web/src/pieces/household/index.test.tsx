@@ -54,7 +54,7 @@ it.each(['offline','owner-change','unavailable'])('hides late program credential
  await act(async()=>{tree=create(h(Setup));});const event=await programForm();await act(async()=>tree.root.findByProps({'aria-label':'Create token'}).props.onSubmit(event));
  await act(async()=>{if(reason==='offline')f.programFeed.status='offline';else f.programFeed.data={programSetup:reason==='owner-change'?programData('other'):null};tree.update(h(Setup));});
  await act(async()=>release(Response.json({ok:true,value:{token:privateBearer,fingerprint:'d'.repeat(64)}})));await act(async()=>{f.programFeed.status='live';f.programFeed.data={programSetup:programData()};tree.update(h(Setup));});
- expect(JSON.stringify(tree.toJSON())).not.toContain(privateBearer);expect(fetch).toHaveBeenCalledOnce();
+ expect(JSON.stringify(tree.toJSON())).not.toContain(privateBearer);expect(JSON.stringify(tree.toJSON())).toContain('may have completed');expect(fetch).toHaveBeenCalledOnce();
 });
 it('edits exact program grants through the shared operation, including an empty set',async()=>{
  f.programFeed.data={programSetup:programData()};vi.stubGlobal('FormData',class{getAll(){return[];}});
@@ -66,4 +66,28 @@ it.each(['offline','owner-change','unavailable'])('clears an already delivered p
  await act(async()=>{tree=create(h(Setup));});const event=await programForm();await act(async()=>tree.root.findByProps({'aria-label':'Create token'}).props.onSubmit(event));expect(JSON.stringify(tree.toJSON())).toContain(privateBearer);
  await act(async()=>{if(reason==='offline')f.programFeed.status='offline';else f.programFeed.data={programSetup:reason==='owner-change'?programData('other'):null};tree.update(h(Setup));});expect(JSON.stringify(tree.toJSON())).not.toContain(privateBearer);
  await act(async()=>{f.programFeed.status='live';f.programFeed.data={programSetup:programData()};tree.update(h(Setup));});expect(JSON.stringify(tree.toJSON())).not.toContain(privateBearer);expect(fetch).toHaveBeenCalledOnce();
+});
+
+it('uses the owner catalogue checkboxes and optional expiry in program issuance',async()=>{
+ f.programFeed.data={programSetup:programData()};const fetch=vi.fn().mockResolvedValue(Response.json({ok:true,value:{token:privateBearer,fingerprint:'d'.repeat(64)}}));vi.stubGlobal('fetch',fetch);
+ await act(async()=>{tree=create(h(Setup));});await programForm();
+ const form=tree.root.findByProps({'aria-label':'Create token'});expect(form.findAllByType('input').filter((node:{props:{type?:string}})=>node.props.type==='checkbox').map((node:{props:{name:string;value:string}})=>[node.props.name,node.props.value])).toEqual([['records','tasks'],['records','projects'],['operations','tasks.command']]);
+ vi.stubGlobal('FormData',class{get(name:string){return({label:'Expiring client',member:'sam',expiresAt:'2026-12-01T00:00:00Z'} as Record<string,string>)[name]??null;}getAll(name:string){return name==='records'?['tasks']:['tasks.command'];}});
+ await act(async()=>form.props.onSubmit({preventDefault(){},currentTarget:{}}));expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({member:'sam',label:'Expiring client',expiresAt:'2026-12-01T00:00:00Z',records:['tasks'],operations:['tasks.command']});
+ await act(async()=>tree.root.findByProps({'aria-label':'Create token'}).props.onSubmit({preventDefault(){},currentTarget:{}}));expect(fetch).toHaveBeenCalledOnce();
+ await act(async()=>tree.root.findAllByType('button').find((node:{props:{children:unknown}})=>node.props.children==='Hide token').props.onClick());expect(tree.root.findByProps({'aria-label':'Create token'}).findByType('fieldset').props.disabled).toBe(false);
+});
+it('saves selected record and operation grants rather than clearing them',async()=>{
+ f.programFeed.data={programSetup:programData()};vi.stubGlobal('FormData',class{getAll(name:string){return name==='records'?['projects']:['tasks.command'];}});await act(async()=>{tree=create(h(Setup));});
+ await act(async()=>tree.root.findByProps({'aria-label':'Save grants for Task client'}).props.onSubmit({preventDefault(){},currentTarget:{}}));expect(f.operation).toHaveBeenCalledExactlyOnceWith('program.setGrants',{fingerprint:'c'.repeat(64),records:['projects'],operations:['tasks.command']});
+});
+it.each(['ended','inactive','offline','denied'] as const)('refuses program grant edits when %s',async reason=>{
+ const data=programData();if(reason==='ended')data.tokens[0].ended=true;f.programFeed.data={programSetup:data};if(reason==='offline')f.programFeed.status='offline';if(reason==='denied')f.feed.data={householdSetup:null,boxes:[]};
+ await act(async()=>{tree=create(h(Setup,{active:reason!=='inactive'}));});const forms=tree.root.findAllByProps({'aria-label':'Save grants for Task client'});
+ if(reason==='denied')expect(forms).toHaveLength(0);else{expect(forms[0].findByType('fieldset').props.disabled).toBe(true);await act(async()=>forms[0].props.onSubmit({preventDefault(){},currentTarget:{}}));}expect(f.operation).not.toHaveBeenCalled();
+});
+it.each(['offline','unavailable'])('refuses program issuance when catalogue is %s',async reason=>{
+ f.programFeed.data={programSetup:programData()};const fetch=vi.fn();vi.stubGlobal('fetch',fetch);await act(async()=>{tree=create(h(Setup));});const event=await programForm();
+ await act(async()=>{if(reason==='offline')f.programFeed.status='offline';else f.programFeed.data={programSetup:null};tree.update(h(Setup));});expect(tree.root.findAllByType('option').find((node:{props:{value?:string}})=>node.props.value==='program').props.disabled).toBe(true);
+ await act(async()=>tree.root.findByProps({'aria-label':'Create token'}).props.onSubmit(event));expect(fetch).not.toHaveBeenCalled();
 });
