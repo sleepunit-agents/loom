@@ -52,7 +52,11 @@
     {
       "id": "desk-010",
       "promise": "Home shows each agent's last answer and recent conversations, with a box to message it.",
-      "source": "docs/how-it-works/site/desk.html#con-h"
+      "source": "docs/how-it-works/site/desk.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "homeMessage"
+      }
     },
     {
       "id": "desk-011",
