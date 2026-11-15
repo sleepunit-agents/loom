@@ -15,12 +15,12 @@ let writes: DataWrites, notifications: unknown[];
 let read: (member: 'sam' | 'lee') => Promise<string[]>;
 beforeEach(() => {
   network.mockClear(); vi.stubGlobal('fetch', network);
-  client = new Database(':memory:'); db = createDataSchema(client, () => at);
+  client = new Database(':memory:'); db = createDataSchema(client, () => '2026-11-14T21:00:00.000Z');
   db.insert(members).values(['sam','lee'].map(id => ({id,role:'member' as const,joinedAt:at}))).run();
   db.insert(projects).values(['pond','bank'].map(id => ({id,name:id}))).run();
   db.insert(projectMembers).values([{project:'pond',member:'sam'},{project:'bank',member:'lee'}]).run();
   db.insert(projectRepositories).values({project:'pond',repository:'House/Loom'}).run();
-  db.insert(changes).values({id,repository:'house/loom',number:1,title:'Cached facts',body:'Body',url:'https://github.com/house/loom/pull/1',state:'open',draft:false,authorLogin:'author',project:'pond',branch:'feature',headCommit:'a'.repeat(40),baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you',openedAt:at,updatedAt:at}).run();
+  db.insert(changes).values({id,repository:'house/loom',number:1,title:'Cached facts',body:'Body',url:'https://github.com/house/loom/pull/1',state:'open',draft:false,authorLogin:'author',project:'pond',branch:'feature',headCommit:'a'.repeat(40),baseBranch:'next',checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you',openedAt:'2026-11-14T19:00:00.000Z',updatedAt:at}).run();
   db.insert(changeChecks).values({change:id,name:'CI',state:'running'}).run();
   db.insert(changePeople).values({change:id,login:'reviewer',role:'reviewer'}).run();
   db.insert(tasks).values({id:'t-1',title:'Linked work',ownerKind:'member',owner:'sam',createdByKind:'member',createdBy:'sam',createdAt:at,changedAt:at}).run();
