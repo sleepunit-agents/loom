@@ -1,6 +1,7 @@
 import {conversationLinks} from './rebuild-conversation-links.mjs';
 import {modelAccountActions} from './rebuild-model-actions.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
+import {approvalRulesAndExpiry,approvalPreparedChanges} from './rebuild-approval-settings.mjs';
 import {taskQuestions,taskInlineQuestion} from './rebuild-task-questions.mjs';
 import {prepareAcceptanceHome} from './rebuild-acceptance-adapter.mjs';
 import {approvalActions} from './rebuild-approval-actions.mjs';
@@ -16,7 +17,7 @@ import {maskCredentialScreenshots} from './rebuild-credential-evidence.mjs';
 import {accessAction} from './rebuild-access-actions.mjs';
 
 import {taskActions} from './rebuild-task-actions.mjs';
-import {conversationActions} from './rebuild-conversation-actions.mjs';
+import {conversationActions,selectExampleConversation} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActions} from './rebuild-inbox-actions.mjs';
@@ -183,11 +184,13 @@ export async function* walkthroughSteps(output) {
    if(title==='Activity'&&row.opened)report.actions=await conversationActions({page,app,example:report.example,out,open:openApp,actions:['commsSend'],previous:report.actions});
    if(title==='People'&&row.opened)report.actions=await conversationActions({page,app,example:report.example,out,open:openApp,actions:['commsSendReload'],previous:report.actions});
    if(title==='Approvals'&&row.opened)report.actions={...report.actions,...await approvalActions({page,tile:page.getByRole('region',{name:'Approvals tile',exact:true}),app,example:report.example,out})};
-   if(title==='Inbox'&&row.opened)report.actions={...report.actions,...await taskQuestions({page,tile:page.getByRole('region',{name:'Inbox tile',exact:true}),app,example:report.example,out})};
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await taskInlineQuestion({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
-   if(title==='Comms'&&row.opened)report.actions={...report.actions,...await changeInline({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
+   if(title==='Approvals'&&row.opened)report.actions={...report.actions,...await approvalRulesAndExpiry({page,tile:page.getByRole('region',{name:'Approvals tile',exact:true}),app,example:report.example,out,clock})};
+   if(title==='Comms'&&row.opened)report.actions={...report.actions,...await approvalPreparedChanges({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out,clock})};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await workVisibility({page,app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
+   if(title==='Tasks'&&row.opened){const tile=await openApp('Inbox');report.actions={...report.actions,...await taskQuestions({page,tile,app,example:report.example,out})};}
+   if(title==='Changes'&&row.opened){const tile=await openApp('Comms');await selectExampleConversation(page,tile);report.actions={...report.actions,...await changeInline({page,tile,app,example:report.example,out})};}
    if(title==='Home'&&row.opened){report.actions={...report.actions,homeMessage:await homeActions({page,tile:page.getByRole('region',{name:'Home tile',exact:true}),app,out})};}
 
    report.apps.push(row);
