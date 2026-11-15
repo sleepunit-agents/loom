@@ -1,13 +1,21 @@
 # A running body's Memory commands
 
-The shared root registers memory.remember and memory.recall on its existing
+The shared root registers memory.remember, memory.recall, memory.archive,
+memory.restore and memory.forget on its existing
 command door. The runtime command catalogue supplies their input schemas.
-Both require a currently authenticated body and select the file declared
+All require a currently authenticated body and select the file declared
 for that body's agent. Inputs cannot select another agent or a path.
 
 Remember accepts a category, title and content, with optional project, TTL
 and JSON metadata. Recall accepts a meaning query, optional category/project
 and a bounded result limit. Its ranked matches add recall heat.
+
+Archive, restore and forget accept one opaque scoped ID from the current
+body's source. Archive optionally stores a private note and removes the memory
+from recall; restore rebuilds its embedding. Forget records the deletion in
+the private source before removing the memory. Forget is final; restore
+applies to archived memories. Replaying a completed change returns its
+original IDs, including after the forgotten row no longer exists.
 
 Results contain opaque scoped IDs, such as art:<uuid>, and recall scores.
 Read title and content with the existing GraphQL field
@@ -30,7 +38,7 @@ the separate data move prepares it.
 
 This is the canonical command/source side. The general native MCP
 consumer is built on t-2241. Exposing the remaining semantic changes
-(drafts, ratification, archive, restore and history) through that path is
+(drafts, ratification, editing and version history) through that path is
 still on t-2243; their existing core/stdio helpers remain. No installed
 service or real source is changed by this implementation.
 

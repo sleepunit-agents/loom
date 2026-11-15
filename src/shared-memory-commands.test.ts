@@ -187,6 +187,46 @@ it('recovers the committed private result after shared receipt failure and reser
  expect((await f.call('remember',{...input,content:'Different'},'recover')).status).toBe(409);
  f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());expect([401,403]).toContain((await f.call('remember',input,'recover')).status);
 });
+it('archives, restores and forgets one own opaque ID with private notes, replay and a deletion record',async()=>{
+ const f=await fixture(),made=await f.call('remember',input,'make-lifecycle'),id=made.result.value.ids[0],uuid=id.slice(4),note='PRIVATE_ARCHIVE_NOTE';
+ for(const verb of ['archive','restore','forget']){
+  expect((await f.call(verb,{id:id.replace('art:','mark:')},'foreign-'+verb)).status).toBe(403);
+  expect((await f.call(verb,{id},'non-body-'+verb,raw.agent)).status).toBe(403);
+  expect((await f.call(verb,{id,agent:'mark'},'select-'+verb)).status).toBe(400);
+ }
+ const archived=await f.call('archive',{id,note},'archive-one');expect(archived.status).toBe(200);expect(archived.result.value.ids).toEqual([id]);
+ expect(f.source.prepare('SELECT archived,archive_note FROM memories WHERE uuid=?').get(uuid)).toEqual({archived:1,archive_note:JSON.stringify({note,archived_at:'2026-11-14T18:00:00.000Z'})});
+ expect((await f.call('recall',{query:'alpha'},'absent')).result.value.ids).toEqual([]);expect(await f.call('archive',{id,note},'archive-one')).toEqual(archived);
+ const restored=await f.call('restore',{id},'restore-one');expect(restored.status).toBe(200);expect(restored.result.value.ids).toEqual([id]);expect((await f.call('recall',{query:'alpha'},'present')).result.value.ids).toEqual([id]);
+ expect(await f.call('restore',{id},'restore-one')).toEqual(restored);
+ f.source.exec("CREATE TRIGGER fail_forget_source BEFORE INSERT ON memory_command_receipts WHEN NEW.name='memory.forget' BEGIN SELECT RAISE(ABORT,'injected'); END");
+ expect((await f.call('forget',{id},'forget-one')).status).toBe(503);expect(f.count()).toBe(1);expect(f.source.prepare('SELECT * FROM memory_deletions').all()).toEqual([]);f.source.exec('DROP TRIGGER fail_forget_source');
+ f.db.$client.exec("CREATE TRIGGER fail_forget_core BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");expect((await f.call('forget',{id},'forget-one')).status).toBe(503);expect(f.count()).toBe(0);
+ f.db.$client.exec('DROP TRIGGER fail_forget_core');const forgotten=await f.call('forget',{id},'forget-one');expect(forgotten.status).toBe(200);expect(forgotten.result.value.ids).toEqual([id]);expect(await f.call('forget',{id},'forget-one')).toEqual(forgotten);
+ expect(f.source.prepare('SELECT content,op FROM memory_deletions').all()).toEqual([{content:words,op:'forget'}]);expect((await f.call('restore',{id},'restore-forgotten')).status).toBe(404);
+ for(const privateText of [words,title,note,f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(privateText))).toBe(false);
+});
+it('consumes canonical Memory through the production body command and GraphQL client',async()=>{
+ const f=await fixture(),client=bodyCommandClient({url:f.url,token:raw.body,signal:new AbortController().signal,clock:f.clock});clean.push(client.close);
+ const catalog=await client.command('runtime.commandCatalog',{name:'memory.remember'},'consumer-catalog');expect(catalog).toMatchObject({ok:true,value:{commands:[{name:'memory.remember'}]}});
+ const remembered=await client.command('memory.remember',input,'consumer-remember');expect(remembered.ok).toBe(true);if(!remembered.ok)throw Error('Missing consumer result');
+ const {ids:[id]}=z.object({ids:z.array(z.string()).length(1)}).parse(remembered.value);expect(JSON.stringify(remembered)).not.toContain(words);
+ expect(await client.query({query:'query($id:String!){memoryProjectMemory(id:$id){content title}}',variables:{id}})).toEqual({data:{memoryProjectMemory:{content:words,title}}});
+ expect(await client.command('memory.recall',{query:'alpha'},'consumer-recall')).toMatchObject({ok:true,value:{ids:[id]}});
+ for(const verb of ['archive','restore','forget'])expect(await client.command('memory.'+verb,{id},'consumer-'+verb)).toMatchObject({ok:true,value:{ids:[id]}});
+ expect(await client.query({query:'query($id:String!){memoryProjectMemory(id:$id){content}}',variables:{id}})).toEqual({data:{memoryProjectMemory:null}});
+ f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());expect(await client.command('memory.remember',input,'consumer-remember')).toMatchObject({ok:false,code:'denied'});
+});
+it('rolls back restore embedding after authority loss and rolls back archive on source receipt failure',async()=>{
+ const f=await fixture(),id=(await f.call('remember',input,'make-rollback')).result.value.ids[0];
+ f.source.exec("CREATE TRIGGER fail_archive_receipt BEFORE INSERT ON memory_command_receipts WHEN NEW.name='memory.archive' BEGIN SELECT RAISE(ABORT,'injected'); END");
+ expect((await f.call('archive',{id},'archive-failure')).status).toBe(503);expect(f.source.prepare('SELECT archived FROM memories').get()).toEqual({archived:0});
+ f.source.exec('DROP TRIGGER fail_archive_receipt');expect((await f.call('archive',{id},'archive-failure')).status).toBe(200);
+ const gate=hold(),pending=f.call('restore',{id},'restore-revoked');await gate.began;
+ f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());gate.release();expect([401,403]).toContain((await pending).status);expect(f.source.prepare('SELECT archived FROM memories').get()).toEqual({archived:1});
+ expect(f.source.prepare("SELECT id FROM memory_command_receipts WHERE id='restore-revoked'").all()).toEqual([]);
+ embed.gate=undefined;f.root.writes.run(()=>f.db.update(s.jobs).set({state:'running'}).where(eq(s.jobs.id,'job')).run());expect((await f.call('restore',{id},'restore-revoked')).status).toBe(200);expect(f.source.prepare('SELECT archived FROM memories').get()).toEqual({archived:0});
+});
 it('rolls back a private write if receipt insertion fails, leaving a safe retry reservation',async()=>{
  const f=await fixture();f.source.exec("CREATE TRIGGER fail_memory_source BEFORE INSERT ON memory_command_receipts BEGIN SELECT RAISE(ABORT,'injected'); END");
  expect((await f.call('remember',input,'source-fail')).status).toBe(503);expect(f.count()).toBe(0);

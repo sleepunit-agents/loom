@@ -98,5 +98,18 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>{
    try{const store=new PeopleStore({database:db,actor:viewer.id,now:options.now});try{return {ids:[store.revisionRestore(input).card.slug]};}finally{store.close();}}catch(error){if(error instanceof CardError)throw new OperationError('invalid','Invalid person-card revision');throw error;}
   })});
+ const target=z.object({id:scopedId}).strict();
+ const ownTarget=(db:Database.Database,viewer:Viewer,id:string)=>{
+  if(viewer.kind!=='agent'||!id.startsWith(viewer.id+':'))throw new OperationError('denied','Current body Memory required');
+  const uuid=id.slice(viewer.id.length+1),row=db.prepare('SELECT ref FROM memories WHERE uuid=?').get(uuid) as {ref:string}|undefined;
+  if(!row)throw new OperationError('not-found','Memory is absent');return {uuid,ref:row.ref};
+ };
+ for(const action of ['archive','restore','forget'] as const)operations.register({...base,doors:[...base.doors],name:`memory.${action}`,
+  input:(action==='archive'?target.extend({note:z.string().max(4000).optional()}):target).describe(`${action} one memory in your own declared source by its opaque scoped ID.`),output:z.object({ids}).strict(),
+  prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{
+   const row=ownTarget(db,viewer,input.id);
+   const result=action==='archive'?(await backend.archive({ref:row.ref,note:'note' in input?input.note as string|undefined:undefined})).archived:action==='restore'?(await backend.restore({ref:row.ref})).restored:(await backend.forget({ref:row.ref})).deleted;
+   return {ids:result.length?[row.uuid]:[]};
+  })});
  return {close};
 }
