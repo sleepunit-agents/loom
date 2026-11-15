@@ -142,3 +142,10 @@ it('normalizes rule targets exactly like stored requests before reading an exact
 it('returns Ask after an exact owner No even when a standing rule says Do',async()=>{
  const f=await fixture(),id=await f.ask();expect((await f.call('answer',{id,answer:'deny'},randomUUID(),f.owner)).status).toBe(200);f.root.services.approvalRules.set({kind:'merge',scope:'project:pond',person:'alice',tier:'do'},'pat');expect((await (await f.call('rule',target)).json()).value).toEqual({tier:'ask',scope:null,person:null});
 });
+
+it('validates the exact conversation approval selection through the shared query door for its private member',async()=>{
+ const {conversationApprovalsQuery}=await import('../web/src/pieces/comms/work-query.js');
+ const f=await fixture(),id=await f.ask();
+ const response=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.member},body:JSON.stringify({query:conversationApprovalsQuery,variables:{conversation:f.thread.conversation,offset:0}})});
+ const result=await response.json();expect(result.errors).toBeUndefined();expect(result.data.approvals).toEqual([{id}]);expect(result.data.inboxItems).toEqual([]);
+});
