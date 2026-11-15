@@ -22,6 +22,13 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('retention');
   const result=step.value.actions?.conversationRetention;expect(result,JSON.stringify(result)).toMatchObject({ok:true,inconclusive:true,before:{encrypted:true,readable:true,browserReadable:true,readableUntilDeadline:true},after:{ciphertextErased:true,words:null,metadataRetained:true,metadataCompared:expect.arrayContaining(['sender','kind','at'])}});
  });
+ it('compares actual Sharing SQL executions at two and ten projects',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('data-growth');
+  const result=step.value.actions.dataSharingSQL;
+  expect(result.samples,JSON.stringify(result)).toHaveLength(2);expect(result.samples.map(sample=>sample.projects)).toEqual([2,10]);
+  expect(result.samples.every(sample=>sample.sqlExecutions>0)).toBe(true);
+  expect(result.ok===false||result.inconclusive===true).toBe(true);
+ });
  for(const title of titles)it(`collects ${title} from the real launcher`,{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase).toBe('app');const app=step.value.row;
   expect(app.title).toBe(title);expect(app.opened||!!app.error).toBe(true);
@@ -88,6 +95,8 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   for(const name of ['dataDoor','dataSelectionSQL','dataInboxChange'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
   expect(step.value.actions.dataTaskPatches).toMatchObject({ok:true,inconclusive:true,initialRevision:1,requests:1});
   expect(step.value.actions.dataSharingSQL.statements.length).toBeGreaterThan(0);
+  expect(step.value.actions.dataSharingSQL.samples.map(sample=>sample.projects)).toEqual([2,10]);
+  expect(step.value.actions.dataSharingSQL.samples.every(sample=>sample.sqlExecutions>0)).toBe(true);
   for(const name of ['dataDoor','dataSelectionSQL','dataSharingSQL','dataTaskPatches','dataInboxChange']){const result=step.value.actions?.[name];expect(result?.inconclusive||typeof result?.ok==='boolean').toBe(true);if(result.ok===false)expect(result.error??result.reason).toBeTruthy();}
 
 
@@ -105,6 +114,12 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   if(arrival.ok===false)expect(arrival.error).toContain('did not offer a source link');
   for(const name of ['inboxTaskSettlement','inboxSourceOutcome'])expect(step.value.actions[name],JSON.stringify(step.value.actions[name])).toMatchObject({ok:true});
   expect(step.value.actions.inboxSourceTargets).toMatchObject(arrival.ok?{ok:true}:{inconclusive:true});
+ });
+ it('completes the actual worker/body protocol and reads its persisted private reply',{retry:0,timeout:20_000},async()=>{
+  const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('native-protocol');
+  expect(step.value.actions.nativeProtocol,JSON.stringify(step.value.actions.nativeProtocol)).toMatchObject({ok:true,runs:expect.arrayContaining([expect.objectContaining({running:true,state:'done',bootstrapErased:true})])});
+  expect(step.value.actions.nativeProtocol.runs).toHaveLength(2);
+  expect(step.value.actions.nativeReply).toMatchObject({ok:true,persistedAfterReload:true});
  });
  afterAll(async()=>{
   try{

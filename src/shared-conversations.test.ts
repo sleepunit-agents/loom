@@ -276,9 +276,9 @@ it('bounds SQL for the full actual Inbox selection with two and ten private ques
     expect(result.response.status).toBe(200);
     return {rows:result.body.data!.inboxItems as {body:{words:string}|null;refs:string[];read:boolean}[],count:f.statements.length};
   };
-  let small=0,smallSearch=0;
+  let small=0,smallSearch=0,selected="";
   for(let n=0;n<10;n++){
-    const ask=await comms.ask(thread.id,'art','growth-'+n,{words:'PRIVATE QUESTION '+n,answers:'words'});
+    const ask=await comms.ask(thread.id,'art','growth-'+n,{words:'PRIVATE QUESTION '+n,answers:'words'});selected=ask.inboxItem!;
     f.db.insert(inboxRefs).values([{item:ask.inboxItem!,ref:'z-ref'},{item:ask.inboxItem!,ref:'a-ref'}]).run();
     f.db.insert(inboxReads).values({item:ask.inboxItem!,member:'alice',readAt:new Date(f.clock.now()).toISOString()}).run();
     if(n===1){const result=await read();expect(result.rows).toHaveLength(2);small=result.count;f.statements.length=0;const search=await f.query(inboxQuery,'alice',{...variables,search:'PRIVATE QUESTION'});expect(search.body.errors).toBeUndefined();expect(search.body.data!.inboxItems).toHaveLength(2);expect(JSON.stringify(search.body.data!.inboxItems)).toContain('PRIVATE QUESTION');smallSearch=f.statements.length;}
@@ -289,6 +289,7 @@ it('bounds SQL for the full actual Inbox selection with two and ten private ques
   expect(large.rows.every(row=>row.body?.words.startsWith('PRIVATE QUESTION'))).toBe(true);
   for(const row of large.rows){expect(row.refs).toEqual(['a-ref','z-ref']);expect(row.read).toBe(true);}
   f.statements.length=0;const search=await f.query(inboxQuery,'alice',{...variables,search:'PRIVATE QUESTION'});expect(search.body.errors).toBeUndefined();expect(f.statements.length).toBe(smallSearch);expect(search.body.data!.inboxItems).toHaveLength(10);expect((search.body.data!.inboxItems as {body:{words:string}}[]).every(row=>row.body.words.startsWith('PRIVATE QUESTION'))).toBe(true);
+  const direct=await f.query(inboxQuery,'alice',{...variables,hasItem:true,id:selected});expect(direct.body.errors).toBeUndefined();expect(direct.body.data!.inboxItem).toMatchObject({body:{words:'PRIVATE QUESTION 9'}});
   let changed=false;
   f.openGate(async()=>{if(!changed){changed=true;f.root.writes.run(()=>f.db.update(inbox).set({member:'bob'}).where(eq(inbox.thread,thread.id)).run());}});
   const revoked=await f.query(inboxQuery,'alice',variables);

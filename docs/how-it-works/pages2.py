@@ -550,7 +550,7 @@ def data():
     commentCount
   }}
 }}</pre></div><i class="wire t-violet"></i><div class="seq__r seq__r--empty"></div></div>
-      <div class="seq__row"><div class="seq__l seq__l--empty"></div><span></span><div class="seq__r"><b>2 · One query</b><span>Loom knows who is asking. It runs one database query that filters, joins and applies the visibility check for that caller.</span></div></div>
+      <div class="seq__row"><div class="seq__l seq__l--empty"></div><span></span><div class="seq__r"><b>2 · One query</b><span>Loom knows who is asking. It uses a fixed small number of sane SQL statements, independent of row count, with filtering and visibility checked in the database.</span></div></div>
       <div class="seq__row"><div class="seq__l"><b>3 · Rows</b><span>The tile draws the rows it was sent.</span></div><i class="wire wire--back t-cyan"></i><div class="seq__r seq__r--empty"></div></div>
       <div class="seq__row"><div class="seq__l"><b>4 · Then only changes</b><span>Changes arrive as a subscription. The tile updates in place.</span></div><i class="wire wire--back t-cyan"></i><div class="seq__r"><b>Something changes</b><span>Loom sends that change to every tile whose request it matches.</span></div></div>
     </div>'''
@@ -566,7 +566,7 @@ def data():
         ("One definition", "cyan", flow("schema", "generates", "endpoint"),
          "The endpoint is generated from the same Drizzle schema as the tables, so there is one definition of the data and no hand-written reads. GraphQL is a widely used standard with ready-made tools on both ends."),
         ("One query", "violet", gate("Filter on real columns", "Join the connected tables", "Apply the caller's visibility", "Sort"),
-         "Loom turns the request into one database query. Filtering, joining and the visibility check all happen in the database."),
+         "Loom handles the request in one API call using a fixed small number of sane SQL statements, independent of the number of rows. Several batched statements are fine. Filtering and visibility checks happen in the database."),
         ("Only changes", "pink", flow("rows", "then", "changes"),
          "After the first rows, changes arrive as subscriptions over the websocket. A tile never asks again for what it already has."),
         ("One schema", "amber", card("amber", "Defined once", "Drizzle on SQLite", "Moving to another database later is a configuration change."),
@@ -576,7 +576,7 @@ def data():
     return app_page("How a tile gets its data", "under every part", "One GraphQL endpoint, generated from the same schema as the database.",
         "A tile sends a query naming exactly the fields and connected things it wants, gets the rows, then receives changes as subscriptions over the websocket.",
         ["There is one definition of the data, and no hand-written reads.", "A tile names exactly the fields and connected things it wants.",
-         "Loom runs one query, with the visibility check for whoever is asking.", "After the first rows, loom sends only what changed."],
+         "A page reads with one API call, backed by a fixed small number of SQL statements that does not grow with the number of rows, with visibility checked for whoever is asking.", "After the first rows, loom sends only what changed."],
         fig, "The sequence between a tile and loom, with one query: the open tasks in a project, with their owner and comment count.",
         "How a query connects to other parts", "One query, with a thread from each part of it that reaches another page.", anat,
         "One definition, one query, changes and the schema", panels, [],

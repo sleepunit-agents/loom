@@ -1,4 +1,5 @@
 import {RuntimeAccounts} from '../runtime/model-accounts';
+import {sessionChange} from '../../signin/session-change';
 import DeviceLink from '../../signin/DeviceLink';
 import { decode as dec } from './encoding';
 import { useState, type FormEvent } from 'react';
@@ -29,7 +30,7 @@ export default function AccountApp({go=()=>{},active=true}:{path?:string;go?:(pa
  const feed=useDataQuery<{account:Account|null}>(query),account=feed.data?.account;
  const [busy,setBusy]=useState(false),[message,say]=useState('');
  const enabled=active&&feed.status==='live'&&!!account&&!busy;
- const change=async(name:string,ref:string)=>{if(!enabled)return;setBusy(true);say('');try{await memberOperation(name,{ref});say('Saved');}catch{say('Could not save. Check the connection and try again.');}finally{setBusy(false);}};
+ const change=async(name:string,ref:string)=>{if(!enabled)return;setBusy(true);say('');try{if(name==='account.revokeSession'){if(await sessionChange(name,{ref})==='signed-out')return;}else await memberOperation(name,{ref});say('Saved');}catch{say(name==='account.revokeSession'?'Could not confirm sign-out. Check your sign-in and connection.':'Could not save. Check the connection and try again.');}finally{setBusy(false);}};
  const enableNotifications=async()=>{
   if(!enabled||!account?.notifications?.publicKey)return;setBusy(true);say('');
   try{
