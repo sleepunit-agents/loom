@@ -18,11 +18,12 @@ export function conversationQuestionPolicy(db:DataDatabase){
   return sql`exists(select 1 from ${table} where ${table.id}=${id} and ${allowed})`;
  };
  const canRead=(viewer:Viewer,kind:Kind,id:string)=>db.get<{allowed:number}>(sql`select ${visibleSource(viewer,kind,id)} as allowed`)?.allowed===1;
- const visibility=(viewer:Viewer,f:Fields)=>sql`(${workVisibility(viewer).approvals!(f)}) and (
+ const sourceVisibility=(viewer:Viewer,f:Fields)=>sql`(
   (${f.waitsOnKind} is null and ${f.waitsOnId} is null)
   or (${f.waitsOnKind}='task' and ${visibleSource(viewer,'task',f.waitsOnId)})
   or (${f.waitsOnKind}='approval' and ${visibleSource(viewer,'approval',f.waitsOnId)})
  )`;
+ const visibility=(viewer:Viewer,f:Fields)=>sql`(${workVisibility(viewer).approvals!(f)}) and ${sourceVisibility(viewer,f)}`;
  const ask:BodyQuestionAuthority=(viewer,cv,q)=>{
   const recipient=db.select().from(members).where(eq(members.id,q.to)).get();
   // This checks the destination's visibility; it never acts as that member.
@@ -41,6 +42,7 @@ export function conversationQuestionPolicy(db:DataDatabase){
   return !!row&&row.sourceKind==='conversation'&&row.sourceId===cv.id&&(!row.project||row.project===cv.project)&&(
    row.ownerKind==='member'&&row.owner===cv.member||row.ownerKind==='agent'&&row.owner===cv.agent||row.ownerKind==='household'&&recipient.role==='owner');
  };
- const canReadItem=(viewer:Viewer,id:string)=>!!db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.id,id),visibility(viewer,getTableColumns(inbox)))).get();
- return {visibility,ask,canReadItem};
+ // Additional source constraint only; callers still establish recipient authority.
+ const sourceAllowsItem=(viewer:Viewer,id:string)=>!!db.select({id:inbox.id}).from(inbox).where(and(eq(inbox.id,id),sourceVisibility(viewer,getTableColumns(inbox)))).get();
+ return {visibility,ask,sourceAllowsItem};
 }

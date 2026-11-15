@@ -50,7 +50,7 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       // Chat is the control surface. A current body may carry out its recorded
       // member's ordinary mailbox preference, without becoming that member.
       const person = (access.action === 'volume' || access.action === 'settings') ? options.chatMember?.(viewer) : undefined;
-      const delegated = !!person && (access.action === 'volume' ? access.item.toKind === 'person' && access.item.to === person && conversationQuestionPolicy(db).canReadItem({kind:'member',id:person},access.item.id)
+      const delegated = !!person && (access.action === 'volume' ? access.item.toKind === 'person' && access.item.to === person && conversationQuestionPolicy(db).sourceAllowsItem({kind:'member',id:person},access.item.id)
         : access.action === 'settings' && access.who.kind === 'person' && access.who.id === person);
       return (tempoCommandAllowed(db, viewer, access) || delegated) &&
         (access.action !== 'settings' || !options.settingsAuthorized || options.settingsAuthorized(viewer, access.who));
