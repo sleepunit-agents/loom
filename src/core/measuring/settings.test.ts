@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it } from 'vitest';
 import { createDataSchema, type DataDatabase } from '../data/database.js';
 import { agents, members, measuringSettings } from '../data/schema.js';
 import { approvalService } from '../../apps/approvals.js';
+import { readMeasuringChange } from './change.js';
 import { DEFAULT_MEASURING } from './index.js';
 import { MEASURING_SETTINGS_OPERATION, measuringSettingsService } from './settings.js';
 
@@ -19,6 +20,7 @@ it('prepares a durable before/after card and applies it using a recreated servic
   const service = measuringSettingsService(db);
   const after = { ...DEFAULT_MEASURING, on: true, keep_days: 7 };
   const card = JSON.parse(JSON.stringify(service.prepare(after)));
+  expect(readMeasuringChange(card)).toEqual({ before: DEFAULT_MEASURING, after });
   expect(service.read().on).toBe(false);
   expect(card.changeSummary).toContain('"on":false');
   expect(card.changeSummary).toContain('"on":true');
@@ -43,7 +45,7 @@ it('refuses stale proposals and rolls its edit back with the enclosing approval 
 
 it('validates every setting before a card is issued and binds application to the exact displayed change', () => {
   const service = measuringSettingsService(db);
-  for (const patch of [{ keep_days: 0 }, { keep_days: 1.5 }, { keep_days: 3651 }, { send_outside: true },
+  for (const patch of [{ keep_days: -1 }, { keep_days: 1.5 }, { keep_days: 3651 }, { send_outside: true },
     { outside_address: 'file:///tmp/traces' }, { outside_address: 'https://user:pass@example.com' },
     { outside_address: 'https://example.com/?token=hidden' }, { outside_address: 'https://example.com/#fragment' }]) {
     expect(() => service.prepare({ ...DEFAULT_MEASURING, ...patch })).toThrow();

@@ -200,3 +200,26 @@ it('keeps earlier successful normalization when the next event fails', () => {
   expect(f.rows().map(r => r.id)).toEqual(['two']);
   spool.close();
 });
+
+it('a whole batch of held receipts cannot starve later arrivals and inspection does not advance delivery', () => {
+  const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
+  for (let i = 0; i < 65; i++) spool.retain('slack', String(i), f.input);
+  const inspected: string[] = [], delivered: string[] = [];
+  expect(spool.drain('slack', id => { inspected.push(id); return false; }, 64, 'inspect')).toBe(0);
+  expect(spool.drain('slack', id => { delivered.push(id); return id === '64'; })).toBe(0);
+  expect(inspected).toEqual(delivered); expect(delivered).toHaveLength(64);
+  expect(spool.drain('slack', id => { inspected.push(id); return false; }, 64, 'inspect')).toBe(0);
+  expect(spool.drain('slack', id => { delivered.push(id); return id === '64'; })).toBe(1);
+  expect(delivered.at(-1)).toBe('64'); expect(f.rows()).toHaveLength(64);
+  const retried: string[] = []; spool.drain('slack', id => { retried.push(id); return false; });
+  expect(retried).toHaveLength(64); expect(retried[0]).toBe('0'); spool.close();
+});
+
+it('a malformed retained receipt is retried after other receipts instead of starving them', () => {
+  const f = fixture(), spool = new BridgeEvents(f.db, f.clock);
+  spool.retain('slack', 'bad', f.input); spool.retain('slack', 'good', f.input);
+  expect(() => spool.drain('slack', () => { throw Error('synthetic malformed frame'); })).toThrow();
+  const seen: string[] = []; expect(spool.drain('slack', id => { seen.push(id); })).toBe(1);
+  expect(seen).toEqual(['good']); expect(f.rows().map(row => row.id)).toEqual(['bad']);
+  expect(() => spool.drain('slack', () => { throw Error('still malformed'); })).toThrow(); spool.close();
+});

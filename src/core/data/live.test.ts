@@ -140,6 +140,21 @@ it.each(['resolve', 'reject'])('drains an underlying %s execution after its cons
   expect(drained).toBe(true);
 });
 
+it('measures only initial snapshot work and does not measure its own notification rerun or idle subscription', async () => {
+  let value='first', reads=0, measurements=0;
+  let live:DataLive;
+  live=new DataLive(async work=>{const result=await work();measurements++;live.changed();return result;});
+  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{value:{type:GraphQLString,resolve(){reads++;return value;}}}})});
+  const stream=live.watch({schema,query:'{ value }',valid:()=>true});
+  try {
+    expect((await stream.next()).value).toEqual({revision:1,patches:[{path:[],value:{value:'first'}}]});
+    expect(reads).toBe(2);expect(measurements).toBe(1);
+    const changed=stream.next();value='second';live.changed();
+    expect((await changed).value).toEqual({revision:2,patches:[{path:['value'],value:'second'}]});
+    expect(reads).toBe(3);expect(measurements).toBe(1);
+  } finally {await stream.return?.();live.close();await live.drain();}
+});
+
 it('fences validation callbacks after a literal callback stops live access', async () => {
   const { GraphQLScalarType } = await import('graphql/index.js');
   const live = new DataLive(); let late = 0;
@@ -153,4 +168,15 @@ it('fences validation callbacks after a literal callback stops live access', asy
   } }) });
   expect(() => live.watch({ schema, query: '{ a:value(input:"stop") b:value(input:"late") }', valid: () => true })).toThrow();
   await live.drain(); expect(late).toBe(0);
+
+});
+
+it('timing notifications wake selections without reviving a read invalidated by a private write',async()=>{
+ const {live,watch}=setup(),context={};
+ const stream=watch();await stream.next();
+ live.captureRead(context);const version=live.readVersion(context);
+ live.timingsChanged();expect(live.currentRead(version)).toBe(true);
+ live.changed();expect(live.currentRead(version)).toBe(false);
+ live.timingsChanged();expect(live.currentRead(version)).toBe(false);
+ live.close();expect(live.currentRead(live.epoch())).toBe(false);
 });
