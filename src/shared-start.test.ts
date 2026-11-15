@@ -1,11 +1,12 @@
 import { afterEach, expect, it } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, statSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { startSharedLoom } from './shared-start.js';
 import { tasks, sessions, members } from './core/data/schema.js';
+import { z } from 'zod';
 import { FakeClock } from './core/clock.js';
 const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -46,4 +47,35 @@ it('can restart after a failed first listen without losing first-run access; a s
  expect(printed).toBe('');expect(readFileSync(join(home,'comms.key'),'utf8')).toBe(key);
  expect(restarted.db.select().from(members).all()).toHaveLength(1);
  expect(restarted.db.$client.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'household_%' OR name='core_migrations'").all()).toEqual([]);
+});
+
+it.each([false,true])('refuses nonempty non-shared homes without altering memories (empty database: %s)',async database=>{
+ const home=mkdtempSync(join(tmpdir(),'legacy-refused-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));
+ writeFileSync(join(home,'precious-memory.md'),'Keep these words');if(database)writeFileSync(join(home,'loom.db'),'');
+ const before=readdirSync(home).sort();
+ await expect(startSharedLoom({home,port:0,webRoot:home,stdout:()=>{throw Error('must not print');}})).rejects.toThrow('separate data move');
+ expect(readdirSync(home).sort()).toEqual(before);expect(readFileSync(join(home,'precious-memory.md'),'utf8')).toBe('Keep these words');
+ if(database)expect(statSync(join(home,'loom.db')).size).toBe(0);
+});
+it('refuses a symlink database without following it',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'symlink-refused-')),target=mkdtempSync(join(tmpdir(),'symlink-target-'));
+ clean.push(()=>{rmSync(home,{recursive:true,force:true});rmSync(target,{recursive:true,force:true});});
+ writeFileSync(join(target,'db'),'PRIVATE EXISTING BYTES');symlinkSync(join(target,'db'),join(home,'loom.db'));
+ await expect(startSharedLoom({home,port:0,webRoot:home,stdout:()=>{}})).rejects.toThrow();
+ expect(readFileSync(join(target,'db'),'utf8')).toBe('PRIVATE EXISTING BYTES');expect(readdirSync(home)).toEqual(['loom.db']);
+});
+it('keeps the home exclusive and credentials private until in-flight HTTP shutdown drains',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'owned-shared-')),webRoot=mkdtempSync(join(tmpdir(),'owned-web-'));
+ clean.push(()=>{rmSync(home,{recursive:true,force:true});rmSync(webRoot,{recursive:true,force:true});});writeFileSync(join(webRoot,'next.html'),'Shared app');
+ let link='';const options={home,port:0,webRoot,stdout:(text:string)=>{link=text.trim();}};
+ const app=await startSharedLoom(options);clean.push(()=>app.close());
+ const response=await fetch(link,{method:'POST',redirect:'manual'}),cookie=response.headers.get('set-cookie')!.split(';')[0];
+ for(const name of readdirSync(home).filter(name=>name.startsWith('loom.db')||name==='comms.key'))expect(statSync(join(home,name)).mode&0o777).toBe(0o600);
+ await expect(startSharedLoom(options)).rejects.toThrow('already running');
+ let began!:()=>void,release!:()=>void;const entered=new Promise<void>(ok=>{began=ok;}),held=new Promise<void>(ok=>{release=ok;});
+ app.operations.register({name:'fixture.held',input:z.object({}),output:z.null(),may:()=>true,async prepare(){began();await held;},run:()=>null});
+ const request=fetch(app.url+'/api/fixture/held',{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({input:{}})}).catch(()=>undefined);
+ await entered;const stopped=app.close();
+ try{await expect(startSharedLoom(options)).rejects.toThrow('already running');}finally{release();await stopped;await request;}
+ const restarted=await startSharedLoom(options);clean.push(()=>restarted.close());expect(restarted.db.select().from(members).all()).toHaveLength(1);
 });
