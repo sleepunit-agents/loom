@@ -22,11 +22,7 @@
     {
       "id": "inbox-004",
       "promise": "Sends you to Approvals or the task when the answer belongs there.",
-      "source": "docs/how-it-works/site/inbox.html",
-      "probe": {
-        "kind": "action",
-        "action": "inboxSourceLinks"
-      }
+      "source": "docs/how-it-works/site/inbox.html"
     },
     {
       "id": "inbox-005",
@@ -46,16 +42,16 @@
     {
       "id": "inbox-008",
       "promise": "A task's question arrives as an item, with a link to the task.",
-      "source": "docs/how-it-works/site/inbox.html#con-h",
-      "probe": {
-        "kind": "action",
-        "action": "taskQuestionInbox"
-      }
+      "source": "docs/how-it-works/site/inbox.html#con-h"
     },
     {
       "id": "inbox-009",
       "promise": "A pending approval arrives as an item, and is answered in Approvals.",
-      "source": "docs/how-it-works/site/inbox.html#con-h"
+      "source": "docs/how-it-works/site/inbox.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "approvalInbox"
+      }
     },
     {
       "id": "inbox-010",

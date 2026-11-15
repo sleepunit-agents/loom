@@ -65,15 +65,12 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='signing-in':add('A first-run one-time link signs the browser in.','',{'kind':'signin'})
  if f.stem=='data':add('The real GraphQL websocket carries data after sign-in without protocol errors.','',{'kind':'live'})
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})
+ if f.stem in ['approvals','inbox']:
+  for row in rows:
+   if row['promise'].startswith(("A pending approval is an item in a person's Inbox", 'A pending approval arrives as an item')):row['probe']={'kind':'action','action':'approvalInbox'}
  if f.stem=='tasks':
   for row in rows:
-   if row['promise'].startswith(('Carries a question to a person', "The question also appears in that person's Inbox")):row['probe']={'kind':'action','action':'taskQuestionInbox'}
-   if row['promise'].startswith('A task can carry one question'):row['probe']={'kind':'action','action':'taskQuestionAnswer'}
    if row['promise'].startswith('Lets a person or an agent claim work'):row['probe']={'kind':'action','action':'taskLifecycle'}
- if f.stem=='inbox':
-  for row in rows:
-   if row['promise'].startswith('Sends you to Approvals or the task'):row['probe']={'kind':'action','action':'inboxSourceLinks'}
-   if row['promise'].startswith("A task's question arrives as an item"):row['probe']={'kind':'action','action':'taskQuestionInbox'}
  # Carry source hashes so a changed approved page cannot silently reuse old results.
  obj={'page':f.stem,'title':next(n.text() for n in nodes if n.tag=='h1'),'ownerTask':owners[f.stem],'sourceSha256':hashlib.sha256(f.read_bytes()).hexdigest(),'promises':rows,'modelTables':[n.attrs['id'][2:] for n in nodes if n.tag=='details' and n.cls('tbl') and n.attrs.get('id','').startswith('t-')]}
  (out/(f.stem+'.json')).write_text(json.dumps(obj,indent=2,ensure_ascii=False)+'\n')

@@ -26,11 +26,7 @@
     {
       "id": "tasks-004",
       "promise": "Carries a question to a person when the work needs a decision.",
-      "source": "docs/how-it-works/site/tasks.html",
-      "probe": {
-        "kind": "action",
-        "action": "taskQuestionInbox"
-      }
+      "source": "docs/how-it-works/site/tasks.html"
     },
     {
       "id": "tasks-005",
@@ -45,11 +41,7 @@
     {
       "id": "tasks-007",
       "promise": "The question also appears in that person's Inbox.",
-      "source": "docs/how-it-works/site/tasks.html#con-h",
-      "probe": {
-        "kind": "action",
-        "action": "taskQuestionInbox"
-      }
+      "source": "docs/how-it-works/site/tasks.html#con-h"
     },
     {
       "id": "tasks-008",
@@ -79,11 +71,7 @@
     {
       "id": "tasks-013",
       "promise": "A task can carry one question, with what happens on yes and on no. The person answers yes or no, or in words. The question also appears in that person's Inbox.",
-      "source": "docs/how-it-works/site/tasks.html#how-h",
-      "probe": {
-        "kind": "action",
-        "action": "taskQuestionAnswer"
-      }
+      "source": "docs/how-it-works/site/tasks.html#how-h"
     },
     {
       "id": "tasks-014",

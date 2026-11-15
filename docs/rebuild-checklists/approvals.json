@@ -47,7 +47,11 @@
     {
       "id": "approvals-009",
       "promise": "A pending approval is an item in a person's Inbox, with a link back here.",
-      "source": "docs/how-it-works/site/approvals.html#con-h"
+      "source": "docs/how-it-works/site/approvals.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "approvalInbox"
+      }
     },
     {
       "id": "approvals-010",
