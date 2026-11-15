@@ -1,3 +1,4 @@
+import { inboxContentChanged } from '../../core/tempo/volume.js';
 /** Trusted shared-model value writes. Outside doors authenticate an owner before
  * calling this service. The holder owns values; the journal owns retry identity.
  * A positive holder receipt finishes metadata after a crash. A negative receipt
@@ -133,8 +134,9 @@ export class SecretValues {
           if (request.state !== 'pending' && request.state !== 'allowed') continue;
           const state = request.state === 'pending' ? 'cancelled' : 'revoked';
           this.db.update(secretRequests).set({ state, answeredAt: at }).where(eq(secretRequests.id, request.id)).run();
-          this.db.update(inbox).set({ state: 'resolved', resolution: state, changedAt: at })
-            .where(and(eq(inbox.source, 'secret-request'), eq(inbox.sourceId, request.id), eq(inbox.state, 'waiting'))).run();
+          const resolved = this.db.update(inbox).set({ state: 'resolved', resolution: state, changedAt: at })
+            .where(and(eq(inbox.source, 'secret-request'), eq(inbox.sourceId, request.id), eq(inbox.state, 'waiting'))).returning().all();
+          for (const item of resolved) inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
         }
         this.db.delete(secretRuleAgents).where(eq(secretRuleAgents.secret, row.secret)).run();
         this.db.insert(secretRules).values({ secret: row.secret, answer: 'ask', minutes: 30 })

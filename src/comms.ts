@@ -1638,53 +1638,6 @@ export function filedThreads(home: string, agent: string, slug: string): string[
 }
 
 /**
- * comms_title (an MCP tool, comms.md "Title"): a body names its own thread, once it knows what it's about. Only in a
- * `loom` conversation; never over the member's own name for it.
- */
-export function titleFromAgent(home: string, agent: string, conversation: string, title: unknown, now: Date = new Date()): Thread {
-  const t = threadOfAgentConversation(home, agent, conversation);
-  if (!t) return fail('comms_title names a Comms thread, and this conversation isn\'t one');
-  const h = householdAt(home);
-  return setTitle(h, t, title, 'agent', now);
-}
-
-/** How many messages comms_thread answers at most, and by default. */
-export const AGENT_READ_MAX = 100;
-export const AGENT_READ_DEFAULT = 30;
-
-/**
- * comms_thread (an MCP tool, comms.md "An agent reading its own threads", t-1896): a body reads the messages of a Comms
- * thread its own agent is the agent of, as the thread's member sees them (words for 14 days, then none; error cards in
- * their fixed words). Which agent is the server's own agent dir, never what the caller sends: with no `thread`, the
- * thread of the conversation given to identity; with one, only a thread whose agent is that same agent. Another agent's
- * thread, a deleted one, or one that never existed is the same refusal. Read only.
- */
-export async function agentThreadRead(home: string, env: NodeJS.ProcessEnv, agent: string, at: { conversation?: string; thread?: unknown; before?: unknown; limit?: unknown }): Promise<{ thread: { id: string; title: string | null; archived: string | null; state: ReturnType<typeof stateOf> }; messages: Message[] }> {
-  const refuse = (): never => fail('comms_thread reads a Comms thread of yours: that isn\'t one', 403);
-  let t: Thread | undefined;
-  if (at.thread !== undefined) {
-    if (typeof at.thread !== 'string' || !THREAD_ID.test(at.thread) || !existsSync(join(home, 'household.db'))) return refuse();
-    const r = withThreadsAt(home, (db) => db.prepare('SELECT * FROM comms_threads WHERE id = ?').get(at.thread) as ThreadRow | undefined);
-    t = r && r.agent === agent ? threadOf(r) : undefined;
-  } else if (at.conversation) {
-    t = threadOfAgentConversation(home, agent, at.conversation);
-  } else {
-    return fail('comms_thread needs a thread: name one of yours, or call identity with this body\'s conversation first');
-  }
-  if (!t) return refuse();
-  const h = householdAt(home);
-  if (!h.agents.includes(agent)) return refuse();
-  const limit = typeof at.limit === 'number' && Number.isInteger(at.limit) && at.limit >= 1 ? Math.min(at.limit, AGENT_READ_MAX) : AGENT_READ_DEFAULT;
-  const before = typeof at.before === 'number' && Number.isInteger(at.before) && at.before > 0 ? at.before : undefined;
-  const all = existsSync(join(home, COMMS_DB)) ? await messagesOf(h, env, t, before !== undefined ? { before } : {}) : [];
-  // The word rule at read time too: the sweep runs on the daemon's clock, and a stdio server reads with no daemon up.
-  const cutoff = Date.now() - (h.commsDays ?? COMMS_DAYS_DEFAULT) * DAY_MS;
-  // Past the thread's words' time, a card's words (t-2109) go with its label.
-  const kept = all.slice(-limit).map((m) => (m.kind !== 'error' && m.text !== null && Date.parse(m.at) < cutoff ? { ...m, text: null, ...(m.card && 'step' in m.card ? { card: (({ step: _s, ...rest }) => rest)(m.card) } : {}) } : m));
-  return { thread: { id: t.id, title: t.title, archived: t.archived, state: stateOf(t) }, messages: kept };
-}
-
-/**
  * What of a thread its app draws as state, as one string (t-1881): the body at work, queued, a failure, its title, and
  * how many of its messages are still on their way and how many steps still running. A live stream tells its app when
  * this moves; a read mark (which moves the row too) doesn't.

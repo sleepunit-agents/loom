@@ -18,6 +18,8 @@ export interface WorkerAssignment {
   box: string;
   agent: string;
   conversation: string | null;
+  /** Current Comms reply surface, when present; not an authority witness. */
+  thread?: string | null;
   model: string;
   account: string;
   harness: string;

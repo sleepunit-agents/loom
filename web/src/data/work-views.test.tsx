@@ -3,15 +3,15 @@ import { createElement as h, Suspense, type ReactNode } from 'react';
 // @ts-expect-error The renderer dependency has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { ApprovalsResult, ChangesResult } from './work-query';
-const feed = vi.hoisted(() => ({ status: 'live', ownerStatus:'live', owner:false, refresh:false, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
-vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: query.includes('WorkAnswerOwner') ? feed.ownerStatus : feed.status, data: query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner,workChangesRefresh:feed.refresh} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
+const feed = vi.hoisted(() => ({ status: 'live', ownerStatus:'live', owner:false, refresh:false, people:[] as {id:string;role:string}[], changeStatus:undefined as string|undefined, requestStatus:undefined as string|undefined, approvals: {} as ApprovalsResult, changes: {} as ChangesResult }));
+vi.mock('./graphql', () => ({ useDataQuery: (query: string) => ({ status: query.includes('WorkAnswerOwner') ? feed.ownerStatus : query.includes('ChangesView') ? feed.changeStatus ?? feed.status : query.includes('WorkMergeRequests') ? feed.requestStatus ?? feed.status : feed.status, data: query.includes('WorkAnswerOwner') ? {workAnswerOwner:feed.owner,workChangesRefresh:feed.refresh,members:feed.people} : query.includes('WorkMergeRequests') ? {approvals:feed.approvals.approvals} : query.includes('ApprovalsView') ? feed.approvals : feed.changes }) }));
 vi.mock('../kit', () => Object.fromEntries(['Split', 'List', 'Row', 'Empty', 'Error', 'Loading', 'Button', 'Input'].map(name => [name, (props: { children?: ReactNode; reader?: ReactNode; list?: ReactNode; search?: ReactNode; listTop?: ReactNode }) => h(name, Object.fromEntries(Object.entries(props).filter(([key]) => !['children', 'reader', 'list', 'search', 'blank', 'folders', 'listTop'].includes(key))), props.children, ...(name === 'Split' ? [props.search, props.listTop, props.list, props.reader] : []))])));
 import { approvalsApp } from '../pieces/approvals/registration';
 import { changesApp } from '../pieces/changes/registration';
 import { ApprovalsApp, ChangesApp, LiveApprovalCard, LiveChangeCard } from './work-views';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { await act(async () => tree?.unmount()); feed.status = 'live'; feed.owner=false; feed.refresh=false; feed.ownerStatus='live'; vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => tree?.unmount()); feed.status = 'live'; feed.owner=false; feed.refresh=false; feed.people=[]; feed.changeStatus=undefined;feed.requestStatus=undefined; feed.ownerStatus='live'; vi.unstubAllGlobals(); });
 function fixture() {
   const before = { on: true, send_outside: false, outside_address: '', keep_days: 7 };
   const after = { ...before, keep_days: 1 };
@@ -25,12 +25,14 @@ async function selectRow() { await act(async () => tree.root.findByType('Row').p
 it('the registered lazy tiles actually render the generated shared rows', async () => {
   fixture();
   await draw(h(Suspense, { fallback: 'Opening' }, h(approvalsApp.Screen, {})));
+  await act(async () => { await vi.dynamicImportSettled(); });
   expect(words()).toContain('Change measuring');
   await selectRow();
   expect(words()).toContain('Keep one day?');
   expect(words()).toContain('Measuring settings change');
   expect(tree.root.findAllByType('Button')).toHaveLength(0);
   await act(async () => tree.update(h(Suspense, { fallback: 'Opening' }, h(changesApp.Screen, {}))));
+  await act(async () => { await vi.dynamicImportSettled(); });
   expect(words()).toContain('Current change');
   await selectRow();
   expect(words()).toContain('first-head');
@@ -305,4 +307,60 @@ it('mounts standing-rule editing only for the live current-owner metadata',async
  expect(form()).toHaveLength(1);
  feed.owner=false;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/rules'})));expect(form()).toHaveLength(0);
  feed.owner=true;for(const status of ['loading','offline','denied','error']){feed.ownerStatus=status;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/rules'})));expect(form()).toHaveLength(0);}
+});
+
+function standingFixture(){
+ fixture();feed.owner=true;feed.people=[{id:'pat',role:'owner'},{id:'sam',role:'member'}];
+ const change={...feed.changes.changes[0],id:'github:acme/app#1',project:'pond',headCommit:'a'.repeat(40)};
+ const card={...feed.approvals.approvals[0],id:'a-merge',kind:'merge' as const,target:`${change.id}@${change.headCommit}`,project:'pond',actingFor:'pat',operation:null,changeSummary:null,details:''};
+ feed.changes={...feed.changes,changes:[change]};feed.approvals={...feed.approvals,approvals:[card]};return {change,card};
+}
+it.each(['approvals','changes'])('sends atomic Always from current %s without optimistic state or duplicate pending requests',async surface=>{
+ const {card,change}=standingFixture();let finish!:(value:Response)=>void;const request=vi.fn<typeof fetch>(()=>new Promise<Response>(done=>{finish=done;}));vi.stubGlobal('fetch',request);
+ const view=()=>surface==='approvals'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}):h(ChangesApp,{path:'/p/changes-preview/change/'+encodeURIComponent(change.id)});
+ await draw(view());
+ const button=()=>tree.root.findAllByType('Button').find((button:{props:{children:unknown}})=>button.props.children==='Always for pond');
+ const headerState=()=>{const paragraphs=tree.root.findByType('article').findByType('header').findAllByType('p');const value=paragraphs[surface==='changes'?paragraphs.length-1:0].props.children;return Array.isArray(value)?value.join(''):String(value);};
+ expect(button()).toBeDefined();await act(async()=>button()!.props.onClick());await act(async()=>button()!.props.onClick());
+ expect(request).toHaveBeenCalledExactlyOnceWith('/api/approvals/always',expect.objectContaining({credentials:'same-origin'}));expect(JSON.parse(String(request.mock.calls[0][1]!.body))).toMatchObject({input:{approval:card.id,change:change.id,head:change.headCommit,project:'pond',person:''}});
+ expect(button()!.props.disabled).toBe(true);expect(headerState()).toContain(surface==='changes'?'Waiting on you':'merge · pending');
+ await act(async()=>finish(Response.json({ok:true,value:{id:card.id}})));
+ expect(headerState()).toContain(surface==='changes'?'Waiting on you':'merge · pending');expect(button()).toBeDefined();expect(card.state).toBe('pending');expect(change.waitingOn).toBe('you');
+ card.state='allowed';change.waitingOn='agent';await act(async()=>tree.update(view()));expect(button()).toBeUndefined();expect(headerState()).toContain(surface==='changes'?'Waiting on agent':'merge · allowed');
+});
+it.each(['approvals','changes'])('rebinds Always after selecting a different current card in %s',async surface=>{
+ const {card,change}=standingFixture(),otherChange={...change,id:'github:acme/app#2',headCommit:'b'.repeat(40),project:'other'},otherCard={...card,id:'a-other',target:`${otherChange.id}@${otherChange.headCommit}`,project:'other',actingFor:'sam'};
+ feed.changes={...feed.changes,changes:[change,otherChange]};feed.approvals={...feed.approvals,approvals:[card,otherCard]};const request=vi.fn<typeof fetch>(async()=>Response.json({ok:true,value:{id:otherCard.id}}));vi.stubGlobal('fetch',request);
+ const view=(id:string,changeId:string)=>surface==='approvals'?h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+id}):h(ChangesApp,{path:'/p/changes-preview/change/'+encodeURIComponent(changeId)});
+ await draw(view(card.id,change.id));await act(async()=>tree.update(view(otherCard.id,otherChange.id)));
+ await act(async()=>tree.root.findAllByType('Button').find((button:{props:{children:unknown}})=>button.props.children==='Always for other for sam')!.props.onClick());
+ expect(JSON.parse(String(request.mock.calls[0][1]!.body))).toMatchObject({input:{approval:otherCard.id,change:otherChange.id,head:otherChange.headCommit,project:'other',person:'sam'}});
+});
+it('names personal Always grants and hides them for stale rows, principals or owner capability independently',async()=>{
+ const {card,change}=standingFixture();card.actingFor='sam';
+ await draw(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id}));const labels=()=>tree.root.findAllByType('Button').map((button:{props:{children:unknown}})=>button.props.children);
+ expect(labels()).toContain('Always for pond for sam');
+ feed.changeStatus='offline';await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels()).not.toContain('Always for pond for sam');expect(labels()).toContain('Allow');
+ feed.changeStatus=undefined;card.actingFor='unknown';await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels().some((label:unknown)=>String(label).startsWith('Always'))).toBe(false);
+ card.actingFor='pat';for(const state of ['allowed','denied','used','withdrawn','expired'] as const){card.state=state;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels().some((label:unknown)=>String(label).startsWith('Always'))).toBe(false);}
+ card.state='pending';change.headCommit='b'.repeat(40);await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels().some((label:unknown)=>String(label).startsWith('Always'))).toBe(false);
+ change.headCommit='a'.repeat(40);for(const status of ['loading','offline','denied','error']){feed.ownerStatus=status;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels().some((label:unknown)=>String(label).startsWith('Always'))).toBe(false);}
+ feed.ownerStatus='live';feed.owner=false;await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels().some((label:unknown)=>String(label).startsWith('Always'))).toBe(false);
+ feed.owner=true;feed.people=[];await act(async()=>tree.update(h(ApprovalsApp,{path:'/p/approvals-preview/approval/'+card.id})));expect(labels().some((label:unknown)=>String(label).startsWith('Always'))).toBe(false);
+});
+
+it('keeps a merge approval inline to one-request Allow/Deny without a standing grant',async()=>{
+ const {card}=standingFixture(),request=vi.fn<typeof fetch>(async()=>Response.json({ok:true,value:{id:card.id}}));vi.stubGlobal('fetch',request);
+ await draw(h(LiveApprovalCard,{id:card.id}));const buttons=tree.root.findAllByType('Button');expect(buttons.map((button:{props:{children:unknown}})=>button.props.children)).toEqual(['Allow','Deny']);
+ await act(async()=>buttons[0].props.onClick());expect(request.mock.calls[0][0]).toBe('/api/approvals/answer');expect(JSON.parse(String(request.mock.calls[0][1]!.body)).input).toEqual({id:card.id,answer:'allow'});
+});
+
+it.each(['ci','reviewer','author','agent','you'] as const)('offers a bound standing answer while waiting on %s without clearing that blocker',async waitingOn=>{
+ const {card,change}=standingFixture();change.waitingOn=waitingOn;
+ const request=vi.fn<typeof fetch>(async()=>Response.json({ok:true,value:{id:card.id}}));vi.stubGlobal('fetch',request);
+ await draw(h(ChangesApp,{path:'/p/changes-preview/change/'+encodeURIComponent(change.id)}));
+ const buttons=tree.root.findAllByType('Button'),labels=buttons.map((button:{props:{children:unknown}})=>button.props.children);
+ expect(labels).toContain('Always for pond');expect(labels.includes('Yes, merge it')).toBe(waitingOn==='you');expect(words()).toContain('Waiting on '+waitingOn);
+ await act(async()=>buttons.find((button:{props:{children:unknown}})=>button.props.children==='Always for pond')!.props.onClick());
+ expect(request).toHaveBeenCalledExactlyOnceWith('/api/approvals/always',expect.anything());expect(change.waitingOn).toBe(waitingOn);expect(card.state).toBe('pending');
 });

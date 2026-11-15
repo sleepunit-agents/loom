@@ -11,7 +11,7 @@ import { startHttpServer, type HttpServeHandle } from '../transport/http-server.
 import { agentDir, createToken, loadHousehold, type Household } from '../household.js';
 import { parseLoomBlock, runtimePieces } from '../cli/pieces-managed.js';
 import { createConversationTables, recordTurn, writeDigest } from '../backends/conversations.js';
-import { adapterCall, openThread, titleFromAgent, type Thread } from '../comms.js';
+import { adapterCall, openThread, setTitle, type Thread } from '../comms.js';
 import { clearPieceCache } from './pieces.js';
 import { stopCommsWatch } from './comms-live.js';
 import { closeAllBackends } from '../backends/index.js';
@@ -94,7 +94,7 @@ export async function deskHome(agents: Record<string, string>, members: { person
     thread: (person, agent, text, title) => {
       const o = openThread(h, process.env, h.members.find((m) => m.person === person)!, { agent, id: id(), text });
       recordTurn(agentDir(h, agent), agent, { venue: 'loom', place: o.thread.id, at: new Date().toISOString(), from: { kind: 'person', slug: person }, kind: 'message', label: 'New thread' } as never, 'runtime:runtime');
-      if (title) titleFromAgent(h.home, agent, o.thread.conversation, title);
+      if (title) setTitle(h, o.thread, title, 'agent');
       return o.thread;
     },
     reply: (t, text) => { adapterCall(h, process.env, { op: 'post', place: t.id, agent: t.agent, text }); },
