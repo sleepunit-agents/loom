@@ -10,7 +10,7 @@ import type { WordsKey } from './words.js';
 type Item = typeof inbox.$inferSelect;
 type Body = { words: string; why?: string | null; ifYes?: string | null; ifNo?: string | null; link?: string | null };
 export type InboxQueryPolicy = (viewer: Viewer, fields: Record<string, AnyColumn>) => SQL;
-export type InboxFilter = { folder?: 'needs' | 'answered' | 'fyi' | 'all'; state?: Item['state']; source?: Item['source']; agent?: string; limit?: number; offset?: number; search?: string };
+export type InboxFilter = { folder?: 'needs' | 'alerts' | 'answered' | 'fyi' | 'all'; state?: Item['state']; source?: Item['source']; agent?: string; limit?: number; offset?: number; search?: string };
 
 export class InboxQueries {
   constructor(readonly db: DataDatabase, readonly key: WordsKey, readonly policy: InboxQueryPolicy,
@@ -33,18 +33,23 @@ export class InboxQueries {
   list(viewer: Viewer, filter: InboxFilter = {}): Item[] {
     const { limit = 50, offset = 0 } = filter;
     if (!Number.isInteger(limit) || limit < 1 || limit > 100 || !Number.isInteger(offset) || offset < 0 || offset > 10000) throw new Error('Invalid Inbox page');
-    if (filter.folder && !['needs', 'answered', 'fyi', 'all'].includes(filter.folder)) throw new Error('Invalid Inbox folder');
+    if (filter.folder && !['needs', 'alerts', 'answered', 'fyi', 'all'].includes(filter.folder)) throw new Error('Invalid Inbox folder');
     // The personal app always shows its recipient's mailbox. Other apps may
     // use the generated table projection for visible records addressed elsewhere.
     if (viewer.kind !== 'member' && viewer.kind !== 'agent') return [];
     return this.mailbox(viewer, filter).limit(limit).offset(offset).all();
   }
+  private folderWhere(folder?: InboxFilter['folder']) {
+    if (folder === 'needs') return and(eq(inbox.state, 'waiting'), isNotNull(inbox.answers))!;
+    if (folder === 'alerts') return and(eq(inbox.state, 'waiting'), eq(inbox.source, 'notice'), isNull(inbox.answers))!;
+    if (folder === 'fyi') return and(eq(inbox.state, 'waiting'), isNull(inbox.answers))!;
+    if (folder === 'answered') return inArray(inbox.state, ['answered', 'resolved', 'done']);
+    return sql`true`;
+  }
   private mailboxWhere(viewer: Viewer, filter: InboxFilter = {}) {
     return and(this.allowed(viewer), eq(inbox.to, viewer.id),
       eq(inbox.toKind, viewer.kind === 'member' ? 'person' : 'agent'),
-      filter.folder === 'needs' ? and(eq(inbox.state, 'waiting'), isNotNull(inbox.answers)) : undefined,
-      filter.folder === 'fyi' ? and(eq(inbox.state, 'waiting'), isNull(inbox.answers)) : undefined,
-      filter.folder === 'answered' ? inArray(inbox.state, ['answered', 'resolved', 'done']) : undefined,
+      this.folderWhere(filter.folder),
       ne(inbox.volume, 'mute'),
       filter.state ? eq(inbox.state, filter.state) : undefined,
       filter.source ? eq(inbox.source, filter.source) : undefined,
@@ -55,12 +60,13 @@ export class InboxQueries {
       .orderBy(desc(sql`julianday(${inbox.at})`), desc(inbox.id));
   }
   folders(viewer: Viewer) {
-    if (viewer.kind !== 'member' && viewer.kind !== 'agent') return { needs: 0, answered: 0, fyi: 0, all: 0, agents: [] };
+    if (viewer.kind !== 'member' && viewer.kind !== 'agent') return { needs: 0, alerts: 0, answered: 0, fyi: 0, all: 0, agents: [] };
     const where = this.mailboxWhere(viewer);
     const totals = this.db.select({
-      needs: sql<number>`coalesce(sum(case when ${inbox.state} = 'waiting' and ${inbox.answers} is not null then 1 else 0 end),0)`,
-      fyi: sql<number>`coalesce(sum(case when ${inbox.state} = 'waiting' and ${inbox.answers} is null then 1 else 0 end),0)`,
-      answered: sql<number>`coalesce(sum(case when ${inbox.state} in ('answered','resolved','done') then 1 else 0 end),0)`,
+      needs: sql<number>`coalesce(sum(case when ${this.folderWhere('needs')} then 1 else 0 end),0)`,
+      alerts: sql<number>`coalesce(sum(case when ${this.folderWhere('alerts')} then 1 else 0 end),0)`,
+      fyi: sql<number>`coalesce(sum(case when ${this.folderWhere('fyi')} then 1 else 0 end),0)`,
+      answered: sql<number>`coalesce(sum(case when ${this.folderWhere('answered')} then 1 else 0 end),0)`,
       all: count(),
     }).from(inbox).where(where).get()!;
     const agents = this.db.select({ id: inbox.agent, count: count() }).from(inbox)
@@ -223,7 +229,7 @@ export function inboxQueryFields(service: InboxQueries): GraphQLFieldConfigMap<u
     id: { type: new GraphQLNonNull(GraphQLString) }, count: { type: new GraphQLNonNull(GraphQLInt) },
   } });
   const folders = new GraphQLObjectType({ name: 'InboxFolders', fields: {
-    ...Object.fromEntries(['needs', 'answered', 'fyi', 'all'].map(name => [name, { type: new GraphQLNonNull(GraphQLInt) }])),
+    ...Object.fromEntries(['needs', 'alerts', 'answered', 'fyi', 'all'].map(name => [name, { type: new GraphQLNonNull(GraphQLInt) }])),
     agents: { type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(agentCount))) },
   } });
   return { inboxFolders: { type: new GraphQLNonNull(folders), resolve: (_row, _args, context) => service.folders(context.viewer) }, inboxItem: {

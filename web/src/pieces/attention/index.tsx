@@ -137,7 +137,7 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
     if (!result.ok) throw new globalThis.Error(result.message);
   };
   const actions: InboxActions | undefined = live ? {
-    read: id => mutate('inbox.read', { item: id }),
+    read: async id => { const result = await call('inbox.read', { item: id }).result; if (!result.ok) throw new globalThis.Error(result.message); },
     answer: (id, answer, words) => mutate('inbox.answer', { item: id, answer, ...(words ? { words } : {}) }),
     openSource: current && inboxSourcePath(current) ? row => { const target = inboxSourcePath(row); if (target) navigate(target); } : undefined,
   } : undefined;

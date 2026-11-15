@@ -9,7 +9,7 @@ export interface InboxItem {
   body?: InboxBody | null; read: boolean; refs: readonly string[];
   answer?: string | null; answerText?: string | null; answeredBy?: string | null; answeredAt?: string | null; resolution?: string | null;
 }
-export interface InboxFolders { needs: number; answered: number; fyi: number; all: number; agents: readonly { id: string; count: number }[] }
+export interface InboxFolders { needs: number; alerts: number; answered: number; fyi: number; all: number; agents: readonly { id: string; count: number }[] }
 export interface InboxSnapshot { folders?: InboxFolders; status: 'live' | 'loading' | 'offline' | 'denied'; items: readonly InboxItem[] }
 export type InboxAnswer = 'yes' | 'no' | 'words' | 'done' | 'dismiss';
 export interface InboxActions {
@@ -25,6 +25,7 @@ export function rows(snapshot: InboxSnapshot, folder: string, query: string): In
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   return snapshot.items.filter(item => item.volume !== 'mute'
     && (folder === 'needs' ? item.state === 'waiting' && !!item.answers
+      : folder === 'alerts' ? item.state === 'waiting' && item.source === 'notice' && !item.answers
       : folder === 'answered' ? ['answered', 'resolved', 'done'].includes(item.state)
       : folder === 'fyi' ? item.state === 'waiting' && !item.answers
       : folder.startsWith('agent:') ? item.agent === folder.slice(6) : true)

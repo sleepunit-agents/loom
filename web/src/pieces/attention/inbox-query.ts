@@ -8,7 +8,7 @@ const fields = `id source sourceId fromId agent project thread at state volume a
 export const inboxQuery = `query Inbox($folder:String!,$search:String!,$agent:String,$offset:Int!,$id:String!,$hasItem:Boolean!,$onlyErrors:Boolean!){
  inboxItems(folder:$folder,search:$search,agent:$agent,limit:51,offset:$offset) @skip(if:$onlyErrors){${fields}}
  inboxItem(id:$id) @include(if:$hasItem){${fields}}
- inboxFolders { needs answered fyi all agents { id count } }
+ inboxFolders { needs alerts answered fyi all agents { id count } }
  inboxActionResults(limit:20){id at ok text page readAt}
 }`;
 export interface InboxReading { folders: InboxFolders; items: InboxItem[]; item: InboxItem | null; results: InboxActionResult[] }
@@ -26,7 +26,7 @@ export function inboxSelection(folder: string, search: string, offset: number, s
     decode(data) {
       if (folder !== 'errors' && !Array.isArray(data.inboxItems) || !Array.isArray(data.inboxActionResults)) throw Error('Invalid Inbox selection');
       const folders = data.inboxFolders as InboxFolders;
-      if (!folders || !['needs','answered','fyi','all'].every(key => Number.isInteger(folders[key as keyof Pick<InboxFolders,'needs'|'answered'|'fyi'|'all'>])) || !Array.isArray(folders.agents)) throw Error('Invalid Inbox folders');
+      if (!folders || !['needs','alerts','answered','fyi','all'].every(key => Number.isInteger(folders[key as keyof Pick<InboxFolders,'needs'|'alerts'|'answered'|'fyi'|'all'>])) || !Array.isArray(folders.agents)) throw Error('Invalid Inbox folders');
       return { folders, items: ((data.inboxItems ?? []) as unknown[]).map(item), item: data.inboxItem ? item(data.inboxItem) : null,
         results: data.inboxActionResults.map(value => {
           const row = value as InboxActionResult;

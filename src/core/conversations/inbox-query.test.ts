@@ -382,9 +382,10 @@ it('filters folders and muted items before paging and counts the whole recipient
   expect(f.service.list(alice, { folder: 'answered' }).map(row => row.id)).toEqual([answered.id]);
   expect(await f.service.search(alice, { folder: 'needs', search: 'Notice body' })).toEqual([]);
   expect(await f.service.search(alice, { folder: 'fyi', search: 'Notice body', limit: 2, offset: 118 })).toHaveLength(2);
-  expect(f.service.folders(alice)).toEqual({ needs: 2, answered: 1, fyi: 120, all: 123, agents: [{ id: 'art', count: 122 }, { id: 'mark', count: 1 }] });
+  expect(f.service.list(alice, { folder: 'alerts', limit: 1 })).toMatchObject([{ source: 'notice', answers: null, state: 'waiting' }]);
+  expect(f.service.folders(alice)).toEqual({ needs: 2, alerts: 120, answered: 1, fyi: 120, all: 123, agents: [{ id: 'art', count: 122 }, { id: 'mark', count: 1 }] });
   expect(() => f.service.list(alice, { folder: 'unknown' as 'all' })).toThrow('Invalid Inbox folder');
-  f.revoke(); expect(f.service.folders(alice)).toEqual({ needs: 0, answered: 0, fyi: 0, all: 0, agents: [] });
+  f.revoke(); expect(f.service.folders(alice)).toEqual({ needs: 0, alerts: 0, answered: 0, fyi: 0, all: 0, agents: [] });
 });
 it('projects independent private wording deadlines without decryption and keeps answers until their own deadline', async () => {
   const f = await fixture(), id = f.ask.inboxItem!;
@@ -413,7 +414,7 @@ it('executes the shipped Inbox selection on actual shared rows, including server
   const value = selection.decode(result.data as Record<string, unknown>);
   expect(value.items.map(row => row.id)).toEqual([f.ask.inboxItem]);
   expect(value.item?.body?.words).toBe('Order the private pump?');
-  expect(value.folders).toEqual({ needs: 1, answered: 0, fyi: 0, all: 1, agents: [{ id: 'art', count: 1 }] });
+  expect(value.folders).toEqual({ needs: 1, alerts: 0, answered: 0, fyi: 0, all: 1, agents: [{ id: 'art', count: 1 }] });
   expect(value.item?.bodyKeepUntil).toBe('2026-11-28T18:00:00.000Z');
   const errors = inboxSelection('errors', '', 0);
   const errorResult = await graphql({ schema, source: errors.query, variableValues: errors.variables, contextValue: { viewer: alice } });

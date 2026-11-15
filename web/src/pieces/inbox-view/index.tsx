@@ -67,7 +67,7 @@ export function InboxView({ snapshot, selected, select, detail, actions, results
   const live = snapshot.status === 'live';
   const item = live ? (detail ? detail.status === 'live' && detail.item?.id === selected ? detail.item : undefined : snapshot.items.find(row => row.id === selected)) : undefined;
   const folders: SplitFolder[] = [
-    ...[['needs', 'Needs you'], ['answered', 'Answered'], ['fyi', 'FYI'], ['all', 'All items']].map(([id, label]) => ({ id, label, count: live && snapshot.folders ? snapshot.folders[id as 'needs' | 'answered' | 'fyi' | 'all'] : rows(display, id, '').length })),
+    ...[['needs', 'Needs you'], ['alerts', 'Alerts'], ['answered', 'Answered'], ['fyi', 'FYI'], ['all', 'All items']].map(([id, label]) => ({ id, label, count: live && snapshot.folders ? snapshot.folders[id as 'needs' | 'alerts' | 'answered' | 'fyi' | 'all'] : rows(display, id, '').length })),
     { id: 'errors', label: 'Errors', count: currentResults?.results.filter(row => !row.ok && !row.readAt).length ?? 0 },
     { heading: 'By agent' }, ...(live && snapshot.folders ? snapshot.folders.agents : [...new Set(live ? display.items.flatMap(row => row.agent ? [row.agent] : []) : [])].sort().map(id => ({ id, count: rows(display, `agent:${id}`, '').length })))
       .map(agent => ({ id: `agent:${agent.id}`, label: agent.id, count: agent.count })),
