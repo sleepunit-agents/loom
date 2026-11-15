@@ -123,3 +123,14 @@ it('refuses a non-fictional or incomplete household before authority or leasing'
  expect(context.db.prepare("SELECT state FROM jobs WHERE agent='moss'").all()).toEqual([{state:'queued'},{state:'queued'}]);
  expect(context.db.prepare("SELECT fingerprint FROM tokens WHERE label LIKE 'Native protocol fixture %'").all()).toEqual([]);
 }));
+for(const mode of ['bootstrap-envelope','body-capability'] as const)it(`refuses completion when ${mode} byte erasure is broken`,{timeout:20_000},()=>household(async context=>{
+ const fill=Buffer.prototype.fill,held=new Set<Buffer>();
+ Buffer.prototype.fill=function(value,...args){
+  const owned=mode==='bootstrap-envelope'?this.subarray(0,7).toString('utf8')==='{"job":'&&this.includes('"bootstrap":'):this.length===69&&this.subarray(0,5).toString('ascii')==='body_';
+  if(value===0&&owned){held.add(this);return this;}
+  return Reflect.apply(fill,this,[value,...args]);
+ };
+ try{await expect(nativeProtocolSmoke(context)).rejects.toThrow();expect(held.size).toBeGreaterThan(0);}
+ finally{Buffer.prototype.fill=fill;for(const bytes of held)Reflect.apply(fill,bytes,[0]);held.clear();}
+ restored(context.db,context.example.runtime.box);
+}));
