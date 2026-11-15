@@ -373,3 +373,11 @@ it('enrolls through the canonical Root then uses the private child credential fo
   expect(JSON.parse(registration.body).input).toEqual({ job: queued.id, fingerprint: hash(raw) }); expect(registration.body).not.toContain(raw);
   expect(requests.map(request => request.path)).toContain('/api/conversation/take'); expect(requests.map(request => request.path)).toContain('/api/conversation/confirm');
 });
+
+it('rejects ambiguous current model configuration without claiming a job or keeping a receipt',async()=>{
+ const f=fixture(),queued=f.send(),roles=[{model:'model',provider:'provider',harness:'codex',series:'series'},{model:'model',provider:'other-provider',harness:'other-runner',series:'other-series'}];
+ f.setRoles(roles);const before=f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get();
+ await expect(f.control.next()).rejects.toThrow('Worker next failed');
+ expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()).toEqual(before);expect(f.db.select().from(operationResults).all()).toEqual([]);
+ f.setRoles([roles[0]]);expect((await f.control.next())?.id).toBe(queued.id);
+});

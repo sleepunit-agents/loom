@@ -6,7 +6,7 @@ export interface ChangeActions {
   refresh?(): Promise<void>;
   canAnswer?(id:string,head:string): boolean;
   answer(id: string, head: string, answer: 'yes' | 'no'): Promise<void>;
-  always?: { change: string; head: string; project: string; run(id: string, head: string): Promise<void> };
+  always?: { label?:string; change: string; head: string; project: string; run(id: string, head: string): Promise<void> };
 }
 function Unavailable({ status }: { status: ChangeSnapshot['status'] }) {
   return status === 'loading' ? <Loading label="Opening Changes…" /> : <Error text={status === 'denied' ? 'Sign in with access to see Changes.' : 'Waiting for connection.'} />;
@@ -27,12 +27,15 @@ function MergeAnswer({ change: c, actions }: { change: Change; actions?: ChangeA
     finally { active.current = false; setBusy(false); }
   }
   const always = actions?.always;
+  const canAnswer = c.state === 'open' && c.waitingOn === 'you' && actions && (actions.canAnswer?.(c.id,c.headCommit) ?? true);
+  const canAlways = c.state === 'open' && always?.change === c.id && always.head === c.headCommit && always.project === c.project;
   return <section><h3>Merge answer</h3>
-    {c.state === 'open' && c.waitingOn === 'you' && actions && (actions.canAnswer?.(c.id,c.headCommit) ?? true) ? <div role="group" aria-label="Merge answer" className="flex flex-wrap gap-2">
-      <Button disabled={busy} onClick={() => void send(() => actions.answer(c.id, c.headCommit, 'yes'))}>Yes, merge it</Button>
-      <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.answer(c.id, c.headCommit, 'no'))}>Not yet</Button>
-      {always?.change === c.id && always.head === c.headCommit && always.project === c.project && <Button variant="outline" disabled={busy} onClick={() => void send(() => always.run(c.id, c.headCommit))}>Always for {c.project}</Button>}
+    {canAnswer || canAlways ? <div role="group" aria-label="Merge answer" className="flex flex-wrap gap-2">
+      {canAnswer && <><Button disabled={busy} onClick={() => void send(() => actions.answer(c.id, c.headCommit, 'yes'))}>Yes, merge it</Button>
+      <Button variant="outline" disabled={busy} onClick={() => void send(() => actions.answer(c.id, c.headCommit, 'no'))}>Not yet</Button></>}
+      {canAlways && <Button className="max-w-full whitespace-normal [overflow-wrap:anywhere]" variant="outline" disabled={busy} onClick={() => void send(() => always.run(c.id, c.headCommit))}>{always.label ?? `Always for ${c.project}`}</Button>}
     </div> : <p>{c.state === 'open' ? `Waiting on ${c.waitingOn}` : c.state}</p>}
+    {canAlways && !canAnswer && <p>Waiting on {c.waitingOn}</p>}
     {busy && <p role="status">Saving answer…</p>}{error && <Error text={error} />}
   </section>;
 }
