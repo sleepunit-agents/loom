@@ -258,3 +258,17 @@ it.each([false, true])('allows the deferred credential before its absolute deadl
   now = 14_999; release(); await settled();
   expect(s.sent()).toEqual([expect.objectContaining({op:resume ? 6 : 2,d:expect.objectContaining({token:'PRIVATE-FRESH'})})]);
 });
+
+it('reports connected only after READY is durable, and reports backoff/disconnected at retirement', async () => {
+  let entered!: () => void, release!: () => void, connected!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const established = new Promise<void>(resolve => { connected = resolve; });
+  const state = vi.fn((value: string) => { if (value === 'connected') connected(); });
+  const f = fixture({ state, commit: async () => { entered(); await held; } });
+  const socket = await identified(f); socket.frame(ready()); await started;
+  expect(state).toHaveBeenLastCalledWith('connecting');
+  release(); await established; expect(state).toHaveBeenLastCalledWith('connected');
+  socket.emit('close', 1006); expect(state).toHaveBeenLastCalledWith('backoff');
+  await f.transport.close(); expect(state).toHaveBeenLastCalledWith('disconnected');
+});

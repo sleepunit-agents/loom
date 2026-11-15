@@ -15,19 +15,21 @@ export interface SendTransport {
  */
 export class BridgeSends {
   private draining?: Promise<void>;
+  private again=false;
   private closed = false;
 
   constructor(private db: DataDatabase, private transport: SendTransport,
-    private now: () => string, private changed: () => void = () => {}) {
+    private now: () => string, private changed: () => void = () => {},
+    private commit:<T>(write:()=>T)=>T=write=>db.transaction(write)) {
     // The app may have accepted the post before a crash lost its receipt.
-    const recovered = db.update(bridgeSends).set({ state: 'uncertain' }).where(eq(bridgeSends.state, 'sending')).run();
+    const recovered = this.commit(()=>db.update(bridgeSends).set({ state: 'uncertain' }).where(eq(bridgeSends.state, 'sending')).run());
     if (recovered.changes) changed();
   }
 
   queue(input: { id: string; incoming: string; text: string; held?: boolean }): BridgeSend {
     if (this.closed) throw new Error('Bridge sends closed');
     if (!input.id.trim() || !input.text.trim()) throw new Error('Reply needs an id and text');
-    const result = this.db.transaction(tx => {
+    const result = this.commit(()=>this.db.transaction(tx => {
       const old = tx.select().from(bridgeSends).where(eq(bridgeSends.id, input.id)).get();
       if (old) {
         if (old.incoming !== input.incoming || old.text !== input.text) throw new Error('Reply id reused');
@@ -39,7 +41,7 @@ export class BridgeSends {
         connection: incoming.connection, channel: incoming.channel, thread: incoming.thread,
         text: input.text, state: input.held ? 'held' : 'pending', createdAt: this.now(),
       }).returning().get();
-    });
+    }));
     this.changed();
     return result;
   }
@@ -58,8 +60,8 @@ export class BridgeSends {
 
   private transition(id: string, from: BridgeSend['state'], to: BridgeSend['state']): void {
     if (this.closed) throw new Error('Bridge sends closed');
-    const result = this.db.update(bridgeSends).set({ state: to })
-      .where(and(eq(bridgeSends.id, id), eq(bridgeSends.state, from))).run();
+    const result = this.commit(()=>this.db.update(bridgeSends).set({ state: to })
+      .where(and(eq(bridgeSends.id, id), eq(bridgeSends.state, from))).run());
     if (!result.changes) throw new Error('Reply state changed');
     this.changed();
   }
@@ -68,9 +70,9 @@ export class BridgeSends {
   flush(): Promise<void> {
     if (this.db.$client.inTransaction) throw new Error('Flush sends after committing the transaction');
     if (this.closed) return Promise.resolve();
-    if (this.draining) return this.draining;
+    if (this.draining) { this.again=true; return this.draining; }
     // Publish the shared promise before a transport callback can reenter flush.
-    this.draining = Promise.resolve().then(() => this.drain()).finally(() => { this.draining = undefined; });
+    this.draining = Promise.resolve().then(async() => { do { this.again=false; await this.drain(); } while(this.again&&!this.closed); }).finally(() => { this.draining = undefined; });
     return this.draining;
   }
 
@@ -82,8 +84,8 @@ export class BridgeSends {
       if (!connection?.enabled) { this.transition(send.id, 'pending', 'held'); continue; }
       // A reconnect can resume a pending send; it has not crossed the network yet.
       if (connection.state !== 'connected') continue;
-      const claim = this.db.update(bridgeSends).set({ state: 'sending' })
-        .where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'pending'))).run();
+      const claim = this.commit(()=>this.db.update(bridgeSends).set({ state: 'sending' })
+        .where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'pending'))).run());
       if (!claim.changes) continue;
       this.changed();
       let postedId: string | undefined;
@@ -97,8 +99,8 @@ export class BridgeSends {
         });
         postedId = receipt.id;
       } catch { /* upstream errors can contain credentials and are never recorded */ }
-      this.db.update(bridgeSends).set({ state: postedId ? 'sent' : 'uncertain', postedId: postedId ?? null })
-        .where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'sending'))).run();
+      this.commit(()=>this.db.update(bridgeSends).set({ state: postedId ? 'sent' : 'uncertain', postedId: postedId ?? null })
+        .where(and(eq(bridgeSends.id, send.id), eq(bridgeSends.state, 'sending'))).run());
       this.changed();
     }
   }

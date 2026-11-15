@@ -15,13 +15,13 @@ const close: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const stop of close.splice(0)) await stop(); });
 function fixture(app = 'AEXPECTED', effects = {secret:vi.fn(),http:vi.fn(),dial:vi.fn()}) {
   const clock = new FakeClock(), sockets: Socket[] = [];
-  const receive = vi.fn(async () => {}), withValue = vi.fn();
+  const receive = vi.fn(async () => {}), withValue = vi.fn(), state = vi.fn();
   const secrets: SecretUse = {withValue:async (name,use)=>{effects.secret();withValue(name);return use('PRIVATE');}};
   const request = vi.fn<typeof fetch>(async () => {effects.http();return Response.json({ok:true,url:'wss://wss.slack.com/link?ticket=PRIVATE'});});
-  const input = {app,appSecret:'app-secret',clock,secrets,request,beforeConnect:()=>true,receive,
+  const input = {app,appSecret:'app-secret',clock,secrets,request,beforeConnect:()=>true,receive,state,
     socket:()=>{effects.dial();const s = new Socket();sockets.push(s);return s as unknown as ReturnType<NonNullable<SlackSocketOptions['socket']>>;}};
   const transport = bridgeSlackSocket(input); close.push(transport.close);
-  return {clock,sockets,receive,withValue,request,transport,input};
+  return {clock,sockets,receive,withValue,request,transport,input,state};
 }
 const envelope = {type:'events_api',envelope_id:'env',payload:{event_id:'Ev1',team_id:'TWORK',event:{type:'message',text:'hello'}}};
 it.each([undefined,null,[],{}, {app_id:'AOTHER'},{app_id:123}])('rejects wrong or missing hello app evidence: %j', async connection_info => {
@@ -77,4 +77,13 @@ it('delivers after a fresh matching hello on a replacement socket', async () => 
   f.clock.advance(1000); await settled(); const second = f.sockets[1];
   second.frame({type:'hello',connection_info:{app_id:'AEXPECTED'}}); second.frame(envelope); await settled();
   expect(second.terminate).not.toHaveBeenCalled(); expect(f.receive).toHaveBeenCalledOnce(); expect(second.send).toHaveBeenCalledOnce();
+});
+
+it('reports connected only for a matching authenticated hello and backoff/disconnected on retirement', async () => {
+ const f=fixture();await settled();expect(f.state).toHaveBeenLastCalledWith('connecting');
+ f.sockets[0].frame({type:'hello',connection_info:{app_id:'AEXPECTED'}});expect(f.state).toHaveBeenLastCalledWith('connected');
+ f.sockets[0].frame({type:'disconnect'});expect(f.state).toHaveBeenLastCalledWith('backoff');
+ f.clock.advance(1000);await settled();f.sockets[1].frame({type:'hello',connection_info:{app_id:'AOTHER'}});
+ expect(f.state).toHaveBeenLastCalledWith('backoff');expect(f.state.mock.calls.filter(([state])=>state==='connected')).toHaveLength(1);
+ await f.transport.close();expect(f.state).toHaveBeenLastCalledWith('disconnected');
 });
