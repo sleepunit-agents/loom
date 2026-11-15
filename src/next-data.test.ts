@@ -1,4 +1,5 @@
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
+import { GraphQLString } from 'graphql/index.js';
 import Database from 'better-sqlite3';
 import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -22,7 +23,7 @@ const query = '{ tasks { id title } }';
 const selection = { type: 'subscribe', id: 'tasks', payload: {
   query: 'subscription($query: String!) { observe(query: $query) { revision patches { path removed value } } }', variables: { query },
 } };
-async function setup(fields?: ReturnType<typeof knowledgeQueryFields>['fields']) {
+async function setup(fields?: ReturnType<typeof knowledgeQueryFields>['fields'], admitted?: () => boolean) {
   const client = new Database(':memory:'); clean.push(() => { if (client.open) client.close(); });
   const pending = new Set<symbol>();
   const clock = new FakeClock();
@@ -41,7 +42,7 @@ async function setup(fields?: ReturnType<typeof knowledgeQueryFields>['fields'])
     VALUES ('pump','Pump','pond','member','owner','member','owner','${at}','${at}');`);
   client.prepare('INSERT INTO tokens (fingerprint,label,kind,member,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(hash(token),'Sam','owner','sam',at,new Date(clock.now()+3600000).toISOString());
   client.prepare('INSERT INTO sessions (id,token,device,via,is_agent,issued_at,seen_at,proved_at) VALUES (?,?,?,?,?,?,?,?)').run(hash(cookie),hash(token),'Browser','token',0,at,at,at);
-  const data = nextData(db, clock, req => !req.headers.origin || req.headers.origin === `http://${req.headers.host}`, undefined, fields);
+  const data = nextData(db, clock, req => !req.headers.origin || req.headers.origin === `http://${req.headers.host}`, undefined, fields, admitted);
   clean.push(() => data.close());
   async function bind() {
     const http = createServer(); const detach = data.attach(http);
@@ -272,4 +273,19 @@ it('serves real Memory and Work through the same HTTP and socket caller, includi
   const closed = once(ws, 'close');
   f.data.writes.run(() => f.client.prepare('UPDATE tokens SET revoked_at=? WHERE fingerprint=?').run(new Date(f.clock.now()).toISOString(), hash(token)));
   expect((await closed)[0]).toBe(4403);
+});
+
+it('stops late authentication database reads when the root withdraws admission during HTTP execution', async () => {
+  let admitted = true, began!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; }), held = new Promise<void>(resolve => { release = resolve; });
+  const f = await setup({ held: { type: GraphQLString, async resolve() { began(); await held; return 'done'; } } }, () => admitted);
+  const pending = f.data.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token }, body: JSON.stringify({ query: '{ held }' }) });
+  await started;
+  const lateReads: string[] = [], prepare = f.client.prepare.bind(f.client);
+  const spy = vi.spyOn(f.client, 'prepare').mockImplementation(sql => { if (/from\s+"(?:tokens|sessions|members)"/i.test(sql)) lateReads.push(sql); return prepare(sql); });
+  try {
+    admitted = false; const closing = f.data.close(); release();
+    expect((await pending).status).toBe(401); await closing;
+    expect(lateReads).toEqual([]);
+  } finally { release(); spy.mockRestore(); }
 });
