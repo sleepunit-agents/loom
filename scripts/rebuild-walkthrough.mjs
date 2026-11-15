@@ -15,10 +15,12 @@ import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
+import {inboxActions} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
+import {installDataProbe,auditDataDoor,dataActions} from './rebuild-data-actions.mjs';
 import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
 import {deskActions} from './rebuild-desk-actions.mjs';
@@ -65,7 +67,7 @@ export async function* walkthroughSteps(output) {
   await context.route('**/*',route=>localRequest(route.request().url(),app.url)?route.continue():route.abort('blockedbyclient'));
   const socketOrigin=app.url.replace(/^http/,'ws');
   await context.routeWebSocket(url=>new URL(url).origin!==socketOrigin,route=>route.close({code:1008,reason:'Walkthrough is local only'}));
-  page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTimeout(8000);
+page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTimeout(8000);await installDataProbe(page);
   page.on('framenavigated',frame=>{if(frame===page.mainFrame())navigation++;});
   page.on('websocket',socket=>{const row={path:new URL(socket.url()).pathname,phase,navigation,closeObserved:false,errorObserved:false};sockets.push(row);socket.on('socketerror',()=>{row.errorObserved=true;});connections.add(socket);socket.on('close',()=>{row.closeObserved=true;connections.delete(socket);});});
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
@@ -136,17 +138,23 @@ export async function* walkthroughSteps(output) {
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await changeInline({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await workVisibility({page,app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
+   if(title==='Inbox'&&row.opened){report.actions={...report.actions,...await inboxActions({page,tile:page.getByRole('region',{name:'Inbox tile',exact:true}),app,example:report.example,out})};}
    report.apps.push(row);
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);
    row.live={frames:visitFrames,subscriptions:subscriptions.filter(sub=>visitFrames.some(frame=>frame.id===sub.id)),scope:'Connection activity during this visit, including shell and other tiles; not app-specific proof',connectionDataReceived:visitFrames.some(frame=>frame.hasData),errors:visitFrames.flatMap(frame=>frame.errors??[])};
+   row.dataDoor=await auditDataDoor(page,title);
    save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
+
   }
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:async title=>{await openLauncher();const button=launcher.locator('.loom-lapp').filter({has:page.locator('.loom-lapp__nm',{hasText:new RegExp('^'+title+'$')})});await button.waitFor({state:'visible'});await button.focus();await page.keyboard.press('Enter');await launcher.waitFor({state:'hidden'});const tile=page.getByRole('region',{name:title+' tile',exact:true});await tile.waitFor({state:'visible'});return tile;}})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
   Object.assign(report.actions,await deskActions({page,out,inventory:report.inventory}));
   save();yield {phase:'desk',actions:safeReport(report.actions)};
+  phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out}));
+  save();yield {phase:'data',actions:safeReport(report.actions)};
+
  }catch(error){report.fatal=String(error);}
  finally{report.transport={sockets};report.consoleErrors=consoleErrors;report.pageErrors=pageErrors;report.networkErrors=networkErrors;report.live={frames:frames.length,dataFrames:frames.filter(frame=>frame.hasData).length,errors:frames.flatMap(frame=>frame.errors??[]),subscriptions};await browser?.close().catch(error=>report.errors.push(String(error)));await app?.close().catch(error=>report.errors.push(String(error)));rmSync(parent,{recursive:true,force:true});report.finishedAt=new Date().toISOString();save();rebuildReport(safeReport(report),out);}
  return safeReport(report);
