@@ -1,3 +1,5 @@
+import {join} from 'node:path';
+import {peopleReader} from '../../pieces/mind/people.js';
 import { installHouseholdBackup } from './backup.js';
 import { installHouseholdProfiles } from './profile.js';
 import { bootstrapInput, bootstrapHouseholdAgent } from './bootstrap.js';
@@ -44,11 +46,10 @@ export function installHouseholdProjects(app: Foundation, home: string): void {
     input: z.object({ person: memberPerson, agents: memberAgents }).strict(),
     may: owner,
     run(ctx, input) {
-      const person = app.operations.call('direct', ctx.viewer, 'mind.personRead', { id: `commons:${input.person}` });
-      if (!person.ok || !person.value || typeof person.value !== 'object' ||
-          !('slug' in person.value) || person.value.slug !== input.person) {
-        throw new OperationError('invalid', 'Pick someone from People');
-      }
+      const reader=peopleReader({directory:join(home,'commons','people.db'),agents:[],sharing:()=>store.sharing(),now:()=>ctx.now});
+      let person;
+      try{person=reader.read(`commons:${input.person}`,ctx.viewer);}finally{reader.close();}
+      if(person?.slug!==input.person)throw new OperationError('invalid','Pick someone from People');
       const members = changeHouseholdMember(app.db, home, input.person, input.agents);
       ctx.changed('household.sharing', 'household'); ctx.changed('core.access', 'household');
       return members;

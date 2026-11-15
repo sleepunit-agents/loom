@@ -1,4 +1,7 @@
-import {afterEach,expect,it} from 'vitest';
+import {changeService} from './apps/changes.js';
+import {FakeClock} from './core/clock.js';
+import {DataWrites} from './core/data/writes.js';
+import {afterEach,expect,it,vi} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw,credentialHash as hash} from '../test/fixtures/conversation-body.js';
@@ -82,4 +85,47 @@ it.each(['merge','command'] as const)('keeps an explicit No for the exact %s tar
 });
 it('does not carry an exact-head No into a genuinely new commit',async()=>{
  const f=await fixture();f.grant('ask');const first=await f.ask();expect((await f.call('answer',{id:first.id,answer:'deny'},'deny',f.owner)).status).toBe(200);f.grant('do');const next='b'.repeat(40);f.root.writes.run(()=>f.db.update(s.changes).set({headCommit:next}).run());expect((await f.ask('new-head',{...request,target:change+'@'+next})).state).toBe('allowed');expect(f.root.services.approvals.get(first.id).state).toBe('denied');
+});
+it('keeps the exact-head owner answer across a fresh Changes read, while preserving GitHub blockers and requiring a new answer for a new head',async()=>{
+ const f=await fixture();const row=f.db.select().from(s.changes).get()!;
+ const rawChange={id:row.id,repo:row.repository,number:row.number,page:'',title:row.title,body:'',url:'',state:'open' as const,draft:false,author:{login:'art'},created:row.openedAt,updated:row.updatedAt,closed:null,head:{ref:'work',id:row.headCommit},base:{ref:'next'},checks:{state:'passing' as const,total:1,failing:[],running:[]},review:{state:'approved' as const,by:[]},mergeable:'yes' as const,conflicts:false,people:[]};
+ f.db.insert(s.agentAccounts).values({agent:'art',service:'github',login:'art'}).run();f.db.insert(s.projectRepositories).values({project:'pond',repository:row.repository}).run();
+ const asked=await f.ask();expect((await f.call('answer',{id:asked.id,answer:'allow'},'allow',f.owner)).status).toBe(200);
+ expect(f.root.services.changes.put(rawChange).waitingOn).toBe('agent');
+ f.clock.advance(31*60_000);expect(f.root.services.changes.put(rawChange).waitingOn).toBe('you');
+ f.db.update(s.approvals).set({state:'used',usedAt:new Date(f.clock.now()).toISOString()}).where(eq(s.approvals.id,asked.id)).run();expect(f.root.services.changes.put(rawChange).waitingOn).toBe('agent');
+ f.db.update(s.approvals).set({state:'allowed',expiresAt:new Date(f.clock.now()+60000).toISOString()}).where(eq(s.approvals.id,asked.id)).run();
+ expect(f.root.services.changes.put({...rawChange,checks:{...rawChange.checks,state:'running'}}).waitingOn).toBe('ci');
+ expect(f.root.services.changes.put({...rawChange,head:{...rawChange.head,id:'b'.repeat(40)}}).waitingOn).toBe('you');
+ for(const tier of ['do','tell'] as const)expect(changeService(f.db,()=>({tier}),()=>new Date(f.clock.now()).toISOString()).put({...rawChange,head:{...rawChange.head,id:'b'.repeat(40)}}).waitingOn).toBe('agent');
+ for(const state of ['allowed','used'] as const){
+  f.db.update(s.approvals).set({state,project:'other'}).where(eq(s.approvals.id,asked.id)).run();expect(f.root.services.changes.put(rawChange).waitingOn).toBe('you');
+ }
+ f.db.update(s.approvals).set({state:'allowed',project:'pond'}).where(eq(s.approvals.id,asked.id)).run();
+ f.root.services.changes.put(rawChange);expect((await f.call('answer',{id:asked.id,answer:'deny'},'deny',f.owner)).status).toBe(200);
+ for(const tier of ['do','tell'] as const)expect(changeService(f.db,()=>({tier}),()=>new Date(f.clock.now()).toISOString()).put(rawChange).waitingOn).toBe('you');
+});
+it('expires an unused allowance and publishes the waiting group at its deadline without a body command or forge read',async()=>{
+ const f=await fixture(),asked=await f.ask();await f.call('answer',{id:asked.id,answer:'allow'},'allow',f.owner);
+ const seen:string[]=[];const stop=f.root.writes.observe(()=>{const row=f.db.select().from(s.approvals).where(eq(s.approvals.id,asked.id)).get();seen.push(row!.state);});
+ f.clock.advance(30*60_000-1);expect(f.db.select().from(s.approvals).get()?.state).toBe('allowed');
+ f.clock.advance(1);expect(f.db.select().from(s.approvals).get()?.state).toBe('expired');expect(f.db.select().from(s.changes).get()?.waitingOn).toBe('you');expect(seen).toContain('expired');stop();
+ const query=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+f.owner},body:JSON.stringify({query:'{approvals{id state} changes{waitingOn}}'})});expect((await query.json()).data).toEqual({approvals:[{id:asked.id,state:'expired'}],changes:[{waitingOn:'you'}]});
+ await f.root.close();f.clock.advance(60*60_000);
+});
+it('does not replace a later exact-target answer when an earlier unused allowance expires',async()=>{
+ const f=await fixture(),first=await f.ask('first');await f.call('answer',{id:first.id,answer:'allow'},'first-yes',f.owner);
+ f.clock.advance(10*60_000);const second=f.root.writes.run(()=>{const next=f.root.services.approvals.request({...f.root.services.approvals.get(first.id)});f.root.services.approvals.allow(next.id,'pat');return next;}).value;
+ f.clock.advance(20*60_000);expect(f.db.select().from(s.approvals).where(eq(s.approvals.id,first.id)).get()?.state).toBe('expired');expect(f.db.select().from(s.approvals).where(eq(s.approvals.id,second.id)).get()?.state).toBe('allowed');expect(f.db.select().from(s.changes).get()?.waitingOn).toBe('agent');
+ f.clock.advance(10*60_000);expect(f.db.select().from(s.approvals).where(eq(s.approvals.id,second.id)).get()?.state).toBe('expired');expect(f.db.select().from(s.changes).get()?.waitingOn).toBe('you');
+});
+
+it('root shutdown cancels outstanding approval timers and removes their write observers',async()=>{
+ const pending=new Set<symbol>(),observers=new Set<symbol>(),at=FakeClock.prototype.at,observe=DataWrites.prototype.observe;
+ const timeSpy=vi.spyOn(FakeClock.prototype,'at').mockImplementation(function(this:FakeClock,time,fn){const id=Symbol();pending.add(id);const stop=at.call(this,time,()=>{pending.delete(id);fn();});return()=>{pending.delete(id);stop();};});
+ const writeSpy=vi.spyOn(DataWrites.prototype,'observe').mockImplementation(function(this:DataWrites,fn){const id=Symbol();observers.add(id);const stop=observe.call(this,fn);return()=>{observers.delete(id);stop();};});
+ try{
+  const f=await fixture(),asked=await f.ask();await f.call('answer',{id:asked.id,answer:'allow'},'allow',f.owner);expect(pending.size).toBeGreaterThan(0);expect(observers.size).toBeGreaterThan(0);
+  await f.root.close();expect(pending.size).toBe(0);expect(observers.size).toBe(0);f.clock.advance(31*60_000);expect(f.db.select().from(s.approvals).get()?.state).toBe('allowed');
+ }finally{timeSpy.mockRestore();writeSpy.mockRestore();}
 });

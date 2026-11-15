@@ -52,6 +52,10 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
   output:z.object({tier:z.enum(['ask','tell','do']),scope:z.string().nullable(),person:z.string().nullable()}).strict(),
   run(ctx,input){merge(ctx.viewer,input.kind,input.target,true);const context=source(ctx.viewer),rule=lastApprovalAnswer(db,context.agent,input.kind,input.target)?.event==='deny'?undefined:rules.resolve({...input,project:context.project,actingFor:context.actingFor});return {tier:rule?.tier??'ask',scope:rule?.scope??null,person:rule?.person??null};},
  }));
+ operations.register(operation({...common,name:'approvals.report',input:z.object({id:z.string().min(1),what:boundedText}).strict(),output:z.object({id:z.string(),reported:z.literal(true)}).strict(),
+  may:(viewer,input)=>belongs(viewer,input.id),
+  run(ctx,input){const row=card(ctx.viewer,input.id);service.reportUsed(row.id,row.agent,input.what);ctx.changed('approvals',row.id);return {id:row.id,reported:true as const};},
+ }));
  operations.register(operation({...common,name:'approvals.withdraw',input:z.object({id:z.string().min(1)}).strict(),output:z.object({id:z.string(),state:z.literal('withdrawn')}).strict(),
   may:(viewer,input)=>belongs(viewer,input.id),
   run(ctx,input){const row=card(ctx.viewer,input.id);service.withdraw(row.id,row.agent);ctx.changed('approvals',row.id);return {id:row.id,state:'withdrawn' as const};},
