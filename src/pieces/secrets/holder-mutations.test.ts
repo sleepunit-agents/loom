@@ -8,7 +8,12 @@ import https from 'node:https';
 import {IncomingMessage} from 'node:http';
 import {connect as tlsConnect} from 'node:tls';
 import {connect as netConnect} from 'node:net';
-import {generateIdentity} from 'age-encryption';
+import {generateIdentity,Encrypter} from 'age-encryption';
+import Database from 'better-sqlite3';
+import {createDataSchema} from '../../core/data/database.js';
+import {DataWrites} from '../../core/data/writes.js';
+import {members,secretWriteJournal,secretChanges,secrets} from '../../core/data/schema.js';
+import {SecretValues} from './shared-values.js';
 import {listenHolderMutations,localHolderMutations} from './holder-mutations.js';
 import {openHolderStore} from './holder-store.js';
 import {startLoom} from '../../foundation.js';
@@ -311,4 +316,61 @@ it('closes a raw receipt caller at the server deadline without disclosing late e
     expect(Buffer.concat(responses).length).toBe(0);expect(hasReceipt).toHaveBeenCalledOnce();
     expect(set).not.toHaveBeenCalled();expect(remove).not.toHaveBeenCalled();
   }finally{peer.destroy();vi.useRealTimers();}
+});
+it('authenticated recovery distinguishes committed from durably fenced ids and never releases a value',async()=>{
+  const {home,client,server,authority,who,raw}=setup();
+  const identity=join(home,'identity'),key=join(home,'receipt-key');writeFileSync(identity,await generateIdentity(),{mode:0o600});writeFileSync(key,randomBytes(32),{mode:0o600});
+  const store=await openHolderStore(home,identity,key),holder=await listenHolderMutations(server,store,authority),api=localHolderMutations(client);
+  closes.push(async()=>{await api.close();await holder.close();store.close();});
+  expect(await api.recover(who)).toBe('undone');
+  await expect(api.set(who,'github',Buffer.from('LATE-VALUE'),'add')).rejects.toThrow(/^Local secret mutation unavailable$/);
+  await expect(store.read('github')).rejects.toThrow();expect(await api.hasReceipt(who)).toBe(false);
+  const committed={...who,writeId:randomUUID()};await api.set(committed,'github',Buffer.from('VALUE'),'add');
+  expect(await api.recover(committed)).toBe('committed');expect(await api.hasReceipt(committed)).toBe(true);
+  expect(await raw('/v1/recover',Buffer.from('INVALID-BODY'))).toBe(503);
+  await expect(api.recover({...who,member:'outsider',writeId:randomUUID()})).rejects.toThrow(/^Local secret mutation unavailable$/);
+  await api.close();await expect(api.recover(committed)).rejects.toThrow(/^Local secret mutation unavailable$/);
+});
+
+it('the shared writer undoes a lost caller through real mTLS recovery and a durable fence blocks its late encrypted commit',async()=>{
+  const {home,client,server,authority}=setup(),fingerprint=new X509Certificate(readFileSync(client.cert)).fingerprint256;
+  authority.mockImplementation(async(peer,member)=>peer===fingerprint&&member==='owner'?member:null);
+  const identity=join(home,'identity'),key=join(home,'receipt-key');writeFileSync(identity,await generateIdentity(),{mode:0o600});writeFileSync(key,randomBytes(32),{mode:0o600});
+  const store=await openHolderStore(home,identity,key),holder=await listenHolderMutations(server,store,authority),api=localHolderMutations(client);
+  const main=new Database(join(home,'main.db')),now=()=>new Date('2026-11-14T12:00:00.000Z').toISOString(),db=createDataSchema(main,now);
+  db.insert(members).values({id:'owner',role:'owner',joinedAt:now()}).run();
+  let release!:()=>void,entered!:()=>void;
+  const blocked=new Promise<void>(resolve=>{release=resolve;}),started=new Promise<void>(resolve=>{entered=resolve;});
+  const original=Encrypter.prototype.encrypt;
+  vi.spyOn(Encrypter.prototype,'encrypt').mockImplementationOnce(async function(this:Encrypter,bytes:Uint8Array|string){entered();await blocked;return original.call(this,bytes);});
+  let late:Promise<void>|undefined,lost=true;
+  const source={...api,set:async(...args:Parameters<typeof api.set>)=>{
+    if(!lost)return api.set(...args);
+    lost=false;late=api.set(...args);void late.catch(()=>{});throw Error('Caller lost before acknowledgement');
+  }};
+  const writes=new DataWrites(db,{refreshAccess(){},changed(){}}),service=new SecretValues(db,now,source,randomBytes(32),write=>{writes.run(write);});
+  closes.push(async()=>{release();service.close();await api.close();await holder.close();store.close();main.close();});
+  const input={id:randomUUID(),member:'owner',name:'API',mode:'add' as const,value:'PRIVATE-UNCOMMITTED-VALUE'};
+  await expect(service.set(input)).rejects.toThrow('reconciliation');await started;
+  expect(db.select().from(secretWriteJournal).get()?.state).toBe('prepared');
+  await service.reconcilePending();expect(db.select().from(secretWriteJournal).get()?.state).toBe('undone');
+  release();await expect(late!).rejects.toThrow(/^Local secret mutation unavailable$/);
+  await expect(store.read('API')).rejects.toThrow();expect(db.select().from(secretChanges).all()).toEqual([]);expect(db.select().from(secrets).all()).toEqual([]);
+  await expect(service.set({...input,id:randomUUID(),value:'NEW-ATTEMPT'})).resolves.toEqual({saved:true});
+  expect(db.select().from(secretChanges).all()).toHaveLength(1);
+  for(const {name} of main.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as {name:string}[])expect(JSON.stringify(main.prepare(`SELECT * FROM "${name.replaceAll('"','""')}"`).all())).not.toContain(input.value);
+});
+it.each([
+  {label:'unfenced absence',status:404,headers:{'content-length':'0'},body:''},
+  {label:'unrelated success',status:200,headers:{'content-length':'0'},body:''},
+  {label:'undo with bytes',status:410,headers:{'content-length':'12'},body:'PRIVATE-BODY'},
+  {label:'chunked undo',status:410,headers:{'transfer-encoding':'chunked'},body:''},
+])('never accepts malformed or merely absent recovery evidence: $label',async({status,headers,body})=>{
+  const {client,server,who}=setup();
+  const listener=https.createServer({ca:privateBytes(server.ca),cert:privateBytes(server.cert),key:privateBytes(server.key),requestCert:true,rejectUnauthorized:true,minVersion:'TLSv1.3'},(req,res)=>{
+    req.resume();res.writeHead(status,headers);res.end(body);
+  });
+  await new Promise<void>(resolve=>listener.listen(server.socket,resolve));chmodSync(server.socket,0o600);
+  const api=localHolderMutations(client);closes.push(async()=>{await api.close();listener.closeAllConnections();await new Promise<void>(resolve=>listener.close(()=>resolve()));});
+  await expect(api.recover(who)).rejects.toThrow(/^Local secret mutation unavailable$/);
 });

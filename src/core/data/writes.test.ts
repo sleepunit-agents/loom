@@ -130,3 +130,18 @@ it('returns notification failures separately from the committed result and attem
   expect(result).toEqual({ value: 'receipt', notificationErrors: [accessError, dataError] });
   expect(db.select().from(projects).get()!.name).toBe('Committed');
 });
+
+it('notifies lifecycle observers after commit, isolates errors and removes closed services', () => {
+  const writes = new DataWrites(db, {refreshAccess() {},changed() {}});
+  const seen: string[] = [];
+  const stop = writes.observe(()=>{expect(client.inTransaction).toBe(false);seen.push('tempo');});
+  writes.observe(()=>{throw new Error('notification failed');});
+  writes.observe(()=>seen.push('other'));
+  expect(()=>writes.run(()=>{throw new Error('rollback');})).toThrow('rollback');
+  expect(seen).toEqual([]);
+  expect(writes.run(()=>writes.run(()=>undefined)).notificationErrors).toHaveLength(1);
+  expect(seen).toEqual(['tempo','other']);
+  stop();
+  expect(writes.run(()=>undefined).notificationErrors).toHaveLength(1);
+  expect(seen).toEqual(['tempo','other','other']);
+});
