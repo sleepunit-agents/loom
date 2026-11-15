@@ -296,3 +296,19 @@ The lent flag is true for another member's agent and false for the machine owner
 agent. The command checks this against current ownership. An existing explicit
 non-lending row cannot authorize a foreign agent after ownership changes. Remove
 an agent from the explicit list to withdraw that permission.
+
+## Stop while preparing a body
+
+Claiming a private Comms job marks its thread as working while the worker prepares
+its repository and house. Starting heartbeats refresh that metadata. A thread Stop
+for that exact starting job atomically ends it as stopped, consumes the request,
+and returns inactive to the assigned worker. The normal worker cancellation path
+aborts a pending repository-consent wait; it does not build, launch a body, send a
+finish report or create a start retry. Untaken mail remains held by the stopped
+attempt until fresh mail resumes work.
+
+The terminal job and heartbeat receipt commit before Tempo is notified. A failed
+receipt preserves the previous active job and Stop request, while cached heartbeat
+replay cannot restore active authority. Running-body Stop remains with the receiving
+body's status protocol. Preparation changes the thread working indicator, without
+inventing a reported agent status or consuming another conversation's Stop.
