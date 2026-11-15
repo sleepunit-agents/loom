@@ -7,7 +7,8 @@ const running = new WeakSet<Foundation['operations']>();
 export function installAttentionMaintenance(app: Foundation): void {
   if (running.has(app.operations)) return;
   running.add(app.operations);
-  const stop = startAttentionRetention(app.operations, { kind: 'service', id: 'attention' }, result => {
+  const caller = app.operations.internal('attention');
+  const stop = startAttentionRetention(app.operations, caller.viewer, result => {
     // Never log records, inputs or a refusal's potentially private wording.
     if (!result.ok) console.warn(`Attention retention failed (${result.code})`);
   }, () => !isClosing(app));

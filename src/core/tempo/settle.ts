@@ -39,6 +39,8 @@ export class SettledInbox {
   private scan(attempted: Set<string>): void {
     this.cancel?.(); this.cancel = undefined;
     let next = this.volume.expire(this.volumeExpired);
+    // Notifications can synchronously shut down Tempo and its shared database.
+    if (this.closed) return;
     const groups = new Map<string, { who: Recipient; items: WaitingItem[] }>();
     for (const item of this.db.select().from(inbox).where(and(eq(inbox.state, 'waiting'), ne(inbox.volume, 'mute'))).orderBy(asc(inbox.at), asc(inbox.seq), asc(inbox.id)).all()) {
       const key = JSON.stringify([item.toKind, item.to]);
@@ -49,6 +51,7 @@ export class SettledInbox {
     for (const key of this.pending.keys()) if (!groups.has(key)) this.pending.delete(key);
     for (const key of this.offered.keys()) if (!groups.has(key)) this.offered.delete(key);
     for (const [key, { who, items }] of groups) {
+      if (this.closed) return;
       // Words/state metadata belong to Inbox. Volume expiry can make an old item
       // eligible again, so include volume without changing content changed_at.
       const settleSeconds = this.volume.timings(who).settleSeconds;
@@ -69,6 +72,10 @@ export class SettledInbox {
         try {
           if (!this.admit(who, items)) this.offered.delete(key);
         } catch { this.offered.delete(key); }
+        // Admission may commit edits to any recipient and notify changed().
+        // Discard captured groups before offering more work; the outer loop
+        // rereads SQL and preserves the per-pass refusal guard.
+        if (this.again) return;
       } else next = Math.min(next ?? Infinity, pending.due);
     }
     if (!this.closed && next !== undefined) this.cancel = this.clock.at(next, () => this.changed());

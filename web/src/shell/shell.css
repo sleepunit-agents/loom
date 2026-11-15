@@ -1,3 +1,7 @@
+/* The lazy status bar reserves the same room before its module arrives. */
+.next-shell{--next-status-line-height:34px}
+.next-shell[data-shell=phone]{--next-status-line-height:32px}
+.next-status-placeholder{flex:none;height:calc(var(--next-status-line-height) + env(safe-area-inset-top) + 1px)}
 .next-shell { height:100dvh; overflow:hidden; display:flex; flex-direction:column; background:var(--v-canvas); color:var(--v-text); }
 .next-bar { height:34px; flex:none; display:flex; align-items:center; justify-content:space-between; padding:0 24px; border-bottom:1px solid var(--v-edge); font-size:12px; letter-spacing:.08em; }
 .next-bar strong { color:var(--v-pink); }
