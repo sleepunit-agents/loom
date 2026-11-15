@@ -41,6 +41,9 @@ it('mounts canonical project sharing reads and atomic cookie-authenticated write
  expect((await f.send('setProjectAgents',{slug:'garden',agents:['mark']})).status).toBe(200);
  expect(f.db.select().from(projectAgents).all()).toEqual([{project:'garden',agent:'mark'}]);
  expect((await f.read('peer','{agentStatus{agent}}')).data.agentStatus).toEqual([{agent:'art'},{agent:'mark'}]);
+ expect(await f.read('peer')).toEqual({data:{projectSharing:null}});
+ expect((await f.send('setProjectAgents',{slug:'garden',agents:['art']},'project-member','peer')).status).toBe(403);
+ expect(f.db.select().from(projectAgents).all()).toEqual([{project:'garden',agent:'mark'}]);
  expect((await f.send('setProjectMembers',{slug:'garden',members:[]})).status).toBe(200);
  expect((await f.read('peer','{agentStatus{agent}}')).data.agentStatus).toEqual([{agent:'art'}]);
  expect(f.errors).toEqual([]);
