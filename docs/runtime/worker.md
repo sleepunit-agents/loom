@@ -464,6 +464,14 @@ Native model tools report only working/waiting while a turn is live. Idle/offlin
 reports and Stop acknowledgement belong to the receiving runtime after execution
 ends, so a model cannot clear the working flag or remove the live Stop control.
 
+runtime.proposeAgentRunSettings lets a current private chat body request its
+member's agent run configuration. The existing inline approval carries the
+previous house, machine order, ports and capabilities alongside the proposed
+ones. Allow rechecks the requesting member's agent ownership and current
+machine availability or lending. A stale card needs a fresh request. Direct
+owner edits and approved changes share validation/application. This path never
+changes repository-secret references or executes a house.
+
 A member-private conversation reports its actual status state, but its progress
 words never enter the global agent status row. That row is shared with other
 owners of the agent: working and waiting use “Working privately” and “Waiting
@@ -478,3 +486,13 @@ authority, machine ownership/revocation, the full previous owner settings,
 lending and name uniqueness. Worker-reported facts are independent of that
 comparison. The direct owner command and approved operation share validation and
 application; no worker credentials or enrollment are issued by either.
+
+The default receiving program also accepts wake and handoff conversations.
+Their canonical Inbox mail is accepted before native execution. Completion
+records wordless action and reply turns with their observed models, then a
+generic completion digest if none was already authored for this conversation/job.
+Authored decisions, task entries and owner questions survive. Successful Comms
+and bridge jobs use the same fallback; native reply words are never copied into
+a second durable field by runtime completion.
+These venues do not create a Comms thread or message;
+Discord and Slack retain their guarded bridge reply path.

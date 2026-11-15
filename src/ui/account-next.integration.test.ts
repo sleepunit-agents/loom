@@ -67,8 +67,12 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
   const trapOrigin=`http://127.0.0.1:${trapAddress.port}`;
   await context.route('**/*',route=>{if(new URL(route.request().url()).origin===origin)return route.continue();blockedHttp++;return route.abort('blockedbyclient');});
   await context.routeWebSocket(url=>new URL(url).origin!==origin.replace(/^http/,'ws'),socket=>{blockedSocket++;socket.close();});
+  // A blocked navigation can still be committing Chrome's error document.
+  // Retire that probe page before starting the independent socket/passkey proof.
+  const trapPage=await context.newPage();
+  try{await trapPage.goto(trapOrigin).catch(()=>{});expect(blockedHttp).toBe(1);}
+  finally{await trapPage.close();}
   const page=await context.newPage(),errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
-  await page.goto(trapOrigin).catch(()=>{});expect(blockedHttp).toBe(1);await page.goto('about:blank');
   await page.evaluate(url=>new Promise<void>(resolve=>{const socket=new WebSocket(url);socket.onclose=()=>resolve();socket.onerror=()=>resolve();}),trapOrigin.replace(/^http/,'ws'));
   expect(blockedSocket).toBe(1);expect(trapped).toBe(0);
   const cdp=await context.newCDPSession(page);await cdp.send('WebAuthn.enable');
