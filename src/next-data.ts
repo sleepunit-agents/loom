@@ -26,10 +26,12 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
-    tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents',
+    tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents', 'agentStatus',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
       'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences'],
     visibility: { ...taskVisibility(viewer), ...workVisibility(viewer),
+      // Status has the same scope as its agent; keep the existing current SQL policy.
+      agentStatus: fields => taskVisibility(viewer).agents!({ id: fields.agent }),
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
     },
   }), fields);
