@@ -209,10 +209,15 @@ it('honors restrictive approval and change callbacks for fresh answers and cache
 });
 
 it('projects only the current caller owner status through the real query door and observes role changes', async () => {
-  const f = fixture(false);
+  const f = fixture(true,true);
   f.root.writes.run(() => f.db.insert(members).values({id:'lee',role:'owner',joinedAt:'2026-11-14T00:00:00.000Z'}).run());
   const read = async () => (await (await f.root.http.request('http://loom/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+cookie},body:JSON.stringify({query:'{ workAnswerOwner }'})})).json());
   expect(await read()).toEqual({data:{workAnswerOwner:true}});
+  f.restrictions.approval=false; f.restrictions.change=false;
+  expect(await read()).toEqual({data:{workAnswerOwner:true}});
+  const request=f.request();
+  expect((await f.send('approvals',{id:request.id,answer:'allow'})).status).toBe(403);
+  expect((await f.send('changes',{id:changeId,head,approval:request.id,answer:'yes'})).status).toBe(403);
   f.root.writes.run(() => f.db.update(members).set({role:'member'}).where(eq(members.id,'sam')).run());
   expect(await read()).toEqual({data:{workAnswerOwner:false}});
   f.root.writes.run(() => f.db.update(members).set({role:'owner'}).where(eq(members.id,'sam')).run());
