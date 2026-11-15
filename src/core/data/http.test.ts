@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { GraphQLSchema, GraphQLObjectType, GraphQLString } from 'graphql/index.js';
+import { GraphQLSchema, GraphQLObjectType, GraphQLString, GraphQLNonNull, GraphQLScalarType } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import Database from 'better-sqlite3';
 import { eq } from 'drizzle-orm';
@@ -235,4 +235,92 @@ it('preserves recursive custom query roots with and without shared fields', asyn
     const response = await app.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ who self { who self { who } } }' }) });
     expect(await response.json()).toEqual({ data: { who: 'sam', self: { who: 'sam', self: { who: 'sam' } } } });
   }
+});
+
+it.each(['resolve', 'reject'])('drains actual HTTP %s work beyond an aborted Yoga response', async outcome => {
+  const { db } = fixture();
+  let began!: () => void, release!: () => void, finished!: () => void;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const readDone = new Promise<void>(resolve => { finished = resolve; });
+  const events: string[] = [];
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    slow: { type: GraphQLString, async resolve() { began(); await held; db.select().from(tasks).all(); events.push('read'); finished(); if (outcome === 'reject') throw Error('private failure'); return 'private words'; } },
+  } }) });
+  const app = dataHttp(db, () => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => true }), undefined, () => schema);
+  const abort = new AbortController();
+  const pending = app.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ slow }' }), signal: abort.signal });
+  await started;
+  try {
+    app.stop(); const closing = app.drain().then(() => { events.push('closed'); }); abort.abort();
+    const response = await pending;
+    expect(response.status).toBe(503); expect(events).toEqual([]);
+    release(); await readDone; await closing;
+    expect(events).toEqual(['read', 'closed']);
+  } finally { release(); await readDone; }
+});
+
+it('drains a sibling resolver after a non-null error has already returned an HTTP result', async () => {
+  const { db } = fixture();
+  let release!: () => void, finished!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const readDone = new Promise<void>(resolve => { finished = resolve; });
+  const events: string[] = [];
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    slow: { type: GraphQLString, async resolve() { await held; db.select().from(tasks).all(); events.push('read'); finished(); return 'late'; } },
+    broken: { type: new GraphQLNonNull(GraphQLString), async resolve() { throw Error('private error'); } },
+  } }) });
+  const app = dataHttp(db, () => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => true }), undefined, () => schema);
+  try {
+    const response = await app.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ slow broken }' }) });
+    expect((await response.json()).errors).toBeDefined();
+    app.stop(); const closing = app.drain().then(() => { events.push('closed'); });
+    await Promise.resolve(); expect(events).toEqual([]);
+    release(); await readDone; await closing;
+    expect(events).toEqual(['read', 'closed']);
+  } finally { release(); await readDone; }
+});
+
+it('stops new HTTP admission without calling credential or schema callbacks', async () => {
+  const { db } = fixture(); let authenticated = 0, schemas = 0;
+  const app = dataHttp(db, () => { authenticated++; return { viewer: { kind: 'member', id: 'sam' }, valid: () => true }; }, undefined, () => { schemas++; throw Error('must not run'); });
+  app.stop(); await app.drain();
+  const response = await app.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ tasks { id } }' }) });
+  expect(response.status).toBe(503); expect(authenticated).toBe(0); expect(schemas).toBe(0);
+});
+
+it('retains result serialization and fences credential checks when serialization stops HTTP', async () => {
+  const { db } = fixture(); let stopped = false, lateValidity = 0;
+  const events: string[] = []; let closing: Promise<void> | undefined;
+  const secret = new GraphQLScalarType({ name: 'ClosingHttpValue', serialize: () => ({ toJSON() {
+    stopped = true; app.stop(); closing = app.drain().then(() => { events.push('closed'); }); events.push('serialized'); return 'private words';
+  } }) });
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: { secret: { type: secret, resolve: () => 'secret' } } }) });
+  const app = dataHttp(db, () => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => { if (stopped) lateValidity++; return true; } }), undefined, () => schema);
+  const response = await app.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ secret }' }) });
+  expect(response.status).toBe(503); expect(await response.text()).not.toContain('private words');
+  await closing; expect(events).toEqual(['serialized', 'closed']); expect(lateValidity).toBe(0);
+});
+
+it('does not admit an HTTP subscription source outside the websocket lifetime', async () => {
+  const { db } = fixture(); let subscriptions = 0;
+  const schema = new GraphQLSchema({
+    query: new GraphQLObjectType({ name: 'Query', fields: { value: { type: GraphQLString } } }),
+    subscription: new GraphQLObjectType({ name: 'Subscription', fields: { value: { type: GraphQLString, async *subscribe() { subscriptions++; yield { value: 'not HTTP' }; } } } }),
+  });
+  const app = dataHttp(db, () => ({ viewer: { kind: 'member', id: 'sam' }, valid: () => true }), undefined, () => schema);
+  const response = await app.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: JSON.stringify({ query: 'subscription { value }' }) });
+  expect((await response.json()).errors).toBeDefined(); expect(subscriptions).toBe(0);
+  app.stop(); await app.drain();
+});
+
+it.each(['authenticate', 'activity'])('fences reentrant HTTP stop from %s before validity or private release', async from => {
+  const { db } = fixture(); let stopped = false, lateValidity = 0;
+  const app = dataHttp(db, () => {
+    if (from === 'authenticate') { stopped = true; app.stop(); }
+    return { viewer: { kind: 'member', id: 'sam' }, valid: () => { if (stopped) lateValidity++; return true; }, activity() { stopped = true; app.stop(); } };
+  });
+  const response = await app.request('/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query: '{ tasks { title } }' }) });
+  expect(response.status).toBe(503); expect((await response.json()).data).toBeUndefined();
+  expect(lateValidity).toBe(0); await app.drain();
 });

@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { getRequestListener } from '@hono/node-server';
 import { WebSocket } from 'ws';
+import { GraphQLObjectType, GraphQLString } from 'graphql/index.js';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { members, tokens, sessions, projects, projectRepositories } from './core/data/schema.js';
@@ -16,7 +17,7 @@ const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); });
 const token = 'a'.repeat(64), cookie = 'b'.repeat(64);
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-function fixture(read: PullRequestReader) {
+function fixture(read: PullRequestReader, fields?: Parameters<typeof sharedRoot>[0]['fields']) {
   const client = new Database(':memory:'); cleanup.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString();
   const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
@@ -26,7 +27,7 @@ function fixture(read: PullRequestReader) {
   db.insert(projects).values({ id: 'pond', name: 'Pond' }).run();
   db.insert(projectRepositories).values({ project: 'pond', repository: 'house/pond' }).run();
   const errors: unknown[] = [];
-  const root = sharedRoot({ db, clock, originAllowed: () => true, changes: { read, rule: () => undefined }, reportError: error => errors.push(error) });
+  const root = sharedRoot({ db, clock, originAllowed: () => true, changes: { read, rule: () => undefined }, fields, reportError: error => errors.push(error) });
   cleanup.push(() => root.close());
   const row: Change = { id: 'github:house/pond#1', repo: 'github:house/pond', number: 1, page: '', title: 'Pump', body: '', url: 'https://github.com/house/pond/pull/1', state: 'open', draft: false, author: { login: 'sam' }, created: at, updated: at, closed: null, head: { ref: 'pump', id: 'a'.repeat(40) }, base: { ref: 'next' }, checks: { state: 'passing', failing: [], running: [], total: 1 }, review: { state: 'approved', by: [] }, mergeable: 'yes', conflicts: false, people: [] };
   return { root, clock, client, row, errors };
@@ -71,5 +72,31 @@ it('drains a configured Changes read before closing the data owner and never rea
   expect(f.root.services.changes.list()).toHaveLength(1);
   f.clock.advance(120_000); expect(reads).toBe(1);
   expect(f.client.open).toBe(true);
+  expect(f.errors).toEqual([]);
+});
+
+it('fences late GraphQL callbacks immediately while an unrelated source read still drains', async () => {
+  let finishSource!: (rows: Change[]) => void, releaseRead!: () => void, began!: () => void, late = 0;
+  const started = new Promise<void>(resolve => { began = resolve; });
+  const held = new Promise<void>(resolve => { releaseRead = resolve; });
+  const f = fixture(async () => new Promise(resolve => { finishSource = resolve; }), {
+    delayed: { type: new GraphQLObjectType({ name: 'ChangesShutdownChild', fields: {
+      word: { type: GraphQLString, resolve() { late++; f.client.prepare('select 1').get(); return 'PRIVATE-FINAL'; } },
+    } }), async resolve() { began(); await held; return {}; } },
+  });
+  const source = f.root.refreshChanges!();
+  await new Promise<void>(resolve => queueMicrotask(resolve));
+  const pending = f.root.http.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui=' + cookie }, body: JSON.stringify({ query: '{ delayed { word } }' }) });
+  let closing: Promise<void> | undefined;
+  try {
+    await started;
+    let closed = false;
+    closing = f.root.close().then(() => { closed = true; });
+    releaseRead(); const response = await pending;
+    expect(await response.text()).not.toContain('PRIVATE-FINAL');
+    expect(late).toBe(0); expect(closed).toBe(false);
+  } finally {
+    releaseRead(); finishSource([]); await source; await closing;
+  }
   expect(f.errors).toEqual([]);
 });

@@ -113,10 +113,11 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       // Install shared completion before synchronous detach/abort callbacks.
-      const stopped = changePolling ? changePolling.stop().then(() => data.close()) : data.close();
+      const sourceStopped = changePolling?.stop();
+      const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, sourceStopped, ...pending.map(entry => entry.done)]).then(results => {
         try { operations.close(); } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
