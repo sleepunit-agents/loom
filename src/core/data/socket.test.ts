@@ -406,3 +406,33 @@ it('withholds a private-word lease that expires during serialization without any
   const fresh=await f.open();const value=await read(fresh,()=>fresh.send(JSON.stringify({type:'subscribe',id:'deadline',payload:{query:'{private trigger}'}})));
   expect(value.payload.data).toEqual({private:null,trigger:'public'});
 });
+
+it('never sends forbidden rows or their changes on the real live feed', async () => {
+  const f = await setup();
+  f.client.exec(`INSERT INTO members (id,role,joined_at) VALUES ('other','member','2026-11-14T00:00:00Z');
+    INSERT INTO projects (id,name) VALUES ('shared','Shared');
+    INSERT INTO project_members (project,member) VALUES ('shared','sam');
+    UPDATE tasks SET project='shared',owner='other' WHERE id='t-1';
+    INSERT INTO tasks (id,title,owner_kind,owner,created_by_kind,created_by,created_at,changed_at)
+    VALUES ('hidden','FORBIDDEN INITIAL','member','other','member','other','2026-11-14T00:00:00Z','2026-11-14T00:00:00Z');`);
+  const ws = await f.open(), frames: string[] = [];
+  ws.on('message', value => frames.push(String(value)));
+  const initial = await read(ws, () => ws.send(JSON.stringify(selection)));
+  expect(initial.payload.data.observe.patches[0].value.tasks).toEqual([{id:'t-1',title:'Pump'}]);
+  const changed = await read(ws, () => {
+    f.client.exec("UPDATE tasks SET title='FORBIDDEN UPDATE' WHERE id='hidden'; UPDATE tasks SET title='Visible update' WHERE id='t-1'");
+    f.live.changed();
+  });
+  expect(changed.payload.data.observe.patches).toEqual([{path:['tasks',0,'title'],removed:false,value:'Visible update'}]);
+  const withdrawn = await read(ws, () => {
+    f.client.exec("DELETE FROM project_members; UPDATE tasks SET title='FORBIDDEN AFTER REVOKE' WHERE id='t-1'");
+    f.live.changed();
+  });
+  expect(withdrawn.payload.data.observe.patches).toEqual([{path:['tasks',0],removed:true,value:null}]);
+  // A second selection is a protocol barrier: the transport has processed all
+  // preceding changes without a timeout or a sleep asserting silence.
+  const barrier = await read(ws, () => ws.send(JSON.stringify({...selection,id:'barrier'})));
+  expect(barrier.payload.data.observe.patches[0].value.tasks).toEqual([]);
+  expect(frames).toHaveLength(4);
+  expect(frames.join('\n')).not.toMatch(/FORBIDDEN|hidden/);
+});
