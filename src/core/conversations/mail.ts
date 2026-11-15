@@ -2,8 +2,8 @@
  * never save them in jobs.brief, generic operation receipts or Inbox columns.
  * External runner doors must recheck their current authentication after await
  * and before committing. This service does not authenticate a machine. */
-import { and, eq, inArray } from 'drizzle-orm';
-import { inbox, messages, threads } from '../data/schema.js';
+import { and, asc, eq, inArray } from 'drizzle-orm';
+import { household, inbox, inboxRefs, messages, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
 
 type Item = typeof inbox.$inferSelect;
@@ -29,15 +29,25 @@ export class ConversationMail {
   async prepareTake(conversation: string, job: string): Promise<() => Delivery[]> {
     const { db, key, now, threads: { conversations } } = this.comms;
     if (db.$client.inTransaction) throw new Error('Prepare mail outside a transaction');
+    const keepDays = () => db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
+    const retained = (message: typeof messages.$inferSelect) => {
+      const days = keepDays();
+      return !!message.words && !!message.keepUntil && Number.isInteger(days) && days >= 1 && days <= 14
+        && Date.parse(message.keepUntil) > Date.parse(now()) && Date.parse(message.at) + days * 86400000 > Date.parse(now());
+    };
     const items = conversations.pending(conversation, job), privateRows = this.privateMessages(items);
+    const refs = () => items.length ? db.select().from(inboxRefs).where(inArray(inboxRefs.item, items.map(item => item.id)))
+      .orderBy(asc(inboxRefs.item), asc(inboxRefs.ref)).all() : [];
+    const beforeRefs = refs();
     const prepared = new Map<string, string | null>();
     for (const item of items) {
       if (!item.thread) { prepared.set(item.id, item.words); continue; }
       const row = privateRows.get(item.id);
       if (!row || row.conversation !== conversation || row.message.thread !== item.thread || row.message.seq !== item.messageSeq) throw new Error('Private mail reference differs');
-      prepared.set(item.id, row.message.words && row.message.keepUntil && row.message.keepUntil > now() ? await key.open(row.message.words) : null);
+      prepared.set(item.id, retained(row.message) && row.message.words ? await key.open(row.message.words) : null);
     }
     return () => db.transaction(() => {
+      if (JSON.stringify(refs()) !== JSON.stringify(beforeRefs)) throw new Error('Mail references changed; prepare again');
       const current = new Map(conversations.pending(conversation, job).map(item => [item.id, item]));
       const currentRows = this.privateMessages(items);
       const words = new Map(prepared);
@@ -49,8 +59,9 @@ export class ConversationMail {
         if (!after || after.conversation !== conversation || after.message.thread !== item.thread || after.message.seq !== item.messageSeq) throw new Error('Private mail reference differs');
         // Retention is checked at release, even if ciphertext was swept during
         // decryption. Expired mail keeps its metadata with unavailable words.
-        if (!after.message.words || !after.message.keepUntil || after.message.keepUntil <= now()) words.set(item.id, null);
-        else if (!before.message.words || !Buffer.from(after.message.words).equals(before.message.words) || after.message.keepUntil !== before.message.keepUntil)
+        if (!retained(after.message)) words.set(item.id, null);
+        else if (!before.message.words || !after.message.words || !Buffer.from(after.message.words).equals(before.message.words)
+          || JSON.stringify({ ...after.message, words: null }) !== JSON.stringify({ ...before.message, words: null }))
           throw new Error('Private message changed; prepare again');
       }
       return conversations.take(conversation, job, items.map(item => item.id)).map(item => ({ item, words: words.get(item.id) ?? null }));

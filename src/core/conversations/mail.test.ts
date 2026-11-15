@@ -3,7 +3,7 @@ import { eq } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { generateX25519Identity } from 'age-encryption';
 import { createDataSchema } from '../data/database.js';
-import { agents, conversations, inbox, jobs, members, messages } from '../data/schema.js';
+import { agents, conversations, household, inbox, inboxRefs, jobs, members, messages } from '../data/schema.js';
 import { wordsKey } from '../../pieces/comms/crypto.js';
 import { CommsMessages } from './messages.js';
 import { ConversationMail } from './mail.js';
@@ -143,4 +143,50 @@ it('rejects a malformed private reference, failed decryption, and a stale confir
   db.update(jobs).set({ state: 'lost' }).where(eq(jobs.id, 'job-1')).run();
   expect(() => mail.confirm(thread.conversation, 'job-1', message.inboxItem!)).toThrow('not running');
   expect(db.select().from(messages).get()?.delivery).toBe('sending');
+});
+
+it('never decrypts mail beyond a shortened household deadline before a sweep', async () => {
+  const { db, key, comms, thread, send, at } = await fixture();
+  await send('Expired by household policy');
+  at('2026-11-16T18:00:00.000Z');
+  db.insert(household).values({ commsDays: 1 }).run();
+  const mail = new ConversationMail(new CommsMessages(db, { ...key, open: async () => { throw new Error('Must not decrypt expired mail'); } }, comms.now));
+  expect((await mail.prepareTake(thread.conversation, 'job-1'))()).toMatchObject([{ words: null, item: { state: 'taken' } }]);
+});
+it('rechecks a shortened household deadline after decryption and before body release', async () => {
+  const { db, key, comms, thread, send, at } = await fixture();
+  await send('Expires while opening');
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const mail = new ConversationMail(new CommsMessages(db, { ...key, open: async blob => { await gate; return key.open(blob); } }, comms.now));
+  const preparing = mail.prepareTake(thread.conversation, 'job-1');
+  at('2026-11-16T18:00:00.000Z');
+  db.insert(household).values({ commsDays: 1 }).run();
+  release();
+  expect((await preparing)()).toMatchObject([{ words: null, item: { state: 'taken' } }]);
+});
+it.each(['at', 'sender', 'kind'] as const)('rejects changed private message %s metadata after preparation', async field => {
+  const { db, mail, thread, send } = await fixture();
+  await send('Prepared words');
+  const commit = await mail.prepareTake(thread.conversation, 'job-1');
+  db.update(messages).set(field === 'at' ? { at: '2026-11-14T18:01:00.000Z' } : field === 'sender' ? { sender: 'art' } : { kind: 'reply' }).run();
+  expect(() => commit()).toThrow('Private message changed');
+  expect(db.select().from(inbox).all().every(item => item.state === 'waiting')).toBe(true);
+});
+
+it('uses the stored deadline instant when timestamps have different precision', async () => {
+  const { db, key, comms, thread, send } = await fixture();
+  await send('Expired whole-second deadline');
+  db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
+  const mail = new ConversationMail(new CommsMessages(db, { ...key, open: async () => { throw new Error('Must not decrypt expired words'); } }, comms.now));
+  expect((await mail.prepareTake(thread.conversation, 'job-1'))()).toMatchObject([{ words: null }]);
+});
+it('refuses stale source references for a prepared plain Inbox item', async () => {
+  const { db, comms, thread, mail } = await fixture();
+  const item = comms.threads.conversations.send({ conversation: thread.conversation, toKind: 'agent', to: 'art', source: 'trigger', fromKind: 'schedule', words: 'Work', refs: ['cv-before'] });
+  const commit = await mail.prepareTake(thread.conversation, 'job-1');
+  db.delete(inboxRefs).where(eq(inboxRefs.item, item.id)).run();
+  db.insert(inboxRefs).values({ item: item.id, ref: 'cv-after' }).run();
+  expect(() => commit()).toThrow('Mail references changed');
+  expect(comms.threads.conversations.item(item.id).state).toBe('waiting');
 });
