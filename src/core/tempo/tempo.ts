@@ -10,7 +10,7 @@ import { TempoSources } from './sources.js';
 export interface TempoConversations {
   open(input: { agent: string; venue: 'wake'; place: string; label: string; project?: string | null }): { id: string };
   send(input: { toKind: 'person' | 'agent'; to: string; conversation?: string; source: 'trigger' | 'notice'; sourceId: string;
-    fromKind: 'schedule'; fromId?: string; words: string; project?: string | null; agent?: string; refs?: string[] }): unknown;
+    fromKind: 'schedule'; fromId?: string; words: string; project?: string | null; agent?: string; member?: string; refs?: string[] }): unknown;
 }
 export interface TempoOptions {
   conversations: TempoConversations;
@@ -29,13 +29,13 @@ export function createTempo(db: DataDatabase, clock: Clock, options: TempoOption
   const settled = new SettledInbox(db, clock, options.admit, options.changed);
   const sweep = new Sweep(clock, delivery => {
     const conversation = delivery.who.kind === 'agent' ? options.conversations.open({ agent: delivery.who.id, venue: 'wake', place: `sweep:${delivery.who.id}`, label: 'The sweep' }).id : undefined;
-    options.conversations.send({ toKind: delivery.who.kind, to: delivery.who.id, conversation, source: 'notice', sourceId: delivery.id, fromKind: 'schedule', words: delivery.words });
+    options.conversations.send({ toKind: delivery.who.kind, to: delivery.who.id, conversation, source: 'notice', sourceId: delivery.id, fromKind: 'schedule', member: delivery.who.kind === 'person' ? delivery.who.id : undefined, words: delivery.words });
   });
   const engine = new TriggerEngine(db, clock, {
     inbox(t, occurrence, words) {
       const conversation = t.toKind === 'agent' ? options.conversations.open({ agent: t.to!, venue: 'wake', place: t.id, label: t.note, project: t.project }).id : undefined;
       options.conversations.send({ toKind: t.toKind!, to: t.to!, conversation, source: 'trigger', sourceId: occurrence,
-        fromKind: 'schedule', fromId: t.owner ?? undefined, words, project: t.project, agent: t.toKind === 'agent' ? t.to! : undefined, refs: [t.id] });
+        fromKind: 'schedule', fromId: t.owner ?? undefined, member: t.toKind === 'person' ? t.to! : undefined, words, project: t.project, agent: t.toKind === 'agent' ? t.to! : undefined, refs: [t.id] });
     },
     operation(name, t, occurrence) {
       if (name === 'tempo.sweep') {

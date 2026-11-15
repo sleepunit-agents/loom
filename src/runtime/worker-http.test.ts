@@ -101,7 +101,7 @@ it('preserves explicit worker run capabilities and rejects malformed ports', asy
 });
 
 it('reports quota observations once with distinct ids and the existing transport guards', async () => {
-  const observation = { account: 'a', owner: 'm', provider: 'p', windows: [] };
+  const observation = { account: 'a', owner: 'm', provider: 'p', windows: [], basis: '00000000-0000-4000-8000-000000000001' };
   const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ recorded: true }));
   const options = { url: 'https://loom.example', token: 'secret', signal: new AbortController().signal, fetch: fetcher };
   for (let i = 0; i < 2; i++) {
@@ -128,8 +128,15 @@ for (const cancel of [false, true]) it(`bounds quota reporting by ${cancel ? 'wo
     const abort = new AbortController(), fetcher = vi.fn<typeof fetch>(async (_url, init) => new Promise((_yes, no) => {
       init!.signal!.addEventListener('abort', () => no(Error('private diagnostic')), { once: true });
     }));
-    const pending = expect(reportWorkerAccountUsage({ url: 'https://loom.example', token: 'secret', signal: abort.signal, fetch: fetcher, timeoutMs: 100 }, { account: 'a', owner: 'm', provider: 'p', windows: [] })).rejects.toThrow('Worker accountUsage failed');
+    const pending = expect(reportWorkerAccountUsage({ url: 'https://loom.example', token: 'secret', signal: abort.signal, fetch: fetcher, timeoutMs: 100 }, { account: 'a', owner: 'm', provider: 'p', windows: [], basis: '00000000-0000-4000-8000-000000000001' })).rejects.toThrow('Worker accountUsage failed');
     if (cancel) abort.abort(); else await vi.advanceTimersByTimeAsync(100);
     await pending; expect(fetcher).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
+});
+
+it('snapshots configured machine facts for each poll without caller-supplied machine identity', async () => {
+  const facts = ['gpu:5090'], fetcher = vi.fn<typeof fetch>().mockImplementation(async () => response(null));
+  const control = httpWorkerControl({ url: 'https://loom.example', token: 'machine-token', signal: new AbortController().signal, fetch: fetcher, facts });
+  facts[0] = 'changed'; await control.next(); await control.next();
+  expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input)).toEqual([{ facts: ['gpu:5090'] }, { facts: ['gpu:5090'] }]);
 });
