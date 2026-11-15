@@ -1,6 +1,7 @@
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
+import {secretDefaultAction} from './rebuild-secret-actions.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
@@ -104,6 +105,7 @@ export async function* walkthroughSteps(output) {
     }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
+    if(title==='Settings'){row.action=await secretDefaultAction({page,tile,out});report.actions={...report.actions,secretDefault:row.action};}
     await page.screenshot({path:join(out,row.screenshot),fullPage:true});
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await changeActions({page,tile:page.getByRole('region',{name:'Changes tile',exact:true}),app,example:report.example,out})};
