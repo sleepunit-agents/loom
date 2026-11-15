@@ -2,9 +2,12 @@
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
 import {secretValueAction} from './rebuild-secret-value-actions.mjs';
+import {secretDefaultAction,verifySecretDefaultAfterReload} from './rebuild-secret-actions.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
+import {maskCredentialScreenshots} from './rebuild-credential-evidence.mjs';
+import {accessAction} from './rebuild-access-actions.mjs';
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
@@ -15,6 +18,8 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
+import {tempoWalkthrough} from './rebuild-tempo.mjs';
+import {FakeClock} from '../dist/core/clock.js';
 
 export const redact=text=>String(text).replace(/(\/login\/)[^\s"'<>\\)]+/g,'$1[redacted]').replace(/(Bearer\s+|loom_ui=)[^\s;"'<>\\)]+/gi,'$1[redacted]').replace(/AGE-SECRET-KEY-[A-Z0-9-]+/g,'[private key redacted]');
 export const safeReport=report=>JSON.parse(JSON.stringify(report,(_key,value)=>typeof value==='string'?redact(value):value));
@@ -54,13 +59,14 @@ export async function* walkthroughSteps(output) {
   writeFileSync(adapter,"export {default} from "+JSON.stringify(new URL('./rebuild-secret-holder.mjs',import.meta.url).href)+";\n",{mode:0o600,flag:'wx'});
   const program=JSON.parse(readFileSync(programPath,'utf8'));program.adapters=adapter;
   writeFileSync(programPath,JSON.stringify(program),{mode:0o600});
-  let link='';app=await startSharedHome({home,port:0,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
+  const clock=new FakeClock(Date.now());
+  let link='';app=await startSharedHome({home,port:0,clock,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});
-  const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:'block'});
+  const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:'block',userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
   await context.route('**/*',route=>localRequest(route.request().url(),app.url)?route.continue():route.abort('blockedbyclient'));
   const socketOrigin=app.url.replace(/^http/,'ws');
   await context.routeWebSocket(url=>new URL(url).origin!==socketOrigin,route=>route.close({code:1008,reason:'Walkthrough is local only'}));
-  page=await context.newPage();page.setDefaultTimeout(8000);
+  page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTimeout(8000);
   page.on('framenavigated',frame=>{if(frame===page.mainFrame())navigation++;});
   page.on('websocket',socket=>{const row={path:new URL(socket.url()).pathname,phase,navigation,closeObserved:false,errorObserved:false};sockets.push(row);socket.on('socketerror',()=>{row.errorObserved=true;});connections.add(socket);socket.on('close',()=>{row.closeObserved=true;connections.delete(socket);});});
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
@@ -75,6 +81,8 @@ export async function* walkthroughSteps(output) {
   await page.screenshot({path:join(out,'00-signin.png'),fullPage:true});
   await page.goto(link);await page.getByRole('button',{name:'Sign in',exact:true}).click();
   await page.locator('.next-shell').waitFor();report.signin.ok=true;
+  const browsers=app.services.comms.db.$client.prepare('SELECT s.is_agent, t.member FROM sessions s JOIN tokens t ON t.fingerprint=s.token').all();
+  report.signin.personBrowser=browsers.length===1&&browsers[0].is_agent===0&&browsers[0].member==='alex';
   await page.screenshot({path:join(out,'01-desk.png'),fullPage:true});
   const openLauncher=async()=>{await page.keyboard.press('Escape');await page.keyboard.press('Control+Shift+Space');await page.getByRole('dialog',{name:'Apps',exact:true}).waitFor();};
   await openLauncher();
@@ -109,11 +117,24 @@ export async function* walkthroughSteps(output) {
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
-    if(title==='Settings'){row.valueAction=await secretValueAction({page,tile,out,home});report.actions={...report.actions,secretValues:row.valueAction};}
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
+    if(['Your account','Household setup','Project sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
+    if(title==='Settings'){
+     const savedDefault=await secretDefaultAction({page,tile,out,deferReload:true});
+     row.valueAction=await secretValueAction({page,tile,out,home});
+     row.action=savedDefault.ok&&row.valueAction.ok
+      ?await verifySecretDefaultAfterReload({page,out,navigate:true})
+      :{...savedDefault,ok:false,persistedAfterReload:false,error:savedDefault.error??'The value sequence did not reach its verified reload.'};
+     report.actions={...report.actions,secretDefault:row.action,secretValues:row.valueAction};
+    }
     await page.screenshot({path:join(out,row.screenshot),fullPage:true});
-   }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
+    if(title==='Tempo'){
+     row.actions={};
+     await tempoWalkthrough({page,tile,url:app.url,clock,example:report.example,checks:row.actions,capture:async name=>{const file=row.screenshot.replace('.png','-'+name+'.png');await page.screenshot({path:join(out,file),fullPage:true});return file;}});
+    }
+   }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());const failureScreenshot=row.actions?row.screenshot.replace('.png','-error.png'):row.screenshot;row.failureScreenshot=failureScreenshot;await page.screenshot({path:join(out,failureScreenshot),fullPage:true}).catch(()=>{});}
+   if(row.actions)report.actions={...report.actions,...Object.fromEntries(Object.entries(row.actions).map(([name,value])=>['tempo'+name[0].toUpperCase()+name.slice(1),value]))};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await changeActions({page,tile:page.getByRole('region',{name:'Changes tile',exact:true}),app,example:report.example,out})};
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await changeInline({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}

@@ -24,7 +24,7 @@ export async function secretValueAction({page,tile,out,home}){
   await form.getByLabel('Name',{exact:true}).fill(name);await form.getByLabel('Description',{exact:true}).fill('Fictional browser credential');
   await form.getByLabel('Value',{exact:true}).fill(initial);await submit(form,'Add secret','set');
   if(await form.getByLabel('Value',{exact:true}).inputValue()!=='')throw Error('The added value remained in the form');
-  tile=await reload();await tile.getByRole('button',{name:'Back to Settings',exact:true}).click();
+  await tile.getByRole('button',{name:'Back to Settings',exact:true}).click();
   await tile.getByText(name,{exact:true}).click();await tile.getByText('The value is write-only. It cannot be read back here.',{exact:true}).waitFor();
   if((await tile.innerText()).includes(initial))throw Error('A value was displayed');
   if(!await holderValueEquals(home,name,initial))throw Error('The encrypted holder did not retain the added value');
@@ -32,12 +32,11 @@ export async function secretValueAction({page,tile,out,home}){
   phase='replace';form=tile.locator('form').filter({has:page.getByRole('button',{name:'Save replacement',exact:true})});
   await form.getByLabel('Value',{exact:true}).fill(replacement);await submit(form,'Save replacement','set');
   if(await form.getByLabel('Value',{exact:true}).inputValue()!=='')throw Error('The replacement remained in the form');
-  tile=await reload();form=tile.locator('form').filter({has:page.getByRole('button',{name:'Save replacement',exact:true})});
+  form=tile.locator('form').filter({has:page.getByRole('button',{name:'Save replacement',exact:true})});
   if(await form.getByLabel('Value',{exact:true}).inputValue()!=='')throw Error('A value survived in the input');
   if((await tile.innerText()).includes(replacement))throw Error('A replacement value was displayed');
   if(!await holderValueEquals(home,name,replacement))throw Error('The encrypted holder did not retain the replacement');
   expectRecords(['add','replace']);
-  await page.screenshot({path:join(out,'action-secret-replaced.png'),fullPage:true});
   phase='remove';await submit(form,'Remove value and revoke access','remove');
   tile=await reload();
   // Named metadata/history remains after value removal; inspect its record.

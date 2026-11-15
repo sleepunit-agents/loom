@@ -278,9 +278,9 @@ CLI subcommands: `wake`, `recall`, `remember`, `forget`, `update`,
 `harness`, `install`, `doctor`, `changes`, `migrate`, `pieces`, `household`, `token`, `sessions`, `export`, `restore`, `store`, `backup`. Any other name runs an
 installed piece, `loom-<name>` on PATH (`src/cli/pieces.ts`, docs/extensions.md).
 
-## Application foundation (first slice)
+## Shared application
 
-`src/core/` owns the kept-open app database, operation registry, Hono HTTP door and `/live` WebSocket. `src/policy.ts` owns the ordered sharing rule. The composition root installs pieces; core imports none. `fixture` builds a disposable home with the test-only example piece. Existing page paths remain active until their apps cut over.
+`src/shared-root.ts` composes the built-in services over one app database and installs the HTTP and `/graphql` WebSocket door. The door identifies outside callers and applies the current sharing rule; built-in modules call each other directly. `src/shared-startup.ts` owns normal `serve --http` startup. `fixture` builds an older disposable test home.
 
 The built-in `changes` command calls the new Changes API client directly; it
 never discovers an installed executable or forwards through the legacy run adapter.

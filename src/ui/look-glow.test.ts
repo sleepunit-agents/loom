@@ -13,7 +13,10 @@ const web = new URL('../../web/src/', import.meta.url);
 const css = (p: string) => readFileSync(new URL(p, web), 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '');
 // The looks' sheet, the face's, and any look's rule loom's own stylesheet carries (its rules under [data-look]).
 const lookRulesOf = (s: string) => [...s.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].includes('data-look')).map((m) => m[0]).join('\n');
-const SHEETS = { 'looks/looks.css': css('looks/looks.css'), 'face.css': css('face.css'), 'desk.css': css('desk.css'), 'tiling/tiles.css': css('tiling/tiles.css'), 'index.css (the looks\' rules)': lookRulesOf(css('index.css')) };
+const SHEETS = {
+  ...Object.fromEntries(['looks/looks.css', 'face.css', 'shell/shell.css', 'pieces/attention/home.css', 'pieces/attention/rail.css', 'pieces/attention/comms-companion.css'].map(path => [path, css(path)])),
+  'index.css (the looks\' rules)': lookRulesOf(css('index.css')),
+};
 
 /** A sheet split into what's inside @media (prefers-contrast: more) and what isn't. */
 function split(s: string): { more: string; rest: string } {
@@ -47,10 +50,10 @@ describe('the looks\' glow', () => {
     it(`${file}: no glow rule is chosen by a state, a tone or a status; no text-shadow`, () => {
       const bad = rules(rest).filter((r) => decls(r.body).some((d) => lit(d.prop, d.value) || /^--glow-/.test(d.prop))
         // A :not() that only leaves out a kind of button (.-danger) says nothing of state; one naming a state does.
-        && /data-state|data-tone|tone|status|warn|bad|danger|working|data-off/.test(r.sel.replace(/:not\((?![^)]*(data-state|data-tone|status|data-off))[^)]*\)/g, ''))).map((r) => r.sel);
+        && /data-state|data-attention|data-tone|tone|status|warn|bad|danger|working|data-off/.test(r.sel.replace(/:not\((?![^)]*(data-state|data-attention|data-tone|status|data-off))[^)]*\)/g, ''))).map((r) => r.sel);
       expect(bad).toEqual([]);
-      // The boot's LOOM//OS: its slashes are the mark's, lit (desk.tsx DeskBoot, a logo, not words to read; a --glow-* token).
-      expect(s.replace(/\.loom-boot__brand i\{[^}]*text-shadow:var\(--glow-line[^}]*\}/, '')).not.toMatch(/text-shadow/);
+      // The shell's aria-hidden LOOM//OS slashes are the logo, using a glow token.
+      expect(s.replace(/\.next-bar strong span\{[^}]*text-shadow:var\(--glow-line[^}]*\}/, '')).not.toMatch(/text-shadow/);
     });
   }
 
