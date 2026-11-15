@@ -1,5 +1,6 @@
 /** Trusted provider adapter seam. Provider calls happen outside transactions;
  * only validated observations enter the shared account/window rows. */
+import { accountCompletion, accountObservationCommitted } from './account-completion.js';
 import { eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
 import { modelAccounts, modelAccountWindows } from '../core/data/schema.js';
@@ -16,11 +17,13 @@ export function readAccountWindows(db: DataDatabase, account: string): QuotaWind
 }
 
 /** A provider response is the complete set of active limits. An older reading
- * of any retained window cannot erase newer observations of that window. */
+ * of any retained window cannot erase newer observations of that window. A caller
+ * enclosing this in its own transaction publishes accountObservationCommitted
+ * after the outer commit (the shared operation and refresh owners do so). */
 export function recordAccountWindows(db: DataDatabase, identity: Identity, windows: readonly QuotaWindow[], now: string) {
   accountCapacity(windows, now); // validate the whole response before changing rows
   if (new Set(windows.map(row => row.name)).size !== windows.length) throw new Error('Duplicate quota window');
-  return db.transaction(() => {
+  const recorded = db.transaction(() => {
     const before = readAccountWindows(db, identity.account);
     if (windows.some(row => row.readAt !== null && before.some(old => old.name === row.name
       && old.readAt !== null && Date.parse(old.readAt) <= Date.parse(now)
@@ -34,6 +37,8 @@ export function recordAccountWindows(db: DataDatabase, identity: Identity, windo
       durationMs: row.durationMs, reserve: row.reserve ?? 0.05 }).run();
     return true;
   }, { behavior: 'immediate' });
+  if (recorded && !db.$client.inTransaction) accountObservationCommitted(db, identity.account);
+  return recorded;
 }
 
 /** Re-evaluate aging observations without treating them as a successful refresh.
@@ -46,19 +51,13 @@ export function currentAccountCapacity(db: DataDatabase, account: string, now: s
   return { ...capacity, hasRoom: Boolean(row?.hasRoom) && capacity.hasRoom };
 }
 
-// Pending provider requests cannot outlive this database handle. A completion
-// token also detects successful refreshes whose persisted values did not change.
-const refreshCompletions = new WeakMap<DataDatabase, Map<string, object>>();
-
 export async function refreshAccountWindows(db: DataDatabase, account: string, provider: UsageProvider, now: () => string) {
   const row = db.select().from(modelAccounts).where(eq(modelAccounts.id, account)).get();
   if (!row) throw new Error('Unknown account');
   const identity = { account, owner: row.owner, provider: row.provider };
-  let completions = refreshCompletions.get(db);
-  if (!completions) { completions = new Map(); refreshCompletions.set(db, completions); }
-  const completion = completions.get(account);
+  const completion = accountCompletion(db, account);
   const snapshot = JSON.stringify({ row, windows: readAccountWindows(db, account) });
-  const unchanged = () => completions.get(account) === completion && snapshot === JSON.stringify({
+  const unchanged = () => accountCompletion(db, account) === completion && snapshot === JSON.stringify({
     row: db.select().from(modelAccounts).where(eq(modelAccounts.id, account)).get(),
     windows: readAccountWindows(db, account),
   });
@@ -71,10 +70,10 @@ export async function refreshAccountWindows(db: DataDatabase, account: string, p
   }
   catch {
     const applied = db.transaction(() => unchanged() && accountUsageUnavailable(db, identity));
-    if (applied) completions.set(account, {});
+    if (applied) accountObservationCommitted(db, account);
     return { refreshed: false };
   }
   const result = db.transaction(() => ({ refreshed: unchanged() && recordAccountWindows(db, identity, windows, now()) }), { behavior: 'immediate' });
-  if (result.refreshed) completions.set(account, {});
+  if (result.refreshed) accountObservationCommitted(db, account);
   return result;
 }
