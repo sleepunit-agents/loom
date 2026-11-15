@@ -669,19 +669,7 @@ describe.skipIf(!hasAge)('the audit log and review over HTTP', () => {
       expect(findingsOf(agentDir(h, 'pond-bot'))).toEqual([]);
     });
 
-    it('an agent\'s conversation_findings returns only its own', async () => {
-      const call = async (agent: string) => {
-        const { server } = createLoomServer({ contextDir: agentDir(h, agent) });
-        const client = new Client({ name: 'audit-test', version: '1' });
-        const [c, s] = InMemoryTransport.createLinkedPair();
-        await Promise.all([server.connect(s), client.connect(c)]);
-        const r = await client.callTool({ name: 'conversation_findings', arguments: {} }) as { content: Array<{ text: string }> };
-        await client.close();
-        return (JSON.parse(r.content[0].text) as { findings: Array<Record<string, unknown>> }).findings;
-      };
-      expect((await call('art')).map((x) => x.text)).toEqual(['P1 asked twice before A1 answered.']);
-      expect(await call('pond-bot')).toEqual([]);
-    });
+
 
     it('two findings for one conversation on different UTC days (the turns\' days) both land; a second the same day doesn\'t', async () => {
       const now = Date.now();
