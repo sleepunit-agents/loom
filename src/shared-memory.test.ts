@@ -195,7 +195,7 @@ it('withdraws a selected private episode when its deadline passes during a sibli
   expect(body).not.toContain('PRIVATE expiring episode');expect(response.status).toBe(503);
  }finally{release();}
 });
-it.each(['activity','activity-window','project','project-preview','person','people-list'] as const)('guards selected %s expiry during serialization without timer delivery',async kind=>{
+it.each((['activity','activity-window','project','project-preview','person','people-list'] as const).flatMap(kind=>(['http','socket'] as const).map(door=>({kind,door}))))('guards selected $kind expiry during serialization without timer delivery via $door',async({kind,door})=>{
  const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
  let current=f.clock.now();vi.spyOn(f.clock,'now').mockImplementation(()=>current);
  if(kind==='person'||kind==='people-list'){const people=new PeopleStore({dbPath:f.sources.agents[0].memories});try{people.write({slug:'friend',name:'Fictional friend'});}finally{people.close();}}
@@ -205,6 +205,15 @@ it.each(['activity','activity-window','project','project-preview','person','peop
  const step=new GraphQLScalarType({name:'MemoryExpiryStep',serialize:()=>({toJSON(){current+=1000;return 'public';}})});
  const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{},fields:{step:{type:step,resolve:()=>true}}});cleanup.push(()=>app.close());
  const selections={activity:'memoryActivityEntry(id:"e~fiction~expiry"){title}','activity-window':'memoryActivity{entries{title}}',project:'memoryProjectMemory(id:"fiction:expiry"){title}','project-preview':'memoryProject(id:"fiction:pond"){sections{items{title}}}',person:'memoryPerson(id:"fiction:friend"){evidence{title}}','people-list':'memoryPeople{evidence{title}}'};
- const response=await fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:`{${selections[kind]} step}`})});
- expect(await response.text()).not.toContain('PRIVATE expiring words');expect(response.status).toBe(503);
+ const query=`{${selections[kind]} step}`;
+ if(door==='http'){
+  const response=await fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query})});
+  expect(await response.text()).not.toContain('PRIVATE expiring words');expect(response.status).toBe(503);
+ }else{
+  const ws=new WebSocket(app.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw,origin:app.url}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+  await waitMessage(ws,()=>ws.send(JSON.stringify({type:'connection_init'})));
+  const frames:string[]=[];ws.on('message',frame=>frames.push(String(frame)));
+  const closed=once(ws,'close');ws.send(JSON.stringify({type:'subscribe',id:'expiry',payload:{query}}));
+  expect((await closed)[0]).toBe(1012);expect(frames.join(' ')).not.toContain('PRIVATE expiring words');
+ }
 });
