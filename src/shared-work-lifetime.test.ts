@@ -32,3 +32,8 @@ it('leaves used allowances and higher-priority GitHub blockers alone',async()=>{
  const f=await fixture();f.writes.run(()=>f.service.use(f.card.id,'art','merge',f.card.target));expect(f.events.size).toBe(0);f.setTime(f.now()+60000);f.drain();expect(f.db.select().from(approvals).get()?.state).toBe('used');
  f.db.update(approvals).set({state:'allowed'}).where(eq(approvals.id,f.card.id)).run();f.db.update(changes).set({waitingOn:'ci'}).run();f.writes.run(()=>{});f.drain();expect(f.db.select().from(changes).get()?.waitingOn).toBe('ci');
 });
+
+it.each(['head','project'] as const)('does not reset a cached change whose %s changed before expiry',async label=>{
+ const f=await fixture();f.db.update(changes).set(label==='head'?{headCommit:'b'.repeat(40)}:{project:'other'}).run();
+ f.setTime(f.now()+60000);f.drain();expect(f.db.select().from(approvals).get()?.state).toBe('expired');expect(f.db.select().from(changes).get()?.waitingOn).toBe('agent');
+});

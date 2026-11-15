@@ -1,5 +1,7 @@
 import {changeService} from './apps/changes.js';
-import {afterEach,expect,it} from 'vitest';
+import {FakeClock} from './core/clock.js';
+import {DataWrites} from './core/data/writes.js';
+import {afterEach,expect,it,vi} from 'vitest';
 import {randomUUID} from 'node:crypto';
 import {eq} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials as raw,credentialHash as hash} from '../test/fixtures/conversation-body.js';
@@ -116,4 +118,14 @@ it('does not replace a later exact-target answer when an earlier unused allowanc
  f.clock.advance(10*60_000);const second=f.root.writes.run(()=>{const next=f.root.services.approvals.request({...f.root.services.approvals.get(first.id)});f.root.services.approvals.allow(next.id,'pat');return next;}).value;
  f.clock.advance(20*60_000);expect(f.db.select().from(s.approvals).where(eq(s.approvals.id,first.id)).get()?.state).toBe('expired');expect(f.db.select().from(s.approvals).where(eq(s.approvals.id,second.id)).get()?.state).toBe('allowed');expect(f.db.select().from(s.changes).get()?.waitingOn).toBe('agent');
  f.clock.advance(10*60_000);expect(f.db.select().from(s.approvals).where(eq(s.approvals.id,second.id)).get()?.state).toBe('expired');expect(f.db.select().from(s.changes).get()?.waitingOn).toBe('you');
+});
+
+it('root shutdown cancels outstanding approval timers and removes their write observers',async()=>{
+ const pending=new Set<symbol>(),observers=new Set<symbol>(),at=FakeClock.prototype.at,observe=DataWrites.prototype.observe;
+ const timeSpy=vi.spyOn(FakeClock.prototype,'at').mockImplementation(function(this:FakeClock,time,fn){const id=Symbol();pending.add(id);const stop=at.call(this,time,()=>{pending.delete(id);fn();});return()=>{pending.delete(id);stop();};});
+ const writeSpy=vi.spyOn(DataWrites.prototype,'observe').mockImplementation(function(this:DataWrites,fn){const id=Symbol();observers.add(id);const stop=observe.call(this,fn);return()=>{observers.delete(id);stop();};});
+ try{
+  const f=await fixture(),asked=await f.ask();await f.call('answer',{id:asked.id,answer:'allow'},'allow',f.owner);expect(pending.size).toBeGreaterThan(0);expect(observers.size).toBeGreaterThan(0);
+  await f.root.close();expect(pending.size).toBe(0);expect(observers.size).toBe(0);f.clock.advance(31*60_000);expect(f.db.select().from(s.approvals).get()?.state).toBe('allowed');
+ }finally{timeSpy.mockRestore();writeSpy.mockRestore();}
 });
