@@ -171,7 +171,7 @@ it('withholds private metadata when read authority changes while a sibling decry
   expect(retry.response.status).toBe(200); expect(retry.body.data).toEqual({commsThread:null,commsMessages:[]});
 });
 
-it.each(['comms','inbox','answer','summary','search'])('withholds %s wording at its actual deadline after buffering, before the expiry timer runs', async kind => {
+it.each(['comms','inbox','answer','summary','search'].flatMap(kind => ['stored','household'].map(bound => ({kind,bound}))))('withholds $kind wording at the $bound deadline before the expiry timer runs', async ({kind,bound}) => {
   const now=Date.parse('2026-11-14T18:00:00Z');let time=now,advanced=false;
   const clockStep=new GraphQLScalarType({name:'DeadlineClockStep',serialize:()=>({toJSON(){advanced=true;time=now+1000;return 'public';}})});
   const f=await fixture({lateClock:{type:clockStep,resolve:()=>true}});
@@ -181,7 +181,10 @@ it.each(['comms','inbox','answer','summary','search'])('withholds %s wording at 
   const question=await comms.ask('th:pump','art','ask',{words:'PRIVATE FINAL WORDS',answers:'words'});
   if(kind==='answer') expect((await f.post('inbox.answer',{item:question.inboxItem!,answer:'words',words:'PRIVATE FINAL WORDS'},'answer')).status).toBe(200);
   if(kind==='summary') await comms.send({thread:'th:pump',kind:'reply',sender:'art',words:'PRIVATE FINAL WORDS'});
-  f.root.writes.run(()=>f.db.update(messages).set({keepUntil:'2026-11-14T18:00:01Z'}).run());
+  f.root.writes.run(()=>{
+    if(bound==='household') { f.db.insert(household).values({commsDays:1}).run(); f.db.update(messages).set({at:'2026-11-13T18:00:01Z',keepUntil:'2026-11-28T18:00:00Z'}).run(); }
+    else f.db.update(messages).set({keepUntil:'2026-11-14T18:00:01Z'}).run();
+  });
   const source=kind==='comms'?'{commsMessages(thread:"th:pump"){words}}'
     :kind==='summary'?'{recentConversations(agent:"art"){lastAnswer{words}}}'
     :kind==='search'?'{inboxItems(search:"PRIVATE FINAL WORDS"){id}}'

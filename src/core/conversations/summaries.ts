@@ -1,3 +1,4 @@
+import { wordsDeadline } from './retention.js';
 /** Small Home/People reads over the same conversations as Comms. Never uses
  * question answers as an agent's last reply or subscribes to whole threads. */
 import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
@@ -51,7 +52,7 @@ export class ConversationSummaries {
     const words = await this.key.open(row.words);
     const current = latest();
     if (!retained(current, keepDays()) || keepDays() !== days || !current?.words || current.agent !== row.agent || current.project !== row.project || current.member !== row.member || current.at !== row.at || current.thread !== row.thread || current.seq !== row.seq || current.keepUntil !== row.keepUntil || !current.words.equals(row.words)) return null;
-    retainedUntil?.(Math.min(Date.parse(current.keepUntil!), Date.parse(current.at) + days * 86400000));
+    retainedUntil?.(wordsDeadline(current, days));
     return { at: row.at, words };
   }
 }

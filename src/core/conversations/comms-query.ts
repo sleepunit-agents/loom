@@ -1,3 +1,4 @@
+import { wordsDeadline } from './retention.js';
 /** Shared Comms read projection. Composition owns current SQL sharing and the
  * authenticated query door; metadata never loads private ciphertext. */
 import { and, asc, count, desc, eq, getTableColumns, is, isNotNull, isNull, lt, sql, SQL, type AnyColumn } from 'drizzle-orm';
@@ -48,7 +49,7 @@ export class CommsQueries {
       .where(and(eq(messages.thread, expected.thread), eq(messages.seq, expected.seq), eq(conversations.id, expected.conversation), this.allowed(viewer))).get();
     const days = this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
     if (!current?.keepUntil || current.at !== expected.at || current.keepUntil !== expected.keepUntil || !Number.isInteger(days) || days < 1 || days > 14) return null;
-    const deadline = Math.min(Date.parse(current.keepUntil), Date.parse(current.at) + days * 86400000);
+    const deadline = wordsDeadline(current, days);
     return Number.isFinite(deadline) ? new Date(deadline).toISOString() : null;
   }
   /** Home is the signed-in member's own mailbox, including only agents they
@@ -105,7 +106,7 @@ export class CommsQueries {
     if (!retained(after, days()) || days() !== keep || !after?.message.words || !same(after.message) || !scope(after)
       || after.agent !== before.agent || after.project !== before.project || after.member !== before.member || after.conversation !== before.conversation
       || !after.message.words.equals(before.message.words)) return null;
-    retainedUntil?.(Math.min(Date.parse(after.message.keepUntil!), Date.parse(after.message.at) + keep * 86400000));
+    retainedUntil?.(wordsDeadline(after.message, keep));
     return words;
   }
 }

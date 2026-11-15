@@ -1,3 +1,4 @@
+import { wordsDeadline } from './retention.js';
 /** Unified Inbox reads for the generated query composition. The authenticated
  * door supplies current SQL visibility; no default policy or new transport. */
 import { and, asc, count, desc, eq, ne, getTableColumns, inArray, is, isNotNull, isNull, sql, SQL, type AnyColumn } from 'drizzle-orm';
@@ -115,7 +116,7 @@ export class InboxQueries {
     const page = current.slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50));
     for (const match of page) if (!match.metadata && match.state?.message) {
       const message = match.state.message;
-      retainedUntil?.(Math.min(Date.parse(message.keepUntil!), Date.parse(message.at) + match.state.keep * 86400000));
+      retainedUntil?.(wordsDeadline(message, match.state.keep));
     }
     return page.map(({ item }) => item);
   }
@@ -136,7 +137,7 @@ export class InboxQueries {
   private deadline(message: Pick<typeof messages.$inferSelect, 'at' | 'keepUntil'> | undefined): string | null {
     const days = this.keepDays();
     if (!message?.keepUntil || !Number.isInteger(days) || days < 1 || days > 14) return null;
-    const at = Math.min(Date.parse(message.keepUntil), Date.parse(message.at) + days * 86400000);
+    const at = wordsDeadline(message, days);
     return Number.isFinite(at) ? new Date(at).toISOString() : null;
   }
   private answerState(viewer: Viewer, item: Item) {
@@ -193,7 +194,7 @@ export class InboxQueries {
     if (!current || JSON.stringify(current) !== JSON.stringify(item) || !retained(after, days()) || days() !== keep
       || !after?.message.words || after.message.at !== before.message.at || after.message.kind !== before.message.kind
       || after.message.keepUntil !== before.message.keepUntil || !after.message.words.equals(before.message.words)) return null;
-    const deadline = Math.min(Date.parse(after.message.keepUntil!), Date.parse(after.message.at) + keep * 86400000);
+    const deadline = wordsDeadline(after.message, keep);
     if (before.message.kind !== 'ask') { retainedUntil?.(deadline); return { words }; }
     // Private questions are the existing Comms encrypted envelope, not a JSON
     // database column. Parse only the named display fields, never arbitrary keys.
