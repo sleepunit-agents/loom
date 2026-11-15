@@ -16,6 +16,19 @@ export class Jobs {
     return row;
   }
 
+  private keepText(job: Pick<Job, 'conversation'>): boolean {
+    if (!job.conversation) return true;
+    const conversation = this.db.select({ venue: conversations.venue }).from(conversations)
+      .where(eq(conversations.id, job.conversation)).get();
+    return Boolean(conversation && conversation.venue !== 'loom');
+  }
+
+  /** Old queued rows may contain a plaintext brief; never send it to a worker. */
+  workerBrief(id: string): string {
+    const job = this.get(id);
+    return this.keepText(job) ? job.brief : '';
+  }
+
   /** Called after inbox settling. Repeated admission returns the same active job.
    * Exhausted starts and manually stopped work need fresh mail to resume. */
   admit(conversationId: string): Job | undefined {
@@ -88,13 +101,10 @@ export class Jobs {
     return this.db.transaction(() => {
       const before = this.assigned(id, box, ['starting', 'running', 'waiting']);
       const at = this.now();
-      const conversation = before.conversation ? this.db.select({ venue: conversations.venue }).from(conversations)
-        .where(eq(conversations.id, before.conversation)).get() : undefined;
-      // A runner's stdout/stderr can contain the private prompt or reply. Keep
-      // no copy in jobs; private words belong only to their encrypted store.
-      const keepLog = !before.conversation || Boolean(conversation && conversation.venue !== 'loom');
+      // A runner's stdout/stderr can contain the private prompt or reply.
+      const keepText = this.keepText(before);
       const job = this.end(before, before.state === 'starting' || exitCode !== 0 ? 'failed' : 'done',
-        { exitCode, logTail: keepLog ? logTail.slice(-16_384) : null, endedAt: at });
+        { exitCode, logTail: keepText ? logTail.slice(-16_384) : null, endedAt: at });
       if (before.state !== 'starting') return { job };
       let depth = 0, ancestor = before;
       const seen = new Set([id]);
@@ -104,7 +114,7 @@ export class Jobs {
         if (depth >= 3) return { job };
       }
       const { id: _id, ...snapshot } = before;
-      const retry = this.db.insert(jobs).values({ ...snapshot, id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
+      const retry = this.db.insert(jobs).values({ ...snapshot, brief: keepText ? before.brief : '', id: `job-${randomUUID()}`, state: 'queued', box: null, account: null, harness: null,
         retryOf: id, retryAt: new Date(Date.parse(at) + 1000 * 2 ** depth).toISOString(), queuedAt: at,
         claimedAt: null, heardAt: null, endedAt: null, build: null, exitCode: null, logTail: null,
       }).returning().get();

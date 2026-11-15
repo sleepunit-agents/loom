@@ -191,3 +191,14 @@ it('keeps an unbound job brief and the final log lines', () => {
   expect(result.job).toMatchObject({ state: 'done', brief: 'unbound instructions', logTail: tail });
   expect(f.runtime.get('unbound').logTail).toBe(tail); expect(result.retry).toBeUndefined();
 });
+
+it('does not copy a legacy private brief into a new failed-start retry', () => {
+  const f = fixture('loom'); f.send(); const job = f.runtime.admit(f.conversation.id)!;
+  f.db.update(jobs).set({ brief: 'LEGACY_PRIVATE_WORDS' }).where(eq(jobs.id, job.id)).run();
+  expect(f.runtime.workerBrief(job.id)).toBe('');
+  f.runtime.claim(job.id, 'worker');
+  const result = f.runtime.finish(job.id, 'worker', 1, 'PRIVATE_DIAGNOSTIC');
+  expect(result.retry?.brief).toBe(''); expect(result.job.logTail).toBeNull();
+  expect(f.runtime.get(result.retry!.id).brief).toBe('');
+  expect(f.runtime.get(job.id).brief).toBe('LEGACY_PRIVATE_WORDS');
+});

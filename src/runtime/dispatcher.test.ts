@@ -207,3 +207,10 @@ it('reads tool and person policy within the same placement and claim transaction
   expect(f.runtime.next('first')?.id).toBe(f.job.id);
   expect(policyReads).toBeGreaterThanOrEqual(2);
 });
+
+it('never hands a legacy private brief to the worker while preserving the old record', () => {
+  const f = fixture(); f.db.update(jobs).set({ brief: 'LEGACY_PRIVATE_WORDS' }).where(eq(jobs.id, f.job.id)).run();
+  const assignment = f.runtime.next('first')!;
+  expect(assignment.id).toBe(f.job.id); expect(assignment.brief).toBe('');
+  expect(f.runtime.jobs.get(f.job.id).brief).toBe('LEGACY_PRIVATE_WORDS');
+});
