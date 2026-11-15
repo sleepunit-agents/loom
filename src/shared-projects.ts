@@ -1,3 +1,4 @@
+import { readSharing } from './core/data/sharing.js';
 import { repoId } from './pieces/changes/model.js';
 import { reprojectChanges } from './apps/changes.js';
 /** Project sharing is plain household metadata, checked only at the outside door. */
@@ -27,7 +28,7 @@ export function sharedProjects(db:DataDatabase){
    reprojectChanges(db);
    return{id:value.id};
   });},
-  read(){return{members:db.select({id:members.id}).from(members).all().map(row=>row.id),agents:db.select({id:agents.id}).from(agents).all().map(row=>row.id),projects:db.select().from(projects).all().map(row=>({...row,members:db.select({id:projectMembers.member}).from(projectMembers).where(eq(projectMembers.project,row.id)).all().map(row=>row.id),agents:db.select({id:projectAgents.agent}).from(projectAgents).where(eq(projectAgents.project,row.id)).all().map(row=>row.id),repositories:db.select({id:projectRepositories.repository}).from(projectRepositories).where(eq(projectRepositories.project,row.id)).all().map(row=>row.id)}))};},
+  read(){return readSharing(db);},
  };
 }
 export function registerSharedProjects(operations:Operations,db:DataDatabase,service:ReturnType<typeof sharedProjects>){

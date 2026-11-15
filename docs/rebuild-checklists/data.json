@@ -1,8 +1,8 @@
 {
   "page": "data",
   "title": "How a tile gets its data",
-  "ownerTask": "t-2235",
-  "sourceSha256": "ce9258f9c956ff7328e4153b2acb353c73e7d189ff99cef6a38fd824b24e6b3e",
+  "ownerTask": "t-2254",
+  "sourceSha256": "3784ae68e14bae9ba8dc01121dee5b83c45f6becb80b2f9cb258d238460ab07e",
   "promises": [
     {
       "id": "data-001",
@@ -25,7 +25,7 @@
     },
     {
       "id": "data-004",
-      "promise": "Loom runs one query, with the visibility check for whoever is asking.",
+      "promise": "A page reads with one API call, backed by a fixed small number of SQL statements that does not grow with the number of rows, with visibility checked for whoever is asking.",
       "source": "docs/how-it-works/site/data.html",
       "probe": {
         "kind": "action",
@@ -75,7 +75,7 @@
     },
     {
       "id": "data-011",
-      "promise": "Loom turns the request into one database query. Filtering, joining and the visibility check all happen in the database.",
+      "promise": "Loom handles the request in one API call using a fixed small number of sane SQL statements, independent of the number of rows. Several batched statements are fine. Filtering and visibility checks happen in the database.",
       "source": "docs/how-it-works/site/data.html#how-h",
       "probe": {
         "kind": "action",

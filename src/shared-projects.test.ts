@@ -104,3 +104,32 @@ it('withdraws selected Sharing words on the actual live socket when owner permis
  const closed=once(ws,'close');f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();release();
  expect((await closed)[0]).toBe(4403);expect(frames.join(' ')).not.toContain('Private live label');
 });
+
+it('reads Sharing with fixed SQL work for two and ten projects through one API call',async()=>{
+ const f=fixture();
+ const prepare=f.client.prepare,statements:string[]=[];
+ f.client.prepare=function(sql:string){
+  const statement=Reflect.apply(prepare,this,[sql]);
+  if(/\bfrom "project(?:s|_members|_agents|_repositories)"/.test(sql))for(const method of ['get','all'] as const){
+   const original=statement[method];
+   statement[method]=function(...args:unknown[]){if(/readSharing|at Object.read \(.*shared-projects\.[jt]s:/.test(new Error().stack??''))statements.push(sql);return Reflect.apply(original,this,args);};
+  }
+  return statement;
+ } as typeof prepare;
+ const read=async()=>{
+  statements.length=0;
+  const result=await f.read('{ householdSharing { members agents projects { id name members agents repositories } } }');
+  expect(result.errors).toBeUndefined();
+  return{rows:result.data.householdSharing.projects,count:statements.length};
+ };
+ let smallCount=0;
+ for(let n=0;n<10;n++){
+  const id='project-'+n;
+  f.root.services.projects.save({...project,id,name:id,repositories:['github:fixture/'+id],members:n===9?[]:project.members});
+  if(n===1){const small=await read();expect(small.rows).toHaveLength(2);smallCount=small.count;}
+ }
+ const large=await read();expect(large.rows).toHaveLength(10);
+ expect(large.count).toBe(smallCount);
+ expect(large.count).toBe(4);
+ expect(large.rows.find((row:{id:string})=>row.id==='project-9')).toEqual({id:'project-9',name:'project-9',members:[],agents:['art'],repositories:['github:fixture/project-9']});
+});
