@@ -7,6 +7,7 @@ import {join,resolve} from 'node:path';
 import {createDataSchema} from './core/data/database.js';
 import {householdService} from './apps/household.js';
 import {sharedRoot} from './shared-root.js';
+import {tempoWatch} from './core/tempo/sources.js';
 import {FakeClock} from './core/clock.js';
 import {loadKey} from './pieces/comms/crypto.js';
 
@@ -25,6 +26,7 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   ] as const) house.setAgent({id,about,markBg,markFg:'#ffffff',faceShape,faceEyes:'dot'});
   house.setMember({id:'alex',role:'owner',fullOwner:true,agents:['fern','moss']});
   house.setMember({id:'robin',role:'member',agents:['moss']});
+  house.initialize();
   const commsKey=await loadKey(home);
   root=sharedRoot({db,clock,commsKey,originAllowed:()=>false,reportError:error=>{throw error;},
    modelRoles:()=>[{model:'example-model',provider:'example-provider',harness:'example-harness',series:'example'}]});
@@ -41,7 +43,7 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   s.tasks.comment(tasks[0].id,'Compared three fictitious models.',{kind:'agent',id:'fern'});
   const approval=s.approvals.request({kind:'command',target:'example-worker:inspect-pump',what:'Inspect the example pump',why:'Check the hose before ordering.',agent:'fern',askedFrom:thread.conversation,actingFor:'alex',conversation:thread.conversation,project:'garden',member:'alex',ask:'Inspect the example pump?',ifYes:'Fern inspects it.',ifNo:'Fern waits.'});
   await s.comms!.ask(thread.id,'fern','example-question',{words:'Spend up to 180 example dollars on the pump?',answers:'yes-no',why:'The example pump is available.',ifYes:'Fern orders the pump.',ifNo:'Fern compares cheaper pumps.'});
-  const trigger=s.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:approval.id,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue after the example inspection is answered.',note:'Continue the pump inspection'});
+  const trigger=s.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:tempoWatch.approval(approval.id),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue after the example inspection is answered.',note:'Continue the pump inspection'});
   const change=s.changes.put({id:'github:example-house/garden#12',repo:'github:example-house/garden',number:12,page:'',title:`Plan the pump repair (${tasks[0].id})`,body:'Fictitious pull request for the browser walkthrough.',url:'https://github.com/example-house/garden/pull/12',state:'open',draft:false,author:{login:'example-fern'},created:at,updated:at,closed:null,head:{ref:'pump-repair',id:'a'.repeat(40)},base:{ref:'next'},checks:{state:'passing',failing:[],running:[],total:1},review:{state:'approved',by:[]},mergeable:'yes',conflicts:false,people:[]});
   // This is an outside operation: use an actual current credential rather
   // than treating a caller label as identity. The setup token never survives.

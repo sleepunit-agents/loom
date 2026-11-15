@@ -152,6 +152,9 @@ jobs:
             # They are few and quick, so one shard always runs them.
             if [ "${{ matrix.shard }}" = 1 ]; then
               mapfile -t guards < <(git ls-files 'src/**/*.test.ts' 'scripts/*.test.ts' 'scripts/*.test.mjs' 'web/src/**/*.test.ts' 'web/src/**/*.test.tsx' | grep -i -E 'reach|seam|architect|purity|no-side-effects|boundar|scripts/ci-')
+              # This one inventories which files touch the review key. On 2026-11-15 two new files
+              # merged past it and next stayed red for two hours.
+              [ ! -f src/audit.integration.test.ts ] || guards+=(src/audit.integration.test.ts)
               echo "Tree guards: ${guards[*]}"
               [ "${#guards[@]}" = 0 ] || npx vitest run "${guards[@]}" --passWithNoTests
             fi
