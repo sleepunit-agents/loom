@@ -36,5 +36,6 @@ export async function inboxActions({page,tile,app,example,out}){
   for(const item of created)await tile.locator('[data-split-row]:visible').filter({hasText:item.question}).waitFor();
   return{reason:'Opening each question stored Alex’s read mark; all three answered questions remained visible in Answered with their task/PR references checked before answering.',items:created.map(item=>item.item)};
  });
+ const needs=tile.getByRole('button',{name:/^Needs you(?:\s|$)/}).first();if(await needs.count())await needs.click();
  return evidence;
 }
