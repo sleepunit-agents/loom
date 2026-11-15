@@ -32,7 +32,7 @@ export async function appearanceActions({page,app,out}){
   }
   await save(()=>panel.getByRole('combobox',{name:'Reduce motion',exact:true}).selectOption('on'));
   await save(()=>panel.getByRole('combobox',{name:'Higher contrast',exact:true}).selectOption('on'));
-  await save(()=>panel.getByRole('checkbox',{name:'One window at a time',exact:true}).check());
+  await save(()=>panel.getByRole('checkbox',{name:'One window at a time',exact:true}).click());
   await page.reload();await page.locator('.next-shell').waitFor();
   await page.waitForFunction(()=>{const d=document.documentElement.dataset;return d.ground==='wash'&&d.motion==='reduce'&&d.contrast==='more'&&d.oneWindow==='on';});
   const row=app.services.comms.db.$client.prepare('SELECT * FROM member_preferences WHERE member=?').get('alex');
