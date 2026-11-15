@@ -7,15 +7,18 @@ export async function approvalRulesAndExpiry({page,tile,app,example,out,clock}){
  const check=(v,m)=>{if(!v)throw Error(m);};
  try{
   const base={kind:'command',target:'fictitious:inspection',what:'Fictitious expiring inspection',why:'Measure allowance expiry.',agent:'fern',askedFrom:'fictitious-expiry',actingFor:'alex',ask:'Allow a fictitious inspection?',ifYes:'Inspect.',ifNo:'Wait.',minutes:1};
-  const expired=write(()=>s.approvals.request(base));write(()=>s.approvals.allow(expired.id,'alex'));
-  clock.advance(60_001);
-  check(s.approvals.get(expired.id).state==='expired'&&!write(()=>s.approvals.use(expired.id,'fern','command',base.target)).ok,'Expired allowance remained usable');
+  for(const minutes of [1,3]){
+   const before=write(()=>s.approvals.request({...base,minutes,target:`fictitious:before-${minutes}`})),after=write(()=>s.approvals.request({...base,minutes,target:`fictitious:after-${minutes}`}));
+   write(()=>{s.approvals.allow(before.id,'alex');s.approvals.allow(after.id,'alex');});clock.advance(minutes*60_000-1);
+   check(s.approvals.get(before.id).state==='allowed'&&s.approvals.get(after.id).state==='allowed'&&write(()=>s.approvals.use(before.id,'fern','command',before.target)).ok,'Allowance ended before its configured deadline');
+   clock.advance(1);check(s.approvals.get(after.id).state==='expired'&&!write(()=>s.approvals.use(after.id,'fern','command',after.target)).ok,'Configured expiry did not refuse use');
+  }
   const watched=write(()=>s.approvals.request({...base,target:'fictitious:watched-answer',what:'Fictitious watched approval'}));
   const trigger=write(()=>s.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:`approval:${watched.id}`,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue after the fictitious answer.',note:'Fictitious approval continuation'}));
   write(()=>s.approvals.allow(watched.id,'alex'));clock.advance(0);
   const deliveries=()=>s.comms.db.$client.prepare("SELECT count(*) AS n FROM inbox JOIN inbox_refs ON inbox_refs.item=inbox.id WHERE inbox.source='trigger' AND inbox_refs.ref=?").get(trigger.id).n;
   check(deliveries()===1,'Approval answer did not fire its once-only trigger');
-  clock.advance(1);write(()=>s.approvals.deny(watched.id,'alex'));check(deliveries()===1,'Once-only trigger fired again on later denial');
+  clock.advance(1);write(()=>s.approvals.deny(watched.id,'alex'));clock.advance(60_001);check(deliveries()===1,'Once-only trigger fired again on later denial');
   const consumed=write(()=>{const card=s.approvals.request({...base,target:'fictitious:consumed'});s.approvals.allow(card.id,'alex');return card;});
   check(write(()=>s.approvals.use(consumed.id,'fern','command',consumed.target)).ok&&!write(()=>s.approvals.use(consumed.id,'fern','command',consumed.target)).ok,'Allowance was not exactly single-use');
   const deniedAllowance=write(()=>s.approvals.request({...base,target:'fictitious:revoked-allowance'}));write(()=>{s.approvals.allow(deniedAllowance.id,'alex');s.approvals.deny(deniedAllowance.id,'alex');});check(s.approvals.get(deniedAllowance.id).state==='denied'&&!write(()=>s.approvals.use(deniedAllowance.id,'fern','command',deniedAllowance.target)).ok,'A denied allowance remained usable');

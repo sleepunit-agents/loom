@@ -43,8 +43,13 @@ it('builds fictitious data through services, then normal startup signs in and qu
   const trigger=app.writes.run(()=>app!.services.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:`approval:${watched.id}`,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue fictitious work.',note:'Watched example'})).value;
   const allowed=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'watched-example',input:{id:watched.id,answer:'allow'}})});expect(allowed.status).toBe(200);clock.advance(0);
   const deliveries=()=>app!.services.comms!.db.$client.prepare("SELECT count(*) AS n FROM inbox JOIN inbox_refs ON inbox_refs.item=inbox.id WHERE inbox.source='trigger' AND inbox_refs.ref=?").get(trigger.id);
-  expect(deliveries()).toEqual({n:1});clock.advance(60_001);
-  expect(app.services.approvals.get(watched.id).state).toBe('expired');expect(app.writes.run(()=>app!.services.approvals.use(watched.id,'fern','command',watched.target)).value.ok).toBe(false);expect(deliveries()).toEqual({n:1});
+  expect(deliveries()).toEqual({n:1});clock.advance(1);app.writes.run(()=>app!.services.approvals.deny(watched.id,'alex'));clock.advance(60_001);expect(deliveries()).toEqual({n:1});
+  for(const minutes of [1,3]){
+   const value={kind:'command' as const,target:'example:expiry-'+minutes,agent:'fern',askedFrom:'example-proof',actingFor:'alex',what:'Duration proof',why:'Configured duration.',ask:'Proceed?',ifYes:'Continue.',ifNo:'Wait.',minutes};
+   const first=app.writes.run(()=>app!.services.approvals.request(value)).value,second=app.writes.run(()=>app!.services.approvals.request(value)).value;app.writes.run(()=>{app!.services.approvals.allow(first.id,'alex');app!.services.approvals.allow(second.id,'alex');});
+   clock.advance(minutes*60_000-1);expect(app.services.approvals.get(second.id).state).toBe('allowed');expect(app.writes.run(()=>app!.services.approvals.use(first.id,'fern','command',value.target)).value.ok).toBe(true);clock.advance(1);
+   expect(app.services.approvals.get(second.id).state).toBe('expired');expect(app.writes.run(()=>app!.services.approvals.use(second.id,'fern','command',value.target)).value.ok).toBe(false);
+  }
   const draft=app.writes.run(()=>app!.services.tasks.create({title:'Fictitious dangerous draft',goal:'Discard only on approval.',why:'Prove installed prepared actions.',owner:{kind:'household'}},{kind:'member',id:'alex'})).value;
   const card=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',conversation:manifest.conversation,member:'alex',what:'Discard fictitious draft',why:'Prove the exact before/after.',ask:'Discard it?',ifYes:'Cancel draft.',ifNo:'Keep draft.'})).value;
   expect(app.services.tasks.get(draft.id).status).toBe('open');
