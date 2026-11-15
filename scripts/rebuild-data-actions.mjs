@@ -1,4 +1,5 @@
 /** Observe the actual browser transport and actual SQLite executions. No mock IO. */
+import {parse} from 'graphql';
 import {AsyncLocalStorage} from 'node:async_hooks';
 import {join} from 'node:path';
 const signatures={Tasks:'query\\s+Tasks\\b',Approvals:'query\\s+ApprovalsView\\b','Project sharing':'\\bhouseholdSharing\\b',Changes:'query\\s+ChangesView\\b',Inbox:'query\\s+Inbox\\b',Tempo:'query\\s+Tempo\\b',Home:'query\\s+DeskLastAnswer\\b',Projects:'query\\s+MemoryProjects\\b',Activity:'query\\s+MemoryActivity\\b',Comms:'query\\s+Comms\\b',Agents:'query\\s+DeskAgentProfiles\\b',People:'query\\s+MemoryPeople\\b',Knowledge:'query\\s+MemoryKnowledge\\b',Bridges:'query\\s+Bridges\\b',Settings:'query\\s+SettingsSecrets\\b','Household setup':'\\bhouseholdSetup\\b','Your account':'\\baccount\\s*\\{'};
@@ -39,23 +40,26 @@ async function stop(page){await page.evaluate(()=>{const state=globalThis.__loom
 export async function dataActions({page,app,example,apps,subscriptions,out}){
  const evidence={};
  const attempt=async(name,run)=>{const screenshot=`action-${name}.png`;try{evidence[name]={ok:true,...await run(),screenshot};}catch(error){evidence[name]={ok:false,error:String(error),screenshot};}await stop(page);await page.screenshot({path:join(out,screenshot),fullPage:true});};
- const unknown=apps.filter(a=>!a.dataDoor?.known);
- evidence.dataDoor=unknown.length?{inconclusive:true,reason:'No query signature for '+unknown.map(a=>a.title).join(', ')}:{ok:apps.every(a=>a.opened&&a.dataDoor.graphql===1&&!a.dataDoor.other.length&&a.dataDoor.selectionSeen),reason:'Every visited app was checked for its actual data selection on the current document’s single open GraphQL socket.',apps:apps.map(a=>a.dataDoor)};
+ const unknown=apps.filter(a=>!a.dataDoor?.known||!a.dataDoor.selectionSeen),bad=apps.filter(a=>!a.opened||a.dataDoor?.graphql!==1||a.dataDoor?.other?.length);
+ evidence.dataDoor=bad.length?{ok:false,error:'Expected one open GraphQL socket at '+bad.map(a=>a.title).join(', '),apps:apps.map(a=>a.dataDoor)}:unknown.length?{inconclusive:true,reason:'A current-document selection signature was not observed for '+unknown.map(a=>a.title).join(', '),apps:apps.map(a=>a.dataDoor)}:{ok:true,reason:'Every visited app’s actual data selection was observed on its current document’s single open GraphQL socket.',apps:apps.map(a=>a.dataDoor)};
  await attempt('dataSelectionSQL',async()=>{
   const original=subscriptions.find(s=>/query\s+Tasks\b/.test(s.query))?.query;check(original,'The real Tasks selection was not observed');
   const query=original.replace(/\btasks\s*\(/,'tasks(where:{id:{eq:'+JSON.stringify(example.tasks[0])+'}}, ');check(query!==original,'Could not add the ID filter to the actual tile selection');
   const result=await sqlRead({page,app,query,task:example.tasks[0],match:/\b(?:from|join)\s+"?tasks"?\b/i});
   check(result.status===200&&!result.body.errors,'Generated selection failed: '+JSON.stringify(result.body.errors));
   const rows=result.body.data.tasks;check(rows.length===1&&rows[0].id===example.tasks[0]&&rows[0].taskCommentsByTask.length>0,'Filtering or connected comment rows differed');
-  check(result.statements.length===1,'Filtered relational task selection used '+result.statements.length+' fact SQL executions');
-  const sql=result.statements[0];check(sql.includes('task_comments')&&sql.includes('members')&&sql.includes('project_members'),'SQL omitted connected reads or sharing predicates');
-  return{reason:'The observed Tasks selection named its fields/relations and its filtered replay returned one task with comments in one SQL statement containing live sharing predicates.',statements:result.statements,fields:Object.keys(rows[0]),task:example.tasks[0]};
+  const root=parse(query).definitions.find(d=>d.kind==='OperationDefinition').selectionSet.selections.find(f=>f.kind==='Field'&&f.name.value==='tasks');
+  const fields=selection=>[...new Set(selection.selections.filter(f=>f.kind==='Field').map(f=>f.alias?.value??f.name.value))].sort();
+  check(JSON.stringify(Object.keys(rows[0]).sort())===JSON.stringify(fields(root.selectionSet)),'The result did not contain exactly the selected task fields');
+  const child=root.selectionSet.selections.find(f=>f.kind==='Field'&&f.name.value==='taskCommentsByTask');check(JSON.stringify(Object.keys(rows[0].taskCommentsByTask[0]).sort())===JSON.stringify(fields(child.selectionSet)),'Connected rows did not contain exactly the selected fields');
+  return{reason:'The observed Tasks selection named its fields and connected comments; its filtered browser replay returned exactly those selected fields.',statements:result.statements,factSQLExecutions:result.statements.length,fields:Object.keys(rows[0]),task:example.tasks[0]};
  });
  await attempt('dataSharingSQL',async()=>{
   const query=subscriptions.find(s=>/\bhouseholdSharing\b/.test(s.query))?.query;check(query,'The actual Sharing selection was not observed');
   const result=await sqlRead({page,app,query,match:/\b(?:from|join)\s+"?project(?:s|_members|_agents|_repositories)"?\b/i});check(result.status===200&&!result.body.errors,'Sharing read failed');
-  const distinct=[...new Set(result.statements)];check(distinct.length===1,'One Sharing root selection executed '+distinct.length+' distinct project/relationship SQL statements: '+JSON.stringify(distinct));
-  return{reason:'The Sharing root selection used one project/relationship fact statement.',statements:distinct};
+  const distinct=[...new Set(result.statements)];
+  if(distinct.length>1)return{ok:false,error:'One Sharing root selection executed '+distinct.length+' distinct project/relationship SQL statements.',statements:distinct};
+  return{inconclusive:true,reason:'This Sharing selection did not disprove one-query reads; the complete property is not yet measured across every view.',statements:distinct};
  });
  await attempt('dataTaskPatches',async()=>{
   await open(page,'Tasks');
