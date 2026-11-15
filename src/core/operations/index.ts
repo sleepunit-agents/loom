@@ -83,6 +83,7 @@ export interface OperationWrites {
 export class Operations {
   // Heterogeneous schemas are erased only at registration; parsing restores each operation's input.
   private frames: Change[][] = [];
+  private completedWriteDeadlines = new WeakMap<object,number>();
   private recoveries = new Set<NonNullable<Operation['recover']>>();
   private stopExpiry?: () => void;
   private ops = new Map<string, Operation<any>>(); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -188,6 +189,9 @@ export class Operations {
     }
     return result;
   }
+  /** Exact completed/replayed result identity, not a later receipt lookup.
+   * Metadata only: no payload retention, replay grant or transport field. */
+  completedWriteDeadline(result: Result): number | undefined { return this.completedWriteDeadlines.get(result); }
   /** Trusted metadata for local post-call receipts. Never returns input or output. */
   retryDeadline(viewer: Viewer, id: string, name: string): number | undefined {
     this.expireReceipts(this.clock.now());
@@ -286,6 +290,7 @@ export class Operations {
           if (old) {
             if (old.operation !== name || old.inputHash !== body) return failure('conflict', 'Operation id already used for different input');
             op.validateReplay?.(viewer, parsed.data, prepared);
+            this.completedWriteDeadlines.set(old.result,old.expires);
             return old.result;
           }
         }
@@ -314,7 +319,9 @@ export class Operations {
         const serialized = JSON.stringify(answer);
         if (op.write) this.saveReceipt({ caller: who, id: id!, operation: name, inputHash: body,
           result: JSON.parse(serialized) as Result, expires: replay?.expires ?? now + 30 * 86400_000 });
-        return JSON.parse(serialized) as Result;
+        const completed=JSON.parse(serialized) as Result;
+        if(op.write)this.completedWriteDeadlines.set(completed,replay?.expires ?? now + 30 * 86400_000);
+        return completed;
       }, !!op.write);
     } catch (e) { result = e instanceof OperationError ? failure(e.code, e.message) : failure('unavailable', 'Operation could not complete'); }
     finally { this.frames.pop(); }
