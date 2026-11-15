@@ -21,9 +21,10 @@ function fixture(){
  const home=mkdtempSync(join(tmpdir(),'fictional-signin-cli-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString()),raw={owner:'a'.repeat(64),sam:'b'.repeat(64)},hash=(value:string)=>createHash('sha256').update(value).digest('hex');
  for(const member of ['owner','sam'] as const){db.insert(members).values({id:member,role:member==='owner'?'owner':'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw[member]),kind:'owner',member,label:member,createdAt:at}).run();writeFileSync(join(home,member),raw[member],{mode:0o600});}
  db.insert(sessions).values({id:hash('c'.repeat(64)),token:hash(raw.sam),device:'Sam browser',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
- const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{}});clean.push(()=>root.close());
+ const programGrants=new Map<string,{records:readonly string[];operations:readonly string[]}>();
+ const root=sharedRoot({db,clock,programStore:{read:id=>programGrants.get(id),write:(id,value)=>{programGrants.set(id,value);return undefined;}},originAllowed:()=>true,reportError:()=>{}});clean.push(()=>root.close());
  const transport:typeof fetch=async(input,init)=>await root.http.fetch(new Request(input,init));
- const invoke=async(piece:'token'|'sessions'|'account'|'household',args:string[],actor:'owner'|'sam'='owner',request:typeof fetch=transport,env?:NodeJS.ProcessEnv)=>{
+ const invoke=async(piece:'token'|'program'|'sessions'|'account'|'household',args:string[],actor:'owner'|'sam'='owner',request:typeof fetch=transport,env?:NodeJS.ProcessEnv)=>{
   let out='',err='',time=0,calls=0;const bodies:string[]=[],paths:string[]=[];
   const code=await runAccessClient(piece,args,{stdin:Readable.from([]),stdinIsTTY:false,env:env??{LOOM_URL:'http://loom',LOOM_TOKEN_FILE:join(home,actor)},stdout:value=>out+=value,stderr:value=>err+=value},{now:()=>time,retry:async ms=>{time+=ms;},request:async(input,init)=>{calls++;bodies.push(String(init?.body));paths.push(new URL(String(input)).pathname);return request(input,init);}});
   return{code,out,err,calls,bodies,paths,time};
@@ -175,4 +176,22 @@ it('the dedicated household binding uses shared HTTP and never reads a local hou
  vi.stubGlobal('fetch',f.transport);expect(await runCli(['token','list'],io)).toBe(0);
  const reads=[...vi.mocked(readFileSync).mock.calls.slice(before[0]),...vi.mocked(openSync).mock.calls.slice(before[1]),...vi.mocked(readFile).mock.calls.slice(before[2])].map(args=>String(args[0]));
  expect(reads.some(path=>path.startsWith(local))).toBe(false);expect(reads).toContain(join(f.home,'owner'));expect(err).toBe('');
+});
+
+it('creates and lists narrow programmes and edits their grants through the actual shared door',async()=>{
+ const f=fixture(),input=JSON.stringify({member:'sam',label:'CLI programme',records:['tasks'],operations:['tasks.command']});const created=await f.invoke('program',['create',input]);expect(created.code).toBe(0);expect(created.paths).toEqual(['/api/signin/program']);expect(created.bodies).toEqual([input]);expect(created.out).toMatch(/^loom_\S+\n$/);
+ const raw=created.out.trim(),auth=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw}}));expect(auth?.viewer).toEqual({kind:'member',id:'sam'});
+ const listed=await f.invoke('program',['list']);expect(listed.code).toBe(0);expect(listed.paths).toEqual(['/graphql']);const [token]=JSON.parse(listed.out);expect(token).toMatchObject({label:'CLI programme',member:'sam',records:['tasks'],operations:['tasks.command']});expect(listed.out).not.toContain(raw);
+ expect((await f.invoke('program',['setGrants',JSON.stringify({fingerprint:token.fingerprint,records:[],operations:[]})],'sam')).code).toBe(1);
+ let attempts=0;const bodies:string[]=[];const saved=await f.invoke('program',['setGrants',JSON.stringify({fingerprint:token.fingerprint,records:[],operations:[]})],'owner',async(url,init)=>{bodies.push(String(init?.body));const response=await f.transport(url,init);if(attempts++===0){await response.body?.cancel();throw Error('lost response');}return response;});expect(saved.code).toBe(0);expect(saved.paths).toEqual(['/api/program/setGrants','/api/program/setGrants']);expect(bodies[0]).toBe(bodies[1]);expect(JSON.parse(saved.out)).toEqual({saved:true});expect((await f.invoke('program',['list'])).out).not.toContain(raw);
+ expect(auth?.valid()).toBe(false);expect((await(await f.root.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id } }'})})).json()).errors).toBeDefined();
+});
+it.each(['lost','5xx','invalid'] as const)('never retries programme issuance after %s or echoes private diagnostics',async reason=>{
+ const f=fixture(),result=await f.invoke('program',['create',JSON.stringify({member:'sam',label:'Uncertain programme',records:[],operations:[]})],'owner',async(url,init)=>{
+ if(reason==='5xx')return new Response('PRIVATE DETAIL',{status:503});if(reason==='invalid')return Response.json({ok:true,value:{token:'PRIVATE DETAIL'}});const response=await f.transport(url,init);await response.body?.cancel();throw Error('PRIVATE DETAIL');
+ });expect(result).toMatchObject({code:1,calls:1,out:''});expect(result.err).toContain('outcome unknown');expect(result.err).not.toContain('PRIVATE DETAIL');
+});
+it('routes programme commands through the primary CLI and refuses the legacy local door',async()=>{
+ const f=fixture();vi.stubGlobal('fetch',f.transport);let out='',err='';const io={stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:'http://loom',LOOM_TOKEN_FILE:join(f.home,'owner'),LOOM_HOME:'/must-not-open'},stdout:(value:string)=>out+=value,stderr:(value:string)=>err+=value};
+ expect(await runCli(['program','create',JSON.stringify({member:'sam',label:'Primary programme',records:['tasks'],operations:[]})],io)).toBe(0);expect(out).toMatch(/^loom_\S+\n$/);out='';expect(await runCli(['program','list'],io)).toBe(0);expect(JSON.parse(out)[0].label).toBe('Primary programme');expect(await runCliLocal(['program','list'],io)).toBe(2);expect(err).toContain('cannot run through the legacy');
 });

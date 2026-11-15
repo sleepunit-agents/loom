@@ -41,6 +41,7 @@ Commands:
   migrate           Apply pending schema migrations to memories.db
   pieces            Installed pieces; install, update, roll back, remove them
   household         Read roster and edit members, agents and projects through the API
+  program           Create, list or change outside-program token grants
   token             Mint, list, revoke tokens or make a one-time sign-in link
   sessions          List browsers or end one through the API
   account           Read personal Account or end a browser/remove a passkey
@@ -60,7 +61,7 @@ Global flags:
   --url <url>            Run against a loom-http server (default: $LOOM_URL), e.g.
                          http://host:8787. Bearer token from $LOOM_TOKEN_FILE.
                          Applies to wake, recall, remember, update, forget,
-                         memory, knowledge, person, project, household, token, sessions, account.
+                         memory, knowledge, person, project, household, token, program, sessions, account.
   --json                 Machine-readable output
   --help, -h             Show help
   --version, -V          Print loom version
@@ -102,7 +103,7 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
     return runChangesClient(rest, io);
   }
 
-  if (sub === 'household' || sub === 'token' || sub === 'sessions' || sub === 'account') {
+  if (sub === 'program' || sub === 'household' || sub === 'token' || sub === 'sessions' || sub === 'account') {
     const parsed=extractGlobalFlags(rest);
     if(parsed.flags.contextDir!==undefined||parsed.flags.client!==undefined||parsed.flags.model!==undefined){io.stderr(`Context, client and model flags do not apply to loom ${sub}.\n`);return 2;}
     if(rest.includes('--url')&&!parsed.flags.url){io.stderr('--url needs a value\n');return 2;}
@@ -259,6 +260,7 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
       return runPiecesCommand(rest, io);
     }
     case 'household':
+    case 'program':
     case 'token':
     case 'sessions':
     case 'account': {
