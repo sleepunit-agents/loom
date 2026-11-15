@@ -91,9 +91,45 @@ it('refuses malformed history ordering before accepting or confirming current ma
  }});clean.push(()=>client.close());
  await expect(client.takeAndAccept(accept)).rejects.toThrow();expect(accept).not.toHaveBeenCalled();expect(f.db.select().from(s.inbox).all().find(row=>row.messageSeq===3)?.state).toBe('taken');
 });
-it('includes earlier retained question messages as dialogue without duplicating the current answer question',async()=>{
+it('keeps earlier questions on the separately validated answer-context path',async()=>{
  const f=await bodyFixture(clean),client=sdk(f);
  await client.digest({summary:'Old question',question:{to:'alice',words:'EARLIER QUESTION',answers:'words'}});
  await f.send('A new ordinary follow-up','followup');
- await client.takeAndAccept(async item=>{expect(item.history).toHaveLength(1);expect(item.history[0].kind).toBe('ask');expect(JSON.parse(item.history[0].words).words).toBe('EARLIER QUESTION');});
+ await client.takeAndAccept(async item=>{expect(item.history).toEqual([]);expect(bodyMailContext(item)).not.toContain('EARLIER QUESTION');});
+});
+it.each(['dim','mute'] as const)('never expands an earlier %s delivery in a later Full follow-up',async volume=>{
+ const f=await bodyFixture(clean),client=sdk(f);
+ await f.send('FIRST LINE\nPRIVATE SECOND LINE','earlier');
+ f.root.writes.run(()=>f.db.update(s.inbox).set({volume}).run());
+ await client.takeAndAccept(async item=>{expect(item.words).toBe(volume==='dim'?'FIRST LINE':null);});
+ await f.send('Full follow-up','later');
+ await client.takeAndAccept(async item=>{expect(item.words).toBe('Full follow-up');expect(item.history).toEqual([]);});
+});
+it('does not put still-pending thread mail in history when taking a different source first',async()=>{
+ const f=await bodyFixture(clean),client=sdk(f);
+ f.root.writes.run(()=>f.root.services.conversations.send({toKind:'agent',to:'art',conversation:f.thread.conversation,source:'notice',fromKind:'unknown',words:'Earlier notice'}));
+ await f.send('PENDING PERSON WORDS','pending');
+ await client.takeAndAccept(async item=>{expect(item.words).toBe('Earlier notice');expect(item.history).toEqual([]);},1);
+ await client.takeAndAccept(async item=>{expect(item.words).toBe('PENDING PERSON WORDS');expect(item.history).toEqual([]);},1);
+});
+it.each(['cipher','swept','expiry','metadata','volume'] as const)('omits optional history changed during decryption: %s',async change=>{
+ const f=await fixture();let opens=0;
+ if(change==='expiry')f.root.writes.run(()=>f.db.update(s.messages).set({keepUntil:new Date(f.clock.now()+1000).toISOString()}).where(eq(s.messages.seq,2)).run());
+ f.openGate(async()=>{if(++opens!==3)return;f.root.writes.run(()=>{
+  if(change==='cipher')f.db.update(s.messages).set({words:Buffer.from('changed cipher')}).where(eq(s.messages.seq,2)).run();
+  if(change==='swept')f.db.update(s.messages).set({words:null}).where(eq(s.messages.seq,2)).run();
+  if(change==='expiry')f.clock.advance(1000);
+  if(change==='metadata')f.db.update(s.messages).set({sender:'changed sender'}).where(eq(s.messages.seq,2)).run();
+  if(change==='volume')f.db.update(s.inbox).set({volume:'dim'}).where(eq(s.inbox.messageSeq,1)).run();
+ });});
+ await f.client.takeAndAccept(async item=>{expect(item.words).toBe('Do that again');expect(item.history.map(line=>line.words)).toEqual([change==='volume'?'PRIOR AGENT REPLY':'PRIOR PERSON DIALOGUE']);});
+ expect(opens).toBe(3);
+});
+it('rejects an oversized history array at the receiving SDK before acceptance',async()=>{
+ const f=await fixture(),accept=vi.fn();
+ const client=bodyConversationClient({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>{
+  const response=await f.root.http.request(new Request(url,init));if(!String(url).endsWith('/take'))return response;
+  const value=await response.json();value.value.items[0].history[0].words='x'.repeat(1_048_576);return Response.json(value);
+ }});clean.push(()=>client.close());
+ await expect(client.takeAndAccept(accept)).rejects.toThrow();expect(accept).not.toHaveBeenCalled();
 });

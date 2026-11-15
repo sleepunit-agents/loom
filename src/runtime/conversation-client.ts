@@ -9,9 +9,9 @@ import type { PrivateQuestion } from '../core/conversations/messages.js';
 const unavailable=()=>new Error('Conversation body request failed; outcome may be uncertain');
 class OversizedMailBatch extends Error{constructor(){super('Conversation body request failed; outcome may be uncertain');}}
 const question=z.object({words:z.string(),why:z.string().nullable(),ifYes:z.string().nullable(),ifNo:z.string().nullable(),link:z.string().nullable()}).strict();
-const historyLine=z.object({seq:z.number().int().positive(),kind:z.enum(['message','reply','card','ask','answer','notice']),sender:z.string().min(1),at:z.iso.datetime({offset:true}),words:z.string(),keepUntil:z.iso.datetime({offset:true})}).strict();
+const historyLine=z.object({seq:z.number().int().positive(),kind:z.enum(['message','reply']),sender:z.string().min(1),at:z.iso.datetime({offset:true}),words:z.string(),keepUntil:z.iso.datetime({offset:true})}).strict();
 const item=z.object({
- history:z.array(historyLine).max(100).optional().default([]),
+ history:z.array(historyLine).max(100).refine(lines=>Buffer.byteLength(JSON.stringify(lines))<=1_048_576).optional().default([]),
  id:z.string().min(1),seq:z.number().int().positive(),source:z.enum(['thread','discord','slack','trigger','handoff','answer','task','approval','secret-request','notice']),sourceId:z.string().nullable(),
  fromKind:z.enum(['person','agent','schedule','unknown']),fromId:z.string().nullable(),at:z.iso.datetime({offset:true}),
  question:question.nullable().optional().default(null),questionKeepUntil:z.iso.datetime({offset:true}).nullable().optional().default(null),words:z.string().nullable(),keepUntil:z.iso.datetime({offset:true}).nullable(),verdict:z.enum(['yes','no']).nullable(),refs:z.array(z.string()),

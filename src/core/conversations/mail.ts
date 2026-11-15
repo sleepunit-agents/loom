@@ -53,7 +53,7 @@ export class ConversationMail {
     const contexts=new Map<string,()=>AnswerContext|null>();
     for(const item of items)if(item.volume==='full'&&prepared.get(item.id)!==null)contexts.set(item.id,await prepareAnswerContext(this.comms,item));
     const first=items[0],cutoff=Math.min(Number.MAX_SAFE_INTEGER,...items.filter(item=>item.thread&&item.messageSeq!==null).map(item=>item.messageSeq!));
-    const history=first?.volume==='full'&&prepared.get(first.id)!==null?await prepareHistoryContext(this.comms,conversation,cutoff,new Set(items.filter(item=>item.source==='answer'&&item.sourceId).map(item=>item.sourceId!))):()=>[];
+    const history=first?.volume==='full'&&prepared.get(first.id)!==null?await prepareHistoryContext(this.comms,conversation,cutoff):()=>[];
     return () => db.transaction(() => {
       if (JSON.stringify(refs()) !== JSON.stringify(beforeRefs)) throw new Error('Mail references changed; prepare again');
       const current = new Map(conversations.pending(conversation, job).map(item => [item.id, item]));
