@@ -59,3 +59,21 @@ it('records a public digest question as a wordless turn of the authenticated run
  const response=await f.call('digest',{summary:'Project work',question:{to:'alice',answers:'yes-no',words:'Proceed with the public plan?'}},'public-question');expect(response.status).toBe(200);
  expect(f.db.select().from(s.turns).all()).toMatchObject([{conversation:f.thread.conversation,run:'job',kind:'note',fromKind:'agent',fromId:'art'}]);expect(f.db.select().from(s.conversationPeople).all()).toEqual([{conversation:f.thread.conversation,whoKind:'agent',who:'art'}]);
 });
+it.each([[false,'ended'],[true,'ended'],[false,'expired'],[true,'expired']] as const)('keeps fallback digest authority and replay gates (existing %s, %s)',async(existing,change)=>{
+ const f=await fixture(),input={summary:'Fallback',ifAbsent:true};
+ if(existing)expect((await f.call('digest',{summary:'Authored'},'authored')).status).toBe(200);
+ for(const token of [raw.member,raw.agent,raw.runner])expect((await f.call('digest',input,'denied-'+token[0],token)).status).toBe(403);
+ expect((await f.call('digest',input,'fallback')).status).toBe(200);
+ const rows=f.db.select().from(s.digests).all();
+ expect((await f.call('digest',input,'fallback')).status).toBe(200);expect(f.db.select().from(s.digests).all()).toEqual(rows);
+ f.root.writes.run(()=>{if(change==='ended')f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run();else f.db.update(s.tokens).set({expiresAt:new Date(f.clock.now()).toISOString()}).where(eq(s.tokens.fingerprint,hash(raw.body))).run();});
+ for(const id of ['fallback','fresh-after-end'])expect((await f.call('digest',input,id)).status).toBe(401);
+ expect(f.db.select().from(s.digests).all()).toEqual(rows);
+});
+it('keeps a digest authored after fallback preparation without creating another question',async()=>{
+ const f=await fixture(),service=f.root.services.comms!,conversation=f.thread.conversation;
+ const fallback=await service.prepareDigest({conversation,run:'job',summary:'Fallback',ifAbsent:true});
+ const authored=await service.digest({conversation,run:'job',summary:'Authored later',question:{to:'alice',answers:'words',words:'Keep this question'}});
+ expect(fallback()).toEqual(authored);expect(f.db.select().from(s.digests).all()).toEqual([authored]);
+ expect(f.db.select().from(s.inbox).all()).toHaveLength(1);
+});
