@@ -51,7 +51,8 @@ export async function bodyProgram(input: {
     bootstrap = { ...parsed.bootstrap, token: Buffer.from(parsed.bootstrap.token, 'ascii') };
     const { job } = bodyInput(parsed.job, parsed.build, bootstrap, true);
     const bridge=job.venue==='discord'||job.venue==='slack';
-    if (job.harness !== 'claude' || !job.conversation || (!bridge&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge) || input.signal.aborted) throw new Error();
+    const background=job.venue==='wake'||job.venue==='handoff';
+    if (job.harness !== 'claude' || !job.conversation || (!bridge&&!background&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge&&!background) || input.signal.aborted) throw new Error();
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
       job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
     let work='Preparing startup inputs',state:'working'|'waiting'='working',secretWaiting=false;
@@ -108,6 +109,10 @@ export async function bodyProgram(input: {
     if (input.signal.aborted) throw new Error();
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
     if(bridge)await client.bridgeReply({incoming:replyTo!,text:answer.text,model:answer.model,outcome:'progressed'});
+    else if(background){
+      await client.turn({kind:'reply',model:answer.model,outcome:'progressed'});
+      await client.digest({summary:answer.text.slice(0,600).replace(/[\uD800-\uDBFF]$/u,''),ifAbsent:true});
+    }
     else await client.reply({ clientId: randomUUID(), words: answer.text, model: answer.model, outcome: 'progressed' });
     await client.status({ state: 'idle', work: '' });
     return 0;
