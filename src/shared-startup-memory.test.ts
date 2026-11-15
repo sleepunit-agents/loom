@@ -12,6 +12,7 @@ import {requestLocalLink} from './core/signin/operator.js';
 import * as s from './core/data/schema.js';
 import {bodyProgramTools} from './runtime/body-program-tools.js';
 import {startSharedHome} from './shared-startup.js';
+import {propose} from './backends/proposals.js';
 vi.mock('./backends/fastembed.js',()=>({FastEmbedProvider:class{
  readonly dimensions=4;
  async embed(){return [1,0,0,0];}
@@ -45,6 +46,9 @@ it('normal startup carries native Memory tools, private Identity and revisions a
   const command=async(operation:string,input:unknown,id:string)=>z.object({ok:z.literal(true),value:z.record(z.string(),z.unknown())}).parse(await invoke('loom_command',{operation,input,id})).value;
   const read=async(query:string)=>z.object({data:z.record(z.string(),z.unknown())}).parse(await invoke('loom_query',{query})).data;
   const id=z.array(z.string()).parse((await command('memory.remember',{category:'user',title:'Fictional retained lesson',content:words,ttl:'permanent'},'startup-remember')).ids)[0];
+  // Seed a retained Proposal with the existing core helper, not an unreviewed native writer.
+  const proposal=propose(join(p.home,'agents/art'),{category:'rough capture',title:'Fictional Proposal',content:'PRIVATE_STARTUP_PROPOSAL'},null);
+  expect(await read('{memoryProposals(agent:"art"){entries{id content}}}')).toEqual({memoryProposals:{entries:[{id:'art:proposal:'+proposal.uuid,content:'PRIVATE_STARTUP_PROPOSAL'}]}});
   expect(await read(`{memoryProjectMemory(id:"${id}"){content} memoryIdentity(agent:"art"){creed topOfMind}}`)).toMatchObject({memoryProjectMemory:{content:words},memoryIdentity:{creed,topOfMind:expect.stringContaining(words)}});
   await command('memory.update',{id,content:'PRIVATE_NORMAL_STARTUP_EDIT'},'startup-edit');
   const history=z.array(z.object({id:z.number(),content:z.string()})).parse((await read(`{memoryHistory(id:"${id}"){id content}}`)).memoryHistory);expect(history).toHaveLength(1);expect(history[0].content).toBe(words);
@@ -55,13 +59,14 @@ it('normal startup carries native Memory tools, private Identity and revisions a
   expect(await peerRead(p.url)).toEqual({data:{memoryProjectMemory:null}});
   p.composition.writes.run(()=>p!.db.insert(s.memberAgents).values({member:'peer',agent:'art'}).run());expect(await peerRead(p.url)).toEqual({data:{memoryProjectMemory:{content:words}}});
   const privatePath=join(p.home,'agents/art/memories.db'),snapshot=()=>{const db=new Database(privatePath,{readonly:true,fileMustExist:true});try{return db.serialize();}finally{db.close();}};
-  const before=snapshot();for(const value of [words,creed,'PRIVATE_NORMAL_STARTUP_EDIT',privatePath])expect(p.client.serialize().includes(Buffer.from(value))).toBe(false);
+  const before=snapshot();for(const value of [words,creed,'PRIVATE_NORMAL_STARTUP_EDIT','PRIVATE_STARTUP_PROPOSAL',privatePath])expect(p.client.serialize().includes(Buffer.from(value))).toBe(false);
   tools.close();await p.composition.close();
   restarted=await startSharedHome({home:p.home,clock,host:'127.0.0.1',port:0,stdout(){},reportError:error=>{throw error;}});tools=port(restarted.url);
   expect(await read(`{memoryProjectMemory(id:"${id}"){content} memoryHistory(id:"${id}"){content}}`)).toEqual(expected);expect(snapshot()).toEqual(before);
   expect(await peerRead(restarted.url)).toEqual({data:{memoryProjectMemory:{content:words}}});restarted.writes.run(()=>restarted!.services.comms!.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'peer')).run());expect(await peerRead(restarted.url)).toEqual({data:{memoryProjectMemory:null}});
   expect((await command('memory.recall',{query:'retained lesson'},'startup-recall')).ids).toEqual([id]);
   await command('memory.archive',{id,note:'PRIVATE_STARTUP_ARCHIVE_REASON'},'startup-archive');expect((await read(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();
+  expect(await read('{memoryArchive(agent:"art"){entries{id content note}}}')).toEqual({memoryArchive:{entries:[{id,content:words,note:'PRIVATE_STARTUP_ARCHIVE_REASON'}]}});
   await command('memory.restore',{id},'startup-restore');expect((await read(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toEqual({content:words});
   await command('memory.forget',{id},'startup-forget');expect((await read(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();
   restarted.writes.run(()=>restarted!.services.comms!.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'memory-job')).run());
