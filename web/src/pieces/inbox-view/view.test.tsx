@@ -102,3 +102,21 @@ it('shows dim items as one-line entries, keeps mute hidden, and opens the comple
  await act(async()=>{entries[0].props.onClick();});expect(select).toHaveBeenCalledWith(item.id);
  await act(async()=>{tree.update(h(InboxView,{snapshot:current,selected:item.id,select}));});expect(JSON.stringify(tree.toJSON())).toContain('In stock today');
 });
+
+it('sets quiet volume on managed cards without answering them and waits for publication', async () => {
+ let finish!:()=>void;
+ const volume=vi.fn(()=>new Promise<void>(resolve=>{finish=resolve;}));
+ const quiet={...item,source:'approval',canSetVolume:true,volume:'dim' as const,quietUntil:'2026-11-15T20:00:00Z'};
+ const props={id:item.id,snapshot:{...snapshot,items:[quiet]},actions:{volume}};
+ await act(async()=>{tree=create(h(InboxQuestionCard,props));});
+ expect(named('Dim').props.disabled).toBe(true);expect(named('Yes')).toBeUndefined();
+ await act(async()=>{named('Mute').props.onClick();named('Mute').props.onClick();});
+ expect(volume).toHaveBeenCalledExactlyOnceWith(item.id,'mute');
+ expect(JSON.stringify(tree.toJSON())).toContain('dim');
+ expect(named('Full').props.disabled).toBe(true);
+ await act(async()=>{finish();});
+ await act(async()=>{tree.update(h(InboxQuestionCard,{...props,snapshot:{...snapshot,items:[{...quiet,volume:'mute'}]}}));});
+ expect(named('Mute').props.disabled).toBe(true);
+ await act(async()=>{tree.update(h(InboxQuestionCard,{...props,snapshot:{...snapshot,items:[{...quiet,canSetVolume:false}]}}));});
+ expect(named('Full')).toBeUndefined();
+});

@@ -215,3 +215,17 @@ it('withdraws a returned but unread HTTP word response at its deadline without a
   expect(response.status).toBe(200);time=now+1000;
   await expect(response.text()).rejects.toThrow('Data access ended');
 });
+
+it('publishes the existing Tempo volume capability independently of answer ownership',async()=>{
+ const f=await fixture();
+ const row=f.root.services.comms!.threads.conversations.send({toKind:'person',to:'alice',source:'approval',fromKind:'agent',agent:'art',member:'alice',words:'Timing request',answers:'yes-no'});
+ const query=`{inboxItem(id:"${row.id}"){id canAnswer canSetVolume volume quietUntil}}`;
+ expect((await f.query(query)).body).toMatchObject({data:{inboxItem:{canAnswer:false,canSetVolume:true,volume:'full',quietUntil:null}}});
+ expect((await f.query(query,'owner')).body).toMatchObject({data:{inboxItem:{canSetVolume:true}}});
+ expect((await f.query(query,'bob')).body.data?.inboxItem).toBeNull();
+ expect((await f.post('inbox.volume',{item:row.id,volume:'mute'},'mute')).status).toBe(200);
+ expect((await f.query(query)).body).toMatchObject({data:{inboxItem:{volume:'mute',quietUntil:'2026-11-21T18:00:00.000Z'}}});
+ expect((await f.post('inbox.volume',{item:row.id,volume:'full'},'unauthorized','bob')).status).toBe(403);
+ f.root.writes.run(()=>f.db.delete(sessions).run());
+ expect((await f.query(query)).response.status).toBe(401);
+});
