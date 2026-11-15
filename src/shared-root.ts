@@ -13,6 +13,7 @@ import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
+import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 import { createRuntime } from './runtime/runtime.js';
@@ -28,6 +29,7 @@ export function sharedRoot(options: {
   publicOrigin?: string;
   fields?: Parameters<typeof nextData>[4];
   approvedOperations?: ApprovedOperations;
+  tempo?: SharedTempoOptions;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
   modelRoles?(): readonly ModelRole[];
@@ -54,6 +56,9 @@ export function sharedRoot(options: {
     runtime,
   };
   registerSharedTaskCommands(operations, db, services.tasks);
+  let tempo: ReturnType<typeof installSharedTempo>;
+  try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, options.tempo); }
+  catch (error) { operations.close(); void data.close(); throw error; }
   const authenticate = dataAuthentication(db, () => clock.now());
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
@@ -94,7 +99,7 @@ export function sharedRoot(options: {
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     const answer = await operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
-      parsed.data.input, parsed.data.id, false, () => !closing && auth.valid());
+      parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid());
     // Execution and its final await can yield. A committed receipt remains
     // durable, but its response must not outlive the admitted credential.
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
@@ -102,7 +107,7 @@ export function sharedRoot(options: {
   });
   runtime.start();
   return {
-    http, operations, services, writes: data.writes, changed: data.changed,
+    http, operations, services: { ...services, tempo }, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);
@@ -114,6 +119,7 @@ export function sharedRoot(options: {
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       runtime.close();
       // Install shared completion before synchronous detach/abort callbacks.
+      tempo.close();
       const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
