@@ -1,6 +1,7 @@
-import { lazy, Suspense, useLayoutEffect, type ReactNode } from 'react';
-import { useRecords, type LiveRecord } from '../data';
+import { lazy, Suspense, useEffect, useLayoutEffect, type ReactNode } from 'react';
+import { useMemberPreferences } from './member-preferences';
 import { keep, lookOf, wearLook, PixelContext, type Prefs } from '../look';
+import { HapticsContext, warmHaptics } from '../haptic';
 import { allowZoom } from '../immersion';
 import { wearMotion, wearContrast } from '../access';
 
@@ -23,15 +24,16 @@ export function wearPreferences(p: Prefs) {
   keep('loom-ground', p.ground ?? 'depth');
 }
 export default function Appearance({ children }: { children: ReactNode }) {
-  const records = useRecords<LiveRecord & { prefs: Prefs }>('household.preferences');
-  const prefs = records.records[0]?.prefs;
-  useLayoutEffect(() => { if (prefs) wearPreferences(prefs); }, [prefs]);
-  const ground = prefs?.ground ?? 'depth';
-  return <PixelContext.Provider value={prefs?.pixel ?? true}>
+  const records = useMemberPreferences();
+  const prefs = records.status === 'live' ? records.records[0]?.prefs : undefined;
+  useLayoutEffect(() => { if (records.status !== 'loading') wearPreferences(prefs ?? {}); }, [prefs, records.status]);
+  const ground = prefs?.ground ?? 'depth', haptics = prefs?.haptics ?? true;
+  useEffect(()=>{if(haptics&&navigator.maxTouchPoints>0)warmHaptics();},[haptics]);
+  return <PixelContext.Provider value={prefs?.pixel ?? true}><HapticsContext.Provider value={haptics}>
     <div className="relative isolate min-h-dvh">
     <span aria-hidden="true" className="loom-wash pointer-events-none fixed inset-0 -z-10" />
     <Suspense fallback={null}>{ground === 'depth' ? <Depth /> : ground === 'contours' ? <Contours /> : null}</Suspense>
     {children}
     </div>
-  </PixelContext.Provider>;
+  </HapticsContext.Provider></PixelContext.Provider>;
 }
