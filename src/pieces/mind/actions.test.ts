@@ -15,9 +15,10 @@ import { verifyKnowledgePages, deriveSlaClass } from '../../backends/knowledge-v
 import { installMindKnowledgeActions } from './actions.js';
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
-const sharing: Sharing = { members: { owner: { owner: true, agents: ['art'] }, partial: { owner: false, agents: ['art'] } }, projects: {}, services: { reader: { types: ['knowledge'], operations: [] } } };
+// Keep installed maintenance admitted while action receipts age thirty days.
+const sharing: Sharing = { members: { owner: { owner: true, agents: ['art'] }, partial: { owner: false, agents: ['art'] } }, projects: {}, services: { attention: { types: ['attention.ask'], operations: ['attention.sweepWaits', 'attention.pendingWaits'] }, reader: { types: ['knowledge'], operations: [] } } };
 const owner: Viewer = { kind: 'member', id: 'owner' };
-async function fixture(missing = false) {
+async function fixture(missing = false, timers = true) {
   const home = mkdtempSync(join(tmpdir(), 'mind-actions-'));
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
   const path = join(home, 'knowledge.db');
@@ -26,6 +27,8 @@ async function fixture(missing = false) {
   const db = missing ? undefined : new BetterSqlite3(path);
   if (db) cleanups.push(() => db.close());
   const clock = new FakeClock(Date.UTC(2026, 10, 12));
+  // Retry-window tests advance wall time, without exercising daemon schedules.
+  if (!timers) clock.at = () => () => {};
   const access = structuredClone(sharing);
   async function start() {
     const app = await startLoom({ home: join(home, 'daemon'), clock, next: true, sharing: () => access, authenticate: () => ({ viewer: owner, valid: () => true }), install(app) {
@@ -127,7 +130,7 @@ it('publishes committed checks to two live windows and repairs publication after
   for (const w of windows) expect(await w.next()).toMatchObject({ kind: 'put', record: { id: 'fact', fresh: 'due', checked: { outcome: 'stale' } } });
 });
 it('refuses a locked source before effects and permits reuse only after the thirty-day retry window', async () => {
-  const { app, db, backend, clock } = await fixture();
+  const { app, db, backend, clock } = await fixture(false, false);
   db!.exec('BEGIN IMMEDIATE');
   try { expect(app.operations.call('direct', owner, 'mind.knowledgeVerify', { slug: 'fact' }, 'locked')).toMatchObject({ code: 'unavailable' }); }
   finally { db!.exec('ROLLBACK'); }
@@ -139,8 +142,7 @@ it('refuses a locked source before effects and permits reuse only after the thir
   expect(app.operations.call('direct', owner, 'mind.knowledgeRecheck', { slug: 'fact' }, 'locked')).toMatchObject({ ok: true });
   expect(await backend!.getVerifications('fact')).toHaveLength(2);
   expect(db!.prepare('SELECT count(*) AS n FROM mind_operation_receipts').get()).toEqual({ n: 1 });
-  // Waits out SQLite's busy timeout on the locked source, which is about the 5 s default test limit.
-}, 20_000);
+});
 it('rolls verification back without a receipt when the original note would exceed the body cap', async () => {
   const { app, backend, db } = await fixture();
   await backend!.writePage({ slug: 'fact', title: 'Fact', domain: 'systems', body: 'a'.repeat(65536), mode: 'replace' });

@@ -1,3 +1,4 @@
+import { wordsDeadline } from './retention.js';
 /** Small Home/People reads over the same conversations as Comms. Never uses
  * question answers as an agent's last reply or subscribes to whole threads. */
 import { and, desc, eq, sql, type SQL } from 'drizzle-orm';
@@ -5,6 +6,7 @@ import { GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLStri
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, members, memberAgents, projectMembers, projectAgents, threads, messages, household } from '../data/schema.js';
+import { keepReadUntil } from '../data/read-lease.js';
 import type { WordsKey } from './words.js';
 
 type Conversation = typeof conversations.$inferSelect;
@@ -34,7 +36,7 @@ export class ConversationSummaries {
 
   /** Words are read only when the client selects lastAnswer. Recheck the exact
    * reply, retention and current sharing after the key operation yields. */
-  async lastAnswer(viewer: Viewer, conversation: string): Promise<{ at: string; words: string } | null> {
+  async lastAnswer(viewer: Viewer, conversation: string, retainedUntil?: (at: number) => void): Promise<{ at: string; words: string } | null> {
     const latest = () => this.db.select({ thread: messages.thread, seq: messages.seq, at: messages.at, keepUntil: messages.keepUntil, words: messages.words, agent: conversations.agent, project: conversations.project, member: conversations.member })
       .from(messages).innerJoin(threads, eq(threads.id, messages.thread))
       .innerJoin(conversations, eq(conversations.id, threads.conversation))
@@ -50,6 +52,7 @@ export class ConversationSummaries {
     const words = await this.key.open(row.words);
     const current = latest();
     if (!retained(current, keepDays()) || keepDays() !== days || !current?.words || current.agent !== row.agent || current.project !== row.project || current.member !== row.member || current.at !== row.at || current.thread !== row.thread || current.seq !== row.seq || current.keepUntil !== row.keepUntil || !current.words.equals(row.words)) return null;
+    retainedUntil?.(wordsDeadline(current, days));
     return { at: row.at, words };
   }
 }
@@ -64,7 +67,7 @@ export function conversationSummaryFields(service: ConversationSummaries): Graph
     id: { type: new GraphQLNonNull(GraphQLString) }, agent: { type: new GraphQLNonNull(GraphQLString) },
     label: { type: new GraphQLNonNull(GraphQLString) }, place: { type: new GraphQLNonNull(GraphQLString) }, venue: { type: new GraphQLNonNull(GraphQLString) },
     project: { type: GraphQLString }, member: { type: GraphQLString }, lastAt: { type: new GraphQLNonNull(GraphQLString) },
-    lastAnswer: { type: answer, resolve: (row, _args, context) => service.lastAnswer(context.viewer, row.id) },
+    lastAnswer: { type: answer, resolve: (row, _args, context) => service.lastAnswer(context.viewer, row.id, until => keepReadUntil(context, until)) },
   } });
   return { recentConversations: {
     type: new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(summary))),
