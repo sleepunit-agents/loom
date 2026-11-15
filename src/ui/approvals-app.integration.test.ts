@@ -134,7 +134,7 @@ it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.htm
     app.data.writes.run(() => app.db.delete(s.sessions).where(eq(s.sessions.id, app.session)).run());
     for (const page of [a, b]) await expect.poll(() => row(page).count()).toBe(0);
     await b.reload();
-    await expect.poll(() => b.getByText('Waiting for connection.', { exact: true }).count()).toBe(1);
+    await expect.poll(() => b.getByRole('heading', { name: 'Sign in to loom', exact: true }).count()).toBe(1);
     expect(await row(b).count()).toBe(0);
     const owners=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
     await owners.addCookies([{name:'loom_ui',value:app.ownerCookie,url:app.url}]);

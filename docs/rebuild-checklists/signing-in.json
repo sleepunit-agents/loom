@@ -1,0 +1,117 @@
+{
+  "page": "signing-in",
+  "title": "Signing in",
+  "ownerTask": "t-2236",
+  "sourceSha256": "55af0ba011b004d7b4c320fd1b14b153b954594807170363b300519c6f8875cb",
+  "promises": [
+    {
+      "id": "signing-in-001",
+      "promise": "How a person, an agent or a machine proves who it is. Loom checks identity in one place, at the door.",
+      "source": "docs/how-it-works/site/signing-in.html"
+    },
+    {
+      "id": "signing-in-002",
+      "promise": "Signs a person in with a passkey or a one-time link.",
+      "source": "docs/how-it-works/site/signing-in.html"
+    },
+    {
+      "id": "signing-in-003",
+      "promise": "Gives each agent's body and each machine a token of its own.",
+      "source": "docs/how-it-works/site/signing-in.html"
+    },
+    {
+      "id": "signing-in-004",
+      "promise": "Lists your signed-in browsers and passkeys, and lets you end them.",
+      "source": "docs/how-it-works/site/signing-in.html"
+    },
+    {
+      "id": "signing-in-005",
+      "promise": "Sends notifications to the phones and browsers you turn on.",
+      "source": "docs/how-it-works/site/signing-in.html"
+    },
+    {
+      "id": "signing-in-006",
+      "promise": "A person's token names the member.",
+      "source": "docs/how-it-works/site/signing-in.html#con-h"
+    },
+    {
+      "id": "signing-in-007",
+      "promise": "An agent's body and each machine carry a token of their own.",
+      "source": "docs/how-it-works/site/signing-in.html#con-h"
+    },
+    {
+      "id": "signing-in-008",
+      "promise": "The live connection runs each request as the caller it knows.",
+      "source": "docs/how-it-works/site/signing-in.html#con-h"
+    },
+    {
+      "id": "signing-in-009",
+      "promise": "Every caller from outside loom presents a token. A token belongs to one member, one agent or one machine. This is the one place loom checks identity.",
+      "source": "docs/how-it-works/site/signing-in.html#how-h"
+    },
+    {
+      "id": "signing-in-010",
+      "promise": "A person's browser holds a session, which stands for one of their tokens. An agent driving a browser gets a session that lasts six hours.",
+      "source": "docs/how-it-works/site/signing-in.html#how-h"
+    },
+    {
+      "id": "signing-in-011",
+      "promise": "A person gets a session with a passkey or by opening a one-time sign-in link. A passkey's counter goes up with each use, so a lower number than last time means a copied key.",
+      "source": "docs/how-it-works/site/signing-in.html#how-h"
+    },
+    {
+      "id": "signing-in-012",
+      "promise": "Once loom knows the caller, the labels on each record decide what it may see. Loom's own parts never present a token to each other.",
+      "source": "docs/how-it-works/site/signing-in.html#how-h"
+    },
+    {
+      "id": "signing-in-013",
+      "promise": "a Your own. A person sees their own passkeys, signed-in browsers and notification devices, and can end each one.",
+      "source": "docs/how-it-works/site/signing-in.html#see-h"
+    },
+    {
+      "id": "signing-in-014",
+      "promise": "b Owners. Household owners see the household's tokens and sessions and can revoke them.",
+      "source": "docs/how-it-works/site/signing-in.html#see-h"
+    },
+    {
+      "id": "signing-in-015",
+      "promise": "c Never the token. Loom stores a one-way fingerprint of each token, session cookie and sign-in link.",
+      "source": "docs/how-it-works/site/signing-in.html#see-h"
+    },
+    {
+      "id": "signing-in-016",
+      "promise": "The signed-in member can see their account without an unavailable screen.",
+      "source": "docs/how-it-works/site/signing-in.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Your account",
+        "contains": []
+      }
+    },
+    {
+      "id": "signing-in-017",
+      "promise": "A first-run one-time link signs the browser in.",
+      "source": "docs/how-it-works/site/signing-in.html",
+      "probe": {
+        "kind": "signin"
+      }
+    },
+    {
+      "id": "signing-in-018",
+      "promise": "Making and hiding a one-time sign-in link through Account persists one link without exposing it in evidence.",
+      "source": "docs/how-it-works/site/signing-in.html",
+      "probe": {
+        "kind": "action",
+        "app": "Your account"
+      }
+    }
+  ],
+  "modelTables": [
+    "tokens",
+    "sessions",
+    "signin_links",
+    "passkeys",
+    "notification_devices"
+  ]
+}

@@ -7,7 +7,7 @@ import { act, create } from 'react-test-renderer';
 const f = vi.hoisted(() => ({ status: 'live', data: {} as Record<string, unknown>, requests: [] as { query: string; variables: Record<string, unknown> }[], call: vi.fn(), queued: vi.fn(), records: vi.fn() }));
 vi.mock('../../data/graphql', () => ({ useDataQuery(query: string, variables: Record<string, unknown>) {
   f.requests.push({ query, variables });
-  return { status: f.status, data: f.status === 'live' ? query.includes('ConversationQuestions(') ? {approvals:(f.data.ordinaryApprovals as {id:string}[]|undefined)??[],inboxItems:((f.data.questions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11)} : query.includes('WorkAnswerOwner') ? {workAnswerOwner:f.data.owner===true,workChangesRefresh:false} : query.includes('MentionedChange(') ? { changes: (f.data.mentionedChanges as Record<string,unknown[]> | undefined)?.[String(variables.id)] ?? [] } : query.includes('InlineQuestion') ? { inboxItem: (f.data.items as Record<string,unknown>|undefined)?.[String(variables.id)] ?? f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
+  return { status: f.status, data: f.status === 'live' ? query.includes('ConversationQuestions(') ? {taskQuestions:((f.data.taskQuestions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11),approvals:(f.data.ordinaryApprovals as {id:string}[]|undefined)??[],inboxItems:((f.data.questions as {id:string}[]|undefined)??[]).slice(Number(variables.offset),Number(variables.offset)+11)} : query.includes('WorkAnswerOwner') ? {workAnswerOwner:f.data.owner===true,workChangesRefresh:false} : query.includes('MentionedChange(') ? { conversationMadeChanges:((f.data.sourceMembership ?? f.data.madeChanges ?? []) as {id:string}[]).filter(row=>row.id===variables.id),changes: (f.data.mentionedChanges as Record<string,unknown[]> | undefined)?.[String(variables.id)] ?? [] } : query.includes('InlineQuestion') ? { inboxItem: (f.data.items as Record<string,unknown>|undefined)?.[String(variables.id)] ?? f.data.item ?? null } : query.includes('ConversationWork(') ? { tasks: f.data.sourceTasks ?? [], conversationMadeChanges:f.data.madeChanges ?? [] } : query.includes('MentionedWork(') ? { tasks: (f.data.mentionedTasks as Record<string, unknown[]> | undefined)?.[String(variables.id)] ?? [] } : f.data : undefined };
 } }));
 vi.mock('../../data', () => ({ callOnce: (name: string, input: unknown) => f.call(name, input), call: (name: string, input: unknown) => f.queued(name, input), useRecords: f.records }));
 vi.mock('../../kit', () => Object.fromEntries(['Split','List','Row','Empty','Error','Loading','Button','Input','Textarea'].map(name => [name,
@@ -180,7 +180,7 @@ function timingQuestion() {
  const before={settleSeconds:5,dimDays:1,muteDays:7},after={...before,settleSeconds:60};
  f.data.owner=true;
  f.data.approvals=[{id:'a-tempo',kind:'setting',target:'tempo:person:alice',what:'Change Tempo',why:'Requested here',agent:'art',project:null,member:'alice',conversation:'cv-pump',state:'pending',ask:'Change timings?',ifYes:'Apply',ifNo:'Keep',details:JSON.stringify({who:{kind:'person',id:'alice'},before,after}),changeSummary:'Tempo for person alice: settle 5 → 60 seconds; dim 1 → 1 days; mute 7 → 7 days',askedAt:'2026-11-14T18:00:00Z',decidedBy:null,expiresAt:null}];
- f.data.questions=[{id:'in-timing'}];
+ f.data.questions=[{id:'in-timing',sourceId:'a-tempo'}];
  f.data.items={'in-timing':{id:'in-timing',source:'approval',sourceId:'a-tempo',waitsOnKind:'approval',waitsOnId:'a-tempo',thread:'th:pump',state:'waiting',answers:'yes-no',at:'2026-11-14T18:00:00Z',read:false,refs:[],body:{words:'Change timings?'},bodyKeepUntil:'2026-11-14T18:00:01Z'}};
 }
 it.each([['Allow',true],['Deny',false]])('answers actual source timing cards inside chat with %s, without a message copy',async(label,allow)=>{
@@ -212,7 +212,45 @@ it('shows ordinary private approval cards to the conversation member even when t
 });
 it('renders an ordinary approval only once when its Inbox item is also present',async()=>{
  setup();f.data.owner=true;f.data.commsMessages=[];
- f.data.ordinaryApprovals=[{id:'a-command'}];f.data.questions=[{id:'in-command',sourceId:'a-command'}];
+ f.data.ordinaryApprovals=[{id:'a-command'}];f.data.questions=[{id:'in-command',sourceId:'a-command'}];f.data.items={'in-command':{id:'in-command',source:'approval',sourceId:'a-command',waitsOnKind:'approval',waitsOnId:'a-command',thread:'th:pump',state:'waiting',answers:'yes-no',at:'2026-11-14T18:00:00Z',read:false,refs:[],body:{words:'Run the fixture?'},bodyKeepUntil:new Date(Date.now()+60000).toISOString()}};
  f.data.approvals=[{id:'a-command',kind:'command',target:'fixture:read',what:'Read fixture',why:'ONLY ONE COMMAND',agent:'art',project:null,member:'alice',conversation:'cv-pump',state:'pending',ask:'Run the fixture?',ifYes:'Read it',ifNo:'Leave it',details:'',changeSummary:null,askedAt:'2026-11-14T18:00:00Z',decidedBy:null,expiresAt:null}];
  await draw();expect(tree.root.findAllByType('Button').filter((button:{props:{children:ReactNode}})=>button.props.children==='Allow')).toHaveLength(1);
+});
+
+it('shows a change filed on work made in the conversation even without a chat mention',async()=>{
+ setup();f.data.madeChanges=[{id:'github:house/loom#9'}];f.data.commsRefs=[];
+ f.data.mentionedChanges={'github:house/loom#9':[{id:'github:house/loom#9',title:'FILED ON SOURCE TASK',state:'open',checks:'passing',review:'approved',waitingOn:'agent',draft:false}]};
+ await draw();expect(text()).toContain('FILED ON SOURCE TASK');expect(text()).toContain('Made here');
+});
+
+it('labels source tasks as Made here and pages a change-only source list without hiding a mentioned sentinel',async()=>{
+ setup();f.data.sourceTasks=[{id:'t-90',title:'SOURCE TASK LABEL',status:'open'}];
+ f.data.madeChanges=Array.from({length:51},(_,n)=>({id:`github:house/loom#${n+1}`}));
+ f.data.mentionedChanges=Object.fromEntries(Array.from({length:51},(_,n)=>[`github:house/loom#${n+1}`,[{id:`github:house/loom#${n+1}`,title:`CHANGE TITLE ${n+1}`,state:'open',checks:'passing',review:'approved',waitingOn:'agent',draft:false}]]));
+ f.data.commsRefs=[{ref:'github:house/loom#51',messageSeq:1}];
+ await draw();
+ expect(tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes('SOURCE TASK LABEL')).props.children).toContain(' · Made here');
+ expect(text()).toContain('CHANGE TITLE 50');expect(text()).toContain('CHANGE TITLE 51');expect(JSON.stringify(tree.root.findByProps({'aria-label':'Conversation change github:house/loom#51'}).findAllByType('p').map((node:{props:{children:ReactNode}})=>node.props.children))).toContain('Made here');
+ const next=tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>node.props.children==='Next work');expect(next.props.disabled).toBe(false);
+ f.data.sourceTasks=[];f.data.madeChanges=[{id:'github:house/loom#51'}];
+ await act(async()=>{next.props.onClick();});
+ expect(f.requests.findLast(row=>row.query.includes('ConversationWork('))?.variables.offset).toBe(50);expect(text()).not.toContain('CHANGE TITLE 50');expect(text()).toContain('CHANGE TITLE 51');
+});
+
+it('keeps a mentioned source task labelled Made here while the source list is on a different page',async()=>{
+ setup();f.data.sourceTasks=[];f.data.commsRefs=[{ref:'t-77',messageSeq:1}];f.data.mentionedTasks={'t-77':[{id:'t-77',title:'MENTIONED SOURCE',status:'open',sourceKind:'conversation',sourceId:'cv-pump'}]};
+ await draw();expect(tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes('MENTIONED SOURCE')).props.children).toContain(' · Made here');
+});
+
+it('opens both a source task and a mentioned task in the Tasks tile',async()=>{
+ setup();f.data.sourceTasks=[{id:'t-90',title:'SOURCE TO OPEN',status:'open'}];f.data.commsRefs=[{ref:'t-91',messageSeq:1}];f.data.mentionedTasks={'t-91':[{id:'t-91',title:'MENTION TO OPEN',status:'open'}]};
+ const go=await draw();
+ for(const [label,id] of [['SOURCE TO OPEN','t-90'],['MENTION TO OPEN','t-91']]){
+  const button=tree.root.findAllByType('button').find((node:{props:{children:ReactNode}})=>JSON.stringify(node.props.children).includes(label));await act(async()=>{button.props.onClick();});expect(go).toHaveBeenLastCalledWith('/p/tasks-preview/task/'+id);
+ }
+});
+
+it('shows the exact setting proposal to its private conversation member while the owner answer waits in a different Inbox',async()=>{
+ vi.useFakeTimers();vi.setSystemTime(new Date('2026-11-14T18:00:00Z'));setup();timingQuestion();f.data.owner=false;f.data.questions=[];f.data.commsMessages=[];f.data.ordinaryApprovals=[{id:'a-tempo'}];
+ await draw();expect(text()).toContain('Tempo settings change');expect(text()).toContain('Before');expect(text()).toContain('After');expect(named('Allow')).toBeUndefined();expect(named('Deny')).toBeUndefined();
 });

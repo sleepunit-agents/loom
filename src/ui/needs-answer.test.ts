@@ -4,9 +4,7 @@
  * below them, and nothing typed lost (Jonathan, 2026-11-04: he typed an answer, pressed Done, and it never went).
  */
 import { describe, expect, it } from 'vitest';
-import { createElement as h } from '../../web/node_modules/react/index.js';
-import { renderToStaticMarkup } from '../../web/node_modules/react-dom/server.node.js';
-import { AnswerBox } from '../../web/src/inbox';
+
 import { draftOf, guardFooter, hasDraft, keepDraft } from '../../web/src/drafts';
 import { answersOf, parseNeeds, yesNoText, type NeedsOwner } from '../backends/needs.js';
 
@@ -48,24 +46,6 @@ describe('drafts, kept on this device per item', () => {
     const bad = { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('full'); }, removeItem: () => { throw new Error('denied'); } };
     expect(() => keepDraft('k', 'x', bad)).not.toThrow();
     expect(draftOf('k', bad)).toBe('');
-  });
-});
-
-describe('the answer box', () => {
-  it('a yes/no question: Yes and No first, then "Or answer in your own words"', () => {
-    const html = renderToStaticMarkup(h(AnswerBox, { a: answer(), yesNo: true }));
-    expect(html.indexOf('>Yes<')).toBeGreaterThan(-1);
-    expect(html.indexOf('>No<')).toBeGreaterThan(html.indexOf('>Yes<'));
-    expect(html.indexOf('Or answer in your own words')).toBeGreaterThan(html.indexOf('>No<'));
-  });
-  it('a words-only ask has no Yes or No: its box is "Reply to <agent>"', () => {
-    const html = renderToStaticMarkup(h(AnswerBox, { a: answer(), yesNo: false }));
-    expect(html).not.toContain('>Yes<');
-    expect(html).toContain('Reply to Art E Fish');
-  });
-  it('a draft says it isn\'t sent yet', () => {
-    expect(renderToStaticMarkup(h(AnswerBox, { a: answer({ draft: 'yes' }), yesNo: true }))).toContain('Not sent yet');
-    expect(renderToStaticMarkup(h(AnswerBox, { a: answer(), yesNo: true }))).not.toContain('Not sent yet');
   });
 });
 

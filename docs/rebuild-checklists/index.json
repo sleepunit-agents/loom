@@ -1,0 +1,67 @@
+{
+  "page": "index",
+  "title": "Everything is a conversation .",
+  "ownerTask": "t-2190",
+  "sourceSha256": "c58a343a489ee2e6002ec97219c592b3cdc6435bbb3fafff0be4d86b6d9e0932",
+  "promises": [
+    {
+      "id": "index-001",
+      "promise": "Loom is a program one household runs for itself. A few people and a few AI agents share a desk in the browser: small app windows side by side, the agents at the edge, a ticker along the top.",
+      "source": "docs/how-it-works/site/index.html"
+    },
+    {
+      "id": "index-002",
+      "promise": "Whatever an agent does, it does in a conversation. You chat with it in loom. Someone talks to it on Discord or Slack. A trigger starts it. One agent hands work to another. Each of these is the same thing to loom, so conversations sit at the centre and every other part touches them.",
+      "source": "docs/how-it-works/site/index.html"
+    },
+    {
+      "id": "index-003",
+      "promise": "Chat is how you control loom. Screens are for seeing. Every app also appears inline in a conversation.",
+      "source": "docs/how-it-works/site/index.html"
+    },
+    {
+      "id": "index-004",
+      "promise": "1 Chat controls, screens show You control loom by talking to your agents. Screens are for seeing. A settings change or a dangerous action asked for in chat gets an approval card inline, with before and after. Ordinary work needs no card.",
+      "source": "docs/how-it-works/site/index.html"
+    },
+    {
+      "id": "index-005",
+      "promise": "2 Installed means trusted Loom's own parts never ask each other for permission. Loom checks permission only for callers from outside.",
+      "source": "docs/how-it-works/site/index.html"
+    },
+    {
+      "id": "index-006",
+      "promise": "3 A small team that trusts each other The project is the unit of sharing. No fine-grained permissions. Household owners see everything.",
+      "source": "docs/how-it-works/site/index.html"
+    },
+    {
+      "id": "index-007",
+      "promise": "4 Real columns Every fact is a named column, defined once with Drizzle. The database does the work. SQLite by default; the database is a configuration choice.",
+      "source": "docs/how-it-works/site/index.html"
+    },
+    {
+      "id": "index-008",
+      "promise": "5 One query endpoint A GraphQL endpoint generated from the same schema. A tile names the fields it wants, and changes arrive as subscriptions over one websocket.",
+      "source": "docs/how-it-works/site/index.html",
+      "probe": {
+        "kind": "legacy-data-socket"
+      }
+    },
+    {
+      "id": "index-009",
+      "promise": "6 Only memories are precious Agents' memories are the one kind of data loom treats as irreplaceable.",
+      "source": "docs/how-it-works/site/index.html"
+    },
+    {
+      "id": "index-010",
+      "promise": "7 One program, one data folder Quick for someone else to install. One API for the command line, the web app and agents. A restart is an acceptable deploy.",
+      "source": "docs/how-it-works/site/index.html"
+    },
+    {
+      "id": "index-011",
+      "promise": "8 Parts can be replaced Each part is a module with a typed interface, so the task store or a bridge can be swapped for another.",
+      "source": "docs/how-it-works/site/index.html"
+    }
+  ],
+  "modelTables": []
+}

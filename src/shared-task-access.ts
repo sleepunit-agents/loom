@@ -2,7 +2,7 @@
 import { and, eq, getTableColumns, sql } from 'drizzle-orm';
 import type { Viewer } from './policy.js';
 import type { DataDatabase } from './core/data/database.js';
-import { agents, members, memberAgents, projects, tasks } from './core/data/schema.js';
+import { agents, members, memberAgents, projects, tasks, inbox } from './core/data/schema.js';
 import { taskVisibility } from './core/data/visibility.js';
 import type { TaskCommand } from './apps/task-command.js';
 import type { TaskRow } from './apps/tasks.js';
@@ -35,6 +35,11 @@ export function taskCommandAllowed(db: DataDatabase, viewer: Viewer, command: Ta
   const task = visibleTask(command.id);
   if (!task) return false;
   switch (command.action) {
+    case 'answer': {
+      const question = db.select().from(inbox).where(eq(inbox.id, command.question)).get();
+      return viewer.kind === 'member' && !!question && question.toKind === 'person' && question.to === viewer.id
+        && question.source === 'task' && question.waitsOnKind === 'task' && question.waitsOnId === command.id;
+    }
     case 'edit': return labels({ ...task, project: command.input.project === undefined ? task.project : command.input.project });
     case 'link': case 'unlink': return !!visibleTask(command.dependsOn);
     case 'ask': return !!db.select().from(members).where(eq(members.id, command.input.to.id)).get()

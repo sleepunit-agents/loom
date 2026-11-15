@@ -91,12 +91,12 @@ it('uses a six-hour agent browser session and secure cookies at the configured H
   f.clock.advance(6 * 3600_000); expect((await f.read(cookie)).status).toBe(401);
 });
 
-it('refuses cross-origin requests, cookies or a fingerprint as minting authority, and follows session deletion', async () => {
+it('refuses cross-origin requests or fingerprints as minting authority, admits member cookies, and follows session deletion', async () => {
   const f = fixture();
   expect((await f.mint({ authorization: 'Bearer ' + credential, origin: 'https://elsewhere.test' })).status).toBe(403);
   expect((await f.mint({ authorization: 'Bearer ' + hash(credential) })).status).toBe(401);
   const path = await f.link(), signed = await f.redeem(path), cookie = signed.headers.get('set-cookie')!.split(';', 1)[0];
-  expect((await f.mint({ cookie })).status).toBe(401);
+  expect((await f.mint({ cookie })).status).toBe(200);
   f.root.writes.run(() => f.db.delete(sessions).run());
   expect((await f.read(cookie)).status).toBe(401);
   const next = await f.link(); expect((await f.redeem(next, { 'sec-fetch-site': 'cross-site' })).status).toBe(403);
@@ -257,4 +257,73 @@ it('limits the origin-only referrer policy to the valid confirmation document', 
   const logout = await f.root.http.request('http://loom/logout', { method: 'POST', headers: { cookie } });
   expect(logout.status).toBe(200);
   expect(logout.headers.get('referrer-policy')).toBe('no-referrer');
+});
+
+it.each(['old','agent','future','boundary'])('does not renew fresh person proof through a %s browser cookie', async how => {
+  const f=fixture(), signed=await f.redeem(await f.link()), cookie=signed.headers.get('set-cookie')!.split(';',1)[0];
+  const now=f.clock.now();
+  f.db.update(sessions).set(how==='agent'?{isAgent:true}:{provedAt:new Date(now+(how==='future'?1:how==='boundary'?-600000:-660000)).toISOString()}).run();
+  const before=f.db.select().from(signinLinks).all();
+  expect((await f.mint({cookie})).status).toBe(403);
+  expect(f.db.select().from(signinLinks).all()).toEqual(before);
+  // The underlying member bearer and trusted issuer remain independent doors.
+  expect((await f.mint()).status).toBe(200);
+  expect(sharedSigninLinks(f.db,f.clock).makeLink(hash(credential)).path).toMatch(/^\/login\/[0-9a-f]{64}$/);
+});
+
+it('rechecks browser proof inside the admitted link write',async()=>{
+ const f=fixture(), signed=await f.redeem(await f.link()), cookie=signed.headers.get('set-cookie')!.split(';',1)[0];
+ const original=f.root.writes.run.bind(f.root.writes);
+ vi.spyOn(f.root.writes,'run').mockImplementationOnce(action=>{
+  f.db.update(sessions).set({provedAt:new Date(f.clock.now()-660000).toISOString()}).run();
+  return original(action);
+ });
+ expect((await f.mint({cookie})).status).toBe(401);
+ expect(f.db.select().from(signinLinks).all()).toEqual([]);
+});
+
+it('uses the exact presented browser proof rather than another fresh session for the same member',async()=>{
+ const f=fixture(), first=await f.redeem(await f.link()), stale=first.headers.get('set-cookie')!.split(';',1)[0];
+ f.db.update(sessions).set({provedAt:new Date(f.clock.now()-660000).toISOString()}).run();
+ const second=await f.redeem(await f.link()), fresh=second.headers.get('set-cookie')!.split(';',1)[0];
+ expect((await f.mint({cookie:stale})).status).toBe(403);
+ f.db.update(sessions).set({provedAt:new Date(f.clock.now()-599999).toISOString()}).where(eq(sessions.id,hash(fresh.slice(8)))).run();
+ expect((await f.mint({cookie:fresh})).status).toBe(200);
+});
+it.each(['revoke','expire'])('rechecks token %s inside the browser link write',async how=>{
+ const f=fixture(), signed=await f.redeem(await f.link()), cookie=signed.headers.get('set-cookie')!.split(';',1)[0];
+ const original=f.root.writes.run.bind(f.root.writes);
+ vi.spyOn(f.root.writes,'run').mockImplementationOnce(action=>{
+  f.db.update(tokens).set(how==='revoke'?{revokedAt:new Date(f.clock.now()).toISOString()}:{expiresAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(credential))).run();
+  return original(action);
+ });
+ expect((await f.mint({cookie})).status).toBe(401);expect(f.db.select().from(signinLinks).all()).toEqual([]);
+});
+it('cannot persist malformed browser proof timestamps in the shared schema',()=>{
+ const f=fixture();
+ expect(()=>f.db.insert(sessions).values({id:hash('bad-proof'),token:hash(credential),device:'fixture',via:'link',isAgent:false,issuedAt:new Date(f.clock.now()).toISOString(),seenAt:new Date(f.clock.now()).toISOString(),provedAt:'not-a-time'}).run()).toThrow(/sessions_proved_at_utc/);
+});
+
+it.each(['ended','aged','agent'])('withholds a one-time link if post-commit publication leaves its presenting browser %s',async change=>{
+ const f=fixture(),signed=await f.redeem(await f.link()),cookie=signed.headers.get('set-cookie')!.split(';',1)[0];let observed=false,insideTransaction=true;
+ const stop=f.root.writes.observe(()=>{
+  if(observed||!f.db.select().from(signinLinks).get())return;observed=true;insideTransaction=f.client.inTransaction;
+  if(change==='ended')f.db.delete(sessions).where(eq(sessions.id,hash(cookie.slice(8)))).run();
+  else f.db.update(sessions).set(change==='aged'?{provedAt:new Date(f.clock.now()-660000).toISOString()}:{isAgent:true}).where(eq(sessions.id,hash(cookie.slice(8)))).run();
+ });cleanup.push(stop);
+ const response=await f.mint({cookie});expect(observed).toBe(true);expect(insideTransaction).toBe(false);
+ expect(response.status).toBe(change==='ended'?401:403);expect(await response.json()).toEqual({error:change==='ended'?'Member authentication required':'Sign in again before making a sign-in link'});
+ expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
+});
+it('withholds a committed one-time link if publication starts shutdown',async()=>{
+ const f=fixture();let stopped=false;
+ const stop=f.root.writes.observe(()=>{if(stopped||!f.db.select().from(signinLinks).get())return;stopped=true;void f.root.close();});cleanup.push(stop);
+ const response=await f.mint();expect(stopped).toBe(true);expect(response.status).toBe(503);expect(await response.json()).toEqual({error:'Sign-in unavailable'});
+ expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
+});
+it.each(['revoke','expire'])('withholds a committed link when publication ends its bearer by %s',async change=>{
+ const f=fixture();let ended=false;
+ const stop=f.root.writes.observe(()=>{if(ended||!f.db.select().from(signinLinks).get())return;ended=true;f.db.update(tokens).set(change==='revoke'?{revokedAt:new Date(f.clock.now()).toISOString()}:{expiresAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(credential))).run();});cleanup.push(stop);
+ const response=await f.mint();expect(ended).toBe(true);expect(response.status).toBe(401);expect(await response.json()).toEqual({error:'Member authentication required'});
+ expect(f.db.select().from(signinLinks).all()).toHaveLength(1);
 });

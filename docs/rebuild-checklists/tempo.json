@@ -1,0 +1,174 @@
+{
+  "page": "tempo",
+  "title": "Tempo",
+  "ownerTask": "t-2238",
+  "sourceSha256": "8fc075f44e55796ea00a9af1122d16b938c1223b74459e6cee15e1e8d8269cd7",
+  "promises": [
+    {
+      "id": "tempo-001",
+      "promise": "Triggers: what starts work without anyone asking. A trigger fires in code and drops an item in someone's inbox. A non-empty inbox is what starts an agent or notifies a person.",
+      "source": "docs/how-it-works/site/tempo.html"
+    },
+    {
+      "id": "tempo-002",
+      "promise": "Lists what is standing and what is due.",
+      "source": "docs/how-it-works/site/tempo.html"
+    },
+    {
+      "id": "tempo-003",
+      "promise": "Fires on a time, a pull request changing, an answer arriving or a job stopping.",
+      "source": "docs/how-it-works/site/tempo.html"
+    },
+    {
+      "id": "tempo-004",
+      "promise": "Drops an item in an inbox, or runs an operation that needs no agent.",
+      "source": "docs/how-it-works/site/tempo.html"
+    },
+    {
+      "id": "tempo-005",
+      "promise": "Holds an agent's triggers while the agent is paused.",
+      "source": "docs/how-it-works/site/tempo.html"
+    },
+    {
+      "id": "tempo-006",
+      "promise": "Who set it: the household, an agent or a person.",
+      "source": "docs/how-it-works/site/tempo.html#con-h"
+    },
+    {
+      "id": "tempo-007",
+      "promise": "A pull request changing can fire a trigger.",
+      "source": "docs/how-it-works/site/tempo.html#con-h"
+    },
+    {
+      "id": "tempo-008",
+      "promise": "Waiting on an approval is a once-only trigger on that answer.",
+      "source": "docs/how-it-works/site/tempo.html#con-h"
+    },
+    {
+      "id": "tempo-009",
+      "promise": "A job stopping can fire a trigger.",
+      "source": "docs/how-it-works/site/tempo.html#con-h"
+    },
+    {
+      "id": "tempo-010",
+      "promise": "A trigger never wakes anyone directly. It drops an item in an inbox, with trigger as its source.",
+      "source": "docs/how-it-works/site/tempo.html#con-h"
+    },
+    {
+      "id": "tempo-011",
+      "promise": "The agent's body starts in that conversation and takes everything waiting at once.",
+      "source": "docs/how-it-works/site/tempo.html#con-h"
+    },
+    {
+      "id": "tempo-012",
+      "promise": "A schedule is a standing time trigger. A lane is a standing time trigger with instructions. A one-off wake is a time trigger that fires once. Waiting on an approval is a once-only trigger on that answer.",
+      "source": "docs/how-it-works/site/tempo.html#how-h"
+    },
+    {
+      "id": "tempo-013",
+      "promise": "A trigger fires in code, with no model. It drops an item in the recipient's inbox. After a short settle time, a non-empty inbox starts an agent's body or notifies a person, with everything waiting at once. Pausing an agent holds its triggers.",
+      "source": "docs/how-it-works/site/tempo.html#how-h"
+    },
+    {
+      "id": "tempo-014",
+      "promise": "Each part contributes a short list of what is open and how long it has sat. One session per recipient sorts them. When nothing is open, no session starts.",
+      "source": "docs/how-it-works/site/tempo.html#how-h"
+    },
+    {
+      "id": "tempo-015",
+      "promise": "Each recipient sets a volume on an inbox item. Dim returns to full when the item changes or has sat long enough. Mute ends after a week by default. A change breaks dim but not mute. Being asked by name breaks both.",
+      "source": "docs/how-it-works/site/tempo.html#how-h"
+    },
+    {
+      "id": "tempo-016",
+      "promise": "The timings are settings a person can change, each with a default. Loom keeps a row only for a person or agent that has changed them.",
+      "source": "docs/how-it-works/site/tempo.html#how-h"
+    },
+    {
+      "id": "tempo-017",
+      "promise": "a What it carries. A trigger names who set it, the agent or person it is for, and its project.",
+      "source": "docs/how-it-works/site/tempo.html#see-h"
+    },
+    {
+      "id": "tempo-018",
+      "promise": "b Who sees it. A household owner sees everything, including what is private to another member. Anyone else sees triggers in their projects and triggers for agents they own.",
+      "source": "docs/how-it-works/site/tempo.html#see-h"
+    },
+    {
+      "id": "tempo-019",
+      "promise": "c Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
+      "source": "docs/how-it-works/site/tempo.html#see-h"
+    },
+    {
+      "id": "tempo-020",
+      "promise": "The trigger detail shows its source, lifespan, target and words.",
+      "source": "docs/how-it-works/site/tempo.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Tempo",
+        "contains": [
+          "answer · once",
+          "An item in fern",
+          "Words",
+          "Continue after the example inspection"
+        ]
+      }
+    },
+    {
+      "id": "tempo-021",
+      "promise": "The trigger offers Run now, Cancel and Pause agent.",
+      "source": "docs/how-it-works/site/tempo.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Tempo",
+        "contains": [
+          "Run now",
+          "Cancel",
+          "Pause agent"
+        ]
+      }
+    },
+    {
+      "id": "tempo-022",
+      "promise": "An answer arriving while the agent is paused does not fire its trigger.",
+      "source": "docs/how-it-works/site/tempo.html",
+      "probe": {
+        "kind": "action",
+        "action": "tempoHeld"
+      }
+    },
+    {
+      "id": "tempo-023",
+      "promise": "Resuming fires the held once-only answer trigger exactly once.",
+      "source": "docs/how-it-works/site/tempo.html",
+      "probe": {
+        "kind": "action",
+        "action": "tempoResumed"
+      }
+    },
+    {
+      "id": "tempo-024",
+      "promise": "Run now delivers one person Inbox item, then the whole waiting batch notifies after settling.",
+      "source": "docs/how-it-works/site/tempo.html",
+      "probe": {
+        "kind": "action",
+        "action": "tempoSettled"
+      }
+    },
+    {
+      "id": "tempo-025",
+      "promise": "Cancelling a future trigger prevents delivery beyond its deadline.",
+      "source": "docs/how-it-works/site/tempo.html",
+      "probe": {
+        "kind": "action",
+        "action": "tempoCancelled"
+      }
+    }
+  ],
+  "modelTables": [
+    "triggers",
+    "trigger_log",
+    "agent_pauses",
+    "tempo_settings"
+  ]
+}

@@ -18,11 +18,11 @@ function fixture() {
     if(path==='startup')return Response.json({aliases:[]});
     const values = {
       take: { job: 'job', conversation: 'cv', stopRequested, items: [{ id: 'mail', seq: 1, source: 'thread', sourceId: null, fromKind: 'person', fromId: 'alice', at: '2026-11-15T00:00:00.000Z', words: 'PRIVATE MAIL', keepUntil: null, verdict: null, refs: [] }] },
-      reply:{saved:true}, confirm: { saved: true }, status: { saved: true, stopRequested }, turn: { saved: true, conversation: 'cv', seq: 1 }, message: { saved: true, seq: 2 },
+      digest:{saved:true,digest:'digest',revision:1,item:null}, reply:{saved:true}, confirm: { saved: true }, status: { saved: true, stopRequested }, turn: { saved: true, conversation: 'cv', seq: 1 }, message: { saved: true, seq: 2 },
     };
     return Response.json({ ok: true, value: values[path as keyof typeof values] });
   });
-  const options = { args: ['config'], read: async () => JSON.stringify({ command: '/native/claude', cwd: '/house' }), stdin: async () => input, env: { ACCOUNT_PROFILE: '/private/profile' }, signal: abort.signal, fetch: fetcher, native, error };
+  const options = { args: ['config'], read: async () => JSON.stringify({ command: '/native/claude', cwd: '/house' }), stdin: async () => input, env: { ACCOUNT_PROFILE: '/private/profile' }, signal: abort.signal, fetch: fetcher, native,loadMemory:async()=>null,error };
   return { options, input, native, error, calls, abort, stop: () => { stopRequested = true; } };
 }
 it('accepts within the child, confirms before native execution, and reports actual response/action models', async () => {
@@ -138,4 +138,50 @@ it('passes retained question context with a short answer to native execution',as
  expect(await bodyProgram({...f.options,fetch:fetchWithContext})).toBe(0);
  expect(f.native).toHaveBeenCalledWith(job,JSON.stringify({question,answer:'yes',verdict:'yes'}),expect.any(AbortSignal));
  expect(JSON.stringify(f.calls)).not.toContain('PRIVATE QUESTION');
+});
+it('retires a Stop seen in the accepted batch before a held heartbeat drains',async()=>{
+ const f=fixture();let heartbeat!:()=>void,release=()=>{},hold=false,notifyAbort!:()=>void,bootstrapBytes:Uint8Array|undefined;
+ const aborted=new Promise<void>(resolve=>{notifyAbort=resolve;});
+ const fetcher:typeof fetch=async(url,init)=>{
+  const path=String(url).split('/').at(-1);
+  if(path==='status'&&hold){hold=false;await new Promise<void>(resolve=>{release=resolve;});}
+  if(path==='take')return Response.json({ok:true,value:{job:'job',conversation:'cv',stopRequested:true,items:[]}});
+  return f.options.fetch(url,init);
+ };
+ const running=bodyProgram({...f.options,fetch:fetcher,schedule:{every:(_ms,callback)=>{heartbeat=callback;return()=>{};}},startup:async(_job,bootstrap,signal)=>{
+  bootstrapBytes=bootstrap.token;expect(bootstrapBytes!.some(byte=>byte!==0)).toBe(true);signal.addEventListener('abort',notifyAbort,{once:true});hold=true;heartbeat();
+ }});
+ try{
+  expect(await Promise.race([aborted.then(()=>true),running.then(()=>false)])).toBe(true);expect(bootstrapBytes!.every(byte=>byte===0)).toBe(true);expect(f.native).not.toHaveBeenCalled();
+  let ended=false;void running.then(()=>{ended=true;});await Promise.resolve();expect(ended).toBe(false);
+ }finally{release();}
+ expect(await running).toBe(0);expect(f.calls.some(row=>row.path==='status'&&(row.body.input as {seenStop?:boolean}).seenStop===true)).toBe(true);
+});
+
+it.each(['wake','handoff'] as const)('finishes %s mail without a Comms thread, recording words only in a bounded digest',async venue=>{
+ const f=fixture(),assigned={...job,venue,thread:null},bytes=Buffer.from(JSON.stringify({job:assigned,build:'image',bootstrap:{origin:'https://loom.example',job:'job',token:raw}}));
+ const native=vi.fn(async()=>({text:'Result '.repeat(120),model:'actual-background-model',actions:[{model:'actual-tool-model'}]}));
+ expect(await bodyProgram({...f.options,stdin:async()=>bytes,native})).toBe(0);
+ expect(native).toHaveBeenCalledWith(assigned,'PRIVATE MAIL',expect.any(AbortSignal));
+ expect(f.calls.filter(row=>row.path==='turn').map(row=>row.body.input)).toEqual([{kind:'action',model:'actual-tool-model',outcome:'progressed'},{kind:'reply',model:'actual-background-model',outcome:'progressed'}]);
+ expect(f.calls.find(row=>row.path==='digest')?.body.input).toEqual({summary:'Completed this stretch of work.',ifAbsent:true});
+ expect(f.calls.some(row=>row.path==='message')).toBe(false);
+ expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});
+ expect(bytes.every(byte=>byte===0)).toBe(true);expect(f.error).not.toHaveBeenCalled();
+});
+it('refuses an unknown venue before accepting any mail',async()=>{
+ const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue='unregistered';
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(1);
+ expect(f.native).not.toHaveBeenCalled();expect(f.calls).toEqual([]);
+});
+
+it.each(['wake','handoff'] as const)('refuses %s without a conversation before accepting mail',async venue=>{
+ const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue=venue;value.job.conversation=null;value.job.thread=null;
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(1);
+ expect(f.native).not.toHaveBeenCalled();expect(f.calls).toEqual([]);
+});
+it('keeps supplementary response words out of completion metadata',async()=>{
+ const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue='wake';value.job.thread=null;
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value)),native:async()=>({text:'a'.repeat(599)+'😀',model:'observed',actions:[]})})).toBe(0);
+ expect(f.calls.find(row=>row.path==='digest')?.body.input).toEqual({summary:'Completed this stretch of work.',ifAbsent:true});
 });

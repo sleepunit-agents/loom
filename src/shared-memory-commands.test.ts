@@ -2,8 +2,8 @@
 import {afterEach,expect,it,vi} from 'vitest';
 import Database,{type Database as Connection} from 'better-sqlite3';
 import {createHash} from 'node:crypto';
-import {mkdtempSync,rmSync} from 'node:fs';
-import {join} from 'node:path';
+import {mkdtempSync,rmSync,writeFileSync,symlinkSync} from 'node:fs';
+import {join,dirname} from 'node:path';
 import {tmpdir} from 'node:os';
 import {createServer} from 'node:http';
 import {getRequestListener} from '@hono/node-server';
@@ -11,7 +11,12 @@ import {once} from 'node:events';
 import {WebSocket} from 'ws';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
+import {GraphQLString} from 'graphql/index.js';
 import {bodyCommandClient} from './runtime/body-command-client.js';
+import {bodyMemoryIdentity,bodyIdentityQuery} from './runtime/body-memory-identity.js';
+import {bodyProgram} from './runtime/body-program.js';
+import type {WorkerAssignment} from './runtime/worker.js';
+import {propose} from './backends/proposals.js';
 const owned=vi.hoisted(()=>({connections:[] as Connection[],failLoad:false}));
 vi.mock('better-sqlite3',async importOriginal=>{
  const original=await importOriginal<{default:typeof Database}>();
@@ -31,6 +36,8 @@ vi.mock('./backends/fastembed.js',()=>({FastEmbedProvider:class{
 import {bodyFixture,bodyCredentials as raw,credentialHash} from '../test/fixtures/conversation-body.js';
 import {prepareSharedMemorySources} from './shared-memory.js';
 import {ProjectsStore} from './backends/projects.js';
+import {PeopleStore} from './backends/people.js';
+import {mergePeople} from './backends/people-merge.js';
 import * as s from './core/data/schema.js';
 const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{owned.failLoad=false;embed.gate=undefined;for(const release of releases.splice(0))release();for(const close of clean.splice(0).reverse())await close();vi.useRealTimers();vi.restoreAllMocks();});
@@ -52,10 +59,131 @@ async function fixture(options:{unprepared?:boolean}={}){
  const call=async(verb:string,value:unknown,id:string,token=raw.body)=>{const response=await fetch(url+'/api/memory/'+verb,{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({input:value,id})});return {status:response.status,result:await response.json()};};
  const query=async(query:string,token=raw.body)=>{const response=await fetch(url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query})});const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
  const count=()=>source.prepare("SELECT 1 FROM sqlite_schema WHERE name='memories'").get()? (source.prepare('SELECT count(*) AS n FROM memories').get() as {n:number}).n:0;
- return {...f,home,path,source,url,call,query,count,sourceBefore,other:memory.sources.agents[1].memories};
+ return {...f,home,path,source,url,call,query,count,sourceBefore,memory,other:memory.sources.agents[1].memories};
 }
 async function next(ws:WebSocket,action:()=>unknown){const pending=once(ws,'message');await action();return JSON.parse(String((await pending)[0]));}
 function hold(){let entered!:()=>void,release!:()=>void;const began=new Promise<void>(resolve=>entered=resolve),blocked=new Promise<void>(resolve=>release=resolve);embed.gate=async()=>{entered();await blocked;};releases.push(release);return {began,release};}
+it('authors private person and project cards through native commands, with typed values, aliases and bounded person revisions',async()=>{
+ const f=await fixture(),calls=embed.calls;
+ const client=bodyCommandClient({url:f.url,token:raw.body,clock:f.clock,signal:new AbortController().signal});clean.push(()=>client.close());
+ const catalog=await client.command('runtime.commandCatalog',{name:'memory.personWrite'},'card-catalog');expect(catalog).toMatchObject({ok:true,value:{commands:[{name:'memory.personWrite'}]}});if(!catalog.ok)throw Error('Missing card catalogue');
+ const person={slug:'friend',name:'PRIVATE_FRIEND',summary:'PRIVATE_CARD_SUMMARY',where:{width:{value:0},ready:{value:false},tags:{value:['one','two']}},how:{tone:'brief'},may:[{text:'A claim about being an owner',source:'A fictional conversation'}]};
+ const madePerson=await client.command('memory.personWrite',person,'person-make'),madeProject=await client.command('memory.projectWrite',{slug:'repair',name:'PRIVATE_REPAIR',summary:'PRIVATE_PROJECT_SUMMARY',goal:'Fit the hose',where:{hose:{value:'25 mm'}},links:{aliases:['garden-repair'],repos:['example/fiction']}},'project-make');
+ expect(madePerson.ok).toBe(true);expect(madeProject.ok).toBe(true);if(!madePerson.ok||!madeProject.ok)throw Error('Missing private card results');
+ const personId=(madePerson.value as {ids:string[]}).ids[0],projectId=(madeProject.value as {ids:string[]}).ids[0];expect(personId).toMatch(/^art:person:[a-f0-9-]{36}$/);expect(projectId).toMatch(/^art:project:[a-f0-9-]{36}$/);
+ expect(embed.calls).toBe(calls);
+ const selected=await f.query(`{memoryPerson(id:"${personId}"){mergedFrom card{name summary where{key value{number boolean strings}} how{key value{text}} may{text}}} memoryProject(id:"${projectId}"){id card{slug name goal links{aliases}}}}`);
+ expect(selected.memoryPerson.mergedFrom).toBeNull();expect(selected.memoryPerson.card).toMatchObject({name:'PRIVATE_FRIEND',summary:'PRIVATE_CARD_SUMMARY',where:expect.arrayContaining([{key:'width',value:{number:0,boolean:null,strings:null}},{key:'ready',value:{number:null,boolean:false,strings:null}}]),how:[{key:'tone',value:{text:'brief'}}],may:[{text:'A claim about being an owner'}]});expect(selected.memoryProject).toMatchObject({id:'art:repair',card:{slug:'repair',name:'PRIVATE_REPAIR',goal:'Fit the hose',links:{aliases:['garden-repair']}}});
+ expect((await f.call('projectWrite',{slug:'garden-repair',summary:'PRIVATE_PROJECT_EDIT'},'project-alias')).result.value.ids).toEqual([projectId]);
+ const cleared=await f.call('projectWrite',{slug:'repair',links:{aliases:null,notes:null,epic:null,repos:null,venues:null}},'project-clear-links');expect(cleared.status).toBe(200);expect(cleared.result.value.ids).toEqual([projectId]);
+ expect((await f.query(`{memoryProject(id:"${projectId}"){card{links{aliases notes epic repos venues}}}}`)).memoryProject.card.links).toEqual({aliases:null,notes:null,epic:null,repos:null,venues:null});expect((await f.query('{memoryProject(id:"art:garden-repair"){name}}')).memoryProject).toBeNull();
+ for(let i=0;i<12;i++)expect((await f.call('personWrite',{slug:'friend',summary:'PRIVATE_PERSON_EDIT_'+i},'person-edit-'+i)).status).toBe(200);
+ const revisions=(await f.query('{memoryPerson(id:"art:friend"){history{id op actor card{summary}}}}')).memoryPerson.history;expect(revisions).toHaveLength(10);expect(revisions[0]).toMatchObject({actor:'art',card:{summary:'PRIVATE_PERSON_EDIT_10'}});
+ const restored=await f.call('personRestoreRevision',{slug:'friend',revision_id:revisions[0].id},'person-revision');expect(restored.status).toBe(200);expect(restored.result.value.ids).toEqual([personId]);expect(await f.call('personRestoreRevision',{slug:'friend',revision_id:revisions[0].id},'person-revision')).toEqual(restored);
+ expect((await f.query('{memoryPerson(id:"art:friend"){card{summary} history{card{summary}}}}')).memoryPerson).toMatchObject({card:{summary:'PRIVATE_PERSON_EDIT_10'},history:expect.arrayContaining([{card:{summary:'PRIVATE_PERSON_EDIT_11'}}])});
+ expect(f.db.select().from(s.members).all().find(row=>row.id==='alice')?.role).toBe('member');expect(f.db.select().from(s.projectMembers).all()).toHaveLength(1);
+ expect(await f.query(`{memoryPerson(id:"${projectId}"){name} memoryProject(id:"${personId}"){name}}`)).toEqual({memoryPerson:null,memoryProject:null});
+ for(const value of ['friend','repair','garden-repair','PRIVATE_FRIEND','PRIVATE_REPAIR','PRIVATE_CARD_SUMMARY','PRIVATE_PROJECT_EDIT','PRIVATE_PERSON_EDIT_',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+});
+it('reports an actual private person redirect when read through the original opaque reference',async()=>{
+ const f=await fixture(),from=await f.call('personWrite',{slug:'former-friend',name:'Former friend'},'merge-from'),into=await f.call('personWrite',{slug:'current-friend',name:'Current friend'},'merge-into');expect(from.status).toBe(200);expect(into.status).toBe(200);const opaque=from.result.value.ids[0];
+ expect((await f.query(`{memoryPerson(id:"${opaque}"){mergedFrom card{slug}}}`)).memoryPerson).toEqual({mergedFrom:null,card:{slug:'former-friend'}});
+ mergePeople({contextDir:dirname(f.path),agentName:'art',actor:'art',memorySelection:null,now:()=>f.clock.now()},{from:'former-friend',into:'current-friend'});
+ expect((await f.query(`{memoryPerson(id:"${opaque}"){mergedFrom card{slug name}}}`)).memoryPerson).toMatchObject({mergedFrom:'former-friend',card:{slug:'current-friend',name:'Current friend'}});
+});
+it('restricts card writes to the current body source and keeps card claims separate from grants',async()=>{
+ const f=await fixture();
+ for(const [verb,value] of [['personWrite',{slug:'friend',name:'Friend'}],['projectWrite',{slug:'repair',name:'Repair'}],['personRestoreRevision',{slug:'friend',revision_id:1}]] as const){
+  for(const [index,token] of [raw.agent,raw.member,raw.runner].entries())expect((await f.call(verb,value,'card-weak-'+verb+'-'+index,token)).status).toBe(403);
+  for(const extra of [{agent:'mark'},{path:f.other}])expect((await f.call(verb,{...value,...extra},'card-path-'+verb+'-'+Object.keys(extra)[0])).status).toBe(400);
+  expect((await f.call(verb,{...value,slug:'../mark'},'card-escape-'+verb)).status).toBe(400);
+ }
+ expect((await f.call('personWrite',{slug:'friend',name:'Friend',where:{role:{value:'owner'}}},'card-claim')).status).toBe(200);
+ expect((await f.call('personWrite',{slug:'friend',where:{tier:{value:3}}},'card-reserved')).status).toBe(400);
+ expect(await f.query('{memoryPerson(id:"mark:friend"){name} memoryProject(id:"mark:repair"){name}}')).toEqual({memoryPerson:null,memoryProject:null});expect(f.db.select().from(s.members).all().find(row=>row.id==='alice')?.role).toBe('member');
+});
+it('rolls back card effects with their private receipts and recovers person restoration without another snapshot',async()=>{
+ const f=await fixture();expect((await f.call('personWrite',{slug:'friend',name:'PRIVATE_ORIGINAL'},'card-atomic-make')).status).toBe(200);
+ f.source.exec("CREATE TRIGGER fail_card_source BEFORE INSERT ON memory_command_receipts WHEN NEW.name IN ('memory.personWrite','memory.projectWrite') BEGIN SELECT RAISE(ABORT,'injected'); END");
+ expect((await f.call('personWrite',{slug:'friend',summary:'PRIVATE_ROLLBACK'},'card-atomic-edit')).status).toBe(503);expect((await f.query('{memoryPerson(id:"art:friend"){card{summary} history{id}}}')).memoryPerson).toEqual({card:{summary:null},history:[]});
+ expect((await f.call('projectWrite',{slug:'repair',name:'PRIVATE_PROJECT',links:{aliases:['garden-repair']}},'card-atomic-project')).status).toBe(503);expect((await f.query('{memoryProject(id:"art:garden-repair"){name}}')).memoryProject).toBeNull();
+ expect(f.source.prepare("SELECT * FROM memory_card_references WHERE kind='project'").all()).toEqual([]);
+ expect(f.source.prepare('SELECT slug FROM project_names WHERE name=?').get('garden-repair')).toBeUndefined();f.source.exec('DROP TRIGGER fail_card_source');
+ expect((await f.call('personWrite',{slug:'friend',summary:'PRIVATE_ROLLBACK'},'card-atomic-edit')).status).toBe(200);const revision=(await f.query('{memoryPerson(id:"art:friend"){history{id}}}')).memoryPerson.history[0].id;
+ f.db.$client.exec("CREATE TRIGGER fail_card_core BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");expect((await f.call('personRestoreRevision',{slug:'friend',revision_id:revision},'card-atomic-restore')).status).toBe(503);
+ const query='{memoryPerson(id:"art:friend"){card{summary} history{id card{summary}}}}',after=await f.query(query);expect(after.memoryPerson.card.summary).toBeNull();expect(after.memoryPerson.history).toHaveLength(2);
+ f.db.$client.exec('DROP TRIGGER fail_card_core');expect((await f.call('personRestoreRevision',{slug:'friend',revision_id:revision},'card-atomic-restore')).status).toBe(200);expect(await f.query(query)).toEqual(after);
+});
+it('rolls back a person card when the current body ends during its preparation',async()=>{
+ const f=await fixture(),write=PeopleStore.prototype.write;
+ vi.spyOn(PeopleStore.prototype,'write').mockImplementation(function(this:PeopleStore,value){const result=write.call(this,value);f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());return result;});
+ expect((await f.call('personWrite',{slug:'friend',name:'PRIVATE_REVOKED'},'card-revoked')).status).toBe(403);expect(f.source.prepare('SELECT slug FROM people').all()).toEqual([]);expect(f.source.prepare('SELECT * FROM person_revisions').all()).toEqual([]);
+ expect(f.source.prepare('SELECT * FROM memory_card_references').all()).toEqual([]);
+});
+it('keeps existing semantic-only preparation usable without silently preparing private card references',async()=>{
+ const f=await fixture();f.source.exec('DROP TABLE memory_card_references; DROP TABLE memory_card_schema');const before=f.source.serialize();await prepareSharedMemorySources(f.memory);expect(f.source.serialize()).toEqual(before);
+ for(const [verb,value] of [['personWrite',{slug:'friend',name:'Friend'}],['projectWrite',{slug:'repair',name:'Repair'}],['personRestoreRevision',{slug:'friend',revision_id:1}]] as const){expect((await f.call(verb,value,'older-'+verb)).status).toBe(503);expect(f.source.serialize().equals(before)).toBe(true);}
+ expect(f.source.serialize()).toEqual(before);expect((await f.call('remember',input,'older-semantic')).status).toBe(200);
+});
+it('browses retained private archive and proposal words through the actual canonical HTTP door without source or shared copies',async()=>{
+ const f=await fixture(),made=await f.call('remember',{...input,ttl:'1h'},'retained-make'),id=made.result.value.ids[0];expect((await f.call('archive',{id,note:'PRIVATE_ARCHIVE_REASON'},'retained-archive')).status).toBe(200);
+ const proposal=propose(dirname(f.path),{category:'rough capture',title:'PRIVATE_PROPOSAL_TITLE',content:'PRIVATE_PROPOSAL_WORDS',source:'fictional capture'},null);
+ const later=f.clock.now()+7200000;vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);const before=f.source.serialize();
+ const query='{memoryArchive(agent:"art",first:1){entries{id title content note expiresAt} nextBefore} memoryProposals(agent:"art"){entries{id title content source} nextBefore}}';
+ const rows=await f.query(query);expect(rows.memoryArchive).toEqual({entries:[{id,title,content:words,note:'PRIVATE_ARCHIVE_REASON',expiresAt:'2026-11-14T19:00:00.000Z'}],nextBefore:null});expect(rows.memoryProposals).toEqual({entries:[{id:'art:proposal:'+proposal.uuid,title:'PRIVATE_PROPOSAL_TITLE',content:'PRIVATE_PROPOSAL_WORDS',source:'fictional capture'}],nextBefore:null});
+ expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();expect(f.source.serialize()).toEqual(before);
+ expect(await f.query('{memoryArchive(agent:"mark"){entries{content}} memoryProposals(agent:"mark"){entries{content}}}')).toEqual({memoryArchive:null,memoryProposals:null});
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await f.query(query,raw.member)).toEqual({memoryArchive:null,memoryProposals:null});
+ for(const value of [words,title,'PRIVATE_ARCHIVE_REASON','PRIVATE_PROPOSAL_TITLE','PRIVATE_PROPOSAL_WORDS',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+});
+it('edits and restores bounded private revisions through actual native commands and authorized GraphQL',async()=>{
+ const f=await fixture(),id=(await f.call('remember',{...input,ttl:'1h'},'history-make')).result.value.ids[0];
+ const history=async(token=raw.body)=>(await f.query(`{memoryHistory(id:"${id}"){id op replacedAt content}}`,token)).memoryHistory as {id:number;op:string;replacedAt:string;content:string}[];
+ for(let i=0;i<12;i++)expect((await f.call('update',{id,content:`alpha PRIVATE_EDIT_${i}`},'edit-'+i)).status).toBe(200);
+ const revisions=await history();expect(revisions).toHaveLength(10);expect(revisions[0]).toMatchObject({op:'update',content:'alpha PRIVATE_EDIT_10'});expect(revisions.at(-1)?.content).toBe('alpha PRIVATE_EDIT_1');
+ expect(await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).toEqual({memoryProjectMemory:{content:'alpha PRIVATE_EDIT_11'}});
+ const restored=await f.call('restoreRevision',{id,revision_id:revisions[0].id},'restore-version');expect(restored.status).toBe(200);expect(restored.result.value).toEqual({ids:[id]});
+ expect(await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).toEqual({memoryProjectMemory:{content:'alpha PRIVATE_EDIT_10'}});
+ const after=await history();expect(after).toHaveLength(10);expect(after[0]).toMatchObject({op:'revision-restore',content:'alpha PRIVATE_EDIT_11'});
+ expect(await f.call('restoreRevision',{id,revision_id:revisions[0].id},'restore-version')).toEqual(restored);expect(await history()).toEqual(after);
+ const before=f.source.serialize();expect(await history()).toEqual(after);expect(f.source.serialize()).toEqual(before);
+ const later=f.clock.now()+7200000;vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);
+ expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();expect(await history()).toEqual(after);
+ expect((await f.call('archive',{id},'history-archive')).status).toBe(200);expect(await history()).toEqual(after);
+ const lifecycle=()=>f.source.prepare('SELECT archived,ttl,expires_at FROM memories WHERE uuid=?').get(id.slice(4));const archived=lifecycle();
+ expect((await f.call('restoreRevision',{id,revision_id:after[0].id},'archived-revision')).status).toBe(200);expect(lifecycle()).toEqual(archived);
+ expect(archived).toEqual({archived:1,ttl:'1h',expires_at:'2026-11-14T19:00:00.000Z'});expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();
+ const retained=await history();expect(retained[0]).toMatchObject({op:'revision-restore',content:'alpha PRIVATE_EDIT_10'});expect(await history(raw.member)).toEqual(retained);
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await history(raw.member)).toEqual([]);
+ for(const value of [words,title,'PRIVATE_EDIT_',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+});
+it('keeps edit and revision-restore authority own-body scoped, and rejects a revision belonging to another memory',async()=>{
+ const f=await fixture(),id=(await f.call('remember',input,'target-make')).result.value.ids[0],other=(await f.call('remember',{...input,title:'Other target',content:'beta PRIVATE_OTHER'},'other-make')).result.value.ids[0];
+ expect((await f.call('update',{id:other,content:'beta PRIVATE_OTHER_EDIT'},'other-edit')).status).toBe(200);
+ const revisions=(await f.query(`{memoryHistory(id:"${other}"){id content}}`)).memoryHistory;
+ expect((await f.call('restoreRevision',{id,revision_id:revisions[0].id},'wrong-version')).status).toBe(404);
+ for(const [verb,value] of [['update',{id,content:'new words'}],['restoreRevision',{id,revision_id:revisions[0].id}]] as const){
+  expect((await f.call(verb,{...value,id:id.replace('art:','mark:')},'foreign-'+verb)).status).toBe(403);
+  for(const [index,token] of [raw.agent,raw.member,raw.runner].entries())expect((await f.call(verb,value,'weaker-'+verb+'-'+index,token)).status).toBe(403);
+  expect((await f.call(verb,{...value,path:f.other},'path-'+verb)).status).toBe(400);
+ }
+ expect((await f.call('update',{id},'empty-edit')).status).toBe(400);expect((await f.call('update',{id,content:'  '},'blank-edit')).status).toBe(400);
+ expect((await f.query(`{memoryHistory(id:"${id.replace('art:','mark:')}"){content}}`)).memoryHistory).toEqual([]);
+ expect(await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).toEqual({memoryProjectMemory:{content:words}});
+});
+it('rolls back revisions with failed source receipts and recovers committed revision restores without repeating them',async()=>{
+ const f=await fixture(),id=(await f.call('remember',input,'atomic-history-make')).result.value.ids[0];
+ const current=()=>f.query(`{memoryProjectMemory(id:"${id}"){content} memoryHistory(id:"${id}"){id op content}}`);
+ f.source.exec("CREATE TRIGGER fail_edit_receipt BEFORE INSERT ON memory_command_receipts WHEN NEW.name='memory.update' BEGIN SELECT RAISE(ABORT,'injected'); END");
+ expect((await f.call('update',{id,content:'beta PRIVATE_ROLLBACK'},'atomic-edit')).status).toBe(503);expect(await current()).toEqual({memoryProjectMemory:{content:words},memoryHistory:[]});
+ f.source.exec('DROP TRIGGER fail_edit_receipt');expect((await f.call('update',{id,content:'beta PRIVATE_ROLLBACK'},'atomic-edit')).status).toBe(200);
+ const revision=(await current()).memoryHistory[0].id;
+ f.db.$client.exec("CREATE TRIGGER fail_restore_core BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");
+ expect((await f.call('restoreRevision',{id,revision_id:revision},'atomic-restore')).status).toBe(503);const after=await current();expect(after.memoryProjectMemory.content).toBe(words);expect(after.memoryHistory).toHaveLength(2);const calls=embed.calls;
+ f.db.$client.exec('DROP TRIGGER fail_restore_core');expect((await f.call('restoreRevision',{id,revision_id:revision},'atomic-restore')).status).toBe(200);expect(await current()).toEqual(after);expect(embed.calls).toBe(calls);
+ const gate=hold(),pending=f.call('update',{id,content:'gamma REVOKED_EDIT'},'revoked-edit');await gate.began;f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());gate.release();expect((await pending).status).toBe(403);
+ expect(f.source.prepare('SELECT content FROM memories').get()).toEqual({content:words});expect(f.source.prepare('SELECT count(*) AS n FROM memory_revisions').get()).toEqual({n:2});
+});
 it('binds commands to the actual body, publishes committed content, and reads opaque results through current GraphQL authority',async()=>{
  const f=await fixture(),ws=new WebSocket(f.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw.body}});clean.push(()=>ws.terminate());await once(ws,'open');
  expect((await next(ws,()=>ws.send(JSON.stringify({type:'connection_init'})))).type).toBe('connection_ack');
@@ -99,6 +227,7 @@ it('recalls active candidates past expired top matches without reheating expired
  const f=await fixture(),expired=(await f.call('remember',{...input,ttl:'1h'},'recall-expired')).result.value.ids[0],active=(await f.call('remember',{...input,title:'Still active',content:'alpha beta ACTIVE',ttl:'permanent'},'recall-active')).result.value.ids[0];
  const now=f.clock.now()+3600000;vi.setSystemTime(now);vi.spyOn(f.clock,'now').mockReturnValue(now);
  const result=await f.call('recall',{query:'alpha',limit:1},'recall-after-expiry');expect(result.status).toBe(200);expect(result.result.value.ids).toEqual([active]);expect(f.source.prepare('SELECT recall_heat FROM memories WHERE uuid=?').get(expired.slice(4))).toEqual({recall_heat:0});expect(f.count()).toBe(2);
+ expect((await f.call('remember',{...input,ttl:'1h'},'remember-after-expiry')).result.value.ids).toEqual([expired]);expect(await f.query(`{memoryProjectMemory(id:"${expired}"){content}}`)).toEqual({memoryProjectMemory:{content:words}});expect(f.count()).toBe(2);
 });
 it('forwards TTL, metadata, category and project filters and truncates eligible recall matches',async()=>{
  const f=await fixture(),ids:string[]=[];
@@ -113,7 +242,9 @@ it('forwards TTL, metadata, category and project filters and truncates eligible 
 it('leaves an existing unprepared source byte-for-byte unchanged through startup and refused commands',async()=>{
  const f=await fixture({unprepared:true});expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect(await f.query('{memoryProject(id:"art:pond"){name}}')).toEqual({memoryProject:{name:'Fictional pond'}});
- expect((await f.call('remember',input,'unprepared-start')).status).toBe(503);expect((await f.call('recall',{query:'alpha'},'unprepared-recall')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
+ expect((await f.call('remember',input,'unprepared-start')).status).toBe(503);expect((await f.call('recall',{query:'alpha'},'unprepared-recall')).status).toBe(503);
+ for(const [verb,value] of [['personWrite',{slug:'friend',name:'Friend'}],['projectWrite',{slug:'repair',name:'Repair'}],['personRestoreRevision',{slug:'friend',revision_id:1}]] as const)expect((await f.call(verb,value,'unprepared-'+verb)).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
+ const id='art:00000000-0000-0000-0000-000000000000';expect((await f.call('update',{id,content:'A valid edit'},'unprepared-edit')).status).toBe(503);expect((await f.call('restoreRevision',{id,revision_id:1},'unprepared-version')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect((await f.call('propose',input,'unprepared-propose')).status).toBe(503);expect((await f.call('ratify',{id:'art:proposal:00000000-0000-0000-0000-000000000000'},'unprepared-ratify')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'memory_command_%'").all()).toEqual([]);
 });
@@ -199,6 +330,44 @@ it('consumes canonical Memory through the production body command and GraphQL cl
  for(const verb of ['archive','restore','forget'])expect(await client.command('memory.'+verb,{id},'consumer-'+verb)).toMatchObject({ok:true,value:{ids:[id]}});
  expect(await client.query({query:'query($id:String!){memoryProjectMemory(id:$id){content}}',variables:{id}})).toEqual({data:{memoryProjectMemory:null}});
  f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());expect(await client.command('memory.remember',input,'consumer-remember')).toMatchObject({ok:false,code:'denied'});
+});
+it('reads private identity and hottest memories from declared sources through the production body client without writes or env fallback',async()=>{
+ const f=await fixture(),directory=dirname(f.path),client=bodyCommandClient({url:f.url,token:raw.body,signal:new AbortController().signal,clock:f.clock});clean.push(client.close);
+ writeFileSync(join(directory,'IDENTITY.md'),'PRIVATE_BODY_CREED');writeFileSync(join(directory,'preferences.md'),'PRIVATE_BODY_PREFERENCES');writeFileSync(join(directory,'self-model.md'),'PRIVATE_BODY_SELF_MODEL');writeFileSync(join(dirname(f.other),'IDENTITY.md'),'OTHER_BODY_CREED');
+ expect((await f.call('remember',input,'context-memory')).status).toBe(200);expect((await f.call('remember',{...input,category:'episode',title:'Private recent episode',content:'PRIVATE_BODY_EPISODE'},'context-episode')).status).toBe(200);
+ f.source.prepare('UPDATE memories SET created=?,authored_at=NULL,recall_heat=0 WHERE category=?').run('2026-07-01T00:00:00.000Z','project');
+ const cool=await bodyMemoryIdentity(client,'art');expect(cool).toContain('## Background');expect(cool).toContain(title);
+ expect((await f.call('recall',{query:'alpha'},'context-recall')).status).toBe(200);const before=f.source.serialize();
+ vi.stubEnv('LOOM_SQLITE_DB_PATH',f.other);vi.stubEnv('LOOM_TIMEZONE','Pacific/Honolulu');
+ try{const identity=await bodyMemoryIdentity(client,'art');for(const value of ['PRIVATE_BODY_CREED','PRIVATE_BODY_PREFERENCES','PRIVATE_BODY_SELF_MODEL','PRIVATE_BODY_EPISODE',title,'18:00'])expect(identity).toContain(value);expect(identity).toContain('## Recent');expect(identity).not.toContain('OTHER_BODY_CREED');expect(await bodyMemoryIdentity(client,'mark')).toBeNull();}finally{vi.unstubAllEnvs();}
+ expect(f.source.serialize()).toEqual(before);for(const value of ['PRIVATE_BODY_CREED','PRIVATE_BODY_PREFERENCES','PRIVATE_BODY_SELF_MODEL','PRIVATE_BODY_EPISODE',words])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+ const denied=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.runner,'content-type':'application/json'},body:JSON.stringify({query:bodyIdentityQuery,variables:{agent:'art'}})}),deniedBody=await denied.json();expect(deniedBody.errors?.length).toBeGreaterThan(0);expect(JSON.stringify(deniedBody)).not.toContain('PRIVATE_BODY_CREED');
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect((await f.query('{memoryIdentity(agent:"art"){creed}}',raw.member)).memoryIdentity).toBeNull();
+});
+it('excludes expired top-of-mind words and old or future episodes without changing precious sources',async()=>{
+ const f=await fixture();expect((await f.call('remember',{...input,ttl:'1h'},'context-expiry')).status).toBe(200);
+ expect((await f.call('remember',{...input,category:'episode',title:'Old episode',content:'OLD_EPISODE'},'context-old')).status).toBe(200);expect((await f.call('remember',{...input,category:'episode',title:'Future episode',content:'FUTURE_EPISODE'},'context-future')).status).toBe(200);
+ f.source.prepare('UPDATE memories SET created=? WHERE title=?').run('2026-11-12T00:00:00.000Z','Old episode');f.source.prepare('UPDATE memories SET created=? WHERE title=?').run('2026-11-16T00:00:00.000Z','Future episode');
+ vi.spyOn(f.clock,'now').mockReturnValue(f.clock.now()+3600000);const before=f.source.serialize(),result=await f.query('{memoryIdentity(agent:"art"){topOfMind recent}}');expect(result).toEqual({memoryIdentity:{topOfMind:null,recent:null}});expect(f.source.serialize()).toEqual(before);
+});
+it('refuses identity files escaping the declared agent directory without leaking words or paths',async()=>{
+ const f=await fixture(),outside=join(f.home,'outside-identity.md');writeFileSync(outside,'ESCAPED_IDENTITY_WORDS');symlinkSync(outside,join(dirname(f.path),'IDENTITY.md'));
+ const response=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({query:bodyIdentityQuery,variables:{agent:'art'}})}),payload=await response.json();expect(payload.errors?.length).toBeGreaterThan(0);expect(JSON.stringify(payload)).not.toContain('ESCAPED_IDENTITY_WORDS');expect(JSON.stringify(payload)).not.toContain(outside);
+});
+it('does not publish top-of-mind words that expire during GraphQL serialization',async()=>{
+ const f=await fixture(),creed='CONTEXT_BOUNDARY_CREED';writeFileSync(join(dirname(f.path),'IDENTITY.md'),creed);expect((await f.call('remember',input,'context-boundary')).status).toBe(200);
+ f.source.prepare('UPDATE memories SET expires_at=?').run(new Date(f.clock.now()+1).toISOString());let crossed=false;const serialize=GraphQLString.serialize;
+ vi.spyOn(GraphQLString,'serialize').mockImplementation(value=>{if(value===creed&&!crossed){crossed=true;f.clock.advance(1);}return serialize(value);});
+ const response=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({query:bodyIdentityQuery,variables:{agent:'art'}})}),payload=await response.json();expect(crossed).toBe(true);expect(JSON.stringify(payload)).not.toContain(words);expect(JSON.stringify(payload)).not.toContain(title);
+});
+it('loads private Memory into the receiving body before its model without copying it into job metadata or shared logs',async()=>{
+ const f=await fixture(),creed='ACTUAL_RECEIVING_BODY_CREED';writeFileSync(join(dirname(f.path),'IDENTITY.md'),creed);expect((await f.call('remember',input,'receiving-memory')).status).toBe(200);
+ const token='body_'+'e'.repeat(64);f.root.writes.run(()=>{f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Receiving Memory fixture',kind:'agent',agent:'art',job:'job',createdAt:new Date(f.clock.now()).toISOString()}).run();f.db.update(s.jobs).set({harness:'claude',model:'requested'}).where(eq(s.jobs.id,'job')).run();});
+ expect((await f.send('Please do work','receiving-mail')).status).toBe(200);
+ const job:WorkerAssignment={id:'job',agent:'art',box:'box',conversation:f.thread.conversation,thread:f.thread.id,venue:'loom',model:'requested',account:'fixture',harness:'claude',brief:'',house:{repository:'fixture',file:'HOUSE.md',branch:'next'}};
+ const bytes=Buffer.from(JSON.stringify({job,build:'fixture',bootstrap:{origin:f.url,job:'job',token}})),native=vi.fn(async(assigned:WorkerAssignment,context:string)=>{expect(assigned).toEqual(job);expect(context).toContain(creed);expect(context).toContain(title);expect(context.indexOf(creed)).toBeLessThan(context.indexOf('Please do work'));expect(bytes.every(byte=>byte===0)).toBe(true);return{text:'Work completed',model:'observed',actions:[]};}),errors=vi.fn();
+ expect(await bodyProgram({args:['fixture'],read:async()=>JSON.stringify({command:'/fake/native',cwd:'/fake/house'}),stdin:async()=>bytes,env:{},signal:new AbortController().signal,clock:f.clock,schedule:{every:()=>()=>{}},native,error:errors})).toBe(0);expect(native).toHaveBeenCalledOnce();expect(errors).not.toHaveBeenCalled();
+ expect(f.db.select().from(s.jobs).get()?.brief).toBe('');for(const value of [creed,words,title,token])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
 });
 it('rolls back restore embedding after authority loss and rolls back archive on source receipt failure',async()=>{
  const f=await fixture(),id=(await f.call('remember',input,'make-rollback')).result.value.ids[0];

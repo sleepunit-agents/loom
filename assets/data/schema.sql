@@ -418,6 +418,7 @@ CREATE TABLE `inbox` (
 	`member` text,
 	`job` text,
 	`taken_at` text,
+	`taken_volume` text,
 	`done_at` text,
 	`answers` text,
 	`why` text,
@@ -453,6 +454,7 @@ CREATE TABLE `inbox` (
 	CONSTRAINT "inbox_source_choice" CHECK("inbox"."source" in ('thread', 'discord', 'slack', 'trigger', 'handoff', 'answer', 'task', 'approval', 'secret-request', 'notice')),
 	CONSTRAINT "inbox_from_kind_choice" CHECK("inbox"."from_kind" in ('person', 'agent', 'schedule', 'unknown')),
 	CONSTRAINT "inbox_state_choice" CHECK("inbox"."state" in ('waiting', 'taken', 'done', 'answered', 'resolved')),
+	CONSTRAINT "inbox_taken_volume_choice" CHECK("inbox"."taken_volume" in ('full', 'dim', 'mute')),
 	CONSTRAINT "inbox_volume_choice" CHECK("inbox"."volume" in ('full', 'dim', 'mute')),
 	CONSTRAINT "inbox_answers_choice" CHECK("inbox"."answers" in ('yes-no', 'words')),
 	CONSTRAINT "inbox_answer_choice" CHECK("inbox"."answer" in ('yes', 'no', 'done', 'dismiss', 'words', 'replied'))

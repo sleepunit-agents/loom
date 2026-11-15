@@ -1,0 +1,155 @@
+{
+  "page": "people",
+  "title": "People and projects",
+  "ownerTask": "t-2236",
+  "sourceSha256": "0a7b2323133946d822fee3ce66b199316dc8f4aee62072b91e33d649e6c00a3a",
+  "promises": [
+    {
+      "id": "people-001",
+      "promise": "Who is in the household, which agents they own, and which projects they share. Everything else in loom points back at these three: members, agents and projects.",
+      "source": "docs/how-it-works/site/people.html"
+    },
+    {
+      "id": "people-002",
+      "promise": "Lists the members: people who can sign in.",
+      "source": "docs/how-it-works/site/people.html"
+    },
+    {
+      "id": "people-003",
+      "promise": "Lists the agents, and who owns each.",
+      "source": "docs/how-it-works/site/people.html"
+    },
+    {
+      "id": "people-004",
+      "promise": "Puts people and agents on projects so they can work together.",
+      "source": "docs/how-it-works/site/people.html"
+    },
+    {
+      "id": "people-005",
+      "promise": "Supplies the labels every other part uses to decide who sees what.",
+      "source": "docs/how-it-works/site/people.html"
+    },
+    {
+      "id": "people-006",
+      "promise": "A pull request gets its project from its repository.",
+      "source": "docs/how-it-works/site/people.html#con-h"
+    },
+    {
+      "id": "people-007",
+      "promise": "Every conversation belongs to one agent.",
+      "source": "docs/how-it-works/site/people.html#con-h"
+    },
+    {
+      "id": "people-008",
+      "promise": "An item can be for one member alone.",
+      "source": "docs/how-it-works/site/people.html#con-h"
+    },
+    {
+      "id": "people-009",
+      "promise": "Every task has an owner. Without a project, its owner decides who sees it.",
+      "source": "docs/how-it-works/site/people.html#con-h"
+    },
+    {
+      "id": "people-010",
+      "promise": "A token says which member or agent is calling.",
+      "source": "docs/how-it-works/site/people.html#con-h"
+    },
+    {
+      "id": "people-011",
+      "promise": "A box's owner says which agents may run there.",
+      "source": "docs/how-it-works/site/people.html#con-h"
+    },
+    {
+      "id": "people-012",
+      "promise": "A member is a person who can sign in. A household owner sees everything, including another member's private thread. Everyone else reaches things through their projects and the agents they own.",
+      "source": "docs/how-it-works/site/people.html#how-h"
+    },
+    {
+      "id": "people-013",
+      "promise": "An agent is one of the household's assistants. A member owns any number of agents, and an agent can have more than one owner. Each agent has a short description of itself, badge colours and a drawn face.",
+      "source": "docs/how-it-works/site/people.html#how-h"
+    },
+    {
+      "id": "people-014",
+      "promise": "A project is the unit of sharing. Put a person and an agent on the same project and they can work together on it. A project also lists its code repositories.",
+      "source": "docs/how-it-works/site/people.html#how-h"
+    },
+    {
+      "id": "people-015",
+      "promise": "One row holds the household-wide settings. Each person has their own preferences for how loom looks and behaves.",
+      "source": "docs/how-it-works/site/people.html#how-h"
+    },
+    {
+      "id": "people-016",
+      "promise": "a The rule. A household owner sees everything, including what is private to another member. Anyone else sees what is in their projects, plus what belongs to agents they own.",
+      "source": "docs/how-it-works/site/people.html#see-h"
+    },
+    {
+      "id": "people-017",
+      "promise": "b Private. Private to a member means that member plus household owners.",
+      "source": "docs/how-it-works/site/people.html#see-h"
+    },
+    {
+      "id": "people-018",
+      "promise": "c Tasks. A task with a project is seen by the project's people. A task without one is seen by its owner, and for an agent's task, by that agent's owners.",
+      "source": "docs/how-it-works/site/people.html#see-h"
+    },
+    {
+      "id": "people-019",
+      "promise": "d Checked at the door. Loom applies this to callers from outside: a person, an agent, a machine, someone's own program. Loom's own parts read without asking.",
+      "source": "docs/how-it-works/site/people.html#see-h"
+    },
+    {
+      "id": "people-020",
+      "promise": "The owner can open project sharing without an unavailable screen.",
+      "source": "docs/how-it-works/site/people.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Project sharing",
+        "contains": []
+      }
+    },
+    {
+      "id": "people-021",
+      "promise": "The owner can open household members and agents without an unavailable screen.",
+      "source": "docs/how-it-works/site/people.html",
+      "probe": {
+        "kind": "ui",
+        "app": "Household setup",
+        "contains": []
+      }
+    },
+    {
+      "id": "people-022",
+      "promise": "Adding a household member through the normal built program persists that member.",
+      "source": "docs/how-it-works/site/people.html",
+      "probe": {
+        "kind": "action",
+        "app": "Household setup"
+      }
+    },
+    {
+      "id": "people-023",
+      "promise": "Creating a project through the normal built program persists its member list.",
+      "source": "docs/how-it-works/site/people.html",
+      "probe": {
+        "kind": "action",
+        "app": "Project sharing"
+      }
+    }
+  ],
+  "modelTables": [
+    "members",
+    "agents",
+    "member_agents",
+    "agent_accounts",
+    "agent_sprites",
+    "projects",
+    "project_members",
+    "project_agents",
+    "project_repositories",
+    "household",
+    "backup_recipients",
+    "member_preferences"
+  ]
+}
