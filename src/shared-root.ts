@@ -32,6 +32,7 @@ import { BridgeSettings } from './pieces/bridges/settings.js';
 import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
+import {sharedSecretProposals} from './shared-secret-proposals.js';
 import { registerSharedSecretCommands } from './shared-secret-commands.js';
 
 /** Fresh shared composition. The caller initializes the approved schema and owns
@@ -122,7 +123,7 @@ export function sharedRoot(options: {
   householdService(db,now).synchronizeFullOwners();
   const settings = tempoSettingsProposals(db, clock);
   const runProposals = sharedRunProposals(db);
-
+  const secretProposals=sharedSecretProposals(db,now);
   const boxProposals=sharedBoxProposals(db);
   let closing: Promise<void> | undefined;
   let meter: Awaited<ReturnType<typeof installMeasuring>> | undefined;
@@ -130,7 +131,7 @@ export function sharedRoot(options: {
   const stops: (() => void)[] = [];
   const report = (error: unknown) => { try { options.reportError(error); } catch { /* committed settings stay committed */ } };
   const measuringProposal = measuringSettingsProposals(db);
-  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation, runProposals.operation, boxProposals.operation]);
+  const approvedOperations = new Map([...(options.approvedOperations ?? []), settings.operation, runProposals.operation, boxProposals.operation, secretProposals.operation]);
   approvedOperations.set(measuringProposal.operation[0], card => {
     measuringProposal.operation[1](card);
     // Synchronous outer writes have committed or rolled back before this runs.
@@ -266,6 +267,7 @@ export function sharedRoot(options: {
   const stopRunProposals = data.writes.observe(() => runProposals.committed(() => tempo?.capacityChanged()));
   startupCleanups.push(stopRunProposals);
 
+  if(options.commsKey)secretProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
   if(options.commsKey)boxProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
   const stopBoxProposals=data.writes.observe(()=>boxProposals.committed(()=>tempo?.capacityChanged()));
   startupCleanups.push(stopBoxProposals);

@@ -472,6 +472,13 @@ machine availability or lending. A stale card needs a fresh request. Direct
 owner edits and approved changes share validation/application. This path never
 changes repository-secret references or executes a house.
 
+A member-private conversation reports its actual status state, but its progress
+words never enter the global agent status row. That row is shared with other
+owners of the agent: working and waiting use “Working privately” and “Waiting
+privately”; idle and offline use an empty work description. Public conversation
+progress keeps its reported words. Receipt rollback and replay preserve the same
+transaction boundary as other conversation output.
+
 runtime.proposeBoxSettings files a private chat request for the machine owner or
 a household owner. Its card includes the current and proposed name, hosting
 flags, agent lending and owner facts. Allow rechecks the current member's
