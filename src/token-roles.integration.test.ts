@@ -94,7 +94,6 @@ describe('minting a runtime token', () => {
     expect(() => createToken(h, { role: { kind: 'review', piece: 'shuttle' }, label: 'r', runtimePieces: ['shuttle'] })).toThrow(/review\/token/);
   });
 
-
 });
 
 describe('token expiry', () => {

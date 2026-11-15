@@ -60,7 +60,7 @@ Global flags:
   --url <url>            Run against a loom-http server (default: $LOOM_URL), e.g.
                          http://host:8787/mcp. Bearer token from $LOOM_TOKEN_FILE.
                          Applies to wake, recall, remember, update, forget,
-                         memory, knowledge, person, project; other commands stay local.
+                         memory, knowledge, person, project, household, token, sessions, account.
   --json                 Machine-readable output
   --help, -h             Show help
   --version, -V          Print loom version
@@ -100,6 +100,13 @@ export async function runCli(argv: string[], io: IOStreams = realStreams()): Pro
   if (sub === 'changes') {
     const { runChangesClient } = await import('./changes-client.js');
     return runChangesClient(rest, io);
+  }
+
+  if (sub === 'household' || sub === 'token' || sub === 'sessions' || sub === 'account') {
+    const parsed=extractGlobalFlags(rest);
+    if(rest.includes('--url')&&!parsed.flags.url){io.stderr('--url needs a value\n');return 2;}
+    const {runAccessClient}=await import('./access-client.js');
+    return runAccessClient(sub,parsed.rest,{...io,env:{...io.env,...(parsed.flags.url?{LOOM_URL:parsed.flags.url}:{})}},undefined,`loom ${sub}`);
   }
 
   // Remote mode: the store verbs go to loom-http when a URL is set.
@@ -254,8 +261,8 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
     case 'token':
     case 'sessions':
     case 'account': {
-      const { runAccessClient } = await import('./access-client.js');
-      return runAccessClient(sub, rest, io);
+      io.stderr(`loom ${sub} uses the shared API caller; it cannot run through the legacy /cli door.\n`);
+      return 2;
     }
     case 'export': {
       const { runExport } = await import('./bundle.js');

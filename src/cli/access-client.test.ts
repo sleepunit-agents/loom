@@ -10,7 +10,7 @@ import {FakeClock} from '../core/clock.js';
 import {createDataSchema} from '../core/data/database.js';
 import {members,tokens,sessions,passkeys} from '../core/data/schema.js';
 import {sharedRoot} from '../shared-root.js';
-import {runCli} from './index.js';
+import {runCli,runCliLocal} from './index.js';
 import {runAccessClient} from './access-client.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{try{for(const close of clean.splice(0).reverse())await close();}finally{vi.unstubAllGlobals();}});
 function fixture(){
@@ -142,4 +142,17 @@ it('keeps roster metadata private and validates both agent administration output
 it('answers help and invalid JSON without touching transport even when a live connection is configured',async()=>{
  const f=fixture();
  for(const [piece,args] of [['household',['setMember','--help']],['household',['setAgent','[]']],['account',['revokeSession','--help']],['token',['link','--help']]] as const){expect((await f.invoke(piece,[...args])).calls).toBe(0);}
+});
+
+it('accepts primary global flags and refuses the legacy daemon dispatch without forwarding',async()=>{
+ const f=fixture();let calls=0,out='',err='';vi.stubGlobal('fetch',async(input:Parameters<typeof fetch>[0],init?:RequestInit)=>{calls++;return f.transport(input,init);});
+ const io={stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_TOKEN_FILE:join(f.home,'owner')},stdout:(text:string)=>out+=text,stderr:(text:string)=>err+=text};
+ expect(await runCli(['--json','token','list','--url','http://loom'],io)).toBe(0);expect(JSON.parse(out)).toHaveLength(2);expect(calls).toBe(1);
+ out='';expect(await runCli(['token','link','--help'],io)).toBe(0);expect(out).toContain('usage: loom token');expect(calls).toBe(1);
+ expect(await runCliLocal(['token','list'],io)).toBe(2);expect(calls).toBe(1);
+});
+it('keeps the same household receipt when the successful reply is lost',async()=>{
+ const f=fixture();let attempts=0;
+ const result=await f.invoke('household',['setMember',JSON.stringify({id:'pat',role:'member',agents:[]})],'owner',async(input,init)=>{const response=await f.transport(input,init);if(++attempts===1){await response.body?.cancel();throw Error('lost');}return response;});
+ expect(result).toMatchObject({code:0,calls:2});expect(new Set(result.bodies).size).toBe(1);
 });

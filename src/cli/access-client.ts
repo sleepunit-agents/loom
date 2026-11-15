@@ -17,13 +17,13 @@ const clients={
 };
 const unknownIssuance='Token creation outcome unknown; list tokens before trying again';
 const defaults: ClientRuntime = { request: (...args) => fetch(...args), retry: ms => new Promise(resolve => setTimeout(resolve, ms)) };
-export async function runAccessClient(piece: 'token'|'sessions'|'account'|'household', argv: string[], io: IOStreams, runtime: ClientRuntime & { now?: () => number } = defaults): Promise<number> {
+export async function runAccessClient(piece: 'token'|'sessions'|'account'|'household', argv: string[], io: IOStreams, runtime: ClientRuntime & { now?: () => number } = defaults, program=`loom-${piece}`): Promise<number> {
   const binding=clients[piece],names=binding.names;
   const issuance=piece==='token'&&argv[0]==='create';
   const link=piece==='token'&&argv[0]==='link';
   const oneTime=issuance||link;
   const unknownOutcome=link?'Sign-in link outcome unknown; make a new link if needed':unknownIssuance;
-  const help=`usage: loom-${piece} <${names.join('|')}> [json-object]\n`;
+  const help=`usage: ${program} <${names.join('|')}> [json-object]\n`;
   if(!argv.length||argv.includes('--help')||argv.includes('-h')){io.stdout(help);return 0;}
   const name=argv[0];if(!names.includes(name)||argv.length>2){io.stderr(help);return 2;}
   const read=name==='list'||name==='read';
