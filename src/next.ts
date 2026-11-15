@@ -3,6 +3,9 @@ import type { Viewer } from './core/index.js';
 import { memoryQueryFields } from './transport/memory-queries.js';
 import { sharedActivityConversations } from './pieces/mind/activity-conversations.js';
 import { dataHttp } from './core/data/http.js';
+import { dataReadSchema } from './core/data/read-schema.js';
+import { DataLive } from './core/data/live.js';
+import { dataSocket } from './core/data/socket.js';
 import { dataDatabase } from './core/data/database.js';
 import { dataAuthentication } from './core/data/authentication.js';
 import { installDiscordHistory, type HistoryAccess } from './pieces/bridges/history-operation.js';
@@ -375,7 +378,20 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   // The generated door uses the SAME connection and fresh shared credentials.
   // Existing homes are deliberately not bootstrapped or migrated here.
   const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
-  const data = dataHttp(sharedData, dataAuthentication(sharedData, () => app.operations.clock.now()), relyingParty(process.env)?.origin, memoryQueries.get(app));
+  const authenticateData = dataAuthentication(sharedData, () => app.operations.clock.now());
+  const fields = memoryQueries.get(app);
+  const data = dataHttp(sharedData, authenticateData, relyingParty(process.env)?.origin, fields);
+  const liveData = new DataLive();
+  const socketData = dataSocket({live: liveData, clock: app.operations.clock,
+    authenticate(req) {
+      const headers = new Headers();
+      for (let i = 0; i < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i], req.rawHeaders[i + 1]);
+      return authenticateData(new Request('http://localhost/graphql', {headers}));
+    },
+    schema: viewer => dataReadSchema(sharedData, viewer, fields), originAllowed: sameOrigin});
+  // Existing operation commits include access changes. File-source signals and
+  // time-dependent Memory projections are connected by their own composition.
+  const stopDataChanges = app.live.observe(() => { socketData.refreshAccess(); liveData.changed(); });
   routes.all('/graphql', c => data.fetch(c.req.raw));
   routes.route('/', signinRoutes(app));
   routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
@@ -435,6 +451,9 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   const hosts = typeof options.host === 'string' ? [options.host] : options.host ?? ['127.0.0.1'];
   let port = options.port ?? 0;
   const close = async () => {
+    stopDataChanges();
+    liveData.close();
+    await socketData.close();
     detaches.forEach(detach => detach());
     for (const socket of sockets) socket.destroy();
     await Promise.all(servers.map(http => {
@@ -454,7 +473,7 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
       });
       http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
-      servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin));
+      servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin), socketData.attach(http));
       await new Promise<void>((ok, no) => { http.once('error', no); http.listen(port,host,ok); });
       const address = http.address();
       if (!address || typeof address === 'string') throw new Error('no next address');
