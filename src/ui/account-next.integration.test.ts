@@ -2,6 +2,8 @@ import webpush from 'web-push';
 /** One Account browser proof through the actual shared program; CI owns Chrome. */
 import {it,expect} from 'vitest';
 import Database from 'better-sqlite3';
+import {createServer} from 'node:http';
+import {sharedSigninLinks} from '../core/signin/shared-links.js';
 import {createHash} from 'node:crypto';
 import {existsSync,mkdirSync} from 'node:fs';
 import {join,resolve} from 'node:path';
@@ -41,4 +43,39 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   await a.screenshot({path:join(shots,'account-shared.png'),animations:'disabled'});
   expect(legacy).toBe(0);expect(errors).toEqual([]);
  }finally{await browser.close();await app.close();client.close();}
+});
+
+it.runIf(enabled)('registers and uses a real browser passkey against the shared sign-in door',async()=>{
+ // Reserve a disposable loopback port so the RP origin is known before Root.
+ const reservation=createServer();await new Promise<void>(resolve=>reservation.listen(0,'127.0.0.1',resolve));
+ const address=reservation.address();if(!address||typeof address==='string')throw Error('No fixture port');
+ const port=address.port;await new Promise<void>(resolve=>reservation.close(()=>resolve()));
+ const origin=`http://localhost:${port}`,client=new Database(':memory:'),clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString()),raw='f'.repeat(64),hash=(value:string)=>createHash('sha256').update(value).digest('hex');
+ db.insert(members).values({id:'sam',role:'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw),kind:'owner',member:'sam',label:'Sam browser fixture',createdAt:at}).run();
+ const app=await serveShared({db,clock,port,publicOrigin:origin,webRoot,originAllowed:()=>true,reportError:error=>{throw error;}});
+ let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
+ try{
+  browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+  const context=await browser.newContext({serviceWorkers:'block',userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
+  await context.route('**/*',route=>new URL(route.request().url()).origin===origin?route.continue():route.abort('blockedbyclient'));
+  await context.routeWebSocket(url=>new URL(url).origin!==origin.replace(/^http/,'ws'),socket=>socket.close());
+  const page=await context.newPage(),errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+  const cdp=await context.newCDPSession(page);await cdp.send('WebAuthn.enable');
+  await cdp.send('WebAuthn.addVirtualAuthenticator',{options:{protocol:'ctap2',transport:'internal',hasResidentKey:true,hasUserVerification:true,isUserVerified:true,automaticPresenceSimulation:true}});
+  // Genuine one-time link redemption; no browser cookie is seeded.
+  const link=app.writes.run(()=>sharedSigninLinks(db,clock).makeLink(hash(raw))).value;
+  await page.goto(origin+link.path);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.next-shell').waitFor();
+  await page.goto(origin+'/p/account-preview');
+  const form=page.getByRole('form',{name:'Add a passkey',exact:true});await form.getByLabel('Passkey name',{exact:true}).fill('Virtual laptop');await form.getByRole('button',{name:'Add a passkey',exact:true}).click();
+  await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor();
+  expect(db.select().from(passkeys).all()).toMatchObject([{label:'Virtual laptop',token:hash(raw),counter:0}]);
+  await page.getByRole('button',{name:'Sign out this device',exact:true}).click();await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();
+  expect(db.select().from(sessions).all()).toEqual([]);
+  await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.locator('.next-shell').waitFor();
+  await page.goto(origin+'/p/account-preview');await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor();
+  expect(db.select().from(sessions).all()).toMatchObject([{token:hash(raw),via:'passkey',isAgent:false}]);expect(db.select().from(passkeys).get()!.counter).toBeGreaterThan(0);
+  const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});await page.screenshot({path:join(shots,'passkey-shared.png'),animations:'disabled'});
+  await page.getByRole('button',{name:'Remove passkey',exact:true}).click();await expect.poll(()=>db.select().from(passkeys).all().length).toBe(0);
+  expect(errors).toEqual([]);
+ }finally{await browser?.close();await app.close();client.close();}
 });
