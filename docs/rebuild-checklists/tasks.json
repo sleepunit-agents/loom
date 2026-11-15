@@ -48,7 +48,11 @@
     {
       "id": "tasks-006",
       "promise": "A task names the conversation it came from.",
-      "source": "docs/how-it-works/site/tasks.html#con-h"
+      "source": "docs/how-it-works/site/tasks.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "taskStructure"
+      }
     },
     {
       "id": "tasks-007",
@@ -80,7 +84,20 @@
     {
       "id": "tasks-010",
       "promise": "A task is ready when it is open, is not an epic and nothing blocks it. Claiming it moves it to in progress. Closing it takes a reason, and the reason cancelled marks it cancelled.",
-      "source": "docs/how-it-works/site/tasks.html#how-h"
+      "source": "docs/how-it-works/site/tasks.html#how-h",
+      "probe": {
+        "kind": "all",
+        "probes": [
+          {
+            "kind": "action",
+            "action": "taskStructure"
+          },
+          {
+            "kind": "action",
+            "action": "taskLifecycle"
+          }
+        ]
+      }
     },
     {
       "id": "tasks-011",
