@@ -39,7 +39,7 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
       return !!raw&&!!programSnapshot(programs,hash(raw));
     },
     current(viewer: Viewer): boolean { return !!proof(viewer); },
-    authenticate(request: Request): Authentication | undefined {
+    authenticate(request: Request, options: { recordUse?: boolean; programs?: 'deny' } = {}): Authentication | undefined {
       if (!admitted()) return;
       const auth = resolve(request);
       if (!admitted() || !auth?.valid() || !admitted()) return;
@@ -55,7 +55,7 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
       if (!token) return;
       const grants=programSnapshot(programs,tokenId);
       // Program tokens stay outside callers; they cannot mint browser/body authority.
-      if(grants&&(session||token.kind!=='owner'||!token.member))return;
+      if(grants&&(options.programs==='deny'||session||token.kind!=='owner'||!token.member))return;
       const bound = token.job ? bodyJob(token) : undefined;
       if (token.job && !bound) return;
       const valid = () => {
@@ -85,7 +85,7 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
           return true;
         });
       };
-      presented();
+      if(options.recordUse!==false)presented();
       if (!valid()) return;
       proofs.set(auth.viewer, { token, session, bearer, valid, grants, box: bound?.box ?? undefined });
       return { ...auth, valid, ...(request.headers.get('upgrade')?.toLowerCase() === 'websocket' ? { activity: presented } : {}) };

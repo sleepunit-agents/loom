@@ -71,7 +71,8 @@ it('withdraws a retained live selection on grant change without waiting for a da
  const f=fixture(),server=createServer(getRequestListener(request=>f.root.http.fetch(request))),detach=f.root.attach(server);await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));cleanup.push(async()=>{detach();await f.root.close();await new Promise<void>(r=>server.close(()=>r()));});const address=server.address();if(!address||typeof address==='string')throw Error('No port');
  const ws=new WebSocket('ws://127.0.0.1:'+address.port+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw.program}});cleanup.push(()=>ws.terminate());await once(ws,'open');let next=once(ws,'message');ws.send(JSON.stringify({type:'connection_init'}));await next;
  next=once(ws,'message');ws.send(JSON.stringify({type:'subscribe',id:'tasks',payload:{query:'subscription { observe(query:"{ tasks { title } }") { patches { path value } } }'}}));expect(String((await next)[0])).toContain('Sam work');
- const closed=once(ws,'close');f.grants.set(hash(raw.program),{records:[],operations:[]});ws.send(JSON.stringify({type:'ping'}));expect((await closed)[0]).toBe(4403);
+ const pushed:string[]=[];ws.on('message',frame=>pushed.push(String(frame)));
+ const closed=once(ws,'close');f.grants.set(hash(raw.program),{records:[],operations:[]});f.root.writes.run(()=>f.db.update(tasks).set({title:'Withdrawn words'}).run());expect((await closed)[0]).toBe(4403);expect(pushed.join(' ')).not.toContain('Withdrawn words');
 });
 
 it('withdraws both lazy HTTP response branches after a direct grant edit',async()=>{
@@ -145,5 +146,21 @@ it('cannot enter a credential ceremony if the owner restricts its token while th
  const body=new ReadableStream<Uint8Array>({async pull(controller){began();await held;controller.enqueue(new TextEncoder().encode(JSON.stringify({kind:'owner',member:'sam',label:'Forbidden new bearer'})));controller.close();}},{highWaterMark:0});
  const pending=f.root.http.request(new Request('http://loom/api/signin/token',{method:'POST',headers:{authorization:'Bearer '+raw.owner,'content-type':'application/json'},body,duplex:'half'} as RequestInit));
  await started;f.grants.set(hash(raw.owner),{records:[],operations:['signin.token']});release();
- expect((await pending).status).toBe(403);expect(f.db.select().from(tokens).all().some(row=>row.label==='Forbidden new bearer')).toBe(false);
+ expect((await pending).status).toBe(403);expect(f.db.select().from(tokens).all().some(row=>row.label==='Forbidden new bearer')).toBe(false);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.owner))).get()?.lastUsedAt).toBeNull();
+});
+
+it('ignores unsupported private table grants while continuing to serve the supported subset',async()=>{
+ const f=fixture();f.grants.set(hash(raw.program),{records:['tasks','tokens','sessions'],operations:[]});
+ expect(await(await f.read('{ tasks { title } }')).json()).toEqual({data:{tasks:[{title:'Sam work'}]}});
+ for(const query of ['{ tokens { fingerprint } }','{ sessions { id } }'])expect((await(await f.read(query)).json()).errors).toBeDefined();
+ const schema=await(await f.read('{ __schema { queryType { fields { name } } } }')).json();expect(schema.errors).toBeUndefined();expect(JSON.stringify(schema)).not.toMatch(/tokens|sessions/);
+});
+it('inspects program routing without recording usage when transport checks reject the request',async()=>{
+ const f=fixture();f.clock.advance(1000);
+ const headers={authorization:'Bearer '+raw.program,'content-type':'application/json',origin:'https://other.example'};
+ expect((await f.root.http.request('http://loom/api/tasks/command',{method:'POST',headers,body:'{}'})).status).toBe(403);
+ expect((await f.root.http.request('http://loom/api/tasks/command',{method:'POST',headers:{authorization:'Bearer '+raw.program,'content-type':'text/plain'},body:'{}'})).status).toBe(415);
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.program))).get()?.lastUsedAt).toBeNull();
+ expect((await f.call('tasks.command',{action:'comment',id:'t-1',text:'Accepted program use'})).status).toBe(200);
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.program))).get()?.lastUsedAt).toBe(new Date(f.clock.now()).toISOString());
 });

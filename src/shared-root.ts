@@ -139,7 +139,7 @@ export function sharedRoot(options: {
   const householdAccess=sharedHouseholdAccess(db,now,options.changes?.rule);
   const projectQueries=sharedProjectQueries(db);
   const householdQueries=householdAccessQueries(db,householdAccess);
-  const authenticateOutside=(request:Request)=>{const auth=credentials.authenticate(request);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)};};
+  const authenticateOutside=(request:Request,options?:Parameters<typeof credentials.authenticate>[1])=>{const auth=credentials.authenticate(request,options);return auth&&{...auth,valid:()=>auth.valid()&&householdQueries.valid(auth.viewer)&&projectQueries.valid(auth.viewer)};};
   const bodyScope=conversationBodyScope(db,credentials.body,scope=>mayRunPrivateWork(scope,sharedSharing(db)));
   const comms = options.commsKey ? sharedConversations(db, clock, options.commsKey) : undefined;
   const tasks=taskService(db,now);
@@ -307,7 +307,7 @@ export function sharedRoot(options: {
       if (!meter) await measuringReady;
       if (closing) return c.json(failure('unavailable', 'Loom is closing'), 503);
       if(credentials.isProgramRequest(c.req.raw)){
-        const auth=authenticate(c.req.raw);
+        const auth=authenticate(c.req.raw,{recordUse:false});
         if(!auth||!credentials.program(auth.viewer))return c.json(failure('denied','Permission denied'),403);
         const path=new URL(c.req.url).pathname;
         const command=/^\/api\/([^/]+)\/([^/]+)$/.exec(path);
@@ -318,7 +318,7 @@ export function sharedRoot(options: {
       await next();
     } finally { active.delete(entry); finished(); }
   });
-  http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate:request=>{const auth=authenticate(request);return auth&&!credentials.program(auth.viewer)?auth:undefined;} }));
+  http.route('/', sharedSigninLinkRoutes({ db, clock, writes: data.writes, publicOrigin: options.publicOrigin, admitted: () => !closing, reportError: options.reportError, authenticate:request=>authenticate(request,{programs:'deny'}) }));
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
