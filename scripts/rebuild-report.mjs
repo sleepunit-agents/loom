@@ -14,7 +14,7 @@ export function evaluate(promise,run){
  if(p.kind==='action'){
   const action=run.actions?.[p.action];
   if(!action)return {status:'not checkable yet',reason:run.fatal??'The browser action did not run.'};
-  return {status:action.ok===true?'met':'not met',reason:action.ok===true?'The browser action and its persisted result were verified.':action.error??'The browser action result differed from the expected record.',evidence:action.screenshot??'walkthrough.json#actions'};
+  return {status:action.ok===true?'met':'not met',reason:action.ok===true?(action.reason??'The browser action and its persisted result were verified.'):action.error??'The browser action result differed from the expected record.',evidence:action.screenshot??'walkthrough.json#actions'};
  }
  if(p.kind==='ui'){
   const app=run.apps.find(app=>app.title===p.app);

@@ -24,6 +24,7 @@ export async function deskActions({page,out,inventory}) {
  };
  const boxes=()=>page.locator('[data-tile]:visible').evaluateAll(nodes=>nodes.map(n=>{const r=n.getBoundingClientRect();return{name:n.getAttribute('aria-label'),x:r.x,y:r.y,w:r.width,h:r.height};}));
  const snapshot=async()=>{
+  await page.locator('[data-tile]:visible').evaluateAll(nodes=>Promise.all(nodes.flatMap(node=>node.getAnimations().map(animation=>animation.finished.catch(()=>{})))));
   const rows=await boxes();check(rows.length>0,'No visible tiles');
   const ground=await page.locator('.next-ground').boundingBox();
   for(const a of rows){
@@ -31,19 +32,23 @@ export async function deskActions({page,out,inventory}) {
    for(const b of rows)if(a!==b)check(Math.min(a.x+a.w,b.x+b.w)-Math.max(a.x,b.x)<=1||Math.min(a.y+a.h,b.y+b.h)-Math.max(a.y,b.y)<=1,`Overlapping tiles: ${a.name}, ${b.name}`);
   }
   const right=Math.max(...rows.map(a=>a.x+a.w)),bottom=Math.max(...rows.map(a=>a.y+a.h));
-  const rail=await page.getByRole('complementary',{name:'Your agents',exact:true}).boundingBox();
-  const expectedRight=rail?rail.x-10:ground.x+ground.width;
+  const railNode=page.getByRole('complementary',{name:'Your agents',exact:true});
+  const rail=await railNode.count()?await railNode.boundingBox():null;
+  const edgeNode=page.getByRole('button',{name:'Show agents rail',exact:true});
+  const edge=await edgeNode.count()?await edgeNode.boundingBox():null;
+  const expectedRight=rail?rail.x-10:edge?edge.x-10:ground.x+ground.width;
   check(Math.abs(Math.min(...rows.map(a=>a.x))-ground.x)<=1&&Math.abs(Math.min(...rows.map(a=>a.y))-ground.y)<=1&&Math.abs(right-expectedRight)<=1&&Math.abs(bottom-(ground.y+ground.height))<=1,'Tiles do not fill the available desk bounds');
   return rows;
  };
  await attempt('deskLauncher',async()=>{
   await clear();await page.keyboard.press('Control+Shift+Space');await launcher.waitFor();
   const groups=await launcher.locator('.loom-lsec').count();check(groups>1,'Launcher apps are not grouped');
+  await page.keyboard.press('Escape');await launcher.waitFor({state:'hidden'});
   const missing=[];
   for(const name of inventory){const label=name==='Home'?'Home':`Open ${name}`;if(!await page.locator('.next-dock').getByRole('button',{name:label,exact:true}).count())missing.push(name);}
   check(!missing.length,`Apps missing from dock: ${missing.join(', ')}`);
   await page.keyboard.press('Escape');await launch('Tasks');
-  return{groups,inventory,search:'Tasks',enterOpened:'Tasks'};
+  return{reason:'Launcher groups and dock inventory matched; typing Tasks and pressing Enter opened its tile.',groups,inventory,search:'Tasks',enterOpened:'Tasks'};
  });
  await attempt('deskLayout',async()=>{
   await clear();await page.setViewportSize({width:1920,height:900});
@@ -64,7 +69,7 @@ export async function deskActions({page,out,inventory}) {
   await page.setViewportSize({width:1100,height:1500});await launch('Inbox');await launch('Approvals');
   await tile('Tasks').waitFor({state:'hidden'});check(await tile('Inbox').isVisible()&&await tile('Approvals').isVisible(),'The most recently used tiles did not remain');
   const evicted=await snapshot();await page.locator('.next-dock').getByRole('button',{name:'Open Tasks',exact:true}).click();await tile('Tasks').waitFor();
-  return{wide,tall,promoted,minimizedRestored:true,closedRemoved:true,leastRecentlyUsed:'Tasks',evicted};
+  return{reason:'Wide and tall tile bounds filled the desk without overlap; promotion, minimize/restore, close, and least-recently-used eviction worked.',wide,tall,promoted,minimizedRestored:true,closedRemoved:true,leastRecentlyUsed:'Tasks',evicted};
  });
  await page.setViewportSize({width:1600,height:1000});
  return evidence;
