@@ -6,7 +6,7 @@ import {tmpdir} from 'node:os';
 import {walkthroughSteps} from '../../scripts/rebuild-walkthrough.mjs';
 const titles=['Tasks','Approvals','Project sharing','Changes','Inbox','Tempo','Home','Projects','Activity','Comms','Agents','People','Knowledge','Bridges','Settings','Household setup','Your account'];
 describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
- let steps:ReturnType<typeof walkthroughSteps>,out:string,ready=false;
+ let steps:ReturnType<typeof walkthroughSteps>,out:string,ready=false,runtimeTitle:string;
  beforeAll(async()=>{
   out=process.env.LOOM_TEST_SHOTS??mkdtempSync(join(tmpdir(),'loom-walkthrough-proof-'));
   steps=walkthroughSteps(out);const step=await steps.next();
@@ -14,7 +14,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(report.signin.ok).toBe(true);expect(report.example.members).toEqual(['alex','robin']);
   expect(report.isolation).toMatchObject({http:'blocked',websocket:'blocked'});
   expect(report.isolation.consoleErrors.join(' ')).toContain('Walkthrough console capture probe');
-  expect(report.inventory).toEqual(titles);
+  expect(report.inventory).toEqual(titles);runtimeTitle=report.example.runtime.job.title;expect(report.example.runtime.job.state).toBe('queued');
  });
  for(const title of titles)it(`collects ${title} from the real launcher`,{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase).toBe('app');const app=step.value.row;
@@ -22,6 +22,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
   expect(app.text.trim().length).toBeGreaterThan(0);
   expect(Array.isArray(app.consoleErrors)).toBe(true);expect(Array.isArray(app.live.frames)).toBe(true);
   expect(readFileSync(join(out,app.screenshot)).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
+  if(title==='Home'){expect(app.error).toBeUndefined();expect(app.text).toContain(runtimeTitle);expect(app.text).toContain('queued');}
   if(title==='Comms')expect(app.detailText).toContain('Three fit. The quiet model');
  });
  it('sends and answers through the real Comms and Inbox controls',{retry:0,timeout:20_000},async()=>{

@@ -1,3 +1,4 @@
+import {exampleRuntime,exampleModelRoles} from './example-runtime.js';
 /** Fictitious acceptance household. Use application services, never row inserts.
  * Missing operations are evidence, not a reason to manufacture passing data. */
 import Database from 'better-sqlite3';
@@ -14,7 +15,8 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
  const home=resolve(directory);
  // Exclusive creation: this command never opens an existing household.
  mkdirSync(home,{mode:0o700});
- const at=new Date().toISOString(),clock=new FakeClock(Date.parse(at));
+ // Settle fictitious inbox mail before wall-clock startup, without future facts.
+ const at=new Date(Date.now()-10_000).toISOString(),clock=new FakeClock(Date.parse(at));
  const client=new Database(join(home,'app.db'));
  let root:ReturnType<typeof sharedRoot>|undefined;
  try {
@@ -27,7 +29,7 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   house.setMember({id:'robin',role:'member',agents:['moss']});
   const commsKey=await loadKey(home);
   root=sharedRoot({db,clock,commsKey,originAllowed:()=>false,reportError:error=>{throw error;},
-   modelRoles:()=>[{model:'example-model',provider:'example-provider',harness:'example-harness',series:'example'}]});
+   modelRoles:()=>exampleModelRoles});
   await root.ready;
   const s=root.services,actor={kind:'member' as const,id:'alex'};
   const thread=s.comms!.threads.open({member:'alex',agent:'fern',title:'Repair the garden pump'});
@@ -45,18 +47,20 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   // This is an outside operation: use an actual current credential rather
   // than treating a caller label as identity. The setup token never survives.
   const setup=root.writes.run(()=>s.signin.issue({kind:'owner',member:'alex',label:'Example setup',expiresAt:new Date(clock.now()+60_000).toISOString()})).value;
-  let account:{id:string};
+  let account:{id:string};let runtime:Awaited<ReturnType<typeof exampleRuntime>>;
   try{
    const response=await root.http.request('http://example/api/runtime/accountCreate',{method:'POST',headers:{authorization:'Bearer '+setup.token,'content-type':'application/json'},body:JSON.stringify({id:'example-account',input:{provider:'example-provider',label:'Example model subscription'}})});
    const answer=z.object({ok:z.literal(true),value:z.object({id:z.string()}).strict()}).strict().safeParse(await response.json());
    if(!response.ok||!answer.success)throw Error('Example account could not be created through its API');
    account=answer.data.value;
+   runtime=await exampleRuntime(root,clock,setup.token,account.id);
   }finally{root.writes.run(()=>s.signin.revoke(setup.fingerprint));}
-  const commons=join(home,'commons');
-  const program={database:join(home,'app.db'),commsKey:join(home,'comms.key'),signinMember:'alex',webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:['fern','moss'].map(agent=>({agent,directory:join(home,'agents',agent),memories:join(home,'agents',agent,'memories.db')}))}}};
-  const manifest={fictional:true,createdAt:at,members:['alex','robin'],agents:['fern','moss'],thread:thread.id,conversation:thread.conversation,tasks:tasks.map(t=>t.id),approval:approval.id,trigger:trigger.id,change:change.id,account,gaps:[
+  const commons=join(home,'commons'),adapters=join(home,'example-adapters.mjs');
+  writeFileSync(adapters,'export default () => ({modelRoles: () => '+JSON.stringify(exampleModelRoles)+'});\n',{mode:0o600});
+  const program={adapters,database:join(home,'app.db'),commsKey:join(home,'comms.key'),signinMember:'alex',webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:['fern','moss'].map(agent=>({agent,directory:join(home,'agents',agent),memories:join(home,'agents',agent,'memories.db')}))}}};
+  const manifest={fictional:true,createdAt:at,members:['alex','robin'],agents:['fern','moss'],thread:thread.id,conversation:thread.conversation,tasks:tasks.map(t=>t.id),approval:approval.id,trigger:trigger.id,change:change.id,account,runtime,gaps:[
    {page:'people',promise:'A shared project with members, agents and a repository',reason:'No project administration operation or trusted shared service is registered; no raw rows were inserted.'},
-   {page:'machines',promise:'An enrolled machine with a job',reason:'No shared machine enrollment operation is registered. A worker and assigned job cannot be fabricated through application operations.'},
+   {page:'machines',promise:'A worker claims and executes its queued job',reason:'The example uses real setup, reporting and inbox admission, but does not claim a job or execute a worker/body/provider.'},
   ]};
   writeFileSync(join(home,'program.json'),JSON.stringify(program,null,2)+'\n',{mode:0o600});
   writeFileSync(join(home,'example.json'),JSON.stringify(manifest,null,2)+'\n',{mode:0o600});
