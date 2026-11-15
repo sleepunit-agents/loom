@@ -12,11 +12,12 @@ import {FakeClock} from './core/clock.js';
 import {startSharedHome} from './shared-startup.js';
 import * as s from './core/data/schema.js';
 import type {bridgeSlackSocket} from './pieces/bridges/slack-socket.js';
-const wire=vi.hoisted(()=>({slack:vi.fn<typeof bridgeSlackSocket>()}));
-vi.mock('./shared-holder-process.js',async()=>({startSharedHolder:(await import('../test/fixtures/shared-holder.js')).inProcessSharedHolder}));
+type InProcessHolder=Awaited<ReturnType<typeof import('../test/fixtures/shared-holder.js').inProcessSharedHolder>>;
+const wire=vi.hoisted(()=>({slack:vi.fn<typeof bridgeSlackSocket>(),owners:[]as InProcessHolder[]}));
+vi.mock('./shared-holder-process.js',async()=>{const {inProcessSharedHolder}=await import('../test/fixtures/shared-holder.js');return{async startSharedHolder(...args:Parameters<typeof inProcessSharedHolder>){const owner=await inProcessSharedHolder(...args);vi.spyOn(owner.source,'generation');wire.owners.push(owner);return owner;}};});
 vi.mock('./pieces/bridges/slack-socket.js',async original=>({...await original<typeof import('./pieces/bridges/slack-socket.js')>(),bridgeSlackSocket:wire.slack}));
 const clean:Array<()=>void|Promise<void>>=[];
-afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.unstubAllGlobals();vi.restoreAllMocks();vi.unstubAllEnvs();wire.slack.mockReset();});
+afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.unstubAllGlobals();vi.restoreAllMocks();vi.unstubAllEnvs();wire.slack.mockReset();wire.owners.length=0;});
 it('uses the owned holder for owner-configured Slack authentication, admission, sends and revocation',async()=>{
  vi.stubEnv('LOOM_PUBLIC_URL',undefined);vi.stubEnv('LOOM_WORKER_SOCKET',undefined);
  const parent=mkdtempSync(join(tmpdir(),'loom-default-bridges-')),home=join(parent,'home'),webRoot=join(parent,'web');
@@ -75,8 +76,16 @@ it('uses the owned holder for owner-configured Slack authentication, admission, 
  await daemon.idle();clock.advance(5000);
  await expect.poll(()=>db.select().from(s.bridgeConnections).get()?.state).toBe('connected');await daemon.idle();
  expect(wire.slack).toHaveBeenCalledTimes(2);
- const stopping=app.close();expect(transport!.beforeConnect()).toBe(false);await expect(transport!.receive({},raw)).rejects.toThrow();
- await stopping;expect(closed).toHaveBeenCalledTimes(2);
+ let release!:()=>void,began!:()=>void;
+ const held=new Promise<void>(yes=>{release=yes;}),started=new Promise<void>(yes=>{began=yes;});
+ closed.mockImplementationOnce(()=>{began();return held;});
+ const holderClose=vi.spyOn(wire.owners[0],'close');let settled=false;
+ const stopping=app.close().then(()=>{settled=true;});expect(transport!.beforeConnect()).toBe(false);await expect(transport!.receive({},raw)).rejects.toThrow();
+ await started;expect(holderClose).toHaveBeenCalledOnce();
+ // Holder completion alone must not dispose SQLite while the transport is held.
+ await holderClose.mock.results[0].value;
+ expect(db.$client.open).toBe(true);expect(db.$client.prepare('select count(*) as n from bridge_connections').get()).toEqual({n:1});expect(settled).toBe(false);
+ release();await stopping;expect(db.$client.open).toBe(false);expect(closed).toHaveBeenCalledTimes(2);
 });
 
 it('keeps an explicitly configured bridge source instead of replacing it with the owned holder',async()=>{
@@ -89,5 +98,5 @@ it('keeps an explicitly configured bridge source instead of replacing it with th
  writeFileSync(adapter,'export let observed=0; export default()=>({bridges:{source:{generation:async()=>{observed++;return "00000000-0000-4000-8000-000000000000";},read:async()=>{throw Error("No configured value");}},effectsAllowed:()=>false}});',{mode:0o600});
  const program=JSON.parse(readFileSync(programPath,'utf8'));program.adapters=adapter;writeFileSync(programPath,JSON.stringify(program),{mode:0o600});
  const app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});clean.push(()=>app.close());
- const module=await import(pathToFileURL(adapter).href);expect(module.observed).toBe(1);expect(app.services.bridges.daemon).toBeDefined();expect(wire.slack).not.toHaveBeenCalled();
+ const module=await import(pathToFileURL(adapter).href);expect(module.observed).toBe(1);expect(wire.owners[0].source.generation).not.toHaveBeenCalled();expect(app.services.bridges.daemon).toBeDefined();expect(wire.slack).not.toHaveBeenCalled();
 });

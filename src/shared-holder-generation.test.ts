@@ -5,7 +5,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {FakeClock} from './core/clock.js';
-import {sharedHolderClient} from './shared-holder-channel.js';
+import {sharedHolderClient,serveSharedHolderChannel} from './shared-holder-channel.js';
+import {openSharedHolderStorage} from './shared-holder-storage.js';
 import {holderChannelPair,inProcessSharedHolder} from '../test/fixtures/shared-holder.js';
 const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
@@ -36,4 +37,16 @@ it('does not accept a UUID as a secret-value reply',async()=>{
  child.send({op:'ready',key:Buffer.alloc(32,1)},()=>{});(await client.ready).fill(0);clean.push(()=>client.close());
  const pending=client.source.read('TOKEN'),failure=expect(pending).rejects.toThrow('unavailable');
  parent.emit('message',{op:'result',seq:1,ok:true,value:randomUUID()});await failure;expect(parent.connected).toBe(false);
+});
+
+it('refuses invalid store metadata before putting it on the private wire',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'loom-invalid-generation-')),clock=new FakeClock();
+ clean.push(()=>rmSync(home,{recursive:true,force:true}));
+ const store=await openSharedHolderStorage(join(home,'holder')),{parent,child}=holderChannelPair();
+ const frames:unknown[]=[];parent.on('message',value=>frames.push(value));
+ const server=serveSharedHolderChannel(child,async()=>({key:Buffer.alloc(32,1),store:{...store,generation:()=> 'invalid store generation'}}));
+ const client=sharedHolderClient(parent,clock);(await client.ready).fill(0);
+ clean.push(async()=>{await client.close();await server.done;});
+ await expect(client.source.generation()).rejects.toThrow('unavailable');
+ expect(frames.at(-1)).toEqual({op:'result',seq:1,ok:false,value:null});
 });
