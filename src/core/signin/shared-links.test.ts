@@ -91,12 +91,12 @@ it('uses a six-hour agent browser session and secure cookies at the configured H
   f.clock.advance(6 * 3600_000); expect((await f.read(cookie)).status).toBe(401);
 });
 
-it('refuses cross-origin requests, cookies or a fingerprint as minting authority, and follows session deletion', async () => {
+it('refuses cross-origin requests or fingerprints as minting authority, admits member cookies, and follows session deletion', async () => {
   const f = fixture();
   expect((await f.mint({ authorization: 'Bearer ' + credential, origin: 'https://elsewhere.test' })).status).toBe(403);
   expect((await f.mint({ authorization: 'Bearer ' + hash(credential) })).status).toBe(401);
   const path = await f.link(), signed = await f.redeem(path), cookie = signed.headers.get('set-cookie')!.split(';', 1)[0];
-  expect((await f.mint({ cookie })).status).toBe(401);
+  expect((await f.mint({ cookie })).status).toBe(200);
   f.root.writes.run(() => f.db.delete(sessions).run());
   expect((await f.read(cookie)).status).toBe(401);
   const next = await f.link(); expect((await f.redeem(next, { 'sec-fetch-site': 'cross-site' })).status).toBe(403);

@@ -179,6 +179,24 @@
           "Order the selected pump"
         ]
       }
+    },
+    {
+      "id": "conversations-031",
+      "promise": "Sending in Comms persists the message after reload and creates one Inbox delivery item.",
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "action",
+        "action": "commsSend"
+      }
+    },
+    {
+      "id": "conversations-032",
+      "promise": "A question answered in Inbox becomes answered inline in Comms.",
+      "source": "docs/how-it-works/site/conversations.html",
+      "probe": {
+        "kind": "action",
+        "action": "commsAnswer"
+      }
     }
   ],
   "modelTables": [

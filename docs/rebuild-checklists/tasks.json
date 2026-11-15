@@ -7,17 +7,29 @@
     {
       "id": "tasks-001",
       "promise": "Shows what is ready to pick up, most urgent first.",
-      "source": "docs/how-it-works/site/tasks.html"
+      "source": "docs/how-it-works/site/tasks.html",
+      "probe": {
+        "kind": "action",
+        "action": "taskStructure"
+      }
     },
     {
       "id": "tasks-002",
       "promise": "Lets a person or an agent claim work, comment on it and close it.",
-      "source": "docs/how-it-works/site/tasks.html"
+      "source": "docs/how-it-works/site/tasks.html",
+      "probe": {
+        "kind": "action",
+        "action": "taskLifecycle"
+      }
     },
     {
       "id": "tasks-003",
       "promise": "Groups work under a parent and holds back what is blocked.",
-      "source": "docs/how-it-works/site/tasks.html"
+      "source": "docs/how-it-works/site/tasks.html",
+      "probe": {
+        "kind": "action",
+        "action": "taskStructure"
+      }
     },
     {
       "id": "tasks-004",
@@ -42,7 +54,11 @@
     {
       "id": "tasks-008",
       "promise": "Other tasks. One parent at most, any number of blockers.",
-      "source": "docs/how-it-works/site/tasks.html#con-h"
+      "source": "docs/how-it-works/site/tasks.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "taskStructure"
+      }
     },
     {
       "id": "tasks-009",
@@ -57,12 +73,20 @@
     {
       "id": "tasks-011",
       "promise": "A task sits under one parent at most. An epic groups other tasks and is never ready itself. A blocked task waits until the task blocking it closes.",
-      "source": "docs/how-it-works/site/tasks.html#how-h"
+      "source": "docs/how-it-works/site/tasks.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "taskStructure"
+      }
     },
     {
       "id": "tasks-012",
       "promise": "People and agents leave comments as work moves. Loom keeps them in order, oldest first, each with who wrote it and when.",
-      "source": "docs/how-it-works/site/tasks.html#how-h"
+      "source": "docs/how-it-works/site/tasks.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "taskComments"
+      }
     },
     {
       "id": "tasks-013",
