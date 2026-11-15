@@ -45,8 +45,9 @@ function fixture(tempo?: Parameters<typeof sharedRoot>[0]['tempo'], commsKey?: P
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: errors, tempo, commsKey, modelRoles: () => roles, runtimeJobEnded: ended });
   cleanup.push(() => root.close());
   const send = (venue: 'loom' | 'handoff' | 'wake' = 'loom', place = 'thread', words = 'Private work instructions') => {
+    if(venue==='handoff'){db.insert(agents).values({id:'mark',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).onConflictDoNothing().run();db.insert(memberAgents).values([{member:'owner',agent:'art'},{member:'owner',agent:'mark'}]).onConflictDoNothing().run();}
     const conversation = root.services.conversations.open({ agent: 'art', venue, place, label: place });
-    const mail = root.services.conversations.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: venue === 'handoff' ? 'handoff' : venue === 'wake' ? 'trigger' : 'thread', fromKind: 'person', fromId: 'owner', words });
+    const mail = root.services.conversations.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: venue === 'handoff' ? 'handoff' : venue === 'wake' ? 'trigger' : 'thread', fromKind: venue==='handoff'?'agent':'person', fromId: venue==='handoff'?'mark':'owner', words });
     expect(root.services.runtime.admit({ kind: 'agent', id: 'art' }, [mail])).toBe(true);
     return db.select().from(jobs).where(eq(jobs.conversation, conversation.id)).get()!;
   };

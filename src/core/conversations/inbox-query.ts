@@ -107,14 +107,17 @@ export class InboxQueries {
         eq(messages.seq, item.messageSeq ?? -1), eq(messages.inboxItem, item.id))).get() : undefined;
       const keep = this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
       const thread = item.thread ? this.db.select().from(threads).where(eq(threads.id, item.thread)).get() : undefined;
-      return { message, keep, thread, answerMail: answer?.mail, handoff: item.source==='handoff'?this.current(viewer,item.id):undefined };
+      return { message, keep, thread, answerMail: answer?.mail };
     };
     const metadata = (item: Item) => [item.id, item.source, item.sourceId, item.fromId, item.agent, item.project,
         item.answer, item.answeredBy, item.resolution, ...this.refs(viewer, item.id)].some(value => value?.toLocaleLowerCase().includes(query));
     const matches: { item: Item; metadata?: true; fromAnswer?: true; state?: ReturnType<typeof privateState> }[] = [];
     for (const item of candidates) {
       if (metadata(item)) { matches.push({ item, metadata: true }); continue; }
-      const state = item.thread || item.source==='handoff' ? privateState(item) : undefined;
+      // Handoffs are agent mail. Their wording is delivered only by take,
+      // while this personal mailbox search can match their metadata.
+      if(item.source==='handoff')continue;
+      const state = item.thread ? privateState(item) : undefined;
       const body = await this.body(viewer, item.id);
       if (body && [body.words, body.why, body.ifYes, body.ifNo, body.link].some(value => value?.toLocaleLowerCase().includes(query))) matches.push({ item, state });
       {
@@ -130,18 +133,22 @@ export class InboxQueries {
       if (byMetadata) return metadata(item);
       if (!state) return true;
       const after = privateState(item, fromAnswer), message = after.message;
-      return JSON.stringify(after) === JSON.stringify(state) && (after.handoff ? viewer.kind==='member'&&handoffDeadline(after.handoff,after.keep)>Date.parse(this.now()) : this.retainedMessage(message, after.keep));
+      return JSON.stringify(after) === JSON.stringify(state) && this.retainedMessage(message, after.keep);
     });
     // One item may match both its question and its independently retained
     // answer. Keep the longest still-valid witness, once, before paging.
     const unique = new Map<string, typeof current[number]>();
-    const deadline = (match: typeof current[number]) => match.metadata ? Infinity : match.state?.handoff ? handoffDeadline(match.state.handoff,match.state.keep) : match.state?.message ? wordsDeadline(match.state.message,match.state.keep) : Infinity;
+    const deadline = (match: typeof current[number]) => match.metadata || !match.state?.message
+      ? Infinity : wordsDeadline(match.state.message, match.state.keep);
     for (const match of current) {
       const prior = unique.get(match.item.id);
       if (!prior || deadline(match) > deadline(prior)) unique.set(match.item.id, match);
     }
     const page = [...unique.values()].slice(filter.offset ?? 0, (filter.offset ?? 0) + (filter.limit ?? 50));
-    for (const match of page) {const until=deadline(match);if(Number.isFinite(until))retainedUntil?.(until);}
+    for (const match of page) if (!match.metadata && match.state?.message) {
+      const message = match.state.message;
+      retainedUntil?.(wordsDeadline(message, match.state.keep));
+    }
     return page.map(({ item }) => item);
   }
   results(viewer: Viewer, limit = 20): (typeof actionResults.$inferSelect)[] {

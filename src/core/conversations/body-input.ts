@@ -1,3 +1,4 @@
+import {handoffPeersAssigned} from './handoff-access.js';
 import {handoffDeadline} from './handoff-words.js';
 /** Body-only ephemeral mail. No operation receipt, job brief or shared cache ever
  * carries words. Confirming acceptance is a separate acknowledgement write. */
@@ -27,15 +28,17 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
  let parsed:z.infer<typeof input>;try{parsed=input.parse(await request.json());}catch{return refuse(400,'Expected ephemeral input without an operation id');}
  if(!options.admitted()||!auth.valid()||!options.admitted())return refuse(403,'Authentication ended');
  const before=options.scope(auth.viewer);if(!before||!options.admitted())return refuse(403,'Current conversation body required');
+ let mailAccess=()=>true;
  const active=()=>{
   if(!options.admitted()||!auth.valid()||!options.admitted())return false;
   const current=options.scope(auth.viewer);
-  return options.admitted()&&!!current&&current.job.id===before.job.id&&['id','agent','project','member','venue','place'].every(key=>current.cv[key as keyof typeof current.cv]===before.cv[key as keyof typeof before.cv]);
+  return options.admitted()&&mailAccess()&&!!current&&current.job.id===before.job.id&&['id','agent','project','member','venue','place'].every(key=>current.cv[key as keyof typeof current.cv]===before.cv[key as keyof typeof before.cv]);
  };
  try {
   const {db}=options.service,mail=new ConversationMail(options.service),cvs=options.service.threads.conversations;
   // Validate the exact pending prefix before opening any private ciphertext.
   const prefix=cvs.pending(before.cv.id,before.job.id).slice(0,parsed.input.limit);
+  mailAccess=()=>before.cv.member!==null||prefix.every(item=>item.source!=='handoff'||item.fromKind==='agent'&&item.fromId!==null&&handoffPeersAssigned(db,item.fromId,before.cv.agent,before.cv.project));
   if(prefix.some(item=>!sameMailScope(item,before.cv)))return refuse(403,'Mail scope differs');
   if(!active())return refuse(403,'Authentication ended');
   const prepared=await mail.prepareTake(before.cv.id,before.job.id,parsed.input.limit);

@@ -10,6 +10,7 @@ afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();}
 it.each([['wake',false],['handoff',false],['wake',true],['handoff',true]] as const)('completes actual %s Inbox mail without Comms (authored digest %s)',async(venue,authored)=>{
  const f=await bodyFixture(clean),conversation=f.thread.conversation,token='body_'+'d'.repeat(64);
  f.root.writes.run(()=>{
+  if(venue==='handoff'){f.db.insert(s.memberAgents).values({member:'alice',agent:'mark'}).run();f.db.insert(s.projectAgents).values({project:'pond',agent:'mark'}).run();}
   f.db.delete(s.threads).where(eq(s.threads.id,f.thread.id)).run();
   f.db.update(s.conversations).set({venue,member:null,place:venue==='wake'?'nightly':'parent-job'}).where(eq(s.conversations.id,conversation)).run();
   f.db.update(s.jobs).set({member:null}).where(eq(s.jobs.id,'job')).run();

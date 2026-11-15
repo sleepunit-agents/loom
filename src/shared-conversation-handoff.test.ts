@@ -46,7 +46,7 @@ it('hands a real private brief through one inherited conversation, settled job a
  expect(f.db.select().from(s.turns).where(eq(s.turns.conversation,cv.id)).all()).toHaveLength(1);
  f.clock.advance(60_000);
  const {sdk,job}=receive(f,cv.id);
- expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()?.brief).toBe('');
+ expect(f.db.select().from(s.jobs).where(eq(s.jobs.id,job)).get()).toMatchObject({member:'alice',project:'pond',brief:''});
  expect(await sdk.takeAndAccept(async item=>{expect(item).toMatchObject({source:'handoff',fromKind:'agent',fromId:'art',words:brief.words,keepUntil:new Date(handoffDeadline(stored,14)).toISOString()});})).toMatchObject({accepted:1});
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,stored.id)).get()?.state).toBe('done');
  for(const table of [s.inbox,s.jobs,s.operationResults,s.conversations,s.turns])expect(JSON.stringify(f.db.select().from(table).all())).not.toContain(brief.words);
@@ -187,7 +187,7 @@ it('hides handoff envelopes from generic agent bodies/search and opens words onl
  f.clock.advance(60_000);const {token}=receive(f,created.conversation);
  const agent=await read(token);expect(await agent.json()).toMatchObject({data:{inboxItem:{body:null,bodyKeepUntil:null}}});
  const searched=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({query:'{inboxItems(search: "loom:handoff:v1"){id body{words}}}'})});expect(await searched.json()).toMatchObject({data:{inboxItems:[]}});
- const member=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+bodyCredentials.memberCookie},body:JSON.stringify({query})});expect(await member.json()).toMatchObject({data:{inboxItem:{body:{words:brief.words}}}});
+ const member=await f.root.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',cookie:'loom_ui='+bodyCredentials.memberCookie},body:JSON.stringify({query})});expect(await member.json()).toMatchObject({data:{inboxItem:{body:{words:brief.words},bodyKeepUntil:new Date(f.clock.now()-60000+14*86400000).toISOString()}}});
 });
 
 it('rechecks a public shared owner after encryption and before receipt replay',async()=>{
@@ -196,4 +196,35 @@ it('rechecks a public shared owner after encryption and before receipt replay',a
  f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run());release();expect((await pending).status).toBe(403);
  f.gate(async()=>{});f.root.writes.run(()=>f.db.insert(s.memberAgents).values({member:'alice',agent:'mark'}).run());await create(f,'public-owner');
  f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run());expect((await f.call('handoff',brief,'public-owner')).status).toBe(403);
+});
+
+it('rechecks the private no-project sender during encryption and receipt replay',async()=>{
+ const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set({project:null}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({project:null}).where(eq(s.jobs.id,'job')).run();});
+ let release!:()=>void,enter!:()=>void;const gate=new Promise<void>(yes=>{release=yes;}),started=new Promise<void>(yes=>{enter=yes;});f.gate(async()=>{enter();await gate;});const pending=f.call('handoff',brief,'private-sender');await started;
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'art')).run());release();expect((await pending).status).toBe(403);expect(f.db.select().from(s.inbox).all()).toEqual([]);
+ f.gate(async()=>{});f.root.writes.run(()=>f.db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run());await create(f,'private-sender');
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'art')).run());expect((await f.call('handoff',brief,'private-sender')).status).toBe(403);
+});
+it.each(['project','owner'] as const)('withholds a pending public brief after %s assignment changes, without relying on notifications',async kind=>{
+ const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set({member:null,...(kind==='owner'?{project:null}:{})}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null,...(kind==='owner'?{project:null}:{})}).where(eq(s.jobs.id,'job')).run();});
+ const created=await create(f);f.clock.advance(60_000);const {token}=receive(f,created.conversation);
+ let enter!:()=>void,release!:()=>void;const started=new Promise<void>(yes=>{enter=yes;}),gate=new Promise<void>(yes=>{release=yes;});f.openGate(async()=>{enter();await gate;});
+ const pending=f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});await started;
+ // Current policy is checked even when a source writer omits its notification.
+ if(kind==='project')f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'mark')).run();else f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run();
+ release();const response=await pending;expect(response.status).toBe(403);expect(await response.text()).not.toContain(brief.words);
+ expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,created.item)).get()?.state).toBe('waiting');
+});
+it('keeps private handoff body words visible to a household owner who is not its member',async()=>{
+ const f=await fixture(),created=await create(f),token='fictional-owner-body-read-'.repeat(4);
+ f.root.writes.run(()=>{f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();f.db.insert(s.tokens).values({fingerprint:credentialHash(token),label:'Fictional owner',kind:'owner',member:'bob',createdAt:new Date(f.clock.now()).toISOString()}).run();});
+ const response=await f.root.http.request('/graphql',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json'},body:JSON.stringify({query:`{inboxItem(id:"${created.item}"){body{words}}}`})});expect(await response.json()).toMatchObject({data:{inboxItem:{body:{words:brief.words}}}});
+});
+
+it.each(['project','owner'] as const)('withdraws published public handoff originals and clones after %s assignment changes',async kind=>{
+ const f=await fixture();f.root.writes.run(()=>{f.db.update(s.conversations).set({member:null,...(kind==='owner'?{project:null}:{})}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.jobs).set({member:null,...(kind==='owner'?{project:null}:{})}).where(eq(s.jobs.id,'job')).run();});
+ const created=await create(f);f.clock.advance(60_000);const {token}=receive(f,created.conversation);
+ const response=await f.root.http.request('/api/conversation/take',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({input:{}})});expect(response.status).toBe(200);const copy=response.clone();
+ if(kind==='project')f.db.delete(s.projectAgents).where(eq(s.projectAgents.agent,'mark')).run();else f.db.delete(s.memberAgents).where(eq(s.memberAgents.agent,'mark')).run();
+ await expect(response.text()).rejects.toThrow('Data access ended');await expect(copy.text()).rejects.toThrow('Data access ended');
 });
