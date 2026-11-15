@@ -21,7 +21,7 @@ export function claudeBody(input: {
   const control=input.mcpConfig?Buffer.from(input.mcpConfig):undefined;let used=false;
   if(control&&(control.byteLength<1||control.byteLength>65536)){control.fill(0);throw unavailable();}
   const allowed=[...(input.mcpTools??['mcp__loom_secrets__request_secret','mcp__loom_secrets__use_secret'])];
-  if(input.mcpTools&&!control||allowed.length>34||new Set(allowed).size!==allowed.length||allowed.some(name=>!/^mcp__loom_secrets__[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(name))){control?.fill(0);throw unavailable();}
+  if(input.mcpTools&&!control||allowed.length>34||new Set(allowed).size!==allowed.length||allowed.some(name=>typeof name!=='string'||!/^mcp__loom_secrets__[a-zA-Z][a-zA-Z0-9_-]{0,63}$/.test(name))){control?.fill(0);throw unavailable();}
   if(control){env.CLAUDE_CODE_MCP_AUTO_BACKGROUND_MS??='0';env.MAX_MCP_OUTPUT_TOKENS??='100000';env.MCP_TOOL_TIMEOUT??='86400000';env.CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT??='86400000';}
   return async (job: WorkerAssignment, words: string, signal: AbortSignal): Promise<ClaudeReply> => {
     if(control&&used)throw unavailable();used=true;

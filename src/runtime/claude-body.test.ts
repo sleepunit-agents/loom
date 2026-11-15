@@ -114,7 +114,7 @@ it('snapshots composed private tool names without broadening denied native tools
  const run=claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{}'),mcpTools:names});names.push('Bash');const pending=run(job,'mail',f.abort.signal),args=f.launch.mock.calls[0][1];
  expect(args.slice(args.indexOf('--allowedTools'),args.indexOf('--disallowedTools'))).toEqual(['--allowedTools','mcp__loom_secrets__command']);expect(args.slice(args.indexOf('--disallowedTools'))).toEqual(['--disallowedTools','Read']);f.finish(f.rows());await pending;
 });
-it.each([{names:['Bash']},{names:['mcp__foreign__tool']},{names:['mcp__loom_secrets__command','mcp__loom_secrets__command']}])('refuses invalid private tool policy $names before launching',({names})=>{
+it.each([{names:[{toString:()=> 'mcp__loom_secrets__command'} as unknown as string]},{names:['Bash']},{names:['mcp__foreign__tool']},{names:['mcp__loom_secrets__command','mcp__loom_secrets__command']}])('refuses invalid private tool policy $names before launching',({names})=>{
  const f=fixture();expect(()=>claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{}'),mcpTools:names})).toThrow('Native Claude execution unavailable');expect(f.launch).not.toHaveBeenCalled();
 });
 it('refuses private tool names without a private MCP configuration before launch',()=>{

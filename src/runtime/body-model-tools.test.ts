@@ -16,3 +16,8 @@ it('reads changing descriptor fields once before validating and snapshotting the
  const result=bodyModelTools([{get name(){return name();},get description(){return description();},get inputSchema(){return schema();},get execute(){return executor();}}]);
  expect(result[0].name).toBe('command');expect(result[0].execute).toBe(execute);for(const getter of [name,description,schema,executor])expect(getter).toHaveBeenCalledOnce();
 });
+
+it('refuses coercible or missing names and malformed descriptor fields',()=>{
+ for(const name of [undefined,{toString:()=> 'use_secret'}])expect(()=>bodyModelTools([{...tool(),name:name as unknown as string}])).toThrow('Body model tools unavailable');
+ expect(()=>bodyModelTools([{...tool(),description:undefined as unknown as string}])).toThrow('Body model tools unavailable');expect(()=>bodyModelTools([{...tool(),description:'x'.repeat(4097)}])).toThrow('Body model tools unavailable');expect(()=>bodyModelTools([{...tool(),execute:undefined as unknown as BodyModelTool['execute']}])).toThrow('Body model tools unavailable');
+});
