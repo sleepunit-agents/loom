@@ -187,7 +187,6 @@ export async function* walkthroughSteps(output) {
    if(title==='Approvals'&&row.opened)report.actions={...report.actions,...await approvalActions({page,tile:page.getByRole('region',{name:'Approvals tile',exact:true}),app,example:report.example,out})};
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await taskInlineQuestion({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
    if(title==='Approvals'&&row.opened)report.actions={...report.actions,...await approvalRulesAndExpiry({page,tile:page.getByRole('region',{name:'Approvals tile',exact:true}),app,example:report.example,out,clock})};
-   if(title==='Comms'&&row.opened)report.actions={...report.actions,...await approvalPreparedChanges({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out,clock})};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await workVisibility({page,app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
    if(title==='Tasks'&&row.opened){const tile=await openApp('Inbox');report.actions={...report.actions,...await taskQuestions({page,tile,app,example:report.example,out})};}
@@ -200,6 +199,8 @@ export async function* walkthroughSteps(output) {
    save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
 
   }
+  {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await approvalPreparedChanges({page,tile,app,example:report.example,out,clock}));}
+  save();yield {phase:'prepared-changes',actions:safeReport(report.actions)};
   {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await changeInline({page,tile,app,example:report.example,out}));}
   save();yield {phase:'change-references',actions:safeReport(report.actions)};
   Object.assign(report.actions,await inboxActions({page,tile:await openApp('Inbox'),app,example:report.example,out}));
