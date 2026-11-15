@@ -384,7 +384,7 @@ html.loom-ios-app { min-height: min(100lvh, calc(100% + env(safe-area-inset-top)
    its keys. Phone notices remain at the top, below the safe area. Unlayered
    placement wins over the component registry's toast defaults. */
 @media (width >= 64rem) {
-  .v-toaster[data-slot="toast-viewport"] { bottom: calc(104px + var(--s-6) + env(safe-area-inset-bottom)); }
+  :root:has(.loom-desk .loom-dock-bar) .v-toaster[data-slot="toast-viewport"] { bottom: calc(104px + var(--s-6) + env(safe-area-inset-bottom)); }
 }
 @media (width < 64rem) {
   .v-toaster[data-slot="toast-viewport"] { top: calc(env(safe-area-inset-top) + 12px); bottom: auto; left: 0; right: 0; margin-inline: auto; }
