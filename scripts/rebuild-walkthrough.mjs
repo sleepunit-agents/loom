@@ -191,7 +191,6 @@ export async function* walkthroughSteps(output) {
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await workVisibility({page,app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
    if(title==='Tasks'&&row.opened){const tile=await openApp('Inbox');report.actions={...report.actions,...await taskQuestions({page,tile,app,example:report.example,out})};}
-   if(title==='Changes'&&row.opened){const tile=await openApp('Comms');await selectExampleConversation(page,tile);report.actions={...report.actions,...await changeInline({page,tile,app,example:report.example,out})};}
    if(title==='Home'&&row.opened){report.actions={...report.actions,homeMessage:await homeActions({page,tile:page.getByRole('region',{name:'Home tile',exact:true}),app,out})};}
 
    report.apps.push(row);
@@ -201,6 +200,8 @@ export async function* walkthroughSteps(output) {
    save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
 
   }
+  {const tile=await openApp('Comms');await selectExampleConversation(page,tile);Object.assign(report.actions,await changeInline({page,tile,app,example:report.example,out}));}
+  save();yield {phase:'change-references',actions:safeReport(report.actions)};
   Object.assign(report.actions,await inboxActions({page,tile:await openApp('Inbox'),app,example:report.example,out}));
   save();yield {phase:'inbox-details',actions:safeReport(report.actions)};
   phase='conversation actions';
