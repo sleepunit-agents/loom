@@ -1,6 +1,7 @@
 /** Measure the approved desk through the running shell; never import its layout rule. */
+import {appearanceActions} from './rebuild-appearance-actions.mjs';
 import {join} from 'node:path';
-export async function deskActions({page,out,inventory}) {
+export async function deskActions({page,app,out,inventory}) {
  const evidence={};let phase;
  const attempt=async(name,run)=>{
   const screenshot=`action-${name}.png`;
@@ -76,5 +77,6 @@ export async function deskActions({page,out,inventory}) {
  });
  if(!evidence.deskGeometry)evidence.deskGeometry={ok:false,error:evidence.deskLayout?.error,phase:evidence.deskLayout?.phase,screenshot:evidence.deskLayout?.screenshot};
  await page.setViewportSize({width:1600,height:1000});
+ Object.assign(evidence,await appearanceActions({page,app,out}));
  return evidence;
 }

@@ -108,7 +108,7 @@ export async function* walkthroughSteps(output) {
   }
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:async title=>{await openLauncher();const button=launcher.locator('.loom-lapp').filter({has:page.locator('.loom-lapp__nm',{hasText:new RegExp('^'+title+'$')})});await button.waitFor({state:'visible'});await button.focus();await page.keyboard.press('Enter');await launcher.waitFor({state:'hidden'});const tile=page.getByRole('region',{name:title+' tile',exact:true});await tile.waitFor({state:'visible'});return tile;}})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
-  Object.assign(report.actions,await deskActions({page,out,inventory:report.inventory}));
+  Object.assign(report.actions,await deskActions({page,app,out,inventory:report.inventory}));
   save();yield {phase:'desk',actions:safeReport(report.actions)};
  }catch(error){report.fatal=String(error);}
  finally{report.consoleErrors=consoleErrors;report.pageErrors=pageErrors;report.networkErrors=networkErrors;report.live={frames:frames.length,dataFrames:frames.filter(frame=>frame.hasData).length,errors:frames.flatMap(frame=>frame.errors??[]),subscriptions};await browser?.close().catch(error=>report.errors.push(String(error)));await app?.close().catch(error=>report.errors.push(String(error)));rmSync(parent,{recursive:true,force:true});report.finishedAt=new Date().toISOString();save();rebuildReport(safeReport(report),out);}

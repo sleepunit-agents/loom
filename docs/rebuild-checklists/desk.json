@@ -35,7 +35,11 @@
     {
       "id": "desk-005",
       "promise": "Wears one of three looks: Neon Noir, Low Light or Daylight.",
-      "source": "docs/how-it-works/site/desk.html"
+      "source": "docs/how-it-works/site/desk.html",
+      "probe": {
+        "kind": "action",
+        "action": "deskLooks"
+      }
     },
     {
       "id": "desk-006",
@@ -93,7 +97,11 @@
     {
       "id": "desk-015",
       "promise": "A look is a set of colours and type over one structure. A person also picks the desk background (depth, contours or wash), reduced motion, higher contrast, and one window at a time.",
-      "source": "docs/how-it-works/site/desk.html#how-h"
+      "source": "docs/how-it-works/site/desk.html#how-h",
+      "probe": {
+        "kind": "action",
+        "action": "deskAppearance"
+      }
     },
     {
       "id": "desk-016",

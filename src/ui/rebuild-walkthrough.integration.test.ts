@@ -32,7 +32,7 @@ describe.skipIf(!process.env.LOOM_TEST_CHROME)('built program walkthrough',()=>{
  });
  it('measures desk launcher and tile controls',{retry:0,timeout:20_000},async()=>{
   const step=await steps.next();expect(step.value.phase,step.value.fatal).toBe('desk');
-  for(const name of ['deskLauncher','deskGeometry','deskLayout']){
+  for(const name of ['deskLauncher','deskGeometry','deskLayout','deskLooks','deskAppearance']){
    const result=step.value.actions?.[name];expect(typeof result?.ok).toBe('boolean');
    if(!result.ok)expect(result.error).toBeTruthy();
    expect(readFileSync(join(out,result.screenshot)).subarray(0,8)).toEqual(Buffer.from([137,80,78,71,13,10,26,10]));
