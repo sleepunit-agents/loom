@@ -75,7 +75,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const touches=mindTouchSources(sources);
   return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:queries.fields,nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,
-   register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'>){
+   register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>){
     installTouched(operations,mindTouchResolver(touches));
     const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages,classify:domain=>deriveSlaClass(null,domain)});closers.push(knowledge.close);
     const agent=settings?.defaultAgent??undefined;

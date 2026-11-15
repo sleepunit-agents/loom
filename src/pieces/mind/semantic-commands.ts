@@ -16,7 +16,7 @@ const category=z.enum(['user','project','self','feedback','reference','pursuit',
 const authored=z.string().refine(value=>value.trim().length>0,'Authored text cannot be blank');
 const remember=z.object({category,title:authored.max(200),content:authored.max(65536),project:z.string().min(1).max(200).optional(),ttl:z.string().max(50).optional(),metadata:z.record(z.string(),z.json()).refine(value=>JSON.stringify(value).length<=32768).optional()}).strict();
 const recall=z.object({query:z.string().min(1).max(4000),category:category.optional(),project:z.string().min(1).max(200).optional(),limit:z.number().int().min(1).max(50).default(10)}).strict();
-export function registerSemanticMemory(operations:Operations,options:{sources?:MindSources;now():number;hash(words:string):string;body(viewer:Viewer):Readonly<{agent:string}>|undefined}){
+export function registerSemanticMemory(operations:Operations,options:{sources?:MindSources;now():number;hash(words:string):string;body(viewer:Viewer):Readonly<{agent:string}>|undefined;committed():void}){
  const sources=new Map<string,{path:string;db:Database.Database}>();let closed=false;
  try{for(const source of options.sources?.agents??[]){if(sources.has(source.agent))throw Error('Duplicate Memory source agent');if(existsSync(source.memories))sources.set(source.agent,{path:source.memories,db:new Database(source.memories,{readonly:true,fileMustExist:true,timeout:0})});}}
  catch(error){for(const source of sources.values())source.db.close();throw error;}
@@ -68,6 +68,9 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
    db.prepare('INSERT INTO memory_command_receipts (viewer,id,name,input_hash,result,expires) VALUES(?,?,?,?,?,?)').run(receipt.viewer,receipt.id,receipt.name,receipt.inputHash,JSON.stringify(result),pending.expires);
    db.prepare('DELETE FROM memory_command_preparations WHERE viewer=? AND id=?').run(receipt.viewer,receipt.id);
   });}finally{backend.close();}
+  // The source fact is committed even if the later shared receipt fails.
+  // Publish that fact independently so active readers cannot remain stale.
+  options.committed();
  };
  const base={write:true,recheckPolicy:true,doors:['http'] as const,inputHash:(words:string)=>options.hash(words),recover,admit,may:(viewer:Viewer)=>!!selected(viewer),run(){throw new OperationError('unavailable','Memory command did not commit');}};
  const opaque=(db:Database.Database,ref:string)=>{const row=db.prepare('SELECT uuid FROM memories WHERE ref=?').get(ref) as {uuid:string}|undefined;if(!row)throw new OperationError('unavailable','Memory result is absent');return row.uuid;};

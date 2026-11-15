@@ -116,6 +116,14 @@ it('recovers recall after shared receipt failure without adding heat again',asyn
  const heat=()=>f.source.prepare('SELECT recall_heat,recall_heat_at,last_accessed FROM memories').all(),before=heat(),calls=embed.calls;expect(before).toEqual([expect.objectContaining({recall_heat:expect.any(Number)})]);
  f.db.$client.exec('DROP TRIGGER fail_recall_core');expect((await f.call('recall',{query:'alpha'},'recover-recall')).status).toBe(200);expect(heat()).toEqual(before);expect(embed.calls).toBe(calls);
 });
+it('publishes a committed source effect even when its shared receipt cannot be saved',async()=>{
+ const f=await fixture(),gate=hold();f.db.$client.exec("CREATE TRIGGER fail_live_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");
+ const pending=f.call('remember',input,'failed-live');await gate.began;
+ const ws=new WebSocket(f.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw.body}});clean.push(()=>ws.terminate());await once(ws,'open');await next(ws,()=>ws.send(JSON.stringify({type:'connection_init'})));
+ const initial=await next(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'memory',payload:{query:'subscription($query:String!){observe(query:$query){patches{path value removed}}}',variables:{query:'{memoryProject(id:"art:pond"){sections{key total items{title body}}}}'}}})));expect(JSON.stringify(initial)).not.toContain(words);
+ const publication=new Promise<unknown>((resolve,reject)=>{const timeout=setTimeout(()=>reject(Error('Committed source effect was not published')),2000);ws.once('message',data=>{clearTimeout(timeout);resolve(JSON.parse(String(data)));});});
+ gate.release();expect((await pending).status).toBe(503);expect(f.count()).toBe(1);expect(JSON.stringify(await publication)).toContain(words);
+});
 it('recovers the committed private result after shared receipt failure and reserves the id against unrelated writes',async()=>{
  const f=await fixture();f.db.$client.exec("CREATE TRIGGER fail_memory_core BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");
  expect((await f.call('remember',input,'recover')).status).toBe(503);expect(f.count()).toBe(1);const before=embed.calls;
