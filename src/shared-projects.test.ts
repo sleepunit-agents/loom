@@ -1,4 +1,8 @@
 import Database from 'better-sqlite3';
+import {createServer} from 'node:http';
+import {once} from 'node:events';
+import {getRequestListener} from '@hono/node-server';
+import {WebSocket} from 'ws';
 import {GraphQLString,type GraphQLFieldConfigMap} from 'graphql/index.js';
 import type {Viewer} from './policy.js';
 import {createHash} from 'node:crypto';
@@ -77,4 +81,26 @@ it('withdraws selected sharing metadata if its owner is demoted during an awaite
  const pending=f.read('{ householdSharing { projects { name } } hold }');await started;
  f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();release();
  expect(await pending).toEqual({errors:[{message:'Authentication ended'}]});
+});
+
+it('keeps owner witnesses scoped to the selected request, allowing unrelated concurrent reads after demotion',async()=>{
+ let began!:()=>void,release!:()=>void,count=0;const started=new Promise<void>(r=>began=r),held=new Promise<void>(r=>release=r);
+ const f=fixture({hold:{type:GraphQLString,resolve:async()=>{if(++count===2)began();await held;return 'Still allowed';}}});await f.call(project);
+ const privateRead=f.read('{ householdSharing { members agents projects { name } } hold }');
+ const ordinaryRead=f.read('{ hold }');await started;
+ f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();release();
+ expect(await privateRead).toEqual({errors:[{message:'Authentication ended'}]});expect(await ordinaryRead).toEqual({data:{hold:'Still allowed'}});
+ expect(await f.read('{ hold }')).toEqual({data:{hold:'Still allowed'}});
+});
+it('withdraws selected Sharing words on the actual live socket when owner permission changes during execution',async()=>{
+ let began!:()=>void,release!:()=>void;const started=new Promise<void>(r=>began=r),held=new Promise<void>(r=>release=r);
+ const f=fixture({hold:{type:GraphQLString,resolve:async()=>{began();await held;return 'Done';}}});await f.call({...project,name:'Private live label'});
+ const server=createServer(getRequestListener(request=>f.root.http.fetch(request))),detach=f.root.attach(server);
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));clean.push(async()=>{detach();await f.root.close();await new Promise<void>(r=>server.close(()=>r()));});
+ const address=server.address();if(!address||typeof address==='string')throw Error('No port');
+ const ws=new WebSocket('ws://127.0.0.1:'+address.port+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+'a'.repeat(64)}});clean.push(()=>ws.terminate());const frames:string[]=[];ws.on('message',raw=>frames.push(String(raw)));await once(ws,'open');
+ let next=once(ws,'message');ws.send(JSON.stringify({type:'connection_init'}));await next;
+ ws.send(JSON.stringify({type:'subscribe',id:'sharing',payload:{query:'subscription { observe(query:"{ householdSharing { members agents projects { name } } hold }") { patches { path value } } }'}}));await started;
+ const closed=once(ws,'close');f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();release();
+ expect((await closed)[0]).toBe(4403);expect(frames.join(' ')).not.toContain('Private live label');
 });
