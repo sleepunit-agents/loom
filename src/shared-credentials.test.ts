@@ -14,7 +14,7 @@ import { agents, members, boxes, jobs, sessions, tokens, tasks, projects } from 
 import { sharedRoot } from './shared-root.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { try { for (const close of cleanup.splice(0).reverse()) await close(); } finally { vi.restoreAllMocks(); } });
-const raw = { member: 'a'.repeat(64), runner: 'b'.repeat(64), body: 'c'.repeat(64), agent: 'd'.repeat(64), cookie: 'e'.repeat(64), bodyCookie: 'f'.repeat(64) };
+const raw = { member: 'a'.repeat(64), runner: 'b'.repeat(64), body: 'c'.repeat(64), agent: 'd'.repeat(64), cookie: 'e'.repeat(64), bodyCookie: 'f'.repeat(64), runnerCookie: '1'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const request = (headers: Record<string,string>) => new Request('http://loom', { headers });
 function fixture(prepare?: () => Promise<unknown>) {
@@ -30,7 +30,7 @@ function fixture(prepare?: () => Promise<unknown>) {
     { fingerprint: hash(raw.body), label: 'Body', kind: 'agent', agent: 'art', job: 'job-1', createdAt: at },
     { fingerprint: hash(raw.agent), label: 'Art', kind: 'agent', agent: 'art', createdAt: at },
   ]).run();
-  db.insert(sessions).values([{ id: hash(raw.cookie), token: hash(raw.member), device: 'Browser', via: 'link', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }, { id: hash(raw.bodyCookie), token: hash(raw.body), device: 'Browser', via: 'link', isAgent: true, issuedAt: at, seenAt: at, provedAt: at }]).run();
+  db.insert(sessions).values([{ id: hash(raw.cookie), token: hash(raw.member), device: 'Browser', via: 'link', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }, { id: hash(raw.bodyCookie), token: hash(raw.body), device: 'Browser', via: 'link', isAgent: true, issuedAt: at, seenAt: at, provedAt: at }, { id: hash(raw.runnerCookie), token: hash(raw.runner), device: 'Browser', via: 'link', isAgent: true, issuedAt: at, seenAt: at, provedAt: at }]).run();
   let root!: ReturnType<typeof sharedRoot>;
   root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {}, fields: {
     currentBody: { type: GraphQLString, resolve: (_row, _args, context) => root.credentials.body(context.viewer)?.job ?? null },
@@ -56,15 +56,22 @@ it('binds runner, body and browser scopes to the exact authenticated viewer, nev
   const f = fixture();
   const body = f.root.credentials.authenticate(request({ authorization: 'Bearer '+raw.body }))!;
   expect(f.root.credentials.body(body.viewer)).toEqual({ job: 'job-1', agent: 'art', box: 'box-1' });
+  expect(Object.isFrozen(f.root.credentials.body(body.viewer))).toBe(true);
   expect(f.root.credentials.body({ ...body.viewer })).toBeUndefined();
   expect(f.root.credentials.runner(body.viewer)).toBeUndefined();
   const runner = f.root.credentials.authenticate(request({ authorization: 'Bearer '+raw.runner }))!;
   expect(f.root.credentials.runner(runner.viewer)).toEqual({ box: 'box-1' });
+  expect(Object.isFrozen(f.root.credentials.runner(runner.viewer))).toBe(true);
   expect(f.root.credentials.body(runner.viewer)).toBeUndefined();
   const browser = f.root.credentials.authenticate(request({ cookie: 'loom_ui='+raw.cookie }))!;
   expect(f.root.credentials.browser(browser.viewer)).toEqual({ session: hash(raw.cookie) });
+  expect(Object.isFrozen(f.root.credentials.browser(browser.viewer))).toBe(true);
   const bearer = f.root.credentials.authenticate(request({ authorization: 'Bearer '+raw.member, cookie: 'loom_ui='+raw.cookie }))!;
   expect(f.root.credentials.browser(bearer.viewer)).toBeUndefined();
+  const cookieRunner = f.root.credentials.authenticate(request({ cookie: 'loom_ui='+raw.runnerCookie }))!;
+  expect(cookieRunner.viewer).toEqual({ kind: 'runner', id: 'box-1' });
+  expect(f.root.credentials.runner(cookieRunner.viewer)).toBeUndefined();
+  expect((await f.root.http.request('http://loom/api/worker/report', { method: 'POST', headers: { 'content-type': 'application/json', cookie: 'loom_ui='+raw.runnerCookie }, body: JSON.stringify({ input: { box: 'box-1' }, id: 'cookie-worker' }) })).status).toBe(403);
   const agent = f.root.credentials.authenticate(request({ authorization: 'Bearer '+raw.agent }))!;
   expect(f.root.credentials.body(agent.viewer)).toBeUndefined();
   const cookieBody = f.root.credentials.authenticate(request({ cookie: 'loom_ui='+raw.bodyCookie }))!;
