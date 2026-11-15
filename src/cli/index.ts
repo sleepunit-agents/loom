@@ -40,9 +40,10 @@ Commands:
   doctor            Probe the loom environment (read-only)
   migrate           Apply pending schema migrations to memories.db
   pieces            Installed pieces; install, update, roll back, remove them
-  household         The household: agents and the default (docs/specs/household.md)
+  household         Read roster and edit members, agents and projects through the API
   token             Mint, list and revoke the household's tokens
-  sessions          The page's browser sessions: list them, sign one out alone
+  sessions          List browsers or end one through the API
+  account           Read personal Account or end a browser/remove a passkey
   export            Write the whole household to one encrypted bundle
   restore           Lay a bundle down in an empty LOOM_HOME, or --drill it
   backup            The nightly backup: set it, run one, see how it's going
@@ -249,21 +250,12 @@ async function dispatch(sub: string, rest: string[], io: IOStreams): Promise<num
       const { runPiecesCommand } = await import('./pieces.js');
       return runPiecesCommand(rest, io);
     }
-    case 'household': {
-      const { runHousehold } = await import('./household.js');
-      return runHousehold(rest, io);
-    }
-    case 'token': {
-      if (rest[0] === 'link' && rest.includes('--next')) {
-        const { runSigninLink } = await import('../core/signin/client.js');
-        return runSigninLink(rest.slice(1), io);
-      }
-      const { runToken } = await import('./household.js');
-      return runToken(rest, io);
-    }
-    case 'sessions': {
-      const { runSessions } = await import('./household.js');
-      return runSessions(rest, io);
+    case 'household':
+    case 'token':
+    case 'sessions':
+    case 'account': {
+      const { runAccessClient } = await import('./access-client.js');
+      return runAccessClient(sub, rest, io);
     }
     case 'export': {
       const { runExport } = await import('./bundle.js');

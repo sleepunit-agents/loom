@@ -4,21 +4,22 @@ import {mkdtempSync,writeFileSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {Readable} from 'node:stream';
-import {afterEach,expect,it} from 'vitest';
+import {afterEach,expect,it,vi} from 'vitest';
 import {eq} from 'drizzle-orm';
 import {FakeClock} from '../core/clock.js';
 import {createDataSchema} from '../core/data/database.js';
 import {members,tokens,sessions,passkeys} from '../core/data/schema.js';
 import {sharedRoot} from '../shared-root.js';
+import {runCli} from './index.js';
 import {runAccessClient} from './access-client.js';
-const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
+const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{try{for(const close of clean.splice(0).reverse())await close();}finally{vi.unstubAllGlobals();}});
 function fixture(){
  const home=mkdtempSync(join(tmpdir(),'fictional-signin-cli-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString(),db=createDataSchema(client,()=>new Date(clock.now()).toISOString()),raw={owner:'a'.repeat(64),sam:'b'.repeat(64)},hash=(value:string)=>createHash('sha256').update(value).digest('hex');
  for(const member of ['owner','sam'] as const){db.insert(members).values({id:member,role:member==='owner'?'owner':'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw[member]),kind:'owner',member,label:member,createdAt:at}).run();writeFileSync(join(home,member),raw[member],{mode:0o600});}
  db.insert(sessions).values({id:hash('c'.repeat(64)),token:hash(raw.sam),device:'Sam browser',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
  const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{}});clean.push(()=>root.close());
  const transport:typeof fetch=async(input,init)=>await root.http.fetch(new Request(input,init));
- const invoke=async(piece:'token'|'sessions'|'account',args:string[],actor:'owner'|'sam'='owner',request:typeof fetch=transport,env?:NodeJS.ProcessEnv)=>{
+ const invoke=async(piece:'token'|'sessions'|'account'|'household',args:string[],actor:'owner'|'sam'='owner',request:typeof fetch=transport,env?:NodeJS.ProcessEnv)=>{
   let out='',err='',time=0,calls=0;const bodies:string[]=[],paths:string[]=[];
   const code=await runAccessClient(piece,args,{stdin:Readable.from([]),stdinIsTTY:false,env:env??{LOOM_URL:'http://loom',LOOM_TOKEN_FILE:join(home,actor)},stdout:value=>out+=value,stderr:value=>err+=value},{now:()=>time,retry:async ms=>{time+=ms;},request:async(input,init)=>{calls++;bodies.push(String(init?.body));paths.push(new URL(String(input)).pathname);return request(input,init);}});
   return{code,out,err,calls,bodies,paths,time};
@@ -106,4 +107,23 @@ it('rejects partial GraphQL errors and private extras in sessions and personal A
  }
  const malformed=await f.invoke('sessions',['list'],'owner',async()=>new Response('PRIVATE MALFORMED',{status:200}));expect(malformed).toMatchObject({code:1,calls:1,out:''});expect(malformed.err).toContain('Invalid daemon response');
  const unsafe=await f.invoke('token',['list'],'owner',f.transport,{LOOM_URL:'https://name:secret@loom',LOOM_TOKEN_FILE:join(f.home,'owner')});expect(unsafe.err).not.toContain('secret');
+});
+
+it('uses the same API for the primary loom CLI, including links, personal Account and project/member administration',async()=>{
+ const f=fixture(),paths:string[]=[];vi.stubGlobal('fetch',async(input:Parameters<typeof fetch>[0],init?:RequestInit)=>{paths.push(new URL(String(input)).pathname);return f.transport(input,init);});
+ const invoke=async(args:string[],actor:'owner'|'sam'='owner')=>{let out='',err='';const code=await runCli(args,{stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:'http://loom',LOOM_TOKEN_FILE:join(f.home,actor),LOOM_HOME:'/must-not-open'},stdout:value=>out+=value,stderr:value=>err+=value});return{code,out,err};};
+ expect(await invoke(['household','read'])).toMatchObject({code:0});
+ expect(await invoke(['household','setMember',JSON.stringify({id:'pat',role:'member',fullOwner:false,agents:[]})])).toMatchObject({code:0});
+ expect(await invoke(['household','setProject',JSON.stringify({id:'demo',name:'Demo',members:['sam'],agents:[],repositories:[]})])).toMatchObject({code:0});
+ expect(await invoke(['token','list'])).toMatchObject({code:0});expect(await invoke(['sessions','list'])).toMatchObject({code:0});expect(await invoke(['account','read'],'sam')).toMatchObject({code:0});
+ const link=await invoke(['token','link'],'sam');expect(link).toMatchObject({code:0,err:''});expect(link.out).toMatch(/^http:\/\/loom\/login\/[0-9a-f]{64}\n$/);
+ expect(paths).toEqual(['/graphql','/api/household/setMember','/api/household/setProject','/graphql','/graphql','/graphql','/api/signin/link']);
+});
+it('never retries a lost link reply, refuses target identity input and validates the returned path',async()=>{
+ const f=fixture();
+ expect(await f.invoke('token',['link','{"member":"sam"}'])).toMatchObject({code:2,calls:0});
+ for(const request of [async()=>{throw Error('PRIVATE LINK');},async()=>Response.json({ok:true,value:{path:'https://other.example/PRIVATE',expiresAt:'now'}})]){
+  const result=await f.invoke('token',['link'],'sam',request);expect(result).toMatchObject({code:1,calls:1,out:''});expect(result.err).toContain('outcome unknown');expect(result.err).not.toContain('PRIVATE');
+ }
+ expect(await f.invoke('household',['setMember','{"id":"other","role":"member","agents":[]}'],'sam')).toMatchObject({code:1});
 });
