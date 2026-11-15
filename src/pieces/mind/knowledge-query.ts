@@ -8,6 +8,8 @@ import {
 } from 'graphql/index.js';
 import { maySee, type Sharing, type Viewer } from '../../core/index.js';
 import { knowledgeView, knowledgeAccess } from './knowledge.js';
+import {knowledgeSweep} from './knowledge-sweep.js';
+import type {SweepPart} from '../../core/tempo/sweep.js';
 
 /** The outside door supplies the authenticated viewer, never a query argument. */
 export interface MemoryQueryContext { viewer: Viewer }
@@ -33,7 +35,9 @@ const overview = new GraphQLObjectType({ name:'MemoryKnowledge',fields:{
 
 export function knowledgeQueryFields(options: { path?:string; sharing():Sharing; now():number }): {
  fields:GraphQLFieldConfigMap<unknown,MemoryQueryContext>;
+ sweep(checkingAgent:string):SweepPart;
  nextDeadline():number|undefined;
+ sweep(checkingAgent:string):SweepPart;
  close():void;
 } {
  let db:Database.Database|undefined,failed=false;
@@ -59,6 +63,7 @@ export function knowledgeQueryFields(options: { path?:string; sharing():Sharing;
   }},
  } });
  return {
+  sweep(checkingAgent){if(failed)throw new GraphQLError('Knowledge is unavailable');return knowledgeSweep(db,{now:options.now},checkingAgent);},
   fields:{
    memoryKnowledgeAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?knowledgeAccess(context.viewer,options.sharing()):null},
    memoryKnowledge:{type:overview,resolve:(_source,_args,context)=>allowed(context)?read():null},

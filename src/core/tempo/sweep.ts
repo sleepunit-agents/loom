@@ -2,15 +2,20 @@ import type { Clock } from '../clock.js';
 import type { Recipient } from './volume.js';
 
 export interface OpenItem { id: string; words: string; openedAt: string }
+export interface OpenItems { items: readonly OpenItem[]; count: number }
 export interface SweepPart {
   name: string;
   /** Each part applies its own recipient routing and returns only open items. */
-  open(who: Recipient): readonly OpenItem[];
+  open(who: Recipient): readonly OpenItem[] | OpenItems;
 }
 export interface SweepSummary {
   part: string; count: number; oldestAt: string; ageMs: number; items: readonly OpenItem[];
 }
 export interface SweepDelivery { id: string; who: Recipient; summaries: readonly SweepSummary[]; words: string }
+function age(ms: number): string {
+  const hours = Math.floor(ms / 3_600_000);
+  return hours >= 24 ? `${Math.floor(hours / 24)} days` : hours > 0 ? `${hours} hours` : `${Math.floor(ms / 60_000)} minutes`;
+}
 /** The operation target of a standing trigger. One inbox item per recipient,
  * however many parts contribute. Ordinary inbox settling does the admission. */
 export class Sweep {
@@ -26,17 +31,19 @@ export class Sweep {
     const summaries: SweepSummary[] = [];
     for (const part of this.parts.values()) {
       const unique = new Map<string, OpenItem>();
-      for (const item of part.open(who)) {
+      const result = part.open(who);
+      const listed = 'items' in result ? result.items : result;
+      for (const item of listed) {
         if (!Number.isFinite(Date.parse(item.openedAt))) throw new Error('Invalid open-item date');
         unique.set(item.id, item);
       }
       const items = [...unique.values()].sort((a, b) => Date.parse(a.openedAt) - Date.parse(b.openedAt) || a.id.localeCompare(b.id));
-      if (items.length) summaries.push({ part: part.name, count: items.length, oldestAt: items[0].openedAt, ageMs: Math.max(0, this.clock.now() - Date.parse(items[0].openedAt)), items });
+      const count = 'items' in result ? result.count : items.length;
+      if (!Number.isSafeInteger(count) || count < items.length || (count > 0 && !items.length)) throw new Error('Invalid open-item count');
+      if (items.length) summaries.push({ part: part.name, count, oldestAt: items[0].openedAt, ageMs: Math.max(0, this.clock.now() - Date.parse(items[0].openedAt)), items });
     }
     if (summaries.length) this.deliver({ id: JSON.stringify(['sweep', who.kind, who.id, occurrence]), who, summaries, words: summaries.map(s => {
-      const hours = Math.floor(s.ageMs / 3_600_000);
-      const age = hours >= 24 ? `${Math.floor(hours / 24)} days` : hours > 0 ? `${hours} hours` : `${Math.floor(s.ageMs / 60_000)} minutes`;
-      return `${s.part}: ${s.count} open, oldest ${age}\n${s.items.map(i => `- ${i.id}: ${i.words.replace(/[\r\n]+/g, ' ')}`).join('\n')}`;
+      return `${s.part}: ${s.count} open, oldest ${age(s.ageMs)}\n${s.items.map(i => `- ${i.id}: ${i.words.replace(/[\r\n]+/g, ' ')} (${age(Math.max(0, this.clock.now() - Date.parse(i.openedAt)))})`).join('\n')}${s.count > s.items.length ? `\n${s.count - s.items.length} more open` : ''}`;
     }).join('\n\n') });
     return summaries;
   }

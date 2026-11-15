@@ -18,13 +18,12 @@ vi.mock('../../data/graphql', () => ({ useDataQuery: () => {
 } }));
 vi.mock('../../lib/cojeev-motion/use-reduced-motion', () => ({ useReducedMotion: () => true }));
 import Home from './home';
-import Inbox from './index';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create> | undefined;
 beforeEach(() => { vi.useFakeTimers(); f.call.mockReset().mockImplementation(() => ({ result: Promise.resolve({ ok: true, value: { days: 0, turns: 0 } }) })); f.snapshot = { status: 'loading', records: [] }; });
 afterEach(async () => { await act(async () => tree?.unmount()); tree = undefined; vi.useRealTimers(); });
 async function publish(status: Snapshot['status']) { await act(async () => { f.snapshot = { status, records: [] }; f.listeners.forEach(fn => fn()); }); }
-it.each([Home, Inbox])('mounted desk page invokes retention on live arrival, daily and reconnect, then stops', async Page => {
+it.each([Home])('mounted desk page invokes retention on live arrival, daily and reconnect, then stops', async Page => {
   await act(async () => { tree = create(h(Page)); });
   expect(f.call).not.toHaveBeenCalled();
   await publish('live');

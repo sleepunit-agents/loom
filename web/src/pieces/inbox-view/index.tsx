@@ -34,6 +34,7 @@ function QuestionReader({ item, actions, inline }: { item: InboxItem; actions?: 
     {(item.body?.ifYes || item.body?.ifNo) && <dl>{item.body.ifYes && <><dt>If yes</dt><dd>{item.body.ifYes}</dd></>}{item.body.ifNo && <><dt>If no</dt><dd>{item.body.ifNo}</dd></>}</dl>}
     {safeLink(item.body?.link) && <a href={safeLink(item.body?.link)} target="_blank" rel="noreferrer">Open linked page</a>}
     {item.refs.length > 0 && <p>About: {item.refs.join(' · ')}</p>}
+    {waiting && managed(item) && <p>Answer this at its source.</p>}
     {waiting && managed(item) && actions?.openSource && <Button onClick={() => actions.openSource!(item)}>Open {item.waitsOnKind ?? (item.source === 'approval' ? 'Approvals' : item.source === 'task' ? 'task' : 'Secrets')}</Button>}
     {waiting && item.answers && item.body && !managed(item) && actions && <section aria-label="Record your answer" className="grid gap-2">
       {item.answers === 'yes-no' && <div><Button disabled={busy} onClick={() => void answer('yes')}>{inline ? 'Allow' : 'Yes'}</Button><Button disabled={busy} onClick={() => void answer('no')}>{inline ? 'Deny' : 'No'}</Button></div>}
@@ -51,26 +52,29 @@ export function InboxQuestionCard({ id, snapshot, actions, inline }: { id: strin
   return item ? <QuestionReader key={item.id} item={item} actions={actions} inline={inline} /> : <Empty title="Item is unavailable" />;
 }
 
-export function InboxView({ snapshot, selected, select, detail, actions, results, dismissResult }: {
+export function InboxView({ snapshot, selected, select, detail, actions, results, dismissResult, navigation }: {
+  navigation?: { folder: string; query: string; offset: number; hasNext: boolean; onFolder(id: string): void; onQuery(value: string): void; previous(): void; next(): void };
   results?: InboxResultsSnapshot; dismissResult?(id: string): Promise<void>;
   snapshot: InboxSnapshot; selected?: string; select(id?: string): void;
   detail?: { status: InboxSnapshot['status']; item: InboxItem | null }; actions?: InboxActions;
 }) {
-  const [folder, setFolder] = useState('needs'), [query, setQuery] = useState('');
+  const [localFolder, setFolder] = useState('needs'), [localQuery, setQuery] = useState('');
+  const folder = navigation?.folder ?? localFolder, query = navigation?.query ?? localQuery;
   const display = selected && detail && detail.status !== 'live'
     ? { ...snapshot, items: snapshot.items.filter(row => row.id !== selected) } : snapshot;
-  const shown = folder === 'errors' ? [] : rows(display, folder, query);
+  const shown = folder === 'errors' ? [] : rows(display, folder, navigation ? '' : query);
   const currentResults = snapshot.status === 'live' && results?.status === 'live' ? results : undefined;
   const live = snapshot.status === 'live';
   const item = live ? (detail ? detail.status === 'live' && detail.item?.id === selected ? detail.item : undefined : snapshot.items.find(row => row.id === selected)) : undefined;
   const folders: SplitFolder[] = [
-    ...[['needs', 'Needs you'], ['answered', 'Answered'], ['fyi', 'FYI'], ['all', 'All items']].map(([id, label]) => ({ id, label, count: rows(display, id, '').length })),
+    ...[['needs', 'Needs you'], ['alerts', 'Alerts'], ['answered', 'Answered'], ['fyi', 'FYI'], ['all', 'All items']].map(([id, label]) => ({ id, label, count: live && snapshot.folders ? snapshot.folders[id as 'needs' | 'alerts' | 'answered' | 'fyi' | 'all'] : rows(display, id, '').length })),
     { id: 'errors', label: 'Errors', count: currentResults?.results.filter(row => !row.ok && !row.readAt).length ?? 0 },
-    { heading: 'By agent' }, ...[...new Set(live ? display.items.flatMap(row => row.agent ? [row.agent] : []) : [])].sort().map(agent => ({ id: `agent:${agent}`, label: agent, count: rows(display, `agent:${agent}`, '').length })),
+    { heading: 'By agent' }, ...(live && snapshot.folders ? snapshot.folders.agents : [...new Set(live ? display.items.flatMap(row => row.agent ? [row.agent] : []) : [])].sort().map(id => ({ id, count: rows(display, `agent:${id}`, '').length })))
+      .map(agent => ({ id: `agent:${agent.id}`, label: agent.id, count: agent.count })),
   ];
-  return <Split label="Inbox" folders={folders} folder={folder} onFolder={setFolder} listTitle="Inbox"
-    listTop={currentResults && (folder === 'fyi' || folder === 'errors' || folder === 'all') ? <InboxActionNotices snapshot={currentResults} errorsOnly={folder === 'errors'} dismiss={dismissResult} /> : undefined}
-    search={<Input aria-label="Search asks" value={live ? query : ''} disabled={!live} onChange={event => setQuery(event.target.value)} />}
+  return <Split label="Inbox" folders={folders} folder={folder} onFolder={id => navigation ? navigation.onFolder(id) : setFolder(id)} listTitle="Inbox"
+    listTop={<>{navigation && folder !== 'errors' && <nav aria-label="Inbox pages"><Button disabled={!live || navigation.offset === 0} onClick={navigation.previous}>Previous page</Button><Button disabled={!live || !navigation.hasNext} onClick={navigation.next}>Next page</Button></nav>}{currentResults && (folder === 'fyi' || folder === 'errors' || folder === 'all') && <InboxActionNotices snapshot={currentResults} errorsOnly={folder === 'errors'} dismiss={dismissResult} />}</>}
+    search={<Input aria-label="Search asks" value={live ? query : ''} disabled={!live} onChange={event => navigation ? navigation.onQuery(event.target.value) : setQuery(event.target.value)} />}
     list={!live ? snapshot.status === 'loading' ? <Loading /> : <Empty title="Inbox is unavailable" /> : shown.length ? shown.map(row => <Row key={row.id} title={row.body?.words ?? `Item from ${row.agent ?? row.fromId ?? 'Loom'}`} meta={row.body?.why ?? row.source} status={`${row.agent ?? 'Loom'} · ${row.state} · ${row.read ? 'Read' : 'Unread'}`} selected={row.id === selected} onClick={() => select(row.id)} />) : folder === 'errors' && currentResults?.results.some(row => !row.ok && !row.readAt) ? null : <Empty title="No items here" />}
     reader={item ? <InboxQuestionCard key={item.id} id={item.id} snapshot={{ status: 'live', items: [item] }} actions={actions} /> : selected && live && detail?.status === 'loading' ? <Loading /> : null}
     open={!!selected} onBack={() => select(undefined)} backLabel="Back to Inbox" blank={<Empty title="Choose an item" />} />;
