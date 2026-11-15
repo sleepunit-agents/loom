@@ -385,3 +385,16 @@ it('projects only the household timezone for Tempo and publishes changes through
  const changed=await read(socket,()=>{f.data.writes.run(()=>f.db.update(s.household).set({timezone:'Europe/London'}).run());});
  expect(changed.payload.data.observe.patches).toContainEqual({path:['tempoTimezone'],removed:false,value:'Europe/London'});
 });
+it('withdraws selected Tempo instructions when project access changes during a sibling await',async()=>{
+ const {GraphQLString}=await import('graphql/index.js');let entered!:()=>void,release!:()=>void;
+ const ready=new Promise<void>(resolve=>{entered=resolve;}),gate=new Promise<void>(resolve=>{release=resolve;});
+ const f=await setup({held:{type:GraphQLString,async resolve(){entered();await gate;return 'ready';}}}),at=new Date(f.clock.now()).toISOString();
+ f.db.insert(s.triggers).values({id:'private-frame-trigger',ownerKind:'household',sourceKind:'answer',watches:'question:pending',lifespan:'once',targetKind:'inbox',toKind:'person',to:'owner',project:'pond',instructions:'PRIVATE TEMPO WORDS',note:'Private instruction',enabled:true,state:'standing',createdAt:at,changedAt:at}).run();
+ const pending=f.data.http.request('/graphql',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+token},body:JSON.stringify({query:'{ triggers { id instructions } held }'})});
+ try{
+  await ready;f.data.writes.run(()=>f.client.exec("DELETE FROM project_members WHERE member='sam'"));release();
+  const response=await pending,text=await response.text();expect(text).not.toContain('PRIVATE TEMPO WORDS');expect(text).not.toContain('private-frame-trigger');
+  if(response.status===200)expect(JSON.parse(text).data.triggers).toEqual([]);
+  else expect([401,403,503]).toContain(response.status);
+ }finally{release();await pending;}
+});
