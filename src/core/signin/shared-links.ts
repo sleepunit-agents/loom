@@ -13,10 +13,11 @@ const fingerprint = (secret: string) => createHash('sha256').update(secret).dige
 const secret = () => randomBytes(32).toString('hex');
 const LINK_MS = 5 * 60_000;
 const PERSON_MS = 30 * 86400_000, AGENT_MS = 6 * 3600_000;
-function browserDevice(ua: string): string {
-  const browser = /HeadlessChrome\//.test(ua) ? 'HeadlessChrome' : /Edg\//.test(ua) ? 'Edge' : /Firefox\/|FxiOS\//.test(ua) ? 'Firefox' : /Chrome\/|CriOS\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+function browserDevice(ua: string): { device: string; isAgent: boolean } {
+  const isAgent = /HeadlessChrome\//.test(ua);
+  const browser = isAgent ? 'HeadlessChrome' : /Edg\//.test(ua) ? 'Edge' : /Firefox\/|FxiOS\//.test(ua) ? 'Firefox' : /Chrome\/|CriOS\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
   const system = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) ? 'iPad' : /Android/.test(ua) ? 'Android' : /Mac OS X|Macintosh/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /CrOS/.test(ua) ? 'ChromeOS' : /Linux/.test(ua) ? 'Linux' : undefined;
-  return system ? `${browser} on ${system}` : browser;
+  return { device: system ? `${browser} on ${system}` : browser, isAgent };
 }
 export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
   const token = (id: string) => {
@@ -39,10 +40,11 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
         const link = db.select().from(signinLinks).where(eq(signinLinks.id, fingerprint(code))).get();
         if (!link || Date.parse(link.expiresAt) <= clock.now()) throw new Error('Sign-in refused');
         const current = token(link.token), cookie = secret(), at = new Date(clock.now()).toISOString();
+        const browser = browserDevice(device), agent = isAgent || browser.isAgent;
         db.delete(signinLinks).where(eq(signinLinks.id, link.id)).run();
-        db.insert(sessions).values({ id: fingerprint(cookie), token: current.fingerprint, device: browserDevice(device),
-          via: 'link', isAgent, issuedAt: at, seenAt: at, provedAt: at }).run();
-        const expires = Math.min(clock.now() + (isAgent ? AGENT_MS : PERSON_MS), current.expiresAt ? Date.parse(current.expiresAt) : Infinity);
+        db.insert(sessions).values({ id: fingerprint(cookie), token: current.fingerprint, device: browser.device,
+          via: 'link', isAgent: agent, issuedAt: at, seenAt: at, provedAt: at }).run();
+        const expires = Math.min(clock.now() + (agent ? AGENT_MS : PERSON_MS), current.expiresAt ? Date.parse(current.expiresAt) : Infinity);
         return { cookie, maxAge: Math.floor((expires - clock.now()) / 1000) };
       });
     },
@@ -101,7 +103,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     return c.html('<!doctype html><html><head><title>Sign in to loom</title></head><body><h1>Sign in to loom</h1><form method="post"><button>Sign in</button></form></body></html>');
   });
   routes.post('/login/:code', c => {
-    const result = write(() => signin.redeem(c.req.param('code'), c.req.header('user-agent') ?? 'Browser', /HeadlessChrome\//.test(c.req.header('user-agent') ?? '')));
+    const result = write(() => signin.redeem(c.req.param('code'), c.req.header('user-agent') ?? 'Browser'));
     c.header('set-cookie', cookieHeader(result.cookie, result.maxAge, c.req.url));
     return c.redirect('/', 303);
   });

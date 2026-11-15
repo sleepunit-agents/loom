@@ -38,6 +38,7 @@ it('mints only for the admitted bearer and spends one link into a shared fingerp
   const f = fixture();
   const response = await f.mint({ authorization: 'Bearer ' + credential }, { member: 'other', token: hash(other), actor: { kind: 'member', id: 'other' } });
   expect(response.status).toBe(200);
+  expect(response.headers.get('cache-control')).toBe('no-store');
   const result = await response.json() as { value: { path: string } };
   const path = result.value.path, code = path.split('/').at(-1)!;
   expect(f.db.select().from(signinLinks).get()).toMatchObject({ id: hash(code), token: hash(credential) });
@@ -175,4 +176,11 @@ it('expires an ordinary browser after the thirty-day lifetime', async () => {
   expect(response.headers.get('set-cookie')).toContain('Max-Age=2592000');
   f.clock.advance(30 * 86400_000 - 1); expect((await f.read(cookie)).status).toBe(200);
   f.clock.advance(1); expect((await f.read(cookie)).status).toBe(401);
+});
+
+it('applies headless recognition inside the trusted service even without an explicit agent flag', () => {
+  const f = fixture(), signin = sharedSigninLinks(f.db, f.clock);
+  const path = f.root.writes.run(() => signin.makeLink(hash(credential))).value.path;
+  const result = f.root.writes.run(() => signin.redeem(path.split('/').at(-1)!, 'Mozilla/5.0 HeadlessChrome/140.0')).value;
+  expect(result.maxAge).toBe(21600); expect(f.db.select().from(sessions).get()).toMatchObject({ isAgent: true, device: 'HeadlessChrome' });
 });
