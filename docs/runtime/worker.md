@@ -67,9 +67,10 @@ failed process cleanup, so it cannot claim more work after uncertain reaping.
 SIGINT and SIGTERM cancel active work and idle waiting. The server owns start
 retries and silence reconciliation.
 
-This document describes the executable and adapter seam. Production mounting of
-the authenticated runner operations is separate composition work; the presence of
-the executable alone does not make a configured worker operational.
+The fresh sharedRoot mounts these operations on its shared connection and owns
+worker/job reconciliation. It requires the canonical current bearer runner proof
+and derives the box from that credential. A worker still needs its locally
+configured builder, runner commands and account access.
 
 ## Container bodies
 
@@ -117,3 +118,37 @@ The wire format follows Docker's [Engine API](https://docs.docker.com/reference/
 create, attach, start, wait and remove endpoints. The worker uses the explicitly
 configured local Unix socket and unversioned routes; it does not start or install
 an engine.
+
+### Worker-local account runner bindings
+
+A shared `runners` command can implement account selection from the startup JSON
+itself. For separate local profiles or private runner commands, configure
+`accountRunners`, keyed first by the account ID and then by harness:
+
+```json
+{
+  "accountRunners": {
+    "subscription-a": {
+      "codex": {
+        "command": "/private/runner-a",
+        "args": [],
+        "cwd": "/work",
+        "env": {"ACCOUNT_PROFILE": "/private/profile-a"}
+      }
+    }
+  }
+}
+```
+
+When this map is present, every job needs an exact account/harness entry. Missing
+entries fail before the builder or body starts; they never fall back to the shared
+runner or another account. Plans are copied when the worker executor is created.
+The builder retains its own explicit environment, and the body receives the
+selected command's environment plus the existing account/model/harness startup
+envelope after the running acknowledgement. The same selection applies to
+container entrypoint, arguments and environment. Container paths refer to files
+inside its trusted image; this adds no host credential/profile mounts.
+
+These bindings select a configured runner. That program must still implement its
+native harness's model choice and tool restrictions; this feature does not infer
+provider CLI flags or supply an account profile that is not locally configured.
