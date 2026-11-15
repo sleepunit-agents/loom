@@ -89,9 +89,10 @@ it('leaves missing sources absent, keeps quiet index cheap and preserves per-sec
 
 it('forwards the exact viewer and sanitizes thrown reader errors', async () => {
  const viewer: Viewer = { kind: 'agent', id: 'fiction' }; let seen: Viewer | undefined;
- const role = {list(v:Viewer) { seen = v; throw Error('PRIVATE SOURCE'); },read(){return undefined;},memoryRead(){return undefined;},access(){return {id:'projects',allowed:false,agents:[]};}};
+ const role = {list(v:Viewer) { seen = v; throw Error('PRIVATE SOURCE'); },read(){return undefined;},memoryRead(){return undefined;},memoryHistory(){throw Error('PRIVATE HISTORY SOURCE');},access(){return {id:'projects',allowed:false,agents:[]};}};
  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: projectsQueryFields(role) }) });
  const query = () => graphql({ schema, source: '{ memoryProjects { id } }', contextValue: { viewer } });
  const result = await query(); expect(seen).toBe(viewer); expect(result.data).toEqual({ memoryProjects: null }); expect(result.errors?.[0].message).toBe('Projects are unavailable'); expect(JSON.stringify(result)).not.toContain('PRIVATE');
+ const history=await graphql({schema,source:'{memoryHistory(id:"fiction:opaque"){content}}',contextValue:{viewer}});expect(history.errors?.[0].message).toBe('Memory history is unavailable');expect(JSON.stringify(history)).not.toContain('PRIVATE');
 
 });
