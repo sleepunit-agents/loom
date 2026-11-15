@@ -14,6 +14,7 @@ import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
+import {inboxActions} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -134,6 +135,7 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await changeInline({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await workVisibility({page,app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
+   if(title==='Inbox'&&row.opened){report.actions={...report.actions,...await inboxActions({page,tile:page.getByRole('region',{name:'Inbox tile',exact:true}),app,example:report.example,out})};}
    report.apps.push(row);
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);
