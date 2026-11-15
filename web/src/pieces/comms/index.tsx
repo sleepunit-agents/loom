@@ -69,7 +69,7 @@ function ThreadReader({thread,onDeleted,go}:{thread:Thread;onDeleted():void;go?:
   {thread.archived!==null?<p className="p-4">Unarchive this thread to send a message.</p>:watching?<div className="flex items-center justify-between gap-3 border-t p-4" role="status" aria-label="Watching job"><p><strong>Watching</strong> · {thread.working?`${thread.agent} keeps working when you close this.`:'Closing this leaves the job as it is.'}</p><Button disabled={status!=='live'} onClick={()=>setJoining(true)}>Join in</Button></div>:<Composer member={thread.member} place={thread.id} agent={thread.agent} onOpened={()=>{}} enabled={status==='live'}/>}
  </article></ThreadRefs>;
 }
-export default function CommsApp({path:shellPath,go,visible=true}:{path?:string;go?:(path:string)=>void;visible?:boolean}={}){
+function LegacyCommsApp({path:shellPath,go,visible=true}:{path?:string;go?:(path:string)=>void;visible?:boolean}={}){
  const [localPath,setLocalPath]=useState(()=>typeof location==='undefined'?'/p/comms-preview':location.pathname);const path=shellPath??localPath;const selected=path.split('/thread/')[1]?`th:${path.split('/thread/')[1]}`:undefined;const base='/p/comms-preview';
  const [rowRequest,setRowRequest]=useState<Call>();const rowState=useRequest(rowRequest);
  const [folder,setFolder]=useState('live');const creating=path===`${base}/new`;const [agent,setAgent]=useState('');
@@ -80,12 +80,9 @@ export default function CommsApp({path:shellPath,go,visible=true}:{path?:string;
  const visit=(next:string)=>{if(go)go(next);else{history.pushState(null,'',next);setLocalPath(next);}};
  const navigate=(id?:string)=>visit(id?`${base}/thread/${id.replace(/^th:/,'')}`:base);
  useEffect(()=>{if(go)return;const pop=()=>setLocalPath(location.pathname);window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);},[go]);
- const conversationPath=path.startsWith(`${base}/conversation/`)?path.slice(`${base}/conversation/`.length):undefined;
- let conversation:string|undefined;try{conversation=conversationPath?decodeURIComponent(conversationPath):undefined;}catch{/* Invalid route stays unavailable. */}
  const rail=useContext(RailContext),source=useRef({});
- const current=status==='live'&&!conversation?records.find(t=>t.id===selected):undefined;
+ const current=status==='live'?records.find(t=>t.id===selected):undefined;
  useEffect(()=>{if(!visible||!current||!rail?.onAir)return;rail.onAir({agent:current.agent},source.current);return()=>rail.onAir(null,source.current);},[visible,current?.id,current?.agent,rail?.onAir]);
- if(conversation)return <ConversationActivity key={conversation} conversation={conversation} onBack={()=>navigate()}/>;
  const listed=folderThreads(records,folder);const ownedAgent=agent||mine?.agents[0]||'';
  return <Split className="loom-comms" label="Comms" folder={folder} folders={[{id:'live',label:'Threads'},{id:'background',label:'Background work'},{id:'archived',label:'Archived'}]} onFolder={setFolder} listTitle={folder==='background'?'Background work':folder==='archived'?'Archived':'Threads'} listMeta={listed.length}
   listTop={<div className="p-3"><Button disabled={status!=='live'} onClick={()=>visit(`${base}/new`)}>New thread</Button><Answer request={rowRequest}/></div>}
@@ -95,3 +92,17 @@ export default function CommsApp({path:shellPath,go,visible=true}:{path?:string;
 }
 
 export { CommsView } from "../comms-view";
+
+/** Route Memory links before mounting any retired thread subscriptions. */
+export default function CommsApp(props:{path?:string;go?:(path:string)=>void;visible?:boolean}={}){
+ const [localPath,setLocalPath]=useState(()=>typeof location==='undefined'?'/p/comms-preview':location.pathname);
+ useEffect(()=>{if(props.go)return;const pop=()=>setLocalPath(location.pathname);window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);},[props.go]);
+ const path=props.path??localPath;
+ const visit=(next:string)=>{if(props.go)props.go(next);else{history.pushState(null,'',next);setLocalPath(next);}};
+ const prefix='/p/comms-preview/conversation/';
+ if(path.startsWith(prefix)){
+  let conversation:string;try{conversation=decodeURIComponent(path.slice(prefix.length));}catch{return <Empty title="Conversation unavailable"/>;}
+  return <ConversationActivity key={conversation} conversation={conversation} onBack={()=>{if(history.length>1)history.back();else visit('/p/activity-preview');}}/>;
+ }
+ return <LegacyCommsApp {...props} path={path} go={visit}/>;
+}

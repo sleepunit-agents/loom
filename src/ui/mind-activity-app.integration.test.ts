@@ -23,6 +23,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Activity filters,
  const fixture=await memorySharedFixture({home,clock,webRoot:root,agents:['art'],otherMembers:['other-member']}),{app}=fixture;
  app.writes.run(()=>{
   const first=app.services.conversations.open({agent:'art',venue:'wake',place:'owner-session',member:'owner',label:'Build the household desk'});
+  app.services.conversations.turn({conversation:first.id,kind:'reply',fromKind:'agent',fromId:'art'});
   app.services.conversations.digest({conversation:first.id,run:'fictional-owner-run',summary:'Shipped the household desk. The live timeline brings the work together.',items:[{kind:'ask',text:'Show what happened across the household'},{kind:'decision',text:'Keep content in the agents’ stores'},{kind:'task',text:'t-2207'}],question:{to:'owner',words:'Review the result',answers:'yes-no'}});
   const planning=app.services.conversations.open({agent:'art',venue:'wake',place:'planning-session',label:'Planning the next release'});
   for(let i=0;i<3;i++)app.services.conversations.turn({conversation:planning.id,kind:i===2?'reply':'message',fromKind:i===2?'agent':'person',fromId:i===2?'art':'owner'});
@@ -41,6 +42,11 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Activity filters,
   await row(a,'Build the household desk').click();await row(b,'Build the household desk').click();
   await expect.poll(()=>b.getByRole('heading',{name:'What happened',exact:true}).count()).toBe(1);expect(await b.getByText('Keep content in the agents’ stores',{exact:true}).count()).toBe(1);
   expect(await b.locator('article a[href="/p/tasks-preview/task/t-2207"]').count()).toBe(1);expect(await b.getByText('Review the result',{exact:false}).count()).toBe(1);
+  await b.getByRole('link',{name:'Conversation',exact:true}).click();
+  await expect.poll(()=>b.getByRole('heading',{name:'Conversation activity',exact:true}).count()).toBe(1);
+  await expect.poll(()=>b.getByText('Build the household desk',{exact:true}).count()).toBe(1);
+  await expect.poll(()=>b.getByText('reply · art',{exact:true}).count()).toBe(1);
+  await b.goBack();await expect.poll(()=>b.getByRole('heading',{name:'What happened',exact:true}).count()).toBe(1);
   await a.setViewportSize({width:800,height:900});await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe('two');await a.setViewportSize({width:1280,height:900});
   await expect.poll(()=>b.getByText('Shipped the household desk. The live timeline brings the work together.',{exact:true}).count()).toBe(1);
   const shots=resolve('artifacts/activity-app');mkdirSync(shots,{recursive:true});
