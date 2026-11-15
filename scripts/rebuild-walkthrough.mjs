@@ -145,6 +145,13 @@ export async function* walkthroughSteps(output) {
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
+    if(title==='Home'){
+     const runtimeRows=tile.locator('[aria-label$="current runtime jobs"] > li');
+     const expected=runtimeRows.filter({hasText:report.example.runtime.job.title}).first();
+     await expected.waitFor({state:'visible'});await expected.scrollIntoViewIfNeeded();
+     row.runtimeJobs=await runtimeRows.evaluateAll(rows=>rows.map(row=>({title:row.querySelector('h4')?.textContent?.trim()??'',status:row.querySelector('p')?.textContent?.trim()??''})));
+     row.text=await tile.innerText();
+    }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Project sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
@@ -177,7 +184,6 @@ export async function* walkthroughSteps(output) {
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await workVisibility({page,app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
    if(title==='Home'&&row.opened){report.actions={...report.actions,homeMessage:await homeActions({page,tile:page.getByRole('region',{name:'Home tile',exact:true}),app,out})};}
-   if(title==='Inbox'&&row.opened){report.actions={...report.actions,...await inboxActions({page,tile:page.getByRole('region',{name:'Inbox tile',exact:true}),app,example:report.example,out})};}
 
    report.apps.push(row);
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
@@ -186,6 +192,8 @@ export async function* walkthroughSteps(output) {
    save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
 
   }
+  Object.assign(report.actions,await inboxActions({page,tile:await openApp('Inbox'),app,example:report.example,out}));
+  save();yield {phase:'inbox-details',actions:safeReport(report.actions)};
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
