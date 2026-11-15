@@ -64,9 +64,9 @@ export async function takeBodyInput(options:{request:Request;service:CommsMessag
     if(words!==null){const deadline=wordsDeadline(message,days);until=Math.min(until,deadline);keepUntil=Number.isFinite(deadline)?new Date(deadline).toISOString():null;}
    }
    if(item.source==='handoff'&&words!==null){const deadline=handoffDeadline(item,days);until=Math.min(until,deadline);if(Number.isFinite(deadline))keepUntil=new Date(deadline).toISOString();}
-   if(hasPrivateInboxPayload(item)&&words!==null){const deadline=privateInboxDeadline(item,days);until=Math.min(until,deadline);if(Number.isFinite(deadline))keepUntil=new Date(deadline).toISOString();
+   if(hasPrivateInboxPayload(db,item)&&words!==null){const deadline=privateInboxDeadline(item,days);until=Math.min(until,deadline);if(Number.isFinite(deadline))keepUntil=new Date(deadline).toISOString();
    }
-   if(item.source==='answer'&&item.sourceId&&item.member&&!item.thread){const q=db.select().from(inbox).where(eq(inbox.id,item.sourceId)).get();if(q?.source==='thread'){if(privateInboxAnswer(db,q)?.id!==item.id)throw Error('Answer reference changed');verdict=q.answer==='yes'||q.answer==='no'?q.answer:null;}}
+   if(item.source==='answer'&&item.sourceId&&item.member&&!item.thread){const q=db.select().from(inbox).where(eq(inbox.id,item.sourceId)).get();if(q?.source==='thread'&&q.state==='answered'&&!q.waitsOnKind&&!q.waitsOnId){if(privateInboxAnswer(db,q)?.id!==item.id)throw Error('Answer reference changed');verdict=q.answer==='yes'||q.answer==='no'?q.answer:null;}}
    if(answerContext){if(!Number.isFinite(answerContext.until))throw Error('Question context needs its deadline');until=Math.min(until,answerContext.until);}
    for(const line of history??[])until=Math.min(until,Date.parse(line.keepUntil));
    return {...(history?.length?{history}:{}),...(answerContext?{question:answerContext.question,questionKeepUntil:new Date(answerContext.until).toISOString()}:{}),id:item.id,seq:item.seq,source:item.source,sourceId:item.sourceId,fromKind:item.fromKind,fromId:item.fromId,at:item.at,words,keepUntil,verdict,refs:refs.filter(ref=>ref.item===item.id).map(ref=>ref.ref)};

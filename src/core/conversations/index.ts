@@ -89,10 +89,10 @@ export class Conversations {
    * private conversation must carry that conversation's current labels. A
    * different member's private source can never be relabelled into it. */
   answerScope(conversation:string|null,agent:string,source:{project:string|null;member:string|null}){
-    if(!conversation)return source;
+    if(!conversation)return undefined;
     const cv=this.conversation(conversation);
     if(cv.agent!==agent)throw new Error('Answer recipient differs from conversation');
-    if(!cv.member)return source;
+    if(!cv.member)return undefined;
     if(source.member&&source.member!==cv.member)throw new Error('Answer source is private to another member');
     return {project:cv.project,member:cv.member};
   }

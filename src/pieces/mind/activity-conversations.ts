@@ -49,7 +49,7 @@ export function sharedActivityConversations(db: DataDatabase, options: {
       tasks: items.filter(i => i.kind === 'task').map(i => i.text),
       references: items.map(i => i.text),
       links: href ? [{ label: 'Conversation', href }] : [],
-      ...(viewer.kind === 'member' && question?.toKind === 'person' && question.to === viewer.id && question.state === 'waiting' && question.words && !hasPrivateInboxPayload(question) ? {
+      ...(viewer.kind === 'member' && question?.toKind === 'person' && question.to === viewer.id && question.state === 'waiting' && question.words && !hasPrivateInboxPayload(db,question) ? {
         needs: question.words, needsForMember: question.to,
         ...(question.link ? { needsHref: question.link } : {}),
       } : {}),

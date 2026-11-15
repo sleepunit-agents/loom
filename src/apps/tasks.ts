@@ -143,7 +143,7 @@ export function taskService(db: DataDatabase, now: () => string = () => new Date
           // A task can be asked outside a thread; its answer still reaches its asker.
           const conversation = task.sourceKind === 'conversation' && task.sourceId ? mail.conversation(task.sourceId) : null;
           const destination=conversation && (task.askedByKind === 'member' || conversation.agent === task.askedBy) ? conversation.id : null;
-          const scope=task.askedByKind==='agent'?mail.answerScope(destination,task.askedBy,{project:task.project,member:task.ownerKind==='member'?task.owner:null}):{project:task.project};
+          const scope=task.askedByKind==='agent'?(mail.answerScope(destination,task.askedBy,{project:task.project,member:task.ownerKind==='member'?task.owner:null})??{project:task.project}):{project:task.project};
           mail.send({ toKind: task.askedByKind === 'member' ? 'person' : 'agent', to: task.askedBy,
             source: 'answer', sourceId: resolved[0]?.id ?? `${id}:${randomUUID()}`,
             conversation: destination,

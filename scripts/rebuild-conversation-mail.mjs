@@ -17,10 +17,13 @@ export async function conversationMail({page,app,clock,example,out,open}){
   check(result.status===200&&result.body.ok===true,'Signed-in '+name+' was refused');return result.body.value;
  };
  const body=async cv=>{
-  check(!cv.job,'The new fixture conversation already has a job');const box=db.select({id:boxes.id}).from(boxes).get();check(!!box,'The normal example has no configured worker box');
-  const id='walkthrough-'+randomUUID(),token='body_'+randomBytes(32).toString('hex');
+  const queued=cv.job?db.select().from(jobs).where(eq(jobs.id,cv.job)).get():undefined;
+  check(!cv.job||queued?.state==='queued'&&queued.agent===cv.agent&&queued.member===cv.member&&queued.project===cv.project,'The new fixture conversation already has a different active body');
+  const box=db.select({id:boxes.id}).from(boxes).get();check(!!box,'The normal example has no configured worker box');
+  const id=queued?.id??'walkthrough-'+randomUUID(),token='body_'+randomBytes(32).toString('hex');
   write(()=>{
-   db.insert(jobs).values({id,agent:cv.agent,box:box.id,member:cv.member,project:cv.project,conversation:cv.id,title:'Fictitious conversation-mail body',state:'running',brief:'',model:'fixture-no-provider',startedByKind:'member',startedBy:'alex',houseRepository:'fictional',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
+   if(queued)db.update(jobs).set({state:'running',box:box.id,startedAt:now()}).where(eq(jobs.id,id)).run();
+   else db.insert(jobs).values({id,agent:cv.agent,box:box.id,member:cv.member,project:cv.project,conversation:cv.id,title:'Fictitious conversation-mail body',state:'running',brief:'',model:'fixture-no-provider',startedByKind:'member',startedBy:'alex',houseRepository:'fictional',houseFile:'Housefile',houseBranch:'next',queuedAt:now()}).run();
    db.update(conversations).set({job:id}).where(eq(conversations.id,cv.id)).run();
    db.insert(tokens).values({fingerprint:createHash('sha256').update(token).digest('hex'),label:'Fictitious body '+id,kind:'agent',agent:cv.agent,job:id,createdAt:now()}).run();
   });current.push(id);
@@ -67,6 +70,18 @@ export async function conversationMail({page,app,clock,example,out,open}){
   for(const table of [inbox,jobs,operationResults,turns,digests]){const rows=JSON.stringify(db.select().from(table).all());for(const words of [brief,commsWords,question.words,question.why,question.ifYes,question.ifNo])check(!rows.includes(words),'Private conversation words were copied into generic storage');}
   const screenshot='action-privateConversationQuestion.png';await page.screenshot({path:join(out,screenshot),fullPage:true});evidence.privateConversationQuestion={ok:true,reason:'A private native handoff digest raised an encrypted question, Inbox displayed its outcomes and recorded Alex yes/time, and the actual receiving SDK accepted the matching answer with retained question context.',item:item.id,screenshot,currentJobFixtures:true,providerStarted:false};
  }catch(error){evidence[stage]=error instanceof ObservedMailFailure?{ok:false,error:redactSignin(error)}:{inconclusive:true,reason:'The conversation-mail observation could not complete.',error:redactSignin(error)};}
- finally{for(const client of clients)client.close();for(const id of current.reverse())try{write(()=>app.services.runtime.stop(id,'alex','reset'));}catch{for(const value of Object.values(evidence)){if(value.ok){delete value.ok;value.inconclusive=true;value.reason='Fixture body cleanup could not be verified.';}}}}
+ finally{
+  for(const client of clients)client.close();
+  let stopped=true,revoked=true;
+  for(const id of current.reverse())try{
+   write(()=>{app.services.runtime.stop(id,'alex','reset');db.update(tokens).set({revokedAt:now()}).where(eq(tokens.job,id)).run();});
+   stopped&&=['done','failed','stopped','lost'].includes(db.select().from(jobs).where(eq(jobs.id,id)).get()?.state);
+   revoked&&=db.select().from(tokens).where(eq(tokens.job,id)).all().every(row=>!!row.revokedAt);
+  }catch{stopped=false;revoked=false;}
+  for(const value of Object.values(evidence)){
+   value.cleanup={jobsStopped:stopped,credentialsRevoked:revoked};
+   if(value.ok&&(!stopped||!revoked)){delete value.ok;value.inconclusive=true;value.reason='Fixture body cleanup could not be verified.';}
+  }
+ }
  return evidence;
 }

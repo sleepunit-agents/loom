@@ -10,7 +10,7 @@ export type AnswerQuestion={words:string;why:string|null;ifYes:string|null;ifNo:
 export type AnswerContext={question:AnswerQuestion;until:number};
 export async function prepareAnswerContext(comms:CommsMessages,answer:Item):Promise<()=>AnswerContext|null>{
  const {db}=comms;
- if(answer.source==='answer'&&!answer.thread&&answer.sourceId&&hasPrivateInboxPayload(answer)){
+ if(answer.source==='answer'&&!answer.thread&&answer.sourceId&&hasPrivateInboxPayload(db,answer)){
   const snapshot=()=>{const q=db.select().from(inbox).where(eq(inbox.id,answer.sourceId!)).get();return q&&privateInboxAnswer(db,q)?.id===answer.id?q:undefined;};
   const before=snapshot(),days=()=>db.select({days:household.commsDays}).from(household).get()?.days??14;
   if(!before||privateInboxDeadline(before,days())<=Date.parse(comms.now()))return()=>null;
