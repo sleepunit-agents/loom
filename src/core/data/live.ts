@@ -1,3 +1,4 @@
+import { ExecutionDrain, instrumentExecution } from './execution.js';
 import { execute, getOperationAST, parse, validate, type ExecutionArgs, type GraphQLSchema } from 'graphql/index.js';
 
 /** Paths address the selected GraphQL result, including aliases. Values are
@@ -35,22 +36,18 @@ export function dataDiff(before: unknown, after: unknown, path: (string | number
 export class DataLive {
   private listeners = new Set<() => void>();
   private stopped = false;
-  private executions = new Set<Promise<void>>();
+  private executions = new ExecutionDrain();
   changed() { for (const listener of [...this.listeners]) listener(); }
   close() { this.stopped = true; this.changed(); this.listeners.clear(); }
 
   /** After stopping admission, wait for actual resolvers, including executions
    * whose consumer already cancelled. Cancellation cannot cancel their IO. */
-  async drain() { while (this.executions.size) await Promise.all([...this.executions]); }
+  async drain() { await this.executions.drain(); }
 
   private async read(args: ExecutionArgs) {
     if (this.stopped) throw new Error('Live data access ended');
-    let finish!: () => void;
-    const done = new Promise<void>(resolve => { finish = resolve; });
-    // Retain before invoking user resolvers: they can synchronously reenter close.
-    this.executions.add(done);
-    try { return await execute(args); }
-    finally { this.executions.delete(done); finish(); }
+    instrumentExecution(args.schema);
+    return this.executions.scope(() => !this.stopped, () => execute(args));
   }
 
   watch(options: {

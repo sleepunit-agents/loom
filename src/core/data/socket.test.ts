@@ -8,7 +8,7 @@ import { dataQueries } from './queries.js';
 import { taskVisibility } from './visibility.js';
 import { DataLive } from './live.js';
 import { dataSocket } from './socket.js';
-import { GraphQLObjectType, GraphQLScalarType, GraphQLSchema, GraphQLString } from 'graphql/index.js';
+import { GraphQLNonNull, GraphQLObjectType, GraphQLScalarType, GraphQLSchema, GraphQLString } from 'graphql/index.js';
 import type { Authentication } from '../live/index.js';
 import { FakeClock } from '../clock.js';
 
@@ -212,7 +212,7 @@ it('uses the upgrade viewer for context-based reads and observe reruns despite c
   expect(changed.payload.data.observe).toEqual({ revision: 2, patches: [{ path: ['title'], removed: false, value: 'sam:Second' }] });
 });
 
-it.each(['query', 'observe'])('drains an admitted %s resolver before shared SQLite may close', async mode => {
+it.each(['query', 'observe'].flatMap(mode => [false, true].map(parallel => ({ mode, parallel }))))('drains an admitted $mode resolver before shared SQLite may close (parallel=$parallel)', async ({ mode, parallel }) => {
   const f = await setup(), ws = await f.open();
   let began!: () => void, release!: () => void;
   const started = new Promise<void>(resolve => { began = resolve; });
@@ -220,19 +220,24 @@ it.each(['query', 'observe'])('drains an admitted %s resolver before shared SQLi
   const events: string[] = [];
   clean.push(() => release());
   f.setSchema(() => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: {
+    broken: { type: new GraphQLNonNull(GraphQLString), async resolve() { throw Error('parallel failure'); } },
     slow: { type: GraphQLString, async resolve() {
       began(); await held;
       f.client.prepare('SELECT title FROM tasks').all(); events.push('read'); return 'done';
     } },
   } }) }));
-  ws.send(JSON.stringify(mode === 'query' ? { type: 'subscribe', id: 'slow', payload: { query: '{ slow }' } } : { ...selection, payload: { ...selection.payload, variables: { query: '{ slow }' } } }));
+  const query = parallel ? '{ slow broken }' : '{ slow }';
+  const failed = parallel ? once(ws, 'message') : undefined;
+  ws.send(JSON.stringify(mode === 'query' ? { type: 'subscribe', id: 'slow', payload: { query } } : { ...selection, payload: { ...selection.payload, variables: { query } } }));
   await started;
+  if (failed) await failed;
   const ended = once(ws, 'close');
   const draining = f.socket.close();
   expect(f.socket.close()).toBe(draining);
   const closing = draining.then(() => { events.push('closed'); });
   try {
     await ended;
+    expect(events).toEqual([]);
     release(); await closing;
     expect(events).toEqual(['read', 'closed']);
   } finally { release(); }

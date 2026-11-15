@@ -6,6 +6,7 @@ import { execute, subscribe, GraphQLError, type ExecutionArgs, type GraphQLSchem
 import type { Viewer } from '../../policy.js';
 import type { Authentication } from '../live/index.js';
 import type { Clock } from '../clock.js';
+import { ExecutionDrain, instrumentExecution } from './execution.js';
 import { DataLive } from './live.js';
 import { dataSubscriptions } from './subscriptions.js';
 
@@ -25,14 +26,10 @@ export function dataSocket(options: {
   const cleanups = new Map<WebSocket, () => void>();
   let stopping = false, closing: Promise<void> | undefined;
   // Transport setup/direct reads and shared hub resolvers have independent lifetimes.
-  const executions = new Set<Promise<void>>();
-  async function run<T>(operation: () => T | PromiseLike<T>): Promise<T> {
+  const executions = new ExecutionDrain();
+  function run<T>(operation: () => T) {
     if (stopping) throw new Error('Data access ended');
-    let finish!: () => void;
-    const done = new Promise<void>(resolve => { finish = resolve; });
-    executions.add(done);
-    try { return await operation(); }
-    finally { executions.delete(done); finish(); }
+    return executions.scope(() => !stopping, operation);
   }
   const protocol = useServer({
     isProd: true,
@@ -43,7 +40,9 @@ export function dataSocket(options: {
       const auth = admitted.get(ctx.extra.socket);
       if (!auth?.valid()) throw new Error('Authentication ended');
       auth.activity?.();
-      return dataSubscriptions(options.schema(auth.viewer), options.live, () => !stopping && auth.valid());
+      const schema = dataSubscriptions(options.schema(auth.viewer), options.live, () => !stopping && auth.valid());
+      instrumentExecution(schema);
+      return schema;
     },
     context(ctx) {
       if (stopping) throw new Error('Data access ended');
@@ -136,7 +135,7 @@ export function dataSocket(options: {
         for (const socket of ws.clients) socket.terminate();
         await protocol.dispose();
       } finally {
-        while (executions.size) await Promise.all([...executions]);
+        await executions.drain();
         await options.live.drain();
       }
     });

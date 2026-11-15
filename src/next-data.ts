@@ -38,12 +38,20 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     schema,
   });
   const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => live.changed() });
+  const http = dataHttp(db, authenticate, publicOrigin, schema);
   let closing: Promise<void> | undefined;
   return {
-    http: dataHttp(db, authenticate, publicOrigin, schema),
+    http,
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); },
     writes,
-    close() { return closing ??= (async () => { await socket.close(); live.close(); })(); },
+    close() {
+      if (closing) return closing;
+      http.stop(); live.close();
+      closing = Promise.resolve().then(async () => {
+        try { await socket.close(); } finally { await http.drain(); }
+      });
+      return closing;
+    },
   };
 }
