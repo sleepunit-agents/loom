@@ -28,3 +28,23 @@ export async function taskQuestions({page,tile,app,example,out}){
   await page.screenshot({path:join(out,screenshot),fullPage:true});return {taskQuestions:{ok:true,screenshot,answers:['yes','no','words']}};
  }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return {taskQuestions:{ok:false,error:String(error),screenshot}};}
 }
+
+export async function taskInlineQuestion({page,tile,app,example,out}){
+ const screenshot='action-taskInlineQuestion.png';
+ try{
+  const s=app.services.tasks,ask='Choose the fictitious inline task pump?';
+  const task=app.writes.run(()=>{
+   const task=s.create({title:'Decide inline pump',goal:'Choose once in chat.',why:'Prove task cards.',owner:{kind:'agent',id:'fern'},source:{kind:'conversation',id:example.conversation}},{kind:'agent',id:'fern'});
+   s.ask(task.id,{to:{kind:'member',id:'alex'},ask,ifYes:'Fern proceeds inline.',ifNo:'Fern waits inline.'},{kind:'agent',id:'fern'});return task;
+  }).value;
+  const card=tile.getByRole('article',{name:'Inbox item',exact:true}).filter({has:page.getByRole('heading',{name:ask,exact:true})});
+  await card.getByRole('heading',{name:ask,exact:true}).waitFor({timeout:4000});
+  const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/tasks/command'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
+  await card.getByRole('button',{name:'Yes',exact:true}).click();
+  const response=await pending,body=await response.json();if(!response.ok()||body.ok!==true)throw Error('Inline task answer refused');
+  const saved=s.get(task.id);
+  if(saved.ask!==null||saved.comments.length!==1||saved.comments[0].actor!=='alex'||!saved.comments[0].at)throw Error('Inline task answer not recorded');
+  app.writes.run(()=>s.close(task.id,'Inline choice recorded.'));
+  await page.screenshot({path:join(out,screenshot),fullPage:true});return {taskInlineQuestion:{ok:true,screenshot}};
+ }catch(error){await page.screenshot({path:join(out,screenshot),fullPage:true}).catch(()=>{});return {taskInlineQuestion:{ok:false,error:String(error),screenshot}};}
+}

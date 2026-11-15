@@ -149,7 +149,7 @@ it.each(['yes','no','words'] as const)('answers a task question as its recipient
  expect((await f.call(command,'sam','answer')).status).toBe(200);
  expect(s.get(task.id)).toMatchObject({ask:null,assigneeKind:'agent',assignee:'art'});
  expect(s.get(task.id).comments).toHaveLength(1);
- expect(s.get(task.id).comments[0]).toMatchObject({actorKind:'member',actor:'sam',text:answer==='words'?'Choose the smaller pump.':`${answer==='yes'?'Yes':'No'}, to: Order the pump?\n${answer==='yes'?'Buy it.':'Wait.'}`});
+ expect(s.get(task.id).comments[0]).toMatchObject({actorKind:'member',actor:'sam',at:new Date(f.clock.now()).toISOString(),text:answer==='words'?'Choose the smaller pump.':`${answer==='yes'?'Yes':'No'}, to: Order the pump?\n${answer==='yes'?'Buy it.':'Wait.'}`});
  expect(f.root.services.conversations.item(question.id).state).toBe('resolved');
  expect(f.db.select().from(inbox).all().filter(row=>row.source==='answer'&&row.sourceId===question.id)).toHaveLength(1);
  s.ask(task.id,{to:{kind:'member',id:'sam'},ask:'Order the pump?',ifYes:'Buy it.',ifNo:'Wait.'},{kind:'agent',id:'art'});
@@ -158,3 +158,13 @@ it.each(['yes','no','words'] as const)('answers a task question as its recipient
  expect(s.get(task.id).ask).toBe('Order the pump?');
  expect(s.get(task.id).comments).toHaveLength(1);
 });
+
+ it('refuses the replaced delivery while its identical replacement is still waiting',async()=>{
+ const f=fixture(),s=f.root.services.tasks,task=s.create(f.input,{kind:'agent',id:'art'});
+ const input={to:{kind:'member' as const,id:'sam'},ask:'Order the pump?',ifYes:'Buy it.',ifNo:'Wait.'};
+ s.ask(task.id,input,{kind:'agent',id:'art'});
+ const old=f.db.select().from(inbox).where(eq(inbox.waitsOnId,task.id)).get()!;
+ s.ask(task.id,input,{kind:'agent',id:'art'});
+ expect((await f.call({action:'answer',id:task.id,question:old.id,answer:'yes'},'sam','old-card')).status).toBe(409);
+ expect(s.get(task.id).ask).toBe(input.ask);expect(s.get(task.id).comments).toEqual([]);
+ });
