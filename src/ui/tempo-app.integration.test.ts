@@ -25,7 +25,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
  const token='tempo-token-'.repeat(6),cookie='tempo-cookie-'.repeat(6);
  db.insert(tokens).values({fingerprint:hash(token),label:'Owner',kind:'owner',member:'owner',createdAt:now()}).run();
  db.insert(sessions).values({id:hash(cookie),token:hash(token),device:'Browser',via:'token',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()}).run();
- const app=sharedRoot({db,clock,originAllowed:()=>true,reportError(error){throw error;}});
+ const app=sharedRoot({db,clock,originAllowed:()=>true,commsKey:{seal:async words=>Buffer.from(words),open:async blob=>Buffer.from(blob).toString(),hash},reportError(error){throw error;}});
  const bodyToken='tempo-browser-body-'.repeat(4);
  db.insert(boxes).values({id:'browser-box',name:'Fixture box',owner:'owner',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:now()}).run();
  const chat=app.services.conversations.open({agent:'art',venue:'loom',place:'browser-settings',member:'owner',label:'Tempo settings'});
@@ -102,6 +102,19 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   mark('run now');await a.getByRole('button',{name:'Run now',exact:true}).click();
   for(const page of [a,b])await expect.poll(()=>page.getByText(/once · fired/).count()).toBe(1);
   expect(client.prepare("SELECT words FROM inbox WHERE source='trigger' AND words='Created through Tempo'").all()).toHaveLength(1);
+  mark('recipient volume');
+  const notice=client.prepare("SELECT id FROM inbox WHERE words='PRIVATE FIRST NOTICE'").get() as {id:string};
+  await a.goto(url+'/p/inbox-preview/ask/'+encodeURIComponent(notice.id));
+  await a.getByRole('button',{name:'Dim',exact:true}).click();
+  await expect.poll(()=>client.prepare('SELECT volume FROM inbox WHERE id=?').get(notice.id)).toEqual({volume:'dim'});
+  await expect.poll(()=>a.getByRole('button',{name:'Dim',exact:true}).isDisabled()).toBe(true);
+  await a.getByRole('button',{name:'Mute',exact:true}).click();
+  await expect.poll(()=>client.prepare('SELECT volume FROM inbox WHERE id=?').get(notice.id)).toEqual({volume:'mute'});
+  await expect.poll(()=>a.getByRole('button',{name:'Mute',exact:true}).isDisabled()).toBe(true);
+  expect(client.prepare('SELECT quiet_until AS until FROM inbox WHERE id=?').get(notice.id)).toEqual({until:new Date(clock.now()+7*86400000).toISOString()});
+  expect(await a.getByText(/returns to full/).count()).toBe(1);
+  await a.getByRole('button',{name:'Full',exact:true}).click();
+  await expect.poll(()=>client.prepare('SELECT volume,quiet_until AS quietUntil FROM inbox WHERE id=?').get(notice.id)).toEqual({volume:'full',quietUntil:null});
   mark('settings card');
   await a.getByRole('button',{name:'Open Approvals',exact:true}).click();
   for(const [allow,seconds] of [[true,60],[false,120]] as const){

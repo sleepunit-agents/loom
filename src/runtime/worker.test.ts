@@ -143,3 +143,59 @@ describe('worker work plane', () => {
     await expect(f.run()).rejects.toThrow('another worker'); expect(f.executor.build).not.toHaveBeenCalled();
   });
 });
+
+it('enrolls only after build/spawn and hands the private token only after running ACK, then erases it and drops logs', async () => {
+  const f = fixture(), token = Buffer.from('body_'+'a'.repeat(64)), enrolled = deferred<import('./body-bootstrap.js').BodyBootstrap>(), ack = deferred<void>();
+  f.body.acceptsBootstrap = true; f.control.enrollBody = vi.fn(() => enrolled.promise); vi.mocked(f.control.started).mockReturnValue(ack.promise);
+  vi.mocked(f.body.release).mockImplementation(async input => { expect(input?.token.toString()).toBe('body_'+'a'.repeat(64)); });
+  const run = f.run(); await flush(); expect(f.control.enrollBody).not.toHaveBeenCalled();
+  f.built.resolve('image'); await flush(); expect(f.control.enrollBody).not.toHaveBeenCalled(); f.spawned.resolve(); await flush();
+  expect(f.control.enrollBody).toHaveBeenCalledExactlyOnceWith('j', expect.any(AbortSignal)); f.pulse(); await flush(); expect(f.control.heartbeat).toHaveBeenLastCalledWith('j', 'starting');
+  enrolled.resolve({ origin: 'https://loom.example', job: 'j', token }); await flush(); expect(f.control.started).toHaveBeenCalledOnce(); expect(f.body.release).not.toHaveBeenCalled(); expect(token[0]).not.toBe(0);
+  ack.resolve(); await flush(); expect(f.body.release).toHaveBeenCalledOnce(); expect(token.every(byte => byte === 0)).toBe(true);
+  f.exited.resolve({ exitCode: 0, logTail: 'body_'+'a'.repeat(64) }); expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledWith('j', 0, '');
+  expect(JSON.stringify([job, vi.mocked(f.control.started).mock.calls, vi.mocked(f.control.finish).mock.calls])).not.toContain('body_');
+});
+for (const phase of ['enroll', 'ack']) it(`does not release a late credential after cancellation during ${phase}`, async () => {
+  const f = fixture(), token = Buffer.from('body_'+'a'.repeat(64)), enrolled = deferred<import('./body-bootstrap.js').BodyBootstrap>(), ack = deferred<void>();
+  f.body.acceptsBootstrap = true; f.control.enrollBody = vi.fn(() => enrolled.promise); vi.mocked(f.control.started).mockReturnValue(ack.promise);
+  const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush();
+  if (phase === 'ack') { enrolled.resolve({ origin: 'https://loom.example', job: 'j', token }); await flush(); }
+  f.abort.abort(); enrolled.resolve({ origin: 'https://loom.example', job: 'j', token }); ack.resolve();
+  expect(await run).toBe('abandoned'); expect(f.body.release).not.toHaveBeenCalled(); expect(f.control.finish).not.toHaveBeenCalled(); expect(token.every(byte => byte === 0)).toBe(true); expect(f.body.stop).toHaveBeenCalled();
+});
+it('refuses a configured private child when enrollment is unavailable and never releases input', async () => {
+  const f = fixture(); f.body.acceptsBootstrap = true;
+  const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); expect(await run).toBe('finished');
+  expect(f.body.release).not.toHaveBeenCalled(); expect(f.control.started).not.toHaveBeenCalled(); expect(f.body.stop).toHaveBeenCalled();
+});
+
+it('erases the owned token immediately on cancellation while a running ACK stays pending', async () => {
+  const f = fixture(), token = Buffer.from('body_'+'a'.repeat(64)), ack = deferred<void>();
+  f.body.acceptsBootstrap = true; f.control.enrollBody = vi.fn(async () => ({ origin: 'https://loom.example', job: 'j', token })); vi.mocked(f.control.started).mockReturnValue(ack.promise);
+  let done = false; const run = f.run().then(result => { done = true; return result; }); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush();
+  expect(f.control.started).toHaveBeenCalledOnce(); expect(token[0]).not.toBe(0); f.abort.abort(); await flush();
+  expect(done).toBe(false); expect(token.every(byte => byte === 0)).toBe(true); expect(f.body.release).not.toHaveBeenCalled();
+  ack.resolve(); expect(await run).toBe('abandoned'); expect(f.control.finish).not.toHaveBeenCalled();
+});
+it('waits for reaping after uncertain enrollment before reporting a failed start and never retries locally', async () => {
+  const f = fixture(), reaped = deferred<void>(); f.body.acceptsBootstrap = true; f.control.enrollBody = vi.fn(async () => { throw Error('private uncertain enrollment'); }); vi.mocked(f.body.stop).mockReturnValue(reaped.promise);
+  const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush();
+  expect(f.body.stop).toHaveBeenCalled(); expect(f.control.finish).not.toHaveBeenCalled(); expect(f.executor.start).toHaveBeenCalledOnce(); expect(f.control.enrollBody).toHaveBeenCalledOnce();
+  reaped.resolve(); expect(await run).toBe('finished'); expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', 1, 'Worker build or body launch failed');
+  expect(f.control.next).toHaveBeenCalledOnce(); expect(f.body.release).not.toHaveBeenCalled(); expect(f.control.started).not.toHaveBeenCalled();
+});
+it('erases private bytes after stdin failure before any terminal report', async () => {
+  const f = fixture(), token = Buffer.from('body_'+'a'.repeat(64)); f.body.acceptsBootstrap = true; f.control.enrollBody = vi.fn(async () => ({ origin: 'https://loom.example', job: 'j', token }));
+  vi.mocked(f.body.release).mockRejectedValue(Error('private input failure')); vi.mocked(f.control.finish).mockImplementation(async () => { expect(token.every(byte => byte === 0)).toBe(true); });
+  const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); expect(await run).toBe('finished');
+  expect(f.control.finish).toHaveBeenCalledExactlyOnceWith('j', 1, ''); expect(f.body.stop).toHaveBeenCalled();
+});
+
+it('keeps bytes intact until pending private stdin acceptance and then erases the owned token', async () => {
+  const f = fixture(), token = Buffer.from('body_'+'a'.repeat(64)), accepted = deferred<void>(); f.body.acceptsBootstrap = true;
+  f.control.enrollBody = vi.fn(async () => ({ origin: 'https://loom.example', job: 'j', token })); vi.mocked(f.body.release).mockReturnValue(accepted.promise);
+  const run = f.run(); await flush(); f.built.resolve('image'); f.spawned.resolve(); await flush(); expect(f.body.release).toHaveBeenCalledOnce();
+  expect(token.toString()).toBe('body_'+'a'.repeat(64)); accepted.resolve(); await flush(); expect(token.every(byte => byte === 0)).toBe(true);
+  f.exited.resolve({ exitCode: 0, logTail: '' }); expect(await run).toBe('finished');
+});

@@ -76,7 +76,8 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
    if(selected.current()&&repositoryCurrent()&&!current()&&db.select().from(secretRequests).where(eq(secretRequests.id,startupRequestId(job.id,secret))).get()?.state==='pending')return c.json({pending:true},423);
   }
   if(!current())throw new PrivateInputError('denied');
-  return inputs.dispatch({job:job.id,secret,attempt},current,(use,bytes)=>{const copy=Uint8Array.from(bytes);try{return new Response(copy,{
+  // Blob snapshots bytes before erasure; Node's fast Response retains views.
+  return inputs.dispatch({job:job.id,secret,attempt},current,(use,bytes)=>{const copy=Uint8Array.from(bytes);try{return new Response(new Blob([copy]),{
    headers:{'content-type':'application/octet-stream','cache-control':'no-store','content-length':String(copy.byteLength),'x-loom-secret-use':use},
   });}finally{copy.fill(0);}});
  });
