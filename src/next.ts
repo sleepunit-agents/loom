@@ -1,3 +1,5 @@
+import {peopleReader} from './pieces/mind/people.js';
+import {mindSources} from './pieces/mind/sources.js';
 import { measureResponse } from './core/measuring/response.js';
 import { measuringHttp } from './core/measuring/http.js';
 import { installMeasuring } from './core/measuring/install.js';
@@ -48,7 +50,7 @@ import { installSharing } from './pieces/sharing/index.js';
 import { installTasks, connectTaskAttention } from './pieces/tasks/index.js';
 import { Bridges } from './pieces/bridges/engine.js';
 import { venueAdapters } from './pieces/bridges/adapters.js';
-import { setupRevision } from './pieces/bridges/store.js';
+import { personFor, setupRevision } from './pieces/bridges/store.js';
 import type { BridgeRuntime } from './pieces/bridges/role.js';
 import type { Venue } from './pieces/bridges/model.js';
 import { bridgeCredentials } from './pieces/bridges/credentials.js';
@@ -247,7 +249,12 @@ export async function installNext(app: Foundation, options: NextOptions) {
     const engine=new Bridges(app,app.operations.clock,options.bridges.runtime??bridgeBodies.runtime,adapters,effects);
     bridgeBodies.connect(engine);
     const receive=options.bridges.receive??((venue,message)=>engine.receive(venue,message));
-    const name=options.bridges.name??(()=>undefined);
+    const name=options.bridges.name??((venue,user)=>{
+      const person=personFor(app.db,venue,user),source=mindSources(app.db,options.home)?.agents.find(agent=>agent.agent===venue.agent);
+      if(!person||!source)return;
+      const reader=peopleReader({agents:[source],sharing,now:()=>app.operations.clock.now()});
+      try{return reader.read(`${venue.agent}:${person}`,{kind:'agent',id:venue.agent})?.name;}catch{return;}finally{reader.close();}
+    });
     const slack=installSlackDaemon(app,effects,{...options.bridges,...lifetime,secrets,receive,name});
     const discord=installDiscordDaemon(app,effects,{...options.bridges,...lifetime,secrets,receive,socket:options.bridges.discordSocket});
     const stopCredentials=credentials.observe(()=>{serial++;void engine.flush();});
