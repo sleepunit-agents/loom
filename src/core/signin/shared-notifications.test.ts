@@ -10,10 +10,11 @@ import type {PushTransport} from './push-transport.js';
 import {sharedRoot} from '../../shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex'),sub={endpoint:'https://fcm.googleapis.com/fictional-device',keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}};
-function fixture(){
+function fixture(notify?: (member:string,ids:readonly string[])=>boolean,seed=false){
  const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now),raw={sam:'a'.repeat(64),other:'b'.repeat(64)},cookie={sam:'c'.repeat(64),other:'d'.repeat(64)},vapid=webpush.generateVAPIDKeys(),send=vi.fn<PushTransport>(async()=>{});
  for(const member of ['sam','other'] as const){db.insert(members).values({id:member,role:'member',joinedAt:now()}).run();db.insert(tokens).values({fingerprint:hash(raw[member]),kind:'owner',member,label:member,createdAt:now()}).run();db.insert(sessions).values({id:hash(cookie[member]),token:hash(raw[member]),device:member+' browser',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()}).run();}
- const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},notifications:{vapid,send}});clean.push(()=>root.close());
+ if(seed)db.insert(notificationDevices).values({endpoint:sub.endpoint,member:'sam',session:hash(cookie.sam),keys:JSON.stringify(sub.keys),device:'Seeded',createdAt:now(),seenAt:now()}).run();
+ const root=sharedRoot({db,clock,originAllowed:()=>true,reportError:()=>{},notifications:{vapid,send},tempo:notify?{notify}:undefined});clean.push(()=>root.close());
  const call=(name:string,input:unknown,member:'sam'|'other'='sam',headers={})=>root.http.request('http://loom/api/'+name,{method:'POST',headers:{cookie:'loom_ui='+cookie[member],'content-type':'application/json',...headers},body:JSON.stringify({input,id:Math.random().toString()})});
  const read=(member:'sam'|'other'='sam')=>root.http.request('http://loom/graphql',{method:'POST',headers:{cookie:'loom_ui='+cookie[member],'content-type':'application/json'},body:JSON.stringify({query:'{ account { notifications { publicKey devices { ref device } } } }'})}).then(r=>r.json());
  const item=(id:string,patch:Partial<typeof inbox.$inferInsert>={})=>root.writes.run(()=>db.insert(inbox).values({id,toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'agent',words:'PRIVATE INBOX WORDS',state:'waiting',at:now(),changedAt:now(),...patch}).run());
@@ -50,7 +51,7 @@ it('ends queued notification devices with their browser and refuses stale delive
  const response=await f.root.http.request('http://loom/logout',{method:'POST',headers:{cookie:'loom_ui='+f.cookie.sam}});expect(response.status).toBe(200);expect(f.db.select().from(notificationDevices).all()).toEqual([]);expect(f.db.select().from(notificationQueue).all()).toEqual([]);
 });
 it('keeps a same-session, same-key reenrollment after a stale gone response',async()=>{
- const f=fixture();await f.call('notifications/subscribe',{sub,device:'Old'});f.item('old');let reject!:(error:unknown)=>void,started!:()=>void;const began=new Promise<void>(resolve=>{started=resolve;});
+ const f=fixture(undefined,true);f.item('old');let reject!:(error:unknown)=>void,started!:()=>void;const began=new Promise<void>(resolve=>{started=resolve;});
  f.send.mockImplementationOnce(async()=>{started();await new Promise((_resolve,no)=>{reject=no;});});
  const pending=f.root.services.notifications!.publish('sam',['old']);await began;
  expect(f.db.select().from(notificationQueue).get()?.attempts).toBe(1);
@@ -70,9 +71,25 @@ it('aborts an outstanding transport and skips later queued delivery on shutdown'
  f.send.mockImplementationOnce(async(_sub,_payload,_options,signal)=>{observed=signal;started();await new Promise<void>((_resolve,reject)=>signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true}));});
  const pending=f.root.services.notifications!.publish('sam',['first','second']);await began;await f.root.close();await pending;expect(observed?.aborted).toBe(true);expect(f.send).toHaveBeenCalledOnce();
 });
-it('connects actual person Inbox settlement to the configured push transport',async()=>{
- const f=fixture();await f.call('notifications/subscribe',{sub,device:'Phone'});
+it.each([false,true])('connects actual person settlement to push transport with custom notifier %s',async custom=>{
+ const notify=vi.fn(()=>true),f=fixture(custom?notify:undefined);await f.call('notifications/subscribe',{sub,device:'Phone'});
  f.root.writes.run(()=>f.root.services.conversations.send({toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'unknown',words:'PRIVATE SETTLED WORDS'}));
  f.clock.advance(4999);expect(f.send).not.toHaveBeenCalled();f.clock.advance(1);
- await Promise.resolve();expect(f.send).toHaveBeenCalledOnce();expect(JSON.stringify(f.send.mock.calls)).not.toContain('PRIVATE SETTLED WORDS');
+ await Promise.resolve();expect(f.send).toHaveBeenCalledOnce();if(custom)expect(notify).toHaveBeenCalledOnce();expect(JSON.stringify(f.send.mock.calls)).not.toContain('PRIVATE SETTLED WORDS');
+});
+
+it.each(['recipient','private-label','quiet','device-remove','device-rebind','session-remove','session-expire','token-expire'] as const)('rechecks later queued delivery after %s changes during transport',async change=>{
+ const f=fixture();await f.call('notifications/subscribe',{sub,device:'Phone'});f.item('first');f.item('second');let release!:()=>void,started!:()=>void;const began=new Promise<void>(resolve=>{started=resolve;});
+ f.send.mockImplementationOnce(async()=>{started();await new Promise<void>(resolve=>{release=resolve;});});const pending=f.root.services.notifications!.publish('sam',['first','second']);await began;
+ const target=f.db.select().from(notificationDevices).get()!;
+ f.root.writes.run(()=>{
+  if(change==='recipient')f.db.update(inbox).set({to:'other'}).where(eq(inbox.id,'second')).run();
+  if(change==='private-label')f.db.update(inbox).set({member:'other'}).where(eq(inbox.id,'second')).run();
+  if(change==='quiet')f.db.update(inbox).set({quietUntil:new Date(f.clock.now()+60000).toISOString()}).where(eq(inbox.id,'second')).run();
+  if(change==='device-remove'){f.db.delete(notificationQueue).where(eq(notificationQueue.device,sub.endpoint)).run();f.db.delete(notificationDevices).run();}
+  if(change==='device-rebind')f.db.update(notificationDevices).set({session:hash(f.cookie.other),member:'other'}).run();
+  if(change==='session-remove'){f.db.delete(notificationQueue).run();f.db.delete(notificationDevices).run();f.db.delete(sessions).where(eq(sessions.id,target.session)).run();}
+  if(change==='session-expire')f.db.update(sessions).set({issuedAt:new Date(f.clock.now()-30*86400000).toISOString()}).where(eq(sessions.id,target.session)).run();
+  if(change==='token-expire')f.db.update(tokens).set({expiresAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.member,'sam')).run();
+ });release();await pending;expect(f.send).toHaveBeenCalledOnce();
 });

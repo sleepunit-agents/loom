@@ -245,7 +245,7 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>commsLifetime?.close());
   const settingsBinding = sharedTempoSettings(db, clock, bodyScope, services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
-    ...options.tempo, notify: options.tempo?.notify ?? ((member,ids)=>{const result=notices.publish(member,ids);pushes?.publish(member,ids);return result;}), chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
+    ...options.tempo, notify: (member,ids)=>{const result=options.tempo?.notify?options.tempo.notify(member,ids):notices.publish(member,ids);pushes?.publish(member,ids);return result;}, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     mailboxReceiptScope: options.tempo?.mailboxReceiptScope ?? settingsBinding.receiptScope,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
     beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},

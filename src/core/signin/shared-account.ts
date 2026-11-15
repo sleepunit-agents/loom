@@ -1,4 +1,4 @@
-import { endBrowser } from './shared-browser.js';
+import { endBrowser, browserRef } from './shared-browser.js';
 /** Personal credential metadata and revocation on the shared connection. */
 import { createHash } from 'node:crypto';
 import { eq, and } from 'drizzle-orm';
@@ -18,7 +18,7 @@ export function sharedAccount(db: DataDatabase, clock: Clock) {
       const own = ownTokens(member), ids = new Set(own.map(t=>t.fingerprint));
       return { member,
         passkeys: db.select().from(passkeys).all().filter(k=>ids.has(k.token)).map(k=>({ref:ref('passkey',k.id),label:k.label,createdAt:k.createdAt,lastUsedAt:k.lastUsedAt,ended:!live(own.find(t=>t.fingerprint===k.token)!,clock.now())})),
-        sessions: db.select().from(sessions).all().filter(s=>ids.has(s.token)).map(s=>({ref:ref('session',s.id),device:s.device,issuedAt:s.issuedAt,seenAt:s.seenAt,ended:!live(own.find(t=>t.fingerprint===s.token)!,clock.now())||Date.parse(s.issuedAt)+(s.isAgent?6*3600000:30*86400000)<=clock.now()})),
+        sessions: db.select().from(sessions).all().filter(s=>ids.has(s.token)).map(s=>({ref:browserRef(s.id),device:s.device,issuedAt:s.issuedAt,seenAt:s.seenAt,ended:!live(own.find(t=>t.fingerprint===s.token)!,clock.now())||Date.parse(s.issuedAt)+(s.isAgent?6*3600000:30*86400000)<=clock.now()})),
       };
     },
     removePasskey(member: string, reference: string) {
@@ -28,7 +28,7 @@ export function sharedAccount(db: DataDatabase, clock: Clock) {
       return {removed:true as const};
     },
     revokeSession(member: string, reference: string) {
-      const own = new Set(ownTokens(member).map(t=>t.fingerprint)), session = db.select().from(sessions).all().find(s=>ref('session',s.id)===reference&&own.has(s.token));
+      const own = new Set(ownTokens(member).map(t=>t.fingerprint)), session = db.select().from(sessions).all().find(s=>browserRef(s.id)===reference&&own.has(s.token));
       if(!session)throw new OperationError('not-found','Browser not found');
       endBrowser(db,session.id);
       return {revoked:true as const};

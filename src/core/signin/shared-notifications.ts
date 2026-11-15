@@ -17,7 +17,7 @@ const hosts=[/^fcm\.googleapis\.com$/,/^updates\.push\.services\.mozilla\.com$/,
 const subscription=z.object({endpoint:z.string().max(1000).refine(value=>{try{const url=new URL(value);return url.protocol==='https:'&&!url.port&&!url.username&&!url.password&&!url.hash&&hosts.some(host=>host.test(url.hostname));}catch{return false;}}),keys:z.object({p256dh:z.string().regex(/^[A-Za-z0-9_-]{20,200}$/),auth:z.string().regex(/^[A-Za-z0-9_-]{8,64}$/)}).strict()}).strict();
 export interface SharedNotificationOptions{vapid:{publicKey:string;privateKey:string};send?:PushTransport}
 export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:DataWrites;config?:SharedNotificationOptions;browser(viewer:Viewer):Readonly<{session:string}>|undefined;visible(viewer:Viewer,fields:Record<string,AnyColumn>):SQL;reportError(error:unknown):void}){
- const {db,clock}=options;let lastEnrollment=clock.now()-1;let closed=false,again=false,running:Promise<void>|undefined;const aborts=new Set<AbortController>();
+ const {db,clock}=options;let lastEnrollment=db.select({at:notificationDevices.createdAt}).from(notificationDevices).all().reduce((latest,row)=>Math.max(latest,Date.parse(row.at)),clock.now()-1);let closed=false,again=false,running:Promise<void>|undefined;const aborts=new Set<AbortController>();
  const write=<T>(action:()=>T)=>{const result=options.writes.run(action);for(const _error of result.notificationErrors)try{options.reportError(Error('Push metadata notification failed'));}catch{}return result.value;};
  const member=(viewer:Viewer)=>viewer.kind==='member'&&!!db.select().from(members).where(eq(members.id,viewer.id)).get();
  const device=(endpoint:string)=>{
