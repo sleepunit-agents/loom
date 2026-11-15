@@ -1,4 +1,6 @@
 /** Shared-data transport composition. No schema creation or legacy credentials. */
+import { sql } from 'drizzle-orm';
+import { members } from './core/data/schema.js';
 import type { IncomingMessage } from 'node:http';
 import type { Viewer } from './policy.js';
 import type { Clock } from './core/clock.js';
@@ -13,16 +15,23 @@ import { taskVisibility } from './core/data/visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
 
-export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}) {
-  const authenticate = dataAuthentication(db, () => clock.now());
+export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true) {
+  const resolve = dataAuthentication(db, () => clock.now());
+  const authenticate = (request: Request) => {
+    if (!admitted()) return;
+    const auth = resolve(request);
+    return auth && { ...auth, valid: () => admitted() && auth.valid() };
+  };
   const live = new DataLive();
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
     tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
-      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync'],
-    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer) },
+      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences'],
+    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer),
+      memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
+    },
   }), fields);
   const socket = dataSocket({ live, clock, originAllowed,
     authenticate(request) {
@@ -44,6 +53,12 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); },
     writes,
-    close() { return closing ??= (async () => { await socket.close(); live.close(); })(); },
+    close() {
+      if (closing) return closing;
+      let resolve!: () => void, reject!: (error: unknown) => void;
+      closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
+      void (async () => { try { await socket.close(); } finally { live.close(); } })().then(resolve, reject);
+      return closing;
+    },
   };
 }
