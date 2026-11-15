@@ -112,3 +112,18 @@ it('audits a stale-head refusal instead of replaying a cached successful spend',
  const f=await fixture(),id=await f.ask();expect((await f.call('answer',{id,answer:'allow'},randomUUID(),f.owner)).status).toBe(200);expect((await f.call('use',{id,...target},'spent')).status).toBe(200);
  f.root.writes.run(()=>f.db.update(s.changes).set({headCommit:'b'.repeat(40)}).run());expect((await f.call('use',{id,...target},'spent')).status).toBe(403);expect(f.root.services.approvals.get(id).state).toBe('used');expect(f.db.select().from(s.approvalRecord).all().map(row=>row.event)).toEqual(['request','allow','use','refused-use']);
 });
+it('offers all four body Work operations only through HTTP, including for a valid proved body',async()=>{
+ const f=await fixture(),id=await f.ask();expect((await f.call('answer',{id,answer:'allow'},randomUUID(),f.owner)).status).toBe(200);
+ const auth=f.root.credentials.authenticate(new Request('http://loom/graphql',{headers:{authorization:'Bearer '+raw.body}}));expect(auth?.valid()).toBe(true);if(!auth)throw Error('No fixture body proof');
+ const before=f.snapshot();for(const door of ['socket','mcp','direct'] as const)for(const [name,input] of [['request',request],['rule',target],['use',{id,...target}],['withdraw',{id}]] as const){expect(f.root.operations.offered(door).some(row=>row.name==='approvals.'+name)).toBe(false);expect(f.root.operations.call(door,auth.viewer,'approvals.'+name,input,randomUUID())).toMatchObject({ok:false,code:'denied'});}
+ expect(f.snapshot()).toEqual(before);
+});
+it.each(['member','project','job'] as const)('binds receipts against a valid same-conversation %s reassignment',async field=>{
+ const f=await fixture(),id=await f.ask('original');
+ f.root.writes.run(()=>{
+  if(field==='member'){f.db.insert(s.memberAgents).values({member:'bob',agent:'art'}).run();f.db.update(s.jobs).set({member:'bob'}).run();f.db.update(s.conversations).set({member:'bob'}).where(eq(s.conversations.id,f.thread.conversation)).run();}
+  else if(field==='project'){f.db.update(s.jobs).set({project:'other'}).run();f.db.update(s.conversations).set({project:'other'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.changes).set({project:'other'}).run();}
+  else {const old=f.db.select().from(s.jobs).get()!;f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,old.id)).run();f.db.insert(s.jobs).values({...old,id:'replacement'}).run();f.db.update(s.conversations).set({job:'replacement'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.tokens).set({job:'replacement'}).where(eq(s.tokens.fingerprint,hash(raw.body))).run();}
+ });
+ expect((await f.call('rule',target)).status).toBe(200);expect((await f.call('request',request,'original')).status).toBe(409);expect(f.db.select().from(s.approvals).all().map(row=>row.id)).toEqual([id]);
+});
