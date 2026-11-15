@@ -604,7 +604,7 @@ it('a late successful retired watchdog cannot extend the resumed generation expi
 
 it.each(['before-admission','during-turn'] as const)('earlier completed joined source withdrawal fences retained history %s',async phase=>{
  const f=await setup(),worker=f.start();await f.ready;const earlier=await f.joinInput();await f.joinInput({prompt:'THIRD SOURCE'});
- f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(2));
+ f.finish();await expect.poll(()=>f.calls.length).toBe(2);
  const withdraw=()=>f.app.db.prepare("UPDATE clock_wakes SET record=json_set(record,'$.withdrawn',json('true')) WHERE id=?").run(earlier);
  if(phase==='before-admission'){
   const original=globalThis.fetch;
@@ -613,7 +613,7 @@ it.each(['before-admission','during-turn'] as const)('earlier completed joined s
   });
   f.finish();expect(await worker.completed).toBe(false);expect(f.calls).toHaveLength(2);
  }else {
-  f.finish();await vi.waitFor(()=>expect(f.calls).toHaveLength(3));withdraw();f.clock.advance(1000);
+  f.finish();await expect.poll(()=>f.calls.length).toBe(3);withdraw();f.clock.advance(1000);
   expect(await worker.completed).toBe(false);expect(f.calls[2].child.killed).toBe(true);
  }
  expect(f.app.db.prepare('SELECT consumed FROM runtime_clock_turns WHERE job=? ORDER BY seq').all(f.job)).toEqual([{consumed:expect.any(Number)},{consumed:expect.any(Number)},{consumed:null}]);
