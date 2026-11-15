@@ -39,7 +39,7 @@ function command(plan: WorkerCommand): WorkerCommand {
 function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntime, closePipesOnKill = false) {
   if (signal.aborted) throw new Error('Worker attempt cancelled');
   const child = runtime.spawn(plan);
-  let spawned = false, closed = false, logTail = '', stdout = '', overflow = false;
+  let spawned = false, closed = false, stopRequested = false, logTail = '', stdout = '', overflow = false;
   let spawnResolve!: () => void, spawnReject!: (error: Error) => void;
   let exitResolve!: (result: { exitCode: number; logTail: string }) => void;
   let exitReject!: (error: Error) => void;
@@ -85,7 +85,7 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
   child.stdin.on('error', () => {});
   child.once('spawn', () => {
     spawned = true;
-    if (signal.aborted) kill();
+    if (signal.aborted || stopRequested) kill();
     spawnResolve();
   });
   child.once('error', () => { spawnReject(new Error('Worker command could not start')); });
@@ -108,11 +108,15 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
     spawned: ready, exited,
     output: () => { if (overflow) throw new Error('Build output exceeded limit'); return stdout; },
     release: async (input: unknown) => {
-      if (released || signal.aborted || closed) throw new Error('Worker input unavailable');
+      if (released || signal.aborted || stopRequested || closed) throw new Error('Worker input unavailable');
       released = true;
       await new Promise<void>((yes, no) => child.stdin.end(JSON.stringify(input) + '\n', (error?: Error | null) => error ? no(error) : yes()));
     },
-    stop: () => stopping ??= (async () => { kill(); if (cleanupError) throw cleanupError; await exited; })(),
+    stop: () => {
+      // Retain cancellation until a pending spawn has a PID to reap.
+      stopRequested = true;
+      return stopping ??= (async () => { kill(); if (cleanupError) throw cleanupError; await exited; })();
+    },
   };
 }
 export function commandWorkerExecutor(config: {

@@ -77,6 +77,28 @@ describe('worker command adapter (no child processes in tests)', () => {
     await flush(); expect(f.runtime.kill).toHaveBeenCalledOnce(); expect(settled).toBe(false);
     child.emit('close', null, 'SIGKILL'); await stopped; expect(settled).toBe(true);
   });
+  it('remembers stop before a pending spawn acquires its process id', async () => {
+    const f = fixture(), signal = new AbortController().signal;
+    const body = f.executor.start(job, 'image', signal), child = f.children[0].child;
+    Object.assign(child, { pid: undefined });
+    const stopped = body.stop();
+    expect(f.runtime.kill).not.toHaveBeenCalled();
+    Object.assign(child, { pid: 123 }); child.emit('spawn');
+    expect(f.runtime.kill).toHaveBeenCalledOnce();
+    await stopped;
+    expect(signal.aborted).toBe(false);
+    expect(f.children[0].input()).toBe('');
+  });
+  it('refuses input as soon as stop begins, before process close', async () => {
+    const f = fixture(); vi.mocked(f.runtime.kill).mockImplementation(() => {});
+    const body = f.executor.start(job, 'image', new AbortController().signal), child = f.children[0];
+    child.child.emit('spawn'); await body.spawned;
+    const stopped = body.stop();
+    try {
+      await expect(body.release()).rejects.toThrow('unavailable');
+      expect(child.input()).toBe('');
+    } finally { child.child.emit('close', null, 'SIGKILL'); await stopped; }
+  });
   it('rejects failed, malformed and oversized build output', async () => {
     for (const output of ['not json', '{}', '{"build":" "}', 'x'.repeat(70_000)]) {
       const f = fixture(), built = f.executor.build(job, new AbortController().signal);
