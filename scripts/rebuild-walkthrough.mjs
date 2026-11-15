@@ -129,7 +129,7 @@ export async function* walkthroughSteps(output) {
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());const failureScreenshot=row.actions?row.screenshot.replace('.png','-error.png'):row.screenshot;row.failureScreenshot=failureScreenshot;await page.screenshot({path:join(out,failureScreenshot),fullPage:true}).catch(()=>{});}
    if(row.actions)report.actions={...report.actions,...Object.fromEntries(Object.entries(row.actions).map(([name,value])=>['tempo'+name[0].toUpperCase()+name.slice(1),value]))};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await changeActions({page,tile:page.getByRole('region',{name:'Changes tile',exact:true}),app,example:report.example,out})};
-   if(title==='Comms'&&row.opened)report.actions=await conversationActions({page,app,example:report.example,out,open:openApp,actions:['commsSend'],previous:report.actions});
+   if(title==='Activity'&&row.opened)report.actions=await conversationActions({page,app,example:report.example,out,open:openApp,actions:['commsSend'],previous:report.actions});
    if(title==='Approvals'&&row.opened)report.actions={...report.actions,...await approvalActions({page,tile:page.getByRole('region',{name:'Approvals tile',exact:true}),app,example:report.example,out})};
    if(title==='Inbox'&&row.opened)report.actions={...report.actions,...await taskQuestions({page,tile:page.getByRole('region',{name:'Inbox tile',exact:true}),app,example:report.example,out})};
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await taskInlineQuestion({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
