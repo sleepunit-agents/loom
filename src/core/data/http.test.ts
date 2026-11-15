@@ -205,3 +205,19 @@ it('withholds a custom root result when admission ends during its resolver', asy
   expect(response.status).toBe(401);
   expect(JSON.stringify(await response.json())).not.toContain('private words');
 });
+
+
+it('combines caller-specific roots and shared fields without restoring default tables', async () => {
+  const { db } = fixture();
+  const fields = { memoryWho: { type: GraphQLString, resolve: (_source: unknown, _args: unknown, context: { viewer: Viewer }) => context.viewer.id } };
+  const authenticate = () => ({ viewer: { kind: 'member' as const, id: 'sam' }, valid: () => true });
+  const root = (viewer: Viewer) => new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Work', fields: {
+    workWho: { type: GraphQLString, resolve: () => viewer.id },
+  } }) });
+  const combined = dataHttp(db, authenticate, undefined, root, fields);
+  const read = (app: ReturnType<typeof dataHttp>, query: string) => app.request('http://loom/graphql', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ query }) });
+  expect(await (await read(combined, '{ workWho memoryWho }')).json()).toEqual({ data: { workWho: 'sam', memoryWho: 'sam' } });
+  expect((await (await read(combined, '{ tasks { id } }')).json()).errors).toBeDefined();
+  const fieldOnly = dataHttp(db, authenticate, undefined, fields);
+  expect(await (await read(fieldOnly, '{ memoryWho tasks { id } }')).json()).toEqual({ data: { memoryWho: 'sam', tasks: [{ id: 'agent' }, { id: 'mine' }] } });
+});
