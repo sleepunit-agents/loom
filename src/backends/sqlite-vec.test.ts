@@ -1322,6 +1322,24 @@ describe('SqliteVecBackend', () => {
       expect(hits.map((h) => h.path)).toContain(ref);
     });
 
+    it('renews an elapsed lifetime on restoration without reheating or extending unexpired memories', async () => {
+      vi.useFakeTimers({toFake:['Date']});
+      try {
+        vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+        const expired=await backend.remember({category:'episode',title:'Expired archive',content:'alpha',ttl:'1h'});
+        const active=await backend.remember({category:'episode',title:'Active archive',content:'beta',ttl:'24h'});
+        const permanent=await backend.remember({category:'project',title:'Permanent archive',content:'gamma',ttl:'permanent'});
+        for(const row of [expired,active,permanent])await backend.archive({ref:row.ref});
+        vi.setSystemTime(new Date('2026-01-01T02:00:00.000Z'));
+        for(const row of [expired,active,permanent])expect((await backend.restore({ref:row.ref})).restored).toEqual([row.ref]);
+        expect((await backend.recall({query:'alpha'})).map(row=>row.path)).toContain(expired.ref);
+        const row=(ref:string)=>backend.getDatabase().prepare('SELECT ttl,expires_at,authored_at FROM memories WHERE ref=?').get(ref);
+        expect(row(expired.ref)).toEqual({ttl:'1h',expires_at:'2026-01-01T03:00:00.000Z',authored_at:'2026-01-01T00:00:00.000Z'});
+        expect(row(active.ref)).toEqual({ttl:'24h',expires_at:'2026-01-02T00:00:00.000Z',authored_at:'2026-01-01T00:00:00.000Z'});
+        expect(row(permanent.ref)).toEqual({ttl:'permanent',expires_at:null,authored_at:'2026-01-01T00:00:00.000Z'});
+      } finally {vi.useRealTimers();}
+    });
+
     it('restored memory clears archive_note', async () => {
       const { ref } = await backend.remember({
         category: 'project',
