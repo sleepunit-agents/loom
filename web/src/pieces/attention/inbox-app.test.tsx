@@ -53,12 +53,12 @@ it('consumes whole-mailbox search without locally discarding source matches, pag
   expect(f.requests.at(-1)?.variables).toMatchObject({ search: 'needle', offset: 0 });
   expect(text()).toContain('Different display text'); expect(button('Next page').props.disabled).toBe(true);
 });
-it('opens source-owned questions and dismisses actual action notices without central answers', async () => {
-  setup(row({ source: 'task', sourceId: 't-1', read: true })); const go = vi.fn();
+it.each([['task','t-1','Open task','/p/tasks-preview/task/t-1'], ['approval','a-1','Open Approvals','/p/approvals-preview/approval/a-1'], ['secret-request','s /1','Open Secrets','/p/settings-preview/requests/s%20%2F1']])('opens %s source questions and dismisses actual action notices without central answers', async (source, sourceId, label, path) => {
+  setup(row({ source, sourceId, read: true })); const go = vi.fn();
   await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go })); });
   expect(button('Yes')).toBeUndefined();
-  await act(async () => { button('Open task').props.onClick(); });
-  expect(go).toHaveBeenCalledWith('/p/tasks-preview/task/t-1');
+  await act(async () => { button(label).props.onClick(); });
+  expect(go).toHaveBeenCalledWith(path);
   await act(async () => { tree.root.findByType('Split').props.onFolder('errors'); });
   expect(f.requests.at(-1)?.variables.onlyErrors).toBe(true);
   expect(text()).toContain('Action failed');
@@ -76,4 +76,15 @@ it('withdraws private question and answer words at their independent deadlines a
   await act(async () => { await vi.advanceTimersByTimeAsync(1000); }); expect(text()).not.toContain('PRIVATE ANSWER');
   f.status = 'denied'; await act(async () => { tree.update(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go: vi.fn() })); });
   expect(tree.root.findAllByType('Row')).toHaveLength(0); expect(button('Yes')).toBeUndefined(); expect(text()).not.toContain('Buy the pump');
+});
+
+it.each(['denied','offline'])('withdraws still-retained private words immediately when %s', async status => {
+  setup(row({ thread: 'th:private', read: true, state: 'answered', body: { words: 'LIVE PRIVATE QUESTION' }, answerText: 'LIVE PRIVATE ANSWER', answer: 'words',
+    bodyKeepUntil: new Date(Date.now() + 60000).toISOString(), answerKeepUntil: new Date(Date.now() + 120000).toISOString() }));
+  await act(async () => { tree = create(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go: vi.fn() })); });
+  expect(text()).toContain('LIVE PRIVATE QUESTION'); expect(text()).toContain('LIVE PRIVATE ANSWER');
+  f.status = status;
+  await act(async () => { tree.update(h(InboxApp, { path: '/p/inbox-preview/ask/in-1', go: vi.fn() })); });
+  expect(text()).not.toContain('LIVE PRIVATE QUESTION'); expect(text()).not.toContain('LIVE PRIVATE ANSWER');
+  expect(tree.root.findAllByType('Row')).toHaveLength(0);
 });

@@ -49,5 +49,6 @@ export function inboxSourcePath(row: InboxItem): string | undefined {
   const kind = row.waitsOnKind ?? row.source, id = row.waitsOnId ?? row.sourceId;
   if (!id) return undefined;
   if (kind === 'approval') return `/p/approvals-preview/approval/${encodeURIComponent(id)}`;
+  if (kind === 'secret-request') return `/p/settings-preview/requests/${encodeURIComponent(id)}`;
   if (kind === 'task') return `/p/tasks-preview/task/${taskSegment(id)}`;
 }
