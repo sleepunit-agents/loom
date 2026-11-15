@@ -24,7 +24,7 @@ export function measuringSettingsProposals(db: DataDatabase) {
       const card = settings.prepare(after);
       // Prepared fields and wording win over unexpected untyped metadata too.
       return approvals.request({ ...context, ...card,
-        what: card.changeSummary,
+        what: 'Change Measuring settings',
         ask: 'Change Measuring settings?',
         ifYes: 'Apply the Measuring settings shown on this card.',
         ifNo: 'Keep the current Measuring settings.',

@@ -25,7 +25,7 @@ it('composes with the injected shared service and files the exact before/after i
   const request = vi.spyOn(shared, 'request');
   const card = proposals.request(shared, after, context);
   expect(request).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ ...context, operation: 'measuring.settings' }));
-  expect(card).toMatchObject({ ...context, state: 'pending', kind: 'setting', target: 'measuring', what: card.changeSummary });
+  expect(card).toMatchObject({ ...context, state: 'pending', kind: 'setting', target: 'measuring', what: 'Change Measuring settings' });
   expect(readMeasuringChange(card)).toEqual({ before: DEFAULT_MEASURING, after });
   expect(db.select().from(measuringSettings).all()).toEqual([]);
   expect(db.select().from(inbox).where(eq(inbox.sourceId, card.id)).get()).toMatchObject({
@@ -41,7 +41,7 @@ it('keeps operation, before/after and card wording authoritative over untyped me
   const metadata = { ...context, kind: 'dangerous', target: 'other', operation: 'other', details: '{}',
     changeSummary: 'fake', what: 'fake', ask: 'fake', ifYes: 'fake', ifNo: 'fake' };
   const card = proposals.request(shared, after, metadata);
-  expect(card).toMatchObject({ kind: 'setting', target: 'measuring', operation: 'measuring.settings', what: card.changeSummary,
+  expect(card).toMatchObject({ kind: 'setting', target: 'measuring', operation: 'measuring.settings', what: 'Change Measuring settings',
     ask: 'Change Measuring settings?', ifYes: 'Apply the Measuring settings shown on this card.', ifNo: 'Keep the current Measuring settings.' });
   expect(readMeasuringChange(card)).toEqual({ before: DEFAULT_MEASURING, after });
 });

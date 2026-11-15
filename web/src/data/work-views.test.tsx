@@ -29,6 +29,7 @@ it('the registered lazy tiles actually render the generated shared rows', async 
   await selectRow();
   expect(words()).toContain('Keep one day?');
   expect(words()).toContain('Measuring settings change');
+  expect(words()).not.toContain('keep_days');
   expect(tree.root.findAllByType('Button')).toHaveLength(2);
   await act(async () => tree.update(h(Suspense, { fallback: 'Opening' }, h(changesApp.Screen, {}))));
   expect(words()).toContain('Current change');
