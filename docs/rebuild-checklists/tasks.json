@@ -12,7 +12,11 @@
     {
       "id": "tasks-002",
       "promise": "Lets a person or an agent claim work, comment on it and close it.",
-      "source": "docs/how-it-works/site/tasks.html"
+      "source": "docs/how-it-works/site/tasks.html",
+      "probe": {
+        "kind": "action",
+        "action": "taskLifecycle"
+      }
     },
     {
       "id": "tasks-003",

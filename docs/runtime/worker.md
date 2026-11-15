@@ -463,3 +463,11 @@ that call, while body close cancels every current and future call.
 Native model tools report only working/waiting while a turn is live. Idle/offline
 reports and Stop acknowledgement belong to the receiving runtime after execution
 ends, so a model cannot clear the working flag or remove the live Stop control.
+
+runtime.proposeBoxSettings files a private chat request for the machine owner or
+a household owner. Its card includes the current and proposed name, hosting
+flags, agent lending and owner facts. Allow rechecks the current member's
+authority, machine ownership/revocation, the full previous owner settings,
+lending and name uniqueness. Worker-reported facts are independent of that
+comparison. The direct owner command and approved operation share validation and
+application; no worker credentials or enrollment are issued by either.
