@@ -3,6 +3,9 @@ import type { Viewer } from './core/index.js';
 import { memoryQueryFields } from './transport/memory-queries.js';
 import { sharedActivityConversations } from './pieces/mind/activity-conversations.js';
 import { dataHttp } from './core/data/http.js';
+import { dataReadSchema } from './core/data/read-schema.js';
+import { DataLive } from './core/data/live.js';
+import { dataSocket } from './core/data/socket.js';
 import { dataDatabase } from './core/data/database.js';
 import { dataAuthentication } from './core/data/authentication.js';
 import { installDiscordHistory, type HistoryAccess } from './pieces/bridges/history-operation.js';
@@ -368,73 +371,16 @@ export async function listenNext(app: Foundation, options: NextOptions) {
   const sources = mindTransports.get(app) ?? [];
   await prepareTouchSources(sources);
   const stopTouches = await listenForTouchSources(app.operations, sources);
-  const auth = options.authenticate ?? nextSessionResolver(app);
-  const api = httpDoor(app, auth);
-  const root = resolve(options.webRoot ?? resolve(import.meta.dirname, '../dist/web'));
-  const routes = new Hono<{ Bindings: { incoming: IncomingMessage } }>();
-  // The generated door uses the SAME connection and fresh shared credentials.
-  // Existing homes are deliberately not bootstrapped or migrated here.
-  const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
-  const data = dataHttp(sharedData, dataAuthentication(sharedData, () => app.operations.clock.now()), relyingParty(process.env)?.origin, memoryQueries.get(app));
-  routes.all('/graphql', c => data.fetch(c.req.raw));
-  routes.route('/', signinRoutes(app));
-  routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
-  routes.all('/mcp', async c => {
-    // A stateless transport per request binds every call to this caller.
-    const authentication = auth(c.env.incoming as IncomingMessage);
-    if (!authentication?.valid()) return c.json({ error: 'Authentication required' }, 401);
-    const server = new McpServer({ name: 'loom-next', version: '1' });
-    for (const op of app.operations.offered('mcp')) server.registerTool(op.name, {
-      inputSchema: z.object({ input: op.input, id: z.string().optional() }),
-    }, async args => {
-      const result = authentication.valid() ? app.operations.call('mcp', authentication.viewer, op.name, args.input, args.id) : { ok: false, code: 'denied', message: 'Authentication ended' };
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], isError: !result.ok };
-    });
-    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    await server.connect(transport);
-    try { return await transport.handleRequest(c.req.raw); }
-    finally { await transport.close(); await server.close(); }
-  });
-  routes.get('/faces/:agent/:file', c => {
-    const authentication = auth(c.env.incoming as IncomingMessage);
-    if (!authentication?.valid()) return c.notFound();
-    const agent = c.req.param('agent'), file = c.req.param('file');
-    if (!new HouseholdDatabase(app.db).household(options.home)?.agents.includes(agent) ||
-      !maySee(authentication.viewer, { agent, type: 'household.agentDisplay' }, new SharingDatabase(app.db, options.home).sharing())) return c.notFound();
-    const sprite = storedSprite(app.db, agent);
-    if (!sprite || (file !== 'manifest.json' && !Object.hasOwn(sprite.sheets, file))) return c.notFound();
-    return new Response(new Uint8Array(Buffer.from(file === 'manifest.json' ? sprite.rawManifest : sprite.sheets[file], 'base64')), {
-      headers: { 'content-type': file === 'manifest.json' ? 'application/json' : 'image/png', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' },
-    });
-  });
-  const publicRoot = resolve(import.meta.dirname, '../assets');
-  const built = existsSync(resolve(root, 'assets')) ? readdirSync(resolve(root, 'assets')).filter(f => /\.(js|css|woff2)$/.test(f)).sort().map(f => `/app/assets/${f}`) : [];
-  routes.get('/manifest.webmanifest', () => new Response(MANIFEST, { headers: { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' } }));
-  routes.get('/sw.js', () => new Response(nextWorker(built), { headers: { 'content-type': 'text/javascript', 'cache-control': 'no-cache', 'service-worker-allowed': '/' } }));
-  routes.get('*', c => {
-    const pathname = new URL(c.req.url).pathname;
-    if (pathname.startsWith('/api/') || pathname === '/events' || pathname.startsWith('/collections') || pathname === '/live') return c.notFound();
-    const asset = pathname.startsWith('/app/');
-    const publicAsset = /^\/(icons|fonts)\//.test(pathname);
-    // A missing resource must never be mistaken for an HTML navigation.
-    if (!asset && !publicAsset && (extname(pathname) || /^\/(assets|faces|pixel-icons)(\/|$)/.test(pathname))) return c.notFound();
-    const base = publicAsset ? publicRoot : root;
-    const file = publicAsset ? resolve(base, '.' + pathname) : asset ? resolve(root, '.' + pathname.slice(4)) : resolve(root, 'next.html');
-    if (!file.startsWith(base + sep) || !existsSync(file) || !statSync(file).isFile()) return c.notFound();
-    const body = asset || publicAsset ? readFileSync(file) : readFileSync(file,'utf8').replace('<html ', `<html data-fixture="${app.operations.has('example.put')}" data-staging="${!!options.staging}" `);
-    return new Response(body, { headers: {
-      'content-type': ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.png': 'image/png' } as Record<string,string>)[extname(file)] ?? 'application/octet-stream',
-      'cache-control': asset ? 'public, max-age=31536000, immutable' : 'no-store',
-      'x-content-type-options': 'nosniff',
-      'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'",
-    } });
-  });
   const servers: ReturnType<typeof createServer>[] = [];
   const detaches: (() => void)[] = [];
   const sockets = new Set<Socket>();
-  const hosts = typeof options.host === 'string' ? [options.host] : options.host ?? ['127.0.0.1'];
-  let port = options.port ?? 0;
+  let liveData: DataLive | undefined;
+  let socketData: ReturnType<typeof dataSocket> | undefined;
+  let stopDataChanges: (() => void) | undefined;
   const close = async () => {
+    stopDataChanges?.();
+    liveData?.close();
+    await socketData?.close();
     detaches.forEach(detach => detach());
     for (const socket of sockets) socket.destroy();
     await Promise.all(servers.map(http => {
@@ -444,6 +390,82 @@ export async function listenNext(app: Foundation, options: NextOptions) {
     await stopTouches();
   };
   try {
+    const auth = options.authenticate ?? nextSessionResolver(app);
+    const api = httpDoor(app, auth);
+    const root = resolve(options.webRoot ?? resolve(import.meta.dirname, '../dist/web'));
+    const routes = new Hono<{ Bindings: { incoming: IncomingMessage } }>();
+    // The generated door uses the SAME connection and fresh shared credentials.
+    // Existing homes are deliberately not bootstrapped or migrated here.
+    const sharedData = dataDatabase(app.db, () => new Date(app.operations.clock.now()).toISOString());
+    const authenticateData = dataAuthentication(sharedData, () => app.operations.clock.now());
+    const fields = memoryQueries.get(app);
+    const data = dataHttp(sharedData, authenticateData, relyingParty(process.env)?.origin, fields);
+    liveData = new DataLive();
+    socketData = dataSocket({live: liveData, clock: app.operations.clock,
+      authenticate(req) {
+        const headers = new Headers();
+        for (let i = 0; i < req.rawHeaders.length; i += 2) headers.append(req.rawHeaders[i], req.rawHeaders[i + 1]);
+        return authenticateData(new Request('http://localhost/graphql', {headers}));
+      },
+      schema: viewer => dataReadSchema(sharedData, viewer, fields), originAllowed: sameOrigin});
+    // Private file-source touches commit through core.touched, so they share
+    // this signal with operation and access changes. Clock deadlines are separate.
+    stopDataChanges = app.live.observe(() => { socketData!.refreshAccess(); liveData!.changed(); });
+    routes.all('/graphql', c => data.fetch(c.req.raw));
+    routes.route('/', signinRoutes(app));
+    routes.get('/health', c => c.json({ ok: true, next: true, staging: !!options.staging }));
+    routes.all('/mcp', async c => {
+      // A stateless transport per request binds every call to this caller.
+      const authentication = auth(c.env.incoming as IncomingMessage);
+      if (!authentication?.valid()) return c.json({ error: 'Authentication required' }, 401);
+      const server = new McpServer({ name: 'loom-next', version: '1' });
+      for (const op of app.operations.offered('mcp')) server.registerTool(op.name, {
+        inputSchema: z.object({ input: op.input, id: z.string().optional() }),
+      }, async args => {
+        const result = authentication.valid() ? app.operations.call('mcp', authentication.viewer, op.name, args.input, args.id) : { ok: false, code: 'denied', message: 'Authentication ended' };
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], isError: !result.ok };
+      });
+      const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+      await server.connect(transport);
+      try { return await transport.handleRequest(c.req.raw); }
+      finally { await transport.close(); await server.close(); }
+    });
+    routes.get('/faces/:agent/:file', c => {
+      const authentication = auth(c.env.incoming as IncomingMessage);
+      if (!authentication?.valid()) return c.notFound();
+      const agent = c.req.param('agent'), file = c.req.param('file');
+      if (!new HouseholdDatabase(app.db).household(options.home)?.agents.includes(agent) ||
+        !maySee(authentication.viewer, { agent, type: 'household.agentDisplay' }, new SharingDatabase(app.db, options.home).sharing())) return c.notFound();
+      const sprite = storedSprite(app.db, agent);
+      if (!sprite || (file !== 'manifest.json' && !Object.hasOwn(sprite.sheets, file))) return c.notFound();
+      return new Response(new Uint8Array(Buffer.from(file === 'manifest.json' ? sprite.rawManifest : sprite.sheets[file], 'base64')), {
+        headers: { 'content-type': file === 'manifest.json' ? 'application/json' : 'image/png', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' },
+      });
+    });
+    const publicRoot = resolve(import.meta.dirname, '../assets');
+    const built = existsSync(resolve(root, 'assets')) ? readdirSync(resolve(root, 'assets')).filter(f => /\.(js|css|woff2)$/.test(f)).sort().map(f => `/app/assets/${f}`) : [];
+    routes.get('/manifest.webmanifest', () => new Response(MANIFEST, { headers: { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' } }));
+    routes.get('/sw.js', () => new Response(nextWorker(built), { headers: { 'content-type': 'text/javascript', 'cache-control': 'no-cache', 'service-worker-allowed': '/' } }));
+    routes.get('*', c => {
+      const pathname = new URL(c.req.url).pathname;
+      if (pathname.startsWith('/api/') || pathname === '/events' || pathname.startsWith('/collections') || pathname === '/live') return c.notFound();
+      const asset = pathname.startsWith('/app/');
+      const publicAsset = /^\/(icons|fonts)\//.test(pathname);
+      // A missing resource must never be mistaken for an HTML navigation.
+      if (!asset && !publicAsset && (extname(pathname) || /^\/(assets|faces|pixel-icons)(\/|$)/.test(pathname))) return c.notFound();
+      const base = publicAsset ? publicRoot : root;
+      const file = publicAsset ? resolve(base, '.' + pathname) : asset ? resolve(root, '.' + pathname.slice(4)) : resolve(root, 'next.html');
+      if (!file.startsWith(base + sep) || !existsSync(file) || !statSync(file).isFile()) return c.notFound();
+      const body = asset || publicAsset ? readFileSync(file) : readFileSync(file,'utf8').replace('<html ', `<html data-fixture="${app.operations.has('example.put')}" data-staging="${!!options.staging}" `);
+      return new Response(body, { headers: {
+        'content-type': ({ '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2', '.png': 'image/png' } as Record<string,string>)[extname(file)] ?? 'application/octet-stream',
+        'cache-control': asset ? 'public, max-age=31536000, immutable' : 'no-store',
+        'x-content-type-options': 'nosniff',
+        'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self'; frame-ancestors 'none'",
+      } });
+    });
+    const hosts = typeof options.host === 'string' ? [options.host] : options.host ?? ['127.0.0.1'];
+    let port = options.port ?? 0;
     if (!hosts.length) throw new Error('next mode needs a bind host');
     for (const host of [...new Set(hosts)]) {
       const http = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -454,13 +476,13 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         void getRequestListener(request => routes.fetch(request, { incoming: req }))(req, res);
       });
       http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
-      servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin));
+      servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin), socketData.attach(http));
       await new Promise<void>((ok, no) => { http.once('error', no); http.listen(port,host,ok); });
       const address = http.address();
       if (!address || typeof address === 'string') throw new Error('no next address');
       port = address.port;
     }
+    const host = hosts[0].includes(':') ? `[${hosts[0]}]` : hosts[0];
+    return { url: `http://${host}:${port}`, close };
   } catch (error) { await close(); throw error; }
-  const host = hosts[0].includes(':') ? `[${hosts[0]}]` : hosts[0];
-  return { url: `http://${host}:${port}`, close };
 }
