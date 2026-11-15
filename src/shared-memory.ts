@@ -64,6 +64,7 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
  validateSharedMemoryOptions(db,options);
  const closers:Array<()=>void>=[];let closed=false;
  const close=()=>{if(closed)return;closed=true;const errors:unknown[]=[];for(const stop of closers.splice(0).reverse())try{stop();}catch(error){errors.push(error);}if(errors.length)throw new AggregateError(errors,'Memory teardown failed');};
+ const timezone=()=>db.select().from(household).get()?.timezone??'UTC';
  const sharing=()=>sharedSharing(db),sources=options?.sources,agents=sources?.agents??[];
  const settings=db.select().from(household).get();
  const conversationHref=(id:string)=>'/p/comms-preview/conversation/'+encodeURIComponent(id);
@@ -71,8 +72,8 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
  try{
   const people=peopleReader({directory:sources?.commons.people,agents,sharing,now:()=>clock.now(),projectHref});closers.push(people.close);
   const projects=createProjectsReader(clock,{agents,sharing,people,...sharedProjectSections(db,tasks),...options?.sections});closers.push(projects.close);
-  const activity=createActivityReader(clock,{agents,sharing,timezone:()=>db.select().from(household).get()?.timezone??'UTC',github:settings?.githubOwner,conversations:sharedActivityConversations(db,{sharing,conversationHref})});closers.push(activity.close);
-  const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),timezone:()=>db.select().from(household).get()?.timezone??'UTC',projects,activity,conversationHref,projectHref});closers.push(queries.close);
+  const activity=createActivityReader(clock,{agents,sharing,timezone,github:settings?.githubOwner,conversations:sharedActivityConversations(db,{sharing,conversationHref})});closers.push(activity.close);
+  const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),timezone,projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const touches=mindTouchSources(sources);
   return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:queries.fields,nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,
    register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'|'committed'>){

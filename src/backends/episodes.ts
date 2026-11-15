@@ -38,6 +38,8 @@ export interface EpisodeRow {
 export interface TapeOptions {
   /** Trusted private-store selection; omitted keeps the legacy override. */
   memorySelection?: MemorySelection;
+  /** Canonical snapshots exclude future episodes; legacy wrapper defaults remain unchanged. */
+  excludeFuture?:boolean;
   /** Look-back window in hours (default 24). */
   hours?: number;
   /** Approximate token budget for the block (default 1500). Oldest are dropped first. */
@@ -65,10 +67,10 @@ export function heldFromEnv(env: NodeJS.ProcessEnv): string | null | undefined {
   return /^cv-[0-9a-f]{12}$/.test(v) ? v : null;
 }
 
-const DEFAULT_HOURS = 24;
+export const DEFAULT_HOURS = 24;
 const DEFAULT_TOKEN_BUDGET = 1500;
 const DEFAULT_CHARS_PER_TOKEN = 4;
-const HOUR_MS = 3_600_000;
+export const HOUR_MS = 3_600_000;
 
 function zone(opts: TapeOptions): string {
   return opts.timeZone ?? process.env.LOOM_TIMEZONE ?? process.env.TZ ?? 'America/Chicago';
@@ -186,19 +188,15 @@ export function digestRows(contextDir: string, opts: TapeOptions = {}): TapeDige
 }
 
 /** Read-only episodes from the caller's declared private source; no discovery. */
-export function episodesOnConnection(db:Database,opts:TapeOptions={}):EpisodeRow[] {
-    const now = opts.nowMs ?? Date.now();
-    const since = new Date(now - (opts.hours ?? DEFAULT_HOURS) * HOUR_MS).toISOString();
-    const nowIso = new Date(now).toISOString();
-    // A store holding only conversations so far (a turn came before any memory) has no episodes.
-    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories'").get()) return [];
-    return db
-      .prepare(
-        `SELECT title, content, created, project, metadata FROM memories
-         WHERE category = ? AND archived = 0 AND julianday(created) >= julianday(?)
-           AND julianday(created) <= julianday(?) AND (expires_at IS NULL OR julianday(expires_at) > julianday(?))
-         ORDER BY julianday(created),created`,
-      )
-      .all(EPISODE_CATEGORY, since, nowIso, nowIso) as EpisodeRow[];
-
+export function episodesOnConnection(db: Database, opts: TapeOptions = {}): EpisodeRow[] {
+  const now = opts.nowMs ?? Date.now();
+  const since = new Date(now - (opts.hours ?? DEFAULT_HOURS) * HOUR_MS).toISOString();
+  const nowIso = new Date(now).toISOString();
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories'").get()) return [];
+  const window = opts.excludeFuture ? 'julianday(created) >= julianday(?) AND julianday(created) <= julianday(?)' : 'created >= ?';
+  const expiry = opts.excludeFuture ? 'julianday(expires_at) > julianday(?)' : 'expires_at > ?';
+  return db.prepare(`SELECT title, content, created, project, metadata FROM memories
+    WHERE category = ? AND archived = 0 AND ${window} AND (expires_at IS NULL OR ${expiry})
+    ORDER BY ${opts.excludeFuture ? 'julianday(created), created' : 'created ASC'}`)
+    .all(EPISODE_CATEGORY, since, ...(opts.excludeFuture ? [nowIso, nowIso] : [nowIso])) as EpisodeRow[];
 }

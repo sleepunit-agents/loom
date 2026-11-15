@@ -13,7 +13,7 @@ import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {GraphQLString} from 'graphql/index.js';
 import {bodyCommandClient} from './runtime/body-command-client.js';
-import {bodyMemoryContext,bodyMemoryQuery} from './runtime/body-memory-context.js';
+import {bodyMemoryIdentity,bodyIdentityQuery} from './runtime/body-memory-identity.js';
 import {bodyProgram} from './runtime/body-program.js';
 import type {WorkerAssignment} from './runtime/worker.js';
 const owned=vi.hoisted(()=>({connections:[] as Connection[],failLoad:false}));
@@ -173,29 +173,29 @@ it('reads private identity and hottest memories from declared sources through th
  writeFileSync(join(directory,'IDENTITY.md'),'PRIVATE_BODY_CREED');writeFileSync(join(directory,'preferences.md'),'PRIVATE_BODY_PREFERENCES');writeFileSync(join(directory,'self-model.md'),'PRIVATE_BODY_SELF_MODEL');writeFileSync(join(dirname(f.other),'IDENTITY.md'),'OTHER_BODY_CREED');
  expect((await f.call('remember',input,'context-memory')).status).toBe(200);expect((await f.call('remember',{...input,category:'episode',title:'Private recent episode',content:'PRIVATE_BODY_EPISODE'},'context-episode')).status).toBe(200);
  f.source.prepare('UPDATE memories SET created=?,authored_at=NULL,recall_heat=0 WHERE category=?').run('2026-07-01T00:00:00.000Z','project');
- const cool=await bodyMemoryContext(client,'art');expect(cool).toContain('## Background');expect(cool).toContain(title);
+ const cool=await bodyMemoryIdentity(client,'art');expect(cool).toContain('## Background');expect(cool).toContain(title);
  expect((await f.call('recall',{query:'alpha'},'context-recall')).status).toBe(200);const before=f.source.serialize();
  vi.stubEnv('LOOM_SQLITE_DB_PATH',f.other);vi.stubEnv('LOOM_TIMEZONE','Pacific/Honolulu');
- try{const context=await bodyMemoryContext(client,'art');for(const value of ['PRIVATE_BODY_CREED','PRIVATE_BODY_PREFERENCES','PRIVATE_BODY_SELF_MODEL','PRIVATE_BODY_EPISODE',title,'18:00'])expect(context).toContain(value);expect(context).toContain('## Recent');expect(context).not.toContain('OTHER_BODY_CREED');expect(await bodyMemoryContext(client,'mark')).toBeNull();}finally{vi.unstubAllEnvs();}
+ try{const identity=await bodyMemoryIdentity(client,'art');for(const value of ['PRIVATE_BODY_CREED','PRIVATE_BODY_PREFERENCES','PRIVATE_BODY_SELF_MODEL','PRIVATE_BODY_EPISODE',title,'18:00'])expect(identity).toContain(value);expect(identity).toContain('## Recent');expect(identity).not.toContain('OTHER_BODY_CREED');expect(await bodyMemoryIdentity(client,'mark')).toBeNull();}finally{vi.unstubAllEnvs();}
  expect(f.source.serialize()).toEqual(before);for(const value of ['PRIVATE_BODY_CREED','PRIVATE_BODY_PREFERENCES','PRIVATE_BODY_SELF_MODEL','PRIVATE_BODY_EPISODE',words])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
- const denied=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.runner,'content-type':'application/json'},body:JSON.stringify({query:bodyMemoryQuery,variables:{agent:'art'}})}),deniedBody=await denied.json();expect(deniedBody.errors?.length).toBeGreaterThan(0);expect(JSON.stringify(deniedBody)).not.toContain('PRIVATE_BODY_CREED');
- f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect((await f.query('{memoryAgentContext(agent:"art"){creed}}',raw.member)).memoryAgentContext).toBeNull();
+ const denied=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.runner,'content-type':'application/json'},body:JSON.stringify({query:bodyIdentityQuery,variables:{agent:'art'}})}),deniedBody=await denied.json();expect(deniedBody.errors?.length).toBeGreaterThan(0);expect(JSON.stringify(deniedBody)).not.toContain('PRIVATE_BODY_CREED');
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect((await f.query('{memoryIdentity(agent:"art"){creed}}',raw.member)).memoryIdentity).toBeNull();
 });
 it('excludes expired top-of-mind words and old or future episodes without changing precious sources',async()=>{
  const f=await fixture();expect((await f.call('remember',{...input,ttl:'1h'},'context-expiry')).status).toBe(200);
  expect((await f.call('remember',{...input,category:'episode',title:'Old episode',content:'OLD_EPISODE'},'context-old')).status).toBe(200);expect((await f.call('remember',{...input,category:'episode',title:'Future episode',content:'FUTURE_EPISODE'},'context-future')).status).toBe(200);
  f.source.prepare('UPDATE memories SET created=? WHERE title=?').run('2026-11-12T00:00:00.000Z','Old episode');f.source.prepare('UPDATE memories SET created=? WHERE title=?').run('2026-11-16T00:00:00.000Z','Future episode');
- vi.spyOn(f.clock,'now').mockReturnValue(f.clock.now()+3600000);const before=f.source.serialize(),result=await f.query('{memoryAgentContext(agent:"art"){topOfMind recent}}');expect(result).toEqual({memoryAgentContext:{topOfMind:null,recent:null}});expect(f.source.serialize()).toEqual(before);
+ vi.spyOn(f.clock,'now').mockReturnValue(f.clock.now()+3600000);const before=f.source.serialize(),result=await f.query('{memoryIdentity(agent:"art"){topOfMind recent}}');expect(result).toEqual({memoryIdentity:{topOfMind:null,recent:null}});expect(f.source.serialize()).toEqual(before);
 });
 it('refuses identity files escaping the declared agent directory without leaking words or paths',async()=>{
  const f=await fixture(),outside=join(f.home,'outside-identity.md');writeFileSync(outside,'ESCAPED_IDENTITY_WORDS');symlinkSync(outside,join(dirname(f.path),'IDENTITY.md'));
- const response=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({query:bodyMemoryQuery,variables:{agent:'art'}})}),payload=await response.json();expect(payload.errors?.length).toBeGreaterThan(0);expect(JSON.stringify(payload)).not.toContain('ESCAPED_IDENTITY_WORDS');expect(JSON.stringify(payload)).not.toContain(outside);
+ const response=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({query:bodyIdentityQuery,variables:{agent:'art'}})}),payload=await response.json();expect(payload.errors?.length).toBeGreaterThan(0);expect(JSON.stringify(payload)).not.toContain('ESCAPED_IDENTITY_WORDS');expect(JSON.stringify(payload)).not.toContain(outside);
 });
 it('does not publish top-of-mind words that expire during GraphQL serialization',async()=>{
  const f=await fixture(),creed='CONTEXT_BOUNDARY_CREED';writeFileSync(join(dirname(f.path),'IDENTITY.md'),creed);expect((await f.call('remember',input,'context-boundary')).status).toBe(200);
  f.source.prepare('UPDATE memories SET expires_at=?').run(new Date(f.clock.now()+1).toISOString());let crossed=false;const serialize=GraphQLString.serialize;
  vi.spyOn(GraphQLString,'serialize').mockImplementation(value=>{if(value===creed&&!crossed){crossed=true;f.clock.advance(1);}return serialize(value);});
- const response=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({query:bodyMemoryQuery,variables:{agent:'art'}})}),payload=await response.json();expect(crossed).toBe(true);expect(JSON.stringify(payload)).not.toContain(words);expect(JSON.stringify(payload)).not.toContain(title);
+ const response=await fetch(f.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({query:bodyIdentityQuery,variables:{agent:'art'}})}),payload=await response.json();expect(crossed).toBe(true);expect(JSON.stringify(payload)).not.toContain(words);expect(JSON.stringify(payload)).not.toContain(title);
 });
 it('loads private Memory into the receiving body before its model without copying it into job metadata or shared logs',async()=>{
  const f=await fixture(),creed='ACTUAL_RECEIVING_BODY_CREED';writeFileSync(join(dirname(f.path),'IDENTITY.md'),creed);expect((await f.call('remember',input,'receiving-memory')).status).toBe(200);

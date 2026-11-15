@@ -9,7 +9,7 @@ import { claudeBody } from './claude-body.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
 import {bodyCommandClient} from './body-command-client.js';
-import {bodyMemoryContext} from './body-memory-context.js';
+import {bodyMemoryIdentity} from './body-memory-identity.js';
 import type { Clock } from '../core/clock.js';
 import type { WorkerSchedule, WorkerAssignment } from './worker.js';
 const config = z.object({ command: z.string().min(1), cwd: z.string().min(1) }).strict();
@@ -78,7 +78,7 @@ export async function bodyProgram(input: {
     if(signal.aborted)throw new Error();
     if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.status({state:'idle',work:''});return 0;}
     memoryClient=bodyCommandClient({url:bootstrap.origin,token:parsed.bootstrap.token,signal,fetch:input.fetch,clock:input.clock});
-    const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryContext(memoryClient,job.agent));
+    const memory=await (input.loadMemory?input.loadMemory(job.agent,signal):bodyMemoryIdentity(memoryClient,job.agent));
     if(signal.aborted)throw new Error();if(memory)context.unshift(memory);
     await pending;
     if(signal.aborted)throw new Error();
