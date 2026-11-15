@@ -40,7 +40,7 @@ export function Ticker({ live, parts, go }: { live: boolean; parts: TickPart[]; 
     let on = true;
     void document.fonts?.ready.then(() => { if (on) measure(); });
     return () => { on = false; ro.disconnect(); };
-  }, [key, reduced]);
+  }, [key, reduced, live]);
   useEffect(() => {
     const f = () => setHidden(document.visibilityState === 'hidden');
     document.addEventListener('visibilitychange', f);
