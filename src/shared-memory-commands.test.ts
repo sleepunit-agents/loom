@@ -95,6 +95,11 @@ it('uses shared authored-input validation and the normal episode TTL default',as
  const made=await f.call('remember',{...input,category:'episode'},'episode-default');expect(made.status).toBe(200);expect(f.source.prepare('SELECT ttl,expires_at FROM memories').get()).toEqual({ttl:'48h',expires_at:'2026-11-16T18:00:00.000Z'});
  expect((await f.call('remember',{...input,category:'episode',title:'Permanent episode',ttl:'permanent'},'episode-explicit')).status).toBe(200);expect(f.source.prepare('SELECT ttl,expires_at FROM memories WHERE title=?').get('Permanent episode')).toEqual({ttl:'permanent',expires_at:null});
 });
+it('recalls active candidates past expired top matches without reheating expired memories or requiring pruning',async()=>{
+ const f=await fixture(),expired=(await f.call('remember',{...input,ttl:'1h'},'recall-expired')).result.value.ids[0],active=(await f.call('remember',{...input,title:'Still active',content:'alpha beta ACTIVE',ttl:'permanent'},'recall-active')).result.value.ids[0];
+ const now=f.clock.now()+3600000;vi.setSystemTime(now);vi.spyOn(f.clock,'now').mockReturnValue(now);
+ const result=await f.call('recall',{query:'alpha',limit:1},'recall-after-expiry');expect(result.status).toBe(200);expect(result.result.value.ids).toEqual([active]);expect(f.source.prepare('SELECT recall_heat FROM memories WHERE uuid=?').get(expired.slice(4))).toEqual({recall_heat:0});expect(f.count()).toBe(2);
+});
 it('forwards TTL, metadata, category and project filters and truncates eligible recall matches',async()=>{
  const f=await fixture(),ids:string[]=[];
  for(const [i,category,project] of [[0,'project','pond'],[1,'project','pond'],[2,'user','pond'],[3,'project','other']] as const){

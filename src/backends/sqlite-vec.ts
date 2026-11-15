@@ -1194,6 +1194,7 @@ export class SqliteVecBackend implements MemoryBackend {
     startK: number,
     accept: (mem: MemoryRow, vr: VecMatch) => boolean,
   ): { mem: MemoryRow; distance: number }[] {
+    const activeAt=new Date().toISOString();
     const totalVecRows = (
       this.db.prepare('SELECT COUNT(*) AS c FROM vec_memories').get() as {
         c: number;
@@ -1221,9 +1222,10 @@ export class SqliteVecBackend implements MemoryBackend {
       const placeholders = fresh.map(() => '?').join(',');
       const memRows = this.db
         .prepare(
-          `SELECT * FROM memories WHERE id IN (${placeholders}) AND archived = 0`,
+          `SELECT * FROM memories WHERE id IN (${placeholders}) AND archived = 0
+           AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))`,
         )
-        .all(...fresh.map((vr) => vr.rowid)) as MemoryRow[];
+        .all(...fresh.map((vr) => vr.rowid),activeAt) as MemoryRow[];
       const byId = new Map(memRows.map((r) => [r.id, r]));
 
       for (const vr of fresh) {
