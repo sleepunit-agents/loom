@@ -110,7 +110,8 @@ export function sharedRoot(options: {
   memory.register(operations);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
-  registerSharedAccountReports(operations, db, now, credentials.runner);
+  const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
+  startupCleanups.push(()=>accountReports.close());
   const roles = () => options.modelRoles?.() ?? [];
   let tempo!: ReturnType<typeof installSharedTempo>;
   const jobEnded = (id: string) => {
@@ -265,6 +266,7 @@ export function sharedRoot(options: {
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       stopMemoryWrites();memorySignals?.close();
+      accountReports.close();
       commsLifetime?.close();
       runtime.close();
       unobserveBridges?.();const bridgesStopped=bridgeDaemon?.close();
