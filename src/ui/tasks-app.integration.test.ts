@@ -41,6 +41,7 @@ async function fixture() {
     db.insert(s.changeTasks).values({change:id,task:'t-1'}).run();
   }
   const data = sharedRoot({ db, clock, originAllowed: request => request.headers.origin === `http://${request.headers.host}`, reportError: error => { throw error; } });
+  await data.ready;
   const serveData = getRequestListener(request => data.http.fetch(request));
   const http = createServer((request, response) => {
     const url = new URL(request.url!, 'http://localhost');
