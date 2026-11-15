@@ -1,3 +1,4 @@
+import webpush from 'web-push';
 /** One Account browser proof through the actual shared program; CI owns Chrome. */
 import {it,expect} from 'vitest';
 import Database from 'better-sqlite3';
@@ -17,19 +18,25 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
  db.insert(tokens).values({fingerprint:hash('a'.repeat(64)),kind:'owner',member:'sam',label:'Sam',createdAt:now()}).run();
  db.insert(sessions).values([{id:hash(cookie),token:hash('a'.repeat(64)),device:'Current browser',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()},{id:hash('d'.repeat(64)),token:hash('a'.repeat(64)),device:'Kitchen tablet',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()}]).run();
  db.insert(passkeys).values({id:'fixture-key',token:hash('a'.repeat(64)),label:'Fixture laptop',publicKey:'unused-public-half',counter:0,createdAt:now()}).run();
- const app=await serveShared({db,clock,webRoot,originAllowed:()=>true,reportError:error=>{throw error;}}),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+ const app=await serveShared({db,clock,webRoot,notifications:{vapid:webpush.generateVAPIDKeys(),send:async()=>{}},originAllowed:()=>true,reportError:error=>{throw error;}}),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
  try{
-  const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await context.addCookies([{name:'loom_ui',value:cookie,url:app.url}]);
+  const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},userAgent:'Fixture notification browser'});
+  await context.addInitScript(()=>{Object.defineProperty(Notification,'requestPermission',{value:async()=> 'granted'});Object.defineProperty(navigator.serviceWorker,'ready',{value:Promise.resolve({pushManager:{getSubscription:async()=>null,subscribe:async()=>({endpoint:'https://fcm.googleapis.com/browser-proof',toJSON:()=>({keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}})})}})});});
+  await context.addCookies([{name:'loom_ui',value:cookie,url:app.url}]);
   const a=await context.newPage(),b=await context.newPage(),errors:string[]=[];let legacy=0;
   for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/live')legacy++;});}
   await a.goto(app.url+'/p/account-preview');await b.goto(app.url+'/p/account-preview');
   for(const page of [a,b])await expect.poll(()=>page.getByRole('heading',{name:'Fixture laptop',exact:true}).count()).toBe(1);
   await a.getByRole('button',{name:'Remove passkey',exact:true}).click();
   await expect.poll(()=>b.getByRole('heading',{name:'Fixture laptop',exact:true}).count()).toBe(0);expect(db.select().from(passkeys).all()).toEqual([]);
-  const tablet=a.locator('div.rounded-xl').filter({has:a.getByRole('heading',{name:'Kitchen tablet',exact:true})});
+  const tablet=a.getByRole('heading',{name:'Kitchen tablet',exact:true}).locator('..');
   await tablet.getByRole('button',{name:'Sign out browser',exact:true}).click();
   await expect.poll(()=>b.getByRole('heading',{name:'Kitchen tablet',exact:true}).count()).toBe(0);expect(db.select().from(sessions).all()).toHaveLength(1);
   await a.getByRole('button',{name:'Make sign-in link',exact:true}).click();await expect.poll(()=>a.getByRole('status').last().textContent()).toContain('/login/');
+  await a.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
+  await expect.poll(()=>b.getByRole('heading',{name:'Fixture notification browser',exact:true}).count()).toBe(1);
+  await b.getByRole('button',{name:'Remove notification device',exact:true}).click();
+  await expect.poll(()=>a.getByRole('heading',{name:'Fixture notification browser',exact:true}).count()).toBe(0);
   const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
   await a.screenshot({path:join(shots,'account-shared.png'),animations:'disabled'});
   expect(legacy).toBe(0);expect(errors).toEqual([]);
