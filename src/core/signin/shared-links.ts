@@ -134,6 +134,8 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
       const value=write(()=>passkeys.login(body,c.req.header('user-agent')??'Browser'));
       c.header('set-cookie',cookieHeader(value.cookie,value.maxAge,c.req.url));return c.json({ok:true});
     }
+    const auth=authenticate(c.req.raw);
+    if(!auth?.valid()||auth.viewer.kind!=='member')return c.json({error:'Member authentication required'},403);
     const cookie=c.req.header('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith('loom_ui='))?.slice(8);
     if(!cookie)return c.json({error:'Sign in again before adding a passkey'},403);
     if(path==='/passkeys/options')return c.json(passkeys.registrationOptions(cookie));

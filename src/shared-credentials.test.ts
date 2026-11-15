@@ -18,7 +18,7 @@ afterEach(async () => { try { for (const close of cleanup.splice(0).reverse()) a
 const raw = { member: 'a'.repeat(64), runner: 'b'.repeat(64), body: 'c'.repeat(64), agent: 'd'.repeat(64), cookie: 'e'.repeat(64), bodyCookie: 'f'.repeat(64), runnerCookie: '1'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const request = (headers: Record<string,string>) => new Request('http://loom', { headers });
-function fixture(prepare?: () => Promise<unknown>) {
+function fixture(prepare?: () => Promise<unknown>, publicOrigin?:string) {
   const client = new Database(':memory:'); cleanup.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString(), db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   db.insert(members).values({ id: 'sam', role: 'owner', joinedAt: at }).run();
@@ -33,7 +33,7 @@ function fixture(prepare?: () => Promise<unknown>) {
   ]).run();
   db.insert(sessions).values([{ id: hash(raw.cookie), token: hash(raw.member), device: 'Browser', via: 'link', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }, { id: hash(raw.bodyCookie), token: hash(raw.body), device: 'Browser', via: 'link', isAgent: true, issuedAt: at, seenAt: at, provedAt: at }, { id: hash(raw.runnerCookie), token: hash(raw.runner), device: 'Browser', via: 'link', isAgent: true, issuedAt: at, seenAt: at, provedAt: at }]).run();
   let root!: ReturnType<typeof sharedRoot>;
-  root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {}, fields: {
+  root = sharedRoot({ db, clock, publicOrigin, originAllowed: () => true, reportError: () => {}, fields: {
     currentBody: { type: GraphQLString, resolve: (_row, _args, context) => root.credentials.body(context.viewer)?.job ?? null },
   } }); cleanup.push(() => root.close());
   root.operations.register({ name: 'worker.report', write: true, recheckPolicy: true,
@@ -266,10 +266,26 @@ it('wakes safe live credential metadata after incoming use without publishing be
  const address=server.address();if(!address||typeof address==='string')throw Error('No port');
  const ws=new WebSocket('ws://127.0.0.1:'+address.port+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw.member}});cleanup.push(()=>ws.terminate());await once(ws,'open');
  let next=once(ws,'message');ws.send(JSON.stringify({type:'connection_init'}));await next;
+ f.clock.advance(1);
  const frames:string[]=[];ws.on('message',frame=>frames.push(String(frame)));
  next=once(ws,'message');ws.send(JSON.stringify({type:'subscribe',id:'usage',payload:{query:'subscription { observe(query:"{ householdSetup { tokens { label lastUsedAt } sessions { device seenAt } } }") { patches { path value } } }'}}));await next;
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()!.lastUsedAt).toBe(new Date(f.clock.now()).toISOString());
  f.clock.advance(1000);next=once(ws,'message');f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));
  expect(String((await next)[0])).toContain(new Date(f.clock.now()).toISOString());
  const stored=JSON.stringify({tokens:f.db.select().from(tokens).all(),sessions:f.db.select().from(sessions).all()});
  for(const secret of Object.values(raw)){expect(stored).not.toContain(secret);expect(frames.join(' ')).not.toContain(secret);}
+});
+
+it('records protected passkey ceremony and session-status cookie use through the shared resolver',async()=>{
+ const f=fixture(undefined,'https://loom.example');f.clock.advance(1000);
+ const headers={cookie:'loom_ui='+raw.cookie,'content-type':'application/json'};
+ expect((await f.root.http.request('https://loom.example/passkeys/options',{method:'POST',headers,body:'{}'})).status).toBe(200);
+ expect(f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()?.seenAt).toBe(new Date(f.clock.now()).toISOString());
+ f.clock.advance(1000);expect((await f.root.http.request('https://loom.example/auth/session',{headers})).status).toBe(200);
+ expect(f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()?.seenAt).toBe(new Date(f.clock.now()).toISOString());
+});
+it('refuses metadata publication inside an unrelated outer transaction',()=>{
+ const f=fixture();f.clock.advance(1);
+ expect(()=>f.db.transaction(()=>f.root.credentials.authenticate(request({authorization:'Bearer '+raw.member})))).toThrow('Credential usage must own its transaction');
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()?.lastUsedAt).toBeNull();
 });
