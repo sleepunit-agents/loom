@@ -16,6 +16,9 @@ const operation='runtime.agentModels';
 const details=z.object({agent:agentModelsInput.shape.agent,before:agentModelList,after:agentModelsInput.shape.models}).strict();
 const target=(agent:string)=>'runtime:agent-models:'+agent;
 const summary=(value:z.infer<typeof details>)=>'Models for '+value.agent+': '+JSON.stringify(value.before)+' → '+JSON.stringify(value.after);
+const cardWords=(value:z.infer<typeof details>)=>({what:summary(value),why:'Requested in this conversation',ask:'Change models for '+value.agent+'?',ifYes:'Apply the model order shown on this card.',ifNo:'Keep the current models.'});
+// SQLite is the application's trusted state. This checks typed/card consistency,
+// not an attacker replacing the entire database and its membership/credential rows.
 export function sharedModelProposals(db:DataDatabase,roles:()=>readonly ModelRole[]){
  const appliedCards=new Set<string>();
  const read=(agent:string)=>db.select().from(agentModels).where(eq(agentModels.agent,agent)).orderBy(asc(agentModels.position)).all().map(row=>row.model);
@@ -25,7 +28,7 @@ export function sharedModelProposals(db:DataDatabase,roles:()=>readonly ModelRol
   if(card.kind!=='setting'||card.operation!==operation)throw new OperationError('conflict','Wrong model settings card');
   const value=details.parse(JSON.parse(card.details));
   const source=card.conversation?db.select().from(conversations).where(eq(conversations.id,card.conversation)).get():undefined;
-  if(!source||source.agent!==card.agent||source.member!==card.member||source.project!==card.project||card.askedFrom!==source.id||card.what!==summary(value)||card.ask!=='Change models for '+value.agent+'?'||card.ifYes!=='Apply the model order shown on this card.'||card.ifNo!=='Keep the current models.')throw new OperationError('denied','Model settings card changed');
+  if(!source||source.agent!==card.agent||source.member!==card.member||source.project!==card.project||card.askedFrom!==source.id||(['what','why','ask','ifYes','ifNo']as const).some(key=>card[key]!==cardWords(value)[key]))throw new OperationError('denied','Model settings card changed');
   if(card.target!==target(value.agent)||card.changeSummary!==summary(value)||card.member===null||card.actingFor!==card.member||!allowed(card.member,value.agent))throw new OperationError('denied','Model settings authority changed');
   if(JSON.stringify(read(value.agent))!==JSON.stringify(value.before))throw new OperationError('conflict','Model settings changed; ask for a fresh card');
   applyAgentModels(db,{agent:value.agent,models:value.after},roles());
@@ -45,7 +48,7 @@ export function sharedModelProposals(db:DataDatabase,roles:()=>readonly ModelRol
      // Explicit provenance stays at this boundary and is never accepted from input.
      const card=service.request({kind:'setting',operation,target:target(value.agent),details:JSON.stringify(change),changeSummary:summary(change),
       agent:found.cv.agent,member:found.cv.member,actingFor:found.cv.member,project:found.cv.project,conversation:found.cv.id,askedFrom:found.cv.id,
-      what:summary(change),why:'Requested in this conversation',ask:'Change models for '+value.agent+'?',ifYes:'Apply the model order shown on this card.',ifNo:'Keep the current models.'});
+      ...cardWords(change)});
      ctx.changed('approvals',card.id);ctx.changed('inbox',card.id);return{id:card.id};
     },
    });

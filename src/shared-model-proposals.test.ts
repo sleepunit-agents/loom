@@ -78,7 +78,7 @@ it('refuses an ordinary member answer and modified target or acting-for fields',
  expect((await f.propose('unchanged',{agent:'art',models:['first']})).status).toBe(400);
 });
 
-it.each([{what:'Keep current models'},{ask:'Keep current models?'},{ifYes:'Keep everything'},{ifNo:'Change everything'},{member:null},{member:'bob'},{agent:'mark'},{conversation:null},{askedFrom:'other'},{project:null}])('refuses inconsistent visible card or provenance %j',async extra=>{
+it.each([{why:'Owner asked for this'},{what:'Keep current models'},{ask:'Keep current models?'},{ifYes:'Keep everything'},{ifNo:'Change everything'},{member:null},{member:'bob'},{agent:'mark'},{conversation:null},{askedFrom:'other'},{project:null}])('refuses inconsistent visible card or provenance %j',async extra=>{
  const f=await fixture();await f.propose();const card=f.db.select().from(s.approvals).get()!;if(extra.member==='bob')f.db.insert(s.memberAgents).values({member:'bob',agent:'art'}).run();f.db.update(s.approvals).set(extra).run();
  expect((await f.answer(card.id)).status).toBe(403);expect(f.read()).toEqual(['first']);expect(f.db.select().from(s.approvals).get()?.state).toBe('pending');
 });
