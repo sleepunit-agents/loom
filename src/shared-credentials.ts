@@ -11,7 +11,7 @@ import type { Authentication } from './core/live/index.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const active = new Set(['starting', 'running', 'waiting']);
-export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean = () => true, write: (action: () => void) => void = action => { db.transaction(action); }) {
+export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean, write: (action: () => void) => void) {
   const resolve = dataAuthentication(db, () => clock.now());
   const identity = { fingerprint: tokens.fingerprint, kind: tokens.kind, member: tokens.member, agent: tokens.agent, job: tokens.job, box: tokens.box };
   type Token = Pick<typeof tokens.$inferSelect, keyof typeof identity>;

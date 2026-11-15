@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, members, boxes, jobs, sessions, tokens, tasks, projects } from './core/data/schema.js';
+import { sharedCredentials } from './shared-credentials.js';
 import { sharedRoot } from './shared-root.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { try { for (const close of cleanup.splice(0).reverse()) await close(); } finally { vi.restoreAllMocks(); } });
@@ -200,10 +201,11 @@ it('records valid bearer/browser presentation without renewing fixed proof or se
  expect(f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()?.seenAt).toBe(before.seenAt);
  expect(f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}))).toBeDefined();
  expect(f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()).toMatchObject({seenAt:at,issuedAt:before.issuedAt,provedAt:before.provedAt});
- expect(commits).toBe(2);
- f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));expect(commits).toBe(2);
+ expect(commits).toBe(0);
+ f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));expect(commits).toBe(0);
+ f.clock.advance(1);
  f.db.update(sessions).set({issuedAt:new Date(f.clock.now()-30*86400000).toISOString()}).where(eq(sessions.id,hash(raw.cookie))).run();
- expect(f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}))).toBeUndefined();expect(commits).toBe(2);
+ expect(f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}))).toBeUndefined();expect(commits).toBe(0);
 });
 it('does not record forged, revoked or stopped-body credentials, and rechecks after publication', () => {
  const f=fixture();f.clock.advance(1000);
@@ -211,8 +213,8 @@ it('does not record forged, revoked or stopped-body credentials, and rechecks af
  f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(raw.member))).run();
  for(const value of [raw.member,raw.body,'z'.repeat(64)])expect(f.root.credentials.authenticate(request({authorization:'Bearer '+value}))).toBeUndefined();
  expect(f.db.select().from(tokens).all().every(row=>row.lastUsedAt===null)).toBe(true);
- const stop=f.root.writes.observe(()=>f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(raw.agent))).run());
- expect(f.root.credentials.authenticate(request({authorization:'Bearer '+raw.agent}))).toBeUndefined();stop();
+ const credentials=sharedCredentials(f.db,f.clock,()=>true,write=>{f.db.transaction(write);f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(raw.agent))).run();});
+ expect(credentials.authenticate(request({authorization:'Bearer '+raw.agent}))).toBeUndefined();
 });
 it('uses the same presentation metadata at the sign-in link door',async()=>{
  const f=fixture();f.clock.advance(2000);const at=new Date(f.clock.now()).toISOString();
@@ -227,4 +229,34 @@ it('records new incoming socket selections but not retained validity checks or o
  auth.activity!();expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()!.lastUsedAt).toBe(new Date(f.clock.now()).toISOString());
  f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(raw.agent))).run();
  f.clock.advance(1000);auth.activity!();expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()!.lastUsedAt).toBe(new Date(f.clock.now()-1000).toISOString());
+});
+
+it('keeps token expiry fixed and refuses expired tokens and closed-root metadata writes',async()=>{
+ const f=fixture(),expiresAt=new Date(f.clock.now()+2000).toISOString();
+ f.db.update(tokens).set({expiresAt}).where(eq(tokens.fingerprint,hash(raw.member))).run();
+ f.clock.advance(1000);expect(f.root.credentials.authenticate(request({authorization:'Bearer '+raw.member}))).toBeDefined();
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()?.expiresAt).toBe(expiresAt);
+ const last=new Date(f.clock.now()).toISOString();f.clock.advance(1000);
+ expect(f.root.credentials.authenticate(request({authorization:'Bearer '+raw.member}))).toBeUndefined();
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()?.lastUsedAt).toBe(last);
+ await f.root.close();f.clock.advance(1000);
+ expect(f.root.credentials.authenticate(request({authorization:'Bearer '+raw.agent}))).toBeUndefined();
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()?.lastUsedAt).toBeNull();
+});
+it('delivers live rows without treating outgoing changes as credential use or invalidating unrelated reads',async()=>{
+ const f=fixture(),server=createServer(getRequestListener(request=>f.root.http.fetch(request))),detach=f.root.attach(server);
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));cleanup.push(async()=>{detach();await f.root.close();await new Promise<void>(r=>server.close(()=>r()));});
+ const address=server.address();if(!address||typeof address==='string')throw Error('No port');
+ const ws=new WebSocket('ws://127.0.0.1:'+address.port+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw.member}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+ let next=once(ws,'message');ws.send(JSON.stringify({type:'connection_init'}));await next;
+ next=once(ws,'message');ws.send(JSON.stringify({type:'subscribe',id:'roster',payload:{query:'subscription { observe(query:"{ agents { about } }") { patches { path value } } }'}}));await next;
+ const initial=f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()!.lastUsedAt;
+ f.clock.advance(1000);next=once(ws,'message');f.root.writes.run(()=>f.db.update(agents).set({about:'Changed'}).where(eq(agents.id,'art')).run());
+ expect(JSON.stringify((await next)[0].toString())).toContain('Changed');expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()!.lastUsedAt).toBe(initial);
+ // A second caller authenticating during an awaited read must not poison its epoch.
+ let release!:()=>void;const held=new Promise<void>(r=>release=r);let started!:()=>void;const began=new Promise<void>(r=>started=r);
+ const fields={hold:{type:GraphQLString,resolve:async()=>{started();await held;return 'kept';}}};
+ const second=sharedRoot({db:f.db,clock:f.clock,originAllowed:()=>true,fields,reportError:()=>{}});cleanup.push(()=>second.close());
+ const pending=second.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.member,'content-type':'application/json'},body:JSON.stringify({query:'{ hold }'})});await began;
+ f.clock.advance(1);second.credentials.authenticate(request({authorization:'Bearer '+raw.agent}));release();expect(await (await pending).json()).toEqual({data:{hold:'kept'}});
 });

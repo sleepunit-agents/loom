@@ -94,6 +94,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); schedule(); },
     timingsChanged() { live.timingsChanged(); },
+    credentialUsageChanged() { live.metadataChanged(); },
     writes,
     close() {
       if (closing) return closing;
