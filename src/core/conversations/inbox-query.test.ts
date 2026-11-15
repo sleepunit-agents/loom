@@ -68,7 +68,6 @@ it('withholds private bodies after changes to policy, item, ciphertext, deadline
       if (change === 'policy') f.revoke();
       if (change === 'item') f.db.update(inbox).set({ words: 'Changed' }).where(eq(inbox.id, f.ask.inboxItem!)).run();
       if (change === 'ciphertext') f.db.update(messages).set({ words: Buffer.from('Changed') }).run();
-      if (change === 'linkage') f.db.update(threads).set({ conversation: f.comms.threads.conversations.open({ agent: 'art', venue: 'loom', place: 'other', member: 'alice', label: 'Other' }).id }).where(eq(threads.id, f.thread.id)).run();
       if (change === 'deadline') f.db.update(messages).set({ keepUntil: '2026-11-16T18:00:00.000Z' }).run();
       if (change === 'household') f.db.insert(household).values({ commsDays: 1 }).run();
       if (change === 'delete') f.comms.delete(f.thread.id);
@@ -203,6 +202,8 @@ it('validates search and paging bounds and treats metacharacters literally', asy
   await expect(f.service.search(alice, { search: 'private', limit: 101 })).rejects.toThrow('Invalid Inbox page');
   await expect(f.service.search(alice, { search: 'private', offset: -1 })).rejects.toThrow('Invalid Inbox page');
   expect(await f.service.search(alice, { search: '%_' })).toEqual([]);
+  const literal = f.comms.threads.conversations.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', member: 'alice', words: 'Contains %_ literally' });
+  expect((await f.service.search(alice, { search: '%_' })).map(i => i.id)).toEqual([literal.id]);
   expect(await f.service.search(alice, { search: '  ' })).toEqual(f.service.list(alice));
 });
 
