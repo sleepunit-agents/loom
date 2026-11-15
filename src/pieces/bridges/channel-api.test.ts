@@ -66,12 +66,12 @@ it.each([
   const f = fixture(); f.request.mockResolvedValue(Response.json(body));
   expect(await f.api.channel(f.id)).toBeUndefined();
 });
-it.each([{ ok: false, error: 'private upstream words' }, { ok: true, channel: { id: 'OTHER' } }, { ok: true, channel: [] }])('rejects Slack errors and wrong envelopes: %j', async body => {
+it.each([{ ok: false, error: 'private upstream words', channel: { id: 'CROOM' } }, { ok: true, channel: { id: 'OTHER' } }, { ok: true, channel: [] }])('rejects Slack errors and wrong envelopes: %j', async body => {
   const f = fixture('slack'); f.request.mockResolvedValue(Response.json(body));
   expect(await f.api.channel(f.id)).toBeUndefined();
 });
 it.each([403, 404, 429, 500])('retains retry eligibility for HTTP %s without reflecting upstream text', async status => {
-  const f = fixture(); f.request.mockResolvedValue(new Response('private-token', { status }));
+  const f = fixture(); f.request.mockResolvedValue(Response.json({ id: f.id, error: 'private-token' }, { status }));
   expect(await f.api.channel(f.id)).toBeUndefined();
   f.clock.advance(60_000); await Promise.resolve();
   expect(f.request).toHaveBeenCalledTimes(1); expect(f.secrets.withValue).toHaveBeenCalledTimes(1);
