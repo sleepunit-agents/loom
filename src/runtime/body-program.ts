@@ -111,9 +111,11 @@ export async function bodyProgram(input: {
     if(bridge)await client.bridgeReply({incoming:replyTo!,text:answer.text,model:answer.model,outcome:'progressed'});
     else if(background){
       await client.turn({kind:'reply',model:answer.model,outcome:'progressed'});
-      await client.digest({summary:answer.text.slice(0,600).replace(/[\uD800-\uDBFF]$/u,''),ifAbsent:true});
     }
     else await client.reply({ clientId: randomUUID(), words: answer.text, model: answer.model, outcome: 'progressed' });
+    // Reply words have their own storage and retention. Completion metadata must
+    // not make a second durable copy, and must preserve any model-authored digest.
+    await client.digest({summary:'Completed this stretch of work.',ifAbsent:true});
     await client.status({ state: 'idle', work: '' });
     return 0;
   } catch {

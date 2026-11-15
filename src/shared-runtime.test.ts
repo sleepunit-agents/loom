@@ -450,7 +450,7 @@ it('enrolls and completes a handoff body without manufacturing a Comms reply sur
  expect(native).toHaveBeenCalledWith(assigned,'Private work instructions',expect.any(AbortSignal));
  expect(error).not.toHaveBeenCalled();expect(f.db.select().from(inbox).get()?.state).toBe('done');
  expect(f.db.select().from(turns).where(eq(turns.run,queued.id)).get()).toMatchObject({kind:'reply',model:'observed'});
- expect(f.db.select().from(digests).get()).toMatchObject({conversation:queued.conversation,run:queued.id,summary:'Handoff completed'});
+ expect(f.db.select().from(digests).get()).toMatchObject({conversation:queued.conversation,run:queued.id,summary:'Completed this stretch of work.'});
  expect(f.db.select().from(threads).all()).toEqual([]);expect(f.db.select().from(messages).all()).toEqual([]);
  bootstrap.token.fill(0);bootstrap.erase?.();
  await f.control.finish(queued.id,0,'');expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()?.state).toBe('done');

@@ -164,7 +164,7 @@ it.each(['wake','handoff'] as const)('finishes %s mail without a Comms thread, r
  expect(await bodyProgram({...f.options,stdin:async()=>bytes,native})).toBe(0);
  expect(native).toHaveBeenCalledWith(assigned,'PRIVATE MAIL',expect.any(AbortSignal));
  expect(f.calls.filter(row=>row.path==='turn').map(row=>row.body.input)).toEqual([{kind:'action',model:'actual-tool-model',outcome:'progressed'},{kind:'reply',model:'actual-background-model',outcome:'progressed'}]);
- expect(f.calls.find(row=>row.path==='digest')?.body.input).toEqual({summary:'Result '.repeat(120).slice(0,600),ifAbsent:true});
+ expect(f.calls.find(row=>row.path==='digest')?.body.input).toEqual({summary:'Completed this stretch of work.',ifAbsent:true});
  expect(f.calls.some(row=>row.path==='message')).toBe(false);
  expect(f.calls.at(-1)?.body.input).toEqual({state:'idle',work:''});
  expect(bytes.every(byte=>byte===0)).toBe(true);expect(f.error).not.toHaveBeenCalled();
@@ -180,8 +180,8 @@ it.each(['wake','handoff'] as const)('refuses %s without a conversation before a
  expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value))})).toBe(1);
  expect(f.native).not.toHaveBeenCalled();expect(f.calls).toEqual([]);
 });
-it('does not split a supplementary character at the digest limit',async()=>{
+it('keeps supplementary response words out of completion metadata',async()=>{
  const f=fixture(),value=JSON.parse(f.input.toString());value.job.venue='wake';value.job.thread=null;
  expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value)),native:async()=>({text:'a'.repeat(599)+'😀',model:'observed',actions:[]})})).toBe(0);
- expect(f.calls.find(row=>row.path==='digest')?.body.input).toEqual({summary:'a'.repeat(599),ifAbsent:true});
+ expect(f.calls.find(row=>row.path==='digest')?.body.input).toEqual({summary:'Completed this stretch of work.',ifAbsent:true});
 });

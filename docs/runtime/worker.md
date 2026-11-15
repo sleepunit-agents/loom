@@ -482,7 +482,9 @@ application; no worker credentials or enrollment are issued by either.
 The default receiving program also accepts wake and handoff conversations.
 Their canonical Inbox mail is accepted before native execution. Completion
 records wordless action and reply turns with their observed models, then a
-digest summary bounded to 600 characters if none was already authored for this
-conversation/job. Authored decisions, task entries and owner questions survive.
+generic completion digest if none was already authored for this conversation/job.
+Authored decisions, task entries and owner questions survive. Successful Comms
+and bridge jobs use the same fallback; native reply words are never copied into
+a second durable field by runtime completion.
 These venues do not create a Comms thread or message;
 Discord and Slack retain their guarded bridge reply path.

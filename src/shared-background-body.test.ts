@@ -26,7 +26,7 @@ it.each([['wake',false],['handoff',false],['wake',true],['handoff',true]] as con
   error:text=>errors.push(text)})).toBe(0);
  expect(errors).toEqual([]);
  expect(f.db.select().from(s.turns).all()).toEqual(expect.arrayContaining([expect.objectContaining({conversation,kind:'reply',model:'actual-background-model',run:'job'}),expect.objectContaining({conversation,kind:'action',model:'actual-tool-model',run:'job'})]));
- expect(f.db.select().from(s.digests).all()).toEqual([expect.objectContaining({conversation,run:'job',summary:authored?'Authored decisions':'Three pumps compared.',revision:1})]);
+ expect(f.db.select().from(s.digests).all()).toEqual([expect.objectContaining({conversation,run:'job',summary:authored?'Authored decisions':'Completed this stretch of work.',revision:1})]);
  if(authored){expect(f.db.select().from(s.digestItems).all()).toEqual([expect.objectContaining({kind:'task',text:'Keep the inspection task'})]);
   expect(f.db.select().from(s.inbox).all()).toEqual(expect.arrayContaining([expect.objectContaining({toKind:'person',to:'alice',words:'Inspect the pump?',state:'waiting'})]));
  }
