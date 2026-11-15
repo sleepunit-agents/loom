@@ -97,3 +97,15 @@ it('erases original native stdout/stderr buffers and late output after cancellat
  await expect(pending).rejects.toThrow('Native Claude execution unavailable');
  expect(lateOut.every(byte=>byte===0)).toBe(true);expect(lateError.every(byte=>byte===0)).toBe(true);
 });
+it('snapshots private MCP config to descriptor 3, erases its pipe bytes, and permits only its two tools',async()=>{
+ const f=fixture(),secret='PRIVATE_LOCAL_CAPABILITY',input=Buffer.from(JSON.stringify({mcpServers:{loom_secrets:{type:'http',url:'http://127.0.0.1:1234',headers:{Authorization:secret}}}})),chunks:Buffer[]=[];let text='';
+ const pipe=new Writable({write(chunk,_encoding,done){chunks.push(chunk);text+=chunk.toString();done();}}),finished=new Promise<void>(resolve=>pipe.once('finish',resolve));Object.assign(f.child,{stdio:[null,null,null,pipe]});
+ const run=claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:input});input.fill(0);const result=run(job,'PRIVATE ACCEPTED MAIL',f.abort.signal);await finished;
+ expect(JSON.parse(text).mcpServers.loom_secrets.headers.Authorization).toBe(secret);expect(chunks.length).toBeGreaterThan(0);expect(chunks.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);
+ const args=f.launch.mock.calls[0][1],options=f.launch.mock.calls[0][2];expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(args.slice(args.indexOf('--allowedTools'),args.indexOf('--disallowedTools'))).toEqual(['--allowedTools','mcp__loom_secrets__request_secret','mcp__loom_secrets__use_secret']);expect(options.stdio).toEqual(['pipe','pipe','pipe','pipe']);expect(f.launch.mock.calls[0][0]).toBe('/bin/bash');expect(args.slice(0,7)).toEqual(['--noprofile','--norc','-p','-c','exec 3< <(/bin/cat <&3); exec "$@"','loom-native','/private/claude']);expect(JSON.stringify({args,options})).not.toContain(secret);expect(f.words()).toBe('PRIVATE ACCEPTED MAIL');expect(f.env).toEqual({PATH:'/usr/bin',ACCOUNT_PROFILE:'/private/account'});
+ f.finish(f.rows());await result;await expect(run(job,'again',f.abort.signal)).rejects.toThrow('Native Claude execution unavailable');expect(f.launch).toHaveBeenCalledOnce();
+});
+it('erases an unsettled private MCP pipe at cancellation before its write callback runs',async()=>{
+ const f=fixture(),chunks:Buffer[]=[];let release!:()=>void;const pipe=new Writable({write(chunk,_encoding,done){chunks.push(chunk);release=done;}});Object.assign(f.child,{stdio:[null,null,null,pipe]});
+ const run=claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{"private":"LOCAL_CAPABILITY"}')});const result=run(job,'mail',f.abort.signal),refused=expect(result).rejects.toThrow('Native Claude execution unavailable');f.abort.abort();expect(chunks).toHaveLength(1);expect(chunks.every(bytes=>bytes.every(byte=>byte===0))).toBe(true);await refused;release();
+});
