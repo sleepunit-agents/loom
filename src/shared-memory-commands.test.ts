@@ -65,11 +65,11 @@ it('browses retained private archive and draft words through the actual canonica
  const f=await fixture(),made=await f.call('remember',{...input,ttl:'1h'},'retained-make'),id=made.result.value.ids[0];expect((await f.call('archive',{id,note:'PRIVATE_ARCHIVE_REASON'},'retained-archive')).status).toBe(200);
  const proposal=propose(dirname(f.path),{category:'rough capture',title:'PRIVATE_DRAFT_TITLE',content:'PRIVATE_DRAFT_WORDS',source:'fictional capture'},null);
  const later=f.clock.now()+7200000;vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);const before=f.source.serialize();
- const query='{memoryArchive(agent:"art",first:1){entries{id title content note expiresAt} nextBefore} memoryDrafts(agent:"art"){entries{id title content source} nextBefore}}';
- const rows=await f.query(query);expect(rows.memoryArchive).toEqual({entries:[{id,title,content:words,note:'PRIVATE_ARCHIVE_REASON',expiresAt:'2026-11-14T19:00:00.000Z'}],nextBefore:null});expect(rows.memoryDrafts).toEqual({entries:[{id:'art:proposal:'+proposal.uuid,title:'PRIVATE_DRAFT_TITLE',content:'PRIVATE_DRAFT_WORDS',source:'fictional capture'}],nextBefore:null});
+ const query='{memoryArchive(agent:"art",first:1){entries{id title content note expiresAt} nextBefore} memoryProposals(agent:"art"){entries{id title content source} nextBefore}}';
+ const rows=await f.query(query);expect(rows.memoryArchive).toEqual({entries:[{id,title,content:words,note:'PRIVATE_ARCHIVE_REASON',expiresAt:'2026-11-14T19:00:00.000Z'}],nextBefore:null});expect(rows.memoryProposals).toEqual({entries:[{id:'art:proposal:'+proposal.uuid,title:'PRIVATE_DRAFT_TITLE',content:'PRIVATE_DRAFT_WORDS',source:'fictional capture'}],nextBefore:null});
  expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();expect(f.source.serialize()).toEqual(before);
- expect(await f.query('{memoryArchive(agent:"mark"){entries{content}} memoryDrafts(agent:"mark"){entries{content}}}')).toEqual({memoryArchive:null,memoryDrafts:null});
- f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await f.query(query,raw.member)).toEqual({memoryArchive:null,memoryDrafts:null});
+ expect(await f.query('{memoryArchive(agent:"mark"){entries{content}} memoryProposals(agent:"mark"){entries{content}}}')).toEqual({memoryArchive:null,memoryProposals:null});
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await f.query(query,raw.member)).toEqual({memoryArchive:null,memoryProposals:null});
  for(const value of [words,title,'PRIVATE_ARCHIVE_REASON','PRIVATE_DRAFT_TITLE','PRIVATE_DRAFT_WORDS',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
 });
 it('binds commands to the actual body, publishes committed content, and reads opaque results through current GraphQL authority',async()=>{
