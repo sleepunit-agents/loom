@@ -1,9 +1,12 @@
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
+import {secretDefaultAction} from './rebuild-secret-actions.mjs';
 import {changeActions,changeInline} from './rebuild-change-actions.mjs';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
+import {maskCredentialScreenshots} from './rebuild-credential-evidence.mjs';
+import {accessAction} from './rebuild-access-actions.mjs';
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
@@ -49,11 +52,11 @@ export async function* walkthroughSteps(output) {
   report.example=await exampleHome(home);
   let link='';app=await startSharedHome({home,port:0,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});
-  const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:'block'});
+  const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:'block',userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
   await context.route('**/*',route=>localRequest(route.request().url(),app.url)?route.continue():route.abort('blockedbyclient'));
   const socketOrigin=app.url.replace(/^http/,'ws');
   await context.routeWebSocket(url=>new URL(url).origin!==socketOrigin,route=>route.close({code:1008,reason:'Walkthrough is local only'}));
-  page=await context.newPage();page.setDefaultTimeout(8000);
+  page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTimeout(8000);
   page.on('framenavigated',frame=>{if(frame===page.mainFrame())navigation++;});
   page.on('websocket',socket=>{const row={path:new URL(socket.url()).pathname,phase,navigation,closeObserved:false,errorObserved:false};sockets.push(row);socket.on('socketerror',()=>{row.errorObserved=true;});connections.add(socket);socket.on('close',()=>{row.closeObserved=true;connections.delete(socket);});});
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
@@ -68,6 +71,8 @@ export async function* walkthroughSteps(output) {
   await page.screenshot({path:join(out,'00-signin.png'),fullPage:true});
   await page.goto(link);await page.getByRole('button',{name:'Sign in',exact:true}).click();
   await page.locator('.next-shell').waitFor();report.signin.ok=true;
+  const browsers=app.services.comms.db.$client.prepare('SELECT s.is_agent, t.member FROM sessions s JOIN tokens t ON t.fingerprint=s.token').all();
+  report.signin.personBrowser=browsers.length===1&&browsers[0].is_agent===0&&browsers[0].member==='alex';
   await page.screenshot({path:join(out,'01-desk.png'),fullPage:true});
   const openLauncher=async()=>{await page.keyboard.press('Escape');await page.keyboard.press('Control+Shift+Space');await page.getByRole('dialog',{name:'Apps',exact:true}).waitFor();};
   await openLauncher();
@@ -103,7 +108,9 @@ export async function* walkthroughSteps(output) {
      row.detailText=await tile.innerText();
     }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
+    if(['Your account','Household setup','Project sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
+    if(title==='Settings'){row.action=await secretDefaultAction({page,tile,out});report.actions={...report.actions,secretDefault:row.action};}
     await page.screenshot({path:join(out,row.screenshot),fullPage:true});
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await changeActions({page,tile:page.getByRole('region',{name:'Changes tile',exact:true}),app,example:report.example,out})};

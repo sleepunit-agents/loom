@@ -11,13 +11,14 @@ import { z } from 'zod';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
 import { agents, members, boxes, jobs, sessions, tokens, tasks, projects } from './core/data/schema.js';
+import { sharedCredentials } from './shared-credentials.js';
 import { sharedRoot } from './shared-root.js';
 const cleanup: (() => void | Promise<void>)[] = [];
 afterEach(async () => { try { for (const close of cleanup.splice(0).reverse()) await close(); } finally { vi.restoreAllMocks(); } });
 const raw = { member: 'a'.repeat(64), runner: 'b'.repeat(64), body: 'c'.repeat(64), agent: 'd'.repeat(64), cookie: 'e'.repeat(64), bodyCookie: 'f'.repeat(64), runnerCookie: '1'.repeat(64) };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const request = (headers: Record<string,string>) => new Request('http://loom', { headers });
-function fixture(prepare?: () => Promise<unknown>) {
+function fixture(prepare?: () => Promise<unknown>, publicOrigin?:string) {
   const client = new Database(':memory:'); cleanup.push(() => { client.close(); });
   const clock = new FakeClock(), at = new Date(clock.now()).toISOString(), db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   db.insert(members).values({ id: 'sam', role: 'owner', joinedAt: at }).run();
@@ -32,7 +33,7 @@ function fixture(prepare?: () => Promise<unknown>) {
   ]).run();
   db.insert(sessions).values([{ id: hash(raw.cookie), token: hash(raw.member), device: 'Browser', via: 'link', isAgent: false, issuedAt: at, seenAt: at, provedAt: at }, { id: hash(raw.bodyCookie), token: hash(raw.body), device: 'Browser', via: 'link', isAgent: true, issuedAt: at, seenAt: at, provedAt: at }, { id: hash(raw.runnerCookie), token: hash(raw.runner), device: 'Browser', via: 'link', isAgent: true, issuedAt: at, seenAt: at, provedAt: at }]).run();
   let root!: ReturnType<typeof sharedRoot>;
-  root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {}, fields: {
+  root = sharedRoot({ db, clock, publicOrigin, originAllowed: () => true, reportError: () => {}, fields: {
     currentBody: { type: GraphQLString, resolve: (_row, _args, context) => root.credentials.body(context.viewer)?.job ?? null },
   } }); cleanup.push(() => root.close());
   root.operations.register({ name: 'worker.report', write: true, recheckPolicy: true,
@@ -190,4 +191,101 @@ it('requires a browser window outside the exact body record even when policy adm
   expect(page.status).toBe(200);
   expect((await f.call('private/control', { job: 'job-2' }, raw.member, 'member-bearer')).status).toBe(403);
   expect(f.db.select().from(tasks).all()).toHaveLength(2);
+});
+it('records valid bearer/browser presentation without renewing fixed proof or session expiry', async () => {
+ const f=fixture(), before=f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()!;
+ f.clock.advance(5000);
+ const at=new Date(f.clock.now()).toISOString();let commits=0;f.root.writes.observe(()=>commits++);
+ expect(f.root.credentials.authenticate(request({authorization:'Bearer '+raw.member}))).toBeDefined();
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()?.lastUsedAt).toBe(at);
+ expect(f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()?.seenAt).toBe(before.seenAt);
+ expect(f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}))).toBeDefined();
+ expect(f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()).toMatchObject({seenAt:at,issuedAt:before.issuedAt,provedAt:before.provedAt});
+ expect(commits).toBe(0);
+ f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));expect(commits).toBe(0);
+ f.clock.advance(1);
+ f.db.update(sessions).set({issuedAt:new Date(f.clock.now()-30*86400000).toISOString()}).where(eq(sessions.id,hash(raw.cookie))).run();
+ expect(f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}))).toBeUndefined();expect(commits).toBe(0);
+});
+it('does not record forged, revoked or stopped-body credentials, and rechecks after publication', () => {
+ const f=fixture();f.clock.advance(1000);
+ f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'job-1')).run();
+ f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(raw.member))).run();
+ for(const value of [raw.member,raw.body,'z'.repeat(64)])expect(f.root.credentials.authenticate(request({authorization:'Bearer '+value}))).toBeUndefined();
+ expect(f.db.select().from(tokens).all().every(row=>row.lastUsedAt===null)).toBe(true);
+ const credentials=sharedCredentials(f.db,f.clock,()=>true,write=>{f.db.transaction(write);f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(raw.agent))).run();});
+ expect(credentials.authenticate(request({authorization:'Bearer '+raw.agent}))).toBeUndefined();
+});
+it('uses the same presentation metadata at the sign-in link door',async()=>{
+ const f=fixture();f.clock.advance(2000);const at=new Date(f.clock.now()).toISOString();
+ const response=await f.root.http.request('http://loom/api/signin/link',{method:'POST',headers:{authorization:'Bearer '+raw.member}});
+ expect(response.status).toBe(200);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()?.lastUsedAt).toBe(at);
+});
+it('records new incoming socket selections but not retained validity checks or outgoing updates',()=>{
+ const f=fixture(), auth=f.root.credentials.authenticate(request({authorization:'Bearer '+raw.agent,upgrade:'websocket'}))!;
+ const initial=f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()!.lastUsedAt;
+ f.clock.advance(1000);expect(auth.valid()).toBe(true);expect(f.root.credentials.current(auth.viewer)).toBe(true);
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()!.lastUsedAt).toBe(initial);
+ auth.activity!();expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()!.lastUsedAt).toBe(new Date(f.clock.now()).toISOString());
+ f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(raw.agent))).run();
+ f.clock.advance(1000);auth.activity!();expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()!.lastUsedAt).toBe(new Date(f.clock.now()-1000).toISOString());
+});
+
+it('keeps token expiry fixed and refuses expired tokens and closed-root metadata writes',async()=>{
+ const f=fixture(),expiresAt=new Date(f.clock.now()+2000).toISOString();
+ f.db.update(tokens).set({expiresAt}).where(eq(tokens.fingerprint,hash(raw.member))).run();
+ f.clock.advance(1000);expect(f.root.credentials.authenticate(request({authorization:'Bearer '+raw.member}))).toBeDefined();
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()?.expiresAt).toBe(expiresAt);
+ const last=new Date(f.clock.now()).toISOString();f.clock.advance(1000);
+ expect(f.root.credentials.authenticate(request({authorization:'Bearer '+raw.member}))).toBeUndefined();
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()?.lastUsedAt).toBe(last);
+ await f.root.close();f.clock.advance(1000);
+ expect(f.root.credentials.authenticate(request({authorization:'Bearer '+raw.agent}))).toBeUndefined();
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.agent))).get()?.lastUsedAt).toBeNull();
+});
+it('delivers live rows without treating outgoing changes as credential use or invalidating unrelated reads',async()=>{
+ const f=fixture(),server=createServer(getRequestListener(request=>f.root.http.fetch(request))),detach=f.root.attach(server);
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));cleanup.push(async()=>{detach();await f.root.close();await new Promise<void>(r=>server.close(()=>r()));});
+ const address=server.address();if(!address||typeof address==='string')throw Error('No port');
+ const ws=new WebSocket('ws://127.0.0.1:'+address.port+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw.member}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+ let next=once(ws,'message');ws.send(JSON.stringify({type:'connection_init'}));await next;
+ next=once(ws,'message');ws.send(JSON.stringify({type:'subscribe',id:'roster',payload:{query:'subscription { observe(query:"{ agents { about } }") { patches { path value } } }'}}));await next;
+ const initial=f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()!.lastUsedAt;
+ f.clock.advance(1000);next=once(ws,'message');f.root.writes.run(()=>f.db.update(agents).set({about:'Changed'}).where(eq(agents.id,'art')).run());
+ expect(JSON.stringify((await next)[0].toString())).toContain('Changed');expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()!.lastUsedAt).toBe(initial);
+ // A second caller authenticating during an awaited read must not poison its epoch.
+ let release!:()=>void;const held=new Promise<void>(r=>release=r);let started!:()=>void;const began=new Promise<void>(r=>started=r);
+ const fields={hold:{type:GraphQLString,resolve:async()=>{started();await held;return 'kept';}}};
+ const second=sharedRoot({db:f.db,clock:f.clock,originAllowed:()=>true,fields,reportError:()=>{}});cleanup.push(()=>second.close());
+ const pending=second.http.request('http://loom/graphql',{method:'POST',headers:{authorization:'Bearer '+raw.member,'content-type':'application/json'},body:JSON.stringify({query:'{ hold }'})});await began;
+ f.clock.advance(1);second.credentials.authenticate(request({authorization:'Bearer '+raw.agent}));release();expect(await (await pending).json()).toEqual({data:{hold:'kept'}});
+});
+it('wakes safe live credential metadata after incoming use without publishing bearer bytes',async()=>{
+ const f=fixture(),server=createServer(getRequestListener(request=>f.root.http.fetch(request))),detach=f.root.attach(server);
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));cleanup.push(async()=>{detach();await f.root.close();await new Promise<void>(r=>server.close(()=>r()));});
+ const address=server.address();if(!address||typeof address==='string')throw Error('No port');
+ const ws=new WebSocket('ws://127.0.0.1:'+address.port+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw.member}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+ let next=once(ws,'message');ws.send(JSON.stringify({type:'connection_init'}));await next;
+ f.clock.advance(1);
+ const frames:string[]=[];ws.on('message',frame=>frames.push(String(frame)));
+ next=once(ws,'message');ws.send(JSON.stringify({type:'subscribe',id:'usage',payload:{query:'subscription { observe(query:"{ householdSetup { tokens { label lastUsedAt } sessions { device seenAt } } }") { patches { path value } } }'}}));await next;
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()!.lastUsedAt).toBe(new Date(f.clock.now()).toISOString());
+ f.clock.advance(1000);next=once(ws,'message');f.root.credentials.authenticate(request({cookie:'loom_ui='+raw.cookie}));
+ expect(String((await next)[0])).toContain(new Date(f.clock.now()).toISOString());
+ const stored=JSON.stringify({tokens:f.db.select().from(tokens).all(),sessions:f.db.select().from(sessions).all()});
+ for(const secret of Object.values(raw)){expect(stored).not.toContain(secret);expect(frames.join(' ')).not.toContain(secret);}
+});
+
+it('records protected passkey ceremony and session-status cookie use through the shared resolver',async()=>{
+ const f=fixture(undefined,'https://loom.example');f.clock.advance(1000);
+ const headers={cookie:'loom_ui='+raw.cookie,'content-type':'application/json'};
+ expect((await f.root.http.request('https://loom.example/passkeys/options',{method:'POST',headers,body:'{}'})).status).toBe(200);
+ expect(f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()?.seenAt).toBe(new Date(f.clock.now()).toISOString());
+ f.clock.advance(1000);expect((await f.root.http.request('https://loom.example/auth/session',{headers})).status).toBe(200);
+ expect(f.db.select().from(sessions).where(eq(sessions.id,hash(raw.cookie))).get()?.seenAt).toBe(new Date(f.clock.now()).toISOString());
+});
+it('refuses metadata publication inside an unrelated outer transaction',()=>{
+ const f=fixture();f.clock.advance(1);
+ expect(()=>f.db.transaction(()=>f.root.credentials.authenticate(request({authorization:'Bearer '+raw.member})))).toThrow('Credential usage must own its transaction');
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(raw.member))).get()?.lastUsedAt).toBeNull();
 });
