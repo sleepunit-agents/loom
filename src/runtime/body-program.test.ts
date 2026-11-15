@@ -139,3 +139,21 @@ it('passes retained question context with a short answer to native execution',as
  expect(f.native).toHaveBeenCalledWith(job,JSON.stringify({question,answer:'yes',verdict:'yes'}),expect.any(AbortSignal));
  expect(JSON.stringify(f.calls)).not.toContain('PRIVATE QUESTION');
 });
+it('retires a Stop seen in the accepted batch before a held heartbeat drains',async()=>{
+ const f=fixture();let heartbeat!:()=>void,release=()=>{},hold=false,notifyAbort!:()=>void,bootstrapBytes:Uint8Array|undefined;
+ const aborted=new Promise<void>(resolve=>{notifyAbort=resolve;});
+ const fetcher:typeof fetch=async(url,init)=>{
+  const path=String(url).split('/').at(-1);
+  if(path==='status'&&hold){hold=false;await new Promise<void>(resolve=>{release=resolve;});}
+  if(path==='take')return Response.json({ok:true,value:{job:'job',conversation:'cv',stopRequested:true,items:[]}});
+  return f.options.fetch(url,init);
+ };
+ const running=bodyProgram({...f.options,fetch:fetcher,schedule:{every:(_ms,callback)=>{heartbeat=callback;return()=>{};}},startup:async(_job,bootstrap,signal)=>{
+  bootstrapBytes=bootstrap.token;expect(bootstrapBytes!.some(byte=>byte!==0)).toBe(true);signal.addEventListener('abort',notifyAbort,{once:true});hold=true;heartbeat();
+ }});
+ try{
+  expect(await Promise.race([aborted.then(()=>true),running.then(()=>false)])).toBe(true);expect(bootstrapBytes!.every(byte=>byte===0)).toBe(true);expect(f.native).not.toHaveBeenCalled();
+  let ended=false;void running.then(()=>{ended=true;});await Promise.resolve();expect(ended).toBe(false);
+ }finally{release();}
+ expect(await running).toBe(0);expect(f.calls.some(row=>row.path==='status'&&(row.body.input as {seenStop?:boolean}).seenStop===true)).toBe(true);
+});
