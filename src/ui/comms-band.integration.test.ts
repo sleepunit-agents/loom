@@ -86,10 +86,15 @@ process.stdin.on('end', () => {
     browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
   }, 60_000);
   afterAll(async () => {
+    console.error('Legacy Comms cleanup', {stage:'browser',contexts:browser?.contexts().length??0,pages:browser?.contexts().reduce((n,context)=>n+context.pages().length,0)??0});
     await browser?.close();
+    console.error('Legacy Comms cleanup', {stage:'watch'});
     stopCommsWatch();
+    console.error('Legacy Comms cleanup', {stage:'server'});
     await handle?.close();
+    console.error('Legacy Comms cleanup', {stage:'backends'});
     await closeAllBackends();
+    console.error('Legacy Comms cleanup', {stage:'done'});
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     if (h) rmSync(h.home, { recursive: true, force: true });
   });
