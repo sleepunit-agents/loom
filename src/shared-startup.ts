@@ -2,7 +2,7 @@
  * No importer, discovery, schema upgrade, or legacy database fallback. */
 import Database from 'better-sqlite3';
 import {createHash,randomBytes} from 'node:crypto';
-import {isAbsolute,join,resolve} from 'node:path';
+import {isAbsolute,join,resolve,relative,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
@@ -14,7 +14,7 @@ import {prepareOperatorHome,listenOperatorLinks} from './core/signin/operator.js
 import {sameOrigin,relyingParty} from './core/signin/index.js';
 import {sharedSigninLinks} from './core/signin/shared-links.js';
 import {privateBytes} from './pieces/secrets/local-holder.js';
-import {readKey,wordsKey} from './pieces/comms/crypto.js';
+import {readKey,wordsKey,type WordsKey} from './pieces/comms/crypto.js';
 import {serveShared} from './shared-serve.js';
 import type {sharedRoot} from './shared-root.js';
 const path=z.string().refine(isAbsolute,'Use an absolute path');
@@ -41,10 +41,17 @@ function checkDatabase(file:string){
 }
 export async function startSharedHome(options:{home:string;program?:string;host?:string;port?:number;webRoot?:string;clock?:Clock;stdout?(text:string):void;reportError?(error:unknown):void}){
  const home=resolve(options.home),clock=options.clock??systemClock;
+ const config=options.program??join(home,'program.json');
  let bytes:Buffer|undefined;
- const program=(()=>{try{bytes=privateBytes(options.program??join(home,'program.json'));return programSchema.parse(JSON.parse(bytes.toString('utf8')));}finally{bytes?.fill(0);}})();
+ const program=(()=>{try{bytes=privateBytes(config);return programSchema.parse(JSON.parse(bytes.toString('utf8')));}finally{bytes?.fill(0);}})();
+ const webRoot=resolve(options.webRoot??program.webRoot??resolve(import.meta.dirname,'../dist/web'));
+ const inside=(parent:string,child:string)=>{const part=relative(resolve(parent),resolve(child));return !part||part!=='..'&&!part.startsWith('..'+sep)&&!isAbsolute(part);};
+ const directories=[program.memory.sources.commons.directory,...program.memory.sources.agents.map(source=>source.directory)];
+ const files=[config,program.database,program.commsKey,program.adapters,...[program.memory.sources.commons.knowledge,program.memory.sources.commons.people,...program.memory.sources.agents.map(source=>source.memories)]];
+ if(directories.some(directory=>inside(webRoot,directory)||inside(directory,webRoot))||files.some(file=>file&&inside(webRoot,file)))throw Error('Public assets overlap private household files');
  checkDatabase(program.database);
- const commsKey=wordsKey(readKey(program.commsKey));
+ readKey(program.commsKey);
+ const commsKey:WordsKey={seal:value=>wordsKey(readKey(program.commsKey)).seal(value),open:value=>wordsKey(readKey(program.commsKey)).open(value),hash:value=>wordsKey(readKey(program.commsKey)).hash(value)};
  prepareOperatorHome(home);
  const release=await ownHome(home);
  let client:Database.Database|undefined,app:Awaited<ReturnType<typeof serveShared>>|undefined,operator:Awaited<ReturnType<typeof listenOperatorLinks>>|undefined;
@@ -54,13 +61,14 @@ export async function startSharedHome(options:{home:string;program?:string;host?
   client=new Database(program.database,{fileMustExist:true});client.pragma('foreign_keys = ON');
   const db=dataDatabase(client,()=>new Date(clock.now()).toISOString());
   if(db.select().from(members).where(eq(members.id,program.signinMember)).get()?.role!=='owner')throw Error('Configure an existing household owner for local sign-in');
-  if(program.adapters){const module=await import(pathToFileURL(program.adapters).href);if(typeof module.default!=='function')throw Error('Shared adapters must export a factory');adapters=await (module.default as SharedStartupFactory)({db,clock,home});}
+  if(program.adapters){privateBytes(program.adapters).fill(0);const module=await import(pathToFileURL(program.adapters).href);if(typeof module.default!=='function')throw Error('Shared adapters must export a factory');adapters=await (module.default as SharedStartupFactory)({db,clock,home});}
+  const publicOrigin=relyingParty(process.env)?.origin;
   app=await serveShared({db,clock,memory:program.memory,commsKey,
-   originAllowed:sameOrigin,publicOrigin:relyingParty(process.env)?.origin,
+   originAllowed:sameOrigin,publicOrigin,
    changes:adapters.changes,workAnswerAuthority:adapters.workAnswerAuthority,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
    secretWrites:adapters.secretWrites,secretInputs:adapters.secretInputs,bridges:adapters.bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,
-   reportError:options.reportError??(()=>{}),host:options.host,port:options.port,webRoot:options.webRoot??program.webRoot??resolve(import.meta.dirname,'../dist/web'),
+   reportError:options.reportError??(()=>{}),host:options.host,port:options.port,webRoot,
   });
   const signin=sharedSigninLinks(db,clock);
   const issue=({member,label,ttl}:{member:string;label:string;ttl:number})=>app!.writes.run(()=>{
@@ -73,8 +81,8 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    if(ttl<300)db.update(signinLinks).set({expiresAt:new Date(clock.now()+ttl*1000).toISOString()}).where(eq(signinLinks.id,fingerprint(link.path.slice('/login/'.length)))).run();
    return link.path;
   }).value;
-  operator=await listenOperatorLinks(home,app.url,issue);
-  (options.stdout??(text=>{process.stdout.write(text);}))(`${app.url}${issue({member:program.signinMember,label:'Local startup sign-in',ttl:300})}\n`);
+  operator=await listenOperatorLinks(home,publicOrigin??app.url,issue);
+  (options.stdout??(text=>{process.stdout.write(text);}))(`${publicOrigin??app.url}${issue({member:program.signinMember,label:'Local startup sign-in',ttl:300})}\n`);
   return {...app,close};
  }catch(error){await close();throw error;}
 }

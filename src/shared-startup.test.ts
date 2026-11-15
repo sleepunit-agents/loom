@@ -75,3 +75,11 @@ it('refuses a public startup inventory without starting a listener',async()=>{
  const f=await fixture();chmodSync(f.config,0o644);
  await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow();expect(existsSync(join(f.home,'operator.sock'))).toBe(false);
 });
+it('refuses public assets overlapping private files or a startup owner who is not an owner',async()=>{
+ const f=await fixture();
+ writeFileSync(f.config,JSON.stringify({...f.program,webRoot:f.home}),{mode:0o600});
+ await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('overlap');
+ writeFileSync(f.config,JSON.stringify({...f.program,signinMember:'peer'}),{mode:0o600});
+ await expect(startSharedHome({home:f.home,port:0})).rejects.toThrow('existing household owner');
+ expect(existsSync(f.program.memory.sources.commons.knowledge)).toBe(false);
+});
