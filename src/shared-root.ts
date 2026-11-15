@@ -102,10 +102,11 @@ export function sharedRoot(options: {
   clock: Clock;
   originAllowed(request: IncomingMessage): boolean;
   publicOrigin?: string;
-  /** Read-only programme grant adapter. Writable setup must supply programStore. */
+  /** Optional read-only enforcement adapter, without writable programme setup.
+   * Normal roots use canonical SQLite persistence when no adapter is supplied. */
   programGrants?: ProgramGrantReader;
   /** Writable setup and outside enforcement share this exact reader; it
-   * takes precedence over the read-only programGrants test/adapter port. */
+   * takes precedence over the read-only programGrants adapter. */
   programStore?: ProgramGrantStore;
   memory?: SharedMemoryOptions;
   fields?: Parameters<typeof nextData>[4];

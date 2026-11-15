@@ -5,25 +5,24 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {chromium,type Browser} from 'playwright-core';
-import {FakeClock} from '../core/clock.js';
 import {startSharedHome} from '../shared-startup.js';
 import {maskCredentialScreenshots} from '../../scripts/rebuild-credential-evidence.mjs';
 const enabled=process.env.LOOM_PROGRAM_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
 if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))))throw Error('Programme evidence requires Chrome and the built app');
 it.runIf(enabled)('normal-home owners create use edit clear and revoke a narrow programme through the real browser',{timeout:20_000},async()=>{
  const home=mkdtempSync(join(tmpdir(),'loom-programme-home-')),out=join(process.env.LOOM_TEST_SHOTS??resolve('artifacts'),'programme-access');
- let app:Awaited<ReturnType<typeof startSharedHome>>|undefined,browser:Browser|undefined,link='';const errors:unknown[]=[],diagnostics:string[]=[],clock=new FakeClock(Date.now()),expiry=new Date(clock.now()+3600_000).toISOString();let failed=false;
+ let app:Awaited<ReturnType<typeof startSharedHome>>|undefined,browser:Browser|undefined,link='';const errors:unknown[]=[],diagnostics:string[]=[],expiry=new Date(Date.now()+3600_000).toISOString();let failed=false;
  const safeError=(error:unknown)=>Error(String(error).replace(/loom_[A-Za-z0-9_-]+/g,'[token redacted]').replace(/\/login\/[^\s"'<>\)]+/g,'/login/[redacted]'));
  const check=(value:unknown,message:string)=>{if(!value)throw Error(message);};
  try{
   mkdirSync(out,{recursive:true});vi.stubEnv('LOOM_WORKER_SOCKET',undefined);vi.stubEnv('LOOM_PUBLIC_URL',undefined);
-  app=await startSharedHome({home,webRoot,clock,host:'127.0.0.1',port:0,stdout:text=>{link=text.trim();},reportError:error=>errors.push(error)});
+  app=await startSharedHome({home,webRoot,host:'127.0.0.1',port:0,stdout:text=>{link=text.trim();},reportError:error=>errors.push(error)});
   const current=app,db=current.services.comms!.db.$client,owner=(db.prepare("SELECT id FROM members WHERE role='owner'").get() as {id:string}).id;
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},userAgent:'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36'});
   await context.route('**/*',route=>new URL(route.request().url()).origin===current.url?route.continue():route.abort('blockedbyclient'));
   await context.routeWebSocket(url=>new URL(url).origin!==current.url.replace(/^http/,'ws'),socket=>socket.close());
   const page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTimeout(4000);page.on('pageerror',error=>errors.push(error));page.on('console',message=>diagnostics.push(message.text()));
-  await page.goto(link);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.next-shell').waitFor();await page.goto(current.url+'/p/setup-preview');
+  await page.goto(link);await page.getByRole('button',{name:'Sign in',exact:true}).click();await page.locator('.next-shell').waitFor();check((await context.request.post(link)).status()===401,'Startup sign-in link could be reused');await page.goto(current.url+'/p/setup-preview');
   const acceptedPost=async(path:string,click:()=>Promise<unknown>)=>{const pending=page.waitForResponse(response=>new URL(response.url()).pathname===path&&response.request().method()==='POST');void pending.catch(()=>{});await click();check((await pending).ok(),'Visible owner control was refused');};
   const form=page.getByRole('form',{name:'Create token',exact:true});await expect.poll(()=>form.locator('option[value="program"]').isDisabled()).toBe(false);await form.getByRole('combobox',{name:'Identity',exact:true}).selectOption('program');await form.getByRole('textbox',{name:'Token label',exact:true}).fill('Normal-home programme');await form.getByRole('combobox',{name:'Member',exact:true}).selectOption(owner);
   await form.getByRole('checkbox',{name:'tasks',exact:true}).check();await form.getByRole('checkbox',{name:'tasks.command',exact:true}).check();await form.getByRole('textbox',{name:'Expires (optional ISO time)',exact:true}).fill(expiry);
@@ -42,7 +41,7 @@ it.runIf(enabled)('normal-home owners create use edit clear and revoke a narrow 
   const tokenRow=page.getByRole('heading',{name:'Normal-home programme',level:4,exact:true}).locator('..');await acceptedPost('/api/token/revoke',()=>tokenRow.getByRole('button',{name:'Revoke token',exact:true}).click());check((await call('/graphql',{query:'{ tasks { id } }'})).status===403,'Revoked programme retained access');check(!db.serialize().includes(Buffer.from(raw)),'Raw programme credential persisted in SQLite');
   check(!(await page.evaluate(secret=>JSON.stringify([Object.entries(localStorage),Object.entries(sessionStorage)]).includes(secret),raw)),'Raw programme credential persisted in browser storage');check(!diagnostics.some(message=>message.includes(raw)),'Raw programme credential entered browser diagnostics');
   await expect.poll(()=>grants.getByRole('button',{name:'Save program grants',exact:true}).isDisabled()).toBe(true);expect(await value.count()).toBe(0);expect(errors).toEqual([]);await page.screenshot({path:join(out,'programme-controls.png'),fullPage:true});
-  writeFileSync(join(out,'proof.json'),JSON.stringify({normalEmptyHome:true,realSignin:true,createdInBrowser:true,restrictedReads:true,grantedOperation:true,selfAdministrationRefused:true,clearedMarkerRetained:true,editedAccessRestored:true,revoked:true,rawHidden:true,rawNeverPersisted:true,rawNeverStoredInBrowser:true,rawNeverLogged:true},null,2));
+  writeFileSync(join(out,'proof.json'),JSON.stringify({normalEmptyHome:true,realSignin:true,createdInBrowser:true,restrictedReads:true,grantedOperation:true,selfAdministrationRefused:true,clearedMarkerRetained:true,editedAccessRestored:true,revoked:true,rawHidden:true,rawNeverPersisted:true,rawNeverStoredInBrowser:true,rawAbsentFromBrowserDiagnostics:true},null,2));
  }catch(error){failed=true;throw safeError(error);}
  finally{let cleanupError:unknown;for(const close of [()=>browser?.close(),()=>app?.close(),()=>rmSync(home,{recursive:true,force:true}),()=>vi.unstubAllEnvs()]){try{await close();}catch(error){cleanupError??=error;}}if(cleanupError&&!failed)throw safeError(cleanupError);}
 });
