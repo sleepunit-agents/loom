@@ -759,12 +759,17 @@ loom household setMember '{"id":"robin","role":"member","agents":["fern"]}'
 loom household setProject '{"id":"garden","name":"Garden","members":["robin"],"agents":["fern"],"repositories":["github:example-house/garden"]}'
 loom token create '{"kind":"agent","agent":"fern","label":"Fern terminal"}'
 loom token list
+loom program create '{"member":"robin","label":"Garden client","records":["tasks"],"operations":["tasks.command"]}'
+loom program list
+loom program setGrants '{"fingerprint":"<fingerprint>","records":[],"operations":[]}'
 loom token link                       # one-time link for the current member
 loom sessions list
 loom account read                     # your own browsers, passkeys and devices
 ```
 
-Creation prints the new bearer once. Token revocation takes the full fingerprint
+Creation prints the new bearer once. Owners choose the record types and operations
+for outside-program tokens; clearing both grant lists keeps the token restricted
+with no grants. Programme creation is never retried after uncertain delivery. Token revocation takes the full fingerprint
 from `token list`; browser revocation takes its full `ref` from `sessions list`.
 For example, `loom token revoke '{"fingerprint":"<fingerprint>"}'` and
 `loom sessions revoke '{"ref":"<ref>"}'` use the actual values returned by those
