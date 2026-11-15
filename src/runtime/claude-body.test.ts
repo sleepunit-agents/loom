@@ -117,3 +117,6 @@ it('snapshots composed private tool names without broadening denied native tools
 it.each([{names:['Bash']},{names:['mcp__foreign__tool']},{names:['mcp__loom_secrets__command','mcp__loom_secrets__command']}])('refuses invalid private tool policy $names before launching',({names})=>{
  const f=fixture();expect(()=>claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpConfig:Buffer.from('{}'),mcpTools:names})).toThrow('Native Claude execution unavailable');expect(f.launch).not.toHaveBeenCalled();
 });
+it('refuses private tool names without a private MCP configuration before launch',()=>{
+ const f=fixture();expect(()=>claudeBody({command:'/private/claude',cwd:'/house',env:f.env,spawn:f.launch,mcpTools:['mcp__loom_secrets__command']})).toThrow('Native Claude execution unavailable');expect(f.launch).not.toHaveBeenCalled();
+});
