@@ -46,7 +46,7 @@ it('spends one exact allowance without forge effects, records refused uses, and 
 });
 it('rechecks exact head, labels, current body and conversation bindings before fresh and cached results',async()=>{
  const f=await fixture(),id=await f.ask('request');const before=f.snapshot();
- f.root.writes.run(()=>f.db.update(s.changes).set({headCommit:'b'.repeat(40)}).run());expect((await f.call('request',request,'request')).status).toBe(403);expect((await f.call('rule',target)).status).toBe(409);expect((await f.call('use',{id,...target})).status).toBe(403);expect(f.snapshot()).toEqual(before);
+ f.root.writes.run(()=>f.db.update(s.changes).set({headCommit:'b'.repeat(40)}).run());expect((await f.call('request',request,'request')).status).toBe(403);expect((await f.call('rule',target)).status).toBe(409);expect((await f.call('use',{id,...target})).status).toBe(403);expect(f.snapshot()).toEqual({...before,record:[...before.record,expect.objectContaining({approval:id,event:'refused-use'})]});
  f.root.writes.run(()=>f.db.update(s.changes).set({headCommit:head,project:'other'}).run());expect((await f.call('request',request,'request')).status).toBe(403);
  f.root.writes.run(()=>f.db.update(s.changes).set({project:'pond',agent:'mark'}).run());expect((await f.call('request',request,'request')).status).toBe(403);
  f.root.writes.run(()=>f.db.update(s.changes).set({agent:'art'}).run());
@@ -80,4 +80,35 @@ it('keeps operation-backed proposals with typed producers and never executes a s
 it('reads all four rule kinds without creating requests or running any effect',async()=>{
  const f=await fixture();for(const kind of ['merge','command','setting','dangerous'] as const){f.root.services.approvalRules.set({kind,scope:'*',person:'alice',tier:'do'},'pat');const input={kind,target:kind==='merge'?target.target:'fixture:target'};expect((await (await f.call('rule',input)).json()).value).toEqual({tier:'do',scope:'*',person:'alice'});}
  expect(f.db.select().from(s.approvals).all()).toEqual([]);expect(f.db.select().from(s.approvalRecord).all()).toEqual([]);expect(f.db.select().from(s.tempoSettings).all()).toEqual([]);expect(f.db.select().from(s.changes).get()?.state).toBe('open');
+});
+it('publishes a native HTTP body request and its audit atomically to two actual shared sockets',async()=>{
+ const {createServer}=await import('node:http'),{getRequestListener}=await import('@hono/node-server'),{once}=await import('node:events'),{default:WebSocket}=await import('ws');
+ const f=await fixture(),server=createServer(getRequestListener(f.root.http.fetch)),detach=f.root.attach(server);
+ await new Promise<void>(ok=>server.listen(0,'127.0.0.1',ok));const address=server.address();if(!address||typeof address==='string')throw Error('No fixture listener');
+ const url='http://127.0.0.1:'+address.port,sockets=[new WebSocket(url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+f.owner}}),new WebSocket(url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+f.owner}})];
+ const opened=sockets.map(socket=>once(socket,'open'));
+ try{
+  await Promise.all(opened);
+  for(const socket of sockets){let next=once(socket,'message');socket.send(JSON.stringify({type:'connection_init'}));expect(JSON.parse(String((await next)[0])).type).toBe('connection_ack');next=once(socket,'message');socket.send(JSON.stringify({type:'subscribe',id:'work',payload:{query:'subscription { observe(query:"{ approvals { id state actingFor } approvalRecord { approval event } }") { revision patches { path value removed } } }'}}));expect(JSON.parse(String((await next)[0])).payload.data.observe.patches[0].value).toEqual({approvals:[],approvalRecord:[]});}
+  const updates=sockets.map(socket=>once(socket,'message'));
+  const response=await fetch(url+'/api/approvals/request',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+raw.body},body:JSON.stringify({input:request,id:'wire-request'})});expect(response.status).toBe(200);const id=(await response.json()).value.id;
+  const frames=await Promise.all(updates);for(const frame of frames){const patches=JSON.parse(String(frame[0])).payload.data.observe.patches;expect(patches).toContainEqual({path:['approvals',0],value:{id,state:'pending',actingFor:'alice'},removed:false});expect(patches).toContainEqual({path:['approvalRecord',0],value:{approval:id,event:'request'},removed:false});}
+  expect(frames[0][0].toString()).toBe(frames[1][0].toString());
+ }finally{for(const socket of sockets)socket.terminate();detach();server.closeAllConnections();await new Promise<void>(ok=>server.close(()=>ok()));}
+});
+
+it.each(['closed','merged'] as const)('rejects fresh requests and rule reads for a %s change',async state=>{
+ const f=await fixture();f.root.writes.run(()=>f.db.update(s.changes).set({state}).run());const before=f.snapshot();expect((await f.call('request',request)).status).toBe(403);expect((await f.call('rule',target)).status).toBe(409);expect(f.snapshot()).toEqual(before);
+});
+it('withdraws its own approval after the cached head moves',async()=>{
+ const f=await fixture(),id=await f.ask();f.root.writes.run(()=>f.db.update(s.changes).set({headCommit:'b'.repeat(40)}).run());expect((await f.call('withdraw',{id},'stale-withdraw')).status).toBe(200);expect(f.root.services.approvals.get(id).state).toBe('withdrawn');expect(f.db.select().from(s.approvalRecord).all().map(row=>row.event)).toEqual(['request','withdraw']);
+});
+it('accepts command requests and spends their exact allowance without executing command text',async()=>{
+ const f=await fixture(),command={...request,kind:'command',target:'box:box:echo fictitious'};const response=await f.call('request',command,'command');expect(response.status).toBe(200);const id=(await response.json()).value.id;
+ expect(f.root.services.approvals.get(id)).toMatchObject({kind:'command',target:command.target,operation:null,state:'pending',agent:'art'});expect((await f.call('answer',{id,answer:'allow'},randomUUID(),f.owner)).status).toBe(200);
+ expect((await (await f.call('use',{id,kind:'command',target:command.target})).json()).value).toEqual({id,used:true});expect(f.db.select().from(s.approvalRecord).all().map(row=>row.event)).toEqual(['request','allow','use']);expect(f.db.select().from(s.changes).get()?.state).toBe('open');
+});
+it('audits a stale-head refusal instead of replaying a cached successful spend',async()=>{
+ const f=await fixture(),id=await f.ask();expect((await f.call('answer',{id,answer:'allow'},randomUUID(),f.owner)).status).toBe(200);expect((await f.call('use',{id,...target},'spent')).status).toBe(200);
+ f.root.writes.run(()=>f.db.update(s.changes).set({headCommit:'b'.repeat(40)}).run());expect((await f.call('use',{id,...target},'spent')).status).toBe(403);expect(f.root.services.approvals.get(id).state).toBe('used');expect(f.db.select().from(s.approvalRecord).all().map(row=>row.event)).toEqual(['request','allow','use','refused-use']);
 });

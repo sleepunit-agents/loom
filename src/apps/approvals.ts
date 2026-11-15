@@ -116,6 +116,14 @@ export function approvalService(db: DataDatabase, operations: ApprovedOperations
         record(row, 'withdraw'); return get(id);
       });
     },
+    /** Append-only hook for an outside refusal after its effect transaction rolls back. */
+    refuseUse(id: string, agent: string, note: string) {
+      return db.transaction(() => {
+        const row = get(id);
+        if (row.agent !== agent) throw new Error('Approval belongs to another agent');
+        record(row, 'refused-use', note);
+      });
+    },
     /** A refused spend is a result rather than an exception so its audit commits. */
     use(id: string, agent: string, kind: Approval['kind'], target: string): { ok: boolean; approval: Approval } {
       return db.transaction(() => {

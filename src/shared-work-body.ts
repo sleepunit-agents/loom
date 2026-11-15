@@ -42,6 +42,7 @@ export function registerSharedWorkBody(operations:Operations,db:DataDatabase,ser
  }));
  operations.register(operation({...common,name:'approvals.use',input:target.extend({id:z.string().min(1)}).strict(),output:z.object({id:z.string(),used:z.boolean()}).strict(),
   may:(viewer,input)=>belongs(viewer,input.id,true),
+  rejected(viewer,input,failure){if(failure.code==='denied'&&belongs(viewer,input.id)&&!belongs(viewer,input.id,true)){const row=card(viewer,input.id);service.refuseUse(row.id,row.agent,'Cached merge target no longer matches');}},
   run(ctx,input){const row=card(ctx.viewer,input.id),result=service.use(row.id,row.agent,input.kind,input.target);ctx.changed('approvals',row.id);return {id:row.id,used:result.ok};},
  }));
 }
