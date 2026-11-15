@@ -7,7 +7,7 @@ it.each([[1,'one',true],[2,'one',false],[1,'wrong-item',false]] as const)('binds
  try{
   db.exec('CREATE TABLE inbox(id TEXT,conversation TEXT,to_kind TEXT,"to" TEXT,source TEXT,thread TEXT,message_seq INTEGER)');
   for(let n=0;n<count;n++)db.prepare('INSERT INTO inbox VALUES(?,?,?,?,?,?,?)').run(n===0?'one':'duplicate','fictional-cv','agent','fern','thread','th:fiction',1);
-  const control={async waitFor(){},async isVisible(){return true;},first(){return this;},or(){return this;},filter(){return this;},async click(){},async focus(){},async press(){},async fill(){},async evaluateAll(){return[];}};
+  const control={async waitFor(){},async isVisible(){return true;},first(){return this;},or(){return this;},and(){return this;},filter(){return this;},async click(){},async focus(){},async press(){},async fill(){},async evaluateAll(){return[];}};
   const tile={async isVisible(){return true;},getByRole:()=>control,getByText:()=>control,locator:()=>control,async screenshot(){}};
   const response={url:()=> 'https://fiction.invalid/api/comms/send',status:()=>200,json:async()=>({ok:true,value:{thread:'th:fiction',seq:1,item}}),request:()=>({method:()=> 'POST',postDataJSON:()=>({input:{thread:'th:fiction',words:'Fictitious input',clientId:'fiction'}})})};
   const page={getByRole:(role:string)=>role==='region'?tile:control,locator:()=>control,async reload(){},async screenshot(){},async waitForResponse(predicate:(value:typeof response)=>boolean){expect(predicate(response)).toBe(true);return response;}};

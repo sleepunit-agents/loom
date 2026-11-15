@@ -4,6 +4,7 @@ import {join} from 'node:path';
 import {commsDeliveryEvidence} from '../dist/rebuild/comms-delivery-evidence.js';
 export async function conversationActions({page,app,example,out,open,actions=['commsSend','inboxAnswer','commsAnswer'],previous={}}){
  const activate=async button=>{await button.waitFor({state:'visible'});await button.focus();await button.press('Enter');};
+ const readyButton=async button=>{const enabled=button.and(page.locator(':enabled'));await enabled.waitFor({state:'visible'});await enabled.focus();return enabled;};
  const select=async tile=>{
   const heading=tile.getByRole('heading',{name:'Repair the garden pump',exact:true});
   const row=tile.locator('[data-split-row]:visible').filter({hasText:'Repair the garden pump'}).first();
@@ -26,7 +27,8 @@ export async function conversationActions({page,app,example,out,open,actions=['c
   phase='open-comms';let tile=await open('Comms');phase='select-conversation';await select(tile);
   const words='Fictitious walkthrough follow-up: compare the hose again.';
   phase='fill-message';await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(words);
-  phase='send-message';const pending=response('/api/comms/send');await activate(tile.getByRole('button',{name:'Send',exact:true}));const sent=await result(pending);
+  phase='prepare-send-button';const send=await readyButton(tile.getByRole('button',{name:'Send',exact:true}));
+  phase='send-message';const pending=response('/api/comms/send');await send.press('Enter');const sent=await result(pending);
   phase='sent-message-visible';await tile.getByText(words,{exact:true}).waitFor();
   phase='reload';await page.reload();await page.locator('.next-shell').waitFor();phase='reopen-after-reload';tile=await visibleComms();phase='select-after-reload';await select(tile);phase='persisted-message-visible';await tile.getByText(words,{exact:true}).waitFor();
   const {ok,count:inboxCopies}=commsDeliveryEvidence(app.services.comms.db.$client,{thread:example.thread,conversation:example.conversation,agent:'fern'},sent.body);
@@ -35,7 +37,8 @@ export async function conversationActions({page,app,example,out,open,actions=['c
  });
  if(actions.includes('inboxAnswer'))await attempt('inboxAnswer',async()=>{
   const tile=await open('Inbox');await activate(tile.getByRole('button',{name:'Go to Inbox',exact:true}));await activate(tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(question,{exact:true})}));
-  const pending=response('/api/inbox/answer');await activate(tile.getByRole('button',{name:'Yes',exact:true}));const answered=await result(pending);
+  const yes=await readyButton(tile.getByRole('button',{name:'Yes',exact:true}));
+  const pending=response('/api/inbox/answer');await yes.press('Enter');const answered=await result(pending);
   const db=app.services.comms.db.$client,q=db.prepare('SELECT state,answer,answered_by,conversation FROM inbox WHERE id=?').get(answered.input.item);
   const replies=db.prepare('SELECT conversation,to_kind,"to",source FROM inbox WHERE source=\'answer\' AND source_id=?').all(answered.input.item);
   const ok=q?.state==='answered'&&q.answer==='yes'&&q.answered_by==='alex'&&q.conversation===example.conversation&&replies.length===1&&replies[0].conversation===example.conversation&&replies[0].to_kind==='agent'&&replies[0].to==='fern';
