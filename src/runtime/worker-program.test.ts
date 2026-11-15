@@ -43,3 +43,17 @@ it('rejects malformed configuration before reading a token or launching', async 
   expect(f.read).toHaveBeenCalledTimes(1);
   expect(f.control).not.toHaveBeenCalled(); expect(f.executor).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
 });
+
+it('passes a configured build deadline to the executor', async () => {
+  const f = fixture();
+  f.read.mockImplementation(async path => path === '/config' ? JSON.stringify({ ...config, buildTimeoutMs: 1_234 }) : 'private-token');
+  expect(await workerProgram(f)).toBe(0);
+  expect(f.executor).toHaveBeenCalledWith({ ...config, buildTimeoutMs: 1_234 });
+});
+for (const buildTimeoutMs of [0, 1.5, 3_600_001]) it(`rejects invalid configured deadline ${buildTimeoutMs} before launching`, async () => {
+  const f = fixture();
+  f.read.mockResolvedValue(JSON.stringify({ ...config, buildTimeoutMs }));
+  expect(await workerProgram(f)).toBe(1);
+  expect(f.read).toHaveBeenCalledTimes(1);
+  expect(f.executor).not.toHaveBeenCalled();
+});

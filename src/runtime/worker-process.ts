@@ -110,24 +110,39 @@ function launch(plan: WorkerCommand, signal: AbortSignal, runtime: ProcessRuntim
 }
 export function commandWorkerExecutor(config: {
   build: WorkerCommand;
+  /** Maximum build time; running bodies have their own lifecycle. */
+  buildTimeoutMs?: number;
   /** Configured harness name -> runner command; a model name implies nothing. */
   runners: Readonly<Record<string, WorkerCommand>>;
 }, runtime: ProcessRuntime = native): WorkerExecutor {
   const buildPlan = command(config.build);
+  const buildTimeoutMs = config.buildTimeoutMs ?? 300_000;
+  if (!Number.isSafeInteger(buildTimeoutMs) || buildTimeoutMs < 1 || buildTimeoutMs > 3_600_000)
+    throw new Error('Invalid worker build deadline');
   const runners = new Map(Object.entries(config.runners).map(([name, plan]) => [name, command(plan)]));
   return {
     async build(job, signal) {
       if (!runners.has(job.harness)) throw new Error('Worker has no configured runner');
-      const attempt = launch(buildPlan, signal, runtime);
+      const abort = new AbortController();
+      const cancel = () => abort.abort();
+      signal.addEventListener('abort', cancel, { once: true });
+      if (signal.aborted) cancel();
+      const timer = setTimeout(cancel, buildTimeoutMs);
+      let attempt: ReturnType<typeof launch> | undefined;
       try {
+        attempt = launch(buildPlan, abort.signal, runtime);
         await attempt.spawned;
         await attempt.release({ job: job.id, house: job.house });
         const result = await attempt.exited;
-        if (signal.aborted || result.exitCode !== 0) throw new Error('Worker build failed');
+        if (abort.signal.aborted || result.exitCode !== 0) throw new Error('Worker build failed');
         const output: unknown = JSON.parse(attempt.output());
         if (!output || typeof output !== 'object' || !('build' in output) || typeof output.build !== 'string' || !output.build.trim()) throw new Error('Builder returned no artifact');
         return output.build;
-      } finally { await attempt.stop(); }
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', cancel);
+        if (attempt) await attempt.stop();
+      }
     },
     start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody {
       const plan = runners.get(job.harness);
