@@ -48,12 +48,13 @@ it('signs in on the actual shared listener and converges Memory writes, source t
  expect(hasTouchedListener(f.sources.commons.directory)).toBe(true);expect(hasTouchedListener(f.sources.agents[0].directory)).toBe(true);
  const request=(path:string,body?:unknown,headers:Record<string,string>={authorization:'Bearer '+raw})=>fetch(app.url+path,{method:'POST',redirect:'manual',headers:{'content-type':'application/json',origin:app.url,...headers},...(body?{body:JSON.stringify(body)}:{})});
  const minted=await request('/api/signin/link',{input:{}});expect(minted.status).toBe(200);
- const login=await request((await minted.json()).value.path);expect(login.status).toBe(303);
+ const login=await request((await minted.json()).value.path,undefined,{authorization:'Bearer '+raw,'user-agent':'Mozilla/5.0 HeadlessChrome/140.0'});expect(login.status).toBe(303);
  const cookie=login.headers.get('set-cookie')!.split(';',1)[0],headers={cookie};
+ expect(await (await fetch(app.url+'/auth/session',{headers})).json()).toMatchObject({viewer:{kind:'member',id:'owner'}});
  const query='{ memoryKnowledge { pages { slug title fresh } } memoryPerson(id:"fiction:friend") { name } memoryProject(id:"fiction:pond") { name } memoryActivity { entries { title } } }';
  const read=async()=>{const response=await request('/graphql',{query},headers);expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
  expect(await read()).toMatchObject({memoryKnowledge:{pages:[]},memoryPerson:null,memoryProject:null,memoryActivity:{entries:[]}});
- const ws=new WebSocket(app.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{cookie,origin:app.url}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+ const ws=new WebSocket(app.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{cookie,origin:app.url,'user-agent':'Mozilla/5.0 HeadlessChrome/140.0'}});cleanup.push(()=>ws.terminate());await once(ws,'open');
  expect((await waitMessage(ws,()=>ws.send(JSON.stringify({type:'connection_init'})))).type).toBe('connection_ack');
  const first=await waitMessage(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'memory',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query}}})));
  expect(first.payload.data.observe.patches[0].value).toEqual(await read());
