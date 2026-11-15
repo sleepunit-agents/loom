@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { and, eq } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { createDataSchema } from '../data/database.js';
-import { agents, deletedThreads, household, inbox, inboxRefs, members, messages, threadRefs, threads } from '../data/schema.js';
+import { agents, deletedThreads, household, inbox, inboxRefs, members, messages, threadRefs, threads, turns, conversationPeople, conversations } from '../data/schema.js';
 import type { WordsKey } from '../../pieces/comms/crypto.js';
 import { wordsKey } from '../../pieces/comms/crypto.js';
 import { generateX25519Identity } from 'age-encryption';
@@ -186,4 +186,36 @@ it('rechecks source state when a prepared commit is delayed or retried after del
   expect(retry).toThrow('Thread not found');
   expect(askRetry).toThrow('Thread not found');
   expect(answer).toThrow('Not a private question');
+});
+
+it('records each committed Comms message as one wordless turn and records its speakers', async () => {
+  const { db, service, thread } = await fixture();
+  const sent = { thread: thread.id, sender: 'jonathan', kind: 'message' as const, clientId: 'one', words: 'Private request' };
+  await Promise.all([service.send(sent), service.send(sent)]);
+  await service.send({ thread: thread.id, sender: 'art', kind: 'card', clientId: 'card', run: 'run-1', tool: 'lookup', words: 'Private lookup', turn: { model: 'model-1', outcome: 'progressed' } });
+  await service.send({ thread: thread.id, sender: 'art', kind: 'reply', run: 'run-1', words: 'Private reply', turn: { model: 'model-1', outcome: 'answered', latencyMs: 250 } });
+  const ask = await service.ask(thread.id, 'art', 'ask-1', { words: 'Private question?', answers: 'words' });
+  await service.answer(ask.inboxItem!, 'jonathan', 'words', 'Private answer');
+  await service.answer(ask.inboxItem!, 'jonathan', 'words', 'Retry');
+  await service.send({ thread: thread.id, sender: 'art', kind: 'notice', words: 'Private notice' });
+  const recorded = db.select().from(turns).all();
+  expect(recorded.map(r => [r.seq, r.kind, r.fromKind, r.fromId])).toEqual([
+    [1, 'message', 'person', 'jonathan'], [2, 'action', 'agent', 'art'], [3, 'reply', 'agent', 'art'],
+    [4, 'note', 'agent', 'art'], [5, 'message', 'person', 'jonathan'], [6, 'note', 'agent', 'art'],
+  ]);
+  expect(recorded[2]).toMatchObject({ run: 'run-1', model: 'model-1', outcome: 'answered', latencyMs: 250 });
+  expect(JSON.stringify(recorded)).not.toContain('Private');
+  expect(db.select().from(conversationPeople).all()).toEqual([
+    { conversation: thread.conversation, whoKind: 'person', who: 'jonathan' },
+    { conversation: thread.conversation, whoKind: 'agent', who: 'art' },
+  ]);
+  expect(db.select().from(conversations).where(eq(conversations.id, thread.conversation)).get()?.turnCount).toBe(6);
+});
+it('rolls wordless turns and speaker/count updates back with failed message delivery', async () => {
+  const { db, client, service, thread } = await fixture();
+  client.exec("CREATE TRIGGER refuse_mail BEFORE INSERT ON inbox BEGIN SELECT RAISE(ABORT, 'mail unavailable'); END");
+  await expect(service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Private' })).rejects.toThrow();
+  expect(db.select().from(turns).all()).toEqual([]);
+  expect(db.select().from(conversationPeople).all()).toEqual([]);
+  expect(db.select().from(conversations).where(eq(conversations.id, thread.conversation)).get()?.turnCount).toBe(0);
 });

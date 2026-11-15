@@ -2,17 +2,19 @@
  * encrypted words never enter operation receipts or the plaintext Inbox. */
 import { and, eq, inArray, isNotNull, lte, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
-import { conversations, deletedThreads, household, inbox, inboxRefs, messages, threadRefs, threads } from '../data/schema.js';
+import { conversations, deletedThreads, household, inbox, inboxRefs, messages, threadRefs, threads, turns } from '../data/schema.js';
 import type { WordsKey } from './words.js';
 import { refsIn } from './refs.js';
 import { Threads } from './threads.js';
 
 type Message = typeof messages.$inferSelect;
+type TurnDetails = Partial<Pick<typeof turns.$inferInsert, 'model' | 'outcome' | 'latencyMs'>>;
 type Answer = NonNullable<typeof inbox.$inferSelect.answer>;
 export type PrivateQuestion = { words: string; answers: 'yes-no' | 'words'; why?: string; ifYes?: string; ifNo?: string; link?: string };
 export type MessageInput = {
   thread: string; sender: string; kind: 'message' | 'reply' | 'card' | 'notice'; words: string;
   clientId?: string; run?: string; tool?: string; cardState?: Message['cardState'];
+  turn?: TurnDetails;
 };
 
 export class CommsMessages {
@@ -31,14 +33,19 @@ export class CommsMessages {
       .where(and(eq(messages.thread, thread), eq(messages.sender, sender), eq(messages.clientId, clientId))).get();
   }
 
-  private append(input: Omit<typeof messages.$inferInsert, 'seq' | 'at' | 'keepUntil'>, refs: string[]): Message {
+  private append(input: Omit<typeof messages.$inferInsert, 'seq' | 'at' | 'keepUntil'>, refs: string[], detail: TurnDetails = {}): Message {
     const { thread, cv } = this.context(input.thread), at = this.now();
     const days = this.db.select().from(household).get()?.commsDays ?? 14;
     if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
     const seq = (this.db.select({ seq: max(messages.seq) }).from(messages).where(eq(messages.thread, thread.id)).get()?.seq ?? 0) + 1;
     const row = this.db.insert(messages).values({ ...input, seq, at, keepUntil: new Date(Date.parse(at) + days * 86400000).toISOString() }).returning().get();
     this.db.update(threads).set({ lastAt: at }).where(eq(threads.id, thread.id)).run();
-    this.db.update(conversations).set({ lastAt: at }).where(eq(conversations.id, cv.id)).run();
+    const person = input.kind === 'message' || input.kind === 'answer';
+    this.threads.conversations.turn({ conversation: cv.id,
+      kind: person ? 'message' : input.kind === 'reply' ? 'reply' : input.kind === 'card' ? 'action' : 'note',
+      fromKind: person ? 'person' : 'agent', fromId: input.sender,
+      run: person ? null : input.run, ...detail,
+    });
     for (const ref of new Set(refs)) this.db.insert(threadRefs).values({ thread: thread.id, ref, messageSeq: seq })
       .onConflictDoUpdate({ target: [threadRefs.thread, threadRefs.ref], set: { messageSeq: seq } }).run();
     return row;
@@ -56,7 +63,7 @@ export class CommsMessages {
    * must recheck authentication and authorization before invoking it, inside
    * its operation transaction. Return only acknowledgement metadata to receipts. */
   async prepareSend(input: MessageInput): Promise<() => Message> {
-    input = { ...input };
+    input = { ...input, turn: input.turn ? { ...input.turn } : undefined };
     const before = this.context(input.thread);
     if (input.sender !== (input.kind === 'message' ? before.cv.member : before.cv.agent)) throw new Error('Sender differs from thread');
     const old = this.retry(input.thread, input.sender, input.clientId);
@@ -67,7 +74,8 @@ export class CommsMessages {
       if (input.sender !== (input.kind === 'message' ? cv.member : cv.agent)) throw new Error('Sender differs from thread');
       const retry = this.retry(input.thread, input.sender, input.clientId);
       if (retry) return retry;
-      let row = this.append({ ...input, words, delivery: input.kind === 'message' ? 'sending' : null }, refs);
+      const { turn, ...messageInput } = input;
+      let row = this.append({ ...messageInput, words, delivery: input.kind === 'message' ? 'sending' : null }, refs, turn);
       if (input.kind === 'message') row = this.attach(row, this.threads.conversations.send({
         toKind: 'agent', to: cv.agent, conversation: cv.id, source: 'thread', sourceId: `${row.thread}:${row.seq}`,
         fromKind: 'person', fromId: input.sender, thread: row.thread, messageSeq: row.seq, refs,
