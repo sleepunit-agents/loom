@@ -1,4 +1,6 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import * as socketModule from './core/data/socket.js';
+import { Live } from './core/live/index.js';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
@@ -117,4 +119,52 @@ it('refuses unauthenticated and cross-origin upgrades despite the legacy operati
     expect(JSON.stringify(await observe(ws))).toContain('Fictional hose');
     const closed=once(ws,'close');await f.loom.close();await closed;
   } finally {await f.close();}
+});
+
+
+it('disposes the socket, pending selection and change observer on listener shutdown',async()=>{
+  const factory = vi.spyOn(socketModule,'dataSocket');
+  const f=await setup();
+  const options=factory.mock.calls[0][0],socket=factory.mock.results[0].value as ReturnType<typeof socketModule.dataSocket>;
+  const dispose=vi.spyOn(socket,'close'),watch=vi.spyOn(options.live,'watch'),changed=vi.spyOn(options.live,'changed');
+  try {
+    const ws=await f.open();await observe(ws);
+    const selection=watch.mock.results[0].value as ReturnType<typeof options.live.watch>;
+    await f.loom.close();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(await selection.next()).toEqual({done:true,value:undefined});
+    expect(()=>options.live.watch({schema:options.schema({kind:'member',id:'owner'}),query:'{ tasks { id } }',valid:()=>true})).toThrow('Live data access ended');
+    changed.mockClear(); f.loom.live.changed([{type:'core.access',id:'after-close'}]);
+    expect(changed).not.toHaveBeenCalled();
+  } finally {await f.close();vi.restoreAllMocks();}
+});
+
+it('disposes socket resources and the change observer when a later bind fails',async()=>{
+  const home=mkdtempSync(join(tmpdir(),'memory-socket-bind-failure-'));
+  const original=socketModule.dataSocket;
+  const attachments: import('node:http').Server[]=[];
+  let disposal: ReturnType<typeof vi.spyOn>|undefined;
+  let owned: Parameters<typeof socketModule.dataSocket>[0]|undefined;
+  let observeChanges: (()=>void)|undefined;
+  const observeOriginal=Live.prototype.observe;
+  const stops: ReturnType<typeof vi.fn>[]=[];
+  vi.spyOn(Live.prototype,'observe').mockImplementation(function(this:Live,fn){
+    const stop=vi.fn(observeOriginal.call(this,fn));stops.push(stop);
+    observeChanges=()=>this.changed([{type:'core.access',id:'after-failure'}]);return stop;
+  });
+  vi.spyOn(socketModule,'dataSocket').mockImplementation(options=>{
+    owned=options;
+    const socket=original(options),attach=socket.attach;
+    vi.spyOn(socket,'attach').mockImplementation(server=>{attachments.push(server);return attach(server);});
+    disposal=vi.spyOn(socket,'close');return socket;
+  });
+  try {
+    await expect(startLoom({home,next:true,staging:true,clock:new FakeClock(),host:['127.0.0.1','invalid host name'],stdout:()=>{}})).rejects.toThrow();
+    expect(attachments).toHaveLength(2);
+    expect(attachments.every(server=>!server.listening && server.listenerCount('upgrade')===0)).toBe(true);
+    expect(disposal).toHaveBeenCalledOnce();
+    expect(stops.length).toBeGreaterThan(0);expect(stops.at(-1)).toHaveBeenCalledOnce();
+    const changed=vi.spyOn(owned!.live,'changed');observeChanges!();expect(changed).not.toHaveBeenCalled();
+    expect(()=>owned!.live.watch({schema:owned!.schema({kind:'member',id:'owner'}),query:'{ tasks { id } }',valid:()=>true})).toThrow('Live data access ended');
+  } finally {vi.restoreAllMocks();rmSync(home,{recursive:true,force:true});}
 });
