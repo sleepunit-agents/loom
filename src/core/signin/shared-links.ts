@@ -93,7 +93,10 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
   });
   routes.post('/logout', c => {
     const cookie = c.req.header('cookie')?.split(';').map(value => value.trim()).find(value => value.startsWith('loom_ui='))?.slice(8);
-    if (cookie && /^[a-zA-Z0-9_-]{32,4096}$/.test(cookie)) write(() => {
+    // A stale cookie may be cleared locally, but must not authorize server
+    // changes. Authenticate the cookie itself; an unrelated bearer cannot help.
+    const auth = cookie ? authenticate(new Request(c.req.url, { headers: { cookie: `loom_ui=${cookie}` } })) : undefined;
+    if (auth?.valid() && auth.viewer.kind === 'member' && cookie) write(() => {
       const id = fingerprint(cookie);
       options.db.delete(notificationDevices).where(eq(notificationDevices.session, id)).run();
       options.db.delete(sessions).where(eq(sessions.id, id)).run();

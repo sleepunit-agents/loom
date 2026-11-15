@@ -198,3 +198,14 @@ it.each(['origin', 'fetch-site'] as const)('rejects cross-origin logout via %s w
   expect(f.db.select().from(sessions).all()).toHaveLength(1); expect(f.db.select().from(notificationDevices).all()).toHaveLength(1);
   expect((await f.read(cookie)).status).toBe(200);
 });
+
+it.each(['expired', 'revoked'] as const)('clears an %s cookie locally without using it to delete server records', async state => {
+  const f = fixture(), response = await f.redeem(await f.link()), cookie = response.headers.get('set-cookie')!.split(';', 1)[0];
+  const at = new Date(f.clock.now()).toISOString();
+  f.db.insert(notificationDevices).values({ endpoint: 'https://push.invalid/stale', member: 'sam', session: hash(cookie.slice('loom_ui='.length)), keys: 'fixture push keys', device: 'Browser', createdAt: at, seenAt: at }).run();
+  f.root.writes.run(() => f.db.update(tokens).set(state === 'expired' ? { expiresAt: at } : { revokedAt: at }).where(eq(tokens.fingerprint, hash(credential))).run());
+  const out = await f.root.http.request('http://loom/logout', { method: 'POST', headers: { cookie, authorization: 'Bearer ' + other } });
+  expect(out.status).toBe(200); expect(out.headers.get('set-cookie')).toContain('Max-Age=0');
+  expect(f.db.select().from(sessions).all()).toHaveLength(1); expect(f.db.select().from(notificationDevices).all()).toHaveLength(1);
+  expect((await f.read(cookie)).status).toBe(401);
+});
