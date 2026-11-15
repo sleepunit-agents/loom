@@ -55,13 +55,38 @@ describe.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo browser',()=>{
   await context.addCookies([{name:'loom_ui',value:cookie,url}]);
   const [a,b]=await Promise.all([context.newPage(),context.newPage()]);
   for(const page of [a,b]){
+   // Numeric, bounded diagnostics for a hosted click that failed stability.
+   // Never retain DOM words, query variables, credentials or navigation URLs.
+   await page.addInitScript(()=>{
+    const trace={active:true,samples:[] as unknown[],last:undefined as unknown};
+    (window as typeof window&{__tempoGeometry:typeof trace}).__tempoGeometry=trace;
+    const start=performance.now();let previous='',generation=0,lastButton:Element|undefined;
+    const rect=(element:Element|null)=>{const r=element?.getBoundingClientRect();return r?[r.x,r.y,r.width,r.height].map(n=>Math.round(n*100)/100):null;};
+    const sample=()=>{
+     if(!trace.active)return;
+     const button=[...document.querySelectorAll('button[data-split-row]')].find(el=>el.textContent?.includes('Check pump delivery'));
+     if(button!==lastButton){generation++;lastButton=button;}
+     const box=button?.getBoundingClientRect(),style=button?getComputedStyle(button):undefined;
+     const hit=box?document.elementFromPoint(box.x+box.width/2,box.y+box.height/2):null;
+     const value={generation,button:rect(button??null),tile:rect(button?.closest('[data-tile]')??null),connected:button?.isConnected??false,
+      display:style?.display,visibility:style?.visibility,opacity:style?.opacity,hit:!!button&&!!hit&&button.contains(hit),
+      fonts:document.fonts.status,motion:document.documentElement.dataset.motion,hidden:document.hidden};
+     const signature=JSON.stringify(value);
+     if(signature!==previous){const entry={at:Math.round(performance.now()-start),...value};if(trace.samples.length<24)trace.samples.push(entry);trace.last=entry;previous=signature;}
+     requestAnimationFrame(sample);
+    };requestAnimationFrame(sample);
+   });
    page.on('pageerror',error=>console.error('[Tempo page error]',error.message));
    page.on('console',message=>{if(message.type()==='error')console.error('[Tempo console]',message.text());});
-   page.on('websocket',socket=>socket.on('framereceived',frame=>{try{const value=JSON.parse(String(frame.payload));if(value.type==='error'||value.payload?.errors)console.error('[Tempo GraphQL error]',JSON.stringify(value));}catch{}}));
+   page.on('websocket',socket=>{
+    const names=new Map<string,string>();
+    socket.on('framesent',frame=>{try{const value=JSON.parse(String(frame.payload)),query=value.payload?.variables?.query;if(value.type==='subscribe'&&typeof query==='string'&&names.size<64)names.set(value.id,query.match(/^\s*(?:query|subscription)\s+([A-Za-z_]\w*)/)?.[1]??'unnamed');}catch{}});
+    socket.on('framereceived',frame=>{try{const value=JSON.parse(String(frame.payload));if(value.type==='error'||value.payload?.errors)console.error('[Tempo GraphQL error]',JSON.stringify({operation:names.get(value.id),...value}));}catch{}});
+   });
   }
   mark('navigate');await Promise.all([a,b].map(page=>page.goto(url+'/p/tempo')));mark('navigated');
   await Promise.all([a,b].map(async page=>{
-   mark('open trigger');try{await page.getByRole('button',{name:/Check pump delivery/}).click();}catch(error){console.error('[Tempo visible body]',await page.locator('body').innerText());throw error;}
+   mark('open trigger');try{await page.getByRole('button',{name:/Check pump delivery/}).click();}catch(error){console.error('[Tempo geometry]',JSON.stringify(await page.evaluate(()=>(window as typeof window&{__tempoGeometry:unknown}).__tempoGeometry)));console.error('[Tempo visible body]',await page.locator('body').innerText());throw error;}finally{await page.evaluate(()=>{(window as typeof window&{__tempoGeometry:{active:boolean}}).__tempoGeometry.active=false;});}
    await expect.poll(()=>page.getByRole('heading',{name:'Check pump delivery',exact:true}).count()).toBe(1);
    expect(await page.getByText(/America\/Chicago/).count()).toBeGreaterThan(0);
    const due=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'medium',timeStyle:'short'}).format(new Date(trigger.nextDueAt!));
