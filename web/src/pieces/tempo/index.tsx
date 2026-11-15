@@ -105,5 +105,3 @@ export default function Tempo({ snapshot, actions }: { snapshot: TempoSnapshot; 
     reader={reader} open={!!reader} onBack={() => setSelected(undefined)} backLabel="Tempo"
     blank={<Empty title="Open a trigger" text="Choose a trigger to see its source, target, words and history." />} />;
 }
-
-export { TempoSettingsChangeCard } from './settings';
