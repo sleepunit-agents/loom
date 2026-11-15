@@ -9,6 +9,7 @@ import type { memoryQueryFields } from './transport/memory-queries.js';
 import { DataLive } from './core/data/live.js';
 import { dataQueries } from './core/data/queries.js';
 import { dataSocket } from './core/data/socket.js';
+import { tempoVisibility } from './core/tempo/visibility.js';
 import { taskVisibility } from './core/data/visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
@@ -21,8 +22,9 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
     tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
-      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync'],
-    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer) },
+      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync',
+      'triggers', 'triggerLog', 'agentPauses'],
+    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...tempoVisibility(viewer) },
   }), fields);
   const socket = dataSocket({ live, clock, originAllowed,
     authenticate(request) {
