@@ -81,7 +81,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    originAllowed:sameOrigin,publicOrigin,
    changes:adapters.changes,workAnswerAuthority:adapters.workAnswerAuthority,
    tempo:{...adapters.tempo,...(program.repository?{repository:program.repository}:{})},
-   secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges:adapters.bridges,modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,
+   secretWrites:adapters.secretWrites??(holder?{holder:holder.holder,fingerprintKey:holder.fingerprintKey}:undefined),secretInputs:adapters.secretInputs??(holder?{source:holder.source}:undefined),bridges:adapters.bridges??(holder?{source:holder.source,effectsAllowed:()=>!closing}:undefined),modelRoles:adapters.modelRoles,runtimeJobEnded:adapters.runtimeJobEnded,
    reportError:options.reportError??(()=>{}),host:options.host,port:options.port,webRoot,
   });
   const signin=sharedSigninLinks(db,clock);
