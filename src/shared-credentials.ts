@@ -13,16 +13,17 @@ const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 const active = new Set(['starting', 'running', 'waiting']);
 export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () => boolean = () => true) {
   const resolve = dataAuthentication(db, () => clock.now());
-  type Token = typeof tokens.$inferSelect;
+  const identity = { fingerprint: tokens.fingerprint, kind: tokens.kind, member: tokens.member, agent: tokens.agent, job: tokens.job, box: tokens.box };
+  type Token = Pick<typeof tokens.$inferSelect, keyof typeof identity>;
   type Proof = { token: Token; session?: string; bearer: boolean; valid(): boolean; box?: string };
   const proofs = new WeakMap<Viewer, Proof>();
   type BoundJob = Pick<typeof jobs.$inferSelect, 'agent' | 'box' | 'conversation' | 'member' | 'project'>;
   const bodyJob = (token: Token, bound?: BoundJob) => {
     if (token.kind !== 'agent' || !token.job || !token.agent) return;
-    const job = db.select().from(jobs).where(eq(jobs.id, token.job)).get();
+    const job = db.select({ id: jobs.id, agent: jobs.agent, box: jobs.box, conversation: jobs.conversation, member: jobs.member, project: jobs.project, state: jobs.state }).from(jobs).where(eq(jobs.id, token.job)).get();
     if (!job || job.agent !== token.agent || !active.has(job.state) || !job.box) return;
     if (bound && (['agent', 'box', 'conversation', 'member', 'project'] as const).some(key => job[key] !== bound[key])) return;
-    const machine = db.select().from(boxes).where(eq(boxes.id, job.box)).get();
+    const machine = db.select({ revokedAt: boxes.revokedAt }).from(boxes).where(eq(boxes.id, job.box)).get();
     return machine && !machine.revokedAt ? job : undefined;
   };
   const proof = (viewer: Viewer) => {
@@ -40,19 +41,19 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
         : request.headers.get('cookie')?.split(';').map(value => value.trim()).find(value => value.startsWith('loom_ui='))?.slice(8);
       if (!raw) return;
       const session = bearer ? undefined : hash(raw);
-      const tokenId = bearer ? hash(raw) : db.select().from(sessions).where(eq(sessions.id, session!)).get()?.token;
+      const tokenId = bearer ? hash(raw) : db.select({ token: sessions.token }).from(sessions).where(eq(sessions.id, session!)).get()?.token;
       if (!tokenId) return;
-      const token = db.select().from(tokens).where(eq(tokens.fingerprint, tokenId)).get();
+      const token = db.select(identity).from(tokens).where(eq(tokens.fingerprint, tokenId)).get();
       if (!token) return;
       const bound = token.job ? bodyJob(token) : undefined;
       if (token.job && !bound) return;
       const valid = () => {
         // Stop before any SQL when the root has closed admission.
         if (!admitted() || !auth.valid() || !admitted()) return false;
-        const current = db.select().from(tokens).where(eq(tokens.fingerprint, tokenId)).get();
+        const current = db.select(identity).from(tokens).where(eq(tokens.fingerprint, tokenId)).get();
         if (!current || ['kind', 'member', 'agent', 'job', 'box'].some(key => current[key as keyof Token] !== token[key as keyof Token])) return false;
         if (token.kind === 'runner') {
-          const box = token.box && db.select().from(boxes).where(eq(boxes.id, token.box)).get();
+          const box = token.box && db.select({ revokedAt: boxes.revokedAt }).from(boxes).where(eq(boxes.id, token.box)).get();
           if (!box || box.revokedAt) return false;
         }
         if (token.job && !bodyJob(token, bound)) return false;

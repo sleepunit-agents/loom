@@ -165,3 +165,14 @@ it.each(['queued','unassigned','wrong-agent'] as const)('refuses initial body au
   expect(f.db.select().from(tasks).all()).toEqual([]);
   expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
 });
+
+it('reads binding metadata without selecting or retaining job payload columns', () => {
+  const f = fixture();
+  f.db.update(jobs).set({ brief: 'Private fixture words', logTail: 'Private fixture transcript' }).where(eq(jobs.id, 'job-1')).run();
+  const sql = vi.spyOn(f.client, 'prepare');
+  const auth = f.root.credentials.authenticate(request({ authorization: 'Bearer '+raw.body }))!;
+  expect(f.root.credentials.body(auth.viewer)).toEqual({ job: 'job-1', agent: 'art', box: 'box-1' });
+  const reads = sql.mock.calls.map(([statement]) => String(statement)).filter(statement => /from "jobs"/i.test(statement));
+  expect(reads.length).toBeGreaterThan(0);
+  expect(reads.join(' ')).not.toMatch(/brief|log_tail|title|model|harness|account|select\s+\*/i);
+});
