@@ -121,8 +121,8 @@ it('offers all four body Work operations only through HTTP, including for a vali
 it.each(['member','project','job'] as const)('binds receipts against a valid same-conversation %s reassignment',async field=>{
  const f=await fixture(),id=await f.ask('original');
  f.root.writes.run(()=>{
-  if(field==='member'){f.db.insert(s.memberAgents).values({member:'bob',agent:'art'}).run();f.db.update(s.jobs).set({member:'bob'}).run();f.db.update(s.conversations).set({member:'bob'}).where(eq(s.conversations.id,f.thread.conversation)).run();}
-  else if(field==='project'){f.db.update(s.jobs).set({project:'other'}).run();f.db.update(s.conversations).set({project:'other'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.changes).set({project:'other'}).run();}
+  if(field==='member'){f.db.insert(s.memberAgents).values({member:'bob',agent:'art'}).run();f.db.insert(s.projectMembers).values({project:'pond',member:'bob'}).run();f.db.update(s.jobs).set({member:'bob'}).run();f.db.update(s.conversations).set({member:'bob'}).where(eq(s.conversations.id,f.thread.conversation)).run();}
+  else if(field==='project'){f.db.insert(s.projectMembers).values({project:'other',member:'alice'}).run();f.db.insert(s.projectAgents).values({project:'other',agent:'art'}).run();f.db.update(s.jobs).set({project:'other'}).run();f.db.update(s.conversations).set({project:'other'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.changes).set({project:'other'}).run();}
   else {const old=f.db.select().from(s.jobs).get()!;f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,old.id)).run();f.db.insert(s.jobs).values({...old,id:'replacement'}).run();f.db.update(s.conversations).set({job:'replacement'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.tokens).set({job:'replacement'}).where(eq(s.tokens.fingerprint,hash(raw.body))).run();}
  });
  expect((await f.call('rule',target)).status).toBe(200);expect((await f.call('request',request,'original')).status).toBe(409);expect(f.db.select().from(s.approvals).all().map(row=>row.id)).toEqual([id]);
