@@ -95,3 +95,74 @@ it('holds an agent-owned operation with no inbox recipient and coalesces missed 
   engine.resume('art'); expect(operations).toEqual(['tasks.reconcile']);
   expect(row(t.id).nextDueAt).toBe('2026-11-16T18:01:00.000Z');
 });
+
+it.each(['stop', 'pause'] as const)('honors an operation that will %s another due trigger without reentering itself', action => {
+  const f = fixture();
+  const calls: string[] = [];
+  f.effects.operation = name => {
+    calls.push(name);
+    if (name === 'first' && calls.length === 1) {
+      if (action === 'stop') f.engine.stop('second');
+      else f.engine.pause('art');
+    }
+  };
+  f.engine.set({ ...f.base, id: 'first', targetKind: 'operation', target: 'first' });
+  f.engine.set({ ...f.base, id: 'second', targetKind: 'operation', target: 'second' });
+  f.clock.advance(10_000);
+  expect(calls).toEqual(['first']);
+  expect(f.row('second').state).toBe(action === 'stop' ? 'stopped' : 'held');
+  if (action === 'pause') {
+    f.engine.resume('art');
+    expect(calls).toEqual(['first', 'second']);
+  }
+});
+
+it('defers a nested source scan until the firing operation commits, then publishes committed rows', () => {
+  const f = fixture();
+  const calls: string[] = [], snapshots: string[][] = [];
+  f.engine.set({ ...f.base, id: 'first', targetKind: 'operation', target: 'first' });
+  f.engine.set({ ...f.base, id: 'answer', sourceKind: 'answer', watches: 'question:q', targetKind: 'operation', target: 'answer' });
+  f.effects.changed = () => { snapshots.push(f.db.select().from(triggers).all().map(t => t.state)); };
+  f.effects.operation = name => {
+    calls.push(name);
+    if (name === 'first' && calls.length === 1) f.engine.event('answer', 'question:q', 'answered');
+    if (name === 'answer') expect(f.row('first').state).toBe('fired');
+  };
+  f.clock.advance(10_000);
+  expect(calls).toEqual(['first', 'answer']);
+  expect(f.row('answer').state).toBe('fired');
+  expect(snapshots.length).toBeGreaterThan(0);
+  expect(snapshots.every(states => states.every(state => state === 'fired'))).toBe(true);
+});
+
+it('holds remaining queued events when an operation pauses its own agent', () => {
+  const f = fixture();
+  const calls: string[] = [];
+  f.effects.operation = (_name, _trigger, occurrence) => {
+    calls.push(occurrence);
+    if (calls.length === 1) f.engine.pause('art');
+  };
+  f.engine.set({ ...f.base, id: 'events', sourceKind: 'answer', watches: 'question:q', lifespan: 'until-stopped', targetKind: 'operation', target: 'work' });
+  f.engine.pause('art');
+  f.engine.event('answer', 'question:q', 'one');
+  f.engine.event('answer', 'question:q', 'two');
+  f.engine.resume('art');
+  expect(calls).toEqual(['events:one']);
+  expect(f.row('events').state).toBe('held');
+  f.engine.resume('art');
+  expect(calls).toEqual(['events:one', 'events:two']);
+  f.engine.tick();
+  expect(calls).toHaveLength(2);
+});
+
+it('keeps a standing operation stopped when it stops its own trigger', () => {
+  const f = fixture();
+  let calls = 0;
+  f.effects.operation = () => { calls++; if (calls === 1) f.engine.stop('self'); };
+  f.engine.set({ ...f.base, id: 'self', targetKind: 'operation', target: 'work', lifespan: 'until-stopped', times: '12:01' });
+  f.clock.advance(60_000);
+  expect(calls).toBe(1);
+  expect(f.row('self')).toMatchObject({ state: 'stopped', enabled: false, nextDueAt: null });
+  f.clock.advance(86_400_000);
+  expect(calls).toBe(1);
+});
