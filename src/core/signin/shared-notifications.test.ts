@@ -49,3 +49,30 @@ it('ends queued notification devices with their browser and refuses stale delive
  await f.root.services.notifications!.publish('sam',['waiting']);expect(f.send).toHaveBeenCalledOnce();
  const response=await f.root.http.request('http://loom/logout',{method:'POST',headers:{cookie:'loom_ui='+f.cookie.sam}});expect(response.status).toBe(200);expect(f.db.select().from(notificationDevices).all()).toEqual([]);expect(f.db.select().from(notificationQueue).all()).toEqual([]);
 });
+it('keeps a same-session, same-key reenrollment after a stale gone response',async()=>{
+ const f=fixture();await f.call('notifications/subscribe',{sub,device:'Old'});f.item('old');let reject!:(error:unknown)=>void,started!:()=>void;const began=new Promise<void>(resolve=>{started=resolve;});
+ f.send.mockImplementationOnce(async()=>{started();await new Promise((_resolve,no)=>{reject=no;});});
+ const pending=f.root.services.notifications!.publish('sam',['old']);await began;
+ expect(f.db.select().from(notificationQueue).get()?.attempts).toBe(1);
+ const old=f.db.select().from(notificationDevices).get()!,own=(await f.read()).data.account.notifications;
+ await f.call('notifications/removeDevice',{ref:own.devices[0].ref});await f.call('notifications/subscribe',{sub,device:'Reenabled'});
+ expect(f.db.select().from(notificationDevices).get()?.createdAt).not.toBe(old.createdAt);reject({statusCode:410});await pending;expect(f.db.select().from(notificationDevices).get()?.device).toBe('Reenabled');
+});
+it.each(['resolved','muted','revoked'] as const)('rechecks %s authority for later deliveries while the first transport is pending',async change=>{
+ const f=fixture();await f.call('notifications/subscribe',{sub,device:'Phone'});f.item('first');f.item('second');let release!:()=>void,started!:()=>void;const began=new Promise<void>(resolve=>{started=resolve;});
+ f.send.mockImplementationOnce(async()=>{expect(f.db.select().from(notificationQueue).all().filter(row=>row.attempts===1)).toHaveLength(1);started();await new Promise<void>(resolve=>{release=resolve;});});
+ const pending=f.root.services.notifications!.publish('sam',['first','second']);await began;
+ f.root.writes.run(()=>change==='revoked'?f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.member,'sam')).run():f.db.update(inbox).set(change==='muted'?{volume:'mute'}:{state:'resolved'}).where(eq(inbox.id,'second')).run());
+ release();await pending;expect(f.send).toHaveBeenCalledOnce();
+});
+it('aborts an outstanding transport and skips later queued delivery on shutdown',async()=>{
+ const f=fixture();await f.call('notifications/subscribe',{sub,device:'Phone'});f.item('first');f.item('second');let started!:()=>void;const began=new Promise<void>(resolve=>{started=resolve;});let observed:AbortSignal|undefined;
+ f.send.mockImplementationOnce(async(_sub,_payload,_options,signal)=>{observed=signal;started();await new Promise<void>((_resolve,reject)=>signal.addEventListener('abort',()=>reject(Error('aborted')),{once:true}));});
+ const pending=f.root.services.notifications!.publish('sam',['first','second']);await began;await f.root.close();await pending;expect(observed?.aborted).toBe(true);expect(f.send).toHaveBeenCalledOnce();
+});
+it('connects actual person Inbox settlement to the configured push transport',async()=>{
+ const f=fixture();await f.call('notifications/subscribe',{sub,device:'Phone'});
+ f.root.writes.run(()=>f.root.services.conversations.send({toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'unknown',words:'PRIVATE SETTLED WORDS'}));
+ f.clock.advance(4999);expect(f.send).not.toHaveBeenCalled();f.clock.advance(1);
+ await Promise.resolve();expect(f.send).toHaveBeenCalledOnce();expect(JSON.stringify(f.send.mock.calls)).not.toContain('PRIVATE SETTLED WORDS');
+});

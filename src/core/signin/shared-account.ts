@@ -1,12 +1,13 @@
+import { endBrowser } from './shared-browser.js';
 /** Personal credential metadata and revocation on the shared connection. */
 import { createHash } from 'node:crypto';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import { z } from 'zod';
 import { GraphQLObjectType, GraphQLString, GraphQLBoolean, GraphQLList, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
 import type { Clock } from '../clock.js';
-import { members, tokens, sessions, passkeys, notificationDevices, notificationQueue } from '../data/schema.js';
+import { members, tokens, sessions, passkeys } from '../data/schema.js';
 import { OperationError, type Operations } from '../operations/index.js';
 const ref = (kind: string, id: string) => createHash('sha256').update(kind+':'+id).digest('hex');
 const live = (token: typeof tokens.$inferSelect, now: number) => !token.revokedAt && (!token.expiresAt || Date.parse(token.expiresAt)>now);
@@ -29,9 +30,7 @@ export function sharedAccount(db: DataDatabase, clock: Clock) {
     revokeSession(member: string, reference: string) {
       const own = new Set(ownTokens(member).map(t=>t.fingerprint)), session = db.select().from(sessions).all().find(s=>ref('session',s.id)===reference&&own.has(s.token));
       if(!session)throw new OperationError('not-found','Browser not found');
-      db.delete(notificationQueue).where(inArray(notificationQueue.device,db.select({endpoint:notificationDevices.endpoint}).from(notificationDevices).where(eq(notificationDevices.session,session.id)))).run();
-      db.delete(notificationDevices).where(eq(notificationDevices.session,session.id)).run();
-      db.delete(sessions).where(eq(sessions.id,session.id)).run();
+      endBrowser(db,session.id);
       return {revoked:true as const};
     },
   };

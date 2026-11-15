@@ -17,7 +17,7 @@ const hosts=[/^fcm\.googleapis\.com$/,/^updates\.push\.services\.mozilla\.com$/,
 const subscription=z.object({endpoint:z.string().max(1000).refine(value=>{try{const url=new URL(value);return url.protocol==='https:'&&!url.port&&!url.username&&!url.password&&!url.hash&&hosts.some(host=>host.test(url.hostname));}catch{return false;}}),keys:z.object({p256dh:z.string().regex(/^[A-Za-z0-9_-]{20,200}$/),auth:z.string().regex(/^[A-Za-z0-9_-]{8,64}$/)}).strict()}).strict();
 export interface SharedNotificationOptions{vapid:{publicKey:string;privateKey:string};send?:PushTransport}
 export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:DataWrites;config?:SharedNotificationOptions;browser(viewer:Viewer):Readonly<{session:string}>|undefined;visible(viewer:Viewer,fields:Record<string,AnyColumn>):SQL;reportError(error:unknown):void}){
- const {db,clock}=options;let closed=false,again=false,running:Promise<void>|undefined;const aborts=new Set<AbortController>();
+ const {db,clock}=options;let lastEnrollment=clock.now()-1;let closed=false,again=false,running:Promise<void>|undefined;const aborts=new Set<AbortController>();
  const write=<T>(action:()=>T)=>{const result=options.writes.run(action);for(const _error of result.notificationErrors)try{options.reportError(Error('Push metadata notification failed'));}catch{}return result.value;};
  const member=(viewer:Viewer)=>viewer.kind==='member'&&!!db.select().from(members).where(eq(members.id,viewer.id)).get();
  const device=(endpoint:string)=>{
@@ -37,7 +37,7 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
    const current=device(row.device);if(closed||!current||current.session!==target.session||current.keys!==target.keys||!visible(current.member,row.item))continue;
    const abort=new AbortController();aborts.add(abort);const stop=clock.at(clock.now()+15000,()=>abort.abort());
    try{await (options.config.send??pushTransport)(keys.data,JSON.stringify({title:'loom',body:'',tag:'loom-inbox',url:'/p/inbox-preview'}),{vapidDetails:{subject:'mailto:loom@localhost',...options.config.vapid},TTL:3600,urgency:'high',timeout:15000},abort.signal);if(!closed)write(()=>db.update(notificationQueue).set({sentAt:new Date(clock.now()).toISOString()}).where(eq(notificationQueue.id,row.id)).run());}
-   catch(error){if(!closed&&[404,410].includes((error as {statusCode?:number})?.statusCode??0)){const current=device(target.endpoint);if(current?.session===target.session&&current.keys===target.keys)write(()=>remove(target.endpoint));}}
+   catch(error){if(!closed&&[404,410].includes((error as {statusCode?:number})?.statusCode??0)){const current=device(target.endpoint);if(current?.session===target.session&&current.keys===target.keys&&current.createdAt===target.createdAt)write(()=>remove(target.endpoint));}}
    finally{stop();aborts.delete(abort);}
   }
  }
@@ -48,8 +48,8 @@ export function sharedNotifications(options:{db:DataDatabase;clock:Clock;writes:
    operations.register({name:'notifications.subscribe',write:true,recheckPolicy:true,windowOnly:true,doors:['http'],input:z.object({sub:subscription,device:z.string().trim().min(1).max(120)}).strict(),output:z.object({saved:z.literal(true)}).strict(),may:viewer=>!!options.config&&member(viewer)&&!!options.browser(viewer),run(ctx,input){
     const proof=options.browser(ctx.viewer),session=proof&&db.select().from(sessions).where(eq(sessions.id,proof.session)).get();if(!session||session.isAgent)throw new OperationError('denied','A signed-in person browser is required');
     const old=db.select().from(notificationDevices).where(eq(notificationDevices.endpoint,input.sub.endpoint)).get();if(old&&old.member!==ctx.viewer.id)throw new OperationError('conflict','Device belongs to another member');
-    const at=new Date(clock.now()).toISOString(),values={member:ctx.viewer.id,session:session.id,keys:JSON.stringify(input.sub.keys),device:input.device,seenAt:at};
-    db.insert(notificationDevices).values({endpoint:input.sub.endpoint,...values,createdAt:at}).onConflictDoUpdate({target:notificationDevices.endpoint,set:values}).run();ctx.changed('notifications',ctx.viewer.id);return{saved:true as const};}});
+    const at=new Date(clock.now()).toISOString(),createdAt=new Date(lastEnrollment=Math.max(clock.now(),lastEnrollment+1)).toISOString(),values={member:ctx.viewer.id,session:session.id,keys:JSON.stringify(input.sub.keys),device:input.device,seenAt:at};
+    db.insert(notificationDevices).values({endpoint:input.sub.endpoint,...values,createdAt}).onConflictDoUpdate({target:notificationDevices.endpoint,set:{...values,createdAt}}).run();ctx.changed('notifications',ctx.viewer.id);return{saved:true as const};}});
    operations.register({name:'notifications.removeDevice',write:true,recheckPolicy:true,input:z.object({ref:z.string().regex(/^[0-9a-f]{64}$/)}).strict(),output:z.object({removed:z.literal(true)}).strict(),may:member,run(ctx,input){const row=db.select().from(notificationDevices).where(eq(notificationDevices.member,ctx.viewer.id)).all().find(row=>ref(row.endpoint)===input.ref);if(!row)throw new OperationError('not-found','Device not found');remove(row.endpoint);ctx.changed('notifications',ctx.viewer.id);return{removed:true as const};}});
   },
   publish(member:string,ids:readonly string[]){if(closed||!options.config)return false;write(()=>{for(const target of db.select().from(notificationDevices).where(eq(notificationDevices.member,member)).all())for(const item of ids){if(device(target.endpoint)&&visible(member,item))db.insert(notificationQueue).values({id:hash(JSON.stringify([target.endpoint,item])),device:target.endpoint,item,queuedAt:new Date(clock.now()).toISOString()}).onConflictDoNothing().run();}});kick();return running??Promise.resolve();},

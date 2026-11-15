@@ -1,13 +1,14 @@
+import { endBrowser } from './shared-browser.js';
 import { sharedPasskeys } from './shared-passkeys.js';
 import { bodyLimit } from 'hono/body-limit';
 /** Shared-model sign-in links. Trusted issuers name an existing member token;
  * the HTTP door binds that token to the authenticated bearer. */
 import { createHash, randomBytes } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { Hono, type MiddlewareHandler } from 'hono';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
-import { notificationDevices, sessions, signinLinks, tokens, notificationQueue } from '../data/schema.js';
+import { sessions, signinLinks, tokens } from '../data/schema.js';
 import { dataAuthentication } from '../data/authentication.js';
 import { sharedTokens, sharedTokenInput, sharedTokenOwner, activeMemberToken } from './shared-tokens.js';
 import { OperationError } from '../operations/index.js';
@@ -118,9 +119,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     if (auth?.valid() && auth.viewer.kind === 'member' && cookie) write(() => {
       if(!auth.valid())return;
       const id = fingerprint(cookie);
-      options.db.delete(notificationQueue).where(inArray(notificationQueue.device,options.db.select({endpoint:notificationDevices.endpoint}).from(notificationDevices).where(eq(notificationDevices.session,id)))).run();
-      options.db.delete(notificationDevices).where(eq(notificationDevices.session, id)).run();
-      options.db.delete(sessions).where(eq(sessions.id, id)).run();
+      endBrowser(options.db,id);
     });
     c.header('set-cookie', cookieHeader('', 0, c.req.url));
     return c.json({ ok: true });

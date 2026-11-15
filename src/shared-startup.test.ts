@@ -53,6 +53,7 @@ it('normal serve --http installs public assets, current sign-in, Memory, Comms a
  expect(await (await fetch(url+'/auth/session')).json()).toEqual({viewer:null});
  expect((await fetch(url+'/app/key.js')).status).toBe(404);
  expect(printed).toHaveLength(1);
+ const pushKey=JSON.parse(readFileSync(join(f.home,'push-vapid.json'),'utf8'));expect(pushKey.publicKey).toEqual(expect.any(String));expect(pushKey.privateKey).toEqual(expect.any(String));
  const bootstrap=await fetch(printed[0].trim(),{method:'POST',redirect:'manual',headers:{origin:url}});expect(bootstrap.status).toBe(303);
  const cookie=bootstrap.headers.get('set-cookie')!.split(';',1)[0];
  expect(await (await fetch(url+'/auth/session',{headers:{cookie}})).json()).toMatchObject({viewer:{kind:'member',id:'owner'}});
@@ -65,6 +66,7 @@ it('normal serve --http installs public assets, current sign-in, Memory, Comms a
  expect(initial.payload.data.observe.revision).toBe(1);
  const changed=await next(async()=>{const response=await fetch(url+'/api/mind/knowledgeAdd',{method:'POST',headers:{cookie,origin:url,'content-type':'application/json'},body:JSON.stringify({id:'startup-fact',input:{title:'Socket fact',domain:'fiction',body:'Fictional words',source:''}})});expect(await response.json()).toMatchObject({ok:true});});
  expect(JSON.stringify(changed)).toContain('Socket fact');
+ const pushMetadata=await(await fetch(url+'/graphql',{method:'POST',headers:{cookie,origin:url,'content-type':'application/json'},body:JSON.stringify({query:'{ account { notifications { publicKey devices { ref } } } }'})})).json();expect(pushMetadata.data.account.notifications).toEqual({publicKey:pushKey.publicKey,devices:[]});expect(JSON.stringify(pushMetadata)).not.toContain(pushKey.privateKey);
  const peer=await signedIn(f.home,url,'peer');expect((await query(peer)).memoryKnowledge).toBeNull();
  const audit=new Database(f.program.database,{readonly:true});try{for(const token of audit.prepare('SELECT fingerprint,label FROM tokens').all() as Array<{fingerprint:string;label:string}>)expect(token.label.includes(token.fingerprint)).toBe(false);}finally{audit.close();}
  expect((await fetch(url+'/live')).status).toBe(404);expect(errors).toEqual([`loom: shared app on ${url}\n`]);
