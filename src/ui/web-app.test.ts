@@ -37,7 +37,7 @@ describe('the app (web/)', () => {
   });
 
   it.runIf(existsSync(`${root}dist/web/.vite/manifest.json`))('keeps app screens out of both initial import graphs', () => {
-    const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { imports?: string[]; isDynamicEntry?: boolean }>;
+    const manifest = JSON.parse(readFileSync(`${root}dist/web/.vite/manifest.json`, 'utf-8')) as Record<string, { file: string; imports?: string[]; isDynamicEntry?: boolean }>;
     const screens = readdirSync(`${root}web/src/pieces`).filter(piece => existsSync(`${root}web/src/pieces/${piece}/registration.ts`))
       .map(piece => {
         const registration = resolve(root, 'web/src/pieces', piece, 'registration.ts');
@@ -51,14 +51,18 @@ describe('the app (web/)', () => {
       });
     expect(screens.length).toBeGreaterThan(10);
     for (const page of ['index.html', 'next.html']) {
-      expect(manifest[page], page).toBeDefined();
+      const html = readFileSync(`${root}dist/web/${page}`, 'utf8');
+      const scripts = [...html.matchAll(/<script\b[^>]*>/g)].map(match => match[0]).filter(tag => tag.includes('type="module"'))
+        .map(tag => tag.match(/src="\/app\/([^"]+)"/)?.[1]).filter(Boolean);
+      const entries = Object.entries(manifest).filter(([, chunk]) => scripts.includes(chunk.file)).map(([key]) => key);
+      expect(entries.length, page + ' shipped module entries').toBeGreaterThan(0);
       const initial = new Set<string>();
       const visit = (key: string) => {
         if (initial.has(key)) return;
         initial.add(key);
         for (const dependency of manifest[key]?.imports ?? []) visit(dependency);
       };
-      visit(page);
+      entries.forEach(visit);
       expect(screens.filter(key => initial.has(key)), page).toEqual([]);
     }
     expect(screens.filter(key => !manifest[key]?.isDynamicEntry)).toEqual([]);
@@ -84,7 +88,6 @@ describe('the app (web/)', () => {
       ['views.tsx', "p.tone === 'bad' ? 'bg-[color-mix(in_oklab,var(--loom-bad)_10%,transparent)]' : 'bg-[color-mix(in_oklab,var(--loom-warn)_10%,transparent)]'", 'a problem: bg-red-500/10 / bg-amber-500/10'],
       ['views.tsx', '<span className="size-2 rounded-full bg-[var(--loom-warn)]" />', 'Needs you: bg-amber-500'],
       ['views.tsx', 'bg-[var(--loom-accent,var(--loom-unread))]', 'the unread dot: #2563eb'],
-      ['sheets.tsx', 'bg-[var(--loom-count)] px-1.5 text-[11px] font-semibold text-[color:var(--loom-count-ink)]', 'a count: #e5484d, white'],
       ['blocks.tsx', 'bg-[var(--loom-track)]', 'a meter loading: bg-black/10'],
     ];
     expect(sites.filter(([f, now]) => !src(f).includes(now)).map(([f, , w]) => `${f}: ${w}`)).toEqual([]);

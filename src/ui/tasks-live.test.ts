@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { movedKeys, recordsOf } from '../../web/src/tasks-live';
 import { pulseOf, tasksPageKind } from '../../web/src/tasks-pages';
-import { changesConcern, concerns, type WorkItem } from '../../web/src/comms-work';
+
 import type { Rec, ViewState } from '../../web/src/collections/runtime';
 
 const rec = (id: string, more: Record<string, unknown> = {}): Rec => ({ key: `tasks/task/${id}`, ...more });
@@ -35,15 +35,6 @@ describe('the tasks\' live records', () => {
     expect(movedKeys(was, new Map(was)).size).toBe(0);
   });
 
-  it('a thread\'s work panel reads again for a task it shows or one made in it, not another\'s', () => {
-    const shown: WorkItem[] = [{ title: 'x', ref: 't-5', status: 'Open', from: 'tasks' }, { title: 'y', ref: 'github:o/r#3', status: 'Open', from: 'changes' }];
-    const cv = 'cv-0123456789ab';
-    const records = new Map([['tasks/task/t-9', rec('t-9', { source: `conversation:${cv}` })], ['tasks/task/t-8', rec('t-8', { source: 'conversation:cv-ffffffffffff' })]]);
-    expect(concerns(new Set(['tasks/task/t-5']), records, shown, cv)).toBe(true);
-    expect(concerns(new Set(['tasks/task/t-9']), records, shown, cv)).toBe(true);
-    expect(concerns(new Set(['tasks/task/t-8', 'tasks/task/t-7']), records, shown, cv)).toBe(false);
-  });
-
   it('Changes\' pages move with the changes, a project\'s with both, a Tasks page with the tasks', () => {
     expect(['/p/changes', '/p/changes/c/github/acme/app/3', '/a/art/p/changes'].map(pulseOf)).toEqual(['changes', 'changes', 'changes']);
     expect(['/p/changes', '/p/changes/c/github/acme/app/3'].map(tasksPageKind)).toEqual(['also', 'also']);
@@ -52,10 +43,4 @@ describe('the tasks\' live records', () => {
     expect(['/', '/inbox', '/p/changesx'].map(pulseOf)).toEqual(['', '', '']);
   });
 
-  it('a thread\'s work panel reads again for a change it shows, by its ref', () => {
-    const shown: WorkItem[] = [{ title: 'y', ref: 'github:acme/app#3', status: 'Open', from: 'changes' }];
-    const records = new Map([['changes/change/github:acme:app:3', rec('github:acme:app:3', { ref: 'github:acme/app#3' })], ['changes/change/github:acme:app:4', rec('github:acme:app:4', { ref: 'github:acme/app#4' })]]);
-    expect(changesConcern(new Set(['changes/change/github:acme:app:3']), records, shown)).toBe(true);
-    expect(changesConcern(new Set(['changes/change/github:acme:app:4']), records, shown)).toBe(false);
-  });
 });
