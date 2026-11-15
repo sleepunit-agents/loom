@@ -48,7 +48,7 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
  app.post('/startup',async c=>{
   const caller=actor(c.req.raw);if(!caller.body)throw new PrivateInputError('denied');
   if(!z.object({}).strict().safeParse(await json(c.req.raw,c.get('shutdown'))).success)return c.json({ok:false,message:'Private secret input unavailable'},400);
-  const selected=target(caller),aliases=inputs.startup(selected.job.id);if(!selected.current())throw new PrivateInputError('denied');return c.json({aliases});
+  const selected=target(caller),plan=inputs.startup(selected.job.id);if(!selected.current())throw new PrivateInputError('denied');return c.json(plan);
  });
  app.post('/read',async c=>{
   const caller=actor(c.req.raw),parsed=readInput.safeParse(await json(c.req.raw,c.get('shutdown')));
@@ -59,7 +59,7 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
   let secret:string,attempt:string,current=selected.current;
   if(input.kind==='request'){secret=input.secret;attempt='request:'+input.id;}
   else if(input.kind==='startup'){
-   if(!inputs.startup(job.id).some(row=>row.alias===input.alias))throw new PrivateInputError('denied');
+   if(!inputs.startup(job.id).aliases.some(row=>row.alias===input.alias))throw new PrivateInputError('denied');
    const row=db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get();if(!row)throw new PrivateInputError('denied');
    secret=row.secret;attempt='startup:'+input.alias;
    current=()=>selected.current()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret))&&db.select().from(agentHouseSecrets).where(and(eq(agentHouseSecrets.agent,job.agent),eq(agentHouseSecrets.alias,input.alias))).get()?.secret===secret;
@@ -72,7 +72,7 @@ export function sharedSecretInputRoutes(options:{db:DataDatabase;inputs:SecretPr
    };
    if(!repositoryCurrent())throw new PrivateInputError('denied');
    if(!job.houseRepository.trim())return new Response(null,{status:204});
-   inputs.startGrants(job.id);secret=row.repositorySecret;attempt='repository';current=()=>selected.current()&&repositoryCurrent()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret));
+   inputs.startGrants(job.id,[row.repositorySecret]);secret=row.repositorySecret;attempt='repository';current=()=>selected.current()&&repositoryCurrent()&&!!inputs.requests.grantFor(secret,job.agent,job.id,startupRequestId(job.id,secret));
    if(selected.current()&&repositoryCurrent()&&!current()&&db.select().from(secretRequests).where(eq(secretRequests.id,startupRequestId(job.id,secret))).get()?.state==='pending')return c.json({pending:true},423);
   }
   if(!current())throw new PrivateInputError('denied');
