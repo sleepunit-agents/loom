@@ -27,7 +27,7 @@ export function evaluate(promise,run){
   const action=p.app?run.apps?.find(app=>app.title===p.app)?.action:run.actions?.[p.action];
   if(action?.inconclusive)return{status:'not checkable yet',reason:action.reason??'The complete observation could not be made.',evidence:action.screenshot??'walkthrough.json#actions'};
   if(!action)return {status:'not checkable yet',reason:run.fatal??'The browser action did not run.'};
-  return {status:action.ok===true?'met':'not met',reason:action.ok===true?'The browser action and its persisted result were verified.':action.error??'The browser action result differed from the expected record.',evidence:action.screenshot??'walkthrough.json#actions'};
+  return {status:action.ok===true?'met':'not met',reason:action.ok===true?(action.reason??'The browser action and its persisted result were verified.'):action.error??'The browser action result differed from the expected record.',evidence:action.screenshot??'walkthrough.json#actions'};
  }
  if(p.kind==='ui'){
   const app=run.apps.find(app=>app.title===p.app);
