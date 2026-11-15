@@ -1,3 +1,4 @@
+import {sealHandoff} from './core/conversations/handoff-words.js';
 /** Real Root completion effects; native execution and every credential are fictitious. */
 import {afterEach,expect,it} from 'vitest';
 import {eq} from 'drizzle-orm';
@@ -14,7 +15,8 @@ it.each(['comms','authored','private-handoff'] as const)('records completion wit
   f.db.delete(s.tokens).where(eq(s.tokens.fingerprint,old.fingerprint)).run();f.db.insert(s.tokens).values({...old,fingerprint:credentialHash(token)}).run();
   if(background){f.db.delete(s.threads).where(eq(s.threads.id,f.thread.id)).run();f.db.update(s.conversations).set({venue:'handoff',place:'fictional-parent-job'}).where(eq(s.conversations.id,f.thread.conversation)).run();}
  });
- if(background)f.root.writes.run(()=>f.root.services.conversations.send({conversation:f.thread.conversation,toKind:'agent',to:'art',source:'handoff',fromKind:'agent',fromId:'mark',words:'Fictional private handoff'}));
+ const brief=background?await sealHandoff(f.key,'Fictional private handoff',new Date(f.clock.now()).toISOString(),14):null;
+ if(background)f.root.writes.run(()=>f.root.services.conversations.send({conversation:f.thread.conversation,toKind:'agent',to:'art',source:'handoff',fromKind:'agent',fromId:'mark',words:brief}));
  else expect((await f.send('Fictional member input','person')).status).toBe(200);
  const job={id:'job',box:'box',agent:'art',conversation:f.thread.conversation,thread:background?null:f.thread.id,venue:background?'handoff':'loom',model:'fixture',account:'fixture',harness:'claude',brief:'',house:{repository:'fixture',file:'Housefile',branch:'next'}};
  const bytes=Buffer.from(JSON.stringify({job,build:'fixture',bootstrap:{origin:'https://loom.invalid',job:'job',token}}));

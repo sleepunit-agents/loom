@@ -106,3 +106,10 @@ it('durably publishes its complete private key directory before opening cipherte
  const homePath=join(directory,'..'),parent=events.findIndex((row,index)=>index>rename&&row.kind==='sync'&&row.path===homePath);
  expect(parent).toBeGreaterThan(rename);expect(events.findIndex(row=>row.kind==='database')).toBeGreaterThan(parent);
 });
+it('erases stray private bytes after close acknowledgment until peer EOF without reopening client IO',async()=>{
+ const {parent,child}=holderChannelPair(),client=sharedHolderClient(parent,new FakeClock());child.send({op:'ready',key:Buffer.alloc(32,1)},()=>{});(await client.ready).fill(0);
+ child.on('message',(raw:{op:string;seq:number})=>{if(raw.op==='close')child.send({op:'result',seq:raw.seq,ok:true,value:null},()=>{});});
+ try{await client.close();expect(parent.connected).toBe(true);await expect(client.source.read('TOKEN')).rejects.toThrow('unavailable');let received:Uint8Array|undefined;parent.on('message',(raw:{seq?:number;value?:Uint8Array})=>{if(raw.seq===99)received=raw.value;});const original=Buffer.alloc(32,7);
+ await new Promise<void>(resolve=>child.send({op:'result',seq:99,ok:true,value:original},()=>resolve()));expect(received).toBeDefined();expect(received!.every(byte=>byte===0)).toBe(true);expect(original.every(byte=>byte===7)).toBe(true);child.disconnect();expect(parent.listenerCount('message')).toBe(1);
+ }finally{child.disconnect();}
+});

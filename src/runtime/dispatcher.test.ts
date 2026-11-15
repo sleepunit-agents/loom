@@ -216,12 +216,12 @@ it('never hands a legacy private brief to the worker while preserving the old re
   expect(f.runtime.jobs.get(f.job.id).brief).toBe('LEGACY_PRIVATE_WORDS');
 });
 
-it('passes ordinary handoff instructions through the worker assignment', () => {
+it('passes ordinary wake instructions through the worker assignment', () => {
   const f = fixture(); f.runtime.jobs.stop(f.job.id, 'owner', 'write-off');
-  const conversation = f.comms.open({ agent: 'art', venue: 'handoff', place: f.job.id, label: 'Handoff' });
-  f.comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'handoff', fromKind: 'agent', fromId: 'art', words: 'Public handoff instructions' });
+  const conversation = f.comms.open({ agent: 'art', venue: 'wake', place: f.job.id, label: 'Wake' });
+  f.comms.send({ toKind: 'agent', to: 'art', conversation: conversation.id, source: 'trigger', fromKind: 'schedule', words: 'Public wake instructions' });
   const job = f.runtime.jobs.admit(conversation.id)!;
-  expect(f.runtime.next('first')).toMatchObject({ id: job.id, brief: 'Public handoff instructions' });
+  expect(f.runtime.next('first')).toMatchObject({ id: job.id, brief: 'Public wake instructions' });
 });
 it('passes unbound instructions through the worker assignment', () => {
   const f = fixture(); f.db.update(jobs).set({ conversation: null, brief: 'Unbound instructions' }).where(eq(jobs.id, f.job.id)).run();

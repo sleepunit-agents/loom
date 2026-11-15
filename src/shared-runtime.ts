@@ -1,3 +1,4 @@
+import {keepJobText} from './runtime/job-text.js';
 /** Worker operations on the shared connection. No body executes in this root. */
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
@@ -79,12 +80,12 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     may: (viewer, input) => assigned(viewer, input.job),
     inputHash(canonical, { input }) {
       const job = db.select({ conversation: jobs.conversation }).from(jobs).where(eq(jobs.id, input.job)).get();
-      const conversation = job?.conversation ? db.select({ venue: conversations.venue }).from(conversations)
+      const conversation = job?.conversation ? db.select({ venue: conversations.venue, member: conversations.member }).from(conversations)
         .where(eq(conversations.id, job.conversation)).get() : undefined;
       // Private/dangling conversation output is discarded by Jobs.finish. Do
       // not retain even a guessable fingerprint of those words in a receipt.
       const privateOutput = job?.conversation !== null && job?.conversation !== undefined
-        && (!conversation || conversation.venue === 'loom');
+        && !keepJobText(conversation);
       return createHash('sha256').update(privateOutput
         ? JSON.stringify({ job: input.job, exitCode: input.exitCode, logTail: '' }) : canonical).digest('hex');
     },

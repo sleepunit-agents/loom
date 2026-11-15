@@ -245,6 +245,7 @@ it('leaves an existing unprepared source byte-for-byte unchanged through startup
  expect((await f.call('remember',input,'unprepared-start')).status).toBe(503);expect((await f.call('recall',{query:'alpha'},'unprepared-recall')).status).toBe(503);
  for(const [verb,value] of [['personWrite',{slug:'friend',name:'Friend'}],['projectWrite',{slug:'repair',name:'Repair'}],['personRestoreRevision',{slug:'friend',revision_id:1}]] as const)expect((await f.call(verb,value,'unprepared-'+verb)).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  const id='art:00000000-0000-0000-0000-000000000000';expect((await f.call('update',{id,content:'A valid edit'},'unprepared-edit')).status).toBe(503);expect((await f.call('restoreRevision',{id,revision_id:1},'unprepared-version')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
+ expect((await f.call('propose',input,'unprepared-propose')).status).toBe(503);expect((await f.call('ratify',{id:'art:proposal:00000000-0000-0000-0000-000000000000'},'unprepared-ratify')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'memory_command_%'").all()).toEqual([]);
 });
 it('recovers recall after shared receipt failure without adding heat again',async()=>{
@@ -269,6 +270,36 @@ it('recovers the committed private result after shared receipt failure and reser
  f.db.$client.exec('DROP TRIGGER fail_memory_core');const replay=await f.call('remember',input,'recover');expect(replay.status).toBe(200);expect(f.count()).toBe(1);expect(embed.calls).toBe(before);
  expect((await f.call('remember',{...input,content:'Different'},'recover')).status).toBe(409);
  f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());expect([401,403]).toContain((await f.call('remember',input,'recover')).status);
+});
+it('keeps native proposals outside recall until ratification, applies edits and defaults, and replays opaque results',async()=>{
+ const f=await fixture(),before=embed.calls,draft={...input,category:'rough draft',source:'PRIVATE_DRAFT_SOURCE',metadata:{enabled:false,count:0}};
+ const proposed=await f.call('propose',draft,'native-proposal');expect(proposed.status).toBe(200);const id=proposed.result.value.ids[0];expect(id).toMatch(/^art:proposal:[a-f0-9-]{36}$/);expect(embed.calls).toBe(before);expect(f.count()).toBe(0);
+ expect(await f.call('propose',draft,'native-proposal')).toEqual(proposed);expect(f.source.prepare('SELECT count(*) AS n FROM proposals').get()).toEqual({n:1});expect((await f.call('recall',{query:'alpha'},'draft-invisible')).result.value.ids).toEqual([]);
+ expect((await f.call('ratify',{id},'invalid-draft')).status).toBe(400);expect(f.source.prepare('SELECT count(*) AS n FROM proposals').get()).toEqual({n:1});expect(f.count()).toBe(0);
+ const ratification={id,overrides:{category:'episode',title:'Ratified native draft',content:'beta RATIFIED_NATIVE_WORDS'}},ratified=await f.call('ratify',ratification,'native-ratify');expect(ratified.status).toBe(200);const memory=ratified.result.value.ids[0];expect(memory).toMatch(/^art:[a-f0-9-]{36}$/);
+ expect(f.source.prepare('SELECT count(*) AS n FROM proposals').get()).toEqual({n:0});expect(f.source.prepare('SELECT title,content,category,ttl,metadata FROM memories').get()).toEqual({title:'Ratified native draft',content:'beta RATIFIED_NATIVE_WORDS',category:'episode',ttl:'48h',metadata:JSON.stringify(draft.metadata)});
+ expect((await f.call('recall',{query:'beta'},'draft-visible')).result.value.ids).toEqual([memory]);expect(await f.call('ratify',ratification,'native-ratify')).toEqual(ratified);
+ for(const value of [words,title,draft.source,'RATIFIED_NATIVE_WORDS',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+});
+it('rolls back a failed proposal source receipt and recovers its committed draft after shared receipt failure',async()=>{
+ const f=await fixture(),drafts=()=>f.source.prepare("SELECT 1 FROM sqlite_schema WHERE name='proposals'").get()?(f.source.prepare('SELECT count(*) AS n FROM proposals').get() as {n:number}).n:0;
+ f.source.exec("CREATE TRIGGER fail_propose_source BEFORE INSERT ON memory_command_receipts WHEN NEW.name='memory.propose' BEGIN SELECT RAISE(ABORT,'injected'); END");expect((await f.call('propose',input,'propose-recovery')).status).toBe(503);expect(drafts()).toBe(0);f.source.exec('DROP TRIGGER fail_propose_source');
+ f.db.$client.exec("CREATE TRIGGER fail_propose_shared BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");expect((await f.call('propose',input,'propose-recovery')).status).toBe(503);expect(drafts()).toBe(1);f.db.$client.exec('DROP TRIGGER fail_propose_shared');
+ expect((await f.call('propose',input,'propose-recovery')).status).toBe(200);expect(drafts()).toBe(1);expect(f.count()).toBe(0);
+});
+it('ratifies atomically with draft removal and private receipt, then recovers a failed shared receipt without duplication',async()=>{
+ const f=await fixture(),id=(await f.call('propose',input,'rollback-proposal')).result.value.ids[0];
+ f.source.exec("CREATE TRIGGER fail_ratify_source BEFORE INSERT ON memory_command_receipts WHEN NEW.name='memory.ratify' BEGIN SELECT RAISE(ABORT,'injected'); END");
+ expect((await f.call('ratify',{id},'ratify-recovery')).status).toBe(503);expect(f.count()).toBe(0);expect(f.source.prepare('SELECT count(*) AS n FROM proposals').get()).toEqual({n:1});f.source.exec('DROP TRIGGER fail_ratify_source');
+ f.db.$client.exec("CREATE TRIGGER fail_ratify_shared BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");expect((await f.call('ratify',{id},'ratify-recovery')).status).toBe(503);expect(f.count()).toBe(1);expect(f.source.prepare('SELECT count(*) AS n FROM proposals').get()).toEqual({n:0});
+ const calls=embed.calls;f.db.$client.exec('DROP TRIGGER fail_ratify_shared');expect((await f.call('ratify',{id},'ratify-recovery')).status).toBe(200);expect(embed.calls).toBe(calls);expect(f.count()).toBe(1);expect((await f.call('remember',input,'ratify-recovery')).status).toBe(409);
+});
+it('refuses foreign draft IDs and rolls back ratification when the current body ends during embedding',async()=>{
+ const f=await fixture(),id=(await f.call('propose',input,'revoked-proposal')).result.value.ids[0];
+ for(const token of [raw.member,raw.agent,raw.runner])expect((await f.call('propose',input,'weaker-proposal-'+token[0],token)).status).toBe(403);
+ expect((await f.call('ratify',{id:id.replace('art:','mark:')},'foreign-proposal')).status).toBe(403);expect((await f.call('ratify',{id},'member-proposal',raw.member)).status).toBe(403);
+ expect((await f.call('propose',{...input,agent:'mark'},'select-proposal')).status).toBe(400);
+ const gate=hold(),pending=f.call('ratify',{id},'ratify-ended');await gate.began;f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());gate.release();expect([401,403]).toContain((await pending).status);expect(f.count()).toBe(0);expect(f.source.prepare('SELECT count(*) AS n FROM proposals').get()).toEqual({n:1});
 });
 it('archives, restores and forgets one own opaque ID with private notes, replay and a deletion record',async()=>{
  const f=await fixture(),made=await f.call('remember',input,'make-lifecycle'),id=made.result.value.ids[0],uuid=id.slice(4),note='PRIVATE_ARCHIVE_NOTE';

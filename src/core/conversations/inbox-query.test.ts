@@ -1,3 +1,4 @@
+import {sealHandoff} from './handoff-words.js';
 import Database from 'better-sqlite3';
 import { eq, sql, type SQL } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
@@ -92,9 +93,12 @@ it('keeps recent action outcomes and agent mailbox reads addressed to the authen
   expect(f.service.results(alice).map(r => r.id)).toEqual(['r1']);
   expect(f.service.results({ kind: 'agent', id: 'art' })).toEqual([]);
   expect(() => f.service.results(alice, 51)).toThrow('Invalid action result limit');
-  const agentMail = f.comms.threads.conversations.send({ toKind: 'agent', to: 'art', source: 'handoff', fromKind: 'agent', words: 'A brief' });
+  const encoded=await sealHandoff(f.key,'A brief','2026-11-14T18:00:00.000Z',14);
+  const agentMail = f.comms.threads.conversations.send({ toKind: 'agent', to: 'art', source: 'handoff', fromKind: 'agent', words: encoded });
   const agentReads = new InboxQueries(f.db, f.key, () => sql`true`);
   expect(agentReads.list({ kind: 'agent', id: 'art' }).map(i => i.id)).toEqual([agentMail.id]);
+  expect(await agentReads.body({kind:'agent',id:'art'},agentMail.id)).toBeNull();
+  expect(await agentReads.search({kind:'agent',id:'art'},{search:'loom:handoff:v1'})).toEqual([]);
 });
 it('applies the current household keep duration and earlier stored deadline independently', async () => {
   for (const expiry of ['household', 'deadline'] as const) {
@@ -469,4 +473,21 @@ it('keeps one answer match when matching question words expire during a later de
  const firstLeases:number[]=[];expect((await f.service.search(alice,{search:'private',folder:'answered',limit:1},at=>firstLeases.push(at))).map(row=>row.id)).toEqual([f.ask.inboxItem]);expect(firstLeases).toEqual([Date.parse('2026-11-14T18:00:02Z')]);
  let opens=0;f.onOpen(()=>{if(++opens===3)f.time('2026-11-14T18:00:01Z');});const leases:number[]=[];
  expect((await f.service.search(alice,{search:'private',folder:'answered',limit:1},at=>leases.push(at))).map(row=>row.id)).toEqual([f.ask.inboxItem]);expect(leases).toEqual([Date.parse('2026-11-14T18:00:02Z')]);expect(opens).toBeGreaterThanOrEqual(3);
+});
+
+it.each(['allowed','scope','cipher','expiry','policy'] as const)('opens retained handoff words through the existing member read policy: %s',async mode=>{
+ const f=await fixture(),cvs=f.comms.threads.conversations,cv=cvs.open({agent:'art',venue:'handoff',place:'parent',label:'Compare',member:'alice'});
+ const encoded=await sealHandoff(f.key,'Retained handoff words','2026-11-14T18:00:00.000Z',14),replacement=await sealHandoff(f.key,'Other words','2026-11-14T18:00:00.000Z',14);
+ const item=cvs.send({conversation:cv.id,toKind:'agent',to:'art',source:'handoff',fromKind:'agent',words:encoded});
+ f.onOpen(()=>{if(mode==='scope')f.revoke();if(mode==='cipher')f.db.update(inbox).set({words:replacement}).where(eq(inbox.id,item.id)).run();if(mode==='expiry')f.time('2026-11-28T18:00:00.000Z');if(mode==='policy')f.db.insert(household).values({commsDays:1}).run();});
+ let until:number|undefined;expect(await f.service.body(alice,item.id,deadline=>{until=deadline;})).toEqual(mode==='allowed'?{words:'Retained handoff words'}:null);
+ if(mode==='allowed'){expect(until).toBe(Date.parse('2026-11-28T18:00:00.000Z'));expect(await f.service.body({kind:'member',id:'bob'},item.id)).toBeNull();}
+});
+
+it('matches handoff metadata without decrypting wording even on a noncanonical personal row',async()=>{
+ const f=await fixture(),encoded=await sealHandoff(f.key,'HANDOFF SEARCH WORDS','2026-11-14T18:00:00.000Z',14);
+ // Shared readers also fail closed if an internal writer misaddresses agent mail.
+ f.db.insert(inbox).values({id:'in-handoff-search',state:'waiting',volume:'full',toKind:'person',to:'alice',source:'handoff',sourceId:'parent-search-witness',fromKind:'agent',fromId:'art',words:encoded,member:'alice',agent:'art',at:'2026-11-14T18:00:00.000Z',changedAt:'2026-11-14T18:00:00.000Z'}).run();
+ const opens=f.opens();expect(await f.service.search(alice,{source:'handoff',search:'HANDOFF SEARCH WORDS'})).toEqual([]);expect(f.opens()).toBe(opens);
+ expect((await f.service.search(alice,{source:'handoff',search:'parent-search-witness'})).map(row=>row.id)).toEqual(['in-handoff-search']);expect(f.opens()).toBe(opens);
 });
