@@ -69,7 +69,7 @@ it('does not retry a 5xx issuance and bounds ordinary 5xx and transport-error re
 it('supplies redirect refusal and rejects every unsafe URL or missing/empty token before transport',async()=>{
  const f=fixture(),settings={LOOM_URL:'http://loom',LOOM_TOKEN_FILE:join(f.home,'owner')};let redirect:RequestRedirect|undefined;
  await f.invoke('token',['list','{}'],'owner',async(url,init)=>{redirect=init?.redirect;return f.transport(url,init);});expect(redirect).toBe('error');
- for(const LOOM_URL of ['file:///tmp/private','https://name:secret@loom','https://loom/path','https://loom/?query','https://loom/#hash'])expect((await f.invoke('token',['list','{}'],'owner',f.transport,{...settings,LOOM_URL})).calls).toBe(0);
+ for(const LOOM_URL of ['not a URL','file:///tmp/private','https://name:secret@loom','https://loom/path','https://loom/?query','https://loom/#hash'])expect((await f.invoke('token',['list','{}'],'owner',f.transport,{...settings,LOOM_URL})).calls).toBe(0);
  for(const LOOM_TOKEN_FILE of [undefined,join(f.home,'missing'),join(f.home,'empty')]){if(LOOM_TOKEN_FILE?.endsWith('empty'))writeFileSync(LOOM_TOKEN_FILE,'');expect((await f.invoke('token',['list','{}'],'owner',f.transport,{...settings,LOOM_TOKEN_FILE})).calls).toBe(0);}
  expect((await f.invoke('token',['list','{"unexpected":true}'],'owner',f.transport,{})).code).toBe(2);
 });
@@ -91,4 +91,19 @@ it('reports an ordinary 5xx arriving after the deadline as unavailable rather th
  const f=fixture();let now=0,out='',err='',calls=0;
  const code=await runAccessClient('sessions',['revoke',JSON.stringify({ref:'e'.repeat(64)})],{stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:'http://loom',LOOM_TOKEN_FILE:join(f.home,'owner')},stdout:value=>out+=value,stderr:value=>err+=value},{now:()=>now,retry:async ms=>{now+=ms;},request:async()=>{calls++;now=5000;return new Response('PRIVATE LATE FAILURE',{status:503});}});
  expect({code,calls,out}).toEqual({code:1,calls:1,out:''});expect(err).toContain('unavailable');expect(err).not.toContain('PRIVATE LATE FAILURE');
+});
+
+it('rejects partial GraphQL errors and private extras in sessions and personal Account',async()=>{
+ const f=fixture();
+ for(const piece of ['token','sessions','account'] as const){
+  const result=JSON.parse((await f.invoke(piece,[piece==='account'?'read':'list'])).out);
+  const root=piece==='account'?{account:result}:{householdSetup:{[piece==='token'?'tokens':'sessions']:result}};
+  const partial=await f.invoke(piece,[piece==='account'?'read':'list'],'owner',async()=>Response.json({data:root,errors:[{message:'PRIVATE ERROR'}]}));
+  expect(partial).toMatchObject({code:1,out:''});expect(partial.err).not.toContain('PRIVATE');
+  if(piece==='token')continue;
+  const value=piece==='account'?{account:{...result,privateKey:'PRIVATE EXTRA'}}:{householdSetup:{sessions:[{...result[0],privateKey:'PRIVATE EXTRA'}]}};
+  const extra=await f.invoke(piece,[piece==='account'?'read':'list'],'owner',async()=>Response.json({data:value}));expect(extra).toMatchObject({code:1,out:''});expect(extra.err).not.toContain('PRIVATE');
+ }
+ const malformed=await f.invoke('sessions',['list'],'owner',async()=>new Response('PRIVATE MALFORMED',{status:200}));expect(malformed).toMatchObject({code:1,calls:1,out:''});expect(malformed.err).toContain('Invalid daemon response');
+ const unsafe=await f.invoke('token',['list'],'owner',f.transport,{LOOM_URL:'https://name:secret@loom',LOOM_TOKEN_FILE:join(f.home,'owner')});expect(unsafe.err).not.toContain('secret');
 });
