@@ -1,3 +1,4 @@
+import { useDeskAgentDirectory } from './agent-directory';
 import { useHomeComms, threadPath } from './home-comms-data';
 import { useDeskAgentStatuses } from './agent-status';
 import { CurrentJobs } from './current-jobs';
@@ -6,7 +7,7 @@ import { useCallback, useContext, useLayoutEffect, useRef, useState } from 'reac
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
 import { Row } from '../../kit';
 import { useRecords } from '../../data';
-import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson } from './home-model';
+import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents } from './home-model';
 import type { Ask } from './model';
 import './rail.css';
 import { RailContext } from '../../desk-rail';
@@ -21,7 +22,7 @@ function CompanionSlot({agent}:{agent:string}) {
 export default function AgentRail({ go }: { go(path: string): void }) {
   const roster = useDeskRoster();
   const displays = useAgentDisplays();
-  const people = useRecords<AgentPerson>('person');
+  const people = useDeskAgentDirectory();
   const statuses = useDeskAgentStatuses();
   const asks = useRecords<Ask>('attention.ask');
   const {reading, status:threadStatus}=useHomeComms();

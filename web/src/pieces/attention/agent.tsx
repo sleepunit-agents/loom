@@ -1,9 +1,10 @@
+import { useDeskAgentDirectory } from './agent-directory';
 import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
 import { useRecords, type LiveRecord } from '../../data';
 import { AppFrame, List, Row, Empty, Error, Loading, Button } from '../../kit';
 import AgentFace, { faceState, useAgentDisplays } from './agent-face';
-import { agentPath, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson } from './home-model';
+import { agentPath, inboxPath, latestStatus, namedAgents, openAsks, orderedAgents } from './home-model';
 import { HomeSteps } from './home-steps';
 import { useHomeComms, threadPath } from './home-comms-data';
 import type { ActivityWindow } from '../activity/model';
@@ -12,7 +13,7 @@ import './home.css';
 interface Profile extends LiveRecord { agent: string; description?: string; requestedAt?: string; canEdit: boolean }
 /** A record-only agent window; profile writes and deeper sections stay in their owning apps. */
 export default function AgentApp({ path = '/p/agents-preview', go = p => location.assign(p) }: {path?:string;go?:(path:string)=>void} = {}) {
-  const roster=useDeskRoster(), people=useRecords<AgentPerson>('person');
+  const roster=useDeskRoster(), people=useDeskAgentDirectory();
   const profiles=useRecords<Profile>('household.profile'), statuses=useDeskAgentStatuses();
   const asks=useRecords<Ask>('attention.ask'), comms=useHomeComms();
   const activity=useRecords<ActivityWindow>('activity.window','recent'), displays=useAgentDisplays();

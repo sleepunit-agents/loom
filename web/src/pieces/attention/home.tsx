@@ -1,3 +1,4 @@
+import { useDeskAgentDirectory } from './agent-directory';
 import { useDeskAgentStatuses } from './agent-status';
 import { useDeskRoster } from './roster';
 import { stamp } from './time';
@@ -16,7 +17,7 @@ import { AskReader, type Guard } from './index';
 import { useWaitChecks } from './wait-checks';
 import { useMemberRetention } from './member-retention';
 import type { Ask } from './model';
-import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson } from './home-model';
+import { inboxPath, latestStatus, namedAgents, openAsks, orderedAgents } from './home-model';
 function Unavailable({ status, label }: { status: Snapshot['status']; label: string }) {
   return status === 'loading' ? <Loading label={`Opening ${label}…`} /> : <Error title={`Couldn’t load ${label}`} text={status === 'denied' ? 'Sign in with access to see this.' : 'Waiting for connection.'} />;
 }
@@ -27,7 +28,7 @@ export default function Home({ go = path => location.assign(path) }: { go?: (pat
   const { reading:conversations, status:threadStatus } = useHomeComms();
   const [phone,setPhone] = useState(()=>globalThis.window?.matchMedia?.('(max-width: 1023px)').matches ?? false);
   useEffect(()=>{const query=globalThis.window?.matchMedia?.('(max-width: 1023px)');if(!query)return;const change=()=>setPhone(query.matches);change();query.addEventListener('change',change);return()=>query.removeEventListener('change',change);},[]);
-  const people = useRecords<AgentPerson>('person');
+  const people = useDeskAgentDirectory();
   const agents = namedAgents(roster.records, people.status === 'live' ? people.records : []);
   const asks = useRecords<Ask>('attention.ask');
   useWaitChecks(asks);

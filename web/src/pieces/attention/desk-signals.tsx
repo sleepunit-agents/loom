@@ -1,13 +1,14 @@
+import { useDeskAgentDirectory } from './agent-directory';
 import { useHomeComms, threadPath } from './home-comms-data';
 import { useDeskRoster } from './roster';
 import { useEffect } from 'react';
 import { useRecords } from '../../data';
-import { namedAgents, openAsks, orderedAgents, type AgentPerson } from './home-model';
+import { namedAgents, openAsks, orderedAgents } from './home-model';
 import type { Ask } from './model';
 /** Desk signals have no hidden UI or message words; all sources are policy-filtered. */
 export default function DeskSignals({go,onAttention}:{go(path:string):void;onAttention:(value:boolean)=>void}) {
   const roster=useDeskRoster();
-  const people=useRecords<AgentPerson>('person');
+  const people=useDeskAgentDirectory();
   const asks=useRecords<Ask>('attention.ask');
   const {reading}=useHomeComms();
   const agents=orderedAgents(namedAgents(roster.status==='live'?roster.records:[],people.status==='live'?people.records:[]));
