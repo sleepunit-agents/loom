@@ -18,7 +18,7 @@ import { startHttpServer, type HttpServeHandle } from './transport/http-server.j
 import { createLoomServer } from './server.js';
 import { agentDir, commonsDir, createToken, loadHousehold, mintReviewToken, type Household } from './household.js';
 import { runtimePieces } from './cli/pieces-managed.js';
-import { createConversationTables, findingsOf, foldConversations, getConversation, recordTurn, turnsOf, type TurnInput } from './backends/conversations.js';
+import { createConversationTables, findingsOf, getConversation, recordTurn, turnsOf, type TurnInput } from './backends/conversations.js';
 import { writeTurn } from './conversations.js';
 import { PeopleStore } from './backends/people.js';
 import { HOUSEHOLD_DB, syncVenues, venueOf } from './household-store.js';
@@ -761,9 +761,10 @@ describe('criterion 9: one decrypt path', () => {
     // Comms and the separate secrets holder use their own keys in process.
     // Backup configuration only validates public recipients with Encrypter. None
     // may name the review key or import the audit module; keep the allowlist exact.
+    // The fictional startup fixture generates its own Comms identity, never decrypts.
     const library = all.filter((f) => /from\s+['"]age-encryption['"]|import\(\s*['"]age-encryption['"]|require\(\s*['"]age-encryption['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
-    // The normal-startup fixture creates only a disposable public test identity.
     expect(library).toEqual(['../test/fixtures/shared-ui-program.ts', 'comms.ts', 'core/household/backup-bundle.ts', 'core/household/backup-image.ts', 'core/household/backup-restore.ts', 'core/household/backup-schema.ts', 'pieces/comms/crypto.ts', 'pieces/secrets/age-source.ts', 'pieces/secrets/holder-store.ts']);
+    expect(code(join(repoRoot, 'test/fixtures/shared-ui-program.ts'))).not.toMatch(/\b(?:Decrypter|decrypt|addIdentity|setPassphrase|REVIEW_KEY)\b|review\.key|audit\.js/);
     expect(code(join(srcDir, 'core/household/backup-image.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js|node:fs|node:child_process|node:crypto|\bgenerate[A-Z]\w*\b/);
     expect(code(join(srcDir, 'core/household/backup-bundle.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js|node:fs|node:child_process|\bgenerate[A-Z]\w*\b/);
     // Restore accepts only its caller's identity; it cannot discover audit/holder
@@ -942,7 +943,7 @@ describe('a conversation with a non-owner stays one', () => {
     }
   });
 
-  it('a harness and model whose turns were all folded are still redacted', () => {
+  it('a harness and model whose old turns were already removed are still redacted', () => {
     const home = mkdtempSync(join(tmpdir(), 'loom-vocab-fold-'));
     try {
       mkdirSync(join(home, 'agents', 'art'), { recursive: true });
@@ -950,7 +951,9 @@ describe('a conversation with a non-owner stays one', () => {
       const h = loadHousehold(home)!;
       const old = new Date(Date.now() - 100 * 86_400_000).toISOString();
       writeTurn(h, asArt, { venue: 'session', place: 'claude-code:old', at: old, from: { kind: 'agent', id: 'art' }, kind: 'note', run: 'r-old', outcome: 'none', model: 'quokka-7b', harness: 'zebra-harness' });
-      expect(foldConversations(agentDir(h, 'art')).turns).toBe(1);
+      // Historical metadata must survive independently of the retired fold writer.
+      const archived=new BetterSqlite3(join(agentDir(h,'art'),'memories.db'));
+      try{expect(archived.prepare('DELETE FROM conversation_turns WHERE at = ?').run(old).changes).toBe(1);}finally{archived.close();}
       const v = vocabularyOf(h);
       expect(v.harnesses).toContain('zebra-harness');
       expect(v.models).toContain('quokka-7b');
@@ -960,7 +963,7 @@ describe('a conversation with a non-owner stays one', () => {
     }
   });
 
-  it('an unknown sender\'s turn, folded away after 90 days, still marks it', () => {
+  it('an unknown sender\'s old turn was removed but still marks it', () => {
     const home = mkdtempSync(join(tmpdir(), 'loom-strangers-fold-'));
     try {
       mkdirSync(join(home, 'agents', 'art'), { recursive: true });
@@ -970,7 +973,9 @@ describe('a conversation with a non-owner stays one', () => {
       const { conversation } = writeTurn(h, asArt, msg('claude-code:fold', old, { kind: 'unknown' }));
       writeTurn(h, asArt, msg('claude-code:fold', new Date().toISOString(), { kind: 'person', slug: 'jonathan' }));
       expect(withNonOwner(h, 'art', conversation)).toBe(true);
-      expect(foldConversations(agentDir(h, 'art')).turns).toBe(1);
+      // Historical metadata must survive independently of the retired fold writer.
+      const archived=new BetterSqlite3(join(agentDir(h,'art'),'memories.db'));
+      try{expect(archived.prepare('DELETE FROM conversation_turns WHERE at = ?').run(old).changes).toBe(1);}finally{archived.close();}
       expect(turnsOf(agentDir(h, 'art'), conversation).some((t) => t.from.kind === 'unknown')).toBe(false);
       expect(withNonOwner(h, 'art', conversation)).toBe(true);
     } finally {
