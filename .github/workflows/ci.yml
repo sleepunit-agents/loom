@@ -216,10 +216,16 @@ jobs:
           retention-days: 14
           if-no-files-found: error
 
+  # The actual built program, first-run sign-in and every app must run before
+  # next can auto-merge. A separately triggered workflow cannot gate CI results.
+  walkthrough:
+    if: github.base_ref == 'next' || github.ref == 'refs/heads/next'
+    uses: ./.github/workflows/rebuild-walkthrough.yml
+
   results:
     name: CI results
     if: always()
-    needs: [test, package]
+    needs: [test, package, walkthrough]
     # Fork safety (the one runs-on that may name self-hosted; scripts/ci-runners.test.ts holds it to
     # exactly this). Our own runners take only trusted runs: a push or a merge-queue group, which only
     # people with write access can start, or a pull request from a branch in this repository that a person
@@ -265,9 +271,10 @@ jobs:
           name: ci-merged-${{ github.run_attempt }}
           path: merged/
           retention-days: 14
-      - name: Require every shard and the deploy build to pass
+      - name: Require every shard, deploy build and next walkthrough to pass
         if: always()
         env:
           RESULT: ${{ needs.test.result }}
           PACKAGE: ${{ needs.package.result }}
-        run: test "$RESULT" = success && test "$PACKAGE" = success
+          WALKTHROUGH: ${{ needs.walkthrough.result }}
+        run: node scripts/ci-require-results.mjs
