@@ -5,7 +5,7 @@ import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
 import { createTempo } from '../core/tempo/tempo.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountBoxes, jobs, inbox } from '../core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, inbox } from '../core/data/schema.js';
 import { createRuntime } from './runtime.js';
 
 const cleanups: (() => void)[] = [];
@@ -22,6 +22,8 @@ function fixture() {
   db.insert(agentModels).values({ agent: 'art', model: 'model', position: 0 }).run();
   db.insert(agentRunSettings).values({ agent: 'art', houseRepository: 'repo', houseFile: 'Housefile', houseBranch: 'next', nestedContainers: false, gpu: false }).run();
   db.insert(modelAccounts).values({ id: 'account', owner: 'owner', provider: 'provider', label: 'Subscription', hasRoom: true }).run();
+  db.insert(modelAccountWindows).values({ account: 'account', window: 'week', usage: 0.2,
+    usageReadAt: now(), resetsAt: new Date(clock.now() + 7 * 86400_000).toISOString(), durationMs: 7 * 86400_000 }).run();
   db.insert(modelAccountBoxes).values({ account: 'account', box: 'worker' }).run();
   const comms = new Conversations(db, now);
   let tempo: ReturnType<typeof createTempo> | undefined;
