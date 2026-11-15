@@ -9,7 +9,6 @@ import { startLoom } from '../foundation.js';
 import { FakeClock } from '../core/clock.js';
 import { HouseholdDatabase } from '../core/household/document.js';
 import { migrateHouseholdTables } from '../core/household/schema.js';
-import { deskHome } from './agent-desk.fixture.js';
 import { HouseholdRows } from '../core/household/rows.js';
 import { manifestFromPixelLab } from '../household.js';
 import { sheet } from './pixel-sheet.fixture.js';
@@ -20,7 +19,7 @@ const root = resolve('dist/web');
 if (enabled && (!chrome || !existsSync(chrome) || !existsSync(join(root,'next.html')))) throw Error('Desk evidence needs Chrome and the built app');
 it.runIf(enabled)('desk applies member appearance live across fresh windows and serves PWA assets', async () => {
   const home = mkdtempSync(join(tmpdir(),'desk-shell-'));
-  // Activity uses the listed agent's real read-only episode source, never the old reference home.
+  // Activity uses the listed agent's disposable read-only episode source.
   const seedSteps = (base:string,now:number) => {
     const path=join(base,'agents','art');mkdirSync(path,{recursive:true});
     const db=new BetterSqlite3(join(path,'memories.db'));
@@ -40,10 +39,6 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
       new HouseholdRows(app.db,'settings').put('agent-sprite:art',{manifest,rawManifest:Buffer.from(JSON.stringify(manifest)).toString('base64'),sheets:{'sheet.png':sample.png.toString('base64')},v:'browser-fixture'});
     })();
   }});
-  const old = await deskHome({art:'art',birch:'birch',cedar:'cedar',elm:'elm',fern:'fern'},[{person:'owner',agents:'*'}]);
-  seedSteps(old.h.home,Date.now()-60000);
-  old.ask('art','OK to run the backup now?');
-  const oldThread=old.thread('owner','art','A Home conversation','A Home conversation');
   const raised=app.operations.call('direct',{kind:'member',id:'owner'},'attention.raise',{id:'desk-ask',agent:'art',ask:'OK to run the backup now?',why:'Because it matters.',if_yes:'I do it.',if_no:'I leave it.',source:{kind:'piece',id:'desk-fixture'}},'desk-ask');
   expect(raised.ok).toBe(true);
   const browser = await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
@@ -51,11 +46,6 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     const context = await browser.newContext({viewport:{width:1280,height:900}});
     const a = await context.newPage(), b = await context.newPage();
     const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));b.on('pageerror',e=>errors.push(e.message));
-    const oldContext=await browser.newContext({viewport:{width:1280,height:900},reducedMotion:'reduce',serviceWorkers:'block'});
-    await oldContext.addInitScript(()=>{sessionStorage.setItem('loom-arrived','1');sessionStorage.setItem('loom-booted','1');});
-    await oldContext.request.post(old.base+'/login',{form:{token:old.tok.owner},maxRedirects:0});
-    const reference=await oldContext.newPage();
-    const board=await browser.newPage();
     const link = app.operations.call('direct',{kind:'member',id:'owner'},'signin.link',{member:'owner'});
     if (!link.ok) throw Error('Fixture sign-in failed');
     await a.goto(app.url+(link.value as {path:string}).path);
@@ -63,7 +53,6 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await expect.poll(() => a.locator('.next-shell').count()).toBe(1);
     expect(await a.locator('html').getAttribute('data-look')).toBe('neon');
     const set = (prefs:unknown,id:string) => {
-      const result = app.operations.call('direct',{kind:'member',id:'owner'},'household.setPreferences',prefs,id);
       expect(result.ok).toBe(true);
     };
     set({look:'daylight',sound:true,motion:'on',contrast:'on',zoom:true},'appearance');
@@ -109,17 +98,11 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await expect.poll(()=>b.locator('.desk-home').evaluate(el=>el.scrollWidth-el.clientWidth)).toBeLessThanOrEqual(1);
     expect(app.operations.call('direct',{kind:'member',id:'owner'},'household.setProfile',{agent:'art',text:'Keeps the household moving and the desk readable.'},'desk-profile-restore').ok).toBe(true);
     await b.setViewportSize({width:1280,height:900});
-    await reference.goto(old.base+'/a/art?t=*art');
-    await reference.locator('.loom-agentwin').getByRole('button',{name:'Write one',exact:true}).click();
-    await reference.getByLabel("art's description",{exact:true}).fill('Keeps the household moving and the desk readable.');
-    await reference.locator('.loom-agentwin').getByRole('button',{name:'Save',exact:true}).click();
-    await expect.poll(()=>reference.locator('.loom-aghead__desc').getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
     for(const page of [a,b])await page.goto(app.url);
     await a.bringToFront();
     await expect.poll(()=>a.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
     await a.evaluate(()=>document.fonts.ready);
     const faceLink=a.getByRole('link',{name:'Open art agent window',exact:true});
-    // A live face preference can replace the pressed canvas before release. Navigation must survive it.
     set({pixel:true},'agent-link-pixel');
     await expect.poll(()=>faceLink.locator('canvas').count()).toBe(1);
     const hit=await faceLink.boundingBox();if(!hit)throw Error('Agent link is not visible');
@@ -225,7 +208,6 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
     await b.getByRole('button',{name:'Home',exact:true}).click();
     await expect.poll(()=>b.locator('.desk-home-card').getByRole('button',{name:/Recent conversation/}).count()).toBe(1);
     await expect.poll(()=>b.locator('.desk-home-compose').first().getByRole('textbox',{name:'Message',exact:true}).inputValue()).toBe('');
-    // Comparison boards intentionally retain the fixture's ordinary drawn identity.
     expect((await context.request.get(app.url+'/manifest.webmanifest')).headers()['content-type']).toBe('application/manifest+json');
     await expect.poll(() => a.evaluate(async () => (await navigator.serviceWorker.ready).active?.scriptURL)).toBe(app.url+'/sw.js');
     // iPad's home-screen app has its own status bar even in a desktop-width layout.
@@ -263,19 +245,15 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
         expect(await page.locator('.desk-home-compact').count()).toBe(width<1024?4:0);
         expect(await page.locator('.desk-home-compose').count()).toBe(width<1024?1:5);
         if(width<1024)expect(await page.locator('.desk-home-card').getAttribute('data-agent')).toBe('art');
-        await reference.setViewportSize({width,height:900});
-        await reference.addInitScript(look=>localStorage.setItem('loom-look',look),look);
         for (const surface of ['home','home-steps','work','companion','launcher','agent']) {
           if(surface==='home') {
             await page.getByRole('button',{name:'Check again',exact:true}).click();
             await expect.poll(()=>page.getByRole('button',{name:'Yes',exact:true}).isEnabled()).toBe(true);
             // Checking may scroll its button into view; capture Home from its identity/header.
             await page.locator('.desk-home').evaluate(el=>{let node:HTMLElement|null=el as HTMLElement;while(node){node.scrollTop=0;node=node.parentElement;}});
-            if(reference.url()!=='about:blank')await reference.evaluate(()=>localStorage.removeItem('loom-tiles')); await reference.goto(old.base+'/?t='); await expect.poll(()=>reference.locator(width<1024?'.loom-phome .loom-bigcard':'.loom-bigcard').count()).toBeGreaterThan(0);
           }
           if(surface==='home-steps') {
             await page.getByRole('region',{name:'art desk details',exact:true}).getByRole('heading',{name:'Last steps',exact:true}).scrollIntoViewIfNeeded();
-            await reference.locator('.loom-bigcard[data-agent=art]').getByRole('heading',{name:'Last steps',exact:true}).scrollIntoViewIfNeeded();
           }
           if(surface==='work') {
             await page.getByRole('button',{name:'Open Inbox',exact:true}).click();
@@ -295,10 +273,8 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
               await page.locator('.next-status-bar summary').click();
             }
             await expect.poll(()=>page.locator('[data-tile=inbox]').getByText('OK to run the backup now?',{exact:true}).count()).toBe(1);
-            await reference.goto(old.base+(width<1024?'/inbox':'/inbox?t=*inbox'));
             if(width>=1024) {
               await expect.poll(()=>page.locator('.desk-rail-card').count()).toBe(1);
-              await expect.poll(()=>reference.locator('.loom-arail').count()).toBe(1);
               const rail=await page.locator('.next-rail').boundingBox(),tile=await page.locator('[data-tile=inbox]').boundingBox();
               expect(Math.round(rail!.width)).toBe(width>=1440?320:296);expect(tile!.x+tile!.width).toBeLessThanOrEqual(rail!.x-9);
               expect(await page.locator('.next-rail button').allTextContents()).toContain('Asks youOK to run the backup now? ›');
@@ -361,9 +337,6 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
           if(surface==='companion') {
             await page.goto(app.url+'/p/comms-preview/thread/'+encodeURIComponent(commsId));
             await expect.poll(()=>page.locator('.comms-thread').count()).toBe(1);
-            await reference.goto(old.base+'/comms/'+oldThread.id.slice(3)+(width<1024?'':'?t=*comms'));
-            await expect.poll(()=>reference.locator('.comms-thread').count()).toBe(1);
-            await expect.poll(()=>reference.locator('.comms-screen').isVisible()).toBe(true);
             await expect.poll(()=>page.locator('.next-comm-screen').count()).toBe(1);
             if(width>=1280){
               await expect.poll(()=>page.locator('.desk-rail-screen .next-comm-screen').count()).toBe(1);
@@ -413,8 +386,6 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
             await page.keyboard.press('Escape');
             await expect.poll(()=>page.getByRole('dialog').count()).toBe(0);
             await page.getByRole('button',{name:'All apps',exact:true}).first().click();
-            if(width<1024) { await reference.goto(old.base+'/setup'); await expect.poll(()=>reference.getByText('More',{exact:true}).count()).toBeGreaterThan(0); }
-            else { await reference.keyboard.press('Control+Shift+Space'); await expect.poll(()=>reference.getByRole('textbox',{name:'Find an app',exact:true}).count()).toBe(1); }
           }
           if(surface==='agent') {
             await page.bringToFront();
@@ -423,38 +394,25 @@ it.runIf(enabled)('desk applies member appearance live across fresh windows and 
             await expect.poll(()=>page.getByRole('heading',{name:'Needs you · 1',exact:true}).count()).toBe(1);
             await page.evaluate(()=>document.fonts.ready);
             await page.getByRole('link',{name:'Open art agent window',exact:true}).click();
-            await expect.poll(async()=>({path:new URL(page.url()).pathname,readers:await page.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]}).catch(async error=>{console.error('Agent entry failed',look,width,page.url(),await page.locator('.next-notice').textContent());await page.screenshot({path:join(shots,'agent-failure.png')});throw error;});
+            await expect.poll(async()=>({path:new URL(page.url()).pathname,readers:await page.locator('article[aria-label]').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('aria-label'))),errors})).toEqual({path:'/p/agents-preview/agent/art',readers:['art agent window'],errors:[]}).catch(async error=>{console.error('Agent entry failed',{look,width,tiles:await page.locator('[data-tile]').count(),notices:await page.locator('.next-notice').count()});await page.screenshot({path:join(shots,'agent-failure.png')});throw error;});
             await expect.poll(()=>page.getByText('Keeps the household moving and the desk readable.',{exact:true}).count()).toBe(1);
             expect(await page.getByRole('button',{name:'Edit profile in Setup',exact:false}).count()).toBe(1);
             expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
-            await reference.goto(old.base+'/a/art'+(width<1024?'':'?t=*art'));
-            await expect.poll(()=>reference.locator('.loom-agentwin').count()).toBe(1);
-            await expect.poll(()=>reference.locator('.loom-agentwin').getByText('Shipped the desk look',{exact:true}).count()).toBe(1);
             await expect.poll(()=>page.getByRole('group',{name:'art recent steps',exact:true}).getByRole('button').count()).toBe(3);
           }
-          await page.evaluate(()=>document.fonts.ready);await reference.evaluate(()=>document.fonts.ready);
+          await page.evaluate(()=>document.fonts.ready);
           if(surface==='home'&&width===390) {
             // The long full question stays intact. Also show the rows below it, not just a top-of-page claim.
             await page.locator('.desk-home-compact').last().scrollIntoViewIfNeeded();
-            await reference.locator('.loom-phome .loom-rrow').last().scrollIntoViewIfNeeded();
-            const oldRows=await reference.screenshot({path:join(shots,`old-home-agents-${look}-${width}.png`),animations:'disabled'});
-            const newRows=await page.screenshot({path:join(shots,`new-home-agents-${look}-${width}.png`),animations:'disabled'});
-            await board.setViewportSize({width:width*2,height:932});
-            await board.setContent(`<body style="margin:0;background:#17151e;color:#fff;font:14px monospace"><div style="display:flex"><section><p style="height:16px;margin:8px">OLD · Home agents · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${oldRows.toString('base64')}"></section><section><p style="height:16px;margin:8px">NEW · Home agents · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${newRows.toString('base64')}"></section></div></body>`);
-            await board.screenshot({path:join(shots,`compare-home-agents-${look}-${width}.png`)});
-            for(const [p,selector] of [[page,'.desk-home'],[reference,'.loom-phome']] as const)await p.locator(selector).evaluate(el=>{let node:HTMLElement|null=el as HTMLElement;while(node){node.scrollTop=0;node=node.parentElement;}});
+            await page.screenshot({path:join(shots,`new-home-agents-${look}-${width}.png`),animations:'disabled'});
+            await page.locator('.desk-home').evaluate(el=>{let node:HTMLElement|null=el as HTMLElement;while(node){node.scrollTop=0;node=node.parentElement;}});
           }
-          const before=await reference.screenshot({path:join(shots,`old-${surface}-${look}-${width}.png`),animations:'disabled'});
-          const after=await page.screenshot({path:join(shots,`new-${surface}-${look}-${width}.png`),animations:'disabled'});
-          await board.setViewportSize({width:width*2,height:932});
-          await board.setContent(`<body style="margin:0;background:#17151e;color:#fff;font:14px monospace"><div style="display:flex"><section><p style="height:16px;margin:8px">OLD · ${surface} · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${before.toString('base64')}"></section><section><p style="height:16px;margin:8px">NEW · ${surface} · ${look} · ${width}px</p><img width="${width}" src="data:image/png;base64,${after.toString('base64')}"></section></div></body>`);
-          await board.locator('img').evaluateAll(imgs=>Promise.all(imgs.map(i=>(i as HTMLImageElement).decode())));
-          await board.screenshot({path:join(shots,`compare-${surface}-${look}-${width}.png`)});
+          await page.screenshot({path:join(shots,`new-${surface}-${look}-${width}.png`),animations:'disabled'});
         }
         await page.keyboard.press('Escape');await page.goto(app.url);
 
       }
     }
     expect(errors).toEqual([]);
-  } finally { await browser.close(); await old.close(); await app.close(); rmSync(home,{recursive:true,force:true}); }
+  } finally { await browser.close(); await app.close(); rmSync(home,{recursive:true,force:true}); }
 },300000);
