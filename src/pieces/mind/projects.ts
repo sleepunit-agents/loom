@@ -100,7 +100,8 @@ export function createProjectsReader(clock:Pick<Clock,'now'>,options:ProjectsOpt
  const memoryRead=(id:string,v:Viewer):ProjectMemory|undefined=>{
   const colon=id.indexOf(':');if(colon<1)return;const agent=id.slice(0,colon),ref=id.slice(colon+1),db=sources.get(agent);
   if(!db||!maySee(v,{type:'memory',agent},options.sharing())||!has(db,'memories'))return;
-  const row=db.prepare(`SELECT ref,title,content,category,created,coalesce(updated,created) AS updated,expires_at FROM memories WHERE ref=? AND ${activeMemory}`).get(ref,new Date(clock.now()).toISOString()) as {ref:string;title:string;content:string;category:string;created:string;updated:string;expires_at:string|null}|undefined;
+  const opaque=(db.pragma('table_info(memories)') as {name:string}[]).some(column=>column.name==='uuid');
+  const row=db.prepare(`SELECT ref,title,content,category,created,coalesce(updated,created) AS updated,expires_at FROM memories WHERE ${opaque?'(ref=? OR uuid=?)':'ref=?'} AND ${activeMemory}`).get(...(opaque?[ref,ref]:[ref]),new Date(clock.now()).toISOString()) as {ref:string;title:string;content:string;category:string;created:string;updated:string;expires_at:string|null}|undefined;
   if(!row)return;const {expires_at,...data}=row;return {id,agent,...data,...(expires_at?{expires:Date.parse(expires_at)}:{})};
  };
  const access=(v:Viewer)=>({id:'projects',allowed:options.agents.some(a=>allowed(v,a.agent)),agents:options.agents.filter(a=>allowed(v,a.agent)).map(a=>a.agent)});

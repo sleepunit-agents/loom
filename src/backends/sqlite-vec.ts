@@ -75,6 +75,9 @@ function slugify(text: string): string {
 export interface SqliteVecConfig {
   /** Absolute path to the SQLite database file */
   dbPath: string;
+  /** An independently owned command connection publishes only after its receipt. */
+  notifyWrites?: boolean;
+  busyTimeout?: number;
   /**
    * Observer for the recall observation log. Called once per recall with
    * the search's telemetry; errors it throws are swallowed — a failed
@@ -138,15 +141,26 @@ export class SqliteVecBackend implements MemoryBackend {
   ) {
     mkdirSync(dirname(config.dbPath), { recursive: true });
     this.db = new BetterSqlite3(config.dbPath);
+    try{
     this.db.pragma('journal_mode = WAL');
     // WAL + 5s busy_timeout: concurrent sleeves (wakes, lanes, voice) each open
     // their own connection. A brief write-lock window (checkpoint, concurrent
     // write) retries for up to 5s rather than failing immediately. A genuine
     // second loom instance will still fail — it won't hold the lock that long.
-    this.db.pragma('busy_timeout = 5000');
+    this.db.pragma(`busy_timeout = ${config.busyTimeout ?? 5000}`);
     sqliteVec.load(this.db);
     this.initSchema();
-    notifyWrites(this, config.dbPath, 'memory', ['remember', 'forget', 'update', 'prune', 'archive', 'restore', 'restoreRevision', 'supersede', 'mergeMemories'], ['ref', 'refs', 'target_ref', 'source_refs', 'old_ref', 'new_ref', 'deleted', 'expired', 'archived', 'restored']);
+    if(config.notifyWrites!==false)notifyWrites(this, config.dbPath, 'memory', ['remember', 'forget', 'update', 'prune', 'archive', 'restore', 'restoreRevision', 'supersede', 'mergeMemories'], ['ref', 'refs', 'target_ref', 'source_refs', 'old_ref', 'new_ref', 'deleted', 'expired', 'archived', 'restored']);
+    }catch(error){this.db.close();throw error;}
+  }
+
+  /** The caller must own this uncached connection for the whole callback.
+   * WAL readers keep seeing the last committed source while embeddings await. */
+  async atomicWrite<T>(run:(db:Database)=>Promise<T>):Promise<T>{
+    if(this.db.inTransaction)throw Error('Memory command is already running');
+    this.db.exec('BEGIN IMMEDIATE');
+    try{const value=await run(this.db);this.db.exec('COMMIT');return value;}
+    catch(error){if(this.db.inTransaction)this.db.exec('ROLLBACK');throw error;}
   }
 
   // ── MemoryBackend interface ──

@@ -28,6 +28,8 @@ import type {TaskService} from './apps/tasks.js';
 import {sharedProjectSections} from './shared-memory-projects.js';
 import {sharedSharing} from './shared-sharing.js';
 import {migrateMindReceipts} from './pieces/mind/receipt-schema.js';
+import {prepareSemanticMemory} from './pieces/mind/semantic-schema.js';
+import {registerSemanticMemory} from './pieces/mind/semantic-commands.js';
 export interface SharedMemoryOptions {
  sources:MindSources;
  checkingAgent:string;
@@ -52,6 +54,7 @@ export async function prepareSharedMemorySources(options:SharedMemoryOptions|und
  for(const agent of agents)await fresh(agent.memories,()=>{
   new PeopleStore({dbPath:agent.memories,actor:agent.agent}).close();
   new ProjectsStore({dbPath:agent.memories}).close();
+  const db=new Database(agent.memories,{fileMustExist:true});try{prepareSemanticMemory(db);}finally{db.close();}
  });
 }
 export function validateSharedMemoryOptions(db:DataDatabase,options:SharedMemoryOptions|undefined){
@@ -72,11 +75,12 @@ export function sharedMemory(db:DataDatabase,clock:Clock,options:SharedMemoryOpt
   const queries=memoryQueryFields(db,{sources,sharing,now:()=>clock.now(),projects,activity,conversationHref,projectHref});closers.push(queries.close);
   const touches=mindTouchSources(sources);
   return {people,projects,activity,checkingAgent:options?.checkingAgent,fields:queries.fields,nextDeadline:queries.nextDeadline,observeDeadlines:queries.observeDeadlines,sweep:queries.sweep,touches,close,
-   register(operations:Operations){
+   register(operations:Operations,commands?:Pick<Parameters<typeof registerSemanticMemory>[1],'body'|'hash'>){
     installTouched(operations,mindTouchResolver(touches));
     const knowledge=installMindKnowledgeActions(operations,{path:sources?.commons.knowledge,sharing,verify:verifyKnowledgePages,classify:domain=>deriveSlaClass(null,domain)});closers.push(knowledge.close);
     const agent=settings?.defaultAgent??undefined;
     const actions=installMindPeopleActions(operations,{directory:sources?.commons.people,relationship:agents.find(a=>a.agent===agent)?.memories,agent,sharing,create:createPersonHalf});closers.push(actions.close);
+    if(commands)closers.push(registerSemanticMemory(operations,{sources,now:()=>clock.now(),...commands}).close);
    },
   };
  }catch(error){close();throw error;}
