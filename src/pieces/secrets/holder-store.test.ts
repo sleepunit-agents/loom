@@ -286,3 +286,50 @@ it('stores the independently generated random UUID rather than a value-derived m
   const id=who();random.mockReturnValueOnce(second);
   await f.s.set(id,'api-key',value(),'add');expect(f.s.generation()).toBe(second);
 });
+it('durably fences an unused write id across reopen without changing values, receipts or generation', async () => {
+  const f = await setup(), original = who(), abandoned = who();
+  await f.s.set(original, 'api-key', value('original'), 'add'); const generation = f.s.generation();
+  expect(f.s.recover(original)).toBe('committed'); expect(f.s.recover(abandoned)).toBe('undone');
+  expect(f.s.hasReceipt(abandoned)).toBe(false); expect(f.s.generation()).toBe(generation);
+  await expect(f.s.set(abandoned, 'api-key', value('late'), 'replace')).rejects.toThrow(/^Secret holder storage unavailable$/);
+  expect(() => f.s.remove(abandoned, 'api-key')).toThrow(/^Secret holder storage unavailable$/);
+  f.s.close(); const reopened = await f.open();
+  expect(reopened.recover(abandoned)).toBe('undone'); expect(reopened.recover(original)).toBe('committed');
+  await expect(reopened.set(abandoned, 'other-key', value(), 'add')).rejects.toThrow(/^Secret holder storage unavailable$/);
+  expect(await text(reopened)).toBe('original'); expect(reopened.generation()).toBe(generation);
+});
+it('recovery on a second handle fences encryption already in flight before it can commit', async () => {
+  const f = await setup(), id = who(), original = Encrypter.prototype.encrypt;
+  let release!: () => void, entered!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  vi.spyOn(Encrypter.prototype, 'encrypt').mockImplementationOnce(async function(this: Encrypter, bytes: Uint8Array | string) { entered(); await blocked; return original.call(this, bytes); });
+  const pending = f.s.set(id, 'api-key', value(), 'add'); await started;
+  const other = await f.open(); expect(other.recover(id)).toBe('undone'); release();
+  await expect(pending).rejects.toThrow(/^Secret holder storage unavailable$/);
+  expect(other.hasReceipt(id)).toBe(false); await expect(other.read('api-key')).rejects.toThrow(/^Secret holder storage unavailable$/);
+  const db = new Database(join(f.home, 'holder.db'));
+  try { expect(db.prepare('SELECT * FROM holder_aborted_writes').all()).toEqual([{ member: id.member, write_id: id.writeId }]); expect(db.prepare('SELECT * FROM holder_receipts').all()).toEqual([]); }
+  finally { db.close(); }
+});
+it('a failed fence transaction never reports undone and leaves the original id able to commit', async () => {
+  const f = await setup(), id = who(), db = new Database(join(f.home, 'holder.db'));
+  try {
+    db.exec("CREATE TRIGGER fail_fence BEFORE INSERT ON holder_aborted_writes BEGIN SELECT RAISE(ABORT, 'PRIVATE-ERROR'); END");
+    expect(() => f.s.recover(id)).toThrow(/^Secret holder storage unavailable$/);
+    expect(db.prepare('SELECT * FROM holder_aborted_writes').all()).toEqual([]);
+    db.exec('DROP TRIGGER fail_fence'); await f.s.set(id, 'api-key', value(), 'add');
+    expect(f.s.recover(id)).toBe('committed'); expect(db.prepare('SELECT * FROM holder_aborted_writes').all()).toEqual([]);
+  } finally { db.close(); }
+});
+it('adds the recovery table without rewriting an existing holder value, receipt or generation', async () => {
+  const f = await setup(), id = who(); await f.s.set(id, 'api-key', value(), 'add');
+  const generation = f.s.generation(); f.s.close();
+  let db = new Database(join(f.home, 'holder.db'));
+  const before = db.prepare('SELECT * FROM holder_values').all(), receipts = db.prepare('SELECT * FROM holder_receipts').all();
+  db.exec('DROP TABLE holder_aborted_writes'); db.close();
+  const reopened = await f.open(); expect(reopened.recover(id)).toBe('committed'); expect(reopened.generation()).toBe(generation);
+  expect(await text(reopened)).toBe(value().toString());
+  db = new Database(join(f.home, 'holder.db'));
+  try { expect(db.prepare('SELECT * FROM holder_values').all()).toEqual(before); expect(db.prepare('SELECT * FROM holder_receipts').all()).toEqual(receipts); }
+  finally { db.close(); }
+});

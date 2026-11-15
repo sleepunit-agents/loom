@@ -226,3 +226,17 @@ it('passes unbound instructions through the worker assignment', () => {
   const f = fixture(); f.db.update(jobs).set({ conversation: null, brief: 'Unbound instructions' }).where(eq(jobs.id, f.job.id)).run();
   expect(f.runtime.next('first')).toMatchObject({ id: f.job.id, conversation: null, brief: 'Unbound instructions' });
 });
+
+it('keeps explicit body waiting status across worker liveness pulses until a body resumes it', () => {
+  const f = fixture(); f.runtime.next('first'); f.runtime.started('first', f.job.id, 'image');
+  f.runtime.jobs.heartbeat(f.job.id, 'first', 'waiting'); f.tick(15_000);
+  expect(f.runtime.heartbeat('first', f.job.id, 'running')).toEqual({ active: true });
+  expect(f.runtime.jobs.get(f.job.id)).toMatchObject({ state: 'waiting', heardAt: f.now() });
+  expect(f.db.select().from(boxes).where(eq(boxes.id, 'first')).get()?.lastSeenAt).toBe(f.now());
+  expect(f.runtime.heartbeat('second', f.job.id, 'running')).toEqual({ active: false });
+  expect(f.runtime.jobs.get(f.job.id).state).toBe('waiting');
+  // A body status report, rather than the worker's process phase, resumes work.
+  f.runtime.jobs.heartbeat(f.job.id, 'first', 'running');
+  expect(f.runtime.heartbeat('first', f.job.id, 'running')).toEqual({ active: true });
+  expect(f.runtime.jobs.get(f.job.id).state).toBe('running');
+});
