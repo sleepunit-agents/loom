@@ -1,7 +1,6 @@
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
-import {deskActions} from './rebuild-desk-actions.mjs';
 import {taskStructure} from './rebuild-task-structure.mjs';
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
@@ -13,6 +12,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {exampleHome} from '../dist/example-home.js';
 import {startSharedHome} from '../dist/shared-startup.js';
+import {deskActions} from './rebuild-desk-actions.mjs';
 
 export const redact=text=>String(text).replace(/(\/login\/)[^\s"'<>\\)]+/g,'$1[redacted]').replace(/(Bearer\s+|loom_ui=)[^\s;"'<>\\)]+/gi,'$1[redacted]').replace(/AGE-SECRET-KEY-[A-Z0-9-]+/g,'[private key redacted]');
 export const safeReport=report=>JSON.parse(JSON.stringify(report,(_key,value)=>typeof value==='string'?redact(value):value));
