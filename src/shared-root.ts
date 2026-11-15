@@ -1,3 +1,4 @@
+import {programGrantStore} from './core/data/program-grants.js';
 import {sharedProgramSetup,programIssueInput} from './shared-program-setup.js';
 import {programSetupQueries,registerProgramSetup} from './shared-program-queries.js';
 import type {ProgramGrantStore,ProgramGrantReader} from './shared-program-access.js';
@@ -149,7 +150,7 @@ export function sharedRoot(options: {
     // Synchronous outer writes have committed or rolled back before this runs.
     queueMicrotask(() => { void (meter ? meter.refresh() : measuringReady!.then(value => value.refresh())).catch(report); });
   });
-  const programStore=options.programStore;
+  const programStore=options.programStore??(options.programGrants?undefined:programGrantStore(db));
   let credentialWrite: ((action:()=>boolean)=>void) | undefined;
   const credentials = sharedCredentials(db, clock, () => !closing && !!credentialWrite, action => credentialWrite!(action),programStore?(id=>programStore.read(id)):options.programGrants);
   let programOperations:()=>readonly string[]=()=>[];

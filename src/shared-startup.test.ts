@@ -195,3 +195,17 @@ it('runs file triggers, pauses, notices and recipient volume through the normal 
  expect((await fetch(url+'/api/clock/in',{method:'POST',headers,body:JSON.stringify({input:{},id:'retired'})})).status).toBe(404);
  expect(errors).toEqual([`loom: shared app on ${url}\n`]);
 });
+it('persists a narrow outside-program token and an empty grant marker through normal home restarts',async()=>{
+ const f=await fixture();let app=await startSharedHome({home:f.home,port:0,stdout:()=>{}});cleanups.push(()=>app.close());
+ const call=(path:string,input:unknown,headers:Record<string,string>)=>fetch(app.url+path,{method:'POST',headers:{...headers,'content-type':'application/json'},body:JSON.stringify(input)});
+ let cookie=await signedIn(f.home,app.url);const response=await call('/api/signin/program',{member:'peer',label:'Persistent outside client',records:['tasks'],operations:['tasks.command']},{cookie});expect(response.status).toBe(200);
+ const {value}=await response.json(),headers={authorization:'Bearer '+value.token};
+ const read=()=>call('/graphql',{query:'{ tasks { id } }'},headers).then(response=>response.json());expect(await read()).toEqual({data:{tasks:[]}});
+ const command={id:'programme-task-create',input:{action:'create',input:{title:'Programme task',goal:'Actual granted operation',why:'Fictional proof',owner:{kind:'member',id:'peer'}}}},created=await call('/api/tasks/command',command,headers);expect(created.status).toBe(200);const task=(await created.json()).value.id;
+ expect((await(await call('/graphql',{query:'{ projects { id } }'},headers)).json()).errors).toBeDefined();
+ await app.close();app=await startSharedHome({home:f.home,port:0,stdout:()=>{}});expect(await read()).toEqual({data:{tasks:[{id:task}]}});cookie=await signedIn(f.home,app.url);
+ const changed=await call('/api/program/setGrants',{id:'clear-persistent-program',input:{fingerprint:value.fingerprint,records:[],operations:[]}},{cookie});expect(changed.status).toBe(200);expect((await read()).errors).toBeDefined();
+ await app.close();app=await startSharedHome({home:f.home,port:0,stdout:()=>{}});expect((await read()).errors).toBeDefined();expect((await call('/api/tasks/command',command,headers)).status).toBe(403);cookie=await signedIn(f.home,app.url);
+ const metadata=await(await call('/graphql',{query:'{ programSetup { tokens { fingerprint records operations } } }'},{cookie})).json();expect(metadata.data.programSetup.tokens).toContainEqual({fingerprint:value.fingerprint,records:[],operations:[]});
+ expect((await call('/api/token/revoke',{id:'revoke-persistent-program',input:{fingerprint:value.fingerprint}},{cookie})).status).toBe(200);expect((await call('/graphql',{query:'{ tasks { id } }'},headers)).status).toBe(403);
+});
