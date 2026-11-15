@@ -1,3 +1,4 @@
+import { registerAgentModels } from './shared-agent-models.js';
 import { modelCatalog } from './runtime/model-catalog.js';
 import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
 import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
@@ -119,6 +120,7 @@ export function sharedRoot(options: {
   registerSharedPreferences(operations, db);
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   let tempo!: ReturnType<typeof installSharedTempo>;
+  registerAgentModels(operations, db, roles, () => tempo?.capacityChanged());
   const jobEnded = (id: string) => {
     try {
       tempo?.sources.job(id);
