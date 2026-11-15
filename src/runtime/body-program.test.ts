@@ -18,7 +18,7 @@ function fixture() {
     if(path==='startup')return Response.json({aliases:[]});
     const values = {
       take: { job: 'job', conversation: 'cv', stopRequested, items: [{ id: 'mail', seq: 1, source: 'thread', sourceId: null, fromKind: 'person', fromId: 'alice', at: '2026-11-15T00:00:00.000Z', words: 'PRIVATE MAIL', keepUntil: null, verdict: null, refs: [] }] },
-      confirm: { saved: true }, status: { saved: true, stopRequested }, turn: { saved: true, conversation: 'cv', seq: 1 }, message: { saved: true, seq: 2 },
+      reply:{saved:true}, confirm: { saved: true }, status: { saved: true, stopRequested }, turn: { saved: true, conversation: 'cv', seq: 1 }, message: { saved: true, seq: 2 },
     };
     return Response.json({ ok: true, value: values[path as keyof typeof values] });
   });
@@ -119,4 +119,12 @@ it.each(['missing-ref','foreign-platform','unsupported-venue'])('refuses a %s br
   const response=await fetcher(url,options);if(!String(url).endsWith('/take'))return response;
   const batch=await response.json();Object.assign(batch.value.items[0],{source:mode==='foreign-platform'?'discord':'slack',refs:mode==='missing-ref'?[]:['bi:fixture']});return Response.json(batch);
  }})).toBe(1);expect(f.native).not.toHaveBeenCalled();expect(f.calls.some(row=>row.path==='confirm')).toBe(false);expect(bytes.every(byte=>byte===0)).toBe(true);
+});
+
+it('replies to the last accepted matching bridge reference even when its words are unavailable',async()=>{
+ const f=fixture(),fetcher=f.options.fetch,value=JSON.parse(f.input.toString());value.job.venue='slack';value.job.thread=null;f.native.mockResolvedValue({text:'Answer',model:'observed',actions:[]});
+ expect(await bodyProgram({...f.options,stdin:async()=>Buffer.from(JSON.stringify(value)),fetch:async(url,options)=>{
+  const response=await fetcher(url,options);if(!String(url).endsWith('/take'))return response;
+  const batch=await response.json(),first={...batch.value.items[0],source:'slack',refs:['bi:first']};batch.value.items=[first,{...first,id:'second',seq:2,words:null,refs:['bi:last']}];return Response.json(batch);
+ }})).toBe(0);expect(f.native).toHaveBeenCalledWith(expect.anything(),'PRIVATE MAIL',expect.any(AbortSignal));expect(f.calls.find(row=>row.path==='reply')?.body.input).toMatchObject({incoming:'bi:last',model:'observed'});expect(f.calls.some(row=>row.path==='message')).toBe(false);
 });

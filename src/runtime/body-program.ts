@@ -63,7 +63,7 @@ export async function bodyProgram(input: {
       if(bridge&&(item.source==='discord'||item.source==='slack')){
         const refs=item.refs.filter(ref=>ref.startsWith('bi:'));
         if(item.source!==job.venue||refs.length!==1)throw new Error();
-        if(item.words!==null)incoming.push(refs[0]);
+        incoming.push(refs[0]);
       }
       if (item.words !== null) context.push(item.words);
     });
