@@ -83,7 +83,7 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
         state: !field.verified_at ? 'unverified' as const : now > Date.parse(field.verified_at)+(field.stale_after_days??14)*86400000 ? 'stale' as const : 'fresh' as const }));
       return { id,slug,...(agent ? {agent} : {}),name:card.name,card,updated:row.updated,synthesizedAt:row.synthesized_at,
         projects,...(!agent && Object.hasOwn(options.sharing().members,slug) ? {ownership:options.sharing().members[slug]}:{}),
-        kind:card.how?.kind === 'agent' ? 'agent' as const : 'person' as const,evidence,newer,fields,...(slug !== asked ? {mergedFrom:asked} : {}) };
+        kind:card.how?.kind === 'agent' ? 'agent' as const : 'person' as const,evidence,newer,fields,...(slug !== reference ? {mergedFrom:reference} : {}) };
     })();
   };
   function sourceIds(source:string,db:Database) {

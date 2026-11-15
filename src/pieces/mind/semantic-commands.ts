@@ -13,7 +13,7 @@ import {prepareMemoryInput} from '../../tools/remember.js';
 import type {MindSources} from './sources.js';
 import {PeopleStore} from '../../backends/people.js';
 import {ProjectsStore} from '../../backends/projects.js';
-import {CardError} from '../../backends/cards.js';
+import {CardError,type CardConnection} from '../../backends/cards.js';
 type Identity={name:string;input_hash:string;expires:number};
 type Stored=Identity&{result:string};
 const category=z.enum(['user','project','self','feedback','reference','pursuit','episode']);
@@ -44,7 +44,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
    if(pending)check(pending,ctx.receipt);
   }
  };
- const admit=(ctx:Context)=>{
+ const reserve=(ctx:Context)=>{
   const source=current(ctx.viewer),receipt=ctx.receipt;if(!source||!receipt)throw new OperationError('unavailable','Memory is not prepared for commands');
   const db=new Database(source.path,{fileMustExist:true,timeout:0});
   try{db.transaction(()=>{
@@ -77,7 +77,7 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   // Publish that fact independently so active readers cannot remain stale.
   options.committed();
  };
- const base={write:true,recheckPolicy:true,doors:['http'] as const,inputHash:(words:string)=>options.hash(words),recover,admit,may:(viewer:Viewer)=>!!selected(viewer),run(){throw new OperationError('unavailable','Memory command did not commit');}};
+ const base={write:true,recheckPolicy:true,doors:['http'] as const,inputHash:(words:string)=>options.hash(words),recover,admit:reserve,may:(viewer:Viewer)=>!!selected(viewer),run(){throw new OperationError('unavailable','Memory command did not commit');}};
  const opaque=(db:Database.Database,ref:string)=>{const row=db.prepare('SELECT uuid FROM memories WHERE ref=?').get(ref) as {uuid:string}|undefined;if(!row)throw new OperationError('unavailable','Memory result is absent');return row.uuid;};
  const scopedId=z.string().regex(/^[^:]+:[a-f0-9-]{36}$/);
  const ids=z.array(scopedId).describe('Opaque scoped memory IDs. Read words through memoryProjectMemory(id: id) on GraphQL.');
@@ -88,19 +88,17 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
  const person=z.object({slug:z.string().min(1).max(64),name:z.string().optional(),summary:z.string().optional(),where:z.record(z.string(),z.object({value:cardValue,...stamp,label:z.string().optional()}).strict().nullable()).optional(),how:z.record(z.string(),cardValue.nullable()).optional(),may:z.array(z.object({text:z.string(),source:z.string()}).strict()).optional(),merge:z.boolean().optional()}).strict();
  const project=z.object({slug:z.string().min(1).max(32),name:z.string().optional(),status:z.enum(['active','paused','done']).optional(),summary:z.string().optional(),goal:z.string().optional(),where:z.record(z.string(),z.object({value:z.string(),...stamp}).strict().nullable()).optional(),links:z.object({aliases:z.array(z.string()).optional(),notes:z.array(z.string()).optional(),epic:z.string().optional(),repos:z.array(z.string()).optional(),venues:z.array(z.string()).optional()}).strict().optional(),merge:z.boolean().optional()}).strict();
  const cardIds=z.object({ids:z.array(z.string().regex(/^[^:]+:(person|project):[a-f0-9-]{36}$/))}).strict();
- const cardBase={...base,admit(ctx:Context){const source=current(ctx.viewer);if(!source||!semanticCardsReady(source.db))throw new OperationError('unavailable','Private cards are not prepared for commands');admit(ctx);}};
+ const cardBase={...base,admit(ctx:Context){const source=current(ctx.viewer);if(!source||!semanticCardsReady(source.db))throw new OperationError('unavailable','Private cards are not prepared for commands');reserve(ctx);}};
+ const withCard=<Store extends {close():void}>(db:Database.Database,viewer:Viewer,kind:'person'|'project',open:(connection:CardConnection)=>Store,change:(store:Store)=>{card:{slug:string}})=>{
+  try{const store=open({database:db,actor:author(viewer),now:options.now});try{return {ids:[opaqueCardReference(db,kind,change(store).card.slug)]};}finally{store.close();}}
+  catch(error){if(error instanceof CardError)throw new OperationError('invalid',`Invalid ${kind} card`);throw error;}
+ };
  operations.register({...cardBase,doors:[...base.doors],name:'memory.personWrite',input:person.describe('Write a person card in your own declared private Memory source. Read the returned opaque ID with memoryPerson(id:) on GraphQL. Card claims never grant permission.'),output:cardIds,
-  prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>{
-   try{const store=new PeopleStore({database:db,actor:author(viewer),now:options.now});try{return {ids:[opaqueCardReference(db,'person',store.write(input).card.slug)]};}finally{store.close();}}catch(error){if(error instanceof CardError)throw new OperationError('invalid','Invalid person card');throw error;}
-  })});
+  prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>withCard(db,viewer,'person',config=>new PeopleStore(config),store=>store.write(input)))});
  operations.register({...cardBase,doors:[...base.doors],name:'memory.projectWrite',input:project.describe('Write a project card in your own declared private Memory source. Read the returned opaque ID with memoryProject(id:) on GraphQL. Links do not grant sharing.'),output:cardIds,
-  prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>{
-   try{const store=new ProjectsStore({database:db,actor:author(viewer),now:options.now});try{return {ids:[opaqueCardReference(db,'project',store.write(input).card.slug)]};}finally{store.close();}}catch(error){if(error instanceof CardError)throw new OperationError('invalid','Invalid project card');throw error;}
-  })});
+  prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>withCard(db,viewer,'project',config=>new ProjectsStore(config),store=>store.write(input)))});
  operations.register({...cardBase,doors:[...base.doors],name:'memory.personRestoreRevision',input:z.object({slug:z.string().min(1).max(64),revision_id:z.number().int().positive().max(2147483647)}).strict().describe('Restore one retained person-card revision in your own source. Read revision IDs with memoryPerson(id:){history{id}}.'),output:cardIds,
-  prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>{
-   try{const store=new PeopleStore({database:db,actor:author(viewer),now:options.now});try{return {ids:[opaqueCardReference(db,'person',store.revisionRestore(input).card.slug)]};}finally{store.close();}}catch(error){if(error instanceof CardError)throw new OperationError('invalid','Invalid person-card revision');throw error;}
-  })});
+  prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(_backend,db)=>withCard(db,viewer,'person',config=>new PeopleStore(config),store=>store.revisionRestore(input)))});
  const target=z.object({id:scopedId}).strict();
  const ownTarget=(db:Database.Database,viewer:Viewer,id:string)=>{
   if(viewer.kind!=='agent'||!id.startsWith(viewer.id+':'))throw new OperationError('denied','Current body Memory required');

@@ -47,7 +47,8 @@ service or real source is changed by this implementation.
 memory.personWrite and memory.projectWrite author cards in the current body's
 own declared source. They accept the existing card fields and merge behavior;
 they return scoped opaque IDs for memoryPerson(id:) or memoryProject(id:).
-A project alias resolves to its canonical card ID. Card statements and links
+A project alias resolves to its canonical card ID. Resolving a person opaque
+reference does not report a merge; mergedFrom names only an actual redirect. Card statements and links
 never grant access or change household membership or project sharing.
 
 memory.personRestoreRevision restores a retained revision belonging to the
