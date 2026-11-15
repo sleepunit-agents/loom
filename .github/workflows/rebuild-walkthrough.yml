@@ -36,3 +36,6 @@ jobs:
           name: rebuild-walkthrough-${{ github.event.pull_request.head.sha || github.sha }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/rebuild-walkthrough-${{ github.run_id }}-${{ github.run_attempt }}/
           if-no-files-found: error
+      - name: Show per-page results in this run
+        if: always()
+        run: node scripts/rebuild-ci-summary.mjs "${{ runner.temp }}/rebuild-walkthrough-${{ github.run_id }}-${{ github.run_attempt }}/report.json" >> "$GITHUB_STEP_SUMMARY"

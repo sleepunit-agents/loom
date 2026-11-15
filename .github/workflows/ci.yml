@@ -151,7 +151,7 @@ jobs:
             # 2026-11-14 seven unwired web modules merged past src/ui/web-reach.test.ts within the hour.
             # They are few and quick, so one shard always runs them.
             if [ "${{ matrix.shard }}" = 1 ]; then
-              mapfile -t guards < <(git ls-files 'src/**/*.test.ts' 'scripts/*.test.ts' 'web/src/**/*.test.ts' 'web/src/**/*.test.tsx' | grep -i -E 'reach|seam|architect|purity|no-side-effects|boundar|scripts/ci-')
+              mapfile -t guards < <(git ls-files 'src/**/*.test.ts' 'scripts/*.test.ts' 'scripts/*.test.mjs' 'web/src/**/*.test.ts' 'web/src/**/*.test.tsx' | grep -i -E 'reach|seam|architect|purity|no-side-effects|boundar|scripts/ci-')
               echo "Tree guards: ${guards[*]}"
               [ "${#guards[@]}" = 0 ] || npx vitest run "${guards[@]}" --passWithNoTests
             fi
