@@ -105,14 +105,14 @@ export class SecretRequests {
   /** Startup permissions use durable requests, so expiry, denial and explicit
    * revocation survive retries and process restarts. Rule edits do not revoke
    * an already issued grant. Aliases alone never authorize a startup handoff. */
-  grantAtStart(jobId: string): (typeof secretGrants.$inferSelect)[] {
+  grantAtStart(jobId: string, selected?: readonly string[]): (typeof secretGrants.$inferSelect)[] {
     z.string().min(1).max(200).parse(jobId);
     return this.db.transaction(() => {
       const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
       if (!job) throw new Error('Unknown startup job');
       const rules = this.db.select({ secret: secretRules.secret, minutes: secretRules.minutes })
         .from(secretRules).innerJoin(secretRuleAgents, eq(secretRules.secret, secretRuleAgents.secret))
-        .where(and(eq(secretRuleAgents.agent, job.agent), eq(secretRuleAgents.when, 'at_start'))).all();
+        .where(and(eq(secretRuleAgents.agent, job.agent), eq(secretRuleAgents.when, 'at_start'))).all().filter(rule => !selected || selected.includes(rule.secret));
       for (const rule of rules) {
         if (!secretHasValue(this.db, rule.secret)) continue;
         const id = startupRequestId(jobId, rule.secret);
@@ -123,7 +123,7 @@ export class SecretRequests {
       }
       const at = Date.parse(this.now());
       return this.db.select().from(secretGrants).where(and(eq(secretGrants.job, jobId), eq(secretGrants.agent, job.agent))).all()
-        .filter(grant => grant.request === startupRequestId(jobId, grant.secret)
+        .filter(grant => (!selected || selected.includes(grant.secret)) && grant.request === startupRequestId(jobId, grant.secret)
           && this.read(grant.request).state === 'allowed' && secretHasValue(this.db, grant.secret)
           && Date.parse(grant.grantedAt) <= at && at < Date.parse(grant.expiresAt));
     });

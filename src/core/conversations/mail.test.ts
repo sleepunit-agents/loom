@@ -190,3 +190,9 @@ it('refuses stale source references for a prepared plain Inbox item', async () =
   expect(() => commit()).toThrow('Mail references changed');
   expect(comms.threads.conversations.item(item.id).state).toBe('waiting');
 });
+
+it.each(['\n','\r','\v','\f','\u0085','\u2028','\u2029'])('delivers one line for dim plaintext and encrypted mail with separator %j',async separator=>{
+ const {db,thread,plain,send,mail}=await fixture();const ordinary=plain(separator+'  First line  '+separator+'Hidden line'),secret=await send(separator+'  Private line  '+separator+'Private hidden');
+ for(const id of [ordinary.id,secret.inboxItem!])db.update(inbox).set({volume:'dim'}).where(eq(inbox.id,id)).run();
+ expect((await mail.prepareTake(thread.conversation,'job-1'))().map(row=>row.words)).toEqual(['First line','Private line']);
+});
