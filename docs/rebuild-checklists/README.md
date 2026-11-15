@@ -54,3 +54,9 @@ where a report is regenerated.
 The browser job also writes the per-page table into the Actions run summary,
 so the coordinator can see failures and missing coverage before downloading the
 artifact. Keep the artifact for promise-level reasons, screenshots and raw facts.
+
+
+Before committing probe mappings, run `python3 scripts/rebuild-checklists.py --check`.
+It compares every generated file without changing any of them. CI runs the same
+check before collecting browser evidence. Put mappings in the generator, then
+regenerate the JSON copies; changes made only in generated JSON fail the check.

@@ -1,8 +1,12 @@
 """Copy promises from the approved pages; never edit those pages."""
-import hashlib,json,re
+import argparse,hashlib,json,re
 from pathlib import Path
 from html.parser import HTMLParser
 ROOT=Path(__file__).resolve().parents[1]
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--check',action='store_true',help='Fail if committed checklists differ, without writing them')
+args=parser.parse_args()
+mismatches=[]
 class Node:
  def __init__(self,tag='',attrs=(),parent=None): self.tag=tag;self.attrs=dict(attrs);self.parent=parent;self.children=[]
  def text(self): return re.sub(r'\s+',' ',''.join(c if isinstance(c,str) else c.text()+' ' for c in self.children)).strip()
@@ -39,8 +43,16 @@ ui={
  'secrets':[('Settings','Secrets live in Settings with requests and grants.',['Secrets','Requests','Grants'])],
 }
 # These source promises already have behavior probes; regeneration must keep them.
-action_promises={('tasks','Lets a person or an agent claim work, comment on it and close it.'):'taskLifecycle'}
-out=ROOT/'docs/rebuild-checklists';out.mkdir(exist_ok=True)
+action_promises={
+ ('tasks','Lets a person or an agent claim work, comment on it and close it.'):'taskLifecycle',
+ ('tasks','Shows what is ready to pick up, most urgent first.'):'taskStructure',
+ ('tasks','Groups work under a parent and holds back what is blocked.'):'taskStructure',
+ ('tasks','Other tasks. One parent at most, any number of blockers.'):'taskStructure',
+ ('tasks','A task sits under one parent at most. An epic groups other tasks and is never ready itself. A blocked task waits until the task blocking it closes.'):'taskStructure',
+ ('tasks','People and agents leave comments as work moves. Loom keeps them in order, oldest first, each with who wrote it and when.'):'taskComments',
+}
+out=ROOT/'docs/rebuild-checklists'
+if not args.check: out.mkdir(exist_ok=True)
 for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  p=Parser();p.feed(f.read_text());nodes=list(p.root.all());rows=[];seen=set()
  def add(text,section,probe=None):
@@ -71,5 +83,11 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
  if f.stem=='desk':add('Every app discovered in the launcher opens a tile.','',{'kind':'launcher'})
  # Carry source hashes so a changed approved page cannot silently reuse old results.
  obj={'page':f.stem,'title':next(n.text() for n in nodes if n.tag=='h1'),'ownerTask':owners[f.stem],'sourceSha256':hashlib.sha256(f.read_bytes()).hexdigest(),'promises':rows,'modelTables':[n.attrs['id'][2:] for n in nodes if n.tag=='details' and n.cls('tbl') and n.attrs.get('id','').startswith('t-')]}
- (out/(f.stem+'.json')).write_text(json.dumps(obj,indent=2,ensure_ascii=False)+'\n')
+ payload=(json.dumps(obj,indent=2,ensure_ascii=False)+'\n').encode('utf-8')
+ target=out/(f.stem+'.json')
+ if args.check:
+  if not target.is_file() or target.read_bytes()!=payload: mismatches.append(str(target.relative_to(ROOT)))
+ else: target.write_bytes(payload)
  print(f.stem,len(rows))
+
+if mismatches: raise SystemExit('Checklist regeneration differs: '+', '.join(mismatches)+'. Keep probe mappings in the generator and regenerate the copies.')

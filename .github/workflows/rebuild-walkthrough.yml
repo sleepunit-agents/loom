@@ -16,6 +16,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24.x
+      - name: Check that page evidence survives regeneration
+        run: |
+          nice -n 19 python3 scripts/rebuild-checklists.test.py
+          nice -n 19 python3 scripts/rebuild-checklists.py --check
       - name: Build the actual program
         env:
           ONNXRUNTIME_NODE_INSTALL_CUDA: skip
