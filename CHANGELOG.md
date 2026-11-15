@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- Browser sign-in confirmation forms retain their origin check while keeping the link code out of referrers.
+
 - Add a shared-data server composition for authenticated queries, Tasks, member appearance and sign-in on one initialized database.
 
 - CI: test shards 1 and 2 run on loom's own runners and 3 and 4 on GitHub's when the runner switch is on; CodeQL runs nightly and on request instead of on every pull request and push.
