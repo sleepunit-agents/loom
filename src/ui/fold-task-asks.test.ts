@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { foldTaskAsks } from './handler.js';
-import { answeredAsk } from '../needs-resolve.js';
+import { answeredAsk } from '../legacy-piece-checkers.js';
 import type { HomeAsk } from './render.js';
 
 const TASKS = 'tasks';
