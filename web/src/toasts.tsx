@@ -16,7 +16,7 @@ export default function Toasts({ notes, wide, dismiss, undo }: { notes: Note[]; 
           {n.undo && undo && <ToastAction altText={n.undo.label ?? 'Undo'} onClick={() => undo(n)}>{n.undo.label ?? 'Undo'}</ToastAction>}
         </Toast>
       ))}
-      {/* A phone shows toasts at the top, clear of the dock; a desktop keeps them bottom right (index.css, unlayered:
+      {/* A phone shows toasts at the top, clear of the dock; a desktop keeps them above the dock at the bottom right (index.css, unlayered:
           toast.css's own placement outranks a utility class). */}
       <ToastViewport />
     </ToastProvider>

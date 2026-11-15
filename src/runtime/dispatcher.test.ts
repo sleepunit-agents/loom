@@ -35,7 +35,7 @@ function fixture() {
 it('claims only on the selected worker and delivers an execution-ready snapshot once', () => {
   const f = fixture();
   expect(f.runtime.next('second')).toBeUndefined();
-  expect(f.runtime.next('first')).toEqual({ run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
+  expect(f.runtime.next('first')).toEqual({ thread:null, run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
     model: 'primary', account: 'account', harness: 'codex', brief: '', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();

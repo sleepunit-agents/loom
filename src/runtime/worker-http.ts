@@ -8,7 +8,7 @@ import type { WorkerControl } from './worker.js';
 import type { QuotaWindow } from './quota.js';
 export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
-  conversation: z.string().nullable(), model: z.string(), account: z.string(),
+  conversation: z.string().nullable(), thread: z.string().min(1).nullable().optional(), model: z.string(), account: z.string(),
   harness: z.string().min(1), brief: z.string(),
   run: z.object({ policy: z.object({
     deniedTools: z.array(z.object({ pattern: z.string().min(1), guestsOnly: z.boolean() })),
