@@ -1,5 +1,5 @@
 import { Button } from '../../kit';
-import { Composer } from '../comms/composer';
+import { HomeMessageComposer } from './home-composer';
 import { stamp } from './time';
 import { threadPath, type Summaries } from './home-comms-data';
 export { useHomeComms, threadPath } from './home-comms-data';
@@ -13,5 +13,5 @@ export function HomeConversations({agent,name,reading,go}:{agent:string;name:str
  </section>;
 }
 export function HomeComposer({agent,name,reading,go}:{agent:string;name:string;reading?:Summaries;go(path:string):void}) {
- return <section className="desk-home-compose" aria-label={`Message ${name}`}><h3>Message {name}</h3>{reading?.agents.includes(agent)?<Composer key={`${reading.member}:${agent}`} member={reading.member} agent={agent} onOpened={id=>go(threadPath(id))} enabled />:<p>Connect to start a conversation.</p>}</section>;
+ return <section className="desk-home-compose" aria-label={`Message ${name}`}><h3>Message {name}</h3>{reading?.agents.includes(agent)?<HomeMessageComposer key={`${reading.member}:${agent}`} member={reading.member} agent={agent} onOpened={id=>go(threadPath(id))} />:<p>Connect to start a conversation.</p>}</section>;
 }
