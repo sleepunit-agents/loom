@@ -1,5 +1,9 @@
 /** Shared-data transport composition. No schema creation or legacy credentials. */
-import { sql } from 'drizzle-orm';
+import { getTableColumns, sql } from 'drizzle-orm';
+import { bridgeConnections, bridgeIncoming } from './core/data/schema.js';
+import { bridgeSecretsTables, bridgeSecretsVisibility } from './core/data/bridge-secrets-visibility.js';
+import { BridgeQueries, bridgeQueryFields } from './pieces/bridges/queries.js';
+import { bridgeSecretsReaderFields } from './pieces/bridges/readers.js';
 import { members } from './core/data/schema.js';
 import type { IncomingMessage } from 'node:http';
 import type { Viewer } from './policy.js';
@@ -23,16 +27,31 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     return auth && { ...auth, valid: () => admitted() && auth.valid() };
   };
   const live = new DataLive();
+  const bridges = new BridgeQueries(db, () => clock.now());
+  let activityRead = false;
+  const ownFields = { ...bridgeSecretsReaderFields(db), ...bridgeQueryFields(bridges, viewer => {
+    const visibility = bridgeSecretsVisibility(viewer);
+    return { connections: visibility.bridgeConnections!(getTableColumns(bridgeConnections)), incoming: visibility.bridgeIncoming!(getTableColumns(bridgeIncoming)) };
+  }, () => { activityRead = true; schedule(); }) };
+  let cancelDeadline: (() => void) | undefined;
+  let stopped = false;
+  const schedule = () => {
+    cancelDeadline?.(); cancelDeadline = undefined;
+    if (stopped || !activityRead) return;
+    const at = bridges.nextDeadline();
+    if (at !== undefined) cancelDeadline = clock.at(at, () => { live.changed(); schedule(); });
+  };
+  // Start deadline scans only after an actual activity selection succeeds.
   // One explicit read projection for both outside doors. Credentials, receipt
   // plumbing and unrelated domains stay outside the generated schema.
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
     tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
-      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences'],
-    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer),
+      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', ...bridgeSecretsTables],
+    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer),
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
     },
-  }), fields);
+  }), { ...fields, ...ownFields });
   const socket = dataSocket({ live, clock, originAllowed,
     authenticate(request) {
       const headers = new Headers();
@@ -46,13 +65,13 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
     },
     schema,
   });
-  const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => live.changed() });
-  const http = dataHttp(db, authenticate, publicOrigin, schema);
+  const writes = new DataWrites(db, { refreshAccess: () => socket.refreshAccess(), changed: () => { live.changed(); schedule(); } });
+  const http = dataHttp(db, authenticate, publicOrigin, schema, {}, () => live.epoch(), () => clock.now());
   let closing: Promise<void> | undefined;
   return {
     http,
     attach: socket.attach,
-    changed() { socket.refreshAccess(); live.changed(); },
+    changed() { socket.refreshAccess(); live.changed(); schedule(); },
     writes,
     close() {
       if (closing) return closing;
@@ -60,6 +79,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       closing = Promise.resolve().then(async () => {
         try { await socketClosing; } finally { await http.drain(); }
       });
+      stopped = true; cancelDeadline?.();
       http.stop();
       const socketClosing = socket.close();
       live.close();
