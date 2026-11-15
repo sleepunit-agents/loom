@@ -33,7 +33,7 @@ it('registers a passkey on the actual shared door and signs in with verified sin
  key.counter=1;const c=await challenge();const response=await f.post('/login/passkey',key.assertion(c));expect(response.status).toBe(200);expect(response.headers.get('set-cookie')).toContain('HttpOnly');
  const cookie=response.headers.get('set-cookie')!.split(';')[0];
  expect(await(await f.root.http.request(origin+'/auth/session',{headers:{cookie}})).json()).toEqual({viewer:{kind:'member',id:'sam'}});
- expect((await f.post('/login/passkey',key.assertion(c))).status).toBe(401);
+ key.counter=2;expect((await f.post('/login/passkey',key.assertion(c))).status).toBe(401);key.counter=1;
  expect((await f.post('/login/passkey',key.assertion(await challenge()))).status).toBe(401);
  key.counter=2;expect((await f.post('/login/passkey',key.assertion(await challenge(),true))).status).toBe(401);
  expect((await f.post('/login/passkey',key.assertion(await challenge()))).status).toBe(200);
@@ -96,4 +96,24 @@ it('refuses sign-in effects if shutdown starts after request admission but befor
  vi.spyOn(f.root.writes,'run').mockImplementationOnce(action=>{closed=f.root.close();return run(action);});
  expect((await f.post('/api/signin/link')).status).toBe(401);await closed;
  expect(f.client.prepare('SELECT * FROM signin_links').all()).toEqual([]);
+});
+
+it('independently binds registration to both the browser and its token',async()=>{
+ const f=fixture(),key=new Authenticator();
+ const c1=(await(await f.post('/passkeys/options')).json()).challenge;
+ const sameToken='e'.repeat(64),at=new Date(f.clock.now()).toISOString();
+ f.db.insert(sessions).values({id:hash(sameToken),token:hash(f.raw.sam),device:'Second browser',via:'link',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
+ expect((await f.post('/passkeys',key.registration(c1),'sam',{cookie:'loom_ui='+sameToken})).status).toBe(401);
+ const c2=(await(await f.post('/passkeys/options')).json()).challenge;
+ f.db.update(sessions).set({token:hash(f.raw.other)}).where(eq(sessions.id,hash(f.cookies.sam))).run();
+ expect((await f.post('/passkeys',key.registration(c2))).status).toBe(401);expect(f.db.select().from(passkeys).all()).toEqual([]);
+});
+it('keeps stale logout authority from changing browser rows at transaction entry',async()=>{
+ const f=fixture(),run=f.root.writes.run.bind(f.root.writes),before=f.db.select().from(sessions).all();
+ vi.spyOn(f.root.writes,'run').mockImplementationOnce(action=>{f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.member,'sam')).run();return run(action);});
+ expect((await f.post('/logout')).status).toBe(200);expect(f.db.select().from(sessions).all()).toEqual(before);
+});
+it('expires an otherwise valid passkey login challenge before any session is created',async()=>{
+ const f=fixture(),key=await f.add(),challenge=(await(await f.post('/login/passkey/options')).json()).challenge;key.counter=1;const before=f.db.select().from(sessions).all();f.clock.advance(300000);
+ expect((await f.post('/login/passkey',key.assertion(challenge))).status).toBe(401);expect(f.db.select().from(sessions).all()).toEqual(before);
 });

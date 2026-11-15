@@ -116,6 +116,7 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
     // changes. Authenticate the cookie itself; an unrelated bearer cannot help.
     const auth = cookie ? authenticate(new Request(c.req.url, { headers: { cookie: `loom_ui=${cookie}` } })) : undefined;
     if (auth?.valid() && auth.viewer.kind === 'member' && cookie) write(() => {
+      if(!auth.valid())return;
       const id = fingerprint(cookie);
       options.db.delete(notificationDevices).where(eq(notificationDevices.session, id)).run();
       options.db.delete(sessions).where(eq(sessions.id, id)).run();
