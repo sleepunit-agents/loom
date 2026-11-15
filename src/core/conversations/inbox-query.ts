@@ -1,6 +1,6 @@
 /** Unified Inbox reads for the generated query composition. The authenticated
  * door supplies current SQL visibility; no default policy or new transport. */
-import { and, asc, desc, eq, getTableColumns, is, SQL, type AnyColumn } from 'drizzle-orm';
+import { and, asc, desc, eq, getTableColumns, is, sql, SQL, type AnyColumn } from 'drizzle-orm';
 import { GraphQLBoolean, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../policy.js';
 import type { DataDatabase } from '../data/database.js';
@@ -39,7 +39,7 @@ export class InboxQueries {
       filter.state ? eq(inbox.state, filter.state) : undefined,
       filter.source ? eq(inbox.source, filter.source) : undefined,
       filter.agent ? eq(inbox.agent, filter.agent) : undefined))
-      .orderBy(desc(inbox.at), desc(inbox.id));
+      .orderBy(desc(sql`julianday(${inbox.at})`), desc(inbox.id));
   }
 
   /** Search the recipient's whole mailbox before paging. Private text is opened
@@ -84,7 +84,7 @@ export class InboxQueries {
     if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error('Invalid action result limit');
     if (viewer.kind !== 'member') return [];
     return this.db.select().from(actionResults).where(eq(actionResults.member, viewer.id))
-      .orderBy(desc(actionResults.at), desc(actionResults.id)).limit(limit).all();
+      .orderBy(desc(sql`julianday(${actionResults.at})`), desc(actionResults.id)).limit(limit).all();
   }
   refs(viewer: Viewer, id: string): string[] {
     return this.db.select({ ref: inboxRefs.ref }).from(inboxRefs).innerJoin(inbox, eq(inbox.id, inboxRefs.item))

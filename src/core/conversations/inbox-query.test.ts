@@ -232,3 +232,18 @@ it('searches each remaining question body field and a long literal passage', asy
   const item = f.comms.threads.conversations.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', member: 'alice', words: passage });
   expect((await f.service.search(alice, { search: passage })).map(i => i.id)).toEqual([item.id]);
 });
+
+it('orders mailbox pages and action notices by actual time across timestamp precision', async () => {
+  const f = await fixture(), cvs = f.comms.threads.conversations;
+  const older = cvs.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', words: 'Older', member: 'alice' });
+  const newer = cvs.send({ toKind: 'person', to: 'alice', source: 'notice', fromKind: 'agent', words: 'Newer', member: 'alice' });
+  f.db.update(inbox).set({ at: '2026-11-14T18:00:00Z' }).where(eq(inbox.id, older.id)).run();
+  f.db.update(inbox).set({ at: '2026-11-14T18:00:00.500Z' }).where(eq(inbox.id, newer.id)).run();
+  expect(f.service.list(alice, { source: 'notice', limit: 1 }).map(row => row.id)).toEqual([newer.id]);
+  expect(f.service.list(alice, { source: 'notice', limit: 1, offset: 1 }).map(row => row.id)).toEqual([older.id]);
+  f.db.insert(actionResults).values([
+    { id: 'older', member: 'alice', at: '2026-11-14T18:00:00Z', ok: true, text: 'Older', page: '/inbox' },
+    { id: 'newer', member: 'alice', at: '2026-11-14T18:00:00.500Z', ok: true, text: 'Newer', page: '/inbox' },
+  ]).run();
+  expect(f.service.results(alice, 1).map(row => row.id)).toEqual(['newer']);
+});

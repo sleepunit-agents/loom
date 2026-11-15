@@ -121,3 +121,12 @@ it('returns the existing private question envelope intact and performs no writes
   expect(f.statements.filter(statement => /^\s*(insert|update|delete|replace|create|alter|drop)\b/i.test(statement))).toEqual([]);
   expect(f.service.thread(alice, f.thread.id)?.readSeq).toBe(0);
 });
+
+it('orders and pages Comms threads by time rather than ISO timestamp precision', async () => {
+  const f = await fixture();
+  const newer = f.comms.threads.open({ member: 'alice', agent: 'art', title: 'Newer' });
+  f.db.update(threads).set({ lastAt: '2026-11-14T18:00:00Z' }).where(eq(threads.id, f.thread.id)).run();
+  f.db.update(threads).set({ lastAt: '2026-11-14T18:00:00.500Z' }).where(eq(threads.id, newer.id)).run();
+  expect(f.service.list(alice, { limit: 1 }).map(row => row.id)).toEqual([newer.id]);
+  expect(f.service.list(alice, { limit: 1, offset: 1 }).map(row => row.id)).toEqual([f.thread.id]);
+});
