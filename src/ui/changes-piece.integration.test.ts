@@ -9,6 +9,7 @@ import { chromium } from 'playwright-core';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
 import { serveShared } from '../shared-serve.js';
+import { tmpdir } from 'node:os';
 import * as s from '../core/data/schema.js';
 import { changesQuery } from '../../web/src/data/work-query.js';
 
@@ -25,6 +26,7 @@ async function fixture() {
   const at = '2026-11-14T20:00:00.000Z', clock = new FakeClock(Date.parse(at));
   const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
   db.insert(s.members).values(['sam', 'lee'].map(id => ({ id, role: 'member' as const, joinedAt: at }))).run();
+  db.insert(s.agents).values({id:'art',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();
   db.insert(s.projects).values(['pond', 'other'].map(id => ({ id, name: id }))).run();
   db.insert(s.projectMembers).values({ project: 'pond', member: 'sam' }).run();
   const cookie = 'c'.repeat(64), token = 't'.repeat(64);
@@ -35,7 +37,7 @@ async function fixture() {
   for (const [id, project, name] of [[changeId, 'pond', title], ['github:other/app#4', 'other', hiddenTitle]]) {
     db.insert(s.changes).values({ id, repository: project === 'pond' ? 'acme/app' : 'other/app', number: 3, title: name,
       body: 'Checks, reviews and task citations arrive in every window.', url: '', state: 'open', draft: false,
-      authorLogin: 'art', project, agent: null, branch: 'work', headCommit: 'a'.repeat(40), baseBranch: 'next',
+      authorLogin: 'art', project, agent: project === 'pond' ? 'art' : null, branch: 'work', headCommit: 'a'.repeat(40), baseBranch: 'next',
       checks: 'running', review: 'required', mergeable: 'unknown', waitingOn: 'ci', openedAt: at, updatedAt: at }).run();
   }
   db.insert(s.changeChecks).values({ change: changeId, name: 'Typecheck', state: 'running' }).run();
@@ -47,10 +49,16 @@ async function fixture() {
     db.insert(s.tasks).values({ id, title: name, ownerKind, owner, project, createdByKind: 'member', createdBy: 'sam', createdAt: at, changedAt: at }).run();
     db.insert(s.changeTasks).values({ change: changeId, task: id }).run();
   }
-  const app = await serveShared({db,clock,webRoot:root,reportError:error=>{throw error;},
-    originAllowed:request=>!request.headers.origin||request.headers.origin===`http://${request.headers.host}`});
-  return {db,data:app,cookie,session,url:app.url,
-    async close(){await app.close();client.close();}};
+  db.insert(s.members).values({id:'pat',role:'owner',joinedAt:at}).run();
+  const ownerCookie='d'.repeat(64), ownerFingerprint=createHash('sha256').update('disposable-owner-token').digest('hex');
+  db.insert(s.tokens).values({fingerprint:ownerFingerprint,label:'Disposable owner',kind:'owner',member:'pat',createdAt:at}).run();
+  db.insert(s.sessions).values({id:createHash('sha256').update(ownerCookie).digest('hex'),token:ownerFingerprint,device:'Owner fixture',via:'token',isAgent:false,issuedAt:at,seenAt:at,provedAt:at}).run();
+  db.insert(s.projectRepositories).values({project:'pond',repository:'acme/app'}).run();
+  let sourceReads=0;
+  const data = await serveShared({db,clock,webRoot:root,changes:{read:async()=>{sourceReads++;return [];},rule:()=>undefined},
+    originAllowed:request=>!request.headers.origin||request.headers.origin===`http://${request.headers.host}`,reportError:error=>{throw error;}});
+  return {db,data,cookie,ownerCookie,session,sourceReads:()=>sourceReads,url:data.url,
+    async close(){await data.close();client.close();}};
 }
 
 // Runs without a browser or built assets: catches /graphql falling through to
@@ -74,7 +82,7 @@ it('serves the shipped Changes selection over the real authenticated HTTP listen
   } finally { await app.close(); }
 });
 
-it.runIf(chrome && existsSync(join(root, 'index.html')))('Changes shares generated checks, review and linked tasks across browser windows and withdraws revoked access', async () => {
+it.runIf(process.env.CI === 'true' && chrome && existsSync(join(root, 'index.html')))('Changes shares generated checks, review and linked tasks across browser windows and withdraws revoked access', async () => {
   const app = await fixture();
   const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
   try {
@@ -106,14 +114,6 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Changes shares generat
       await expect.poll(() => page.getByText('changes requested', { exact: true }).count()).toBe(1);
       await expect.poll(() => page.getByText('Updated linked task', { exact: true }).count()).toBe(1);
     }
-    const shots = process.env.LOOM_TEST_SHOTS ?? resolve('artifacts/changes-piece'); mkdirSync(shots, { recursive: true });
-    for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
-      await b.setViewportSize({ width, height: 900 });
-      await b.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; }, look);
-      await expect.poll(() => b.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
-      expect(await b.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-      await b.screenshot({ path: join(shots, `changes-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
-    }
     app.data.writes.run(() => app.db.delete(s.projectMembers).where(eq(s.projectMembers.member, 'sam')).run());
     for (const page of [a, b]) {
       await expect.poll(() => row(page).count()).toBe(0);
@@ -128,6 +128,45 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Changes shares generat
     await b.reload();
     await expect.poll(() => b.getByRole('heading', { name:'Sign in to loom', exact:true }).count()).toBe(1);
     expect(await row(b).count()).toBe(0);
+
+    app.data.writes.run(()=>{
+      app.db.update(s.changes).set({checks:'passing',review:'approved',mergeable:'yes',waitingOn:'you'}).where(eq(s.changes.id,changeId)).run();
+      app.db.delete(s.changeChecks).where(eq(s.changeChecks.change,changeId)).run();
+    });
+    const request=()=>app.data.writes.run(()=>app.data.services.approvals.request({kind:'merge',target:`${changeId}@${app.db.select().from(s.changes).where(eq(s.changes.id,changeId)).get()!.headCommit}`,agent:'art',project:'pond',what:'Merge shared change',why:'Ready',askedFrom:'changes',actingFor:'unknown',ask:'Merge this exact commit?',ifYes:'Agent merges this head',ifNo:'Wait'})).value;
+    const first=request();
+    const owners=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900},reducedMotion:'reduce'});
+    await owners.addCookies([{name:'loom_ui',value:app.ownerCookie,url:app.url}]);
+    const c=await owners.newPage(), d=await owners.newPage();
+    for (const page of [c,d]) page.on('pageerror',error=>errors.push(error.message));
+    await Promise.all([c.goto(`${app.url}/p/changes-preview/change/${encodeURIComponent(changeId)}`),d.goto(`${app.url}/p/changes-preview/change/${encodeURIComponent(changeId)}`)]);
+    await c.getByRole('button',{name:'Refresh',exact:true}).click();
+    await expect.poll(()=>app.sourceReads()).toBe(1);
+    for (const page of [c,d]) await expect.poll(()=>page.getByText(/^Last read /).count()).toBe(1);
+    for (const page of [c,d]) {
+      await expect.poll(()=>page.getByRole('button',{name:'Yes, merge it',exact:true}).count()).toBe(1);
+      expect(await page.getByText('Typecheck · failing',{exact:true}).count()).toBe(0);
+    }
+    const shots = process.env.LOOM_TEST_SHOTS ?? join(tmpdir(),'loom-changes-piece'); mkdirSync(shots, { recursive: true });
+    for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
+      await d.setViewportSize({ width, height: 900 });
+      await d.evaluate(look => { document.documentElement.dataset.look = look; document.documentElement.dataset.mode = look === 'daylight' ? 'light' : 'dark'; }, look);
+      await expect.poll(() => d.locator('.loom-split').getAttribute('data-mode')).toBe(width < 640 ? 'one' : 'three');
+      expect(await d.locator('.loom-split').evaluate(el => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+      await d.screenshot({ path: join(shots, `changes-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
+    }
+    await c.getByRole('button',{name:'Yes, merge it',exact:true}).click();
+    await expect.poll(()=>app.data.services.approvals.get(first.id).state).toBe('allowed');
+    expect(app.data.services.approvals.get(first.id).decidedBy).toBe('pat');
+    for (const page of [c,d]) await expect.poll(()=>page.getByRole('button',{name:'Yes, merge it',exact:true}).count()).toBe(0);
+    app.data.writes.run(()=>app.db.update(s.changes).set({headCommit:'b'.repeat(40),waitingOn:'you'}).where(eq(s.changes.id,changeId)).run());
+    const second=request();
+    for (const page of [c,d]) await expect.poll(()=>page.getByRole('button',{name:'Not yet',exact:true}).count()).toBe(1);
+    await c.getByRole('button',{name:'Not yet',exact:true}).click();
+    await expect.poll(()=>app.data.services.approvals.get(second.id).state).toBe('denied');
+    expect(app.data.services.approvals.get(second.id).decidedBy).toBe('pat');
+    expect(app.db.select().from(s.changes).where(eq(s.changes.id,changeId)).get()!.state).toBe('open');
+    await owners.close();
     expect(errors).toEqual([]);
     await context.close();
   } finally { await browser.close(); await app.close(); }

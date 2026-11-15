@@ -16,8 +16,8 @@ export class Dispatcher {
   }
   /** Polls also report machine health when idle or report-only. Placement and
    * claim share one transaction, so a second poll cannot receive the same job. */
-  next(box: string) {
-    this.machines.heartbeat(box);
+  next(box: string, facts?: readonly string[]) {
+    this.machines.heartbeat(box, facts);
     return this.db.transaction(() => {
       const machine = this.liveMachine(box);
       if (machine.reportOnly) return;

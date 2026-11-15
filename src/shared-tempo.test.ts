@@ -57,7 +57,7 @@ it('fails settings closed without chat provenance and forwards configured adapte
  const f=fixture();
  expect((await f.call('tempo.proposeSettings',{who:{kind:'agent',id:'art'},patch:{settleSeconds:60}},'settings')).status).toBe(403);
  const settings=vi.fn(()=>({id:'proposal'})),admit=vi.fn(()=>true),operation=vi.fn(),instructions=vi.fn(()=> 'From repository');
- const g=fixture({settings,admit,operation,instructions});
+ const g=fixture({settings,admit,operation,instructions,repository:'/must-not-be-read'});
  expect(await (await g.call('tempo.proposeSettings',{who:{kind:'agent',id:'art'},patch:{settleSeconds:60}},'settings')).json()).toEqual({ok:true,value:{id:'proposal'}});
  expect(settings).toHaveBeenCalledWith({kind:'member',id:'owner'},{kind:'agent',id:'art'},{settleSeconds:60});
  expect((await g.call('tempo.set',{...g.trigger,instructions:null,file:'routines/check.md'},'file')).status).toBe(200);
@@ -153,6 +153,25 @@ it('withdraws a selected notice when recipient sharing changes during a sibling 
 });
 
 
+it('loads configured repository instructions at firing through the actual shared command',async()=>{
+ const {mkdtempSync,mkdirSync,writeFileSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os'),{join}=await import('node:path');
+ const repository=mkdtempSync(join(tmpdir(),'tempo-root-lane-'));
+ try{
+  mkdirSync(join(repository,'routines'));writeFileSync(join(repository,'routines/check.md'),'Old words');
+  const f=fixture({repository});
+  const trigger={...f.trigger,times:new Date(f.clock.now()+1000).toISOString(),instructions:null,file:'routines/check.md'};
+  expect((await f.call('tempo.set',trigger,'file-backed')).status).toBe(200);
+  expect(f.db.select().from(inbox).all()).toEqual([]);
+  writeFileSync(join(repository,'routines/check.md'),'Read at firing');f.clock.advance(1000);
+  expect(f.db.select().from(inbox).all()).toMatchObject([{source:'trigger',words:'Read at firing'}]);
+  const unsafe={...trigger,id:'unsafe',times:new Date(f.clock.now()+1000).toISOString(),file:'missing'};
+  expect((await f.call('tempo.set',unsafe,'missing-file')).status).toBe(200);f.clock.advance(1000);
+  expect(f.client.prepare("SELECT state FROM triggers WHERE id='unsafe'").get()).toEqual({state:'failed'});
+  expect(f.db.select().from(inbox).all()).toHaveLength(1);
+ }finally{rmSync(repository,{recursive:true,force:true});}
+});
+
 it('records scheduled Tempo work by its fixed job name only while Measuring is on',async()=>{
  const f=fixture(undefined,true);
  await f.root.ready;
@@ -163,4 +182,18 @@ it('records scheduled Tempo work by its fixed job name only while Measuring is o
  expect((await g.call('tempo.set',g.trigger,'set')).status).toBe(200);
  g.clock.advance(5000);
  expect(g.db.select().from(timingDays).all()).toEqual([]);
+});
+
+it('retries an unconfirmed Run now with the same receipt rather than delivering duplicate work',async()=>{
+ const {tempoActions}=await import('../web/src/pieces/tempo/commands.js');
+ const f=fixture();expect((await f.call('tempo.set',{...f.trigger,times:'23:59',lifespan:'until-stopped'},'standing')).status).toBe(200);
+ let lose=true;const ids:string[]=[];
+ const actions=tempoActions(async(input,init)=>{
+  ids.push(JSON.parse(String(init?.body)).id);const headers=new Headers(init?.headers);headers.set('authorization','Bearer '+credential);
+  const response=await f.root.http.fetch(new Request(new URL(String(input),'http://loom'),{...init,headers}));
+  if(lose){lose=false;throw new Error('Lost reply');}return response;
+ });
+ await expect(actions.runNow('delivery')).rejects.toThrow('Lost reply');expect(f.db.select().from(inbox).all()).toHaveLength(1);
+ await actions.runNow('delivery');expect(f.db.select().from(inbox).all()).toHaveLength(1);expect(ids[1]).toBe(ids[0]);
+ await actions.runNow('delivery');expect(f.db.select().from(inbox).all()).toHaveLength(2);expect(ids[2]).not.toBe(ids[1]);
 });

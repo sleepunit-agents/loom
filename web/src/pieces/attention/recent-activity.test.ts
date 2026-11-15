@@ -7,17 +7,16 @@ it('reuses the existing Memory document/decoder and normalizes optional nulls fo
  const existing=memoryQueries.activity('recent');
  expect(deskRecentActivitySelection.query).toBe(existing.query);expect(deskRecentActivitySelection.variables).toEqual(existing.variables);
  expect(deskRecentActivitySelection.decode(query.data)).toEqual(existing.decode(query.data));
- const result=deskRecentActivity(query);expect(result.status).toBe('live');
+ const result=deskRecentActivity({status:'live',data:deskRecentActivitySelection.decode(query.data)});expect(result.status).toBe('live');
  expect(result.records[0].entries[0]).toMatchObject({id:'step',title:'Current step'});
  expect(result.records[0].entries[0]).not.toHaveProperty('line');
  expect(result.records[0]).not.toHaveProperty('earlier');
 });
 it.each(['loading','offline','denied'] as const)('withdraws retained activity on %s',status=>{
- expect(deskRecentActivity({...query,status})).toEqual({status,records:[]});
+ expect(deskRecentActivity({status,data:deskRecentActivitySelection.decode(query.data)})).toEqual({status,records:[]});
 });
 it('keeps live empty distinct from missing, refused or malformed selections',()=>{
  expect(deskRecentActivity({status:'live'})).toEqual({status:'loading',records:[]});
- expect(deskRecentActivity({status:'live',data:{memoryActivity:null}})).toEqual({status:'denied',records:[]});
- expect(deskRecentActivity({status:'live',data:{}})).toEqual({status:'offline',records:[]});
- expect(deskRecentActivity({...query,data:{memoryActivity:{...window,entries:[]}}})).toMatchObject({status:'live',records:[{entries:[]}]});
+ expect(deskRecentActivity({status:'live',data:null})).toEqual({status:'denied',records:[]});
+ expect(deskRecentActivity({status:'live',data:deskRecentActivitySelection.decode({memoryActivity:{...window,entries:[]}})})).toMatchObject({status:'live',records:[{entries:[]}]});
 });

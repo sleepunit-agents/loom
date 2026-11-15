@@ -20,7 +20,7 @@ export class SecretRequests {
   private readonly mail: Conversations;
   constructor(readonly db: DataDatabase, readonly now: () => string = () => new Date().toISOString()) { this.mail = new Conversations(db, now); }
 
-  request(raw: SecretRequestInput): Request {
+  request(raw: SecretRequestInput, when: 'on_request' | 'at_start' = 'on_request'): Request {
     const input = requestInput.parse(raw);
     return this.db.transaction(() => {
       const old = this.db.select().from(secretRequests).where(eq(secretRequests.id, input.id)).get();
@@ -36,7 +36,7 @@ export class SecretRequests {
       if (input.conversation && this.db.select().from(conversations).where(eq(conversations.id, input.conversation)).get()?.agent !== input.agent) throw new Error('Conversation does not belong to this agent');
       const row = this.db.insert(secretRequests).values({ ...input, state: 'pending', always: false, askedAt: this.now() }).returning().get();
       const rule = this.db.select().from(secretRules).where(eq(secretRules.secret, input.secret)).get();
-      const applies = rule && this.db.select().from(secretRuleAgents).where(and(eq(secretRuleAgents.secret, input.secret), eq(secretRuleAgents.agent, input.agent), eq(secretRuleAgents.when, 'on_request'))).get();
+      const applies = rule && this.db.select().from(secretRuleAgents).where(and(eq(secretRuleAgents.secret, input.secret), eq(secretRuleAgents.agent, input.agent), eq(secretRuleAgents.when, when))).get();
       const decision = rule ? applies ? rule.answer : 'ask' : this.db.select().from(household).get()?.secretsDefault ?? 'ask';
       if (decision !== 'ask') return this.settle(row, 'rule', decision === 'auto', false, Math.min(input.minutes, rule?.minutes ?? input.minutes));
       const owners = this.db.select().from(members).where(eq(members.role, 'owner')).all();
@@ -59,7 +59,8 @@ export class SecretRequests {
         const answer = allow ? 'auto' : 'never';
         const old = this.db.select().from(secretRules).where(eq(secretRules.secret, row.secret)).get();
         const agents = old?.answer === answer ? this.db.select().from(secretRuleAgents).where(eq(secretRuleAgents.secret, row.secret)).all().map(a => ({ agent: a.agent, when: a.when })) : [];
-        if (!agents.some(a => a.agent === row.agent && a.when === 'on_request')) agents.push({ agent: row.agent, when: 'on_request' });
+        const when = row.job && row.id === startupRequestId(row.job, row.secret) ? 'at_start' : 'on_request';
+        if (!agents.some(a => a.agent === row.agent && a.when === when)) agents.push({ agent: row.agent, when });
         this.setRule({ secret: row.secret, answer, minutes: row.minutes, agents });
       }
       return this.settle(row, by, allow, always, row.minutes);
@@ -95,43 +96,36 @@ export class SecretRequests {
     });
   }
 
-  grantFor(secret: string, agent: string, job?: string): typeof secretGrants.$inferSelect | undefined {
+  grantFor(secret: string, agent: string, job?: string, request?: string): typeof secretGrants.$inferSelect | undefined {
     if (!secretHasValue(this.db, secret)) return;
     const at = this.now();
-    return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent), sql`julianday(${secretGrants.expiresAt}) > julianday(${at})`, sql`julianday(${secretGrants.grantedAt}) <= julianday(${at})`, or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
+    return this.db.select().from(secretGrants).where(and(eq(secretGrants.secret, secret), eq(secretGrants.agent, agent), request ? eq(secretGrants.request, request) : undefined, sql`julianday(${secretGrants.expiresAt}) > julianday(${at})`, sql`julianday(${secretGrants.grantedAt}) <= julianday(${at})`, or(isNull(secretGrants.job), job ? eq(secretGrants.job, job) : isNull(secretGrants.job)))).get();
   }
 
-  /** Trusted job-start composition only: derive the agent from the saved job.
-   * Explicit at_start permission is separate from on_request auto permission;
-   * 'ask' permits an explicitly listed startup agent; 'never' denies it. Household
-   * defaults and house alias configuration alone do not grant startup access.
-   * No values leave here: composition commits, then uses SecretDelivery for each
-   * selected house secret. It binds the authenticated sink and job lifecycle.
-   * Retries keep the original deadline, including after expiry or a rule edit.
-   * Existing grants survive rule edits; revoke them separately if needed. */
-  grantAtStart(jobId: string): (typeof secretGrants.$inferSelect)[] {
+  /** Startup permissions use durable requests, so expiry, denial and explicit
+   * revocation survive retries and process restarts. Rule edits do not revoke
+   * an already issued grant. Aliases alone never authorize a startup handoff. */
+  grantAtStart(jobId: string, selected?: readonly string[]): (typeof secretGrants.$inferSelect)[] {
     z.string().min(1).max(200).parse(jobId);
     return this.db.transaction(() => {
       const job = this.db.select().from(jobs).where(eq(jobs.id, jobId)).get();
       if (!job) throw new Error('Unknown startup job');
-      const at = this.now();
       const rules = this.db.select({ secret: secretRules.secret, minutes: secretRules.minutes })
         .from(secretRules).innerJoin(secretRuleAgents, eq(secretRules.secret, secretRuleAgents.secret))
-        .where(and(eq(secretRuleAgents.agent, job.agent), eq(secretRuleAgents.when, 'at_start'),
-          or(eq(secretRules.answer, 'ask'), eq(secretRules.answer, 'auto')))).all();
-      const result: (typeof secretGrants.$inferSelect)[] = [];
+        .where(and(eq(secretRuleAgents.agent, job.agent), eq(secretRuleAgents.when, 'at_start'))).all().filter(rule => !selected || selected.includes(rule.secret));
       for (const rule of rules) {
         if (!secretHasValue(this.db, rule.secret)) continue;
-        const minutes = duration.parse(rule.minutes);
-        const id = `sg-start-${createHash('sha256').update(JSON.stringify([jobId, rule.secret])).digest('hex')}`;
-        this.db.insert(secretGrants).values({ id, secret: rule.secret, agent: job.agent, job: jobId,
-          grantedBy: 'rule', grantedAt: at, expiresAt: new Date(Date.parse(at) + minutes * 60000).toISOString() })
-          .onConflictDoNothing({ target: secretGrants.id }).run();
-        const grant = this.db.select().from(secretGrants).where(eq(secretGrants.id, id)).get()!;
-        if (grant.secret !== rule.secret || grant.agent !== job.agent || grant.job !== jobId || grant.request !== null || grant.grantedBy !== 'rule') throw new Error('Startup grant identity changed');
-        if (Date.parse(grant.grantedAt) <= Date.parse(at) && Date.parse(at) < Date.parse(grant.expiresAt)) result.push(grant);
+        const id = startupRequestId(jobId, rule.secret);
+        if (this.db.select().from(secretRequests).where(eq(secretRequests.id, id)).get()) continue;
+        this.request({ id, secret: rule.secret, agent: job.agent, job: jobId,
+          ...(job.conversation ? { conversation: job.conversation } : {}),
+          why: 'The house needs this secret when its job starts.', minutes: duration.parse(rule.minutes) }, 'at_start');
       }
-      return result;
+      const at = Date.parse(this.now());
+      return this.db.select().from(secretGrants).where(and(eq(secretGrants.job, jobId), eq(secretGrants.agent, job.agent))).all()
+        .filter(grant => (!selected || selected.includes(grant.secret)) && grant.request === startupRequestId(jobId, grant.secret)
+          && this.read(grant.request).state === 'allowed' && secretHasValue(this.db, grant.secret)
+          && Date.parse(grant.grantedAt) <= at && at < Date.parse(grant.expiresAt));
     });
   }
 
@@ -151,4 +145,8 @@ export class SecretRequests {
     // Source-specific resolution until Conversations exposes secret-request.
     this.db.update(inbox).set({ state: 'resolved', resolution: reason, changedAt: this.now() }).where(and(eq(inbox.source, 'secret-request'), eq(inbox.sourceId, id), eq(inbox.state, 'waiting'))).run();
   }
+}
+
+export function startupRequestId(job: string, secret: string): string {
+  return `q-start-${createHash('sha256').update(JSON.stringify([job, secret])).digest('hex')}`;
 }

@@ -6,6 +6,9 @@ on:
       - 'src/foundation.ts'
       - 'src/next-data.ts'
       - 'src/core/data/**'
+      - 'src/core/tempo/**'
+      - 'src/shared-*.ts'
+      - 'src/apps/approvals*.ts'
       - 'web/src/data/**'
       - 'web/src/pieces/approval-view/**'
       - 'web/src/pieces/approvals/**'
@@ -34,12 +37,12 @@ jobs:
       - name: Prove the shared Approvals reader
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
-          export LOOM_TEST_SHOTS="$PWD/artifacts/approvals-piece"
+          export LOOM_TEST_SHOTS="$RUNNER_TEMP/approvals-piece"
           nice -n 19 npx vitest run src/ui/approvals-app.integration.test.ts --maxWorkers=1
-          test "$(find artifacts/approvals-piece -name '*.png' | wc -l)" -eq 6
+          test "$(find "$LOOM_TEST_SHOTS" -name '*.png' | wc -l)" -eq 6
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: approvals-piece-${{ github.event.pull_request.head.sha }}
-          path: artifacts/approvals-piece/
+          path: ${{ runner.temp }}/approvals-piece/
           if-no-files-found: error

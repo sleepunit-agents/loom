@@ -58,7 +58,7 @@ export default function Shell({ apps, surfaces = {} }: { apps: readonly Register
   const visible = route.tiles.filter(t => !t.minimized);
   // Until Home's piece registers a rail there is no invented agent data or empty reserved column.
   const { Home, Rail, Bar, Signals } = surfaces;
-  const companion = useCompanion(!phone&&!!Rail&&visible.length>0&&railAs==='always');
+  const companion = useCompanion(!phone&&!!Rail&&visible.length>0&&railWidth(width)>100&&(railAs==='always'||hiding.peek.rail));
   const workArea = { ...area,w:Math.max(1,area.w - (Rail && visible.length ? (railAs==='always'?railWidth(width)+10:railAs==='strip'?24:0) : 0)) };
   useEffect(() => { if(!phone) {const notices=router.fit(workArea,width,oneWindow);if(notices.length)setNotice(notices.join(' '));} },[workArea.w,workArea.h,width,phone,oneWindow,router]);
   const focused = visible.find(t => t.id === route.focused) ?? visible[0];

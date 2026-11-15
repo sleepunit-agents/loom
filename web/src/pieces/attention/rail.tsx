@@ -28,7 +28,7 @@ export default function AgentRail({ go }: { go(path: string): void }) {
   const {reading, status:threadStatus}=useHomeComms();
   const agents = orderedAgents(namedAgents(roster.status === 'live' ? roster.records : [], people.status === 'live' ? people.records : []));
   const rail = useContext(RailContext);
-  const companion = agents.find(a=>a.id===rail?.selected);
+  const companion = rail?.shown?agents.find(a=>a.id===rail.selected):undefined;
   const box = useRef<HTMLDivElement>(null);
   const [fold, setFold] = useState(false);
   const [room, setRoom] = useState('');

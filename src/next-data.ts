@@ -16,10 +16,11 @@ import type { memoryQueryFields } from './transport/memory-queries.js';
 import { DataLive, type MeasureRead } from './core/data/live.js';
 import { dataQueries } from './core/data/queries.js';
 import { dataSocket } from './core/data/socket.js';
+import { tempoVisibility } from './core/tempo/visibility.js';
+import { tempoQueryFields } from './core/tempo/queries.js';
 import { taskVisibility } from './core/data/visibility.js';
 import { boxVisibility } from './core/data/box-visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
-import { tempoVisibility } from './core/tempo/visibility.js';
 import { DataWrites } from './core/data/writes.js';
 import { modelAccountQueries } from './runtime/account-query.js';
 import { measuringVisibility } from './core/measuring/visibility.js';
@@ -65,7 +66,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
       memberAgents: () => viewer.kind === 'member' ? sql`exists(select 1 from ${members} where ${members.id} = ${viewer.id} and ${members.role} = 'owner')` : sql`false`,
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
     },
-  }), { ...fields, ...ownFields, ...accounts.fields,
+  }), { ...fields, ...ownFields, ...tempoQueryFields(db, viewer), ...accounts.fields,
     // Jobs carry the same agent/project/private-member labels as Approvals.
     // Reuse its canonical SQL rather than maintain another sharing policy.
     ...jobSummaryFields(new JobSummaries(db, () => ({ jobs: workVisibility(viewer).approvals }))),
@@ -89,6 +90,7 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   let closing: Promise<void> | undefined;
   return {
     http,
+    readVersion: () => live.epoch(),
     attach: socket.attach,
     changed() { socket.refreshAccess(); live.changed(); schedule(); },
     timingsChanged() { live.timingsChanged(); },
