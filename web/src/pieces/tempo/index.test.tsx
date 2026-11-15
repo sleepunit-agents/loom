@@ -115,3 +115,11 @@ it.each(['fired', 'stopped', 'failed'] as const)('offers no run or cancel for a 
   expect(button('Run now')).toBeUndefined();
   expect(button('Cancel')).toBeUndefined();
 });
+
+it('offers resume for a paused operation belonging to its agent without an inbox recipient',async()=>{
+ const resume=vi.fn(async()=>{}),actions={runNow:vi.fn(async()=>{}),stop:vi.fn(async()=>{}),pause:vi.fn(async()=>{}),resume};
+ const own={...snapshot,pauses:[{agent:'art',since:'2026-11-14T00:00:00Z'}],triggers:[{...snapshot.triggers[0],ownerKind:'agent' as const,owner:'art',targetKind:'operation' as const,target:'tempo.sweep',toKind:null,to:null,state:'held' as const}]};
+ await act(async()=>{tree=create(h(TempoCard,{snapshot:own,triggerId:'tr-1',actions}));});
+ const button=tree.root.findAllByType('Button').find((node:{props:{children:unknown}})=>node.props.children==='Resume agent')!;
+ expect(button).toBeDefined();await act(async()=>button.props.onClick());expect(resume).toHaveBeenCalledExactlyOnceWith('art');
+});
