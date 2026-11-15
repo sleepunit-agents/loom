@@ -54,8 +54,25 @@ it('never accepts an event before hello even when the envelope claims the expect
   expect(s.terminate).toHaveBeenCalledOnce(); expect(f.receive).not.toHaveBeenCalled(); expect(s.send).not.toHaveBeenCalled();
 });
 
-it('snapshots the authenticated app rather than following caller mutation', async () => {
-  const f = fixture(); f.input.app = 'AOTHER'; await settled(); const s = f.sockets[0];
-  s.frame({type:'hello',connection_info:{app_id:'AOTHER'}}); s.frame(envelope); await settled();
-  expect(s.terminate).toHaveBeenCalledOnce(); expect(f.receive).not.toHaveBeenCalled(); expect(s.send).not.toHaveBeenCalled();
+it('snapshots the authenticated app across initial and reconnected sockets', async () => {
+  const f = fixture(); f.input.app = 'AOTHER'; await settled(); const first = f.sockets[0];
+  first.frame({type:'hello',connection_info:{app_id:'AEXPECTED'}}); first.frame(envelope); await settled();
+  expect(f.receive).toHaveBeenCalledOnce(); expect(first.send).toHaveBeenCalledOnce();
+  first.frame({type:'disconnect'}); f.clock.advance(1000); await settled(); const second = f.sockets[1];
+  second.frame({type:'hello',connection_info:{app_id:'AOTHER'}}); second.frame(envelope); await settled();
+  expect(second.terminate).toHaveBeenCalledOnce(); expect(f.receive).toHaveBeenCalledOnce(); expect(second.send).not.toHaveBeenCalled();
+});
+it('requires hello before receipt on a replacement socket', async () => {
+  const f = fixture(); await settled(); const first = f.sockets[0];
+  first.frame({type:'hello',connection_info:{app_id:'AEXPECTED'}}); first.frame({type:'disconnect'});
+  f.clock.advance(1000); await settled(); const second = f.sockets[1];
+  second.frame(envelope); await settled();
+  expect(second.terminate).toHaveBeenCalledOnce(); expect(f.receive).not.toHaveBeenCalled(); expect(second.send).not.toHaveBeenCalled();
+});
+it('delivers after a fresh matching hello on a replacement socket', async () => {
+  const f = fixture(); await settled(); const first = f.sockets[0];
+  first.frame({type:'hello',connection_info:{app_id:'AEXPECTED'}}); first.frame({type:'disconnect'});
+  f.clock.advance(1000); await settled(); const second = f.sockets[1];
+  second.frame({type:'hello',connection_info:{app_id:'AEXPECTED'}}); second.frame(envelope); await settled();
+  expect(second.terminate).not.toHaveBeenCalled(); expect(f.receive).toHaveBeenCalledOnce(); expect(second.send).toHaveBeenCalledOnce();
 });
