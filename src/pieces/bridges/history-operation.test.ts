@@ -64,9 +64,8 @@ async function configured(staging=false,adapter=true) {
  value(await f.post(f.runner,'runtime.reportJob',{job,state:'running'}));
  for(const [name,input] of [
   ['secrets.describe',{name:'discord',description:'fixture bot'}],
-  ['secrets.grantService',{service:'bridges',name:'discord'}],
   ['bridges.putVenues',{id:'discord',platform:'discord',agent:'art',workspace:'300',bot:'100',tokenSecret:'discord'}],
- ] as const){if(!adapter&&name==='secrets.grantService')continue;value(await f.post(f.owner,name,input));}
+ ] as const){value(await f.post(f.owner,name,input));}
  return {...f,job,body};
 }
 it('reads through the installed HTTP operation and generated client with a real running private owner body',async()=>{
@@ -87,13 +86,12 @@ it('denies typed authority, member, runner, unbound and wrong-agent callers befo
  for(const patch of [{agent:'art'},{principal:'owner'},{permit:{}},{workspace:'300'},{kind:'dm'}])expect(await f.post(f.body,'bridges.discordHistory',{...query,...patch})).toMatchObject({ok:false,code:'invalid'});
  expect(before()).toBe(n);
 });
-it.each(['credential','setup','grant','job'] as const)('suppresses late words after %s revocation during history IO',async drift=>{
+it.each(['credential','setup','job'] as const)('suppresses late words after %s revocation during history IO',async drift=>{
  const f=await configured();
  f.request.mockImplementation(async url=>{
   if(String(url).includes('/messages?')){
    if(drift==='credential')signin(f.app).tokens.change(ts=>{for(const t of ts)if(t.sha256===hash(f.body))t.revoked=new Date(f.clock.now()).toISOString();});
    if(drift==='setup')value(await f.post(f.owner,'bridges.removeVenues',{id:'discord'}));
-   if(drift==='grant')value(await f.post(f.owner,'secrets.revokeService',{service:'bridges',name:'discord'}));
    if(drift==='job')value(await f.post(f.runner,'runtime.finishJob',{job:f.job,state:'done'}));
    return Response.json([{id:'500',channel_id:'400',author:{id:'600'},type:0,content:'LATE PRIVATE WORDS'}]);
   }
@@ -143,7 +141,7 @@ it('rechecks the transport lifetime in the final transaction after preparation',
  expect(await f.app.operations.callAsync('http',viewer,'bridges.discordHistory',query)).toMatchObject({ok:true});
  const result=await f.app.operations.callAsync('http',viewer,'bridges.discordHistory',query,undefined,false,()=>{
   if(++checks===1)return true;
-  value(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'secrets.revokeService',{service:'bridges',name:'discord'},'last-moment-revoke'));
+  value(f.app.operations.call('direct',{kind:'member',id:'jonathan'},'bridges.removeVenues',{id:'discord'},'last-moment-remove'));
   return true;
  });
  expect(checks).toBe(2);expect(result).toMatchObject({ok:false});
