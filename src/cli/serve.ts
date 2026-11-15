@@ -48,7 +48,7 @@ Options:
                          for --scope knowledge, default 8787 / 8788)
   --help, -h             Show this help
 
---scope full (default): bearer token from LOOM_BEARER_TOKEN.
+--scope full (default): current shared household sign-in and credentials.
 --scope knowledge: per-identity bearer from LOOM_KNOWLEDGE_BEARER_TOKENS,
   format "identity:token,identity:token" — e.g. "art:abc123,mark:def456".
   Required and non-empty; the knowledge-only service refuses to boot without
