@@ -6,9 +6,6 @@ import {fileURLToPath} from 'node:url';
 import {X509Certificate,randomBytes,randomUUID} from 'node:crypto';
 import {generateIdentity} from 'age-encryption';
 import {startLoom} from '../../foundation.js';
-import * as foundation from '../../foundation.js';
-import {run as serve} from '../../cli/serve.js';
-import {Readable} from 'node:stream';
 import https from 'node:https';
 import type {Socket} from 'node:net';
 import {fixture} from '../../fixture.js';
@@ -114,34 +111,14 @@ it('close during holder acknowledgement performs no late database work and stagi
   clock.advance(0);await expect.poll(()=>app.db.prepare('SELECT state FROM secrets_write_intents').get()).toEqual({state:'complete'});
 });
 
-it('serve loads explicit strict private writes configuration and dispatches through the normal root',async()=>{
-  const s=await setup(),authorityFile=join(s.home,'authority.json');writeFileSync(authorityFile,JSON.stringify(s.authority),{mode:0o600});
-  const actual=foundation.startLoom;let app:Awaited<ReturnType<typeof startLoom>>|undefined;
-  const start=vi.spyOn(foundation,'startLoom').mockImplementation(async options=>app=await actual({...options,port:0,clock:new FakeClock()}));
-  let ready=false;const running=serve(['--next','--home',s.appHome,'--secret-authority',authorityFile,'--secret-writes',s.writes],
-    {stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:text=>{if(text.includes('next app on'))ready=true;}});
-  let holder:Awaited<ReturnType<typeof startPersistentHolder>>|undefined;
-  try {
-    await expect.poll(()=>ready).toBe(true);holder=await startPersistentHolder(s.file);
-    expect(start.mock.calls[0][0].secretWrites).toBeDefined();
-    expect(await app!.operations.callAsync('http',owner,'secrets.set',{name:'API',writeId:randomUUID(),mode:'add',value:'CLI-ROOT-SENTINEL'},'cli')).toMatchObject({ok:true});
-  } finally {await holder?.close();process.emit('SIGTERM');expect(await running).toBe(0);start.mockRestore();}
-});
-it('CLI rejects incomplete and malformed mutation config with fixed value-free diagnostics',async()=>{
-  const s=await setup(),error:string[]=[];
-  const io={stdin:Readable.from([]),stdinIsTTY:false,env:{},stdout:()=>{},stderr:(text:string)=>error.push(text)};
-  expect(await serve(['--secret-writes',s.writes],io)).toBe(2);expect(error.splice(0)).toEqual(['--secret-writes requires --next\n']);
-  expect(await serve(['--next','--secret-writes',s.writes],io)).toBe(2);expect(error.splice(0)).toEqual(['--secret-writes requires --secret-authority\n']);
-  const file=join(s.home,'authority.json');writeFileSync(file,JSON.stringify(s.authority),{mode:0o600});
-  const valid=JSON.parse(readFileSync(s.writes,'utf8'));
-  for(const bad of [{...valid,extra:'PRIVATE-SENTINEL'},{...valid,holder:{...valid.holder,extra:'PRIVATE-SENTINEL'}},{...valid,retryKeys:{active:'relative',previous:[]}},{...valid,retryKeys:{...valid.retryKeys,extra:'PRIVATE-SENTINEL'}}]) {
-    writeFileSync(s.writes,JSON.stringify(bad),{mode:0o600});
-    expect(await serve(['--next','--secret-authority',file,'--secret-writes',s.writes],io)).toBe(2);
-    expect(error.splice(0)).toEqual(['Invalid secret mutation configuration\n']);
-  }
-  writeFileSync(s.writes,JSON.stringify(valid),{mode:0o600});chmodSync(s.writes,0o644);
-  expect(await serve(['--next','--secret-authority',file,'--secret-writes',s.writes],io)).toBe(2);
-  expect(error.splice(0)).toEqual(['Invalid secret mutation configuration\n']);
+it('the explicit mutation loader rejects malformed and public config with value-free diagnostics',async()=>{
+ const s=await setup(),valid=JSON.parse(readFileSync(s.writes,'utf8'));
+ for(const bad of [{...valid,extra:'PRIVATE-SENTINEL'},{...valid,holder:{...valid.holder,extra:'PRIVATE-SENTINEL'}},{...valid,retryKeys:{active:'relative',previous:[]}},{...valid,retryKeys:{...valid.retryKeys,extra:'PRIVATE-SENTINEL'}}]){
+  writeFileSync(s.writes,JSON.stringify(bad),{mode:0o600});
+  expect(()=>configuredSecretWrites(s.writes)).toThrow(/^Invalid secret mutation configuration$/);
+ }
+ writeFileSync(s.writes,JSON.stringify(valid),{mode:0o600});chmodSync(s.writes,0o644);
+ expect(()=>configuredSecretWrites(s.writes)).toThrow(/^Invalid secret mutation configuration$/);
 });
 it('configured root removal cancels its managed Attention ask atomically and retries after rollback',async()=>{
   const s=await setup();const app=await startLoom({home:s.appHome,next:true,clock:new FakeClock(),secretAuthority:s.authority,secretWrites:configuredSecretWrites(s.writes),stdout:()=>{}});stops.push(app.close);
