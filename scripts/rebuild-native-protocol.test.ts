@@ -118,3 +118,8 @@ it('keeps expected input and generated credentials out of forced failure diagnos
  expect(diagnostic).toContain('did not complete');expect(diagnostic).not.toContain(marker);expect(diagnostic).not.toMatch(/(?:body_[a-f0-9]{64}|loom_[A-Za-z0-9_-]{43})/);
  restored(context.db,context.example.runtime.box);
 }));
+it('refuses a non-fictional or incomplete household before authority or leasing',{timeout:20_000},()=>household(async context=>{
+ for(const example of [{...context.example,fictional:false},{...context.example,runtime:undefined}])await expect(nativeProtocolSmoke({...context,example})).rejects.toThrow('fictional household');
+ expect(context.db.prepare("SELECT state FROM jobs WHERE agent='moss'").all()).toEqual([{state:'queued'},{state:'queued'}]);
+ expect(context.db.prepare("SELECT fingerprint FROM tokens WHERE label LIKE 'Native protocol fixture %'").all()).toEqual([]);
+}));
