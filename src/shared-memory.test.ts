@@ -60,6 +60,8 @@ it('signs in on the actual shared listener and converges Memory writes, source t
  expect(first.payload.data.observe.patches[0].value).toEqual(await read());
  const added=await waitMessage(ws,async()=>{const command=memoryCall('mind.knowledgeAdd',{title:'Fictional pump',domain:'fiction',body:'Fictional pump words',source:''},(path,init)=>fetch(app.url+path,{...init,headers:{...init.headers,cookie,origin:app.url}}));expect((await command.result).ok).toBe(true);});
  expect(JSON.stringify(added)).toContain('Fictional pump');
+ const retiredRead=await request('/api/mind/knowledgeRead',{input:{slug:'fictional-pump'}},headers);expect(retiredRead.status).toBe(404);
+ expect((await fetch(app.url+'/live',{headers})).status).toBe(404);
  const people=new PeopleStore({dbPath:f.sources.agents[0].memories});cleanup.push(()=>people.close());
  const person=await waitMessage(ws,()=>people.write({slug:'friend',name:'Private fictional friend'}));expect(JSON.stringify(person)).toContain('Private fictional friend');
  const projects=new ProjectsStore({dbPath:f.sources.agents[0].memories});cleanup.push(()=>projects.close());
