@@ -35,12 +35,14 @@ export interface WorkerBody {
   stop(): Promise<void>;
 }
 export interface WorkerExecutor {
-  build(job: WorkerAssignment, signal: AbortSignal): Promise<string>;
+  build(job: WorkerAssignment, signal: AbortSignal, repositoryInput?: Uint8Array): Promise<string>;
   start(job: WorkerAssignment, build: string, signal: AbortSignal): WorkerBody;
 }
 export interface WorkerControl {
   /** Claims once on the server. An uncertain response is never retried locally. */
   next(): Promise<WorkerAssignment | undefined>;
+  /** Private one-attempt input, never part of the assignment/receipt. */
+  repositoryInput?(id:string,signal:AbortSignal):Promise<Uint8Array|undefined>;
   started(id: string, build: string): Promise<void>;
   /** false means revoked/stopped/lost: cease execution without a finish report. */
   heartbeat(id: string, state: 'starting' | 'running'): Promise<boolean>;
@@ -93,7 +95,11 @@ export async function workOnce(input: {
     let build: string;
     try {
       if (abort.signal.aborted) return 'abandoned';
-      build = await executor.build(assignment, abort.signal);
+      const repositoryInput=await control.repositoryInput?.(assignment.id,abort.signal);
+      try {
+        if(abort.signal.aborted)return 'abandoned';
+        build = repositoryInput?await executor.build(assignment,abort.signal,repositoryInput):await executor.build(assignment,abort.signal);
+      } finally { repositoryInput?.fill(0); }
       if (abort.signal.aborted) return 'abandoned';
       if (!build.trim()) throw new Error('Build returned no artifact');
       body = executor.start(assignment, build, abort.signal);

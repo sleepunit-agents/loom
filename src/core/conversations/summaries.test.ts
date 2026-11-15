@@ -137,3 +137,18 @@ it('rechecks the independent household age deadline after opening the latest ans
   expect(await f.service.lastAnswer({ kind: 'member', id: 'owner' }, f.thread.conversation)).toBeNull();
   expect(f.opens()).toBe(1);
 });
+
+it('selects the latest reply across all visible conversations before bounding, independently of later activity',async()=>{
+ const f=setup(),viewer={kind:'member' as const,id:'alice'};
+ await f.comms.send({thread:f.thread.id,sender:'art',kind:'reply',words:'The actual latest answer'});
+ for(let n=0;n<10;n++) {f.setTime('2026-11-14T19:00:00.000Z');f.comms.threads.open({id:'th:new-'+n,member:'alice',agent:'art',title:'Unanswered '+n});}
+ const older=f.comms.threads.open({id:'th:older',member:'alice',agent:'art',title:'Older answer'});f.setTime('2026-11-14T17:00:00.000Z');await f.comms.send({thread:older.id,sender:'art',kind:'reply',words:'Older'});
+ f.setTime('2026-11-14T20:00:00.000Z');await f.comms.send({thread:older.id,sender:'alice',kind:'message',words:'New activity'});
+ const hidden=f.comms.threads.open({id:'th:hidden',member:'bob',agent:'art',title:'Private other person'});await f.comms.send({thread:hidden.id,sender:'art',kind:'reply',words:'Hidden newer answer'});
+ expect(f.service.recent(viewer,'art',8).map(row=>row.id)).not.toContain(f.thread.conversation);
+ expect(f.service.recent(viewer,'art',1,true).map(row=>row.id)).toEqual([f.thread.conversation]);expect(f.opens()).toBe(0);
+ const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:conversationSummaryFields(f.service)})});
+ const result=await graphql({schema,source:'{ recentConversations(agent:"art",limit:1,answeredOnly:true){id lastAnswer{words}} }',contextValue:{viewer}});
+ expect(result.errors).toBeUndefined();expect(JSON.parse(JSON.stringify(result.data))).toEqual({recentConversations:[{id:f.thread.conversation,lastAnswer:{words:'The actual latest answer'}}]});
+ f.db.delete(memberAgents).run();expect(f.service.recent({kind:'agent',id:'mark'},'art',1,true)).toEqual([]);
+});
