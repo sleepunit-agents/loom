@@ -383,7 +383,7 @@ it('filters folders and muted items before paging and counts the whole recipient
   expect(await f.service.search(alice, { folder: 'needs', search: 'Notice body' })).toEqual([]);
   expect(await f.service.search(alice, { folder: 'fyi', search: 'Notice body', limit: 2, offset: 118 })).toHaveLength(2);
   expect(f.service.list(alice, { folder: 'alerts', limit: 1 })).toMatchObject([{ source: 'notice', answers: null, state: 'waiting' }]);
-  expect(f.service.folders(alice)).toEqual({ needs: 2, alerts: 120, answered: 1, fyi: 120, all: 123, agents: [{ id: 'art', count: 122 }, { id: 'mark', count: 1 }] });
+  expect(f.service.folders(alice)).toEqual({ needs: 2, alerts: 120, answered: 1, fyi: 120, all: 123, agents: [{ id: 'art', count: 122, needs: 1 }, { id: 'mark', count: 1, needs: 1 }] });
   expect(() => f.service.list(alice, { folder: 'unknown' as 'all' })).toThrow('Invalid Inbox folder');
   f.revoke(); expect(f.service.folders(alice)).toEqual({ needs: 0, alerts: 0, answered: 0, fyi: 0, all: 0, agents: [] });
 });
@@ -419,4 +419,22 @@ it('executes the shipped Inbox selection on actual shared rows, including server
   const errors = inboxSelection('errors', '', 0);
   const errorResult = await graphql({ schema, source: errors.query, variableValues: errors.variables, contextValue: { viewer: alice } });
   expect(errorResult.errors).toBeUndefined(); expect(errors.decode(errorResult.data as Record<string, unknown>).items).toEqual([]);
+});
+
+it('projects per-agent Needs counts separately from all states without opening words', async () => {
+  const f = await fixture(), cvs = f.comms.threads.conversations;
+  cvs.send({ toKind: 'person', to: 'alice', member: 'alice', agent: 'art', source: 'notice', fromKind: 'agent', words: 'Second question', answers: 'words' });
+  const answered = cvs.send({ toKind: 'person', to: 'alice', member: 'alice', agent: 'art', source: 'notice', fromKind: 'agent', words: 'Answered question', answers: 'yes-no' });
+  cvs.answer(answered.id, 'alice', 'yes');
+  cvs.send({ toKind: 'person', to: 'alice', member: 'alice', agent: 'art', source: 'notice', fromKind: 'agent', words: 'FYI' });
+  // The fixture policy allows Alice-scoped rows, but recipient filtering must
+  // still exclude Bob's pending item from both counters.
+  cvs.send({ toKind: 'person', to: 'bob', member: 'alice', agent: 'art', source: 'notice', fromKind: 'agent', words: 'Other recipient', answers: 'words' });
+  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: inboxQueryFields(f.service) }) });
+  const read = () => graphql({ schema, source: '{ inboxFolders { needs agents { id count needs } } }', contextValue: { viewer: alice } });
+  const result = await read(); expect(result.errors).toBeUndefined();
+  expect(result.data).toEqual({ inboxFolders: { needs: 2, agents: [{ id: 'art', count: 4, needs: 2 }] } });
+  expect(f.opens()).toBe(0);
+  f.revoke();
+  expect((await read()).data).toEqual({ inboxFolders: { needs: 0, agents: [] } });
 });
