@@ -25,3 +25,41 @@ shared schema, and can still be lent near reset when the forecast is safe.
 
 This service is trusted internal code. Public account field visibility remains the
 query door's responsibility. No decrypted credentials are stored here.
+
+## Model-account reads
+
+The shared GraphQL query root exposes `modelAccounts`. It never exposes the raw
+account tables or accepts caller identity, private-column filtering or ordering.
+Rows are ordered by the public label.
+
+```graphql
+{
+  modelAccounts {
+    ... on RuntimeAccount { label level }
+    ... on RuntimeAccountDetail {
+      id owner provider usage usageReadAt resetsAt hasRoom
+      signedInOn { id name }
+    }
+  }
+}
+```
+
+A member who owns the account, or whose current household role is `owner`, gets
+`RuntimeAccountDetail`. Every other caller gets `RuntimeAccountSummary`, which
+contains only label and level. An agent does not inherit the privileges of the
+member who owns it. The existing outside door refuses service and runner general
+queries. Both concrete views implement the common `RuntimeAccount` interface.
+
+Level is exactly `plenty`, `getting full` or `almost full`, based on the current
+shared quota windows. Unavailable capacity is conservatively `almost full`.
+Private usage and timestamps remain the stored provider observation; an expired
+window does not manufacture a new reading. `hasRoom` reflects current admission
+capacity, including stale observations or a failed-reader latch.
+
+A private selection records only its account identifiers against the authenticated
+Viewer object. The same door's `auth.valid()` rechecks current account ownership
+and household role before buffered HTTP delivery and socket refresh/delivery.
+Losing authority while an async sibling is pending refuses that response; a new
+request can receive the coarse view. A live connection whose private selection
+loses authority closes with the normal authentication-ended code. No credentials, usage/provider/location values or caller-supplied identities
+enter this witness. The witness is weakly keyed and belongs to one shared-data root.

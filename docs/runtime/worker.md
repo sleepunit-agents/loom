@@ -67,10 +67,23 @@ failed process cleanup, so it cannot claim more work after uncertain reaping.
 SIGINT and SIGTERM cancel active work and idle waiting. The server owns start
 retries and silence reconciliation.
 
-The fresh sharedRoot mounts these operations on its shared connection and owns
-worker/job reconciliation. It requires the canonical current bearer runner proof
-and derives the box from that credential. A worker still needs its locally
-configured builder, runner commands and account access.
+The fresh `sharedRoot` mounts these four authenticated runner operations on the
+same shared connection and write/receipt boundary. The canonical current bearer
+runner proof supplies the machine identity; runner-labelled cookies are refused.
+Only that live machine may claim or report its jobs; caller-supplied machine identity is refused.
+It receives model roles from the trusted root's `modelRoles()` configuration,
+never from a worker request. A root without configured roles leaves work queued.
+`runtime.next` and heartbeat receipt replays are refused, so an old claim or
+`active:true` cannot restore a finished job. The worker already uses a fresh id
+for each call and never retries an uncertain request. Other report receipts are
+checked against current machine/job authority before replay.
+
+The root owns the silence sweep and closes it on shutdown. Terminal source
+notifications run after the job effect and receipt commit. Private Comms briefs
+and log words do not enter assignments, job storage or receipt fingerprints;
+ephemeral private input and current-body credentials need their separate door.
+Native harness adapters and switching an installed server to the fresh root are
+separate work; an executable and root factory alone do not deploy a worker.
 
 ## Container bodies
 
