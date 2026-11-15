@@ -1,6 +1,10 @@
 import {sharedMemory,type SharedMemoryOptions} from './shared-memory.js';
 import {installMemoryTempo} from './transport/memory-tempo.js';
 import {installMemorySignals} from './transport/memory-signals.js';
+import { sql } from 'drizzle-orm';
+import { secretChanges } from './core/data/schema.js';
+import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
+import { registerSharedBridgeReply } from './shared-bridge-reply.js';
 import { SecretDelivery, type SecretDeliveryHolder } from './pieces/secrets/delivery.js';
 import { SecretStartup } from './pieces/secrets/shared-startup.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
@@ -60,6 +64,7 @@ export function sharedRoot(options: {
   secretDelivery?: SecretDeliveryHolder;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
+  bridges?: Omit<SharedBridgeOptions,'db'|'clock'|'writes'|'changed'|'reportError'>;
   modelRoles?(): readonly ModelRole[];
   runtimeJobEnded?(id: string): void;
 }) {
@@ -144,9 +149,20 @@ export function sharedRoot(options: {
   };
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
   startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();startup?.close();void delivery?.close().catch(()=>report(new Error('Secret startup cleanup failed')));});
+  const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,db,clock,writes:data.writes,changed:data.changed,
+    inboxCommitted:ids=>{tempo?.capacityChanged();options.bridges?.inboxCommitted?.(ids);},
+    reportError:()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}}});
+  const lastSecretChange=()=>db.select({id:sql<number>`coalesce(max(rowid),0)`}).from(secretChanges).get()!.id;
+  let secretChange=bridgeDaemon?lastSecretChange():0;
+  const unobserveBridges=bridgeDaemon&&data.writes.observe(()=>{
+    const latest=lastSecretChange(),credentialsChanged=latest!==secretChange;secretChange=latest;
+    bridgeDaemon.changed(credentialsChanged);
+  });
+  startupCleanups.push(()=>{unobserveBridges?.();void bridgeDaemon?.close().catch(()=>report(new Error('Bridge startup cleanup failed')));});
+  if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,viewer=>credentials.body(viewer),options.bridges!.effectsAllowed);
   comms?.install(operations);
   const services = {
-    bridges: {settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
+    bridges: {daemon:bridgeDaemon,settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks,
     approvals: approvalService(db, approvedOperations, now),
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
@@ -165,7 +181,7 @@ export function sharedRoot(options: {
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
     beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},
   }); }
-  catch (error) { cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
+  catch (error) { unobserveBridges?.(); void bridgeDaemon?.close(); cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
   startupCleanups.push(()=>tempo.close());
   measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
@@ -223,6 +239,7 @@ export function sharedRoot(options: {
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   runtime.start();
+  if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});
   return {
     measuring: measuringReady,
     ready: measuringReady!.then(() => undefined),
@@ -239,6 +256,7 @@ export function sharedRoot(options: {
       stopMemoryWrites();memorySignals?.close();
       commsLifetime?.close();
       runtime.close();
+      unobserveBridges?.();const bridgesStopped=bridgeDaemon?.close();
       // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();
       cancelSecretRecovery?.(); values?.close(); startup?.close();
@@ -248,7 +266,7 @@ export function sharedRoot(options: {
       const measured = measuringReady!.then(value => value.close());
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, deliveryStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, bridgesStopped, deliveryStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { try{operations.close();}finally{memory.close();} } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
