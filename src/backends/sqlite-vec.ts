@@ -75,6 +75,11 @@ function slugify(text: string): string {
 export interface SqliteVecConfig {
   /** Absolute path to the SQLite database file */
   dbPath: string;
+  /** An independently owned command connection publishes only after its receipt. */
+  notifyWrites?: boolean;
+  busyTimeout?: number;
+  /** A source command includes lazy schema work in its effect transaction. */
+  deferSchema?: boolean;
   /**
    * Observer for the recall observation log. Called once per recall with
    * the search's telemetry; errors it throws are swallowed — a failed
@@ -138,15 +143,26 @@ export class SqliteVecBackend implements MemoryBackend {
   ) {
     mkdirSync(dirname(config.dbPath), { recursive: true });
     this.db = new BetterSqlite3(config.dbPath);
-    this.db.pragma('journal_mode = WAL');
+    try{
+    if(!config.deferSchema)this.db.pragma('journal_mode = WAL');
     // WAL + 5s busy_timeout: concurrent sleeves (wakes, lanes, voice) each open
     // their own connection. A brief write-lock window (checkpoint, concurrent
     // write) retries for up to 5s rather than failing immediately. A genuine
     // second loom instance will still fail — it won't hold the lock that long.
-    this.db.pragma('busy_timeout = 5000');
+    this.db.pragma(`busy_timeout = ${config.busyTimeout ?? 5000}`);
     sqliteVec.load(this.db);
-    this.initSchema();
-    notifyWrites(this, config.dbPath, 'memory', ['remember', 'forget', 'update', 'prune', 'archive', 'restore', 'restoreRevision', 'supersede', 'mergeMemories'], ['ref', 'refs', 'target_ref', 'source_refs', 'old_ref', 'new_ref', 'deleted', 'expired', 'archived', 'restored']);
+    if(!config.deferSchema)this.initSchema();
+    if(config.notifyWrites!==false)notifyWrites(this, config.dbPath, 'memory', ['remember', 'forget', 'update', 'prune', 'archive', 'restore', 'restoreRevision', 'supersede', 'mergeMemories'], ['ref', 'refs', 'target_ref', 'source_refs', 'old_ref', 'new_ref', 'deleted', 'expired', 'archived', 'restored']);
+    }catch(error){this.db.close();throw error;}
+  }
+
+  /** The caller must own this uncached connection for the whole callback.
+   * WAL readers keep seeing the last committed source while embeddings await. */
+  async atomicWrite<T>(run:(db:Database)=>Promise<T>):Promise<T>{
+    if(this.db.inTransaction)throw Error('Memory command is already running');
+    this.db.exec('BEGIN IMMEDIATE');
+    try{if(this.config.deferSchema)this.initSchema();const value=await run(this.db);this.db.exec('COMMIT');return value;}
+    catch(error){if(this.db.inTransaction)this.db.exec('ROLLBACK');throw error;}
   }
 
   // ── MemoryBackend interface ──
@@ -179,7 +195,7 @@ export class SqliteVecBackend implements MemoryBackend {
     if (hit) {
       // Re-read under the write lock; if the holder was archived meanwhile,
       // fall through to a fresh insert.
-      const reheated = retryWrite(() => this.reheatTx(uniqKey, timestamp).immediate());
+      const reheated = retryWrite(() => this.reheatTx(uniqKey, timestamp,input.ttl).immediate());
       if (reheated) return reheated;
     }
 
@@ -212,7 +228,7 @@ export class SqliteVecBackend implements MemoryBackend {
     const tx = this.db.transaction((): MemoryRef | undefined => {
       // Recheck under the write lock: a concurrent writer may have stored
       // this exact content while we were embedding.
-      const winner = this.reheatTx(uniqKey, timestamp)();
+      const winner = this.reheatTx(uniqKey, timestamp,input.ttl)();
       if (winner) return winner;
       const result = insertMem.run(
         uuid,
@@ -1095,12 +1111,16 @@ export class SqliteVecBackend implements MemoryBackend {
    * active row holds it. Run it with .immediate() on its own, or call it
    * inside another transaction (better-sqlite3 nests it as a savepoint).
    */
-  private reheatTx(uniqKey: string, timestamp: string) {
+  private reheatTx(uniqKey: string, timestamp: string,ttl?:string) {
     return this.db.transaction((): MemoryRef | undefined => {
       const existing = this.db
-        .prepare('SELECT id, ref, title, category FROM memories WHERE uniq = ? AND archived = 0 LIMIT 1')
-        .get(uniqKey) as Pick<MemoryRow, 'id' | 'ref' | 'title' | 'category'> | undefined;
+        .prepare('SELECT id, ref, title, category,ttl,expires_at FROM memories WHERE uniq = ? AND archived = 0 LIMIT 1')
+        .get(uniqKey) as Pick<MemoryRow, 'id' | 'ref' | 'title' | 'category'|'ttl'|'expires_at'> | undefined;
       if (!existing) return undefined;
+      if(existing.expires_at&&(!Number.isFinite(Date.parse(existing.expires_at))||isExpired(existing.expires_at,new Date(timestamp)))){
+        const duration=ttl??existing.ttl??undefined;
+        this.db.prepare('UPDATE memories SET ttl=?,expires_at=? WHERE id=?').run(duration??null,computeExpiresAt(timestamp,duration),existing.id);
+      }
       this.db
         .prepare('UPDATE memories SET times_seen = times_seen + 1, updated = ?, authored_at = ? WHERE id = ?')
         .run(timestamp, timestamp, existing.id);
@@ -1184,6 +1204,7 @@ export class SqliteVecBackend implements MemoryBackend {
     startK: number,
     accept: (mem: MemoryRow, vr: VecMatch) => boolean,
   ): { mem: MemoryRow; distance: number }[] {
+    const activeAt=new Date().toISOString();
     const totalVecRows = (
       this.db.prepare('SELECT COUNT(*) AS c FROM vec_memories').get() as {
         c: number;
@@ -1211,9 +1232,10 @@ export class SqliteVecBackend implements MemoryBackend {
       const placeholders = fresh.map(() => '?').join(',');
       const memRows = this.db
         .prepare(
-          `SELECT * FROM memories WHERE id IN (${placeholders}) AND archived = 0`,
+          `SELECT * FROM memories WHERE id IN (${placeholders}) AND archived = 0
+           AND (expires_at IS NULL OR julianday(expires_at)>julianday(?))`,
         )
-        .all(...fresh.map((vr) => vr.rowid)) as MemoryRow[];
+        .all(...fresh.map((vr) => vr.rowid),activeAt) as MemoryRow[];
       const byId = new Map(memRows.map((r) => [r.id, r]));
 
       for (const vr of fresh) {
