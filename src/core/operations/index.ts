@@ -9,6 +9,8 @@ import { migrate } from '../db/index.js';
 import type { Clock } from '../clock.js';
 import type { Viewer } from '../../policy.js';
 export type Door = 'http' | 'socket' | 'mcp' | 'direct';
+/** A transport supplies this capability only after authenticating its session. */
+const signedInWindow = (door: Door, viewer: Viewer, window: boolean) => window && viewer.kind === 'member' && (door === 'socket' || door === 'http');
 export type Code = 'denied' | 'not-found' | 'invalid' | 'conflict' | 'unavailable';
 export type Failure = { ok: false; code: Code; message: string };
 export type Result = { ok: true; value: unknown } | Failure;
@@ -217,12 +219,12 @@ export class Operations {
     if (!valid()) return failure('denied', 'Authentication ended');
     const op = this.ops.get(name);
     if (!op) return failure('not-found', 'Unknown operation');
-    if ((op.windowOnly && (!window || door !== 'socket' || viewer.kind !== 'member')) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
+    if ((op.windowOnly && !signedInWindow(door, viewer, window)) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
     if (op.admit && (this.db.inTransaction || this.frames.length)) return failure('unavailable', 'Admission must own the outer transaction');
     if (!op.prepare && !op.windowOnly && !op.requiresWindow && !window) return this.call(door, viewer, name, input, id);
     const parsed = op.input.safeParse(input);
     if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
-    if (op.requiresWindow?.(parsed.data, viewer) && (!window || door!=='socket' || viewer.kind!=='member')) return failure('denied','A signed-in window is required');
+    if (op.requiresWindow?.(parsed.data, viewer) && !signedInWindow(door, viewer, window)) return failure('denied','A signed-in window is required');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
     try {
       let receipt: Readonly<WriteReceipt> | undefined;
@@ -246,10 +248,10 @@ export class Operations {
     if (this.invalidInternal(door, viewer)) return failure('denied', 'Internal caller unavailable');
     const op = this.ops.get(name);
     if (!op) return failure('not-found', 'Unknown operation');
-    if ((op.windowOnly && (!window || door !== 'socket' || viewer.kind !== 'member')) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
+    if ((op.windowOnly && !signedInWindow(door, viewer, window)) || (op.doors && !op.doors.includes(door))) return failure('denied', 'Operation is not offered on this door');
     const parsed = op.input.safeParse(input);
     if (!parsed.success) return failure('invalid', 'Input does not match operation schema');
-    if (op.requiresWindow?.(parsed.data, viewer) && (!window || door!=='socket' || viewer.kind!=='member')) return failure('denied','A signed-in window is required');
+    if (op.requiresWindow?.(parsed.data, viewer) && !signedInWindow(door, viewer, window)) return failure('denied','A signed-in window is required');
     if (op.write && (!id || id.length > 200)) return failure('invalid', 'A write needs an operation id (1–200 characters)');
     const changes: Change[] = [];
     let result: Result | PreparationNeeded;
