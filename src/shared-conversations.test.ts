@@ -80,14 +80,11 @@ it('answers the same private Inbox item through real HTTP and denies other peopl
   expect(f.db.select().from(operationResults).where(eq(operationResults.id,'other-read')).all()).toEqual([]);
   const visibleOwner = await f.query(`{inboxItem(id:"${question.inboxItem}"){body{words}}}`,'owner');
   expect(visibleOwner.body.errors).toBeUndefined(); expect(visibleOwner.body.data?.inboxItem).toEqual({body:{words:'PRIVATE QUESTION'}});
-  for (const [name,input,id] of [
-    ['inbox.read',{item:question.inboxItem!},'owner-read'],
-    ['inbox.answer',{item:question.inboxItem!,answer:'words',words:'OWNER ANSWER'},'owner-answer'],
-  ] as const) {
-    expect((await f.post(name,input,id,'owner')).status).toBe(403);
-    expect(f.db.select().from(operationResults).where(eq(operationResults.id,id)).all()).toEqual([]);
-  }
-  expect(f.client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({n:0});
+  expect((await f.post('inbox.read',{item:question.inboxItem!},'owner-read','owner')).status).toBe(200);
+  expect(f.client.prepare('SELECT member FROM inbox_reads').all()).toEqual([{member:'owner'}]);
+  expect((await f.query(`{inboxItem(id:"${question.inboxItem}"){read}}`)).body.data?.inboxItem).toEqual({read:false});
+  expect((await f.post('inbox.answer',{item:question.inboxItem!,answer:'words',words:'OWNER ANSWER'},'owner-answer','owner')).status).toBe(403);
+  expect(f.db.select().from(operationResults).where(eq(operationResults.id,'owner-answer')).all()).toEqual([]);
   const plain = f.root.services.conversations.send({toKind:'person',to:'alice',source:'discord',sourceId:'plain-owner-test',fromKind:'agent',fromId:'art',member:'alice',agent:'art',words:'PUBLIC SOURCE QUESTION',answers:'yes-no'});
   expect((await f.query(`{inboxItem(id:"${plain.id}"){body{words}}}`,'owner')).body.data?.inboxItem).toEqual({body:{words:'PUBLIC SOURCE QUESTION'}});
   expect((await f.post('inbox.answer',{item:plain.id,answer:'yes'},'owner-plain-answer','owner')).status).toBe(403);
