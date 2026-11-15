@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { httpWorkerControl, reportWorkerAccountUsage } from './worker-http.js';
+import { httpWorkerControl, reportWorkerAccountUsage, reportWorkerHealth } from './worker-http.js';
 const assignment = { id: 'j1', box: 'attic', agent: 'art', conversation: 'cv1', model: 'm', account: 'a', harness: 'h', brief: 'private', house: { repository: 'r', file: 'f', branch: 'main' } };
 const response = (value: unknown) => new Response(JSON.stringify({ ok: true, value }));
 function client(fetcher: typeof fetch, signal = new AbortController().signal) {
@@ -139,4 +139,12 @@ it('snapshots configured machine facts for each poll without caller-supplied mac
   const control = httpWorkerControl({ url: 'https://loom.example', token: 'machine-token', signal: new AbortController().signal, fetch: fetcher, facts });
   facts[0] = 'changed'; await control.next(); await control.next();
   expect(fetcher.mock.calls.map(([, init]) => JSON.parse(String(init?.body)).input)).toEqual([{ facts: ['gpu:5090'] }, { facts: ['gpu:5090'] }]);
+});
+
+it('uses the existing bounded authenticated operation door for health without claiming work', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response({ ok: true }));
+  expect(await reportWorkerHealth({ url: 'https://loom.example', token: 'machine-token', signal: new AbortController().signal, fetch: fetcher, facts: ['os:linux'] })).toEqual({ ok: true });
+  expect(String(fetcher.mock.calls[0][0])).toBe('https://loom.example/api/runtime/health');
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).input).toEqual({ facts: ['os:linux'] });
+  expect(fetcher.mock.calls[0][1]).toMatchObject({ redirect: 'error', headers: { authorization: 'Bearer machine-token' } });
 });

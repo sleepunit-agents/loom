@@ -34,6 +34,14 @@ export function registerSharedRuntime(operations: Operations, db: DataDatabase, 
     if (viewer.kind !== 'runner' || options.runner(viewer)?.box !== viewer.id) throw new OperationError('denied', 'Worker required');
     return viewer.id;
   };
+  operations.register({ name: 'runtime.health', write: true, recheckPolicy: true, doors: ['http'],
+    input: z.object({ facts: machineFacts.optional() }).strict(), output: ack, may: machine,
+    validateReplay() { throw new OperationError('conflict', 'Report with a new operation id'); },
+    run(ctx, input) {
+      const box = runner(ctx.viewer); dispatcher.machines.heartbeat(box, input.facts);
+      ctx.changed('box', box); return { ok: true as const };
+    },
+  });
   operations.register({ name: 'runtime.next', write: true, recheckPolicy: true, doors: ['http'],
     input: z.object({ facts: machineFacts.optional() }).strict(), output: workerAssignment.nullable(), may: machine,
     // The client never retries an uncertain claim. Replaying an old assignment

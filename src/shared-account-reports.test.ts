@@ -328,8 +328,8 @@ it('refreshes from the normal worker before claims and reports later failure thr
     },
   });
   expect(await pending).toBe(0);
-  expect(paths).toEqual(['/api/runtime/accountUsageBasis', '/api/runtime/accountUsage', '/api/runtime/next', '/api/runtime/accountUsageBasis', '/api/runtime/accountUnavailable']);
+  expect(paths).toEqual(['/api/runtime/health', '/api/runtime/accountUsageBasis', '/api/runtime/accountUsage', '/api/runtime/next', '/api/runtime/accountUsageBasis', '/api/runtime/accountUnavailable']);
   expect(f.db.select().from(modelAccountWindows).get()?.usage).toBe(0.2);
-  expect(f.db.select().from(operationResults).all().map(row => row.operation)).toEqual(['runtime.accountUsage', 'runtime.next', 'runtime.accountUnavailable']);
+  expect(f.db.select().from(operationResults).all().map(row => row.operation)).toEqual(['runtime.health', 'runtime.accountUsage', 'runtime.next', 'runtime.accountUnavailable']);
   expect(error).toHaveBeenCalledExactlyOnceWith('Worker quota refresh unavailable\n'); expect(output).not.toHaveBeenCalled();
 });
