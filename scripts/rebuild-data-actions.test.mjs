@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import {evaluate} from './rebuild-report.mjs';
 import {it,expect} from 'vitest';
 import Database from 'better-sqlite3';
-import {connectionEvidence,changedFields,sqlRead,installDataProbe} from './rebuild-data-actions.mjs';
+import {connectionEvidence,changedFields,sqlRead,installDataProbe,auditDataDoor} from './rebuild-data-actions.mjs';
 it('requires an active selection with successful data, not just a sent request',()=>{
  const oldSocket=globalThis.WebSocket,oldState=globalThis.__loomDataProbe;
  try{
@@ -64,4 +64,14 @@ it('keeps actual approved-promise mappings and classifies positive, negative and
   expect(evaluate(promise,{actions:{[action]:{ok:false,error:'Measured counterexample'}}}).status).toBe('not met');
   expect(evaluate(promise,{actions:{[action]:{inconclusive:true}}}).status).toBe('not checkable yet');
  }
+});
+
+it('waits for the active app selection data after a control changes its query',async()=>{
+ const original=globalThis.WebSocket,previous=globalThis.__loomDataProbe;
+ try{
+  globalThis.WebSocket={OPEN:1};const socket={readyState:1,url:'ws://127.0.0.1/graphql'},entry={active:new Map([['fresh',{id:'fresh',query:'query Inbox { inboxItems { id } }'}]]),frames:[{id:'old'}]};
+  globalThis.__loomDataProbe={sockets:[socket],entries:new Map([[socket,entry]])};let waited=false;
+  const page={waitForFunction:async(fn,args)=>{expect(fn(args)).toBe(false);entry.frames.push({id:'fresh'});expect(fn(args)).toBe(true);waited=true;},evaluate:async(fn,args)=>{expect(waited).toBe(true);return fn(args);}};
+  expect(await auditDataDoor(page,'Inbox')).toMatchObject({selectionSeen:true,graphql:1});
+ }finally{globalThis.WebSocket=original;globalThis.__loomDataProbe=previous;}
 });
