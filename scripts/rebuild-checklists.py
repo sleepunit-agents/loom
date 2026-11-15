@@ -116,7 +116,9 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if row['promise'].startswith('Each tile asks for its rows over the one live connection'):row['probe']={'kind':'action','action':'dataDoor'}
  if f.stem=='conversations':
   for row in rows:
-   if row['promise'].startswith(('A conversation belongs to one agent', 'a Three labels.', 'b Who sees it.', 'c Private.')):row['probe']={'kind':'action','action':'conversationVisibility'}
+   if row['promise'].startswith(('A conversation belongs to one agent', 'a Three labels.')):row['probe']={'kind':'action','action':'conversationLabels'}
+   if row['promise'].startswith('b Who sees it.'):row['probe']={'kind':'action','action':'conversationVisibility'}
+   if row['promise'].startswith('c Private.'):row['probe']={'kind':'action','action':'commsPrivacy'}
  if f.stem=='inbox':
   for row in rows:
    if row['promise'].startswith(('Every item has one recipient:', 'a The recipient.')):row['probe']={'kind':'action','action':'inboxRecipients'}

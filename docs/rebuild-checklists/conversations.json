@@ -115,7 +115,7 @@
       "source": "docs/how-it-works/site/conversations.html#con-h",
       "probe": {
         "kind": "action",
-        "action": "conversationVisibility"
+        "action": "conversationLabels"
       }
     },
     {
@@ -124,7 +124,7 @@
       "source": "docs/how-it-works/site/conversations.html#see-h",
       "probe": {
         "kind": "action",
-        "action": "conversationVisibility"
+        "action": "conversationLabels"
       }
     },
     {
@@ -142,7 +142,7 @@
       "source": "docs/how-it-works/site/conversations.html#see-h",
       "probe": {
         "kind": "action",
-        "action": "conversationVisibility"
+        "action": "commsPrivacy"
       }
     },
     {

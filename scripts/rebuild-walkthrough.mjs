@@ -152,7 +152,7 @@ page=await context.newPage();maskCredentialScreenshots(page);page.setDefaultTime
   save();yield {phase:'desk',actions:safeReport(report.actions)};
   phase='data measurements';Object.assign(report.actions,await dataActions({page,app,example:report.example,apps:report.apps,subscriptions,out}));
   save();yield {phase:'data',actions:safeReport(report.actions)};
-  Object.assign(report.actions,await conversationVisibilityActions({page,browser,app,home,out}));
+  Object.assign(report.actions,await conversationVisibilityActions({page,browser,app,home,out,verifyIsolation}));
   save();yield {phase:'visibility',actions:safeReport(report.actions)};
 
  }catch(error){report.fatal=String(error);}
