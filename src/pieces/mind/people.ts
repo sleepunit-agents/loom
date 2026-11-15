@@ -1,9 +1,7 @@
 /** Existing person cards, read in place. No schema initialization or path discovery. */
 import { existsSync } from 'node:fs';
 import BetterSqlite3, { type Database } from 'better-sqlite3';
-import { z } from 'zod';
-import { operation, maySee, mayAct, type Operations, type Live, type Sharing, type Viewer } from '../../core/index.js';
-import type { PeopleConversations } from './people-conversations.js';
+import { maySee, mayAct, type Sharing, type Viewer } from '../../core/index.js';
 import type { PersonRecord, PersonCard, PersonEvidence } from './people-model.js';
 export type { PersonRecord } from './people-model.js';
 interface Row { slug: string; card_json: string; updated: string; synthesized_at: string | null; archived_at: string | null }
@@ -12,7 +10,7 @@ export interface PeopleReaderOptions {
   projectHref?(agent:string,slug:string):string|undefined;
   directory?:string; agents:Array<{agent:string;memories:string}>; sharing():Sharing; now():number;
 }
-/** Direct file projection shared by GraphQL and the retiring record transport. */
+/** Direct file projection used by GraphQL. */
 export interface PeopleReader {
  access(viewer:Viewer):{id:string;allowed:boolean;directory:boolean;agents:string[];canAdd:boolean};
  nextDeadline():number|undefined;
@@ -129,29 +127,4 @@ export function peopleReader(options:PeopleReaderOptions):PeopleReader {
     },
     close(){if(closed)return;closed=true;for(const db of sources.values())db.close();}
   };
-}
-export function installMindPeople(operations:Operations,live:Live,options:Omit<PeopleReaderOptions,'now'> & {conversations?:PeopleConversations}) {
-  const reader=peopleReader({...options,now:()=>operations.clock.now()});
-  const {read,ids,sources,allowed}=reader;
-  operations.register(operation({ name:'mind.peopleList',input:z.object({}).strict(),output:z.unknown(),may:() => true,
-    run:ctx => reader.list(ctx.viewer) }));
-  operations.register(operation({ name:'mind.personRead',input:z.object({id:z.string().min(3).max(200)}).strict(),output:z.unknown(),
-    may:(v,input) => { const source=input.id.slice(0,input.id.indexOf(':'));return allowed(v,source==='commons' ? undefined : source); },
-    run:(ctx,input) => read(input.id,ctx.viewer) ?? {ok:false,code:'not-found',message:'Person card not found'} }));
-  live.register({name:'person',ids,read,inScope:(r,scope) => scope===undefined || r.id===scope,
-    refreshOn:c => c.type==='person' || c.type==='memory' || c.type==='project',
-    expires(record) {
-      const r=record as unknown as PersonRecord, now=operations.clock.now();
-      const deadlines=Object.values(r.card.where ?? {}).flatMap(f => f.verified_at ? [Date.parse(f.verified_at)+(f.stale_after_days??14)*86400000+1] : []);
-      const db=r.agent && sources.get(r.agent);
-      if (db && has(db,'memories')) {
-        const next=db.prepare(`SELECT min(expires_at) AS at FROM memories WHERE archived=0 AND json_extract(metadata,'$.person')=? AND julianday(expires_at)>julianday(?)`).get(r.slug,new Date(now).toISOString()) as {at:string|null};
-        if (next.at) deadlines.push(Date.parse(next.at));
-      }
-      return deadlines.filter(t => t>now).sort((a,b)=>a-b)[0];
-    },
-  });
-  live.register({name:'people.conversations',ids,read:(id,v)=>{const person=read(id,v);return person ? {id,...(options.conversations?.list(v,person.slug) ?? {available:false,rows:[]})} : undefined;},inScope:(r,scope)=>scope===undefined || r.id===scope,refreshOn:c=>c.type==='person' || c.type==='attention.conversation' || c.type.startsWith('comms.')});
-  live.register({name:'people.access',ids:()=>['people'],read:(_id,v)=>reader.access(v),inScope:()=>true});
-  return {close:reader.close};
 }
