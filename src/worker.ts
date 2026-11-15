@@ -7,4 +7,5 @@ process.exitCode = await workerProgram({ args: process.argv.slice(2),
   on: (name, stop) => { process.on(name, stop); },
   off: (name, stop) => { process.off(name, stop); },
   error: text => { process.stderr.write(text); },
+  output: text => { process.stdout.write(text); },
 });
