@@ -10,7 +10,8 @@ try {
  let words;
  const batch=await client.takeAndAccept(async(item,signal)=>{if(signal.aborted||item.source!=='thread'||item.words!=='PRIVATE WORKER INPUT')throw Error('Wrong input');words=item.words;});
  if(batch.accepted!==1)throw Error('Input was not accepted');
- await client.reply({clientId:'reply',words:'PRIVATE WORKER REPLY',model:'fixture-actual-model',outcome:'answered',latencyMs:23});
+ const reply=await client.reply({clientId:'reply',words:'PRIVATE WORKER REPLY',model:'fixture-actual-model',outcome:'answered',latencyMs:23});
+ await client.finding({turnSeq:reply.seq,measure:'useful',score:4,text:'Fictitious comparison was useful'});
  await client.digest({summary:'Completed fictitious worker input',items:[]});
  await client.status({state:'idle',work:'Fictitious work complete'});
  // A credential-bearing child may print private values; its parent must discard them.
