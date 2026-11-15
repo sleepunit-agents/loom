@@ -2,10 +2,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createElement as h, useSyncExternalStore } from 'react';
 // @ts-expect-error Renderer has no bundled declarations.
 import { act, create } from 'react-test-renderer';
-import type { CallState, Result, Snapshot } from '../data';
+import type { Result, Snapshot } from '../data';
 import type { Prefs } from '../look';
 const f = vi.hoisted(() => ({ snapshot: { records: [], status: 'loading' } as Snapshot, listeners: new Set<() => void>(), call: vi.fn(), look: vi.fn(), keep: vi.fn(), motion: vi.fn(), contrast: vi.fn(), zoom: vi.fn() }));
-vi.mock('../data', () => ({ call: f.call }));
+vi.mock('../data/operation', () => ({ memberOperation: f.call }));
 vi.mock('./member-preferences', () => ({ useMemberPreferences: () => useSyncExternalStore(fn => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.snapshot) }));
 vi.mock('../look', async original => ({ ...await original<typeof import('../look')>(), wearLook: f.look, keep: f.keep }));
 vi.mock('../access', () => ({ wearMotion: f.motion, wearContrast: f.contrast }));
@@ -18,11 +18,9 @@ const live = (prefs: Prefs): Snapshot => ({ status: 'live', records: [{ id: 'jon
 async function publish(snapshot: Snapshot) { await act(async () => { f.snapshot = snapshot; f.listeners.forEach(fn => fn()); }); }
 async function draw() { await act(async () => { tree = create(h(Preferences)); }); }
 function request() {
-  let state: CallState<Prefs> = { pending: true, status: 'pending' };
-  const listeners = new Set<() => void>();
-  const retry = vi.fn(() => { state = { pending: true, status: 'pending' }; listeners.forEach(fn => fn()); });
-  const handle = { id: 'same-id', result: new Promise<Result<Prefs>>(() => {}), retry, getSnapshot: () => state, subscribe: (fn: () => void) => { listeners.add(fn); return () => { listeners.delete(fn); }; } };
-  return { handle, finish: async (result: Result<Prefs>) => act(async () => { state = { pending: false, status: 'done', result }; listeners.forEach(fn => fn()); }) };
+  let resolve!:()=>void,reject!:(error:Error)=>void;
+  const handle=new Promise<void>((yes,no)=>{resolve=yes;reject=no;});
+  return {handle,finish:async(result:Result<Prefs>)=>act(async()=>{if(result.ok)resolve();else reject(new Error(result.message));})};
 }
 beforeEach(() => { vi.clearAllMocks(); f.snapshot = { status: 'loading', records: [] }; f.listeners.clear(); });
 afterEach(async () => { await act(async () => tree?.unmount()); });
@@ -57,12 +55,13 @@ it('disables edits while loading or disconnected and resets displayed choices wh
   expect(tree.root.findByProps({ 'aria-label': 'Look' }).props.disabled).toBe(true); expect(tree.root.findByProps({ 'aria-label': 'Look' }).props.value).toBe('neon');
   await publish({ status: 'denied', records: [] }); expect(f.look).toHaveBeenLastCalledWith('neon'); expect(JSON.stringify(tree.toJSON())).toContain('Sign in again'); expect(f.call).not.toHaveBeenCalled();
 });
-it('surfaces a failed save and retries the original handle without inventing another operation', async () => {
+it('surfaces a failed HTTP save and retries only on an explicit request', async () => {
   f.snapshot = live({}); const r = request(); f.call.mockReturnValue(r.handle); await draw();
   await act(async () => tree.root.findByProps({ 'aria-label': 'Reduce motion' }).props.onChange({ target: { value: 'on' } }));
   expect(f.call).toHaveBeenCalledWith('household.setPreferences', { motion: 'on' });
-  await r.finish({ ok: false, code: 'unavailable', message: 'Try again' }); expect(JSON.stringify(tree.toJSON())).toContain('Try again');
-  await act(async () => tree.root.findByType('button').props.onClick()); expect(r.handle.retry).toHaveBeenCalledOnce(); expect(f.call).toHaveBeenCalledOnce();
+  await r.finish({ ok: false, code: 'unavailable', message: 'Try again' }); expect(JSON.stringify(tree.toJSON())).toContain('Could not confirm the save');
+  expect(f.call).toHaveBeenCalledOnce();const next=request();f.call.mockReturnValue(next.handle);
+  await act(async () => tree.root.findByType('button').props.onClick());expect(f.call).toHaveBeenCalledTimes(2);expect(f.call.mock.calls[1]).toEqual(f.call.mock.calls[0]);await next.finish({ok:true,value:{motion:'on'}});
 });
 it.each([
   ['Sound', 'sound', false], ['Pixel faces', 'pixel', true],
@@ -79,4 +78,12 @@ it.each([
   await r.finish({ok:true,value:{[key]:!fallback}});
   await publish(live({[key]:!fallback}));
   expect(field().props.checked).toBe(!fallback);
+});
+it('locks a pending HTTP save and never resubmits it on reconnection',async()=>{
+  f.snapshot=live({look:'neon'});const r=request();f.call.mockReturnValue(r.handle);await draw();
+  const change=()=>tree.root.findByProps({'aria-label':'Look'}).props.onChange({target:{value:'daylight'}});
+  await act(async()=>{change();change();});expect(f.call).toHaveBeenCalledTimes(1);
+  await r.finish({ok:false,code:'unavailable',message:'Disconnected'});
+  await publish({status:'offline',records:[]});await publish(live({look:'neon'}));
+  expect(f.call).toHaveBeenCalledTimes(1);expect(f.look).toHaveBeenLastCalledWith('neon');
 });
