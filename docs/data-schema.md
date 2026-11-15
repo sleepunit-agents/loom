@@ -2,7 +2,10 @@
 
 The approved [how-it-works site](how-it-works/README.md) is the goal. The authored
 schema is `src/core/data/schema.ts`: all 79 tables and 551 named columns in
-`model.py`, plus the eight internal bookkeeping tables listed there. This module
+`model.py`, plus the eight internal bookkeeping tables listed there and three internal
+programme restriction/grant tables. The programme marker is independent of its
+record-type and operation rows, so clearing every grant cannot make a token
+ordinary. These additional tables contain no raw bearer credential. This module
 replaces per-part table definitions as each part is connected to it.
 
 Import typed table exports such as `tasks`, `taskComments`, `timingDays` and
