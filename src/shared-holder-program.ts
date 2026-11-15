@@ -12,8 +12,9 @@ export async function runSharedHolder(directory:string,channel:HolderChannel){
   const store=await openSharedHolderStorage(directory);
   try{return {store,key:privateBytes(join(directory,'daemon-fingerprint.key'),32)};}catch(error){store.close();throw error;}
  });
- const stop=()=>{void handle.close();};process.on('SIGTERM',stop);process.on('SIGINT',stop);
- try{await handle.done;}finally{process.off('SIGTERM',stop);process.off('SIGINT',stop);await handle.close();}
+ // The inherited owner channel is the sole orderly shutdown path. An OS
+ // signal is a process fault, observed and joined by the original supervisor.
+ try{await handle.done;}finally{await handle.close();}
 }
 let entry=false;try{entry=!!process.argv[1]&&realpathSync(process.argv[1])===realpathSync(fileURLToPath(import.meta.url));}catch{}
 if(entry){try{if(process.argv.length!==3)throw Error();await runSharedHolder(process.argv[2],process as unknown as HolderChannel);}catch{process.exitCode=2;}}
