@@ -50,10 +50,14 @@ describe('the app (web/)', () => {
         return relative(resolve(root, 'web'), screen!);
       });
     expect(screens.length).toBeGreaterThan(10);
+    const emittedEntries:string[][]=[];
+    // Pin the source binding as well as the emitted public document entries.
+    expect(readFileSync(`${root}web/src/main.tsx`,'utf8')).toMatch(/import ['"]\.\/shell\/main['"]/);
     for (const page of ['index.html', 'next.html']) {
       const html = readFileSync(`${root}dist/web/${page}`, 'utf8');
       const scripts = [...html.matchAll(/<script\b[^>]*>/g)].map(match => match[0]).filter(tag => tag.includes('type="module"'))
         .map(tag => tag.match(/src="\/app\/([^"]+)"/)?.[1]).filter(Boolean);
+      emittedEntries.push(scripts as string[]);
       const entries = Object.entries(manifest).filter(([, chunk]) => scripts.includes(chunk.file)).map(([key]) => key);
       expect(entries.length, page + ' shipped module entries').toBeGreaterThan(0);
       const initial = new Set<string>();
@@ -65,6 +69,7 @@ describe('the app (web/)', () => {
       entries.forEach(visit);
       expect(screens.filter(key => initial.has(key)), page).toEqual([]);
     }
+    expect(emittedEntries[0]).toEqual(emittedEntries[1]);
     expect(screens.filter(key => !manifest[key]?.isDynamicEntry)).toEqual([]);
   });
 

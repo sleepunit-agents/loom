@@ -2,15 +2,13 @@
 import { it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
-import { createServer } from 'node:http';
-import { existsSync, readFileSync, mkdirSync } from 'node:fs';
-import { join, extname, resolve } from 'node:path';
-import { getRequestListener } from '@hono/node-server';
+import { existsSync, mkdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
 import { chromium } from 'playwright-core';
 import { FakeClock } from '../core/clock.js';
 import { createDataSchema } from '../core/data/database.js';
-import { nextData } from '../next-data.js';
+import { serveShared } from '../shared-serve.js';
 import * as s from '../core/data/schema.js';
 import { changesQuery } from '../../web/src/data/work-query.js';
 
@@ -49,21 +47,10 @@ async function fixture() {
     db.insert(s.tasks).values({ id, title: name, ownerKind, owner, project, createdByKind: 'member', createdBy: 'sam', createdAt: at, changedAt: at }).run();
     db.insert(s.changeTasks).values({ change: changeId, task: id }).run();
   }
-  const data = nextData(db, clock, request => request.headers.origin === `http://${request.headers.host}`);
-  const serveData = getRequestListener(request => data.http.fetch(request));
-  const http = createServer((request, response) => {
-    const url = new URL(request.url!, 'http://localhost');
-    if (url.pathname === '/graphql') { void serveData(request, response); return; }
-    const file = url.pathname.startsWith('/app/') ? resolve(root, url.pathname.slice(5)) : join(root, 'index.html');
-    if (!file.startsWith(`${root}/`) || !existsSync(file)) { response.writeHead(404).end(); return; }
-    response.setHeader('content-type', ({ '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.woff2': 'font/woff2' } as Record<string, string>)[extname(file)] ?? 'application/octet-stream');
-    response.end(readFileSync(file));
-  });
-  const detach = data.attach(http);
-  await new Promise<void>(ok => http.listen(0, '127.0.0.1', ok));
-  const address = http.address(); if (!address || typeof address === 'string') throw new Error('No fixture listener');
-  return { db, data, cookie, session, url: `http://127.0.0.1:${address.port}`,
-    async close() { detach(); await data.close(); await new Promise<void>(ok => http.close(() => ok())); client.close(); } };
+  const app = await serveShared({db,clock,webRoot:root,
+    originAllowed:request=>!request.headers.origin||request.headers.origin===`http://${request.headers.host}`});
+  return {db,data:app,cookie,session,url:app.url,
+    async close(){await app.close();client.close();}};
 }
 
 // Runs without a browser or built assets: catches /graphql falling through to
@@ -74,6 +61,9 @@ it('serves the shipped Changes selection over the real authenticated HTTP listen
     const post = (cookie?: string) => fetch(`${app.url}/graphql`, { method: 'POST',
       headers: { 'content-type': 'application/json', ...(cookie ? { cookie: `loom_ui=${cookie}` } : {}) }, body: JSON.stringify({ query: changesQuery }) });
     expect((await post()).status).toBe(401);
+    const session = await fetch(app.url+'/auth/session',{headers:{cookie:`loom_ui=${app.cookie}`}});
+    expect(session.headers.get('content-type')).toContain('application/json');
+    expect((await session.json()).viewer).toMatchObject({id:'sam'});
     const response = await post(app.cookie);
     expect(response.headers.get('cache-control')).toBe('no-store');
     const result = await response.json(); expect(result.errors).toBeUndefined();
@@ -136,7 +126,7 @@ it.runIf(chrome && existsSync(join(root, 'index.html')))('Changes shares generat
     app.data.writes.run(() => app.db.delete(s.sessions).where(eq(s.sessions.id, app.session)).run());
     for (const page of [a, b]) await expect.poll(() => row(page).count()).toBe(0);
     await b.reload();
-    await expect.poll(() => b.getByText('Waiting for connection.', { exact: true }).count()).toBe(1);
+    await expect.poll(() => b.getByRole('heading', { name:'Sign in to loom', exact:true }).count()).toBe(1);
     expect(await row(b).count()).toBe(0);
     expect(errors).toEqual([]);
     await context.close();
