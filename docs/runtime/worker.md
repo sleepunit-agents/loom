@@ -443,3 +443,7 @@ private take route. Successful status reports notify the runtime so its heartbea
 can preserve waiting/idle status; a returned Stop request invokes the runtime's
 Stop callback before publishing a tool result. Request cancellation closes only
 that call, while body close cancels every current and future call.
+
+Native model tools report only working/waiting while a turn is live. Idle/offline
+reports and Stop acknowledgement belong to the receiving runtime after execution
+ends, so a model cannot clear the working flag or remove the live Stop control.
