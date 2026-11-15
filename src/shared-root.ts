@@ -1,11 +1,19 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
-import { tempoSettingsProposals } from './core/tempo/proposal.js';
-import { sharedTempoSettings, type TempoChatAuthentication } from './shared-tempo-settings.js';
+import {sharedMemory,type SharedMemoryOptions} from './shared-memory.js';
+import {installMemoryTempo} from './transport/memory-tempo.js';
+import {installMemorySignals} from './transport/memory-signals.js';
+import { SecretDelivery, type SecretDeliveryHolder } from './pieces/secrets/delivery.js';
+import { SecretStartup } from './pieces/secrets/shared-startup.js';
+import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
+import { BridgeSettings } from './pieces/bridges/settings.js';
+import { registerSharedBridgeCommands } from './shared-bridge-commands.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
 import { registerSharedSecretCommands } from './shared-secret-commands.js';
-/** Fresh shared composition. The caller owns the approved shared connection;
- * portable Memory stays in its declared files. No legacy loom tables. */
+/** Fresh shared composition. The caller initializes the approved schema and owns
+ * the connection; this never bootstraps legacy tables or opens another store. */
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { tempoSettingsProposals } from './core/tempo/proposal.js';
+import { sharedTempoSettings, type TempoChatAuthentication } from './shared-tempo-settings.js';
 import type { IncomingMessage } from 'node:http';
 import { Hono } from 'hono';
 import { z } from 'zod';
@@ -19,12 +27,12 @@ import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
-import {sharedMemory,type SharedMemoryOptions} from './shared-memory.js';
-import {installMemoryTempo} from './transport/memory-tempo.js';
-import {installMemorySignals} from './transport/memory-signals.js';
 import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
+import { createRuntime } from './runtime/runtime.js';
+import type { ModelRole } from './runtime/placement.js';
+import { registerSharedRuntime } from './shared-runtime.js';
 
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
@@ -39,8 +47,12 @@ export function sharedRoot(options: {
   tempo?: SharedTempoOptions;
   /** Explicit authenticated private holder and stable private retry key. */
   secretWrites?: {holder:RecoverableSecretMutations;fingerprintKey:Uint8Array};
+  /** Authenticated private holder-to-worker sink; values never enter this root. */
+  secretDelivery?: SecretDeliveryHolder;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
+  modelRoles?(): readonly ModelRole[];
+  runtimeJobEnded?(id: string): void;
 }) {
   if(options.secretWrites && (!(options.secretWrites.fingerprintKey instanceof Uint8Array) || options.secretWrites.fingerprintKey.byteLength!==32))throw Error('Invalid secret retry key');
   const { db, clock } = options;
@@ -49,32 +61,45 @@ export function sharedRoot(options: {
   const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;
   const credentials = sharedCredentials(db, clock, () => !closing);
-  const services = {
-    tasks: taskService(db, now),
-    approvals: approvalService(db, new Map([...(options.approvedOperations ?? []), settings.operation]), now),
-    conversations: new Conversations(db, now),
-  };
-  const memory=sharedMemory(db,clock,options.memory,services.tasks);
+  const tasks=taskService(db,now);
+  const memory=sharedMemory(db,clock,options.memory,tasks);
   const startupCleanups:Array<()=>void>=[memory.close];
   try{
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields,...options.fields}, () => !closing, credentials.authenticate);
-  startupCleanups.push(()=>{void data.close().catch(error=>{try{options.reportError(error);}catch{/* Preserve the startup failure. */}});});
+  startupCleanups.push(()=>{void data.close().catch(()=>{try{options.reportError(new Error('Data startup cleanup failed'));}catch{}});});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
     receipts: new OperationResults(db), writes: data.writes,
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   startupCleanups.push(()=>operations.close());
-  memory.register(operations);memorySignals=installMemorySignals(clock,memory,()=>data.changed());
-  startupCleanups.push(()=>memorySignals?.close());
+  memory.register(operations);memorySignals=installMemorySignals(clock,memory,()=>data.changed());startupCleanups.push(memorySignals.close);
   const stopMemoryWrites=data.writes.observe(()=>memorySignals!.rearm());startupCleanups.push(stopMemoryWrites);
   registerSharedPreferences(operations, db);
+  const roles = () => options.modelRoles?.() ?? [];
+  let tempo!: ReturnType<typeof installSharedTempo>;
+  const jobEnded = (id: string) => {
+    try {
+      tempo?.sources.job(id);
+      tempo?.capacityChanged();
+      options.runtimeJobEnded?.(id);
+    } catch (error) { options.reportError(error); }
+  };
+  const runtime = createRuntime(db, clock, { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
+  startupCleanups.push(()=>runtime.close());
+  registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
+
   const requests = new SecretRequests(db, now);
+  const secretCommit = <T>(write: () => T): T => {
+    const result = data.writes.run(write);
+    for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
+    return result.value;
+  };
   const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,
-    options.secretWrites.fingerprintKey, write => {
-      const result = data.writes.run(write);
-      for (const _error of result.notificationErrors) { try { options.reportError(new Error('Secret write notification failed')); } catch { /* reporting cannot undo a commit */ } }
-    });
+    options.secretWrites.fingerprintKey, secretCommit);
+  const delivery = options.secretDelivery && new SecretDelivery(db, now, options.secretDelivery, secretCommit);
+  const startup = delivery && new SecretStartup(db, requests, delivery, secretCommit);
+  registerSharedSecretAgentCommands(operations, db, requests, delivery, viewer => credentials.body(viewer));
   registerSharedSecretCommands(operations, db, requests, values && {
     values, fingerprintKey:options.secretWrites!.fingerprintKey,
   });
@@ -90,21 +115,26 @@ export function sharedRoot(options: {
     return secretRecovery;
   };
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
-  startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();});
+  startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();startup?.close();void delivery?.close().catch(()=>{try{options.reportError(new Error('Secret startup cleanup failed'));}catch{}});});
+  const services = {
+    bridges: {settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
+    tasks,
+    approvals: approvalService(db, new Map([...(options.approvedOperations ?? []), settings.operation]), now),
+    conversations: new Conversations(db, now),
+    runtime,
+    secrets: {requests,values,delivery,startup,reconcile:recoverSecrets},
+  };
   registerSharedTaskCommands(operations, db, services.tasks);
-
+  registerSharedBridgeCommands(operations,db,services.bridges.settings);
   const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
-  const tempo=installSharedTempo(db,clock,data.writes,operations,services.conversations,data.changed,{...options.tempo,chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
-    settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,beforeStart(tempo){
-    const stopOther=options.tempo?.beforeStart?.(tempo);
-    try{
-      const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;
-      return ()=>{try{stopMemory?.();}finally{stopOther?.();}};
-    }catch(error){stopOther?.();throw error;}
-  }});
+  try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, {
+    ...options.tempo, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
+    settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
+    beforeStart(tempo){const stopOther=options.tempo?.beforeStart?.(tempo);try{const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;return()=>{try{stopMemory?.();}finally{stopOther?.();}};}catch(error){stopOther?.();throw error;}},
+  }); }
+  catch (error) { cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
   startupCleanups.push(()=>tempo.close());
   const authenticate = credentials.authenticate;
-
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
   const bodyRequest = (request: Request, abort: AbortController, limited = false) => {
@@ -145,13 +175,15 @@ export function sharedRoot(options: {
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     const answer = await chat.run(auth, () => operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
       parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid()));
+
     // Execution and its final await can yield. A committed receipt remains
     // durable, but its response must not outlive the admitted credential.
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
+  runtime.start();
   return {
-    http, operations, services: {...services,secrets:{requests,values,reconcile:recoverSecrets},tempo}, memory, credentials, writes: data.writes, changed: ()=>memorySignals!.changed(),
+    http, operations, services: { ...services, tempo }, memory, credentials, writes: data.writes, changed: ()=>memorySignals!.changed(),
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);
@@ -161,14 +193,16 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
-      // Install shared completion before synchronous detach/abort callbacks.
-      cancelSecretRecovery?.(); values?.close();
       stopMemoryWrites();memorySignals?.close();
+      runtime.close();
+      // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();
+      cancelSecretRecovery?.(); values?.close(); startup?.close();
+      const deliveryStopped = delivery?.close();
       const stopped = data.close();
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, deliveryStopped, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { try{operations.close();}finally{memory.close();} } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
@@ -176,8 +210,5 @@ export function sharedRoot(options: {
       return closing;
     },
   };
-  }catch(error){
-    for(const stop of startupCleanups.reverse())try{stop();}catch(cleanup){try{options.reportError(cleanup);}catch{/* Preserve the startup failure. */}}
-    throw error;
-  }
+  }catch(error){for(const stop of startupCleanups.reverse())try{stop();}catch{try{options.reportError(new Error('Shared startup cleanup failed'));}catch{}}throw error;}
 }

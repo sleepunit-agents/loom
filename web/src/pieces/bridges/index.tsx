@@ -1,3 +1,4 @@
+import { ConnectionControl,ChannelControl,PersonControl,SendControl } from './controls';
 import { useState, type ComponentProps } from 'react';
 import { useDataQuery } from '../../data/graphql';
 import { BridgesView, type BridgeFolder, type BridgeSelection } from '../bridges-view';
@@ -16,10 +17,16 @@ function selection(path: string): { folder: BridgeFolder; selected?: BridgeSelec
 function LiveBridges({ path, go }: { path?: string; go?: (path: string) => void }) {
   const [local, setLocal] = useState(base);
   const route = selection(path ?? local), navigate = go ?? setLocal;
-  const snapshot = bridgesSnapshot(useDataQuery<BridgesData>(bridgesQuery));
+  const query=useDataQuery<BridgesData>(bridgesQuery),snapshot=bridgesSnapshot(query);
+  const manage=snapshot.status==='live'&&query.data?.bridgeReader?.manage===true;
   return <BridgesView key={snapshot.member} snapshot={snapshot} member={snapshot.member} {...route}
     select={selected => navigate(selected ? `${base}/item/${selected.folder}/${encodeURIComponent(selected.id)}` : `${base}/${route.folder}`)}
-    changeFolder={folder => navigate(`${base}/${folder}`)} />;
+    changeFolder={folder => navigate(`${base}/${folder}`)} cards={manage?{
+      create:route.folder==='sends'?null:<details key={route.folder}><summary>New {route.folder==='connections'?'connection':route.folder==='channels'?'channel rule':'person link'}</summary>{route.folder==='connections'?<ConnectionControl/>:route.folder==='channels'?<ChannelControl/>:<PersonControl/>}</details>,
+      connection:id=>{const row=snapshot.connections.find(row=>row.id===id);return row&&<ConnectionControl key={JSON.stringify(row)} row={row} filters={snapshot.filters.filter(f=>f.connection===id)}/>;},
+      channel:row=><ChannelControl key={JSON.stringify(row)} row={row}/>,person:row=><PersonControl key={JSON.stringify(row)} row={row}/>,
+      send:id=>{const row=snapshot.sends.find(row=>row.id===id);return row&&<SendControl key={JSON.stringify(row)} row={row}/>;},
+    }:undefined}/>;
 }
 /** The registered app now reads the generated schema itself. An explicit host
  * may still supply the same view contract, including its approval controls. */

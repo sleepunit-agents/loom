@@ -1,3 +1,4 @@
+import { conversationTables, conversationVisibility } from './core/data/conversation-visibility.js';
 /** Shared-data transport composition. No schema creation or legacy credentials. */
 import { getTableColumns, sql } from 'drizzle-orm';
 import { bridgeConnections, bridgeIncoming } from './core/data/schema.js';
@@ -18,13 +19,15 @@ import { dataSocket } from './core/data/socket.js';
 import { taskVisibility } from './core/data/visibility.js';
 import { workVisibility } from './core/data/work-visibility.js';
 import { DataWrites } from './core/data/writes.js';
+import { modelAccountQueries } from './runtime/account-query.js';
 
 export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request: IncomingMessage) => boolean, publicOrigin?: string, fields: ReturnType<typeof memoryQueryFields>['fields'] = {}, admitted: () => boolean = () => true, authentication?: NonNullable<Parameters<typeof dataHttp>[1]>) {
+  const accounts = modelAccountQueries(db, () => new Date(clock.now()).toISOString());
   const resolve = authentication ?? dataAuthentication(db, () => clock.now());
   const authenticate = (request: Request) => {
     if (!admitted()) return;
     const auth = resolve(request);
-    return auth && { ...auth, valid: () => admitted() && auth.valid() };
+    return auth && { ...auth, valid: () => admitted() && auth.valid() && accounts.valid(auth.viewer) };
   };
   const live = new DataLive();
   const bridges = new BridgeQueries(db, () => clock.now());
@@ -47,11 +50,11 @@ export function nextData(db: DataDatabase, clock: Clock, originAllowed: (request
   const schema = (viewer: Viewer) => withQueryFields(dataQueries(db.$client, {
     tables: ['tasks', 'taskComments', 'taskLinks', 'projects', 'agents',
       'approvals', 'approvalRecord', 'approvalNotices', 'approvalRules',
-      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', ...bridgeSecretsTables],
-    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer),
+      'changes', 'changeChecks', 'changePeople', 'changeTasks', 'changeSync', 'memberPreferences', ...bridgeSecretsTables, ...conversationTables],
+    visibility: { ...taskVisibility(viewer), ...workVisibility(viewer), ...bridgeSecretsVisibility(viewer), ...conversationVisibility(viewer),
       memberPreferences: fields => viewer.kind === 'member' ? sql`(${fields.member} = ${viewer.id} and exists (select 1 from ${members} where ${members.id} = ${viewer.id}))` : sql`false`,
     },
-  }), { ...fields, ...ownFields });
+  }), { ...fields, ...ownFields, ...accounts.fields });
   const socket = dataSocket({ live, clock, originAllowed,
     authenticate(request) {
       const headers = new Headers();

@@ -67,9 +67,23 @@ failed process cleanup, so it cannot claim more work after uncertain reaping.
 SIGINT and SIGTERM cancel active work and idle waiting. The server owns start
 retries and silence reconciliation.
 
-This document describes the executable and adapter seam. Production mounting of
-the authenticated runner operations is separate composition work; the presence of
-the executable alone does not make a configured worker operational.
+The fresh `sharedRoot` mounts these four authenticated runner operations on the
+same shared connection and write/receipt boundary. The canonical current bearer
+runner proof supplies the machine identity; runner-labelled cookies are refused.
+Only that live machine may claim or report its jobs; caller-supplied machine identity is refused.
+It receives model roles from the trusted root's `modelRoles()` configuration,
+never from a worker request. A root without configured roles leaves work queued.
+`runtime.next` and heartbeat receipt replays are refused, so an old claim or
+`active:true` cannot restore a finished job. The worker already uses a fresh id
+for each call and never retries an uncertain request. Other report receipts are
+checked against current machine/job authority before replay.
+
+The root owns the silence sweep and closes it on shutdown. Terminal source
+notifications run after the job effect and receipt commit. Private Comms briefs
+and log words do not enter assignments, job storage or receipt fingerprints;
+ephemeral private input and current-body credentials need their separate door.
+Native harness adapters and switching an installed server to the fresh root are
+separate work; an executable and root factory alone do not deploy a worker.
 
 ## Container bodies
 
@@ -117,3 +131,37 @@ The wire format follows Docker's [Engine API](https://docs.docker.com/reference/
 create, attach, start, wait and remove endpoints. The worker uses the explicitly
 configured local Unix socket and unversioned routes; it does not start or install
 an engine.
+
+### Worker-local account runner bindings
+
+A shared `runners` command can implement account selection from the startup JSON
+itself. For separate local profiles or private runner commands, configure
+`accountRunners`, keyed first by the account ID and then by harness:
+
+```json
+{
+  "accountRunners": {
+    "subscription-a": {
+      "codex": {
+        "command": "/private/runner-a",
+        "args": [],
+        "cwd": "/work",
+        "env": {"ACCOUNT_PROFILE": "/private/profile-a"}
+      }
+    }
+  }
+}
+```
+
+When this map is present, every job needs an exact account/harness entry. Missing
+entries fail before the builder or body starts; they never fall back to the shared
+runner or another account. Plans are copied when the worker executor is created.
+The builder retains its own explicit environment, and the body receives the
+selected command's environment plus the existing account/model/harness startup
+envelope after the running acknowledgement. The same selection applies to
+container entrypoint, arguments and environment. Container paths refer to files
+inside its trusted image; this adds no host credential/profile mounts.
+
+These bindings select a configured runner. That program must still implement its
+native harness's model choice and tool restrictions; this feature does not infer
+provider CLI flags or supply an account profile that is not locally configured.
