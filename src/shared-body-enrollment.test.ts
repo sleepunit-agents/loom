@@ -39,6 +39,23 @@ it('rotates prior job body tokens atomically and never revives a revoked fingerp
  expect((await f.call({job:'job',fingerprint:hash(second)})).status).toBe(200);expect(proof.valid()).toBe(false);expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))).toBeUndefined();
  expect((await f.call({job:'job',fingerprint:hash(first)},raw.runner,id)).status).toBe(403);expect((await f.call({job:'job',fingerprint:hash(first)})).status).toBe(403);expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(second))).get()?.revokedAt).toBeNull();
 });
+it.each(['worker','foreign'])('enrolls independent concurrent and subsequent jobs on %s without revoking another body',async box=>{
+ const f=fixture(),first=f.credential(),second=f.credential(),third=f.credential();
+ if(box==='worker')f.root.writes.run(()=>f.db.update(jobs).set({box}).where(eq(jobs.id,'other')).run());
+ const results=await Promise.all([f.call({job:'job',fingerprint:hash(first)}),f.call({job:'other',fingerprint:hash(second)},box==='worker'?raw.runner:raw.foreign)]);
+ expect(results.map(response=>response.status)).toEqual([200,200]);
+ expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))?.valid()).toBe(true);
+ expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+second}}))?.valid()).toBe(true);
+ f.root.writes.run(()=>{
+  f.db.update(jobs).set({state:'done'}).where(eq(jobs.id,'job')).run();
+  f.db.insert(jobs).values({id:'next-job',box:'worker',agent:'art',state:'starting',title:'',brief:'',model:'test',startedByKind:'agent',startedBy:'art',houseRepository:'',houseFile:'',houseBranch:'',queuedAt:f.now()}).run();
+ });
+ expect((await f.call({job:'next-job',fingerprint:hash(third)})).status).toBe(200);
+ expect(f.db.select().from(tokens).where(eq(tokens.fingerprint,hash(first))).get()?.revokedAt).toBeNull();
+ expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+first}}))).toBeUndefined();
+ for(const body of [second,third])expect(f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+body}}))?.valid()).toBe(true);
+ const bodies=f.db.select().from(tokens).all().filter(row=>row.job!==null);expect(new Set(bodies.map(row=>row.label)).size).toBe(3);
+});
 it('rejects other roles, foreign worker, cookie, forged labels and identity claims',async()=>{
  const f=fixture(),input={job:'job',fingerprint:hash(f.credential())};for(const token of [raw.owner,raw.agent,raw.foreign])expect((await f.call(input,token)).status).toBe(403);expect((await f.call(input,raw.cookie,randomUUID(),true)).status).toBe(403);
  for(const extra of [{agent:'art'},{box:'worker'},{token:f.credential()},{member:'owner'}])expect((await f.call({...input,...extra})).status).toBe(400);
