@@ -1,6 +1,7 @@
 import webpush from 'web-push';
 /** One Account browser proof through the actual shared program; CI owns Chrome. */
 vi.mock('../core/signin/push-transport.js',()=>({pushTransport:()=>{throw Error('External push delivery is forbidden in this proof');}}));
+import {accountEvidenceError} from './account-evidence-errors.js';
 import {runInNewContext} from 'node:vm';
 import {it,expect,vi} from 'vitest';
 import Database from 'better-sqlite3';
@@ -23,8 +24,8 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
  db.insert(tokens).values({fingerprint:hash('a'.repeat(64)),kind:'owner',member:'sam',label:'Sam',createdAt:now()}).run();
  db.insert(sessions).values([{id:hash(cookie),token:hash('a'.repeat(64)),device:'Current browser',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()},{id:hash('d'.repeat(64)),token:hash('a'.repeat(64)),device:'Kitchen tablet',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()}]).run();
  db.insert(passkeys).values({id:'fixture-key',token:hash('a'.repeat(64)),label:'Fixture laptop',publicKey:'unused-public-half',counter:0,createdAt:now()}).run();
- const delivered:Array<{title:string;body:string;url:string}>=[];let receive:((payload:string)=>Promise<void>)|undefined;
- const app=await serveShared({db,clock,webRoot,notifications:{vapid:webpush.generateVAPIDKeys(),send:async(sub,payload)=>{expect(String(payload)).not.toContain('PRIVATE');expect(sub.endpoint).toBe('https://fcm.googleapis.com/browser-proof');if(!receive)throw Error('Notification receiver not ready');await receive(String(payload));}},originAllowed:()=>true,reportError:error=>{throw error;}}),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+ const delivered:Array<{title:string;body:string;url:string}>=[],settled:string[][]=[];let receive:((payload:string)=>Promise<void>)|undefined;
+ const app=await serveShared({db,clock,webRoot,tempo:{notify:(_member,ids)=>{settled.push([...ids]);return true;}},notifications:{vapid:webpush.generateVAPIDKeys(),send:async(sub,payload)=>{expect(String(payload)).not.toContain('PRIVATE');expect(sub.endpoint).toBe('https://fcm.googleapis.com/browser-proof');if(!receive)throw Error('Notification receiver not ready');await receive(String(payload));}},originAllowed:()=>true,reportError:error=>{throw error;}}),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
  try{
   const handlers:Record<string,(event:unknown)=>void>={};const worker=await (await fetch(app.url+'/sw.js')).text();
   runInNewContext(worker,{URL,location:{origin:app.url},self:{addEventListener:(name:string,handler:(event:unknown)=>void)=>{handlers[name]=handler;},registration:{showNotification:async(title:string,options:{body:string;data:{url:string}})=>{delivered.push({title,body:options.body,url:options.data.url});}}}});
@@ -46,10 +47,10 @@ it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live
   await a.getByRole('button',{name:'Enable notifications on this browser',exact:true}).click();
   await expect.poll(()=>b.getByRole('heading',{name:'Fixture notification browser',exact:true}).count()).toBe(1);
   app.writes.run(()=>app.services.conversations.send({toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'unknown',words:'PRIVATE NOTIFICATION PROOF WORDS'}));clock.advance(5000);
-  await expect.poll(()=>delivered.length).toBe(1);expect(delivered).toEqual([{title:'loom',body:'',url:app.url+'/p/inbox-preview'}]);
+  await expect.poll(()=>delivered.length).toBe(1);expect(settled.length).toBe(1);expect(delivered).toEqual([{title:'loom',body:'',url:app.url+'/p/inbox-preview'}]);
   await b.getByRole('button',{name:'Remove notification device',exact:true}).click();
   await expect.poll(()=>a.getByRole('heading',{name:'Fixture notification browser',exact:true}).count()).toBe(0);
-  app.writes.run(()=>app.services.conversations.send({toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'unknown',words:'PRIVATE AFTER DISABLE'}));clock.advance(5000);await app.services.notifications!.publish('sam',[]);expect(delivered).toHaveLength(1);
+  app.writes.run(()=>app.services.conversations.send({toKind:'person',to:'sam',member:'sam',source:'notice',fromKind:'unknown',words:'PRIVATE AFTER DISABLE'}));clock.advance(5000);await app.services.notifications!.publish('sam',[]);expect(settled.length).toBe(2);expect(delivered).toHaveLength(1);
   const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
   await a.screenshot({path:join(shots,'account-shared.png'),animations:'disabled',mask:[a.locator('[data-signin-link]')]});
   const self=a.getByRole('heading',{name:'Current browser',exact:true}).locator('..');await self.getByRole('button',{name:'Sign out browser',exact:true}).click();
@@ -70,7 +71,7 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
  db.insert(members).values({id:'sam',role:'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash(raw),kind:'owner',member:'sam',label:'Sam browser fixture',createdAt:at}).run();
  db.insert(members).values({id:'other',role:'member',joinedAt:at}).run();db.insert(tokens).values({fingerprint:hash('g'.repeat(64)),kind:'owner',member:'other',label:'Other member fixture',createdAt:at}).run();
  const app=await serveShared({db,clock,port,publicOrigin:origin,webRoot,originAllowed:()=>true,reportError:error=>{throw error;}});
- let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined,trap:ReturnType<typeof createServer>|undefined;let privateCredentialKey='';
+ let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined,trap:ReturnType<typeof createServer>|undefined;let privateCredentialKey='',failed=false;
  try{
   browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
   // This proof represents a person; separate route tests exercise headless six-hour sessions.
@@ -112,12 +113,12 @@ it.runIf(enabled)('registers and uses a real browser passkey against the shared 
   await page.getByRole('button',{name:'Sign out this device',exact:true}).click();await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();
   await setCounter(0);const rejected=page.waitForResponse(response=>new URL(response.url()).pathname==='/login/passkey');void rejected.catch(()=>{});await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();expect((await rejected).status()).toBe(401);
   expect(db.select().from(sessions).all()).toEqual([]);expect(db.select().from(passkeys).get()!.counter).toBe(rememberedCounter);await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).waitFor();
-  await setCounter(rememberedCounter);await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.locator('.next-shell').waitFor();await page.goto(origin+'/p/account-preview');await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor();
+  await setCounter(rememberedCounter);await page.getByRole('button',{name:'Sign in with a passkey',exact:true}).click();await page.locator('.next-shell').waitFor();await page.goto(origin+'/p/account-preview');await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor();expect(db.select().from(sessions).all()).toMatchObject([{via:'passkey',token:hash(raw)}]);expect(db.select().from(passkeys).get()!.counter).toBeGreaterThan(rememberedCounter);
   const body=await page.locator('body').innerText();expect(body.includes(raw)).toBe(false);expect(body.includes(link.path)).toBe(false);
   const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});await page.screenshot({path:join(shots,'passkey-shared.png'),animations:'disabled',mask:[page.locator('[data-signin-link]')]});
   await page.getByRole('button',{name:'Remove passkey',exact:true}).click();await expect.poll(()=>db.select().from(passkeys).all().length).toBe(0);await page.getByRole('heading',{name:'Virtual laptop',exact:true}).waitFor({state:'hidden'});
   expect(errors).toEqual([]);
- }catch(error){const message=String(error).replace(/\/login\/[a-zA-Z0-9_-]+/g,'/login/[redacted]');throw Error(privateCredentialKey?message.replaceAll(privateCredentialKey,'[virtual key redacted]'):message);}
- finally{await browser?.close();await app.close();if(trap)await new Promise<void>(resolve=>trap!.close(()=>resolve()));client.close();}
+ }catch(error){failed=true;throw accountEvidenceError(error,privateCredentialKey);}
+ finally{let cleanupError:unknown;for(const close of [()=>browser?.close(),()=>app.close(),()=>trap?new Promise<void>(resolve=>trap!.close(()=>resolve())):undefined,()=>client.close()]){try{await close();}catch(error){cleanupError??=error;}}if(cleanupError&&!failed)throw accountEvidenceError(cleanupError,privateCredentialKey);}
  writeFileSync(resolve('artifacts/household-account/passkey.json'),JSON.stringify({completed:true,realPasskeyRegistered:true,realPasskeySignin:true,counterIncreased:true,copiedCounterRejected:true,noSessionAfterCopiedCounter:true,restoredCounterSignin:true,passkeyRemoved:true,oneTimeLinkRedeemedOnce:true,deviceLogout:true},null,2));
 });
