@@ -221,10 +221,35 @@ it('rolls wordless turns and speaker/count updates back with failed message deli
 });
 
 it('uses actual stored expiry instants for private word reads and ciphertext sweeps', async () => {
-  const { db, service, thread } = await fixture();
+  const { db, service, thread, key } = await fixture();
   const message = await service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Expired by stored deadline' });
   db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
-  expect(await service.words(thread.id, message.seq)).toBeNull();
+  const neverDecrypt = new CommsMessages(db, { ...key, open: async () => { throw new Error('Must not decrypt expired words'); } }, service.now);
+  expect(await neverDecrypt.words(thread.id, message.seq)).toBeNull();
   expect(service.expire()).toBe(1);
   expect(db.select().from(messages).get()?.words).toBeNull();
+});
+
+it('applies a shortened household deadline to existing word reads and ciphertext sweeps independently of stored expiry', async () => {
+  const { db, service, thread, key, at } = await fixture();
+  const message = await service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Shortened retention' });
+  at('2026-11-16T18:00:00.000Z');
+  db.insert(household).values({ commsDays: 1 }).run();
+  expect(message.keepUntil).toBe('2026-11-28T18:00:00.000Z');
+  const neverDecrypt = new CommsMessages(db, { ...key, open: async () => { throw new Error('Must not decrypt household-expired words'); } }, service.now);
+  expect(await neverDecrypt.words(thread.id, message.seq)).toBeNull();
+  expect(service.expire()).toBe(1);
+  expect(db.select().from(messages).get()?.words).toBeNull();
+});
+it.each(['household', 'stored'] as const)('withholds words when the %s retention deadline expires during decryption', async deadline => {
+  const { db, service, thread, key, at } = await fixture();
+  const message = await service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Expires during open' });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const gated = new CommsMessages(db, { ...key, open: async blob => { await gate; return key.open(blob); } }, service.now);
+  const reading = gated.words(thread.id, message.seq);
+  if (deadline === 'household') { db.insert(household).values({ commsDays: 1 }).run(); at('2026-11-16T18:00:00.000Z'); }
+  else at(message.keepUntil!);
+  expect(db.select().from(messages).get()?.words).not.toBeNull();
+  release(); expect(await reading).toBeNull();
 });
