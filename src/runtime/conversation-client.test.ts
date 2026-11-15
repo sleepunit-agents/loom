@@ -71,3 +71,19 @@ it.each([['abort','fetch'],['close','fetch'],['abort','body'],['close','body']] 
  if(phase==='fetch'){release(response);await Promise.resolve();await Promise.resolve();}
  expect(cancelled).toBe(true);expect(accept).not.toHaveBeenCalled();expect(f.fetcher).toHaveBeenCalledTimes(1);expect(f.fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
 });
+it.each(['http://localhost','http://127.0.0.1','http://[::1]'])('uses fixed authenticated conversation endpoints on loopback origin %s',async url=>{
+ const f=await fixture(),client=bodyConversationClient({url,token:raw.body,job:'job',conversation:f.thread.conversation,signal:f.abort.signal,clock:f.clock,fetch:f.fetcher});clean.push(()=>client.close());
+ expect(await client.status({state:'idle',work:'Ready'})).toEqual({saved:true,stopRequested:false});expect(f.requests[0].url).toBe(url+'/api/conversation/status');expect(f.requests[0].body).toMatchObject({input:{state:'idle',work:'Ready'},id:expect.any(String)});
+});
+it.each(['reply','card','status','turn','digest','confirm'] as const)('rejects extra private words in the %s acknowledgement',async method=>{
+ const f=await fixture(),values={reply:{saved:true,seq:1},card:{saved:true,seq:1},status:{saved:true,stopRequested:false},turn:{saved:true,conversation:f.thread.conversation,seq:1},digest:{saved:true,digest:'dg',revision:1,item:null},confirm:{saved:true}};
+ const native=f.fetcher.getMockImplementation()!;f.fetcher.mockImplementation(async(url,init)=>String(url).endsWith('/take')?native(url,init):Response.json({ok:true,value:{...values[method],words:'PRIVATE ACK LEAK'}}));
+ let pending:Promise<unknown>;
+ if(method==='reply')pending=f.client.reply({clientId:'r',words:'Fictitious'});
+ else if(method==='card')pending=f.client.card({clientId:'c',words:'Fictitious',tool:'Read',cardState:'done'});
+ else if(method==='status')pending=f.client.status({state:'idle',work:''});
+ else if(method==='turn')pending=f.client.turn({kind:'note'});
+ else if(method==='digest')pending=f.client.digest({summary:'Finished'});
+ else {await f.send('Fictitious input','one');pending=f.client.takeAndAccept(async()=>{});}
+ await expect(pending).rejects.toThrow(/^Conversation body request failed; outcome may be uncertain$/);
+});
