@@ -22,3 +22,22 @@ machine enrollment cannot yet be populated through current application services.
 The manifest reports these instead of inserting tables or invoking the retired
 foundation. The model account is fictitious metadata with no provider login or
 capacity. A sample PR is a local copy with no GitHub request.
+
+After building, run the browser measurement with:
+
+```sh
+npx playwright-core install chromium
+node scripts/rebuild-walkthrough.mjs /tmp/loom-walkthrough-report
+```
+
+`LOOM_TEST_CHROME` selects an existing Chromium binary. The walkthrough starts
+`startSharedHome`, the same built entry used by `serve --next`, opens the normal
+sign-in page, follows startup's one-time link, and discovers every launcher app.
+It records each tile's actual text, screenshot, console/page/network errors and
+GraphQL connection activity during that visit. Connection activity may also
+include the shell and other open tiles; it is not proof of a specific app's query.
+There are no injected sessions, mocked HTTP routes or sample UI components.
+Screenshots and `walkthrough.json` are uploaded by the Rebuild walkthrough CI job.
+App failures are measurements in that report; fatal startup/sign-in failures fail
+the command. A green walkthrough job means evidence was collected, not that all
+product promises are fulfilled.
