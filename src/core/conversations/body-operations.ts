@@ -1,7 +1,7 @@
 import { registerConversationBodyOutput } from './body-output.js';
 import { ConversationMail } from './mail.js';
 import { sameMailScope } from './body-input.js';
-import { conversationBodyScope, type BodyProof } from './body-scope.js';
+import { conversationBodyScope, requireBodyScope, type BodyProof } from './body-scope.js';
 /** Reports from the currently authenticated job body. Public Viewer labels,
  * input-selected jobs and ordinary agent tokens never establish this proof. */
 import { z } from 'zod';
@@ -15,7 +15,7 @@ export function registerConversationBodyOperations(operations:Operations, servic
  registerConversationBodyOutput(operations,service,proof,privateAssignment);
  const conversationsService=service.threads.conversations,db=service.db;
  const current=conversationBodyScope(db,proof,privateAssignment);
- const requireCurrent=(viewer:Viewer)=>{const found=current(viewer);if(!found)throw new OperationError('denied','Current conversation body required');return found;};
+ const requireCurrent=requireBodyScope(current);
  const common={write:true,recheckPolicy:true,doors:['http'] as ['http'],may:(viewer:Viewer)=>!!current(viewer),inputHash:(input:string, identity:Readonly<{actor:Viewer}>)=>service.key.hash(`body-conversation\0${current(identity.actor)?.job.id ?? 'unbound'}\0${input}`)};
  operations.register(operation({...common,name:'conversation.turn',
   input:z.object({kind:z.enum(['reply','action','wake','note','refused']),model:z.string().min(1).max(200).optional(),outcome:z.enum(['answered','progressed','deferred','failed','none']).optional(),latencyMs:z.number().int().nonnegative().optional()}).strict(),

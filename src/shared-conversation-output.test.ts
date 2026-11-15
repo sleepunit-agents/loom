@@ -40,3 +40,9 @@ it('isolates sender retry IDs across jobs and records no inferred model',async()
  f.root.writes.run(()=>{f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,old.id)).run();f.db.insert(s.jobs).values({...old,id:'next-job',state:'running'}).run();f.db.update(s.conversations).set({job:'next-job'}).where(eq(s.conversations.id,f.thread.conversation)).run();f.db.update(s.tokens).set({job:'next-job'}).where(eq(s.tokens.job,old.id)).run();});
  expect((await f.call('message',{...input,words:'Second job'},'second')).status).toBe(200);expect(f.db.select().from(s.messages).all()).toMatchObject([{run:'job',clientId:'job:same'},{run:'next-job',clientId:'next-job:same'}]);expect(f.db.select().from(s.turns).all().map(row=>row.model)).toEqual([null,null]);
 });
+it('keys both private output and reported status fingerprints with the Comms key',async()=>{
+ const f=await fixture(),input={kind:'reply',clientId:'one',words:'PRIVATE FINGERPRINT'};expect((await f.call('message',input,'message-fingerprint')).status).toBe(200);expect((await f.call('status',{state:'working',work:'Reported work'},'status-fingerprint')).status).toBe(200);
+ for(const [name,canonical]of [['conversation.message','{"clientId":"one","kind":"reply","words":"PRIVATE FINGERPRINT"}'],['conversation.status','{"state":"working","work":"Reported work"}']]){
+  const receipt=f.db.select().from(s.operationResults).where(eq(s.operationResults.operation,name)).get()!;expect(receipt.inputHash).toBe(f.root.services.comms!.key.hash('body-output\0job\0'+canonical));expect(receipt.inputHash).not.toContain('PRIVATE');expect(receipt.result).not.toContain('PRIVATE');expect(receipt.result).not.toContain('Reported work');
+ }
+});

@@ -4,11 +4,11 @@ import { eq } from 'drizzle-orm';
 import type { Viewer } from '../../policy.js';
 import { operation, OperationError, type Operations } from '../operations/index.js';
 import { agentStatus, threads } from '../data/schema.js';
-import { conversationBodyScope, type BodyProof } from './body-scope.js';
+import { conversationBodyScope, requireBodyScope, type BodyProof } from './body-scope.js';
 import type { CommsMessages } from './messages.js';
 export function registerConversationBodyOutput(operations:Operations,service:CommsMessages,proof:BodyProof,privateAssignment:(scope:{member:string;agent:string;project?:string})=>boolean):void {
  const db=service.db,current=conversationBodyScope(db,proof,privateAssignment);
- const requireCurrent=(viewer:Viewer)=>{const found=current(viewer);if(!found)throw new OperationError('denied','Current conversation body required');return found;};
+ const requireCurrent=requireBodyScope(current);
  const threadFor=(viewer:Viewer)=>{
   const found=requireCurrent(viewer),thread=db.select().from(threads).where(eq(threads.conversation,found.cv.id)).get();
   if(found.cv.venue!=='loom'||!thread)throw new OperationError('not-found','Current conversation has no Comms thread');
