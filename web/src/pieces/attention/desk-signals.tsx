@@ -1,19 +1,17 @@
+import { useDeskWaitingCounts } from './waiting';
 import { useDeskAgentDirectory } from './agent-directory';
 import { useHomeComms, threadPath } from './home-comms-data';
 import { useDeskRoster } from './roster';
 import { useEffect } from 'react';
-import { useRecords } from '../../data';
-import { namedAgents, openAsks, orderedAgents } from './home-model';
-import type { Ask } from './model';
+import { namedAgents, orderedAgents } from './home-model';
 /** Desk signals have no hidden UI or message words; all sources are policy-filtered. */
 export default function DeskSignals({go,onAttention}:{go(path:string):void;onAttention:(value:boolean)=>void}) {
   const roster=useDeskRoster();
   const people=useDeskAgentDirectory();
-  const asks=useRecords<Ask>('attention.ask');
+  const waiting=useDeskWaitingCounts();
   const {reading}=useHomeComms();
   const agents=orderedAgents(namedAgents(roster.status==='live'?roster.records:[],people.status==='live'?people.records:[]));
-  const open=asks.status==='live'?openAsks(asks.records):[];
-  const attention=open.length>0||!!reading?.summaries.some(s=>s.unread&&agents.some(a=>a.id===s.agent));
+  const attention=(waiting.status==='live'&&(waiting.total??0)>0)||!!reading?.summaries.some(s=>s.unread&&agents.some(a=>a.id===s.agent));
   useEffect(()=>{onAttention(attention);return()=>onAttention(false);},[attention,onAttention]);
   useEffect(()=>{
     const shortcut=(e:KeyboardEvent)=>{
