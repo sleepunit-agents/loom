@@ -33,7 +33,7 @@ export async function conversationActions({page,app,example,out,open,actions=['c
   const receipt={thread:sent.body.thread,seq:sent.body.seq,item:sent.body.item};
   const {ok,count:inboxCopies}=commsDeliveryEvidence(app.services.comms.db.$client,{thread:example.thread,conversation:example.conversation,agent:'fern'},receipt);
   const screenshot='action-comms-send-before-reload.png';await tile.screenshot({path:join(out,screenshot)});
-  return{ok:false,inconclusive:ok,reason:ok?'Send receipt verified; reload has not yet been observed.':'Send receipt differed from its delivery.',persistedAfterReload:false,receipt,inboxCopies,screenshot};
+  return{ok:false,inconclusive:ok,receiptVerified:ok,reason:ok?'Send receipt verified; reload has not yet been observed.':'Send receipt differed from its delivery.',persistedAfterReload:false,receipt,inboxCopies,screenshot};
  });
  if(actions.includes('commsSendReload'))await attempt('commsSend',async()=>{
   const sent=evidence.commsSend;if(!sent?.receipt)throw Error('Send did not return an accepted receipt');
@@ -42,7 +42,7 @@ export async function conversationActions({page,app,example,out,open,actions=['c
   phase='persisted-message-visible';await tile.getByText(words,{exact:true}).waitFor();
   const {ok,count:inboxCopies}=commsDeliveryEvidence(app.services.comms.db.$client,{thread:example.thread,conversation:example.conversation,agent:'fern'},sent.receipt);
   const screenshot='action-comms-send.png';await tile.screenshot({path:join(out,screenshot)});
-  return{ok,persistedAfterReload:true,receipt:sent.receipt,inboxCopies,screenshot,sendDurationMs:sent.durationMs};
+  return{ok:sent.receiptVerified===true&&ok,persistedAfterReload:true,receipt:sent.receipt,inboxCopies,screenshot,sendDurationMs:sent.durationMs};
  });
  if(actions.includes('inboxAnswer'))await attempt('inboxAnswer',async()=>{
   const tile=await open('Inbox');await activate(tile.getByRole('button',{name:'Go to Inbox',exact:true}));await activate(tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(question,{exact:true})}));

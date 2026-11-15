@@ -2,7 +2,7 @@
 import {expect,it} from 'vitest';
 import Database from 'better-sqlite3';
 import {conversationActions} from '../../scripts/rebuild-conversation-actions.mjs';
-it.each([[1,'one',true,false],[2,'one',false,false],[1,'wrong-item',false,false],[1,'one',false,true]] as const)('binds the actual action receipt with %s stored copies and item %s',async(count,item,ok,duplicateAfterSend)=>{
+it.each([[1,'one',true,false,false],[2,'one',false,false,false],[1,'wrong-item',false,false,false],[1,'one',false,true,false],[2,'one',false,false,true]] as const)('binds receipt with %s copies, item %s, expected %s, late duplicate %s, cleanup %s',async(count,item,ok,duplicateAfterSend,removeAfterSend)=>{
  const db=new Database(':memory:');
  try{
   db.exec('CREATE TABLE inbox(id TEXT,conversation TEXT,to_kind TEXT,"to" TEXT,source TEXT,thread TEXT,message_seq INTEGER)');
@@ -16,9 +16,10 @@ it.each([[1,'one',true,false],[2,'one',false,false],[1,'wrong-item',false,false]
   expect(sent.commsSend).toMatchObject({ok:false,persistedAfterReload:false,receipt:{thread:'th:fiction',seq:1,item},inboxCopies:count});
   expect(sent.commsSend.inconclusive).toBe(count===1&&item==='one');
   if(duplicateAfterSend)db.prepare('INSERT INTO inbox VALUES(?,?,?,?,?,?,?)').run('late-duplicate','fictional-cv','agent','fern','thread','th:fiction',1);
+  if(removeAfterSend)db.prepare('DELETE FROM inbox WHERE id=?').run('duplicate');
   const result=await conversationActions({...options,actions:['commsSendReload'],previous:sent});
   expect(Object.keys(result).sort()).toEqual(['alreadyCollected','commsSend']);
   expect(result.alreadyCollected).toEqual({ok:true});
-  expect(result).toMatchObject({commsSend:{ok,inboxCopies:count+(duplicateAfterSend?1:0),persistedAfterReload:true}});
+  expect(result).toMatchObject({commsSend:{ok,inboxCopies:count+(duplicateAfterSend?1:0)-(removeAfterSend?1:0),persistedAfterReload:true}});
  }finally{db.close();}
 });
