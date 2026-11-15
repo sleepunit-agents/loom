@@ -15,7 +15,6 @@ import { installTasks } from '../pieces/tasks/index.js';
 import { installApprovals } from '../pieces/approvals/index.js';
 import { installAttention } from '../pieces/attention/index.js';
 import { installBridges } from '../pieces/bridges/index.js';
-import { installClock } from '../pieces/clock/index.js';
 import { installExample } from '../pieces/example/index.js';
 import { installMindKnowledge } from '../pieces/mind/index.js';
 import { installRuntime } from '../pieces/runtime/index.js';
@@ -97,7 +96,6 @@ it('registers the own types and exact namespace operations for every in-repo ins
   installSharing(app, home);
   for (const install of [installChanges, installTasks, installApprovals, installAttention, installExample, installRuntime, installSecrets]) install(app.db, app.operations, app.live, sharing);
   installBridges(app, sharing);
-  app.onClose(installClock(app.db, app.operations, app.live, sharing).close);
   app.onClose(installMindKnowledge(app.operations, app.live, { path: join(home, 'absent.db'), sharing }).close);
   const types = {
     changes: ['change', 'change-sync'], tasks: ['task'], approvals: ['approval', 'approval-rule'],
@@ -105,14 +103,14 @@ it('registers the own types and exact namespace operations for every in-repo ins
     example: ['example.record'], runtime: ['runtime.box', 'runtime.job', 'runtime.settings', 'runtime.binding'],
     secrets: ['secret.name', 'secret.grant', 'secret.request', 'secret.policy', 'secret.change'],
     bridges: ['bridges.venue', 'bridges.route', 'bridges.link', 'bridges.send'],
-    clock: ['wake', 'schedule', 'clock', 'approval', 'runtime.job'], mind: ['knowledge'], sharing: ['household.project', 'household.sharing'],
+    mind: ['knowledge'], sharing: ['household.project', 'household.sharing'],
   };
   const snapshot = sharing();
   expect(Object.keys(snapshot.services).sort()).toEqual(Object.keys(types).sort());
   for (const [id, ownTypes] of Object.entries(types)) {
     expect(snapshot.services[id].types).toEqual(ownTypes);
     const namespace = id === 'sharing' ? 'household' : id;
-    const ownOperations = app.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(namespace + '.') || id==='attention' && ['tasks.show','tasks.readMany','approvals.check'].includes(name) || id==='clock' && ['runtime.acceptClock','approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check'].includes(name));
+    const ownOperations = app.operations.offered('direct').map(op => op.name).filter(name => name.startsWith(namespace + '.') || id==='attention' && ['tasks.show','tasks.readMany','approvals.check'].includes(name));
     expect(ownOperations.length).toBeGreaterThan(0);
     expect(snapshot.services[id].operations).toEqual(ownOperations);
     for (const type of ownTypes) expect(maySee({ kind: 'service', id }, { type }, snapshot)).toBe(true);
@@ -131,18 +129,6 @@ it('supports multiple operation registries leasing one database and removes only
   expect(second.store.sharing().services.changes.operations).toContain('changes.list');
   second.app.operations.close();
   expect(second.store.sharing().services).toEqual({});
-});
-
-it('composes only the exact Clock local lifecycle calls across the Approvals boundary',()=>{
- const {app,store}=fixture(),sharing=()=>store.sharing();
- installApprovals(app.db,app.operations,app.live,sharing);
- const jobs=installClock(app.db,app.operations,app.live,sharing);app.onClose(jobs.close);
- const v={kind:'service' as const,id:'clock'},s=sharing();
- for(const name of ['approvals.piece-request','approvals.piece-use-local','approvals.piece-standing-local','approvals.piece-standing-local-check'])
-  expect(mayAct(v,{type:'approval'},s,'act',name)).toBe(true);
- for(const name of ['approvals.answer','approvals.grant','approvals.piece-use','approvals.standing','approvals.piece-withdraw'])
-  expect(mayAct(v,{type:'approval'},s,'act',name)).toBe(false);
- expect(maySee(v,{type:'approval',member:'jonathan'},s)).toBe(false);
 });
 
 it('reuses immutable snapshots until an installation, operation registration or close changes authority', () => {

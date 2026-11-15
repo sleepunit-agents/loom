@@ -230,8 +230,150 @@ enrollment is not retried.
 Credential-bearing body output is drained without keeping a job log tail in
 both process and container adapters. The outer worker also sends an empty tail,
 including for an injected adapter. Body replies and tool cards use their private
-current-body producers instead. This parent transport does not implement a native
-child consumer: the configured command must implement the envelope and use the
-canonical body/Secrets clients. The full enrollment-to-child integration remains
-part of the machines/models task until the canonical server and consumer are
-connected and tested together.
+current-body producers instead. The parent transport alone does not execute a native model: its configured
+child must implement the envelope and use the canonical body/Secrets clients.
+The fixed Claude receiver below connects this envelope to native execution and
+the body client; other native harnesses and the full body lifecycle remain part
+of the machines/models task.
+
+### Fixed Claude child
+
+loom-body <configuration-file> implements that private envelope as a separate
+worker child. Opt the exact account/harness runner into bodyBootstrap:true;
+its command is the fixed loom-body entry, with its configuration filename as
+the only argument. Its configuration is {"command":"/path/to/claude","cwd":"/house"}.
+The worker's explicitly configured account environment reaches the child and
+native CLI; no ambient worker environment is added.
+
+The child takes mail through the canonical body client into its own context,
+confirms acceptance, then invokes Claude with the assignment's exact model.
+Always-denied tool patterns and applicable outside/unknown guest-only patterns
+go into native --disallowedTools. A household person's missing outside tier
+does not make that person a guest. The CLI uses dontAsk permission mode,
+an empty settings-source list, no unrelated MCP servers, and no persisted native
+session. Calls needing interactive native approval are refused.
+
+The child publishes a reply only with the observed main assistant response model,
+and records observed tool-action models separately. Requested, initialization,
+usage-map, synthetic, aborted and subagent model values never stand in for that
+response. Native diagnostics stay private. Serialized status beats keep work reported;
+a Stop cancels native execution and suppresses its reply. A failed status beat
+also stops the body. The parent still owns and reaps the
+whole process group.
+
+This initial Claude entry handles one private Comms mail batch and its response.
+The claim includes its current Comms thread identifier when that reply surface
+exists. The child refuses assignments without it before startup inputs or native
+execution; this routing metadata never replaces the Root's current body proof.
+Other venues need their own receiving/output adapter and remain unfinished.
+The in-child bodyProgram.startup extension point precedes mail/model input;
+startup Secret alias retrieval is a separate integration. Codex, additional
+Comms tools and multi-turn question/wait handling remain unfinished.
+
+## Outside tiers and tool denials
+
+`POST /api/runtime/agentBodyPolicySet` uses the ordinary `{id,input}` envelope:
+
+```json
+{"agent":"art","people":[{"platform":"discord","workspace":"server-id","user":"user-id","tier":2}],"deniedTools":[{"pattern":"Bash","guestsOnly":true},{"pattern":"Write","guestsOnly":false}]}
+```
+
+Current agent owners, including co-owners, replace these two lists atomically
+with their receipt. Current ownership is rechecked on cached replay; runner,
+agent and service principals cannot edit them, and a household owner role alone
+is insufficient. Each list has at most 128 distinct entries. Outside-person keys
+include platform, workspace and user, with tiers 1, 2 or 3. These keys configure
+how the agent treats outside people; they never establish household identity.
+Workers derive each job's senders from its actual stored bridge receipts rather
+than trusting message words. A claim receives only its current senders' tiers.
+
+Tool patterns have 1–512 characters, cannot begin an option dash or contain NUL or
+line breaks, and can apply to all work or only guests. The same pattern may have
+both rules. The native receiving adapter applies the current denial rules; a
+claimed assignment keeps its snapshot across later settings edits. Failed writes
+preserve both lists, and replay never reinstates an earlier configuration.
+Configuration neither runs a model/provider nor changes the household policy.
+
+Outside workspace and user identifiers are preserved exactly, without trimming.
+Workspace/user identifiers must be nonblank and control-free. Tool patterns keep
+literal spaces; leading/trailing control characters and whitespace padding do not
+bypass their raw character or length checks. Option dashes after leading whitespace
+are rejected too.
+
+## Agent house settings
+
+`POST /api/runtime/agentRunSettingsSet` uses the ordinary `{id,input}` envelope:
+
+```json
+{"agent":"art","houseRepository":"https://example.com/house.git","houseFile":"Housefile","houseBranch":"next","nestedContainers":false,"gpu":false,"boxes":["workshop","attic"],"ports":[{"address":"127.0.0.1","port":9000}]}
+```
+
+Current agent owners configure their house, ordered preferred machines and allowed
+listening ports. The existing agent setup policy applies, including current
+ownership on receipt replay. Runner, agent and service principals cannot edit it;
+a household owner role alone does not replace agent ownership. Preferred machines
+must be enrolled, unrevoked and visible to the configuring member, or explicitly lent to the
+agent. Listing a machine does not grant permission to run there. An empty preference
+list holds work until a machine is configured.
+
+Repository references cannot contain URL passwords, HTTP user information, queries
+or fragments. The
+house file is a relative path inside the repository. Machine and port lists are
+distinct and bounded at 128 entries. Ports use literal IPv4/IPv6 addresses and
+integer ports 1–65535. This command preserves the existing Secrets-owned repository
+credential reference; secret aliases and grants stay with Secrets.
+
+All settings and the receipt commit together, followed by an existing Tempo
+capacity notification. Rollback preserves previous settings and cached replay
+does not apply the change again. First house setup wakes settled mail. Each job
+keeps the house repository/file/branch recorded at admission. Worker claims use
+current preferred machines, ports and capabilities; enabling GPU after admission
+also requires a GPU-capable machine. Already claimed assignment snapshots stay
+unchanged. Configuration does not execute a builder or model provider.
+
+Listening IP addresses are normalized before uniqueness checks and storage, so
+equivalent IPv6 spellings cannot configure duplicate endpoints. House reference
+text rejects control characters, including tabs that a URL parser would remove.
+
+## Owner machine settings
+
+An authenticated current machine owner (or current household owner) sends
+`POST /api/runtime/boxSettingsSet` with the ordinary `{id,input}` envelope:
+
+```json
+{"box":"workshop","name":"Workshop","hostsAny":false,"reportOnly":false,"alwaysOn":true,"agents":[{"agent":"art","lent":true}],"facts":["rack:attic"]}
+```
+
+This replaces hosting flags, explicit agent permissions and owner-supplied facts
+atomically with the command receipt. Machine ownership, enrollment, heartbeat and
+revocation are not writable fields of this command. Missing/revoked machines,
+unknown agents, duplicate entries and another live machine's name are refused.
+Runners, agents and services cannot change this setup. A committed change notifies
+the existing capacity lifecycle; receipt replay and rollback do not notify again.
+
+Worker-reported facts remain separate from owner labels. Adding an owner label
+promotes an overlapping report to owner authority, so subsequent worker reports
+cannot erase it. Report-only workers continue health reporting and always-on
+outage detection but never claim agent work. Lending an explicit agent does not
+grant its owner access to the machine registry or machine settings.
+
+The lent flag is true for another member's agent and false for the machine owner's
+agent. The command checks this against current ownership. An existing explicit
+non-lending row cannot authorize a foreign agent after ownership changes. Remove
+an agent from the explicit list to withdraw that permission.
+
+## Stop while preparing a body
+
+Claiming a private Comms job marks its thread as working while the worker prepares
+its repository and house. Starting heartbeats refresh that metadata. A thread Stop
+for that exact starting job atomically ends it as stopped, consumes the request,
+and returns inactive to the assigned worker. The normal worker cancellation path
+aborts a pending repository-consent wait; it does not build, launch a body, send a
+finish report or create a start retry. Untaken mail remains held by the stopped
+attempt until fresh mail resumes work.
+
+The terminal job and heartbeat receipt commit before Tempo is notified. A failed
+receipt preserves the previous active job and Stop request, while cached heartbeat
+replay cannot restore active authority. Running-body Stop remains with the receiving
+body's status protocol. Preparation changes the thread working indicator, without
+inventing a reported agent status or consuming another conversation's Stop.

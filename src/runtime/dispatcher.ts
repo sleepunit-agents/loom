@@ -1,11 +1,12 @@
 /** Trusted control plane for a runner door. The outside door must derive box
  * from the authenticated runner; installed callers use this directly. Nothing
  * here executes a process, opens credentials or invents another transport. */
+import { Threads } from '../core/conversations/threads.js';
 import { workerPolicy } from './body-policy.js';
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { DataDatabase } from '../core/data/database.js';
-import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs } from '../core/data/schema.js';
-import { Jobs } from './jobs.js';
+import { agentRunSettings, agentHousePorts, boxes, jobNeeds, jobs, conversations, threads } from '../core/data/schema.js';
+import { Jobs, type Job } from './jobs.js';
 import { Machines } from './machines.js';
 import { selectPlacement, type ModelRole } from './placement.js';
 export class Dispatcher {
@@ -13,6 +14,12 @@ export class Dispatcher {
   readonly machines: Machines;
   constructor(readonly db: DataDatabase, readonly now: () => string, readonly roles: () => readonly ModelRole[]) {
     this.jobs = new Jobs(db, now); this.machines = new Machines(db, now);
+  }
+  private currentThread(job:Pick<Job,'id'|'agent'|'conversation'>){
+    if(!job.conversation)return undefined;
+    return this.db.select({id:threads.id,stop:threads.stopRequested,member:conversations.member}).from(threads)
+      .innerJoin(conversations,eq(conversations.id,threads.conversation))
+      .where(and(eq(conversations.id,job.conversation),eq(conversations.job,job.id),eq(conversations.agent,job.agent),eq(conversations.venue,'loom'))).get();
   }
   /** Polls also report machine health when idle or report-only. Placement and
    * claim share one transaction, so a second poll cannot receive the same job. */
@@ -26,6 +33,9 @@ export class Dispatcher {
       for (const job of queued) {
         if (job.retryAt && job.retryAt > at) continue;
         const needs = this.db.select().from(jobNeeds).where(eq(jobNeeds.job, job.id)).all().map(row => row.need);
+        const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, job.agent)).get();
+        // Settings may gain GPU after admission; never claim an incapable box.
+        if (settings?.gpu && !needs.includes('gpu')) needs.push('gpu');
         const placement = selectPlacement(this.db, { agent: job.agent, now: at, roles, needs });
         if (!placement || placement.box !== box) continue;
         const claimed = this.jobs.claim(job.id, box);
@@ -33,11 +43,13 @@ export class Dispatcher {
         // model on a queued job is the initial preference; this records the
         // model actually requested from the worker after current placement.
         this.db.update(jobs).set({ model: placement.model, account: placement.account, harness: placement.harness }).where(eq(jobs.id, job.id)).run();
-        const settings = this.db.select().from(agentRunSettings).where(eq(agentRunSettings.agent, claimed.agent)).get();
         const ports = this.db.select({ address: agentHousePorts.address, port: agentHousePorts.port })
           .from(agentHousePorts).where(eq(agentHousePorts.agent, claimed.agent))
           .orderBy(asc(agentHousePorts.address), asc(agentHousePorts.port)).all();
-        return { run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy: workerPolicy(this.db, claimed) }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
+        const thread = this.currentThread(claimed);
+        if(thread)new Threads(this.db,this.now).working(thread.id,true);
+        const venue=claimed.conversation?this.db.select({venue:conversations.venue}).from(conversations).where(eq(conversations.id,claimed.conversation)).get()?.venue:null;
+        return { venue:venue??null, thread:thread?.id ?? null, run: { nestedContainers: settings?.nestedContainers ?? false, gpu: settings?.gpu ?? false, ports, policy: workerPolicy(this.db, claimed) }, id: claimed.id, box, agent: claimed.agent, conversation: claimed.conversation,
           model: placement.model, account: placement.account, harness: placement.harness,
           brief: this.jobs.workerBrief(claimed.id), house: { repository: claimed.houseRepository ?? '',
             file: claimed.houseFile ?? '', branch: claimed.houseBranch ?? '' } };
@@ -64,6 +76,17 @@ export class Dispatcher {
       const job = this.db.select().from(jobs).where(eq(jobs.id, id)).get();
       if (!job || job.box !== box || !(state === 'starting' ? job.state === 'starting' : ['running', 'waiting'].includes(job.state)))
         return { active: false };
+      if(state==='starting'&&job.conversation){
+        const thread=this.currentThread(job);
+        if(thread){
+          if(thread.stop&&thread.member){
+            this.jobs.stop(job.id,thread.member,'write-off');
+            new Threads(this.db,this.now).takeStop(thread.id);
+            return {active:false,stopped:true as const};
+          }
+          new Threads(this.db,this.now).working(thread.id,true);
+        }
+      }
       // The worker reports a live process, not whether its body resumed work.
       // Preserve a body's explicit waiting status until a body status update.
       this.jobs.heartbeat(id, box, job.state === 'waiting' ? 'waiting' : state);

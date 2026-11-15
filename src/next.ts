@@ -49,10 +49,6 @@ import type { Authentication } from './core/live/index.js';
 import { maySee, mayAct } from './core/index.js';
 import type { Sharing } from './core/index.js';
 import { installSharing } from './pieces/sharing/index.js';
-import { clockVouchApplication } from './pieces/clock/role.js';
-import { installClock } from './pieces/clock/index.js';
-import { clockVouchFiling } from './pieces/clock/dependencies/filing.js';
-import { clockAnswers } from './pieces/clock/dependencies/answers.js';
 import { installTasks, connectTaskAttention } from './pieces/tasks/index.js';
 import { Bridges } from './pieces/bridges/engine.js';
 import { venueAdapters } from './pieces/bridges/adapters.js';
@@ -69,10 +65,8 @@ import { installBridgeRawRetention } from './pieces/bridges/raw-retention.js';
 import { connectApprovalAttention, installApprovals } from './pieces/approvals/index.js';
 import { installRunnerInput } from './pieces/runtime/input.js';
 import { installRuntime } from './pieces/runtime/index.js';
-import { clockRuntime } from './pieces/runtime/clock.js';
 import { runtimeStore } from './pieces/runtime/store.js';
 import { clockDelivery } from './pieces/runtime/clock-delivery.js';
-import { clockDestination } from './pieces/runtime/clock-destination.js';
 import { centralRuntimeCredentials } from './pieces/runtime/central-credentials.js';
 import { listenHolderAuthority, type AuthorityServerConfig } from './pieces/secrets/holder-authority.js';
 import { installHouseSecrets } from './pieces/secrets/house.js';
@@ -159,7 +153,6 @@ export interface NextOptions {
   secretWrites?: {holder: AsyncSecretMutations; retryKeys: string | SecretRetryKeyFiles};
   bridges?: NextBridgesOptions;
   /** Explicit opt-in for fixed 24-hour safety wakes, acting as the named agents. */
-  clockDeadmanAgents?: readonly string[];
 }
 export async function installNext(app: Foundation, options: NextOptions) {
   if (options.secretWrites && !options.secretAuthority) throw new Error('Secret writes require holder authority');
@@ -197,7 +190,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   if (!app.operations.has('approvals.list')) installApprovals(app.db, app.operations, app.live, sharing, {
     caller: conversations.approvalCaller,
     localAgent:()=>new HouseholdDatabase(app.db).household(options.home)?.default ?? 'agent',
-    applications: { clock: clockVouchApplication(app.operations), runtime: runtimeOwnerApplication(app.operations) },
+    applications: { runtime: runtimeOwnerApplication(app.operations) },
     projects: () => {
       try {
         const store = new SharingDatabase(app.db, options.home);
@@ -290,10 +283,7 @@ export async function installNext(app: Foundation, options: NextOptions) {
   const clockBodies=clockDelivery(app,sharing,effects,v=>signin(app).agent(v));
   conversations.connectClock(clockBodies);
   installVenueHistory(app,sharing,conversations.clockProvenance);
-  if (!app.operations.has('clock.list')) {
-    const jobs = installClock(app.db, app.operations, app.live, sharing, { provenance: conversations.clockProvenance, credentialService: conversations.clockCredentialService, caller: conversations.approvalCaller, capacityConversation: conversations.capacityConversation, runtime: clockRuntime(app, effects, clockDestination(app, sharing), clockBodies), deadmanAgents: options.clockDeadmanAgents, vouchFiling: clockVouchFiling(app.operations), approvals: clockAnswers(app.db, app.operations, app.live, sharing), notices: attentionSources?.register('clock', () => { /* Acknowledging a notice never retries work. */ }) });
-    app.onClose(jobs.close);
-  }
+
   let historyRead: HistoryAccess['read'] = async () => ({value:'wait',current:()=>false});
   installDiscordHistory(app, {permit:(viewer,place)=>runtimeDiscordHistoryPermit(app,viewer,place),read:(...args)=>historyRead(...args)});
   if (options.bridges && !bridgeDaemons.has(app)) {
@@ -486,7 +476,13 @@ export async function listenNext(app: Foundation, options: NextOptions) {
         };
         void measureResponse(measuring.get(app), req, res, dispatch)?.catch(() => { if (!res.headersSent) res.writeHead(503); res.end(); });
       });
-      http.on('connection',socket=>{sockets.add(socket);socket.once('close',()=>sockets.delete(socket));});
+      http.on('connection',socket=>{
+        sockets.add(socket);
+        // HTTP stops owning raw socket errors after an upgrade. A denied
+        // handshake can still receive a peer reset before its close finishes.
+        socket.on('error',()=>socket.destroy());
+        socket.once('close',()=>sockets.delete(socket));
+      });
       servers.push(http); detaches.push(app.live.attach(http,auth,sameOrigin), data.attach(http));
       await new Promise<void>((ok, no) => { http.once('error', no); http.listen(port,host,ok); });
       const address = http.address();

@@ -241,3 +241,22 @@ it('filters conversation questions inside the current recipient mailbox before p
  expect((await f.query(query,'owner')).body).toMatchObject({data:{inboxItems:[{id:other.id}]}});
  expect((await f.query(query,'bob')).body).toMatchObject({data:{inboxItems:[]}});
 });
+
+it.each(['dim','mute'] as const)('real ordinary and encrypted answers lift dim but preserve mute (%s), while reading changes neither',async(level)=>{
+ const f=await fixture();
+ for(const privateQuestion of [false,true]){
+  let id:string;
+  if(privateQuestion){
+   const thread=f.root.services.comms!.threads.open({member:'alice',agent:'art',title:'Private volume'});
+   id=(await f.root.services.comms!.ask(thread.id,'art','private-volume',{words:'PRIVATE QUESTION',answers:'words'})).inboxItem!;
+  }else id=f.root.services.conversations.send({toKind:'person',to:'alice',source:'thread',fromKind:'agent',member:'alice',words:'Ordinary question',answers:'words'}).id;
+  f.root.services.tempo.volume.set({kind:'person',id:'alice'},id,level);
+  const quiet=f.root.services.conversations.item(id).quietUntil;
+  expect((await f.post('inbox.read',{item:id},'read-'+privateQuestion)).status).toBe(200);
+  await f.query(`{inboxItem(id:"${id}"){body{words}}}`);
+  expect(f.root.services.conversations.item(id)).toMatchObject({volume:level,quietUntil:quiet});
+  expect((await f.post('inbox.answer',{item:id,answer:'words',words:privateQuestion?'PRIVATE ANSWER':'Ordinary answer'},'answer-'+privateQuestion)).status).toBe(200);
+  expect(f.root.services.conversations.item(id)).toMatchObject({state:'answered',volume:level==='dim'?'full':'mute',quietUntil:level==='dim'?null:quiet});
+ }
+ expect(JSON.stringify(f.db.select().from(inbox).all())).not.toContain('PRIVATE');
+});

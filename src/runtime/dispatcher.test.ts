@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../core/data/database.js';
 import { Conversations } from '../core/conversations/index.js';
-import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections } from '../core/data/schema.js';
+import { agents, members, boxes, agentModels, agentBoxes, agentRunSettings, agentHousePorts, memberAgents, modelAccounts, modelAccountWindows, modelAccountBoxes, jobs, jobNeeds, boxFacts, agentPeople, agentDeniedTools, secrets, bridgeConnections, conversations } from '../core/data/schema.js';
 import { BridgeIncoming } from '../pieces/bridges/incoming.js';
 import { Dispatcher } from './dispatcher.js';
 const opened: Database.Database[] = [];
@@ -35,7 +35,7 @@ function fixture() {
 it('claims only on the selected worker and delivers an execution-ready snapshot once', () => {
   const f = fixture();
   expect(f.runtime.next('second')).toBeUndefined();
-  expect(f.runtime.next('first')).toEqual({ run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
+  expect(f.runtime.next('first')).toEqual({ venue:'loom', thread:null, run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [{ kind: 'person', person: 'owner', tier: null }] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
     model: 'primary', account: 'account', harness: 'codex', brief: '', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();
@@ -170,6 +170,7 @@ it('persists the selected account and harness on each attempt and clears them fo
 it('projects current agent capabilities and only its configured ports at claim', () => {
   const f = fixture();
   f.db.update(agentRunSettings).set({ nestedContainers: true, gpu: true }).run();
+  f.db.insert(boxFacts).values({box:'first',fact:'gpu:5090',fromOwner:false}).run();
   f.db.insert(agentHousePorts).values([
     { agent: 'art', address: '127.0.0.1', port: 9000 },
     { agent: 'art', address: '127.0.0.1', port: 8000 },
@@ -239,4 +240,8 @@ it('keeps explicit body waiting status across worker liveness pulses until a bod
   f.runtime.jobs.heartbeat(f.job.id, 'first', 'running');
   expect(f.runtime.heartbeat('first', f.job.id, 'running')).toEqual({ active: true });
   expect(f.runtime.jobs.get(f.job.id).state).toBe('running');
+});
+
+it.each(['discord','slack'] as const)('includes the saved %s receiving venue without pretending it is a Comms thread',venue=>{
+ const f=fixture();f.db.update(conversations).set({venue}).where(eq(conversations.id,f.conversation.id)).run();const claimed=f.runtime.next('first');expect(claimed).toMatchObject({venue,thread:null,conversation:f.conversation.id});
 });

@@ -1,3 +1,5 @@
+import Database from 'better-sqlite3';
+import { schema as retiredClockSchema } from './pieces/clock/schema/001.js';
 import { it, expect } from 'vitest';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
@@ -187,24 +189,41 @@ it.runIf(existsSync(resolve(import.meta.dirname,'../dist/web/next.html')))('defa
   }finally{await loom.close();rmSync(home,{recursive:true,force:true});}
 });
 
-it('next owns clock jobs, holds starts without a runtime and restores held work after restart', async () => {
-  const home = mkdtempSync(join(tmpdir(),'loom-next-clock-'));
-  const clock = new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-  const options = {home,next:true,clock,sharing:fixtureSharing};
-  let loom = await startLoom(options);
-  const viewer = {kind:'member' as const,id:'jonathan'};
+it('does not install the retired Clock engine while keeping conversation and Memory reads', async () => {
+  const home = mkdtempSync(join(tmpdir(),'loom-next-clock-retired-'));
+  const loom = await startLoom({home,next:true,clock:new FakeClock(),sharing:fixtureSharing,
+    authenticate:req=>req.headers.authorization==='fixture'?{viewer:{kind:'member',id:'jonathan'},valid:()=>true}:undefined});
   try {
-    const created = loom.operations.call('direct',viewer,'clock.in',{agent:'art',prompt:'New work only',note:'Next clock',when:'1m'},'next-clock');
-    expect(created).toMatchObject({ok:true,value:{state:'pending'}});
-    const id = (created as {ok:true;value:{id:string}}).value.id;
-    clock.advance(60_000);
-    // Pump the role's known promise chain, without an elapsed-time sleep.
-    for(let n=0;n<5;n++) await Promise.resolve();
-    expect(loom.operations.call('direct',viewer,'clock.list',{})).toMatchObject({ok:true,value:[{id,state:'held',hold:'staging'}]});
-    await loom.close(); loom = await startLoom(options);
-    clock.advance(8*86400_000);
-    expect(loom.operations.call('direct',viewer,'clock.list',{})).toMatchObject({ok:true,value:[{id,state:'held',hold:'staging'}]});
+    for (const door of ['http','direct','socket','mcp'] as const)
+      expect(loom.operations.offered(door).some(operation=>operation.name.startsWith('clock.'))).toBe(false);
+    const reply=await fetch(loom.url+'/api/clock/in',{method:'POST',headers:{authorization:'fixture','content-type':'application/json'},body:JSON.stringify({id:'old-clock',input:{agent:'art',prompt:'Retired work',note:'Old Clock',when:'1m'}})});
+    expect(reply.status).toBe(404);
+    expect(loom.db.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'clock_%'").all()).toEqual([]);
   } finally {await loom.close();rmSync(home,{recursive:true,force:true});}
+});
+
+it('leaves stored Clock records untouched through startup and restart without running them',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'loom-retired-clock-data-'));
+ const stored=new Database(join(home,'loom.db'));
+ stored.exec(retiredClockSchema[0].sql);
+ stored.prepare('INSERT INTO clock_wakes VALUES (?,?,?)').run('old-wake',JSON.stringify({id:'old-wake',agent:'art',prompt:'Stored private words',state:'pending',due:0}),1);
+ stored.prepare('INSERT INTO clock_schedules VALUES (?,?,?)').run('old-lane',JSON.stringify({id:'old-lane',enabled:true,prompt:'Stored lane words'}),1);
+ stored.prepare('INSERT INTO clock_pauses VALUES (?,?)').run('art',1);
+ stored.prepare('INSERT INTO clock_events(wake,record) VALUES (?,?)').run('old-wake','{"event":"set"}');
+ stored.prepare('INSERT INTO clock_meta VALUES (?,?)').run('private-id:old-wake','1');
+ const tables=['clock_wakes','clock_schedules','clock_pauses','clock_events','clock_meta'];
+ const before=tables.map(table=>stored.prepare(`SELECT * FROM ${table}`).all());stored.close();
+ try{
+  for(let restart=0;restart<2;restart++){
+   const clock=new FakeClock(),loom=await startLoom({home,next:true,clock,stdout(){}});
+   try{
+    clock.advance(86400_000);await Promise.resolve();
+    expect(tables.map(table=>loom.db.prepare(`SELECT * FROM ${table}`).all())).toEqual(before);
+    expect(loom.operations.has('clock.in')).toBe(false);
+    expect(loom.db.prepare('SELECT * FROM runtime_jobs').all()).toEqual([]);
+   }finally{await loom.close();}
+  }
+ }finally{rmSync(home,{recursive:true,force:true});}
 });
 
 it('next serves real PWA files and rejects missing resources instead of returning the shell', async () => {
@@ -299,4 +318,24 @@ it('mounts shared-credential GraphQL HTTP and websocket doors in the next listen
     expect(databaseClosed).toBe(true);
     clock.advance(3600000);
   } finally { ws?.terminate(); await loom.close(); rmSync(home,{recursive:true,force:true}); }
+});
+
+
+it('owns a rejected upgrade socket through a peer reset', async () => {
+  const home=mkdtempSync(join(tmpdir(),'loom-next-reset-'));fixture(home);
+  let rejected: import('node:net').Socket | undefined;
+  const loom=await startLoom({home,next:true,staging:true,clock:new FakeClock(),stdout:()=>{},
+    authenticate:req=>{rejected=req.socket;return undefined;}});
+  const url=new URL(loom.url),peer=createConnection({host:url.hostname,port:Number(url.port)});
+  peer.on('error',()=>{});
+  try {
+    await once(peer,'connect');
+    const response=once(peer,'data');
+    peer.write('GET /live HTTP/1.1\r\nHost: '+url.host+'\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n');
+    expect(String((await response)[0])).toContain('401 Unauthorized');
+    expect(rejected).toBeDefined();
+    // Model the reset emitted by TCP after HTTP handed this socket to upgrade.
+    expect(()=>rejected!.emit('error',Object.assign(new Error('read ECONNRESET'),{code:'ECONNRESET'}))).not.toThrow();
+    expect(rejected!.destroyed).toBe(true);
+  } finally {peer.destroy();await loom.close();rmSync(home,{recursive:true,force:true});}
 });
