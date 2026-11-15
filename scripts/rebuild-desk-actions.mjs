@@ -1,11 +1,12 @@
 /** Measure the approved desk through the running shell; never import its layout rule. */
 import {join} from 'node:path';
+import {startDeskLaunchTrace,deskLaunchSnapshot,stopDeskLaunchTrace} from './rebuild-desk-launch-trace.mjs';
 export async function deskActions({page,out,inventory}) {
- const evidence={};let phase;
+ const evidence={},launches=[];let phase;
  const attempt=async(name,run)=>{
   const screenshot=`action-${name}.png`;
-  try{const facts=await run();evidence[name]={ok:true,...facts,screenshot};}
-  catch(error){evidence[name]={ok:false,phase,error:String(error),screenshot};}
+  try{const facts=await run();evidence[name]={ok:true,...facts,screenshot,launches:launches.slice(-6)};}
+  catch(error){evidence[name]={ok:false,phase,error:String(error),screenshot,launches:launches.slice(-6)};}
   await page.screenshot({path:join(out,screenshot),fullPage:true});
  };
  const check=(yes,message)=>{if(!yes)throw Error(message);};
@@ -13,11 +14,16 @@ export async function deskActions({page,out,inventory}) {
  const tile=name=>page.getByRole('region',{name:`${name} tile`,exact:true});
  const launch=async name=>{
   phase='launch '+name+' from '+new URL(page.url()).pathname;
+  const proof={name,phase};launches.push(proof);await startDeskLaunchTrace(page);
+  try{
   await page.keyboard.press('Escape');await page.keyboard.press('Control+Shift+Space');await launcher.waitFor();
   await launcher.getByRole('textbox',{name:'Find an app',exact:true}).fill(name);
   const matches=await launcher.locator('.loom-lapp__nm').allTextContents();
   check(matches[0]===name,`First launcher match for ${name}: ${JSON.stringify(matches)}`);
-  await launcher.getByRole('textbox',{name:'Find an app',exact:true}).press('Enter');await launcher.waitFor({state:'hidden'});await tile(name).waitFor();
+  await deskLaunchSnapshot(page,'before-enter');
+  await launcher.getByRole('textbox',{name:'Find an app',exact:true}).press('Enter');await launcher.waitFor({state:'hidden'});
+  await deskLaunchSnapshot(page,'after-close');await tile(name).waitFor();
+  }finally{proof.trace=await stopDeskLaunchTrace(page).catch(()=>({lost:true,events:[]}));}
  };
  const clear=async()=>{
   await page.keyboard.press('Escape');
