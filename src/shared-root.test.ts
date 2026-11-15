@@ -249,7 +249,7 @@ it('bounds streamed command bodies even without a Content-Length header', async 
   expect(f.client.prepare('SELECT * FROM operation_results').all()).toEqual([]);
 });
 
-it.each([false, true])('drains an executing socket read before shared SQLite closes, with failing sibling=%s', async broken => {
+it.each([{ broken: false, live: false }, { broken: true, live: false }, { broken: false, live: true }, { broken: true, live: true }])('drains an executing socket read before shared SQLite closes, live=$live failing sibling=$broken', async ({ broken, live }) => {
   let release!: () => void, began!: () => void, finished!: () => void;
   const started = new Promise<void>(resolve => { began = resolve; });
   const held = new Promise<void>(resolve => { release = resolve; });
@@ -266,7 +266,9 @@ it.each([false, true])('drains an executing socket read before shared SQLite clo
   const ws = new WebSocket(`ws://127.0.0.1:${address.port}/graphql`, 'graphql-transport-ws', { headers: { authorization: 'Bearer ' + token } });
   cleanup.push(() => ws.terminate()); await once(ws, 'open');
   const ack = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await ack;
-  ws.send(JSON.stringify({ type: 'subscribe', id: 'slow', payload: { query: broken ? '{ slow broken }' : '{ slow }' } })); await started;
+  const selection = broken ? '{ slow broken }' : '{ slow }';
+  const query = live ? 'subscription { observe(query:' + JSON.stringify(selection) + ') { revision patches { path value removed } } }' : selection;
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'slow', payload: { query } })); await started;
   const ended = once(ws, 'close');
   const closing = f.root.close().then(() => { events.push('closed'); });
   await ended; release(); await readDone; await closing;
