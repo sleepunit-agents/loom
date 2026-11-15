@@ -19,6 +19,7 @@ it('reports a private tell-rule step through its labelled permanent record and n
  const f=await fixture();expect((await f.call('report',{id:f.id,what:'PRIVATE RESULT'})).status).not.toBe(200);
  expect((await f.call('use',{id:f.id,kind:'command',target:f.request.target})).status).toBe(200);
  for(const token of [raw.member,raw.agent,raw.runner,f.bob])expect((await f.call('report',{id:f.id,what:'PRIVATE RESULT'},randomUUID(),token)).status).toBe(403);
+ for(const claim of [{agent:'mark'},{target:'forged'},{member:'bob'},{conversation:'forged'},{project:'other'},{job:'other'}])expect((await f.call('report',{id:f.id,what:'PRIVATE RESULT',...claim})).status).toBe(400);
  const report={id:f.id,what:'PRIVATE RESULT'};expect((await f.call('report',report,'report')).status).toBe(200);expect((await f.call('report',report,'report')).status).toBe(200);expect((await f.call('report',report,'new-retry')).status).toBe(200);
  expect(f.db.select().from(s.approvalRecord).all().filter(row=>row.note==='Reported step: PRIVATE RESULT')).toHaveLength(1);
  expect(f.db.select().from(s.approvalNotices).all()).toEqual([]);
@@ -35,6 +36,9 @@ it('rolls back reporting if its receipt fails and requires a tell rule rather th
  f.root.services.approvalRules.set({kind:'command',scope:'fixture:*',person:'alice',tier:'do'},'pat');
  const id=(await (await f.call('request',f.request)).json()).value.id;await f.call('use',{id,kind:'command',target:f.request.target});
  expect((await f.call('report',{id,what:'Do result'})).status).not.toBe(200);
+ f.root.services.approvalRules.set({kind:'command',scope:'fixture:*',person:'alice',tier:'ask'},'pat');
+ const manual=(await (await f.call('request',f.request)).json()).value.id;f.root.services.approvals.allow(manual,'pat');await f.call('use',{id:manual,kind:'command',target:f.request.target});
+ expect((await f.call('report',{id:manual,what:'Manual result'})).status).not.toBe(200);
 });
 it('stores a non-private reported step once in the notices table as well as its permanent record',async()=>{
  const f=await fixture();await f.call('use',{id:f.id,kind:'command',target:f.request.target});
