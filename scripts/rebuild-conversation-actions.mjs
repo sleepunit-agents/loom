@@ -21,7 +21,7 @@ export async function conversationActions({page,app,example,out,open}){
   return{ok,persistedAfterReload:true,inboxCopies:rows.length,screenshot};
  });
  await attempt('inboxAnswer',async()=>{
-  const tile=await open('Inbox');await tile.getByText(question,{exact:true}).first().click();
+  const tile=await open('Inbox');const back=tile.locator('.loom-split__back:visible');if(await back.count())await back.click();await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText(question,{exact:true})}).click();
   const pending=response('/api/inbox/answer');await tile.getByRole('button',{name:'Yes',exact:true}).click({timeout:4000});const answered=await result(pending);
   const db=app.services.comms.db.$client,q=db.prepare('SELECT state,answer,answered_by,conversation FROM inbox WHERE id=?').get(answered.input.item);
   const replies=db.prepare('SELECT conversation,to_kind,"to",source FROM inbox WHERE source=\'answer\' AND source_id=?').all(answered.input.item);
