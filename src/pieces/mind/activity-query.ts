@@ -1,5 +1,6 @@
 /** Activity projections composed into the shared query schema. No endpoint or store of their own. */
 import {GraphQLBoolean,GraphQLError,GraphQLFloat,GraphQLInt,GraphQLList,GraphQLNonNull,GraphQLObjectType,GraphQLString,type GraphQLFieldConfigMap} from 'graphql/index.js';
+import type {QueryDeadlines} from './query-deadlines.js';
 import type {Viewer} from '../../core/index.js';
 import type {installMindActivity} from './activity.js';
 
@@ -16,15 +17,18 @@ const window=new GraphQLObjectType({name:'MemoryActivityWindow',fields:{id:requi
 
 /** The authenticated outside door supplies the viewer; the existing reader
  * rechecks current sharing, conversation scope and expiry on every read. */
-export function activityQueryFields(reader:Pick<ReturnType<typeof installMindActivity>,'window'|'read'>):GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
+export function activityQueryFields(reader:Pick<ReturnType<typeof installMindActivity>,'window'|'read'>,deadlines?:QueryDeadlines):GraphQLFieldConfigMap<unknown,{viewer:Viewer}> {
  const safe=<T>(read:()=>T):T=>{try{return read();}catch{throw new GraphQLError('Activity is unavailable');}};
+ const track=<T extends {expires?:number}>(value:T|undefined,context:{viewer:Viewer},kind:string,id:string)=>{
+  deadlines?.set(JSON.stringify([context.viewer.kind,context.viewer.id,kind,id]),value?.expires);return value??null;
+ };
  return {
-  memoryActivity:{type:window,args:{to:{type:GraphQLString,defaultValue:'recent'}},resolve:(_source,args,context)=>context?.viewer?safe(()=>reader.window(args.to??'recent',context.viewer))??null:null},
+  memoryActivity:{type:window,args:{to:{type:GraphQLString,defaultValue:'recent'}},resolve:(_source,args,context)=>context?.viewer?track(safe(()=>reader.window(args.to??'recent',context.viewer)),context,'activity.window',args.to??'recent'):null},
   memoryActivityEntry:{type:open,args:{id:{type:new GraphQLNonNull(GraphQLString)}},resolve:(_source,args,context)=>{
    if(!context?.viewer)return null;
    const result=safe(()=>reader.read(args.id,context.viewer));
    if(result&&'state' in result)throw new GraphQLError('Activity entry is unavailable');
-   return result??null;
+   return track(result,context,'activity.entry',args.id);
   }},
  };
 }

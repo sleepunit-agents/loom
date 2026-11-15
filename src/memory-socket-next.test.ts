@@ -14,13 +14,15 @@ import { eq } from 'drizzle-orm';
 import { startLoom } from './foundation.js';
 import { FakeClock, type Sharing } from './core/index.js';
 import { createDataSchema, dataDatabase } from './core/data/database.js';
-import { agents, members, tokens, sessions, tasks, conversationPeople } from './core/data/schema.js';
+import { agents, members, tokens, sessions, tasks, conversationPeople, conversations } from './core/data/schema.js';
 import { HouseholdDatabase } from './core/household/document.js';
 import { migrateHouseholdTables } from './core/household/schema.js';
 import { Conversations } from './core/conversations/index.js';
 import { SqliteKnowledgeBackend } from './backends/sqlite-knowledge.js';
 import { PeopleStore } from './backends/people.js';
 import { ProjectsStore } from './backends/projects.js';
+import {installMindActivity} from './pieces/mind/activity.js';
+import type {ActivityConversations} from './pieces/mind/activity-role.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const credentials = {owner:'a'.repeat(64), peer:'b'.repeat(64), short:'c'.repeat(64)};
@@ -33,7 +35,7 @@ async function message(ws: WebSocket, action: () => unknown): Promise<Message> {
 const observe = (ws: WebSocket) => message(ws, () => ws.send(JSON.stringify({id:'live',type:'subscribe',payload:{
   query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }', variables:{query},
 }})));
-async function setup(host?: string[], now=Date.parse('2026-11-14T18:00:00Z')) {
+async function setup(host?: string[], now=Date.parse('2026-11-14T18:00:00Z'), activityRole?:ActivityConversations) {
   const home = mkdtempSync(join(tmpdir(),'memory-socket-next-'));
   const clock = new FakeClock(now), at = new Date(clock.now()).toISOString();
   const client = new Database(join(home,'loom.db')), db = createDataSchema(client);
@@ -58,7 +60,7 @@ async function setup(host?: string[], now=Date.parse('2026-11-14T18:00:00Z')) {
   const loom = await startLoom({home,next:true,staging:true,clock,host,sharing:()=>sharing,stdout:()=>{},
     // This legacy operation-door identity must never authenticate /graphql.
     authenticate:()=>({viewer:{kind:'member',id:'owner'},valid:()=>true}),
-    install(app){migrateHouseholdTables(app.db);app.db.transaction(()=>new HouseholdDatabase(app.db).replace(home,{v:1,agents:['fiction'],owner:'owner',default:'fiction',members:[{person:'owner',role:'owner',agents:'*'},{person:'peer',role:'member',agents:[]}]}))();},
+    install(app){migrateHouseholdTables(app.db);app.db.transaction(()=>new HouseholdDatabase(app.db).replace(home,{v:1,agents:['fiction'],owner:'owner',default:'fiction',members:[{person:'owner',role:'owner',agents:'*'},{person:'peer',role:'member',agents:[]}]}))();if(activityRole){const reader=installMindActivity(app.operations,app.live,{agents:[{agent:'fiction',memories:join(home,'agents/fiction/memories.db')}],sharing:()=>sharing,conversations:activityRole});app.onClose(reader.close);}},
   });
   const sockets: WebSocket[] = [];
   const open = async (who: keyof typeof credentials | null = 'owner', headers: Record<string,string> = {}, base = loom.url) => {
@@ -366,4 +368,34 @@ it('arms Projects deadlines from the initial query and refreshes age, expiry and
   expect(await response.json()).toMatchObject({data:{memoryProject:{fields:[{state:'stale for 14 days'}],spark:[0,0,0,0,0,1,0],sections:expect.arrayContaining([{key:'memories',total:1}])},memoryProjectMemory:null}});
   const at=vi.spyOn(f.clock,'at');await f.loom.close();at.mockClear();f.clock.advance(day);await Promise.resolve();expect(at).not.toHaveBeenCalled();at.mockRestore();
  }finally{writer.close();await f.close();}
+},2000);
+
+it('refreshes Activity when future shared conversations enter the inclusive detail and exclusive list windows',async()=>{
+ const f=await setup();
+ try{
+  const now=f.clock.now(),thread=f.db.select().from(conversations).get()!;
+  f.loom.operations.register({name:'fiction.futureConversation',write:true,input:z.object({}),output:z.null(),may:()=>true,run(ctx){ctx.db.prepare('UPDATE conversations SET last_at=? WHERE id=?').run(new Date(now+61000).toISOString(),thread.id);ctx.changed('conversation',thread.id);return null;}});
+  expect(f.loom.operations.call('direct',{kind:'member',id:'owner'},'fiction.futureConversation',{},'future-conversation')).toEqual({ok:true,value:null});
+  const selection=`{ memoryActivity { entries { title } } memoryActivityEntry(id:"c~fiction~${thread.id}") { title } }`;
+  const ws=await f.open(),subscribe=()=>ws.send(JSON.stringify({id:'future-time',type:'subscribe',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection}}}));
+  expect(await message(ws,subscribe)).toMatchObject({payload:{data:{observe:{patches:[{value:{memoryActivity:{entries:[]},memoryActivityEntry:null}}]}}}});
+  const frames:Message[]=[];ws.on('message',raw=>frames.push(JSON.parse(String(raw))));f.clock.advance(999);await Promise.resolve();expect(frames).toEqual([]);
+  expect(await message(ws,()=>f.clock.advance(1))).toMatchObject({payload:{data:{observe:{patches:[{path:['memoryActivityEntry'],removed:false,value:{title:'Fictional conversation'}}]}}}});
+  expect(await message(ws,()=>f.clock.advance(1))).toMatchObject({payload:{data:{observe:{patches:[{path:['memoryActivity','entries',0],removed:false,value:{title:'Fictional conversation'}}]}}}});
+ }finally{await f.close();}
+},2000);
+
+it('rearms Activity from injected conversation expiry discovered by the initial query',async()=>{
+ const now=Date.parse('2026-11-14T18:00:00Z');
+ const row={kind:'digest' as const,key:'clock-run',at:new Date(now).toISOString(),conversation:{id:'cv-fiction',agent:'fiction',venue:'terminal',place:'terminal',label:'Fictional expiring conversation',people:[]},expires:now+1000,summary:'Fictional words',asked:[],decided:[],tasks:[],links:[],more:[]};
+ const f=await setup(undefined,now,{list:()=>({available:true,rows:[row]}),read:()=>row,conversation:()=>row.conversation});
+ try{
+  const ws=await f.open(),scheduled=vi.spyOn(f.clock,'at');
+  const selection='{ memoryActivity { entries { title } } memoryActivityEntry(id:"d~fiction~clock-run") { title } }';
+  const initial=await message(ws,()=>ws.send(JSON.stringify({id:'expiry-time',type:'subscribe',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection}}})));
+  expect(JSON.stringify(initial)).toContain('Fictional expiring conversation');
+  await vi.waitFor(()=>expect(scheduled).toHaveBeenCalledWith(now+1000,expect.any(Function)));scheduled.mockRestore();
+  const changed=await message(ws,()=>f.clock.advance(1000));
+  expect(changed).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining([{path:['memoryActivityEntry'],removed:false,value:null},{path:['memoryActivity','entries',0],removed:true,value:null}])}}}});
+ }finally{await f.close();}
 },2000);

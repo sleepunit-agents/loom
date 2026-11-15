@@ -135,6 +135,7 @@ export function installMindActivity(operations:Operations,live:Live,options:{age
   if(closed)return;
   const now=operations.clock.now();
   let next=startOf(dayBefore(isoDay(now,tz),-1),tz);
+  try{const at=options.conversations?.nextDeadline?.(now);if(at!==undefined&&Number.isFinite(at)&&at>now)next=Math.min(next,at);}catch{/* Conversation source failures are reported by the reader. */}
   for(const db of sources.values())try{
    if(!has(db))continue;
    for(const raw of db.prepare("SELECT created,expires_at FROM memories WHERE category='episode' AND archived=0").iterate()){

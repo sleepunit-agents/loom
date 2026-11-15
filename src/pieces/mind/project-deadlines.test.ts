@@ -1,8 +1,9 @@
 import {expect,it,vi} from 'vitest';
-import {ProjectDeadlines,projectDeadline} from './project-deadlines.js';
+import {projectDeadline} from './project-deadlines.js';
+import {QueryDeadlines} from './query-deadlines.js';
 import type {ProjectRecord} from './projects-model.js';
 it('coalesces new result metadata, keeps independent selections and cancels queued notification on close',async()=>{
- let now=0;const deadlines=new ProjectDeadlines(()=>now),changed=vi.fn(),off=deadlines.observe(changed);
+ let now=0;const deadlines=new QueryDeadlines(()=>now),changed=vi.fn(),off=deadlines.observe(changed);
  deadlines.set('owner',20);deadlines.set('peer',10);expect(deadlines.nextDeadline()).toBe(10);await Promise.resolve();expect(changed).toHaveBeenCalledOnce();
  now=10;expect(deadlines.nextDeadline()).toBe(20);deadlines.set('peer',30);await Promise.resolve();expect(deadlines.nextDeadline()).toBe(20);
  deadlines.set('owner',undefined);await Promise.resolve();expect(deadlines.nextDeadline()).toBe(30);

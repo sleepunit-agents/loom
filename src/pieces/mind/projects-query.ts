@@ -2,7 +2,8 @@
 import { GraphQLBoolean, GraphQLError, GraphQLFloat, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../core/index.js';
 import type { Mind } from './role.js';
-import {projectDeadline, type ProjectDeadlines} from './project-deadlines.js';
+import {projectDeadline} from './project-deadlines.js';
+import type {QueryDeadlines} from './query-deadlines.js';
 import type { ProjectRecord, ProjectMemory, ProjectCard, ProjectSection } from './projects-model.js';
 
 const text = { type: GraphQLString }, requiredText = { type: new GraphQLNonNull(GraphQLString) };
@@ -46,7 +47,7 @@ const memory = new GraphQLObjectType({ name: 'MemoryProjectMemory', fields: {
  category: requiredText, created: requiredText, updated: requiredText, expires: { type: GraphQLFloat },
 } });
 
-export function projectsQueryFields(mind: Mind, deadlines?:ProjectDeadlines, now:()=>number=Date.now): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
+export function projectsQueryFields(mind: Mind, deadlines?:QueryDeadlines, now:()=>number=Date.now): GraphQLFieldConfigMap<unknown, { viewer: Viewer }> {
  const read = (context: { viewer: Viewer }, verb: string, input: Record<string, unknown>, absent: unknown) => {
   if (!context?.viewer) return absent;
   try {
