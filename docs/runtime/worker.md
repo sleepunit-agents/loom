@@ -427,3 +427,19 @@ is accepted only for errors without a data entry; partial execution data and its
 errors remain HTTP200 results. Loopback HTTP includes localhost,127.0.0.1 and::1.
 The client rejects whitespace or controls in its fixed bearer before Fetch can
 normalize a header. A GraphQL errors entry is nonempty whenever present.
+
+## Composing native tools
+
+`bodyProgramTools` projects three standard MCP tool descriptors and a call callback
+for the receiving body's one local MCP listener: `loom_commands`, `loom_command`
+and `loom_query`. It starts no listener and supplies no new credential. Discovery
+uses the registered Root catalogue, command calls keep stable caller IDs and
+current Root permissions, and reads use the generated GraphQL schema. This
+projection is a composition port; the native listener/CLI wiring is separate.
+
+Mail confirmation, observed model/latency telemetry and Stop acknowledgement stay
+with the receiving runtime. The model cannot supply those fields or invoke the
+private take route. Successful status reports notify the runtime so its heartbeat
+can preserve waiting/idle status; a returned Stop request invokes the runtime's
+Stop callback before publishing a tool result. Request cancellation closes only
+that call, while body close cancels every current and future call.
