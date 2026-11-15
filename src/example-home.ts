@@ -10,8 +10,10 @@ import {sharedRoot} from './shared-root.js';
 import {tempoWatch} from './core/tempo/sources.js';
 import {FakeClock} from './core/clock.js';
 import {exampleRuntime,exampleModelRoles,exampleBackdateMs} from './example-runtime.js';
+import {CommsMessages} from './core/conversations/messages.js';
 import {loadKey} from './pieces/comms/crypto.js';
 
+export const exampleRetentionWords='The fictional shed door was checked last fortnight.';
 export async function exampleHome(directory:string, webRoot=resolve('dist/web')) {
  const home=resolve(directory);
  // Exclusive creation: this command never opens an existing household.
@@ -35,6 +37,7 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
   await root.ready;
   const s=root.services,actor={kind:'member' as const,id:'alex'};
   root.writes.run(()=>{s.projects.save({id:'garden',name:'Example garden',members:['alex','robin'],agents:['fern','moss'],repositories:['github:example-house/garden']});s.householdAccess.setAccounts({agent:'fern',github:['example-fern']});});
+
   const thread=s.comms!.threads.open({member:'alex',agent:'fern',title:'Repair the garden pump'});
   await s.comms!.send({thread:thread.id,sender:'alex',kind:'message',words:'Please compare replacement pumps for our example garden.'});
   await s.comms!.send({thread:thread.id,sender:'fern',kind:'reply',words:'Three fit. The quiet model costs 164 example dollars.'});
@@ -58,11 +61,20 @@ export async function exampleHome(directory:string, webRoot=resolve('dist/web'))
    account=answer.data.value;
    runtime=await exampleRuntime(root,clock,setup.token,{account:account.id,owner:'alex',provider:exampleModelRoles[0].provider});
   }finally{root.writes.run(()=>s.signin.revoke(setup.fingerprint));}
+  // Runtime settlement is complete. Anchor the retained sample and manifest
+  // to the actual final clock so startup never rewinds ahead-of-time jobs.
+  // One old, still-retained reply lets the walkthrough cross a real deadline
+  // on its fake clock without advancing every runtime timer for a fortnight.
+  const keepDays=(client.prepare('SELECT comms_days FROM household').get() as {comms_days:number}|undefined)?.comms_days??14;
+  const older=new CommsMessages(db,commsKey,()=>new Date(clock.now()-keepDays*86400000+1000).toISOString());
+  const olderThread=older.threads.open({member:'alex',agent:'moss',title:'Previous shed inspection'});
+  const olderReply=await older.send({thread:olderThread.id,sender:'moss',kind:'reply',words:exampleRetentionWords});
   const commons=join(home,'commons'),adapters=join(home,'example-adapters.mjs');
   writeFileSync(adapters,'export default () => ({modelRoles: () => '+JSON.stringify(exampleModelRoles)+'});\n',{mode:0o600});
   const program={adapters,database:join(home,'app.db'),commsKey:join(home,'comms.key'),signinMember:'alex',webRoot:resolve(webRoot),memory:{checkingAgent:'fern',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:['fern','moss'].map(agent=>({agent,directory:join(home,'agents',agent),memories:join(home,'agents',agent,'memories.db')}))}}};
-  const manifest={fictional:true,createdAt:at,members:['alex','robin'],agents:['fern','moss'],thread:thread.id,conversation:thread.conversation,tasks:tasks.map(t=>t.id),approval:approval.id,trigger:trigger.id,change:change.id,account,runtime,gaps:[
+  const manifest={fictional:true,createdAt:new Date(clock.now()).toISOString(),retention:{thread:olderThread.id,seq:olderReply.seq,at:olderReply.at,until:olderReply.keepUntil},members:['alex','robin'],agents:['fern','moss'],thread:thread.id,conversation:thread.conversation,tasks:tasks.map(t=>t.id),approval:approval.id,trigger:trigger.id,change:change.id,account,runtime,gaps:[
    {page:'machines',promise:'A worker claims and executes its queued job',reason:'The example uses real setup, reporting and inbox admission, but does not claim a job or execute a worker/body/provider.'},
+
   ]};
   writeFileSync(join(home,'program.json'),JSON.stringify(program,null,2)+'\n',{mode:0o600});
   writeFileSync(join(home,'example.json'),JSON.stringify(manifest,null,2)+'\n',{mode:0o600});

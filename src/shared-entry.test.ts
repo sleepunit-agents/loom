@@ -5,6 +5,8 @@ import {join,resolve} from 'node:path';
 import {Readable} from 'node:stream';
 import {it,expect,vi} from 'vitest';
 import {run} from './cli/serve.js';
+// Only the process boundary is substituted; real entry/protocol/storage run.
+vi.mock('./shared-holder-process.js',async()=>({startSharedHolder:(await import('../test/fixtures/shared-holder.js')).inProcessSharedHolder}));
 const webRoot=resolve(import.meta.dirname,'../dist/web');
 const entries=(html:string)=>[...html.matchAll(/<script\b[^>]*>/g)].map(match=>match[0]).filter(tag=>tag.includes('type="module"')).map(tag=>tag.match(/src="([^"]+)"/)?.[1]);
 it.runIf(existsSync(join(webRoot,'index.html')))('normal serve --http serves both built documents with the same shared client and identity door',async()=>{

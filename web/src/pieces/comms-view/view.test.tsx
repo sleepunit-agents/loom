@@ -1,4 +1,4 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Children, createElement as h, type ReactNode } from 'react';
 // @ts-expect-error Renderer does not ship declarations.
 import { act, create } from 'react-test-renderer';
@@ -7,7 +7,12 @@ import { CommsView } from './index';
 import { threadRows, type CommsActions, type CommsDetail, type CommsSnapshot } from './model';
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let tree: ReturnType<typeof create>;
-afterEach(async () => { await act(async () => tree?.unmount()); });
+beforeEach(() => {
+  const data = new Map<string, string>();
+  vi.stubGlobal('window',new EventTarget());
+  vi.stubGlobal('localStorage', { getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => data.set(key, value), removeItem: (key: string) => data.delete(key) });
+});
+afterEach(async () => { await act(async () => tree?.unmount()); vi.unstubAllGlobals(); });
 const thread = { id: 'th:pump', conversation: 'cv-pump', title: 'Private pump', agent: 'art', project: 'pond', member: 'alice', pinned: false, lastAt: '2026-11-14T20:00:00Z', readSeq: 0, working: true, stopRequested: false };
 const snapshot: CommsSnapshot = { status: 'live', member: 'alice', threads: [thread], agents: [{ id: 'art', name: 'Art' }] };
 const detail: CommsDetail = { status: 'live', thread, refs: [{ ref: 't-12', messageSeq: 2 }], messages: [
@@ -98,4 +103,58 @@ it('shows work filed from the conversation even when no task or pull request was
   await act(async () => { tree = create(h(CommsView, { snapshot, detail: { ...detail, refs: [] }, selected: thread.id, select: vi.fn(), cards: { work } })); });
   expect(work).toHaveBeenCalledWith([], thread.conversation);
   expect(JSON.stringify(tree.toJSON())).toContain('Task created here');
+});
+
+it('keeps unsent words across loading and navigation, partitioned by member and thread', async () => {
+  const a = actions(); await draw(a);
+  await act(async () => { tree.root.findByType('Textarea').props.onChange({ target: { value: 'Unsent diagnostic draft' } }); });
+  const update = async (s = snapshot, d = detail, selected = thread.id) => act(async () => {
+    tree.update(h(CommsView, { snapshot: s, detail: d, selected, select: vi.fn(), actions: a }));
+  });
+  await update({ ...snapshot, status: 'loading' });
+  expect(tree.root.findAllByType('Textarea')).toHaveLength(0);
+  expect(JSON.stringify(tree.toJSON())).not.toContain('Unsent diagnostic draft');
+  await update();
+  expect(tree.root.findByType('Textarea').props.value).toBe('Unsent diagnostic draft');
+  const other = { ...thread, id: 'th:other', conversation: 'cv-other' };
+  await update({ ...snapshot, threads: [other] }, { ...detail, thread: other, messages: [] }, other.id);
+  expect(tree.root.findByType('Textarea').props.value).toBe('');
+  await update({ ...snapshot, member: 'bob', threads: [{ ...thread, member: 'bob' }] }, { ...detail, thread: { ...thread, member: 'bob' } });
+  expect(tree.root.findByType('Textarea').props.value).toBe('');
+  await update();
+  expect(tree.root.findByType('Textarea').props.value).toBe('Unsent diagnostic draft');
+  expect(a.send).not.toHaveBeenCalled();
+});
+it('keeps a failed send identity across refresh and clears only acknowledged words', async () => {
+  const a = actions(); a.send = vi.fn(async () => { throw new Error('uncertain delivery'); });
+  await draw(a);
+  await act(async () => { tree.root.findByType('Textarea').props.onChange({ target: { value: 'Send once' } }); });
+  await act(async () => { named('Send').props.onClick(); });
+  const id = vi.mocked(a.send).mock.calls[0][2];
+  await act(async () => { tree.unmount(); });
+  await draw(a);
+  expect(tree.root.findByType('Textarea').props.value).toBe('Send once');
+  a.send = vi.fn(async () => {});
+  await act(async () => { named('Send').props.onClick(); });
+  expect(a.send).toHaveBeenCalledExactlyOnceWith(thread.id, 'Send once', id);
+  expect(tree.root.findByType('Textarea').props.value).toBe('');
+  await act(async () => { tree.unmount(); });
+  await draw(a);
+  expect(tree.root.findByType('Textarea').props.value).toBe('');
+});
+
+it('clears a remounted composer when its earlier send acknowledges, preserving later edits', async () => {
+ const a=actions();let finish!:()=>void;a.send=vi.fn(()=>new Promise<void>(yes=>{finish=yes;}));await draw(a);
+ await act(async()=>tree.root.findByType('Textarea').props.onChange({target:{value:'Sending before refresh'}}));
+ await act(async()=>named('Send').props.onClick());
+ const update=async(status:CommsSnapshot['status'])=>act(async()=>tree.update(h(CommsView,{snapshot:{...snapshot,status},detail,selected:thread.id,select:vi.fn(),actions:a})));
+ await update('loading');await update('live');
+ expect(tree.root.findByType('Textarea').props.value).toBe('Sending before refresh');
+ await act(async()=>finish());
+ expect(tree.root.findByType('Textarea').props.value).toBe('');
+ await act(async()=>tree.root.findByType('Textarea').props.onChange({target:{value:'Second send'}}));
+ await act(async()=>named('Send').props.onClick());await update('loading');await update('live');
+ await act(async()=>tree.root.findByType('Textarea').props.onChange({target:{value:'Newer unsent words'}}));
+ await act(async()=>finish());
+ expect(tree.root.findByType('Textarea').props.value).toBe('Newer unsent words');
 });
