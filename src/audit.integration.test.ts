@@ -762,7 +762,8 @@ describe('criterion 9: one decrypt path', () => {
     // Backup configuration only validates public recipients with Encrypter. None
     // may name the review key or import the audit module; keep the allowlist exact.
     const library = all.filter((f) => /from\s+['"]age-encryption['"]|import\(\s*['"]age-encryption['"]|require\(\s*['"]age-encryption['"]/.test(code(f))).map((f) => relative(srcDir, f)).sort();
-    expect(library).toEqual(['comms.ts', 'core/household/backup-bundle.ts', 'core/household/backup-image.ts', 'core/household/backup-restore.ts', 'core/household/backup-schema.ts', 'pieces/comms/crypto.ts', 'pieces/secrets/age-source.ts', 'pieces/secrets/holder-store.ts']);
+    // The normal-startup fixture creates only a disposable public test identity.
+    expect(library).toEqual(['../test/fixtures/shared-ui-program.ts', 'comms.ts', 'core/household/backup-bundle.ts', 'core/household/backup-image.ts', 'core/household/backup-restore.ts', 'core/household/backup-schema.ts', 'pieces/comms/crypto.ts', 'pieces/secrets/age-source.ts', 'pieces/secrets/holder-store.ts']);
     expect(code(join(srcDir, 'core/household/backup-image.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js|node:fs|node:child_process|node:crypto|\bgenerate[A-Z]\w*\b/);
     expect(code(join(srcDir, 'core/household/backup-bundle.ts'))).not.toMatch(/\bREVIEW_KEY\b|review\.key|audit\.js|node:fs|node:child_process|\bgenerate[A-Z]\w*\b/);
     // Restore accepts only its caller's identity; it cannot discover audit/holder
