@@ -9,6 +9,7 @@ import type {QueryDeadlines} from './query-deadlines.js';
 import type { ProjectRecord, ProjectMemory, ProjectCard, ProjectSection } from './projects-model.js';
 
 const text = { type: GraphQLString }, requiredText = { type: new GraphQLNonNull(GraphQLString) };
+const validId=(value:unknown,max:number)=>typeof value==='string'&&value.length>=3&&value.length<=max;
 const strings = { type: new GraphQLList(new GraphQLNonNull(GraphQLString)) };
 const list = (type: GraphQLObjectType) => new GraphQLNonNull(new GraphQLList(new GraphQLNonNull(type)));
 const item = new GraphQLObjectType({ name: 'MemoryProjectItem', fields: {
@@ -58,7 +59,7 @@ export function projectsQueryFields(source: ProjectQueryReader, deadlines?:Query
  const read = (context: { viewer: Viewer }, verb: string, input: Record<string, unknown>, absent: unknown) => {
   if (!context?.viewer) return absent;
   try {
-   if(verb!=='projectsList'&&(typeof input.id!=='string'||input.id.length<3||input.id.length>(verb==='projectMemoryRead'?300:200)))return absent;
+   if(verb!=='projectsList'&&!validId(input.id,verb==='projectMemoryRead'?300:200))return absent;
    const readAt=now();
    const value=verb==='projectsList'?source.list(context.viewer):verb==='projectRead'?source.read(input.id as string,context.viewer):source.memoryRead(input.id as string,context.viewer);
    if(value===undefined||value===null)return absent;
@@ -75,7 +76,7 @@ export function projectsQueryFields(source: ProjectQueryReader, deadlines?:Query
  const id = { type: new GraphQLNonNull(GraphQLString) };
  return {
   memoryHistory:{type:list(revision),args:{id},resolve:(_source,args,context)=>{
-   if(!context?.viewer||typeof args.id!=='string'||args.id.length<3||args.id.length>300)return [];
+   if(!context?.viewer||!validId(args.id,300))return [];
    try{return source.memoryHistory(args.id,context.viewer);}catch{throw new GraphQLError('Memory history is unavailable');}
   }},
   memoryProjectsAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?source.access(context.viewer):null},

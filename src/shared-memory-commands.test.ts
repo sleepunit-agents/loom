@@ -56,7 +56,7 @@ async function fixture(options:{unprepared?:boolean}={}){
 }
 async function next(ws:WebSocket,action:()=>unknown){const pending=once(ws,'message');await action();return JSON.parse(String((await pending)[0]));}
 function hold(){let entered!:()=>void,release!:()=>void;const began=new Promise<void>(resolve=>entered=resolve),blocked=new Promise<void>(resolve=>release=resolve);embed.gate=async()=>{entered();await blocked;};releases.push(release);return {began,release};}
-it('edits and restores bounded private versions through actual native commands and authorized GraphQL',async()=>{
+it('edits and restores bounded private revisions through actual native commands and authorized GraphQL',async()=>{
  const f=await fixture(),id=(await f.call('remember',{...input,ttl:'1h'},'history-make')).result.value.ids[0];
  const history=async(token=raw.body)=>(await f.query(`{memoryHistory(id:"${id}"){id op replacedAt content}}`,token)).memoryHistory as {id:number;op:string;replacedAt:string;content:string}[];
  for(let i=0;i<12;i++)expect((await f.call('update',{id,content:`alpha PRIVATE_EDIT_${i}`},'edit-'+i)).status).toBe(200);
@@ -70,11 +70,14 @@ it('edits and restores bounded private versions through actual native commands a
  const later=f.clock.now()+7200000;vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);
  expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();expect(await history()).toEqual(after);
  expect((await f.call('archive',{id},'history-archive')).status).toBe(200);expect(await history()).toEqual(after);
- expect(await history(raw.member)).toEqual(after);
+ const lifecycle=()=>f.source.prepare('SELECT archived,ttl,expires_at FROM memories WHERE uuid=?').get(id.slice(4));const archived=lifecycle();
+ expect((await f.call('restoreRevision',{id,revision_id:after[0].id},'archived-revision')).status).toBe(200);expect(lifecycle()).toEqual(archived);
+ expect(archived).toEqual({archived:1,ttl:'1h',expires_at:'2026-11-14T19:00:00.000Z'});expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();
+ const retained=await history();expect(retained[0]).toMatchObject({op:'revision-restore',content:'alpha PRIVATE_EDIT_10'});expect(await history(raw.member)).toEqual(retained);
  f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await history(raw.member)).toEqual([]);
  for(const value of [words,title,'PRIVATE_EDIT_',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
 });
-it('keeps edit and version-restore authority own-body scoped, and rejects a version belonging to another memory',async()=>{
+it('keeps edit and revision-restore authority own-body scoped, and rejects a revision belonging to another memory',async()=>{
  const f=await fixture(),id=(await f.call('remember',input,'target-make')).result.value.ids[0],other=(await f.call('remember',{...input,title:'Other target',content:'beta PRIVATE_OTHER'},'other-make')).result.value.ids[0];
  expect((await f.call('update',{id:other,content:'beta PRIVATE_OTHER_EDIT'},'other-edit')).status).toBe(200);
  const revisions=(await f.query(`{memoryHistory(id:"${other}"){id content}}`)).memoryHistory;
@@ -88,7 +91,7 @@ it('keeps edit and version-restore authority own-body scoped, and rejects a vers
  expect((await f.query(`{memoryHistory(id:"${id.replace('art:','mark:')}"){content}}`)).memoryHistory).toEqual([]);
  expect(await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).toEqual({memoryProjectMemory:{content:words}});
 });
-it('rolls back versions with failed source receipts and recovers committed version restores without repeating them',async()=>{
+it('rolls back revisions with failed source receipts and recovers committed revision restores without repeating them',async()=>{
  const f=await fixture(),id=(await f.call('remember',input,'atomic-history-make')).result.value.ids[0];
  const current=()=>f.query(`{memoryProjectMemory(id:"${id}"){content} memoryHistory(id:"${id}"){id op content}}`);
  f.source.exec("CREATE TRIGGER fail_edit_receipt BEFORE INSERT ON memory_command_receipts WHEN NEW.name='memory.update' BEGIN SELECT RAISE(ABORT,'injected'); END");

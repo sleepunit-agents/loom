@@ -85,16 +85,16 @@ export function registerSemanticMemory(operations:Operations,options:{sources?:M
   if(!row)throw new OperationError('not-found','Memory is absent');return {uuid,ref:row.ref};
  };
  operations.register({...base,doors:[...base.doors],name:'memory.update',
-  input:target.extend({content:authored.max(65536).optional(),metadata:remember.shape.metadata,observation:z.enum(['confirm','contradict']).optional()}).refine(input=>input.content!==undefined||input.metadata!==undefined||input.observation!==undefined,'A change is required').describe('Edit one memory in your own declared source. A changed body saves its prior version first.'),output:z.object({ids}).strict(),
+  input:target.extend({content:authored.max(65536).optional(),metadata:remember.shape.metadata,observation:z.enum(['confirm','contradict']).optional()}).refine(input=>input.content!==undefined||input.metadata!==undefined||input.observation!==undefined,'A change is required').describe('Edit one memory in your own declared source. A changed body saves its prior revision first.'),output:z.object({ids}).strict(),
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{
    const row=ownTarget(db,viewer,input.id),result=await backend.update({ref:row.ref,content:input.content,metadata:input.metadata,observation:input.observation});
    if(!result.updated)throw new OperationError('not-found','Memory is absent');return {ids:[row.uuid]};
   })});
  operations.register({...base,doors:[...base.doors],name:'memory.restoreRevision',
-  input:target.extend({revision_id:z.number().int().positive().max(2147483647)}).describe('Restore a saved body version of your own memory. Read retained versions with memoryHistory(id:) on GraphQL.'),output:z.object({ids}).strict(),
+  input:target.extend({revision_id:z.number().int().positive().max(2147483647)}).describe('Restore a saved body revision of your own memory. Read retained revisions with memoryHistory(id:) on GraphQL.'),output:z.object({ids}).strict(),
   prepare:async(input,{viewer,receipt})=>execute(viewer,receipt,async(backend,db)=>{
    const row=ownTarget(db,viewer,input.id),result=await backend.restoreRevision({ref:row.ref,revision_id:input.revision_id});
-   if(!result.restored)throw new OperationError('not-found','Memory version is absent');return {ids:[row.uuid]};
+   if(!result.restored)throw new OperationError('not-found','Memory revision is absent');return {ids:[row.uuid]};
   })});
  for(const action of ['archive','restore','forget'] as const)operations.register({...base,doors:[...base.doors],name:`memory.${action}`,
   input:(action==='archive'?target.extend({note:z.string().max(4000).optional()}):target).describe(`${action} one memory in your own declared source by its opaque scoped ID.`),output:z.object({ids}).strict(),
