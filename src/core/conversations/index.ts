@@ -1,6 +1,6 @@
 /** The trusted conversation service. External callers enter through the data API;
  * built-in producers share this interface and the same tables, in every venue. */
-import { inboxContentChanged } from '../tempo/volume.js';
+import { inboxContentChanged, type Recipient } from '../tempo/volume.js';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, max, ne, or } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
@@ -143,10 +143,10 @@ export class Conversations {
   }
 
   /** Called by tasks/approvals when their durable outcome is committed. */
-  resolve(kind: 'task' | 'approval', id: string, reason: string): Item[] {
+  resolve(kind: 'task' | 'approval', id: string, reason: string, named?: Recipient): Item[] {
     return this.db.transaction(() => {
       const resolved = this.db.update(inbox).set({ state: 'resolved', resolution: reason, changedAt: this.now() }).where(and(eq(inbox.waitsOnKind, kind), eq(inbox.waitsOnId, id), eq(inbox.state, 'waiting'))).returning().all();
-      for (const item of resolved) inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id);
+      for (const item of resolved) inboxContentChanged(this.db, {kind:item.toKind,id:item.to}, item.id, named?.kind === item.toKind && named.id === item.to);
       return resolved.map(item => this.item(item.id));
     });
   }

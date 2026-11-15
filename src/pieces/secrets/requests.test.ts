@@ -102,8 +102,13 @@ describe('shared-schema secret requests and grants', () => {
   });
   it('cancels a pending request and revokes an allowed grant without replay resurrection', () => {
     const f = fixture(); f.service.request(f.input);
+    const quiet=new Date(Date.parse(f.now())+86400000).toISOString();
+    f.db.update(inbox).set({volume:'dim',quietUntil:quiet}).where(eq(inbox.to,'jonathan')).run();
+    f.db.update(inbox).set({volume:'mute',quietUntil:quiet}).where(eq(inbox.to,'owner2')).run();
     expect(f.service.cancel(f.input.id).state).toBe('cancelled');
     expect(f.service.answer(f.input.id, 'jonathan', true).state).toBe('cancelled');
+    expect(f.db.select().from(inbox).where(eq(inbox.to,'jonathan')).get()).toMatchObject({volume:'full',quietUntil:null});
+    expect(f.db.select().from(inbox).where(eq(inbox.to,'owner2')).get()).toMatchObject({volume:'mute',quietUntil:quiet});
     f.service.request({ ...f.input, id: 'q-allowed' }); f.service.answer('q-allowed', 'jonathan', true);
     expect(f.service.revoke('q-allowed').state).toBe('revoked');
     expect(f.service.request({ ...f.input, id: 'q-allowed' }).state).toBe('revoked');

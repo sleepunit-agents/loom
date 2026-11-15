@@ -84,17 +84,19 @@ it('rolls message, refs and question state back together if Inbox insertion fail
   expect(service.threads.conversations.item(ask.inboxItem!).state).toBe('waiting');
 });
 
-it('uses household retention, refuses expired reads before sweeping and preserves metadata after clearing ciphertext', async () => {
+it.each(['dim','mute'] as const)('uses household retention without lifting %s or its deadline after clearing ciphertext', async volume => {
   const { db, service, thread, at } = await fixture();
   db.insert(household).values({ commsDays: 1 }).run();
   const row = await service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Short lived' });
   expect(row.keepUntil).toBe('2026-11-15T18:00:00.000Z');
+  const quietUntil='2026-11-16T18:00:00.000Z';
+  db.update(inbox).set({volume,quietUntil}).where(eq(inbox.id,row.inboxItem!)).run();
   at(row.keepUntil!);
   expect(await service.words(thread.id, row.seq)).toBeNull();
   expect(service.expire()).toBe(1);
   expect(service.expire()).toBe(0);
   expect(db.select().from(messages).get()).toMatchObject({ seq: 1, words: null, sender: 'jonathan', inboxItem: row.inboxItem });
-  expect(db.select().from(inbox).get()?.state).toBe('waiting');
+  expect(db.select().from(inbox).get()).toMatchObject({state:'waiting',volume,quietUntil});
 });
 
 it('deletes ciphertext and refs, settles pending mail, leaves a tombstone and rejects delayed encrypted writes', async () => {
