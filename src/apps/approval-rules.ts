@@ -1,5 +1,5 @@
 /** Standing answers over the approved table. The caller supplies trusted actingFor
- * context; query text or a merely readable record cannot supply that identity. */
+ * member ID context; query text or a merely readable record cannot supply that identity. */
 import { and, asc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { DataDatabase } from '../core/data/database.js';
@@ -12,13 +12,14 @@ export type RuleInput=z.input<typeof approvalRuleInput>;
 type Rule=typeof approvalRules.$inferSelect;
 /** Linear-space wildcard matching; a pattern cannot introduce a regular expression. */
 function matches(pattern:string,text:string){
-  let previous=Array<boolean>(text.length+1).fill(false);previous[0]=true;
+  const letters=Array.from(text);
+  let previous=Array<boolean>(letters.length+1).fill(false);previous[0]=true;
   for(const character of pattern){
-    const next=Array<boolean>(text.length+1).fill(false);next[0]=character==='*'&&previous[0];
-    for(let i=1;i<=text.length;i++)next[i]=character==='*' ? previous[i]||next[i-1] : previous[i-1]&&character===text[i-1];
+    const next=Array<boolean>(letters.length+1).fill(false);next[0]=character==='*'&&previous[0];
+    for(let i=1;i<=letters.length;i++)next[i]=character==='*' ? previous[i]||next[i-1] : previous[i-1]&&character===letters[i-1];
     previous=next;
   }
-  return previous[text.length];
+  return previous[letters.length];
 }
 export function approvalRulesService(db:DataDatabase,now:()=>string){
   const owner=(id:string)=>db.select().from(members).where(and(eq(members.id,id),eq(members.role,'owner'))).get();
@@ -49,9 +50,9 @@ export function approvalRulesService(db:DataDatabase,now:()=>string){
      * grants never become household rules and stale setters grant nothing. */
     resolve(input:{kind:Rule['kind'];target:string;project?:string|null;actingFor:string}):Pick<Rule,'tier'|'scope'|'person'|'setBy'>|undefined{
       if(!input.actingFor||['unknown','?'].includes(input.actingFor)||input.target.length>8192)return;
-      const principal=input.actingFor==='owner'?undefined:db.select().from(members).where(eq(members.id,input.actingFor)).get();
-      if(input.actingFor!=='owner'&&!principal)return;
-      const person=input.actingFor==='owner'||principal?.role==='owner'?'':input.actingFor;
+      const principal=db.select().from(members).where(eq(members.id,input.actingFor)).get();
+      if(!principal)return;
+      const person=principal.role==='owner'?'':input.actingFor;
       const target=input.kind==='merge'?/^github:([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)#[1-9][0-9]*@[a-f0-9]{40}$/.exec(input.target)?.[1]:input.target;
       if(!target)return;
       const lookup=input.kind==='merge'?`github:${target.toLowerCase()}`:target;
@@ -60,9 +61,9 @@ export function approvalRulesService(db:DataDatabase,now:()=>string){
         const project=rule.scope.startsWith('project:');
         if(project&&!db.select().from(projects).where(eq(projects.id,rule.scope.slice(8))).get())return [];
         if(project?rule.scope!==`project:${input.project}`:!matches(rule.scope,lookup))return [];
-        return [{rule,rank:project?1:rule.scope==='*'?3:rule.scope.includes('*')?2:0,stars:rule.scope.split('*').length-1}];
+        return [{rule,rank:project?1:rule.scope==='*'?3:rule.scope.includes('*')?2:0,literals:rule.scope.replaceAll('*','').length,stars:rule.scope.split('*').length-1}];
       });
-      const strict={ask:0,tell:1,do:2};hits.sort((a,b)=>a.rank-b.rank||a.stars-b.stars||strict[a.rule.tier]-strict[b.rule.tier]||a.rule.scope.localeCompare(b.rule.scope));
+      const strict={ask:0,tell:1,do:2};hits.sort((a,b)=>a.rank-b.rank||b.literals-a.literals||a.stars-b.stars||strict[a.rule.tier]-strict[b.rule.tier]||a.rule.scope.localeCompare(b.rule.scope));
       const row=hits[0]?.rule;return row&&{tier:row.tier,scope:row.scope,person:row.person,setBy:row.setBy};
     },
   };

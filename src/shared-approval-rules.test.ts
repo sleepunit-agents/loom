@@ -1,4 +1,8 @@
 import Database from 'better-sqlite3';
+import {createServer} from 'node:http';
+import {once} from 'node:events';
+import {getRequestListener} from '@hono/node-server';
+import {WebSocket} from 'ws';
 import {createHash} from 'node:crypto';
 import {afterEach,expect,it} from 'vitest';
 import {eq} from 'drizzle-orm';
@@ -41,8 +45,10 @@ it('edits all four standing kinds through the real current-owner door, with acto
 });
 it('resolves exact > project > repository wildcard > global, keeps named grants separate, and unknown or stale authority asks',()=>{
  const f=fixture(),rules=f.root.services.approvalRules,target='github:acme/app#1@'+'a'.repeat(40);
- const resolve=(actingFor='owner')=>rules.resolve({kind:'merge',target,project:'pond',actingFor});
+ const resolve=(actingFor='pat')=>rules.resolve({kind:'merge',target,project:'pond',actingFor});
  rules.set({kind:'merge',scope:'*',tier:'do'},'pat');expect(resolve()).toMatchObject({tier:'do',scope:'*',person:''});
+ expect(resolve('owner')).toBeUndefined();
+ f.db.insert(s.members).values({id:'owner',role:'member',joinedAt:new Date(f.clock.now()).toISOString()}).run();expect(resolve('owner')).toBeUndefined();
  expect(resolve('unknown')).toBeUndefined();expect(resolve('?')).toBeUndefined();expect(resolve('missing')).toBeUndefined();expect(resolve('sam')).toBeUndefined();
  rules.set({kind:'merge',scope:'github:acme/*',tier:'tell'},'pat');expect(resolve()).toMatchObject({tier:'tell'});
  rules.set({kind:'merge',scope:'project:pond',tier:'do'},'pat');expect(resolve()).toMatchObject({tier:'do',scope:'project:pond'});
@@ -57,6 +63,8 @@ it('treats pattern punctuation literally and lets current owners delete orphaned
  rules.set({kind:'command',scope:'run [a].*',person:'sam',tier:'do'},'pat');
  expect(rules.resolve({kind:'command',target:'run [a].txt',actingFor:'sam'})).toMatchObject({tier:'do'});
  expect(rules.resolve({kind:'command',target:'run a.txt',actingFor:'sam'})).toBeUndefined();
+ rules.set({kind:'command',scope:'echo 🦆*',person:'sam',tier:'ask'},'pat');expect(rules.resolve({kind:'command',target:'echo 🦆pond',actingFor:'sam'})).toMatchObject({tier:'ask'});
+ rules.set({kind:'command',scope:'echo 🦆*',person:'sam',tier:null},'pat');
  rules.set({kind:'setting',scope:'project:pond',person:'lee',tier:'ask'},'pat');f.db.delete(s.projects).run();
  expect(()=>f.db.delete(s.members).where(eq(s.members.id,'lee')).run()).toThrow('polymorphic foreign key');
  expect(rules.resolve({kind:'setting',target:'timings',project:'pond',actingFor:'lee'})).toBeUndefined();
@@ -74,5 +82,38 @@ it('publishes owner rule edits/deletions through the generated query and hides g
  f.root.writes.run(()=>f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'pat')).run());
  expect((await f.post({...input,tier:null},'remove')).status).toBe(200);
  expect(await query()).toEqual({data:{approvalRules:[]}});
+ expect(f.db.select().from(s.operationResults).all()).toHaveLength(2);
+});
+
+it('chooses literal specificity ahead of star count, then the stricter tier for equal matching specificity',()=>{
+ const f=fixture(),rules=f.root.services.approvalRules;
+ const resolve=()=>rules.resolve({kind:'merge',target:'github:acme/app#1@'+'a'.repeat(40),actingFor:'pat'});
+ rules.set({kind:'merge',scope:'github:acme/*',tier:'do'},'pat');
+ rules.set({kind:'merge',scope:'github:acme/a*p*',tier:'ask'},'pat');expect(resolve()).toMatchObject({tier:'ask',scope:'github:acme/a*p*'});
+ rules.set({kind:'merge',scope:'github:acme/a*p*',tier:null},'pat');
+ rules.set({kind:'merge',scope:'github:acme/a*p',tier:'do'},'pat');rules.set({kind:'merge',scope:'github:acme/ap*',tier:'tell'},'pat');
+ expect(resolve()).toMatchObject({tier:'tell',scope:'github:acme/ap*'});
+ rules.set({kind:'merge',scope:'github:acme/*pp',tier:'ask'},'pat');expect(resolve()).toMatchObject({tier:'ask',scope:'github:acme/*pp'});
+ rules.set({kind:'merge',scope:'github:acme/*pp',tier:null},'pat');expect(resolve()).toMatchObject({tier:'tell'});
+ rules.set({kind:'merge',scope:'github:acme/ap*',tier:null},'pat');expect(resolve()).toMatchObject({tier:'do',scope:'github:acme/a*p'});
+});
+it('rolls back receipt failure without a live publication, then publishes successful creation and deletion',async()=>{
+ const f=fixture();await f.root.ready;
+ const http=createServer(getRequestListener(request=>f.root.http.fetch(request))),detach=f.root.attach(http);
+ await new Promise<void>(done=>http.listen(0,'127.0.0.1',done));
+ cleanup.push(async()=>{detach();await new Promise<void>(done=>http.close(()=>done()));});
+ const address=http.address();if(!address||typeof address==='string')throw new Error('No address');
+ const ws=new WebSocket(`ws://127.0.0.1:${address.port}/graphql`,'graphql-transport-ws',{headers:{cookie:'loom_ui='+'c'.repeat(64),origin:'http://loom'}});cleanup.push(async()=>{ws.terminate();});
+ await once(ws,'open');let next=once(ws,'message');ws.send(JSON.stringify({type:'connection_init'}));await next;
+ const messages:unknown[]=[];ws.on('message',data=>messages.push(JSON.parse(String(data))));
+ next=once(ws,'message');ws.send(JSON.stringify({type:'subscribe',id:'rules',payload:{query:'subscription { observe(query:"{ approvalRules { scope tier } }") { revision patches { path value removed } } }'}}));await next;
+ const count=messages.length,input={kind:'merge',scope:'github:acme/*',tier:'ask'};
+ f.db.$client.exec("CREATE TRIGGER broken_rule_receipt BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'private receipt failure'); END");
+ expect((await f.post(input,'failed')).status).toBe(503);expect(f.root.services.approvalRules.list()).toEqual([]);expect(f.db.select().from(s.operationResults).all()).toEqual([]);
+ await new Promise<void>(done=>setImmediate(done));expect(messages).toHaveLength(count);
+ f.db.$client.exec('DROP TRIGGER broken_rule_receipt');next=once(ws,'message');expect((await f.post(input,'success')).status).toBe(200);
+ expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toContainEqual({path:['approvalRules',0],value:{scope:'github:acme/*',tier:'ask'},removed:false});
+ next=once(ws,'message');expect((await f.post({...input,tier:null},'remove')).status).toBe(200);
+ expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toContainEqual({path:['approvalRules',0],removed:true,value:null});
  expect(f.db.select().from(s.operationResults).all()).toHaveLength(2);
 });
