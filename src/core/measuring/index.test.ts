@@ -20,6 +20,23 @@ function storage() {
 }
 
 describe('optional OpenTelemetry measuring', () => {
+  it('assigns completion days and retention from the same injected UTC clock', async () => {
+    const clock = new FakeClock(Date.UTC(2026, 10, 14, 23));
+    const {store, rows, prune} = storage();
+    const m = await createMeasuring({...enabled, keep_days: 2}, targets, store, undefined, clock);
+    let finish!: (value: number) => void;
+    const pending = m.runAsync('job', 'github.read', () => new Promise<number>(resolve => {finish = resolve;}));
+    m.run('request', 'tasks', () => 1);
+    expect(rows.map(row => row.day)).toEqual(['2026-11-14']);
+    expect(prune.mock.calls).toEqual([['2026-11-13']]);
+    clock.advance(3600_000);
+    finish(2);
+    expect(await pending).toBe(2);
+    expect(rows.map(row => row.day)).toEqual(['2026-11-14', '2026-11-15']);
+    expect(prune.mock.calls).toEqual([['2026-11-13'], ['2026-11-14']]);
+    await m.close();
+  });
+
   it('off does not inspect destinations or touch storage, and preserves values and errors', async () => {
     const {store,rows,prune} = storage();
     const m = await createMeasuring({...DEFAULT_MEASURING, outside_address:'invalid', send_outside:true}, targets, store);

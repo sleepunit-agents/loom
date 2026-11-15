@@ -12,7 +12,9 @@
 /** The runtime's spawn preamble, at the start of a title or of a fallback episode's "Ask:" line. */
 const PREAMBLE = /^(?:Ask:\s*)?You are ([a-z][a-z0-9-]{0,39}), in a conversation on ([a-z][a-z0-9-]{0,39})(?::\s*(.*?))?\s*(?:\(bridge\b|Its conversation is\b|$)/s;
 /** The conversation a preamble names. */
-const NAMED = /\bIts conversation is (cv-[0-9a-f]{12})\b/;
+const CONVERSATION_ID = 'cv-(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{12})';
+const NAMED = new RegExp(`\\bIts conversation is (${CONVERSATION_ID})\\b`);
+const METADATA_ID = new RegExp(`^${CONVERSATION_ID}$`);
 /** Anything that opens like a prompt to the body, preamble or not: never shown as a title. */
 const PROMPTISH = /^(?:Ask:\s*)?You are (?:a |an |the )?[\w -]{1,40}?[,.:]/;
 
@@ -60,7 +62,7 @@ export function plainEpisode(e: { title: string; content?: string | null; where:
   agentLabel: string, conversation: (id: string) => ConversationFacts | undefined): PlainEpisode {
   const title = e.title ?? '';
   const content = e.content ?? '';
-  const named = typeof e.meta?.conversation === 'string' && /^cv-[0-9a-f]{12}$/.test(e.meta.conversation) ? e.meta.conversation : NAMED.exec(content)?.[1] ?? NAMED.exec(title)?.[1];
+  const named = typeof e.meta?.conversation === 'string' && METADATA_ID.test(e.meta.conversation) ? e.meta.conversation : NAMED.exec(content)?.[1] ?? NAMED.exec(title)?.[1];
   // The body's copy first: a title is cut at 72 characters, the body's Ask line at 280.
   const prompt = PREAMBLE.test(title) || PROMPTISH.test(title);
   if (!prompt) return { title, where: e.where, ...(named ? { conversation: named } : {}), wasPrompt: false };
