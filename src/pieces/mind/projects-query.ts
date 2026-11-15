@@ -75,6 +75,8 @@ export function projectsQueryFields(source: ProjectQueryReader, deadlines?:Query
  };
  const id = { type: new GraphQLNonNull(GraphQLString) };
  return {
+  // Retained revisions have no current-body expiry lease. Keep this safe
+  // boundary separate from the live Project/Memory deadline path above.
   memoryHistory:{type:list(revision),args:{id},resolve:(_source,args,context)=>{
    if(!context?.viewer||!validId(args.id,300))return [];
    try{return source.memoryHistory(args.id,context.viewer);}catch{throw new GraphQLError('Memory history is unavailable');}
