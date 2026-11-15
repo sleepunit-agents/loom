@@ -49,23 +49,25 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   await new Promise<void>(ok=>server.listen(0,'127.0.0.1',ok));const address=server.address();if(!address||typeof address==='string')throw Error('No address');
   const url=`http://127.0.0.1:${address.port}`;
   mark('launch');browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
-  const context=await browser.newContext({serviceWorkers:'block',timezoneId:'Asia/Tokyo',locale:'en-US'});context.setDefaultTimeout(10000);
+  // This is a command/data proof; motion has separate coverage. Keep animation
+  // waits out of the budget and let independent windows hydrate together.
+  const context=await browser.newContext({serviceWorkers:'block',timezoneId:'Asia/Tokyo',locale:'en-US',reducedMotion:'reduce'});context.setDefaultTimeout(10000);
   await context.addCookies([{name:'loom_ui',value:cookie,url}]);
-  const a=await context.newPage(),b=await context.newPage();
+  const [a,b]=await Promise.all([context.newPage(),context.newPage()]);
   for(const page of [a,b]){
    page.on('pageerror',error=>console.error('[Tempo page error]',error.message));
    page.on('console',message=>{if(message.type()==='error')console.error('[Tempo console]',message.text());});
    page.on('websocket',socket=>socket.on('framereceived',frame=>{try{const value=JSON.parse(String(frame.payload));if(value.type==='error'||value.payload?.errors)console.error('[Tempo GraphQL error]',JSON.stringify(value));}catch{}}));
   }
   mark('navigate');await Promise.all([a,b].map(page=>page.goto(url+'/p/tempo')));mark('navigated');
-  for(const page of [a,b]){
+  await Promise.all([a,b].map(async page=>{
    mark('open trigger');try{await page.getByRole('button',{name:/Check pump delivery/}).click();}catch(error){console.error('[Tempo visible body]',await page.locator('body').innerText());throw error;}
    await expect.poll(()=>page.getByRole('heading',{name:'Check pump delivery',exact:true}).count()).toBe(1);
    expect(await page.getByText(/America\/Chicago/).count()).toBeGreaterThan(0);
    const due=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'medium',timeStyle:'short'}).format(new Date(trigger.nextDueAt!));
    expect((await page.getByText(/^Due:/).textContent())?.replace(/\s+/g,' ')).toBe(`Due: ${due} · America/Chicago`.replace(/\s+/g,' '));
    expect(await page.getByText('Check the pump shipment',{exact:true}).count()).toBe(1);
-  }
+  }));
   mark('settled notice');app.writes.run(()=>{
    for(const words of ['PRIVATE FIRST NOTICE','PRIVATE SECOND NOTICE'])app.services.conversations.send({toKind:'person',to:'owner',member:'owner',source:'notice',fromKind:'agent',words});
   });
@@ -81,11 +83,11 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   expect(await a.getByRole('status',{name:'Inbox notification'}).count()).toBe(0);
   expect(await b.getByRole('status',{name:'Inbox notification'}).count()).toBe(1);
   mark('pause');await a.getByRole('button',{name:'Pause agent',exact:true}).click();
-  for(const page of [a,b])await expect.poll(()=>page.getByText(/Held · agent paused/).count()).toBeGreaterThan(0);
+  await Promise.all([a,b].map(page=>expect.poll(()=>page.getByText(/Held · agent paused/).count()).toBeGreaterThan(0)));
   await b.getByRole('button',{name:'Resume agent',exact:true}).click();
-  for(const page of [a,b])await expect.poll(()=>page.getByRole('button',{name:'Pause agent',exact:true}).count()).toBe(1);
+  await Promise.all([a,b].map(page=>expect.poll(()=>page.getByRole('button',{name:'Pause agent',exact:true}).count()).toBe(1)));
   await a.getByRole('button',{name:'Cancel',exact:true}).click();
-  for(const page of [a,b])await expect.poll(()=>page.getByText(/once · stopped/).count()).toBe(1);
+  await Promise.all([a,b].map(page=>expect.poll(()=>page.getByText(/once · stopped/).count()).toBe(1)));
   mark('create');await a.getByRole('button',{name:'Create trigger',exact:true}).click();
   const form=a.getByRole('form',{name:'Create trigger'});
   await form.getByLabel('Label',{exact:true}).fill('Browser-created trigger');
@@ -95,12 +97,12 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Tempo reads household time
   await form.getByLabel('Words',{exact:true}).fill('Created through Tempo');
   await form.getByRole('button',{name:'Create trigger',exact:true}).click();
   await expect.poll(()=>a.getByRole('form',{name:'Create trigger'}).count()).toBe(0);
-  for(const page of [a,b]){
+  await Promise.all([a,b].map(async page=>{
    await page.getByRole('button',{name:/Browser-created trigger/}).click();
    await expect.poll(()=>page.getByText('Created through Tempo',{exact:true}).count()).toBe(1);
-  }
+  }));
   mark('run now');await a.getByRole('button',{name:'Run now',exact:true}).click();
-  for(const page of [a,b])await expect.poll(()=>page.getByText(/once · fired/).count()).toBe(1);
+  await Promise.all([a,b].map(page=>expect.poll(()=>page.getByText(/once · fired/).count()).toBe(1)));
   expect(client.prepare("SELECT words FROM inbox WHERE source='trigger' AND words='Created through Tempo'").all()).toHaveLength(1);
   mark('settings card');
   await a.getByRole('button',{name:'Open Approvals',exact:true}).click();
