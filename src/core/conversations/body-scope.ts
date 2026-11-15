@@ -1,3 +1,4 @@
+import { OperationError } from '../operations/index.js';
 /** Fresh assigned-body provenance. This confers no general registry read or
  * member identity. Only the root's exact authenticated Viewer proof qualifies. */
 import { eq } from 'drizzle-orm';
@@ -15,4 +16,12 @@ export function conversationBodyScope(db:DataDatabase,proof:BodyProof,privateAss
   if(cv.member&&!privateAssignment({member:cv.member,agent:cv.agent,project:cv.project??undefined}))return;
   return {job,cv};
  };
+}
+
+export function requireBodyScope(current:ReturnType<typeof conversationBodyScope>) {
+ return (viewer:Viewer)=>{const found=current(viewer);if(!found)throw new OperationError('denied','Current conversation body required');return found;};
+}
+
+export function bodyOperationDefaults(current:ReturnType<typeof conversationBodyScope>,hash:(input:string)=>string,domain:string) {
+ return {write:true,recheckPolicy:true,doors:['http'] as ['http'],may:(viewer:Viewer)=>!!current(viewer),inputHash:(input:string,identity:Readonly<{actor:Viewer}>)=>hash(domain+'\0'+(current(identity.actor)?.job.id??'unbound')+'\0'+input)};
 }
