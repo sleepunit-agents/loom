@@ -10,7 +10,7 @@ import { sharedRoot } from './shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];
 afterEach(async()=>{vi.restoreAllMocks();for(const close of clean.splice(0).reverse())await close();});
 function fixture(keyByte=7){
- const client=new Database(':memory:');clean.push(()=>client.close());const clock=new FakeClock(),at=new Date(clock.now()).toISOString();
+ const client=new Database(':memory:');clean.push(()=>{client.close();});const clock=new FakeClock(),at=new Date(clock.now()).toISOString();
  const db=createDataSchema(client),owner='a'.repeat(64),peer='b'.repeat(64);
  for(const [id,token] of [['owner',owner],['peer',peer]]){
   db.insert(members).values({id,role:id==='owner'?'owner':'member',joinedAt:at}).run();
