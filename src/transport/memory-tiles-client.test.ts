@@ -48,7 +48,7 @@ it('reads all four Memory tiles on one canonical client, switches details and cl
  const conversations=new Conversations(db,()=>new Date(now).toISOString());
  const thread=conversations.open({agent:'fiction',venue:'wake',place:'fiction',label:'Private fictional session'});
  const activity=createActivityReader({now:()=>now},{agents:sources.agents,sharing,conversations:sharedActivityConversations(db,{sharing}),timezone:'America/Chicago'});
- const queries=memoryQueryFields(db,{sources,sharing,now:()=>now,mind:projects,activity,conversationHref:id=>'/conversation/'+id,projectHref:(_agent,slug)=>'/project/'+slug});
+ const queries=memoryQueryFields(db,{sources,sharing,now:()=>now,projects,activity,conversationHref:id=>'/conversation/'+id,projectHref:(_agent,slug)=>'/project/'+slug});
  const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:queries.fields})});
  vi.stubGlobal('location',{protocol:'https:',host:'memory.invalid'});
  const selections=new Map<string,{query:string;variables:Record<string,unknown>;revision:number;sink:{next(value:unknown):void};stop:ReturnType<typeof vi.fn>}>();

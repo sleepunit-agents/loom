@@ -1,6 +1,7 @@
 /** Default web startup from an explicit, already prepared shared household.
  * No importer, discovery, schema upgrade, or legacy database fallback. */
 import Database from 'better-sqlite3';
+import {initializeSharedHome} from './shared-initialize.js';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {isAbsolute,join,resolve,relative,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -42,6 +43,7 @@ function checkDatabase(file:string){
 }
 export async function startSharedHome(options:{home:string;program?:string;host?:string;port?:number;webRoot?:string;clock?:Clock;stdout?(text:string):void;reportError?(error:unknown):void}){
  const home=resolve(options.home),clock=options.clock??systemClock;
+ if(!options.program)await initializeSharedHome(home,clock);
  const config=options.program??join(home,'program.json');
  let bytes:Buffer|undefined;
  const program=(()=>{try{bytes=privateBytes(config);return programSchema.parse(JSON.parse(bytes.toString('utf8')));}finally{bytes?.fill(0);}})();

@@ -5,13 +5,11 @@ import { join } from 'node:path';
 import { GraphQLObjectType, GraphQLSchema, graphql } from 'graphql/index.js';
 import { sql } from 'drizzle-orm';
 import Database from 'better-sqlite3';
-import { createFoundation } from '../../core/app.js';
 import { FakeClock, type Sharing, type Viewer } from '../../core/index.js';
 import { createDataSchema } from '../../core/data/database.js';
 import { dataQueries } from '../../core/data/queries.js';
 import { ProjectsStore } from '../../backends/projects.js';
-import { installMindProjects } from './projects.js';
-import { mindRole, type Mind } from './role.js';
+import { createProjectsReader } from './projects.js';
 import { projectsQueryFields } from './projects-query.js';
 import type { ProjectSectionRole } from './projects-roles.js';
 
@@ -20,17 +18,16 @@ afterEach(() => { for (const close of closes.splice(0).reverse()) close(); });
 function fixture(roles: { notes?: ProjectSectionRole; conversations?: ProjectSectionRole; changes?: ProjectSectionRole } = {}) {
  const home = mkdtempSync(join(tmpdir(), 'projects-query-')); closes.push(() => rmSync(home, { recursive: true, force: true }));
  const clock = new FakeClock(Date.parse('2026-11-14T18:00:00Z'));
- const app = createFoundation({ home, clock }); closes.push(() => app.close());
  const shared = new Database(':memory:'); closes.push(() => shared.close()); createDataSchema(shared);
  const store = new ProjectsStore({ dbPath: join(home, 'fiction.db'), now: () => clock.now() }); closes.push(() => store.close());
  const other = new ProjectsStore({ dbPath: join(home, 'other.db') }); closes.push(() => other.close());
  let sharing: Sharing = { members: { owner: { owner: true, agents: [] }, member: { owner: false, agents: ['fiction'] }, peer: { owner: false, agents: [] } }, projects: { team: { members: ['peer'], agents: ['fiction'] } }, services: {} };
  const database = new Database(join(home, 'fiction.db')); closes.push(() => database.close());
  const missing = join(home, 'absent.db');
- const installed = installMindProjects(app.operations, app.live, { agents: [{ agent: 'fiction', memories: join(home, 'fiction.db') }, { agent: 'other', memories: join(home, 'other.db') }, { agent: 'missing', memories: missing }], sharing: () => sharing, ...roles });
+ const installed = createProjectsReader(clock, { agents: [{ agent: 'fiction', memories: join(home, 'fiction.db') }, { agent: 'other', memories: join(home, 'other.db') }, { agent: 'missing', memories: missing }], sharing: () => sharing, ...roles });
  closes.push(() => installed.close());
  const generated = dataQueries(shared, { tables: ['tasks'], visibility: { tasks: () => sql`true` } });
- const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: { ...generated.getQueryType()!.toConfig().fields, ...projectsQueryFields(mindRole(app.operations)) } }) });
+ const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: { ...generated.getQueryType()!.toConfig().fields, ...projectsQueryFields(installed) } }) });
  const query = (source: string, viewer: Viewer = { kind: 'member', id: 'owner' }) => graphql({ schema, source, contextValue: { viewer } });
  return { query, store, other, database, clock, missing, generated, schema, sharing, replaceSharing(next: Sharing) { sharing = next; } };
 }
@@ -90,12 +87,11 @@ it('leaves missing sources absent, keeps quiet index cheap and preserves per-sec
  expect(calls).toBe(1); expect(JSON.stringify(result)).not.toContain('PRIVATE');
 });
 
-it('forwards the exact viewer and sanitizes failed or thrown role errors', async () => {
+it('forwards the exact viewer and sanitizes thrown reader errors', async () => {
  const viewer: Viewer = { kind: 'agent', id: 'fiction' }; let seen: Viewer | undefined;
- const role: Mind = { call(v) { seen = v; throw Error('PRIVATE SOURCE'); } };
+ const role = {list(v:Viewer) { seen = v; throw Error('PRIVATE SOURCE'); },read(){return undefined;},memoryRead(){return undefined;},access(){return {id:'projects',allowed:false,agents:[]};}};
  const schema = new GraphQLSchema({ query: new GraphQLObjectType({ name: 'Query', fields: projectsQueryFields(role) }) });
  const query = () => graphql({ schema, source: '{ memoryProjects { id } }', contextValue: { viewer } });
  const result = await query(); expect(seen).toBe(viewer); expect(result.data).toEqual({ memoryProjects: null }); expect(result.errors?.[0].message).toBe('Projects are unavailable'); expect(JSON.stringify(result)).not.toContain('PRIVATE');
- role.call = () => ({ ok: false, code: 'unavailable', message: 'PRIVATE SQL' });
- expect((await query()).errors?.[0].message).toBe('Projects are unavailable');
+
 });

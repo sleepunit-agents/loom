@@ -1,28 +1,23 @@
 import { expect, it, vi } from 'vitest';
 import * as socketModule from './core/data/socket.js';
-import { Live } from './core/live/index.js';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
 import { touched } from './core/touched/index.js';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocket } from 'ws';
 import { eq } from 'drizzle-orm';
-import { startLoom } from './foundation.js';
-import { FakeClock, type Sharing } from './core/index.js';
-import { createDataSchema, dataDatabase } from './core/data/database.js';
-import { agents, members, tokens, sessions, tasks, conversationPeople, conversations } from './core/data/schema.js';
-import { HouseholdDatabase } from './core/household/document.js';
-import { migrateHouseholdTables } from './core/household/schema.js';
+import { serveShared } from './shared-serve.js';
+import { FakeClock } from './core/index.js';
+import { createDataSchema } from './core/data/database.js';
+import { agents, members, tokens, sessions, tasks, conversationPeople, conversations, household } from './core/data/schema.js';
 import { Conversations } from './core/conversations/index.js';
 import { SqliteKnowledgeBackend } from './backends/sqlite-knowledge.js';
 import { PeopleStore } from './backends/people.js';
 import { ProjectsStore } from './backends/projects.js';
-import {installMindActivity} from './pieces/mind/activity.js';
-import type {ActivityConversations} from './pieces/mind/activity-role.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 const credentials = {owner:'a'.repeat(64), peer:'b'.repeat(64), short:'c'.repeat(64)};
@@ -35,7 +30,7 @@ async function message(ws: WebSocket, action: () => unknown): Promise<Message> {
 const observe = (ws: WebSocket) => message(ws, () => ws.send(JSON.stringify({id:'live',type:'subscribe',payload:{
   query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }', variables:{query},
 }})));
-async function setup(host?: string[], now=Date.parse('2026-11-14T18:00:00Z'), activityRole?:ActivityConversations) {
+async function setup(now=Date.parse('2026-11-14T18:00:00Z')) {
   const home = mkdtempSync(join(tmpdir(),'memory-socket-next-'));
   const clock = new FakeClock(now), at = new Date(clock.now()).toISOString();
   const client = new Database(join(home,'loom.db')), db = createDataSchema(client);
@@ -47,7 +42,7 @@ async function setup(host?: string[], now=Date.parse('2026-11-14T18:00:00Z'), ac
   const conversations = new Conversations(db,()=>new Date(clock.now()).toISOString());
   const thread = conversations.open({agent:'fiction',venue:'loom',place:'Fictional terminal',label:'Fictional conversation'});
   db.insert(conversationPeople).values({conversation:thread.id,whoKind:'person',who:'friend'}).run();
-  client.close();
+  db.insert(household).values({defaultAgent:'fiction',timezone:'UTC'}).run();
   mkdirSync(join(home,'commons'),{recursive:true}); mkdirSync(join(home,'agents/fiction'),{recursive:true});
   const knowledge = new SqliteKnowledgeBackend({dbPath:join(home,'commons/knowledge.db')});
   await knowledge.writePage({slug:'pump',title:'Earlier pump',domain:'pond',body:'Earlier fictional words'});
@@ -56,12 +51,8 @@ async function setup(host?: string[], now=Date.parse('2026-11-14T18:00:00Z'), ac
   people.write({slug:'friend',name:'Fictional Friend'}); people.close();
   const projects = new ProjectsStore({dbPath:join(home,'agents/fiction/memories.db')});
   projects.write({slug:'pond',name:'Fictional pond'}); projects.close();
-  const sharing: Sharing = {members:{owner:{owner:true,agents:[]},peer:{owner:false,agents:[]}},projects:{},services:{}};
-  const loom = await startLoom({home,next:true,staging:true,clock,host,sharing:()=>sharing,stdout:()=>{},
-    // This legacy operation-door identity must never authenticate /graphql.
-    authenticate:()=>({viewer:{kind:'member',id:'owner'},valid:()=>true}),
-    install(app){migrateHouseholdTables(app.db);app.db.transaction(()=>new HouseholdDatabase(app.db).replace(home,{v:1,agents:['fiction'],owner:'owner',default:'fiction',members:[{person:'owner',role:'owner',agents:'*'},{person:'peer',role:'member',agents:[]}]}))();if(activityRole){const reader=installMindActivity(app.operations,app.live,{agents:[{agent:'fiction',memories:join(home,'agents/fiction/memories.db')}],sharing:()=>sharing,conversations:activityRole});app.onClose(reader.close);}},
-  });
+  const commons=join(home,'commons'),directory=join(home,'agents/fiction');
+  const loom=await serveShared({db,clock,memory:{checkingAgent:'fiction',sources:{commons:{directory:commons,knowledge:join(commons,'knowledge.db'),people:join(commons,'people.db')},agents:[{agent:'fiction',directory,memories:join(directory,'memories.db')}]}},originAllowed:req=>!req.headers.origin||req.headers.origin===`http://${req.headers.host}`,reportError:error=>{throw error;}});
   const sockets: WebSocket[] = [];
   const open = async (who: keyof typeof credentials | null = 'owner', headers: Record<string,string> = {}, base = loom.url) => {
     const ws = new WebSocket(base.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{...(who ? {authorization:'Bearer '+credentials[who]} : {}),...headers}});sockets.push(ws);
@@ -69,11 +60,11 @@ async function setup(host?: string[], now=Date.parse('2026-11-14T18:00:00Z'), ac
     expect(await message(ws,()=>ws.send(JSON.stringify({type:'connection_init',payload:{viewer:{kind:'member',id:'owner'}}})))).toEqual({type:'connection_ack'});
     return ws;
   };
-  return {home,loom,sharing,clock,knowledge,open,db:dataDatabase(loom.db),async close(){for(const ws of sockets)ws.terminate();await loom.close();knowledge.close();rmSync(home,{recursive:true,force:true});}};
+  return {home,loom,clock,knowledge,open,db,async close(){for(const ws of sockets)ws.terminate();await loom.close();knowledge.close();client.close();rmSync(home,{recursive:true,force:true});}};
 }
 
 it('mounts the same generated and four Memory projections on HTTP, ordinary socket reads and live selections',async()=>{
-  const f=await setup(['127.0.0.1','127.0.0.2']);
+  const f=await setup();
   try {
     const response=await fetch(f.loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credentials.owner,'content-type':'application/json'},body:JSON.stringify({query})});
     const expected=await response.json(); expect(expected.errors).toBeUndefined();
@@ -86,14 +77,14 @@ it('mounts the same generated and four Memory projections on HTTP, ordinary sock
     });
     ws.send(JSON.stringify({id:'read',type:'subscribe',payload:{query}}));
     expect(await ordinary).toEqual([{id:'read',type:'next',payload:expected},{id:'read',type:'complete'}]);
-    const live=await f.open('owner',{},f.loom.url.replace('127.0.0.1','127.0.0.2'));
+    const live=await f.open('owner',{},f.loom.url);
     expect(await observe(live)).toMatchObject({type:'next',payload:{data:{observe:{revision:1,patches:[{path:[],removed:false,value:expected.data}]}}}});
     f.loom.operations.register({name:'fiction.renameTask',input:z.object({title:z.string()}),output:z.null(),write:true,may:()=>true,
       run(ctx,input){ctx.db.prepare('UPDATE tasks SET title=? WHERE id=?').run(input.title,'work');ctx.changed('task','work');return null;}});
     const committed=await message(live,()=>expect(f.loom.operations.call('direct',{kind:'member',id:'owner'},'fiction.renameTask',{title:'Changed by a committed operation'},'fiction-rename')).toEqual({ok:true,value:null}));
     expect(committed).toMatchObject({payload:{data:{observe:{patches:[{path:['tasks',0,'title'],removed:false,value:'Changed by a committed operation'}]}}}});
     await f.knowledge.writePage({slug:'pump',title:'Changed fictional pump',domain:'pond',body:'Changed fictional hose'});
-    const changed=await message(live,()=>f.loom.live.changed([{type:'mind.knowledge',id:'pump'}]));
+    const changed=await message(live,()=>f.loom.changed());
     expect(JSON.stringify(changed)).toContain('Changed fictional pump');
     expect(JSON.stringify(changed)).toContain('Changed fictional hose');
   } finally {await f.close();}
@@ -156,17 +147,17 @@ it('keeps simultaneous owner and peer selections separate and removes words afte
     expect(JSON.stringify(await observe(owner))).toContain('Fictional hose');
     const denied=await observe(peer); expect(JSON.stringify(denied)).not.toContain('Fictional');
     expect(denied).toMatchObject({payload:{data:{observe:{patches:[{value:{tasks:[],memoryKnowledgePage:null,memoryPerson:null,memoryProjects:[],memoryActivity:null}}]}}}});
-    f.sharing.members.owner.owner=false; f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();
-    const stripped=await message(owner,()=>f.loom.live.changed([{type:'core.access',id:'owner'}]));
+    f.db.update(members).set({role:'member'}).where(eq(members.id,'owner')).run();
+    const stripped=await message(owner,()=>f.loom.changed());
     expect(JSON.stringify(stripped)).not.toContain('Fictional');
     expect(stripped).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining([{path:['memoryKnowledgePage'],removed:false,value:null},{path:['memoryPerson'],removed:false,value:null},{path:['memoryActivity'],removed:false,value:null}])}}}});
     const closed=once(owner,'close');f.db.update(tokens).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(tokens.fingerprint,hash(credentials.owner))).run();
-    f.loom.live.changed([{type:'core.access',id:'token'}]); expect((await closed)[0]).toBe(4403);
+    f.loom.changed(); expect((await closed)[0]).toBe(4403);
     const expiry=await f.open('short'),expired=once(expiry,'close');f.clock.advance(1000);expect((await expired)[0]).toBe(4403);
   } finally {await f.close();}
 });
 
-it('refuses unauthenticated and cross-origin upgrades despite the legacy operation resolver, and closes sockets at shutdown',async()=>{
+it('refuses unauthenticated and cross-origin upgrades and closes sockets at shutdown',async()=>{
   const f=await setup();
   try {
     for(const headers of [{},{authorization:'Bearer '+credentials.owner,origin:'https://evil.invalid'},{cookie:'loom_ui='+cookie}]) {
@@ -192,57 +183,13 @@ it('disposes the socket, pending selection and change observer on listener shutd
     expect(dispose).toHaveBeenCalledOnce();
     expect(await selection.next()).toEqual({done:true,value:undefined});
     expect(()=>options.live.watch({schema:options.schema({kind:'member',id:'owner'}),query:'{ tasks { id } }',valid:()=>true})).toThrow('Live data access ended');
-    changed.mockClear(); f.loom.live.changed([{type:'core.access',id:'after-close'}]);
+    changed.mockClear(); f.loom.changed();
     expect(changed).not.toHaveBeenCalled();
   } finally {await f.close();vi.restoreAllMocks();}
 });
 
-function trackSocketResources() {
-  const original=socketModule.dataSocket,observeOriginal=Live.prototype.observe;
-  const attachments: import('node:http').Server[]=[];
-  let owned: Parameters<typeof socketModule.dataSocket>[0]|undefined;
-  let disposal: ReturnType<typeof vi.spyOn>|undefined;
-  let observeChanges: (()=>void)|undefined;
-  const stops: ReturnType<typeof vi.fn>[]=[];
-  vi.spyOn(Live.prototype,'observe').mockImplementation(function(this:Live,fn){
-    const stop=vi.fn(observeOriginal.call(this,fn));stops.push(stop);
-    observeChanges=()=>this.changed([{type:'core.access',id:'after-failure'}]);return stop;
-  });
-  vi.spyOn(socketModule,'dataSocket').mockImplementation(options=>{
-    owned=options;
-    const socket=original(options),attach=socket.attach;
-    vi.spyOn(socket,'attach').mockImplementation(server=>{attachments.push(server);return attach(server);});
-    disposal=vi.spyOn(socket,'close');return socket;
-  });
-  return {attachments,expectDisposed(){
-    expect(disposal).toHaveBeenCalledOnce();expect(stops.at(-1)).toHaveBeenCalledOnce();
-    const changed=vi.spyOn(owned!.live,'changed');observeChanges!();expect(changed).not.toHaveBeenCalled();
-    expect(()=>owned!.live.watch({schema:owned!.schema({kind:'member',id:'owner'}),query:'{ tasks { id } }',valid:()=>true})).toThrow('Live data access ended');
-  }};
-}
-
-it('disposes socket resources and the change observer when a later bind fails',async()=>{
-  const home=mkdtempSync(join(tmpdir(),'memory-socket-bind-failure-')),tracked=trackSocketResources();
-  try {
-    await expect(startLoom({home,next:true,staging:true,clock:new FakeClock(),host:['127.0.0.1','invalid host name'],stdout:()=>{}})).rejects.toThrow();
-    expect(tracked.attachments).toHaveLength(2);
-    expect(tracked.attachments.every(server=>!server.listening && server.listenerCount('upgrade')===0)).toBe(true);
-    tracked.expectDisposed();
-  } finally {vi.restoreAllMocks();rmSync(home,{recursive:true,force:true});}
-});
-
-it('cleans acquired socket resources when web asset initialization throws before binding',async()=>{
-  const home=mkdtempSync(join(tmpdir(),'memory-socket-assets-failure-')),tracked=trackSocketResources();
-  writeFileSync(join(home,'assets'),'Fictional invalid assets entry');
-  try {
-    await expect(startLoom({home,next:true,staging:true,clock:new FakeClock(),webRoot:home,stdout:()=>{}})).rejects.toThrow(/ENOTDIR/);
-    expect(tracked.attachments).toHaveLength(0);tracked.expectDisposed();
-  } finally {vi.restoreAllMocks();rmSync(home,{recursive:true,force:true});}
-});
-
-
 it('refreshes Knowledge at exact clock boundaries without writes and cancels its owned deadline',async()=>{
-  const f=await setup(['127.0.0.1','127.0.0.2']);
+  const f=await setup();
   const writer=new Database(join(f.home,'commons/knowledge.db'));
   try {
     const now=f.clock.now(),day=86400_000;
@@ -259,7 +206,7 @@ it('refreshes Knowledge at exact clock boundaries without writes and cancels its
     const subscribe=(ws:WebSocket)=>message(ws,()=>ws.send(JSON.stringify({id:'time',type:'subscribe',payload:{
       query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection},
     }})));
-    const first=await f.open(),second=await f.open('owner',{},f.loom.url.replace('127.0.0.1','127.0.0.2'));
+    const first=await f.open(),second=await f.open('owner',{},f.loom.url);
     const initial=await subscribe(first);await subscribe(second);
     expect(JSON.stringify(initial)).toContain('"fresh":"aging"');
     expect(JSON.stringify(initial)).toContain('"recent":true');
@@ -286,7 +233,7 @@ it('refreshes Knowledge at exact clock boundaries without writes and cancels its
 
 it('refreshes Activity expiry and household midnight on the shared GraphQL clock',async()=>{
   const midnight=Date.parse('2026-11-15T00:00:00Z');
-  const f=await setup(['127.0.0.1','127.0.0.2'],midnight-2000);
+  const f=await setup(midnight-2000);
   const writer=new Database(join(f.home,'agents/fiction/memories.db'));
   writer.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');
   try {
@@ -299,7 +246,7 @@ it('refreshes Activity expiry and household midnight on the shared GraphQL clock
     const subscribe=(ws:WebSocket)=>message(ws,()=>ws.send(JSON.stringify({id:'activity-time',type:'subscribe',payload:{
       query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection},
     }})));
-    const a=await f.open(),b=await f.open('owner',{},f.loom.url.replace('127.0.0.1','127.0.0.2'));
+    const a=await f.open(),b=await f.open('owner',{},f.loom.url);
     const initial=await subscribe(a);await subscribe(b);
     expect(JSON.stringify(initial)).toContain('Expires soon');expect(JSON.stringify(initial)).toContain('Leaves recent');
     const frames:Message[]=[];a.on('message',raw=>frames.push(JSON.parse(String(raw))));
@@ -318,7 +265,7 @@ it('refreshes Activity expiry and household midnight on the shared GraphQL clock
 },2000);
 
 it('refreshes People contact staleness and evidence expiry on the shared GraphQL clock',async()=>{
- const f=await setup(['127.0.0.1','127.0.0.2']),path=join(f.home,'agents/fiction/memories.db'),writer=new Database(path);
+ const f=await setup(),path=join(f.home,'agents/fiction/memories.db'),writer=new Database(path);
  writer.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');
  try{
   const now=f.clock.now(),people=new PeopleStore({dbPath:path,actor:'fiction'});
@@ -328,7 +275,7 @@ it('refreshes People contact staleness and evidence expiry on the shared GraphQL
   await vi.waitFor(()=>expect(scheduled).toHaveBeenCalledWith(now+1001,expect.any(Function)));scheduled.mockRestore();
   const selection='{ memoryPerson(id:"fiction:friend") { fields { key state } evidence { title content } newer } }';
   const subscribe=(ws:WebSocket)=>message(ws,()=>ws.send(JSON.stringify({id:'person-time',type:'subscribe',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection}}})));
-  const a=await f.open(),b=await f.open('owner',{},f.loom.url.replace('127.0.0.1','127.0.0.2'));
+  const a=await f.open(),b=await f.open('owner',{},f.loom.url);
   const initial=await subscribe(a);await subscribe(b);expect(JSON.stringify(initial)).toContain('"state":"fresh"');expect(JSON.stringify(initial)).toContain('Private fictional words');
   const frames:Message[]=[];a.on('message',raw=>frames.push(JSON.parse(String(raw))));
   f.clock.advance(1000);await Promise.resolve();expect(frames).toEqual([]);
@@ -344,7 +291,7 @@ it('refreshes People contact staleness and evidence expiry on the shared GraphQL
 },2000);
 
 it('arms Projects deadlines from the initial query and refreshes age, expiry and spark without writes',async()=>{
- const f=await setup(['127.0.0.1','127.0.0.2']),path=join(f.home,'agents/fiction/memories.db'),writer=new Database(path);
+ const f=await setup(),path=join(f.home,'agents/fiction/memories.db'),writer=new Database(path);
  writer.exec('CREATE TABLE memories(id INTEGER PRIMARY KEY,ref TEXT,category TEXT,title TEXT,content TEXT,created TEXT,updated TEXT,project TEXT,archived INTEGER,expires_at TEXT)');
  try{
   const now=f.clock.now(),day=86400000,projects=new ProjectsStore({dbPath:path});
@@ -354,7 +301,7 @@ it('arms Projects deadlines from the initial query and refreshes age, expiry and
   put.run('rolling','Rolling memory',new Date(now-day+3000).toISOString(),null);
   const selection='{ memoryProject(id:"fiction:pond") { fields { state } spark sections { key total } } memoryProjectMemory(id:"fiction:expiry") { title } }';
   const subscribe=(ws:WebSocket)=>message(ws,()=>ws.send(JSON.stringify({id:'project-time',type:'subscribe',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection}}})));
-  const a=await f.open(),b=await f.open('owner',{},f.loom.url.replace('127.0.0.1','127.0.0.2')),scheduled=vi.spyOn(f.clock,'at');
+  const a=await f.open(),b=await f.open('owner',{},f.loom.url),scheduled=vi.spyOn(f.clock,'at');
   const initial=await subscribe(a);await subscribe(b);expect(JSON.stringify(initial)).toContain('checked 13 days ago');expect(JSON.stringify(initial)).toContain('Expires soon');
   await vi.waitFor(()=>expect(scheduled).toHaveBeenCalledWith(now+1000,expect.any(Function)));scheduled.mockRestore();
   const frames:Message[]=[];a.on('message',raw=>frames.push(JSON.parse(String(raw))));
@@ -385,38 +332,17 @@ it('refreshes Activity when future shared conversations enter the inclusive deta
  }finally{await f.close();}
 },2000);
 
-it('rearms Activity from injected conversation expiry discovered by the initial query',async()=>{
- const now=Date.parse('2026-11-14T18:00:00Z');
- const row={kind:'digest' as const,key:'clock-run',at:new Date(now).toISOString(),conversation:{id:'cv-fiction',agent:'fiction',venue:'terminal',place:'terminal',label:'Fictional expiring conversation',people:[]},expires:now+1000,summary:'Fictional words',asked:[],decided:[],tasks:[],links:[],more:[]};
- const f=await setup(undefined,now,{list:()=>({available:true,rows:[row]}),read:()=>row,conversation:()=>row.conversation});
- try{
-  const ws=await f.open(),scheduled=vi.spyOn(f.clock,'at');
-  const selection='{ memoryActivity { entries { title } } memoryActivityEntry(id:"d~fiction~clock-run") { title } }';
-  const initial=await message(ws,()=>ws.send(JSON.stringify({id:'expiry-time',type:'subscribe',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection}}})));
-  expect(JSON.stringify(initial)).toContain('Fictional expiring conversation');
-  await vi.waitFor(()=>expect(scheduled).toHaveBeenCalledWith(now+1000,expect.any(Function)));scheduled.mockRestore();
-  const changed=await message(ws,()=>f.clock.advance(1000));
-  expect(changed).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining([{path:['memoryActivityEntry'],removed:false,value:null},{path:['memoryActivity','entries',0],removed:true,value:null}])}}}});
- }finally{await f.close();}
-},2000);
-
 it('projects existing Memory capabilities on GraphQL and updates them after a committed demotion',async()=>{
- const f=await setup();let legacy:WebSocket|undefined;
+ const f=await setup();
  const selection='{ memoryKnowledgeAccess { allowed canAdd canVerify canRecheck } memoryPeopleAccess { allowed directory canAdd agents } memoryProjectsAccess { allowed agents } memoryActivityAccess { allowed agents owner timezone today windows expires } }';
  const http=async(who:'owner'|'peer')=>{const response=await fetch(f.loom.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+credentials[who],'content-type':'application/json'},body:JSON.stringify({query:selection})});expect(response.status).toBe(200);const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
  try{
   const expected=await http('owner');expect(expected).toMatchObject({memoryKnowledgeAccess:{allowed:true,canAdd:true},memoryPeopleAccess:{allowed:true,directory:true,agents:['fiction']},memoryProjectsAccess:{allowed:true,agents:['fiction']},memoryActivityAccess:{allowed:true,agents:['fiction'],today:'2026-11-14'}});
-  // Both transports delegate the same capability projection, not two policies.
-  legacy=new WebSocket(f.loom.url.replace('http:','ws:')+'/live');await once(legacy,'open');
-  for(const [type,field] of [['knowledge.access','memoryKnowledgeAccess'],['people.access','memoryPeopleAccess'],['projects.access','memoryProjectsAccess'],['activity.access','memoryActivityAccess']]){
-   const frame=await message(legacy,()=>legacy!.send(JSON.stringify({kind:'subscribe',type}))) as unknown as {records:Record<string,unknown>[]};
-   expect(Object.fromEntries(Object.keys(expected[field]).map(key=>[key,frame.records[0][key]]))).toEqual(expected[field]);
-  }
   const peer=await http('peer');for(const value of Object.values(peer) as Array<{allowed:boolean}>)expect(value.allowed).toBe(false);
   const ws=await f.open();expect(await message(ws,()=>ws.send(JSON.stringify({id:'capabilities',type:'subscribe',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query:selection}}})))).toMatchObject({payload:{data:{observe:{patches:[{value:expected}]}}}});
-  f.loom.operations.register({name:'fiction.demoteCapabilities',write:true,input:z.object({}),output:z.null(),may:()=>true,run(ctx){ctx.db.prepare("UPDATE members SET role='member' WHERE id='owner'").run();f.sharing.members.owner.owner=false;ctx.changed('core.access','owner');return null;}});
+  f.loom.operations.register({name:'fiction.demoteCapabilities',write:true,input:z.object({}),output:z.null(),may:()=>true,run(ctx){ctx.db.prepare("UPDATE members SET role='member' WHERE id='owner'").run();ctx.changed('core.access','owner');return null;}});
   const changed=await message(ws,()=>expect(f.loom.operations.call('direct',{kind:'member',id:'owner'},'fiction.demoteCapabilities',{},'demote-capabilities')).toEqual({ok:true,value:null}));
   expect(changed).toMatchObject({payload:{data:{observe:{patches:expect.arrayContaining(['memoryKnowledgeAccess','memoryPeopleAccess','memoryProjectsAccess','memoryActivityAccess'].map(field=>({path:[field,'allowed'],removed:false,value:false})))}}}});
   const after=await http('owner');for(const value of Object.values(after) as Array<{allowed:boolean}>)expect(value.allowed).toBe(false);
- }finally{legacy?.terminate();await f.close();}
+ }finally{await f.close();}
 },2000);
