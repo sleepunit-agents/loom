@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, expect, it } from 'vitest';
 import { FakeClock } from './core/clock.js';
 import { createDataSchema } from './core/data/database.js';
-import { agents, members, memberAgents, tokens } from './core/data/schema.js';
+import { agentSprites, agents, members, memberAgents, tokens } from './core/data/schema.js';
 import { sharedRoot } from './shared-root.js';
 const clean: (() => void | Promise<void>)[] = [];
 afterEach(async () => { for (const close of clean.splice(0).reverse()) await close(); });
@@ -23,6 +23,24 @@ function fixture() {
   const root = sharedRoot({ db, clock, originAllowed: () => true, reportError: () => {} }); clean.push(() => root.close());
   const call = (operation: string, input: unknown, actor: keyof typeof credentials = 'sam', id = 'request') => root.http.request('http://loom/api/household/'+operation, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer '+credentials[actor] }, body: JSON.stringify({ input, id }) });
   return { client, db, clock, root, call };
+}
+async function openSocket(f: ReturnType<typeof fixture>, actor: keyof typeof credentials) {
+  const server = createServer(), detach = f.root.attach(server);
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  clean.push(async () => { detach(); await f.root.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  const address = server.address(); if (!address || typeof address === 'string') throw Error('No port');
+  const ws = new WebSocket('ws://127.0.0.1:'+address.port+'/graphql', 'graphql-transport-ws', { headers: { authorization: 'Bearer '+credentials[actor] } });
+  clean.push(() => ws.terminate()); await once(ws, 'open');
+  const ack = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await ack;
+  return ws;
+}
+async function subscribe(ws: WebSocket, query: string) {
+  const next = once(ws, 'message');
+  ws.send(JSON.stringify({ type: 'subscribe', id: 'watch', payload: {
+    query: 'subscription($query:String!) { observe(query:$query) { patches { path value removed } } }',
+    variables: { query },
+  } }));
+  return JSON.parse(String((await next)[0])).payload.data.observe;
 }
 it('adds scoped members without requiring ownership and preserves join time when replacing agent lists', async () => {
   const f = fixture();
@@ -82,17 +100,10 @@ it('publishes owner administration metadata and withdraws ordinary member agent 
 it('withdraws agent ownership through a retained real socket schema after a member edit', async () => {
   const f = fixture();
   await f.call('setMember', { id: 'lee', role: 'member', agents: ['art'] });
-  const server = createServer(), detach = f.root.attach(server);
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  clean.push(async () => { detach(); await f.root.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  const address = server.address(); if (!address || typeof address === 'string') throw Error('No port');
-  const ws = new WebSocket('ws://127.0.0.1:'+address.port+'/graphql', 'graphql-transport-ws', { headers: { authorization: 'Bearer '+credentials.lee } });
-  clean.push(() => ws.terminate()); await once(ws, 'open');
-  let next = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await next;
-  next = once(ws, 'message');
-  ws.send(JSON.stringify({ type: 'subscribe', id: 'agents', payload: { query: 'subscription { observe(query:"{ agents { id about } }") { revision patches { path value removed } } }' } }));
-  expect(JSON.parse(String((await next)[0])).payload.data.observe.patches[0].value).toEqual({ agents: [{ id: 'art', about: 'Fixture agent' }] });
-  next = once(ws, 'message');
+  const ws = await openSocket(f, 'lee');
+  const first = await subscribe(ws, '{ agents { id about } }');
+  expect(first.patches[0].value).toEqual({ agents: [{ id: 'art', about: 'Fixture agent' }] });
+  const next = once(ws, 'message');
   expect((await f.call('setMember', { id: 'lee', role: 'member', agents: [] }, 'sam', 'withdraw')).status).toBe(200);
   expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toEqual([{ path: ['agents', 0], removed: true, value: null }]);
 });
@@ -139,19 +150,28 @@ it('creates agents and updates descriptions colors and eyes without overwriting 
 it('withdraws populated owner metadata through an already subscribed socket after permitted demotion', async () => {
   const f = fixture();
   await f.call('setMember', { id: 'lee', role: 'owner', fullOwner: true, agents: ['art'] });
-  const server = createServer(), detach = f.root.attach(server);
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  clean.push(async () => { detach(); await f.root.close(); await new Promise<void>(resolve => server.close(() => resolve())); });
-  const address = server.address(); if (!address || typeof address === 'string') throw Error('No port');
-  const ws = new WebSocket('ws://127.0.0.1:'+address.port+'/graphql', 'graphql-transport-ws', { headers: { authorization: 'Bearer '+credentials.sam } });
-  clean.push(() => ws.terminate()); await once(ws, 'open');
-  let next = once(ws, 'message'); ws.send(JSON.stringify({ type: 'connection_init' })); await next;
-  next = once(ws, 'message');
-  ws.send(JSON.stringify({ type: 'subscribe', id: 'members', payload: { query: 'subscription { observe(query:"{ members(where:{id:{eq:\\"lee\\"}}) { id } memberAgents { member agent } }") { patches { path value removed } } }' } }));
-  expect(JSON.parse(String((await next)[0])).payload.data.observe.patches[0].value).toEqual({ members: [{ id: 'lee' }], memberAgents: [{ member: 'lee', agent: 'art' }] });
-  next = once(ws, 'message');
+  const ws = await openSocket(f, 'sam');
+  const first = await subscribe(ws, '{ members(where:{id:{eq:"lee"}}) { id } memberAgents { member agent } }');
+  expect(first.patches[0].value).toEqual({ members: [{ id: 'lee' }], memberAgents: [{ member: 'lee', agent: 'art' }] });
+  const next = once(ws, 'message');
   expect((await f.call('setMember', { id: 'sam', role: 'member', agents: [] }, 'lee', 'demote')).status).toBe(200);
   expect(JSON.parse(String((await next)[0])).payload.data.observe.patches).toEqual([
     { path: ['members', 0], removed: true, value: null }, { path: ['memberAgents', 0], removed: true, value: null },
   ]);
+});
+
+it.each([
+  ['markBg', '#778899'], ['markFg', '#112233'], ['faceShape', 'drop'], ['faceEyes', 'oval'],
+] as const)('invalidates the PNG pointer for %s alone while preserving stored sprite bytes', async (field, value) => {
+  const f = fixture();
+  // Opaque stored bytes deliberately include zero/high bytes: this service must
+  // preserve them without decoding, rewriting or deleting another role's data.
+  const sprite = { agent: 'art', layout: '{"fixture":"preserved"}', sheets: Buffer.from([0, 137, 80, 78, 71, 13, 10, 255]) };
+  f.db.insert(agentSprites).values(sprite).run();
+  expect((await f.call('setAgent', { id: 'art', ...visual, about: 'New biography' })).status).toBe(200);
+  expect(f.db.select().from(agentSprites).all()).toEqual([sprite]);
+  expect(f.db.select().from(agents).all().find(row => row.id === 'art')?.spriteVersion).toBe('old-png');
+  expect((await f.call('setAgent', { id: 'art', ...visual, about: 'New biography', [field]: value }, 'sam', 'visual')).status).toBe(200);
+  expect(f.db.select().from(agents).all().find(row => row.id === 'art')?.spriteVersion).toBeNull();
+  expect(f.db.select().from(agentSprites).all()).toEqual([sprite]);
 });
