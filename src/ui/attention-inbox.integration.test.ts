@@ -3,7 +3,7 @@ import { it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { extname, join, resolve } from 'node:path';
 import { getRequestListener } from '@hono/node-server';
 import { chromium } from 'playwright-core';
@@ -77,6 +77,12 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('shipped Inbox reads and
     await Promise.all([a, b].map(page => page.goto(`${url}/p/inbox-preview/ask/${encodeURIComponent(question.inboxItem!)}`)));
     for (const page of [a, b]) await expect.poll(() => page.getByRole('heading', { name: 'PRIVATE PUMP QUESTION', exact: true }).count()).toBe(1);
     await expect.poll(() => client.prepare('SELECT count(*) AS n FROM inbox_reads').get()).toEqual({ n: 1 });
+    if (process.env.LOOM_SHOTS) {
+      mkdirSync(process.env.LOOM_SHOTS, { recursive: true });
+      await a.screenshot({ path: join(process.env.LOOM_SHOTS, 'inbox-shared-wide.png'), fullPage: true });
+      await b.setViewportSize({ width: 390, height: 844 });
+      await b.screenshot({ path: join(process.env.LOOM_SHOTS, 'inbox-shared-phone.png'), fullPage: true });
+    }
     await a.getByRole('button', { name: 'Yes', exact: true }).click();
     for (const page of [a, b]) {
       await expect.poll(() => page.getByRole('button', { name: 'Yes', exact: true }).count()).toBe(0);
