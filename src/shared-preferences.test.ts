@@ -37,7 +37,7 @@ it('uses current member rows and partial updates without importing legacy tables
   expect((await f.call({ look: 'daylight' })).status).toBe(200);
   expect((await f.call({ look: 'lowlight', sound: false }, 'lee')).status).toBe(200);
   const before = f.db.select().from(memberPreferences).where(eq(memberPreferences.member, 'sam')).get()!;
-  expect(before).toMatchObject({ look: 'daylight', ground: 'depth', pixel: true, sound: true, oneWindow: false });
+  expect(before).toMatchObject({ look: 'daylight', ground: 'depth', pixel: true, sound: false, oneWindow: false });
   f.clock.advance(1000);
   const answer = await (await f.call({ ground: 'wash', motion: 'on' }, 'sam', 'ground')).json();
   expect(answer).toEqual({ ok: true, value: { changedAt: new Date(f.clock.now()).toISOString() } });
@@ -84,4 +84,16 @@ it('publishes only the current member preference through the same real socket af
   expect(await f.read('sam', '{ memberPreferences { member look } }')).toEqual({ data: { memberPreferences: [{ member: 'sam', look: 'daylight' }] } });
   const closed = once(ws, 'close'); f.root.writes.run(() => f.db.update(tokens).set({ revokedAt: new Date(f.clock.now()).toISOString() }).where(eq(tokens.fingerprint, hash(credentials.sam))).run());
   expect((await closed)[0]).toBe(4403);
+});
+
+it('checks current member policy before replay even for a retained trusted viewer', async () => {
+  const f = fixture();
+  expect((await f.call({ look: 'daylight' })).status).toBe(200);
+  f.db.transaction(() => {
+    f.db.delete(memberPreferences).where(eq(memberPreferences.member, 'sam')).run();
+    f.db.delete(tokens).where(eq(tokens.member, 'sam')).run();
+    f.db.delete(members).where(eq(members.id, 'sam')).run();
+  });
+  expect(f.root.operations.call('http', { kind: 'member', id: 'sam' }, 'household.setPreferences', { look: 'daylight' }, 'save')).toEqual({ ok: false, code: 'denied', message: 'Permission denied' });
+  expect(f.client.prepare('SELECT count(*) AS n FROM operation_results').get()).toEqual({ n: 1 });
 });

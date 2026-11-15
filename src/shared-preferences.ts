@@ -9,7 +9,7 @@ const choices = z.object({
   sound: z.boolean(), pixel: z.boolean(), icons: z.boolean(), haptics: z.boolean(),
   oneWindow: z.boolean(), zoom: z.boolean(), motion: z.enum(['follow', 'on', 'off']), contrast: z.enum(['follow', 'on', 'off']),
 });
-const defaults: z.infer<typeof choices> = { look: 'neon', ground: 'depth', sound: true, pixel: true, icons: false,
+const defaults: z.infer<typeof choices> = { look: 'neon', ground: 'depth', sound: false, pixel: true, icons: false,
   haptics: true, oneWindow: false, zoom: false, motion: 'follow', contrast: 'follow' };
 export function registerSharedPreferences(operations: Operations, db: DataDatabase) {
   operations.register({ name: 'household.setPreferences', write: true, recheckPolicy: true,
