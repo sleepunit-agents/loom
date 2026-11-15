@@ -17,11 +17,13 @@ it('builds fictitious data through services, then normal startup signs in and qu
   const output:string[]=[],errors:string[]=[];
   expect(await runExampleHome([],text=>output.push(text),text=>errors.push(text))).toBe(2);
   expect(await runExampleHome([home],text=>output.push(text),text=>errors.push(text))).toBe(0);
+  expect(errors.join(' ')).not.toContain('loom_');
   const manifest=JSON.parse(output[0]);
   expect(made.some(root=>vi.mocked(root.http.request).mock.calls.some(([path,init])=>path==='http://example/api/runtime/accountCreate'&&init?.method==='POST'&&JSON.parse(String(init.body)).id==='example-account'))).toBe(true);
   expect(statSync(join(home,'comms.key')).mode & 0o077).toBe(0);
   const database=new Database(join(home,'app.db'),{readonly:true});
-  try{expect(database.prepare("select member,revoked_at,expires_at from tokens where label='Example setup'").get()).toEqual({member:'alex',revoked_at:expect.any(String),expires_at:expect.any(String)});
+  try{expect(database.prepare("select member,revoked_at,expires_at,created_at from tokens where label='Example setup'").get()).toEqual({member:'alex',revoked_at:expect.any(String),expires_at:expect.any(String),created_at:expect.any(String)});
+  const setup=database.prepare("select created_at,expires_at from tokens where label='Example setup'").get() as {created_at:string;expires_at:string};expect(Date.parse(setup.expires_at)-Date.parse(setup.created_at)).toBe(60_000);
   expect(database.prepare('select id,owner from model_accounts').all()).toEqual([{id:manifest.account.id,owner:'alex'}]);
   expect(database.prepare("select operation,id from operation_results where id='example-account'").get()).toEqual({operation:'runtime.accountCreate',id:'example-account'});}finally{database.close();}
   expect(readFileSync(join(home,'program.json'),'utf8')).not.toContain('loom_');expect(JSON.stringify(manifest)).not.toContain('loom_');expect(readFileSync(join(home,'example.json'),'utf8')).not.toContain('loom_');

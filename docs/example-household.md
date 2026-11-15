@@ -12,7 +12,10 @@ and the garden pump story are entirely fictitious. No GitHub, provider, worker,
 or bridge is contacted by the example command. No body is launched.
 
 The command uses the program's trusted application services, including its
-normal encrypted Comms writer. For outside-only model-account creation it calls the real HTTP API with a temporary Alex token, limited to one minute and revoked in finally. The token never enters the manifest or program inventory. It never writes rows itself. It refuses any
+normal encrypted Comms writer. For outside-only model-account creation it calls
+the real HTTP API with a temporary Alex token, limited to one minute and revoked
+in finally. The token never enters the manifest or program inventory. It never
+writes rows itself. It refuses any
 existing destination. `program.json` is the private normal-startup inventory;
 `example.json` lists created records and any example-data gaps. Preserve the
 whole directory while using it; the key is needed to read its conversation.
