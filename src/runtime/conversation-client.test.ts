@@ -61,7 +61,7 @@ it.each(['declared','streamed'] as const)('cancels a %s oversized valid response
  const bytes=new TextEncoder().encode(JSON.stringify({ok:true,value}));let sent=false,cancelled=false;
  const stream=new ReadableStream<Uint8Array>({pull(controller){if(sent)controller.close();else{sent=true;controller.enqueue(bytes);}},cancel(){cancelled=true;}},{highWaterMark:0});
  f.fetcher.mockResolvedValue(new Response(stream,{headers:{'content-type':'application/json',...(mode==='declared'?{'content-length':'16777217'}:{})}}));const accept=vi.fn(async()=>{});
- await expect(f.client.takeAndAccept(accept)).rejects.toThrow('Conversation body request failed');expect(cancelled).toBe(true);expect(accept).not.toHaveBeenCalled();expect(f.fetcher).toHaveBeenCalledTimes(1);
+ await expect(f.client.takeAndAccept(accept,1)).rejects.toThrow('Conversation body request failed');expect(cancelled).toBe(true);expect(accept).not.toHaveBeenCalled();expect(f.fetcher).toHaveBeenCalledTimes(1);
 });
 it.each([['abort','fetch'],['close','fetch'],['abort','body'],['close','body']] as const)('ends parent %s during stalled %s and cancels any late response',async(how,phase)=>{
  const f=await fixture();let entered!:()=>void,release!:(response:Response)=>void;const started=new Promise<void>(r=>{entered=r;});let cancelled=false;

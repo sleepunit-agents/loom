@@ -1,11 +1,13 @@
 /** Current-body client. The parent supplies its existing enrolled body bearer.
  * Words travel only through a bounded response and the body's acceptance sink;
  * outstanding confirmations retain IDs only and retry before any new input. */
+import {BODY_INPUT_BYTES} from './body-input-limit.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { clock as systemClock,type Clock } from '../core/clock.js';
 import type { PrivateQuestion } from '../core/conversations/messages.js';
 const unavailable=()=>new Error('Conversation body request failed; outcome may be uncertain');
+class OversizedMailBatch extends Error{constructor(){super('Conversation body request failed; outcome may be uncertain');}}
 const item=z.object({
  id:z.string().min(1),seq:z.number().int().positive(),source:z.enum(['thread','discord','slack','trigger','handoff','answer','task','approval','secret-request','notice']),sourceId:z.string().nullable(),
  fromKind:z.enum(['person','agent','schedule','unknown']),fromId:z.string().nullable(),at:z.iso.datetime({offset:true}),
@@ -41,12 +43,12 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
     void flight.then(value=>{if(!valid())void value.body?.cancel().catch(()=>{});},()=>{});
     response=await flight;
     if(!valid()||response.redirected||!response.ok||!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw unavailable();
-    const length=response.headers.get('content-length');if(length!==null&&(!/^\d+$/.test(length)||Number(length)>16_777_216))throw unavailable();
+    const length=response.headers.get('content-length');if(length!==null){if(!/^\d+$/.test(length))throw unavailable();if(Number(length)>BODY_INPUT_BYTES)throw new OversizedMailBatch();}
     reader=response.body?.getReader();if(!reader)throw unavailable();let size=0;
-    for(;;){const part=await reader.read();if(!valid()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>16_777_216){part.value.fill(0);throw unavailable();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
+    for(;;){const part=await reader.read();if(!valid()){part.value?.fill(0);throw unavailable();}if(part.done)break;size+=part.value.byteLength;if(size>BODY_INPUT_BYTES){part.value.fill(0);throw new OversizedMailBatch();}chunks.push(Buffer.from(part.value));part.value.fill(0);}
     joined=Buffer.concat(chunks);const parsed=z.object({ok:z.literal(true),value:schema}).strict().parse(JSON.parse(joined.toString('utf8')));if(!valid())throw unavailable();return parsed.value;
    })(),aborted]);
-  }catch{throw unavailable();}
+  }catch(error){if(error instanceof OversizedMailBatch&&namespace==='conversation'&&name==='take')throw error;throw unavailable();}
   finally{
    cancel();lifetime.removeEventListener('abort',stop);abort.signal.removeEventListener('abort',rejectAbort);controllers.delete(abort);abort.abort();joined?.fill(0);for(const chunk of chunks)chunk.fill(0);
    try{if(reader)void reader.cancel().catch(()=>{});else void response?.body?.cancel().catch(()=>{});}catch{}
@@ -59,8 +61,9 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
    if(taking||!current()||!Number.isInteger(limit)||limit<1||limit>100)throw unavailable();taking=true;
    try{
     await confirmPending();
-    const input=await call('take',{limit},batch);
-    if(input.job!==options.job||input.conversation!==options.conversation||input.items.length>limit||new Set(input.items.map(row=>row.id)).size!==input.items.length||input.items.some((row,i)=>i>0&&row.seq<=input.items[i-1].seq))throw unavailable();
+    let requested=limit,input:z.infer<typeof batch>;
+    for(;;){try{input=await call('take',{limit:requested},batch);break;}catch(error){if(!(error instanceof OversizedMailBatch)||requested===1)throw unavailable();requested=Math.max(1,Math.floor(requested/2));}}
+    if(input.job!==options.job||input.conversation!==options.conversation||input.items.length>requested||new Set(input.items.map(row=>row.id)).size!==input.items.length||input.items.some((row,i)=>i>0&&row.seq<=input.items[i-1].seq))throw unavailable();
     let accepted=0;
     for(const row of input.items){
      if(!current())throw unavailable();
