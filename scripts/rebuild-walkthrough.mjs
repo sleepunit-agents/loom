@@ -43,8 +43,7 @@ export async function* walkthroughSteps(output) {
  const out=resolve(output);mkdirSync(out,{recursive:true});
  const parent=mkdtempSync(join(tmpdir(),'loom-walkthrough-')),home=join(parent,'home');
  const report={version:1,source:{commit:process.env.GITHUB_SHA??null,ref:process.env.GITHUB_REF??null,repository:process.env.GITHUB_REPOSITORY??null,run:process.env.GITHUB_RUN_ID??null,attempt:process.env.GITHUB_RUN_ATTEMPT??null},startedAt:new Date().toISOString(),example:{gaps:[]},signin:{ok:false},apps:[],errors:[]};
- let app,browser,page,clock;
- let app,browser,page,phase='first-run',navigation=0;
+ let app,browser,page,clock,phase='first-run',navigation=0;
  const sockets=[];
  const consoleErrors=[],pageErrors=[],networkErrors=[],frames=[],subscriptions=[],connections=new Set();
  const save=()=>writeFileSync(join(out,'walkthrough.json'),JSON.stringify(safeReport(report),null,2)+'\n');
