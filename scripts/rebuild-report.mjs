@@ -12,7 +12,7 @@ export function evaluate(promise,run){
  if(p.kind==='live')return {status:run.live?.dataFrames>0&&!run.live.errors.length?'met':'not met',reason:`GraphQL data frames: ${run.live?.dataFrames??0}; GraphQL errors: ${run.live?.errors?.length??0}.`,evidence:'walkthrough.json#live'};
  if(p.kind==='launcher')return {status:run.inventory?.length&&run.apps.length===run.inventory.length&&run.apps.every(app=>app.opened)?'met':'not met',reason:`${run.apps.filter(app=>app.opened).length} of ${run.inventory?.length??0} launcher apps opened.`,evidence:'walkthrough.json#apps'};
  if(p.kind==='action'){
-  const action=run.actions?.[p.action];
+  const action=p.app?run.apps?.find(app=>app.title===p.app)?.action:run.actions?.[p.action];
   if(!action)return {status:'not checkable yet',reason:run.fatal??'The browser action did not run.'};
   return {status:action.ok===true?'met':'not met',reason:action.ok===true?'The browser action and its persisted result were verified.':action.error??'The browser action result differed from the expected record.',evidence:action.screenshot??'walkthrough.json#actions'};
  }
@@ -43,10 +43,10 @@ export function rebuildReport(run,out){
  }
  const summary=summarizePages(pages),counts=emptyCounts();
  for(const page of summary)for(const status of Object.keys(counts))counts[status]+=page.counts[status];
- const report={version:1,startedAt:run.startedAt,finishedAt:run.finishedAt,counts,summary,exampleGaps:run.example.gaps,fatal:run.fatal,pages};
+ const report={version:1,source:run.source??null,startedAt:run.startedAt,finishedAt:run.finishedAt,counts,summary,exampleGaps:run.example.gaps,fatal:run.fatal,pages};
  writeFileSync(join(out,'report.json'),JSON.stringify(report,null,2)+'\n');
  const escape=text=>String(text).replace(/\|/g,'\\|').replace(/\n/g,' ');
- const lines=['# Rebuild against the approved site','',`Met: **${counts.met}** · Not met: **${counts['not met']}** · Not checkable yet: **${counts['not checkable yet']}**`,'','This is a measurement, not a release gate. Unexercised behavior remains unknown.','The JSON and screenshots beside this report are the evidence. Broad prose is kept whole;','a visible control does not prove that its action works. Source hashes detect page drift.','',`Started: ${run.startedAt}. Finished: ${run.finishedAt??'interrupted'}.`,'','## Example-data gaps','',...run.example.gaps.map(g=>`- **${g.page}**: ${g.promise}. ${g.reason}`),'','## Browser errors','',...['consoleErrors','pageErrors','networkErrors','errors'].map(key=>`- ${key}: ${JSON.stringify(run[key]??[])}`),''];
+ const lines=['# Rebuild against the approved site','',`Met: **${counts.met}** · Not met: **${counts['not met']}** · Not checkable yet: **${counts['not checkable yet']}**`,'','This is a measurement, not a release gate. Unexercised behavior remains unknown.','The JSON and screenshots beside this report are the evidence. Broad prose is kept whole;','a visible control does not prove that its action works. Source hashes detect page drift.','',`Started: ${run.startedAt}. Finished: ${run.finishedAt??'interrupted'}.`,'',`Tested commit: ${escape(run.source?.commit??'not recorded')} · Ref: ${escape(run.source?.ref??'not recorded')} · Run: ${escape(run.source?.run??'not recorded')} · Attempt: ${escape(run.source?.attempt??'not recorded')}`,'','## Example-data gaps','',...run.example.gaps.map(g=>`- **${g.page}**: ${g.promise}. ${g.reason}`),'','## Browser errors','',...['consoleErrors','pageErrors','networkErrors','errors'].map(key=>`- ${key}: ${JSON.stringify(run[key]??[])}`),''];
  lines.push('## Page summary','',
   'Read **Not met** as an observed failure and **Not checkable yet** as a coverage gap, not a pass.',
   'A page is met only when every listed promise is met. One failed promise makes it not met;',

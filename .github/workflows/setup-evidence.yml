@@ -1,0 +1,50 @@
+name: Household setup evidence
+on:
+  pull_request:
+    paths:
+      - 'web/src/pieces/household/**'
+      - 'src/core/signin/**'
+      - 'src/shared-household-access*'
+      - 'src/apps/household.ts'
+      - 'src/apps/changes.ts'
+      - 'src/shared-household-members.ts'
+      - 'src/next-data.ts'
+      - 'src/shared-serve.ts'
+      - 'src/ui/desk-memory.fixture.ts'
+      - 'web/src/data/**'
+      - 'src/shared-root.ts'
+      - 'src/shared-credentials.ts'
+      - 'src/fixture.ts'
+      - 'src/ui/household-setup.integration.test.ts'
+      - '.github/workflows/setup-evidence.yml'
+permissions:
+  contents: read
+concurrency:
+  group: setup-evidence-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+      - name: Install and build
+        env:
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+        run: |
+          nice -n 19 npm ci --no-audit --no-fund
+          nice -n 19 npm run build
+          npx playwright-core install --with-deps chromium
+      - name: Verify Household setup on the shared listener
+        run: |
+          export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
+          export LOOM_DESK_EVIDENCE=1
+          nice -n 19 npx vitest run src/ui/household-setup.integration.test.ts --maxWorkers=1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: household-setup-${{ github.event.pull_request.head.sha }}
+          path: artifacts/household-setup/
+          if-no-files-found: error
