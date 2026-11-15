@@ -11,7 +11,7 @@ import { Operations } from './index.js';
 
 const closes: (() => void)[] = [];
 afterEach(() => closes.splice(0).reverse().forEach(close => close()));
-function fixture(transform: (store: ReceiptPersistence) => ReceiptPersistence = store => store, failNotifications = false) {
+function fixture(transform: (store: ReceiptPersistence) => ReceiptPersistence = store => store, failNotifications = false, failCommitted = false) {
   const client = new Database(':memory:');
   const clock = new FakeClock();
   const db = createDataSchema(client, () => new Date(clock.now()).toISOString());
@@ -29,10 +29,10 @@ function fixture(transform: (store: ReceiptPersistence) => ReceiptPersistence = 
     changed() { expect(client.inTransaction).toBe(false); notifications.push('data'); },
   });
   const reportError = vi.fn();
-  const operations = new Operations(client, clock, () => {}, { receipts: transform(receipts), writes, reportError });
+  const operations = new Operations(client, clock, () => { if (failCommitted) throw new Error('committed publication failed'); }, { receipts: transform(receipts), writes, reportError });
   closes.push(() => client.close(), () => operations.close());
   const service = taskService(db, () => new Date(clock.now()).toISOString());
-  const run = vi.fn(() => service.create({ title: 'Pump', goal: 'Water moves', why: 'Pond needs it', owner: { kind: 'member', id: 'sam' } }, { kind: 'member', id: 'sam' }).id);
+  const run = vi.fn((ctx: { changed(type: string, id: string): void }) => { ctx.changed('task', 't-1'); return service.create({ title: 'Pump', goal: 'Water moves', why: 'Pond needs it', owner: { kind: 'member', id: 'sam' } }, { kind: 'member', id: 'sam' }).id; });
   operations.register({ name: 'tasks.create', input: z.object({}), output: z.string(), write: true, may: () => true, run });
   const call = () => operations.call('http', { kind: 'member', id: 'sam' }, 'tasks.create', {}, 'same');
   return { client, db, clock, operations, writes, notifications, reportError, run, call };
@@ -61,6 +61,7 @@ it('rolls back service effects and receipt when receipt persistence fails withou
 
 it('reports notification failures while preserving committed success and safe replay', () => {
   const s = fixture(store => store, true);
+  s.reportError.mockImplementation(() => { throw new Error('reporter failed'); });
   expect(s.call()).toEqual({ ok: true, value: 't-1' });
   expect(s.notifications).toEqual(['access', 'data']);
   expect(s.reportError).toHaveBeenCalledOnce();
@@ -73,4 +74,14 @@ it('keeps refusal of unrelated outer transactions and rejects a shared boundary 
   expect(s.client.transaction(() => s.call())()).toMatchObject({ code: 'unavailable' });
   expect(s.run).not.toHaveBeenCalled();
   expect(() => new Operations(s.client, s.clock, () => {}, { writes: s.writes })).toThrow('Shared writes require shared receipts');
+});
+
+it('requires a reporter for shared writes and reports committed callback failures without retrying', () => {
+  const s = fixture(store => store, false, true);
+  const receipts = new OperationResults(s.db);
+  expect(() => new Operations(s.client, s.clock, () => {}, { writes: s.writes, receipts })).toThrow('Shared writes require an error reporter');
+  expect(s.call()).toEqual({ ok: true, value: 't-1' });
+  expect(s.reportError).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ message: 'committed publication failed' }));
+  expect(s.call()).toEqual({ ok: true, value: 't-1' });
+  expect(s.run).toHaveBeenCalledOnce();
 });

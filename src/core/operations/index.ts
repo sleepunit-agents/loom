@@ -89,6 +89,7 @@ export class Operations {
    */
   constructor(readonly db: Db, readonly clock: Clock, private committed: (changes: Change[]) => void, private readonly options: { receipts?: ReceiptPersistence; writes?: OperationWrites; reportError?: (error: unknown) => void } = {}) {
     if (options.writes && !options.receipts) throw new Error('Shared writes require shared receipts');
+    if (options.writes && !options.reportError) throw new Error('Shared writes require an error reporter');
     if (!options.receipts) migrate(db, 'core', [{ number: 1, sql: 'CREATE TABLE core_operations (viewer TEXT NOT NULL, id TEXT NOT NULL, name TEXT NOT NULL, input_hash TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(viewer,id))' }]);
     this.expire();
   }
@@ -96,9 +97,12 @@ export class Operations {
     if (!write || !this.options.writes) return this.db.transaction(run)();
     const committed = this.options.writes.run(run);
     for (const error of committed.notificationErrors) {
-      try { this.options.reportError?.(error); } catch { /* reporting cannot undo a committed effect */ }
+      this.report(error);
     }
     return committed.value;
+  }
+  private report(error: unknown): void {
+    try { this.options.reportError?.(error); } catch { /* reporting cannot undo a committed effect */ }
   }
   close() { closeInternalCallers(this); this.stopExpiry?.(); unregisterBuiltinServices(this); }
   private expire() {
@@ -174,7 +178,7 @@ export class Operations {
     } catch (e) { result = e instanceof OperationError ? failure(e.code,e.message) : failure('unavailable','Recovery could not complete'); }
     finally { this.frames.pop(); }
     if (result.ok) {
-      if (changes.length) { try { this.committed(changes); } catch { /* committed recovery remains durable */ } }
+      if (changes.length) { try { this.committed(changes); } catch (error) { this.report(error); /* committed recovery remains durable */ } }
       this.expire();
     }
     return result;
@@ -302,7 +306,7 @@ export class Operations {
     if (result.ok && changes.length) {
       const parent = this.frames.at(-1);
       if (parent) parent.push(...changes);
-      else { try { this.committed(changes); } catch { /* committed writes remain successful; failed subscribers reconnect */ } }
+      else { try { this.committed(changes); } catch (error) { this.report(error); /* committed writes remain successful */ } }
     }
     if (result.ok && !this.frames.length && op.write) this.expire();
     if (result.ok) { try { op.after?.(parsed.data, result); } catch { /* durable jobs resume on restart */ } }
