@@ -3,7 +3,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {memoryCall} from '../web/src/memory/commands.js';
 import Database from 'better-sqlite3';
 import {createHash} from 'node:crypto';
-import {mkdtempSync,rmSync,existsSync,mkdirSync,readFileSync} from 'node:fs';
+import {mkdtempSync,rmSync,existsSync,mkdirSync,readFileSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {once} from 'node:events';
@@ -39,7 +39,11 @@ async function waitMessage(ws:WebSocket,action:()=>unknown){
 it('signs in on the actual shared listener and converges Memory writes, source touches, grants and revocation',async()=>{
  const f=fixture(),scheduled=vi.spyOn(f.clock,'at'),errors:unknown[]=[];
  expect(existsSync(f.sources.commons.knowledge)).toBe(false);
- const app=await serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources,checkingAgent:'fiction'},originAllowed:req=>{try{return new URL(String(req.headers.origin)).host===req.headers.host;}catch{return false;}},reportError:e=>errors.push(e)});cleanup.push(()=>app.close());
+ const webRoot=join(f.home,'web');mkdirSync(join(webRoot,'assets'),{recursive:true});writeFileSync(join(webRoot,'next.html'),'<html>Fictional Memory app</html>');writeFileSync(join(webRoot,'assets/app.js'),'/* fictional app */');
+ const app=await serveShared({db:f.db,clock:f.clock,webRoot,memory:{sources:f.sources,checkingAgent:'fiction'},originAllowed:req=>{try{return new URL(String(req.headers.origin)).host===req.headers.host;}catch{return false;}},reportError:e=>errors.push(e)});cleanup.push(()=>app.close());
+ const navigation=await fetch(app.url+'/p/knowledge-preview');expect(navigation.status).toBe(200);expect(await navigation.text()).toBe('<html>Fictional Memory app</html>');
+ expect(await (await fetch(app.url+'/app/assets/app.js')).text()).toBe('/* fictional app */');
+ const absent=await fetch(app.url+'/api/missing');expect(absent.status).toBe(404);expect(await absent.text()).not.toContain('Fictional Memory app');
  expect(hasTouchedListener(f.sources.commons.directory)).toBe(true);expect(hasTouchedListener(f.sources.agents[0].directory)).toBe(true);
  const request=(path:string,body?:unknown,headers:Record<string,string>={authorization:'Bearer '+raw})=>fetch(app.url+path,{method:'POST',redirect:'manual',headers:{'content-type':'application/json',origin:app.url,...headers},...(body?{body:JSON.stringify(body)}:{})});
  const minted=await request('/api/signin/link',{input:{}});expect(minted.status).toBe(200);
