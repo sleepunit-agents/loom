@@ -4,7 +4,7 @@ import type { IncomingMessage } from 'node:http';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { DataDatabase } from './core/data/database.js';
-import { dataAuthentication } from './core/data/authentication.js';
+import { sharedCredentials } from './shared-credentials.js';
 import { OperationResults } from './core/data/operation-results.js';
 import type { Clock } from './core/clock.js';
 import { Operations, failure, type Change } from './core/operations/index.js';
@@ -13,10 +13,10 @@ import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { Conversations } from './core/conversations/index.js';
 import { registerSharedPreferences } from './shared-preferences.js';
 import { registerSharedTaskCommands } from './shared-task-commands.js';
-import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 import { nextData } from './next-data.js';
 import { sharedSigninLinkRoutes } from './core/signin/shared-links.js';
 import { settledNotices } from './core/tempo/notices.js';
+import { installSharedTempo, type SharedTempoOptions } from './shared-tempo.js';
 
 class BodyTooLarge extends Error {}
 const envelope = z.object({ input: z.unknown(), id: z.string().min(1).max(200).optional() }).strict();
@@ -35,7 +35,8 @@ export function sharedRoot(options: {
   const now = () => new Date(clock.now()).toISOString();
   let closing: Promise<void> | undefined;
   const notices = settledNotices(db, () => data.changed());
-  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...notices.fields, ...options.fields }, () => !closing);
+  const credentials = sharedCredentials(db, clock, () => !closing);
+  const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, { ...notices.fields, ...options.fields }, () => !closing, credentials.authenticate);
   const operations = new Operations(db.$client, clock, changes => options.changed?.(changes), {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
@@ -47,10 +48,9 @@ export function sharedRoot(options: {
   };
   registerSharedTaskCommands(operations, db, services.tasks);
   let tempo: ReturnType<typeof installSharedTempo>;
-  try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed,
-    { ...options.tempo, notify: options.tempo?.notify ?? notices.publish }); }
+  try { tempo = installSharedTempo(db, clock, data.writes, operations, services.conversations, data.changed, { ...options.tempo, notify: options.tempo?.notify ?? notices.publish }); }
   catch (error) { notices.close(); operations.close(); void data.close(); throw error; }
-  const authenticate = dataAuthentication(db, () => clock.now());
+  const authenticate = credentials.authenticate;
   const active = new Set<{ abort: AbortController; done: Promise<void> }>();
   const http = new Hono<{ Variables: { shutdown: AbortController } }>();
   const bodyRequest = (request: Request, abort: AbortController, limited = false) => {
@@ -97,7 +97,7 @@ export function sharedRoot(options: {
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   return {
-    http, operations, services: { ...services, tempo }, writes: data.writes, changed: data.changed,
+    http, operations, services: { ...services, tempo }, credentials, writes: data.writes, changed: data.changed,
     attach(server: Parameters<typeof data.attach>[0]) {
       if (closing) throw new Error('Loom is closing');
       return data.attach(server);
