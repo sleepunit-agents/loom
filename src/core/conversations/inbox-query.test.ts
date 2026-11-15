@@ -420,3 +420,25 @@ it('executes the shipped Inbox selection on actual shared rows, including server
   const errorResult = await graphql({ schema, source: errors.query, variableValues: errors.variables, contextValue: { viewer: alice } });
   expect(errorResult.errors).toBeUndefined(); expect(errors.decode(errorResult.data as Record<string, unknown>).items).toEqual([]);
 });
+it('searches recorded public answers and resolution text in the same recipient mailbox',async()=>{
+ const f=await fixture(),cvs=f.comms.threads.conversations;
+ const answered=cvs.send({toKind:'person',to:'alice',source:'notice',sourceId:'public-question',member:'alice',fromKind:'agent',answers:'words',words:'Which fixture?'});cvs.answer(answered.id,'alice','words','Use the amber fixture');
+ const resolved=cvs.send({toKind:'person',to:'alice',source:'task',sourceId:'task-question',member:'alice',fromKind:'agent',answers:'yes-no',words:'Continue?',waitsOnKind:'task',waitsOnId:'t-1'});cvs.resolve('task','t-1','Completed the turquoise fixture');
+ expect((await f.service.search(alice,{search:'amber fixture',folder:'answered'})).map(row=>row.id)).toEqual([answered.id]);expect((await f.service.search(alice,{search:'turquoise fixture',folder:'answered'})).map(row=>row.id)).toEqual([resolved.id]);
+ expect(await f.service.search({kind:'member',id:'bob'},{search:'amber fixture'})).toEqual([]);
+});
+it('searches retained encrypted answer words before paging and binds only their own deadline',async()=>{
+ const f=await fixture();await f.comms.answer(f.ask.inboxItem!,'alice','words','Use the violet answer fixture');
+ for(let n=0;n<55;n++){const row=f.comms.threads.conversations.send({toKind:'person',to:'alice',source:'notice',sourceId:'noise-'+n,member:'alice',fromKind:'agent',answers:'words',words:'Noise question'});f.comms.threads.conversations.answer(row.id,'alice','words','Noise answer');}
+ // The question expired; its separately retained answer can still be searched.
+ f.db.update(messages).set({keepUntil:'2026-11-14T17:00:00Z'}).where(eq(messages.kind,'ask')).run();f.db.update(messages).set({keepUntil:'2026-11-15T18:00:00Z'}).where(eq(messages.kind,'answer')).run();
+ const leases:number[]=[];expect((await f.service.search(alice,{search:'violet answer fixture',folder:'answered',limit:1},at=>leases.push(at))).map(row=>row.id)).toEqual([f.ask.inboxItem]);expect(leases).toEqual([Date.parse('2026-11-15T18:00:00Z')]);expect(f.db.select().from(inbox).where(eq(inbox.id,f.ask.inboxItem!)).get()?.answerText).toBeNull();
+ f.time('2026-11-15T18:00:00Z');expect(await f.service.search(alice,{search:'violet answer fixture'})).toEqual([]);
+});
+it.each(['revoke','expiry','cipher','link'] as const)('rechecks earlier private answer search matches after later decrypt yields: %s',async change=>{
+ const f=await fixture();await f.comms.answer(f.ask.inboxItem!,'alice','words','Earlier needle answer');
+ const other=await f.comms.ask(f.thread.id,'art','later-ask',{words:'Other question',answers:'yes-no'});await f.comms.answer(other.inboxItem!,'alice','words','Other answer');
+ f.db.update(inbox).set({at:'2026-11-14T18:01:00Z'}).where(eq(inbox.id,f.ask.inboxItem!)).run();const answer=f.db.select().from(messages).all().find(row=>row.kind==='answer')!;let opens=0;
+ f.onOpen(()=>{if(++opens!==3)return;if(change==='revoke')f.revoke();if(change==='expiry')f.time('2026-11-29T18:00:00Z');if(change==='cipher')f.db.update(messages).set({words:Buffer.from('Replaced answer')}).where(eq(messages.seq,answer.seq)).run();if(change==='link')f.db.update(inbox).set({sourceId:'different-question'}).where(eq(inbox.sourceId,f.ask.inboxItem!)).run();});
+ expect(await f.service.search(alice,{search:'needle',folder:'answered'})).toEqual([]);expect(opens).toBeGreaterThanOrEqual(3);
+});
