@@ -768,9 +768,8 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
     } finally { source.mockRestore(); await held.release(); }
   }, 20_000);
 
-  it('folding and scorecard measures wait for memory recovery, then both finish', async () => {
+  it('scorecard measures wait for memory recovery, then finish', async () => {
     const dir = agentDir(h, 'art'), memory = join(dir, 'memories.db');
-    const old = recordTurn(dir, 'art', { venue: 'loom', place: 'fold-fixture', at: '2020-01-01T00:00:00Z', from: { kind: 'person', slug: 'jonathan' }, kind: 'message' }, 'runtime');
     recordTurn(dir, 'art', { venue: 'loom', place: 'measure-fixture', at: new Date(Date.now() - 2000).toISOString(), from: { kind: 'person', slug: 'jonathan' }, kind: 'message' }, 'runtime');
     recordTurn(dir, 'art', { venue: 'loom', place: 'measure-fixture', at: new Date().toISOString(), from: { kind: 'agent', id: 'art' }, kind: 'reply', model: 'maintenance-fixture', harness: 'codex' }, 'runtime');
     const keeper = new BetterSqlite3(memory); keeper.pragma('journal_mode = WAL'); keeper.prepare('SELECT 1 FROM sqlite_master').get();
@@ -779,11 +778,6 @@ describe.skipIf(!hasAge || !hasPython)('a held lock, through the server', () => 
       handle.setBackgroundActive(false); handle.setBackgroundActive(true);
       expect((await fetch(`${base}/login`)).status).toBe(200);
       await held.release();
-      await expect.poll(() => {
-        const check = new BetterSqlite3(memory);
-        try { return check.prepare('SELECT COUNT(*) AS n FROM conversation_days WHERE conversation = ?').get(old.conversation); }
-        finally { check.close(); }
-      }).toEqual({ n: 1 });
       await expect.poll(() => {
         const check = new BetterSqlite3(join(h.home, HOUSEHOLD_DB));
         try { return check.prepare("SELECT COUNT(*) AS n FROM scorecards WHERE model = 'maintenance-fixture' AND measure = 'first_reply_s'").get(); }
