@@ -1,4 +1,8 @@
 import { settledNotices } from './core/tempo/notices.js';
+import { sql } from 'drizzle-orm';
+import { secretChanges } from './core/data/schema.js';
+import { SharedBridges, type SharedBridgeOptions } from './pieces/bridges/shared-daemon.js';
+import { registerSharedBridgeReply } from './shared-bridge-reply.js';
 import { SecretDelivery, type SecretDeliveryHolder } from './pieces/secrets/delivery.js';
 import { SecretStartup } from './pieces/secrets/shared-startup.js';
 import { registerSharedSecretAgentCommands } from './shared-secret-agent-commands.js';
@@ -57,6 +61,7 @@ export function sharedRoot(options: {
   secretDelivery?: SecretDeliveryHolder;
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
+  bridges?: Omit<SharedBridgeOptions,'db'|'clock'|'writes'|'changed'|'reportError'>;
   modelRoles?(): readonly ModelRole[];
   runtimeJobEnded?(id: string): void;
 }) {
@@ -131,9 +136,19 @@ export function sharedRoot(options: {
     return secretRecovery;
   };
   if(values)cancelSecretRecovery=clock.at(clock.now(),recoverSecrets);
+  const bridgeDaemon=options.bridges&&new SharedBridges({...options.bridges,db,clock,writes:data.writes,changed:data.changed,
+    inboxCommitted:ids=>{tempo?.capacityChanged();options.bridges?.inboxCommitted?.(ids);},
+    reportError:()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}}});
+  const lastSecretChange=()=>db.select({id:sql<number>`coalesce(max(rowid),0)`}).from(secretChanges).get()!.id;
+  let secretChange=bridgeDaemon?lastSecretChange():0;
+  const unobserveBridges=bridgeDaemon&&data.writes.observe(()=>{
+    const latest=lastSecretChange(),credentialsChanged=latest!==secretChange;secretChange=latest;
+    bridgeDaemon.changed(credentialsChanged);
+  });
+  if(bridgeDaemon)registerSharedBridgeReply(operations,db,bridgeDaemon.sends,viewer=>credentials.body(viewer),options.bridges!.effectsAllowed);
   comms?.install(operations);
   const services = {
-    bridges: {settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
+    bridges: {daemon:bridgeDaemon,settings:new BridgeSettings(db,now,write=>{const result=data.writes.run(write);for(const _error of result.notificationErrors){try{options.reportError(new Error('Bridge write notification failed'));}catch{}}return result.value;})},
     tasks: taskService(db, now),
     approvals: approvalService(db, approvedOperations, now),
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
@@ -150,7 +165,7 @@ export function sharedRoot(options: {
     ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
   }); }
-  catch (error) { notices.close(); cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
+  catch (error) { unobserveBridges?.(); void bridgeDaemon?.close(); cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
   measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
   }, db).then(value => { meter = value; return value; });
@@ -207,6 +222,7 @@ export function sharedRoot(options: {
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
   runtime.start();
+  if(bridgeDaemon)void bridgeDaemon.ready().catch(()=>{try{options.reportError(new Error('Bridge processing unavailable'));}catch{}});
   return {
     measuring: measuringReady,
     ready: measuringReady.then(() => undefined),
@@ -222,6 +238,7 @@ export function sharedRoot(options: {
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
       commsLifetime?.close();
       runtime.close();
+      unobserveBridges?.();const bridgesStopped=bridgeDaemon?.close();
       // Install shared completion before synchronous detach/abort callbacks.
       tempo.close();
       notices.close();
@@ -232,7 +249,7 @@ export function sharedRoot(options: {
       const measured = measuringReady.then(value => value.close());
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, deliveryStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, bridgesStopped, deliveryStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { operations.close(); } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
