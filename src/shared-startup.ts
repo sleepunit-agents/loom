@@ -86,11 +86,13 @@ export async function startSharedHome(options:{home:string;program?:string;host?
    inboxCommitted:ids=>configuredBridges.inboxCommitted?.(ids),
   }:holder?{source:holder.source,effectsAllowed:()=>!closing}:undefined;
   const source=adapters.secretInputs?.source??holder?.source;
-  if(program.githubBindings&&!adapters.changes&&!source)throw Error('GitHub credential source unavailable');
-  const changes:RootOptions['changes']=adapters.changes??(program.githubBindings?{github:{
-   source:source!,bindings:program.githubBindings,
-   request:async(...args)=>{if(closing)throw Error('GitHub read unavailable');return fetch(...args);},
-  }}:undefined);
+  let changes=adapters.changes;
+  if(!changes&&program.githubBindings){
+   if(!source)throw Error('GitHub credential source unavailable');
+   changes={github:{source,bindings:program.githubBindings,
+    request:async(...args)=>{if(closing)throw Error('GitHub read unavailable');return fetch(...args);},
+   }};
+  }
   const publicOrigin=relyingParty(process.env)?.origin;
   app=await serveShared({db,clock,memory:program.memory,commsKey,notifications:{vapid:notificationKey(home)},
    originAllowed:sameOrigin,publicOrigin,

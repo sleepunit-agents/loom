@@ -57,14 +57,15 @@ it('reads Owner-written credentials on normal restart, rotates tokens, retains c
  const beforeRelease=requests.mock.calls.length;hold=false;release();await expect(pending).rejects.toThrow('GitHub read unavailable');await stopping;expect(db.$client.open).toBe(false);expect(requests).toHaveBeenCalledTimes(beforeRelease);
  const count=requests.mock.calls.length;clock.advance(120000);expect(requests).toHaveBeenCalledTimes(count);
 });
-it('preserves an explicit Changes adapter even when configured bindings have no holder source',async()=>{
+it('preserves an explicit Changes adapter even when bindings and the owned holder exist',async()=>{
  const {home,webRoot,clock}=files();await initializeSharedHome(home,clock);
  const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));
- delete program.secretHolder;program.githubBindings={acme:'FORGE'};program.adapters=join(home,'adapter.mjs');
+ program.githubBindings={acme:'FORGE'};program.adapters=join(home,'adapter.mjs');
  writeFileSync(program.adapters,'export default ()=>({changes:{read:async()=>[],rule:()=>undefined}})',{mode:0o600});writeFileSync(file,JSON.stringify(program),{mode:0o600});
+ const request=vi.fn(async()=>{throw Error('Unexpected provider request');});vi.stubGlobal('fetch',request);
  const app=await startSharedHome({home,webRoot,clock,port:0,stdout:()=>{}});clean.push(()=>app.close());
  app.writes.run(()=>app.services.projects.save({id:'app',name:'App',members:[],agents:[],repositories:['github:acme/app']}));
- await app.refreshChanges!();expect(app.services.changes.syncStatus()?.failed).toBe(false);expect(wire.start).not.toHaveBeenCalled();
+ await app.refreshChanges!();expect(app.services.changes.syncStatus()?.failed).toBe(false);expect(wire.start).toHaveBeenCalledOnce();expect(request).not.toHaveBeenCalled();
 });
 it('uses an explicit trusted Secret source when the owned holder is disabled',async()=>{
  const {home,webRoot,clock}=files();await initializeSharedHome(home,clock);const file=join(home,'program.json'),program=JSON.parse(readFileSync(file,'utf8'));
