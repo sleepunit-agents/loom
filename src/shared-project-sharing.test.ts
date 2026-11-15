@@ -36,7 +36,9 @@ it('mounts canonical project sharing reads and atomic cookie-authenticated write
  expect((await f.send('createProject',{slug:'garden',name:' Garden ',members:['peer','peer'],agents:['art']})).status).toBe(200);
  expect(await f.read()).toEqual({data:{projectSharing:{members:['owner','peer'],agents:['art','mark'],projects:[{id:'garden',name:'Garden',members:['peer'],agents:['art']}]}}});
  expect((await f.send('createProject',{slug:'garden',name:'Overwrite'})).status).toBe(409);
+ const receipts=f.db.select().from(operationResults).all();
  for(const input of [{slug:'garden',members:['missing']},{slug:'garden',members:[],role:'owner'}])expect((await f.send('setProjectMembers',input)).status).toBe(400);
+ expect(f.db.select().from(operationResults).all()).toEqual(receipts);
  expect(f.db.select().from(projectMembers).all()).toEqual([{project:'garden',member:'peer'}]);
  expect((await f.send('setProjectAgents',{slug:'garden',agents:['mark']})).status).toBe(200);
  expect(f.db.select().from(projectAgents).all()).toEqual([{project:'garden',agent:'mark'}]);
@@ -68,10 +70,11 @@ it('denies authenticated agents both administration metadata and project writes'
 });
 it('rolls membership and the receipt back together when a write fails after deletion',async()=>{
  const f=await fixture();await f.send('createProject',{slug:'garden',name:'Garden',members:['owner']});
+ const receipts=f.db.select().from(operationResults).all();
  f.client.exec("CREATE TEMP TRIGGER reject_members BEFORE INSERT ON project_members WHEN NEW.member='peer' BEGIN SELECT RAISE(ABORT,'fixture'); END");
  expect((await f.send('setProjectMembers',{slug:'garden',members:['peer']},'rollback')).status).toBe(503);
  expect(f.db.select().from(projectMembers).all()).toEqual([{project:'garden',member:'owner'}]);
- expect(f.db.select().from(operationResults).all().some(row=>row.id==='rollback')).toBe(false);
+ expect(f.db.select().from(operationResults).all()).toEqual(receipts);
 });
 it('updates the existing live query and clears retained administration metadata after current-role withdrawal',async()=>{
  const f=await fixture(),ws=new WebSocket(f.app.url.replace(/^http/,'ws')+'/graphql','graphql-transport-ws',{headers:{cookie:'loom_ui='+f.cookies.owner,origin:f.app.url}});
