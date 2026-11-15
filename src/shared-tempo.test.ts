@@ -19,7 +19,7 @@ function fixture(tempo?: SharedTempoOptions){
  db.insert(agentRunSettings).values({agent:'art',houseRepository:'repo',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
  db.insert(tokens).values({fingerprint:hash(credential),label:'Owner',kind:'owner',member:'owner',createdAt:now()}).run();
  const root=sharedRoot({db,clock,originAllowed:()=>true,tempo,reportError(error){throw error;}});
- cleanup.push(()=>client.close(),()=>root.close());
+ cleanup.push(()=>{client.close();},()=>root.close());
  const call=(name:string,input:unknown,id:string)=>root.http.request('http://loom/api/'+name.replace('.','/'),{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+credential},body:JSON.stringify({input,id})});
  const trigger={id:'delivery',ownerKind:'household',sourceKind:'time',times:now(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Check pump',note:'Delivery'};
  return {client,db,clock,now,root,call,trigger};

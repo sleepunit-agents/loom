@@ -17,10 +17,11 @@ export function installTempoComposition(options: {
 }) {
   const { db, clock } = options;
   const tempo = createTempo(db, clock, options.delivery);
-  const unregister = [...workSweepParts(db, clock), ...options.contributors ?? []].map(part => tempo.sweep.register(part));
+  const unregister: (() => void)[] = [];
   let closed = false;
   let stop: (() => void) | undefined;
   try {
+    for (const part of [...workSweepParts(db, clock), ...options.contributors ?? []]) unregister.push(tempo.sweep.register(part));
     registerTempoOperations(options.operations, db, tempo, options.commands);
     stop = options.writes.observe(() => tempo.committed());
     tempo.start();
