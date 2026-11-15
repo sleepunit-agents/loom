@@ -1,4 +1,6 @@
 import Database from 'better-sqlite3';
+import { GraphQLInt, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
+import { DataLive } from '../core/data/live.js';
 import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { FakeClock } from '../core/clock.js';
@@ -17,13 +19,13 @@ function fixture() {
   const db=createDataSchema(client,now);
   db.insert(members).values({id:'owner',role:'owner',joinedAt:now()}).run();
   db.insert(agents).values({id:'art',about:'',markBg:'#000',markFg:'#fff',faceShape:'pebble',faceEyes:'dot'}).run();
-  const writes=new DataWrites(db,{refreshAccess(){},changed(){}});
+  const writeChanged=vi.fn(),writes=new DataWrites(db,{refreshAccess(){},changed:writeChanged});
   const operations=new Operations(client,clock,()=>{},{receipts:new OperationResults(db),writes,reportError:e=>{throw e;}});
   const mail=new Conversations(db,now),admitted=vi.fn(()=>true),changed=vi.fn();
   const tempo=installTempoComposition({db,clock,writes,operations,commands:{authorize:()=>true,settings(){throw Error('not used');}},
     delivery:{conversations:mail,admit:admitted,changed,operation(){throw Error('unknown operation');}}});
   cleanup.push(()=>{tempo.close();operations.close();client.close();});
-  return {client,db,clock,now,writes,operations,mail,tempo,admitted,changed};
+  return {client,db,clock,now,writes,operations,mail,tempo,admitted,changed,writeChanged};
 }
 
 it('starts settled admission only after an outer shared commit; rolls back do not wake',()=>{
@@ -60,4 +62,23 @@ it('registers real work contributors: an empty sweep sends nothing and open task
   expect(f.tempo.sweep.run({kind:'agent',id:'art'},'open')).toMatchObject([{part:'Tasks',count:1},{part:'Changes',count:1}]);
   expect(f.tempo.sweep.run({kind:'person',id:'owner'},'open')).toMatchObject([{part:'Approvals',count:1}]);
   expect(f.db.select().from(inbox).all()).toMatchObject([{to:'art',words:expect.stringContaining('Tasks: 1 open')},{to:'owner',words:expect.stringContaining('Approvals: 1 open')}]);
+});
+
+it('publishes a post-commit source result once through the existing live signal, while keeping timer and capacity publications',async()=>{
+ const f=fixture(),live=new DataLive();
+ f.changed.mockImplementation(()=>live.changed());f.writeChanged.mockImplementation(()=>live.changed());
+ f.tempo.triggers.set({id:'watch',ownerKind:'household',sourceKind:'answer',watches:'question:q',lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Answer arrived',note:'Answer'});
+ const schema=new GraphQLSchema({query:new GraphQLObjectType({name:'Query',fields:{delivered:{type:GraphQLInt,resolve:()=>f.db.select().from(inbox).all().filter(i=>i.source==='trigger').length}}})});
+ const watch=live.watch({schema,query:'{ delivered }',valid:()=>true});
+ try{
+  expect((await watch.next()).value?.patches).toEqual([{path:[],value:{delivered:0}}]);
+  f.changed.mockClear();f.writeChanged.mockClear();const pending=watch.next();
+  f.writes.run(()=>f.db.insert(inbox).values({id:'q',toKind:'person',to:'owner',source:'notice',fromKind:'agent',state:'answered',answer:'yes',answeredAt:f.now(),at:f.now(),changedAt:f.now()}).run());
+  expect((await pending).value?.patches).toEqual([{path:['delivered'],value:1}]);
+  expect(f.writeChanged).toHaveBeenCalledOnce();expect(f.changed).not.toHaveBeenCalled();
+  f.tempo.capacityChanged();expect(f.changed).toHaveBeenCalledOnce();
+  f.tempo.triggers.set({id:'timer',ownerKind:'household',sourceKind:'time',times:new Date(f.clock.now()+1000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'agent',to:'art',instructions:'Timer',note:'Timer'});
+  f.changed.mockClear();f.clock.advance(1000);expect(f.changed).toHaveBeenCalledOnce();
+  expect(f.db.select().from(inbox).all().filter(i=>i.source==='trigger')).toHaveLength(2);
+ }finally{await watch.return?.();live.close();}
 });

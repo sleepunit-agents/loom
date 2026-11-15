@@ -43,7 +43,7 @@ export function SecretsView({ snapshot, member, folder, selected, select, change
   snapshot: SecretsSnapshot; member: string; folder: SecretsFolder; selected?: SecretsSelection;
   select: (selection: SecretsSelection | undefined) => void;
   changeFolder: (folder: SecretsFolder) => void;
-  cards?: { add?: () => ReactNode; secret?: (name: string) => ReactNode; request?: (id: string) => ReactNode; grant?: (id: string) => ReactNode };
+  cards?: { add?: () => ReactNode; secret?: (name: string) => ReactNode; request?: (id: string) => ReactNode; grant?: (id: string) => ReactNode; piece?: (id: string) => ReactNode };
   pieces?: readonly { id: string; label: string; description: string; open: () => void }[];
 }) {
   if (snapshot.member !== member || snapshot.status === 'loading') return <Loading label="Opening Settings…" />;
@@ -76,6 +76,7 @@ export function SecretsView({ snapshot, member, folder, selected, select, change
     {request.state === 'pending' && cards?.request?.(request.id)}
   </article>;
   else if (grant) reader = <article className="grid gap-4 p-5"><h1>{grant.secret}</h1>{grantDetails(grant)}{cards?.grant?.(grant.id)}</article>;
+  else if (folder === 'pieces' && active && pieces.some(piece => piece.id === active)) reader = <article className="grid gap-4 p-5"><h1>{pieces.find(piece => piece.id === active)!.label}</h1>{cards?.piece?.(active)}</article>;
   else if (folder === 'add') reader = <article className="grid gap-4 p-5"><h1>Add a secret</h1><p>The value is write-only. It cannot be read back here.</p>{cards?.add?.()}</article>;
   const rows = folder === 'requests' ? snapshot.requests.map(value => row(value.id, `${value.agent}: ${value.secret}`, value.why, value.state))
     : folder === 'grants' ? snapshot.grants.map(value => row(value.id, `${value.agent}: ${value.secret}`, value.job ? `Job: ${value.job}` : 'Agent-wide', `Expires: ${value.expiresAt}`))

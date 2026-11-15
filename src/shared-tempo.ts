@@ -7,19 +7,22 @@ import type { Operations } from './core/operations/index.js';
 import type { Conversations } from './core/conversations/index.js';
 import type { TempoOptions } from './core/tempo/tempo.js';
 import type { TempoOperationOptions } from './core/tempo/operations.js';
+import type { Viewer } from './policy.js';
+import type { Recipient } from './core/tempo/volume.js';
 import type { SweepPart } from './core/tempo/sweep.js';
 import { installTempoComposition } from './transport/tempo-composition.js';
 import { tempoCommandAllowed } from './shared-tempo-access.js';
 import { Jobs } from './runtime/jobs.js';
 
 export interface SharedTempoOptions {
-  /** Register area contributors/schedules before startup; return their teardown. */
-  beforeStart?:(tempo:ReturnType<typeof import('./core/tempo/tempo.js').createTempo>)=>(()=>void)|void;
   admit?: TempoOptions['admit'];
   operation?: TempoOptions['operation'];
   instructions?: TempoOptions['instructions'];
   changeRevision?: TempoOptions['changeRevision'];
   settings?: TempoOperationOptions['settings'];
+  chatMember?(viewer: Viewer): string | undefined;
+  settingsAuthorized?(viewer: Viewer, who: Recipient): boolean;
+  beforeStart?:Parameters<typeof installTempoComposition>[0]['beforeStart'];
   contributors?: readonly SweepPart[];
 }
 export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataWrites, operations: Operations,
@@ -38,7 +41,15 @@ export function installSharedTempo(db: DataDatabase, clock: Clock, writes: DataW
       }),
       operation: options.operation ?? (() => { throw new Error('Unknown Tempo operation'); }),
     },
-    commands: { authorize: (viewer, access) => tempoCommandAllowed(db, viewer, access),
+    commands: { authorize: (viewer, access) => {
+      // Chat is the control surface. A current body may carry out its recorded
+      // member's ordinary mailbox preference, without becoming that member.
+      const person = (access.action === 'volume' || access.action === 'settings') ? options.chatMember?.(viewer) : undefined;
+      const delegated = !!person && (access.action === 'volume' ? access.item.toKind === 'person' && access.item.to === person
+        : access.action === 'settings' && access.who.kind === 'person' && access.who.id === person);
+      return (tempoCommandAllowed(db, viewer, access) || delegated) &&
+        (access.action !== 'settings' || !options.settingsAuthorized || options.settingsAuthorized(viewer, access.who));
+    },
       settings: options.settings ?? (() => { throw new Error('Settings proposal needs authenticated chat context'); }),
     },
   });

@@ -1,3 +1,6 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { tempoSettingsProposals } from './core/tempo/proposal.js';
+import { sharedTempoSettings, type TempoChatAuthentication } from './shared-tempo-settings.js';
 import { SecretRequests } from './pieces/secrets/requests.js';
 import { SecretValues, type RecoverableSecretMutations } from './pieces/secrets/shared-values.js';
 import { registerSharedSecretCommands } from './shared-secret-commands.js';
@@ -39,13 +42,16 @@ export function sharedRoot(options: {
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
 }) {
+  if(options.secretWrites && (!(options.secretWrites.fingerprintKey instanceof Uint8Array) || options.secretWrites.fingerprintKey.byteLength!==32))throw Error('Invalid secret retry key');
   const { db, clock } = options;
   const now = () => new Date(clock.now()).toISOString();
+  const chat = new AsyncLocalStorage<TempoChatAuthentication>();
+  const settings = tempoSettingsProposals(db, clock);
   let closing: Promise<void> | undefined;
   const credentials = sharedCredentials(db, clock, () => !closing);
   const services = {
     tasks: taskService(db, now),
-    approvals: approvalService(db, options.approvedOperations, now),
+    approvals: approvalService(db, new Map([...(options.approvedOperations ?? []), settings.operation]), now),
     conversations: new Conversations(db, now),
   };
   const memory=sharedMemory(db,clock,options.memory,services.tasks);
@@ -87,7 +93,9 @@ export function sharedRoot(options: {
   startupCleanups.push(()=>{cancelSecretRecovery?.();values?.close();});
   registerSharedTaskCommands(operations, db, services.tasks);
 
-  const tempo=installSharedTempo(db,clock,data.writes,operations,services.conversations,data.changed,{...options.tempo,beforeStart(tempo){
+  const settingsBinding = sharedTempoSettings(db, clock, () => chat.getStore(), services.approvals);
+  const tempo=installSharedTempo(db,clock,data.writes,operations,services.conversations,data.changed,{...options.tempo,chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
+    settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,beforeStart(tempo){
     const stopOther=options.tempo?.beforeStart?.(tempo);
     try{
       const stopMemory=memory.checkingAgent?installMemoryTempo(db,tempo,memory,memory.checkingAgent):undefined;
@@ -135,8 +143,8 @@ export function sharedRoot(options: {
     const parsed = envelope.safeParse(body);
     if (!parsed.success) return c.json(failure('invalid', 'Expected {input, id?}'), 400);
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
-    const answer = await operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
-      parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid());
+    const answer = await chat.run(auth, () => operations.callAsync('http', auth.viewer, `${c.req.param('piece')}.${c.req.param('operation')}`,
+      parsed.data.input, parsed.data.id, auth.window === true, () => !closing && auth.valid()));
     // Execution and its final await can yield. A committed receipt remains
     // durable, but its response must not outlive the admitted credential.
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
