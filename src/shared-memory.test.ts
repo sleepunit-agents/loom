@@ -140,3 +140,28 @@ it('rejects an unconfigured checking recipient before creating source files',asy
  await expect(serveShared({db:f.db,clock:f.clock,memory:{sources:f.sources,checkingAgent:'absent'},originAllowed:()=>true,reportError:()=>{}})).rejects.toThrow('configured checking agent');
  expect(existsSync(f.sources.commons.knowledge)).toBe(false);expect(existsSync(f.sources.agents[0].memories)).toBe(false);expect(f.tables()).toEqual(f.before);
 });
+it('refreshes Knowledge and Activity together at the shared root deadline without a write',async()=>{
+ const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'},now=f.clock.now();await prepareSharedMemorySources(memory);
+ const knowledge=new SqliteKnowledgeBackend({dbPath:f.sources.commons.knowledge});
+ try{for(const slug of ['recent','aging','due'])await knowledge.writePage({slug,title:slug,domain:'fiction',body:'Fictional fact'});}finally{knowledge.close();}
+ const facts=new Database(f.sources.commons.knowledge);
+ try{for(const [slug,days] of [['recent',7],['aging',20],['due',30]] as const)facts.prepare('UPDATE pages SET verified_at=? WHERE slug=?').run(new Date(now-days*86400000+1000).toISOString(),slug);}finally{facts.close();}
+ const episodes=new Database(f.sources.agents[0].memories);
+ try{episodes.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');episodes.prepare("INSERT INTO memories VALUES('expiry','Expires soon','Fictional episode',?,NULL,'{}',?,'episode',0)").run(new Date(now).toISOString(),new Date(now+1000).toISOString());}finally{episodes.close();}
+ const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{}});cleanup.push(()=>app.close());
+ const query='{ memoryKnowledge { pages { slug fresh recent } } memoryKnowledgePage(slug:"due") { fresh } memoryActivity { entries { id title } } memoryActivityEntry(id:"e~fiction~expiry") { title } }';
+ const ws=new WebSocket(app.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw,origin:app.url}});cleanup.push(()=>ws.terminate());await once(ws,'open');
+ await waitMessage(ws,()=>ws.send(JSON.stringify({type:'connection_init'})));
+ const initial=await waitMessage(ws,()=>ws.send(JSON.stringify({type:'subscribe',id:'clock',payload:{query:'subscription($query:String!){ observe(query:$query){ revision patches { path removed value } } }',variables:{query}}})));
+ expect(JSON.stringify(initial)).toContain('Expires soon');expect(JSON.stringify(initial)).toContain('"recent":true');
+ f.clock.advance(999);
+ const changed=await waitMessage(ws,()=>f.clock.advance(1));
+ expect(changed).toMatchObject({payload:{data:{observe:{revision:2,patches:expect.arrayContaining([
+  {path:['memoryKnowledgePage','fresh'],removed:false,value:'due'},
+  expect.objectContaining({path:expect.arrayContaining(['recent']),value:null}),
+  expect.objectContaining({path:expect.arrayContaining(['fresh']),value:'aging'}),
+  {path:['memoryActivityEntry'],removed:false,value:null},
+ ])}}}});
+ const response=await fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query})});
+ expect(await response.json()).toMatchObject({data:{memoryKnowledge:{pages:expect.arrayContaining([{slug:'recent',fresh:'fresh',recent:null},{slug:'aging',fresh:'aging',recent:null},{slug:'due',fresh:'due',recent:null}])},memoryKnowledgePage:{fresh:'due'},memoryActivity:{entries:[]},memoryActivityEntry:null}});
+});
