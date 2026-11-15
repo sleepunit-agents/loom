@@ -4,7 +4,7 @@ import { and, createTableRelationsHelpers, getOperators, getTableColumns, getTab
 import { alias, type AnySQLiteTable } from 'drizzle-orm/sqlite-core';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { buildSchema } from 'drizzle-graphql';
-import { GraphQLError, GraphQLInt, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
+import { GraphQLError, GraphQLBoolean, GraphQLInt, GraphQLNonNull, GraphQLSkipDirective, GraphQLIncludeDirective, getDirectiveValues, getNamedType, isObjectType, Kind, type GraphQLResolveInfo, type SelectionSetNode } from 'graphql/index.js';
 import { schema, tables, taskComments, taskLinks, tasks } from './schema.js';
 
 type TableName = keyof typeof tables;
@@ -68,21 +68,30 @@ export function dataQueries(client: Database.Database, options: {
       Object.entries(value.config(createTableRelationsHelpers(value.table))).map(([key, relation]) => [key, names.get(getTableName(relation.referencedTable))!]),
     ));
   }
+  const readiness = (fields: Fields) => {
+    const blocker = alias(tasks, 'data_ready_blocker');
+    return sql`${fields.status} = 'open' and ${fields.type} <> 'epic' and not exists (select 1 from ${taskLinks} inner join ${tasks} as ${sql.identifier("data_ready_blocker")} on ${blocker.id} = ${taskLinks.dependsOn} where ${taskLinks.task} = ${fields.id} and ${taskLinks.type} = 'blocks' and ${blocker.status} <> 'closed')`;
+  };
   function constrain(name: TableName, input: ReadConfig | true, sets = querySelection.getStore()?.fieldNodes.flatMap(node => node.selectionSet ? [node.selectionSet] : []) ?? [], root = true): ReadConfig {
     const config = input === true ? {} : input;
     const predicate = visibility[name]!;
     const fieldsSelected = selectedFields(sets, querySelection.getStore()!);
     return {
       ...config,
-      ...(name === 'tasks' && selected.has('taskComments') && fieldsSelected.has('commentCount') ? {
+      ...(name === 'tasks' && (fieldsSelected.has('isReady') || selected.has('taskComments') && fieldsSelected.has('commentCount')) ? {
         extras: (fields: Fields) => {
-          const allowed = visibility.taskComments!(getTableColumns(taskComments));
-          if (!is(allowed, SQL)) throw new Error('SQL visibility required for taskComments');
-          // Defer rendering past Drizzle's alias rewrite, as with row policies.
-          // The parent fields are already aliased; the count's inner tables
-          // and policy subqueries must retain their own column identities.
-          const count = sql`(select count(*) from ${taskComments} where ${taskComments.task} = ${fields.id} and ${allowed})`;
-          return { commentCount: sql`${{ getSQL: () => count }}`.mapWith(Number).as('data_comment_count') };
+          const extras: Record<string, SQL.Aliased> = {};
+          if (fieldsSelected.has('isReady')) {
+            const ready = readiness(fields);
+            extras.isReady = sql`${{ getSQL: () => ready }}`.mapWith(Boolean).as('data_is_ready');
+          }
+          if (selected.has('taskComments') && fieldsSelected.has('commentCount')) {
+            const allowed = visibility.taskComments!(getTableColumns(taskComments));
+            if (!is(allowed, SQL)) throw new Error('SQL visibility required for taskComments');
+            const count = sql`(select count(*) from ${taskComments} where ${taskComments.task} = ${fields.id} and ${allowed})`;
+            extras.commentCount = sql`${{ getSQL: () => count }}`.mapWith(Number).as('data_comment_count');
+          }
+          return extras;
         },
       } : {}),
       where: (fields: Fields, operators: ReturnType<typeof getOperators>) => {
@@ -97,10 +106,8 @@ export function dataQueries(client: Database.Database, options: {
         // aliased by the relational builder; inner subquery tables stay intact.
         // Readiness is a property of the visible task, not of the subset of
         // blockers the caller can read. Never return hidden blocker rows/IDs.
-        const blocker = alias(tasks, 'data_ready_blocker');
         const ready = root && name === 'tasks' && querySelection.getStore()?.fieldName === 'readyTasks'
-          ? sql`${fields.status} = 'open' and ${fields.type} <> 'epic' and not exists (select 1 from ${taskLinks} inner join ${tasks} as ${sql.identifier("data_ready_blocker")} on ${blocker.id} = ${taskLinks.dependsOn} where ${taskLinks.task} = ${fields.id} and ${taskLinks.type} = 'blocks' and ${blocker.status} <> 'closed')`
-          : undefined;
+          ? readiness(fields) : undefined;
         return and(sql`${{ getSQL: () => allowed }}`, ready ? sql`${{ getSQL: () => ready }}` : undefined, requested);
       },
       with: config.with && Object.fromEntries(Object.entries(config.with).map(([key, nested]) => {
@@ -132,6 +139,12 @@ export function dataQueries(client: Database.Database, options: {
     if (!output || !isObjectType(output) || visited.has(output)) return;
     visited.add(output);
     const fields = output.getFields();
+    if (name === 'tasks') fields.isReady = {
+      name: 'isReady', type: new GraphQLNonNull(GraphQLBoolean), args: [],
+      description: 'Open non-epic task with no unclosed blocker, computed in this SQL statement.',
+      resolve: row => row.isReady,
+      extensions: {}, astNode: undefined, deprecationReason: undefined,
+    };
     if (name === 'tasks' && selected.has('taskComments')) fields.commentCount = {
       name: 'commentCount', type: new GraphQLNonNull(GraphQLInt), args: [],
       description: 'Number of visible comments on this task, counted in the same SQL statement.',

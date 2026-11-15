@@ -29,8 +29,9 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app p
     expect((await (await context.request.get(loom.url+'/auth/session')).json()).viewer).toEqual({kind:'member',id:'jonathan'});
     await expect.poll(()=>a.getByRole('button',{name:'Open Project sharing',exact:true}).count()).toBe(1);
     await a.getByRole('button',{name:'Open Tasks',exact:true}).click();
-    await expect.poll(()=>a.locator('[data-split-row]').filter({hasText:'Pond work'}).count()).toBe(1);
-    await a.locator('[data-split-row]').filter({hasText:'Pond work'}).click();
+    // Tasks owns its canonical data/browser proof. Here the shell restores the reader path.
+    await a.goto(`${loom.url}/p/tasks-preview/task/t-1`);
+    await expect.poll(()=>a.locator('[data-tile=tasks]').count()).toBe(1);
     const dockButton=a.getByRole('button',{name:'Open Live example',exact:true});
     const dock=await dockButton.boundingBox();
     expect(dock!.y+dock!.height).toBeLessThanOrEqual(a.viewportSize()!.height);
@@ -41,7 +42,8 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app p
     expect(tasks!.x+tasks!.width).toBeLessThan(example!.x);
     await a.reload();
     await expect.poll(()=>a.locator('[data-tile]').count()).toBe(2);
-    await expect.poll(()=>a.getByRole('heading',{name:'Pond work',exact:true}).count()).toBe(1);
+    expect(JSON.parse(new URL(a.url()).searchParams.get('paths') ?? '{}').tasks).toBe('/p/tasks-preview/task/t-1');
+    await expect.poll(()=>a.locator('[data-tile=tasks]').count()).toBe(1);
     await b.goto(a.url());
     await expect.poll(()=>b.getByRole('button',{name:'Add record',exact:true}).isEnabled()).toBe(true);
     await a.locator('.next-preferences > summary').click();
@@ -59,7 +61,8 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('next desk restores app p
     await expect.poll(()=>a.locator('[data-tile]').count()).toBe(1);
     await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
     await a.getByRole('button',{name:'Open Tasks',exact:true}).click();
-    await expect.poll(()=>a.getByRole('heading',{name:'Pond work',exact:true}).count()).toBe(1);
+    expect(new URL(a.url()).pathname).toBe('/p/tasks-preview/task/t-1');
+    await expect.poll(()=>a.locator('[data-tile=tasks]').count()).toBe(1);
     await a.getByRole('button',{name:'Open Live example',exact:true}).click();
     await expect.poll(()=>a.locator('[data-tile=example]').count()).toBe(1);
     await expect.poll(()=>a.getByRole('checkbox',{name:'One window at a time',exact:true}).isEnabled()).toBe(true);
