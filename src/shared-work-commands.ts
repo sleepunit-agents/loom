@@ -34,7 +34,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
   };
   const mayMerge = (viewer: Member, request: Approval, id: string) => {
     const row = change(id);
-    return !!row && (authority?.change(viewer, row, request) ?? true);
+    return !!row && (!authority || authority.change(viewer, row, request) === true);
   };
   const answerMerge = (ctx: Context, input: { id: string; head: string; approval: string; allow: boolean }) => {
     if (ctx.viewer.kind !== 'member') throw new OperationError('denied', 'A member is required');
@@ -52,7 +52,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     input: z.object({ id, answer: z.enum(['allow', 'deny']) }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const row = approval(input.id);
-      if (!workAnswersAllowed(db, viewer) || !row || (authority && !authority.approval(viewer, row))) return false;
+      if (!workAnswersAllowed(db, viewer) || !row || (authority && authority.approval(viewer, row) !== true)) return false;
       const merge = mergeTarget(row);
       return !merge || mayMerge(viewer, row, merge.id);
     },
@@ -83,7 +83,7 @@ export function registerSharedWorkCommands(operations: Operations, db: DataDatab
     input: z.object({ id, head: z.string().regex(/^[0-9a-f]{40}$/), approval: id, answer: z.enum(['yes', 'no']) }).strict(), output: z.object({ id }).strict(),
     may(viewer, input) {
       const request = approval(input.approval);
-      return workAnswersAllowed(db, viewer) && !!request && (authority?.approval(viewer, request) ?? true) && mayMerge(viewer, request, input.id);
+      return workAnswersAllowed(db, viewer) && !!request && (!authority || authority.approval(viewer, request) === true) && mayMerge(viewer, request, input.id);
     },
     validateReplay(_viewer, input) { currentHead(input); },
     run(ctx, input) {
