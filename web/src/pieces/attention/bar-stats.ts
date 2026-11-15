@@ -2,7 +2,6 @@ import { useRecords, type Snapshot } from '../../data';
 import type { TickPart } from '../../ticker';
 import type { Task } from '../tasks/model';
 import { useDataQuery } from '../../data/graphql';
-import type { VenueRecord } from '../bridges/model';
 import type { ChangeRecord } from '../changes/model';
 
 /** Minimal Tempo facts; no trigger instructions, destinations or log notes. */
@@ -19,6 +18,9 @@ export interface DeskTempoData {
 /** Enrollment is distinct from worker health; no machine names or owner details. */
 export const deskBoxesQuery = `query DeskBoxes { boxes { id revokedAt } }`;
 export interface DeskBoxesData { boxes: { id: string; revokedAt: string | null }[] }
+/** Connection configuration only; enabled does not imply connected or healthy. */
+export const deskBridgesQuery = `query DeskBridges { bridgeConnections { id enabled } }`;
+export interface DeskBridgesData { bridgeConnections: { id: string; enabled: boolean }[] }
 const current = <T extends {id:string}>(s: Snapshot<T>): readonly T[] => s.status === 'live' ? s.records : [];
 /** Counts only the policy-filtered records in this window. No legacy tile programs or health guesses. */
 export function useDeskStats() {
@@ -26,7 +28,8 @@ export function useDeskStats() {
   const tasks = useRecords<Task>('task');
   const tempo = useDataQuery<DeskTempoData>(deskTempoQuery);
   const tempoData = tempo.status === 'live' ? tempo.data : undefined;
-  const venues = useRecords<VenueRecord>('bridges.venue');
+  const bridges = useDataQuery<DeskBridgesData>(deskBridgesQuery);
+  const bridgeData = bridges.status === 'live' ? bridges.data : undefined;
   const changes = useRecords<ChangeRecord>('change');
   const enrolled = boxes.status === 'live' && boxes.data ? boxes.data.boxes.filter(b=>b.revokedAt===null).length : undefined;
   const open = current(changes).filter(c=>c.state==='open');
@@ -35,11 +38,11 @@ export function useDeskStats() {
   const failedTriggers = tempoData?.triggers.filter(t=>t.state==='failed').length ?? 0;
   const paused = tempoData?.agentPauses.length ?? 0;
   const latest = tempoData?.triggerLog[0];
-  const enabledVenues = current(venues).filter(v=>v.enabled).length;
+  const enabledConnections = bridgeData?.bridgeConnections.filter(c=>c.enabled).length ?? 0;
   const parts: TickPart[] = [
     {text:tasks.status==='live' ? `Tasks · ${current(tasks).filter(t=>t.status==='in_progress').length} in progress · ${current(tasks).filter(t=>t.ready).length} ready` : 'Tasks unavailable',href:'/p/tasks-preview'},
     {text:tempoData ? `Tempo · ${activeTriggers} active trigger${activeTriggers===1?'':'s'} · ${paused} paused agent${paused===1?'':'s'}${failedTriggers?` · ${failedTriggers} failed`:''}${latest?` · Last event: ${latest.event}`:''}` : 'Tempo unavailable',href:'/p/tempo-preview',tone:failedTriggers?'bad':undefined},
-    {text:venues.status==='live' ? `Bridges · ${enabledVenues} enabled venue${enabledVenues===1?'':'s'}` : 'Bridges unavailable',href:'/p/bridges-preview'},
+    {text:bridgeData ? `Bridges · ${enabledConnections} enabled connection${enabledConnections===1?'':'s'}` : 'Bridges unavailable',href:'/p/bridges-preview'},
     {text:changes.status==='live' ? `Changes · ${open.length} open${failing?` · ${failing} CI red`:''}` : 'Changes unavailable',href:'/p/changes-preview',tone:failing?'bad':undefined},
   ];
   // Trouble first, preserving the normal order for equal tones.

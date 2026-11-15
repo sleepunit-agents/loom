@@ -3,18 +3,17 @@ import { createElement as h, useMemo } from 'react';
 // @ts-expect-error Existing renderer has no declarations.
 import { act, create } from 'react-test-renderer';
 import type { Snapshot } from '../../data';
-const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>, boxes:{status:'live',data:{boxes:[]}} as any, tempo:{status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}} as any}));
-vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>useMemo(()=>document.includes('DeskBoxes')?f.boxes:document.includes('DeskTempo')?f.tempo:({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.tempo,f.boxes])}));
-vi.mock('../../data',()=>({useRecords:(type:string)=>{expect(type).not.toBe('runtime.box');return f.snapshots[type];}}));
+const f=vi.hoisted(()=>({snapshots:{} as Record<string,Snapshot<any>>, bridges:{status:'live',data:{bridgeConnections:[]}} as any, boxes:{status:'live',data:{boxes:[]}} as any, tempo:{status:'live',data:{triggers:[],triggerLog:[],agentPauses:[]}} as any}));
+vi.mock('../../data/graphql',()=>({useDataQuery:(document:string)=>useMemo(()=>document.includes('DeskBridges')?f.bridges:document.includes('DeskBoxes')?f.boxes:document.includes('DeskTempo')?f.tempo:({status:'live',data:{agents:(f.snapshots['attention.ownedAgent']?.records??[]).map((a:any)=>({id:a.id,position:a.position??0}))}}),[f.snapshots['attention.ownedAgent'],f.tempo,f.boxes,f.bridges])}));
+vi.mock('../../data',()=>({useRecords:(type:string)=>{expect(['runtime.box','bridges.venue']).not.toContain(type);return f.snapshots[type];}}));
 vi.mock('../../ticker',()=>({Ticker:(props:unknown)=>h('ticker-test',props as object)}));
 import Bar from './bar';
 (globalThis as typeof globalThis & {IS_REACT_ACT_ENVIRONMENT:boolean}).IS_REACT_ACT_ENVIRONMENT=true;
 let tree:ReturnType<typeof create>;
 const live=(records:object[])=>({records,status:'live' as const});
-beforeEach(()=>{f.boxes={status:'live',data:{boxes:[{id:'local',revokedAt:null},{id:'gone',revokedAt:'2026-11-14T00:00:00Z'}]}};f.tempo={status:'live',data:{triggers:[{id:'standing',enabled:true,state:'standing'},{id:'done',enabled:true,state:'fired'},{id:'off',enabled:false,state:'due'}],triggerLog:[{seq:2,event:'fired'}],agentPauses:[{agent:'art'}]}};f.snapshots={
+beforeEach(()=>{f.bridges={status:'live',data:{bridgeConnections:[{id:'v',enabled:true},{id:'off',enabled:false}]}};f.boxes={status:'live',data:{boxes:[{id:'local',revokedAt:null},{id:'gone',revokedAt:'2026-11-14T00:00:00Z'}]}};f.tempo={status:'live',data:{triggers:[{id:'standing',enabled:true,state:'standing'},{id:'done',enabled:true,state:'fired'},{id:'off',enabled:false,state:'due'}],triggerLog:[{seq:2,event:'fired'}],agentPauses:[{agent:'art'}]}};f.snapshots={
  task:live([{id:'t-1',status:'in_progress',ready:false},{id:'t-2',status:'open',ready:true}]),
  wake:live([{id:'w-1',state:'parked'},{id:'w-2',state:'fired'}]),
- 'bridges.venue':live([{id:'v',enabled:true},{id:'off',enabled:false}]),
  change:live([{id:'pr',state:'open',checks:{state:'failing'}},{id:'merged',state:'merged',checks:{state:'failing'}}]),
  'household.time':live([{id:'owner',at:Date.parse('2026-11-13T18:41:00Z'),timezone:'America/Chicago'}]),
  'attention.ownedAgent':live([{id:'art',name:'Art'}]),
@@ -34,6 +33,7 @@ it('uses owned-agent facts and open asks, and opens Inbox through the router',as
 it.each(['offline','denied','loading'] as const)('drops stale work, identity and count on %s',async(status)=>{
  await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
  f.tempo={...f.tempo,status};
+ f.bridges={...f.bridges,status};
  f.boxes={...f.boxes,status};
  for(const type of Object.keys(f.snapshots))f.snapshots[type]={...f.snapshots[type],status};
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
@@ -67,7 +67,7 @@ it('uses real piece counts, puts CI trouble first, and never calls enrollment he
   {text:'Changes · 1 open · 1 CI red',href:'/p/changes-preview',tone:'bad'},
   {text:'Tasks · 1 in progress · 1 ready',href:'/p/tasks-preview'},
   {text:'Tempo · 1 active trigger · 1 paused agent · Last event: fired',href:'/p/tempo-preview',tone:undefined},
-  {text:'Bridges · 1 enabled venue',href:'/p/bridges-preview'},
+  {text:'Bridges · 1 enabled connection',href:'/p/bridges-preview'},
   {text:'1 enrolled box · health unavailable'},
  ]);
  expect(tree.root.findByProps({'aria-label':'1 enrolled box; health unavailable'})).toBeTruthy();
@@ -113,4 +113,20 @@ it('updates box enrollment, distinguishes live zero and clears retained counts i
  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
  expect(boxes()).toBe('0 enrolled boxes · health unavailable');
  expect(tree.root.findByProps({'aria-label':'0 enrolled boxes; health unavailable'})).toBeTruthy();
+});
+
+it('updates generated bridge counts and clears retained configuration when unavailable',async()=>{
+ await act(async()=>{tree=create(h(Bar,{title:'Home',go:vi.fn(),actions:null}));});
+ const bridges=()=>tree.root.findByType('ticker-test').props.parts.find((p:any)=>p.href==='/p/bridges-preview');
+ f.bridges={status:'live',data:{bridgeConnections:[{id:'a',enabled:true},{id:'b',enabled:true},{id:'off',enabled:false}]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(bridges().text).toBe('Bridges · 2 enabled connections');
+ for(const status of ['loading','offline','denied']){
+  f.bridges={...f.bridges,status};
+  await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+  expect(bridges().text).toBe('Bridges unavailable');
+ }
+ f.bridges={status:'live',data:{bridgeConnections:[]}};
+ await act(async()=>tree.update(h(Bar,{title:'Home',go:vi.fn(),actions:null})));
+ expect(bridges().text).toBe('Bridges · 0 enabled connections');
 });
