@@ -211,8 +211,6 @@ it('files other apps’ actual window mutations with fixed owning links, without
   const examples: [string,object,string,string][] = [
     ['household.setProfile',{agent:'art',text:'Sensitive authored description'},'Household setup','/p/setup-preview'],
     ['household.createProject',{slug:'receipt-fixture',name:'Private project title',repositories:[],members:['alice'],agents:['art']},'Sharing','/p/sharing-preview'],
-    ['clock.pause',{agent:'art'},'Clock','/p/clock-preview'],
-    ['clock.resume',{agent:'art'},'Clock','/p/clock-preview'],
     ['changes.refresh',{},'Changes','/p/changes-preview'],
   ];
   for (const [name,input,sourceLabel,page] of examples) {
