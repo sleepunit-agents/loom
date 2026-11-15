@@ -2,6 +2,7 @@
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
 import {bridgeSettingsAction} from './rebuild-bridge-actions.mjs';
+import {taskStructure} from './rebuild-task-structure.mjs';
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
@@ -101,7 +102,7 @@ export async function* walkthroughSteps(output) {
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
     await page.screenshot({path:join(out,row.screenshot),fullPage:true});
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
-   if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
+   if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);
    row.live={frames:visitFrames,subscriptions:subscriptions.filter(sub=>visitFrames.some(frame=>frame.id===sub.id)),scope:'Connection activity during this visit, including shell and other tiles; not app-specific proof',connectionDataReceived:visitFrames.some(frame=>frame.hasData),errors:visitFrames.flatMap(frame=>frame.errors??[])};
