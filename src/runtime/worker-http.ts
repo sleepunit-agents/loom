@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { WorkerControl } from './worker.js';
+import type { QuotaWindow } from './quota.js';
 export const workerAssignment = z.object({
   id: z.string().min(1), box: z.string().min(1), agent: z.string().min(1),
   conversation: z.string().nullable(), model: z.string(), account: z.string(),
@@ -15,10 +16,11 @@ export const workerAssignment = z.object({
   }).optional(),
   house: z.object({ repository: z.string(), file: z.string(), branch: z.string() }),
 });
-export function httpWorkerControl(input: {
+export interface WorkerHttpOptions {
   url: string; token: string; signal: AbortSignal; timeoutMs?: number;
   fetch?: typeof fetch;
-}): WorkerControl {
+}
+function operationCaller(input: WorkerHttpOptions) {
   const base = new URL(input.url);
   if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(base.hostname)))
     throw new Error('Worker needs HTTPS (HTTP allowed only on loopback)');
@@ -62,6 +64,13 @@ export function httpWorkerControl(input: {
       if (response?.body && !response.body.locked) await response.body.cancel().catch(() => {});
     }
   }
+  return call;
+}
+export function reportWorkerAccountUsage(input: WorkerHttpOptions, observation: { account: string; owner: string; provider: string; windows: readonly QuotaWindow[] }) {
+  return operationCaller(input)('accountUsage', observation, z.object({ recorded: z.boolean() }).strict());
+}
+export function httpWorkerControl(input: WorkerHttpOptions): WorkerControl {
+  const call = operationCaller(input);
   const ack = z.object({ ok: z.literal(true) });
   return {
     next: async () => (await call('next', {}, workerAssignment.nullable())) ?? undefined,
