@@ -24,7 +24,7 @@ export function memoryQueryFields(db: DataDatabase, options: {
       sharing: options.sharing, now: options.now, projectHref: options.projectHref,
       conversations: db.$client.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='conversations'").get()
         ? sharedPeopleConversations(db, options.sharing, options.conversationHref) : undefined});
-    return {nextDeadline(){const times=[knowledge.nextDeadline(),deadlines.nextDeadline(),people.nextDeadline(),options.activity.nextDeadline?.()].filter((at):at is number=>at!==undefined);return times.length?Math.min(...times):undefined;},observeDeadlines:(fn:()=>void)=>deadlines.observe(fn),fields: {...knowledge.fields, ...people.fields, ...projectsQueryFields(options.mind,deadlines,options.now,options.projectAccess), ...activityQueryFields(options.activity,deadlines)},
+    return {sweep:knowledge.sweep,nextDeadline(){const times=[knowledge.nextDeadline(),deadlines.nextDeadline(),people.nextDeadline(),options.activity.nextDeadline?.()].filter((at):at is number=>at!==undefined);return times.length?Math.min(...times):undefined;},observeDeadlines:(fn:()=>void)=>deadlines.observe(fn),fields: {...knowledge.fields, ...people.fields, ...projectsQueryFields(options.mind,deadlines,options.now,options.projectAccess), ...activityQueryFields(options.activity,deadlines)},
       close() { deadlines.close(); people.close(); knowledge.close(); }};
   } catch (error) { deadlines.close(); knowledge.close(); throw error; }
 }
