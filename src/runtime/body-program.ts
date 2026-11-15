@@ -6,6 +6,7 @@ import { workerAssignment } from './worker-http.js';
 import { bodyInput, eraseBootstrap, type BodyBootstrap } from './body-bootstrap.js';
 import { bodyConversationClient,bodyMailContext } from './conversation-client.js';
 import { claudeBody } from './claude-body.js';
+import { bodyProgramTools } from './body-program-tools.js';
 import { bodySecretTools } from './body-secret-tools.js';
 import { bodyStartupSecrets } from './body-secrets.js';
 import type { Clock } from '../core/clock.js';
@@ -24,6 +25,7 @@ export async function bodyProgram(input: {
 }): Promise<number> {
   let bytes: Uint8Array | undefined, bootstrap: BodyBootstrap | undefined;
   let tools:Awaited<ReturnType<typeof bodySecretTools>>|undefined;
+  let programTools:ReturnType<typeof bodyProgramTools>|undefined;
   let client: ReturnType<typeof bodyConversationClient> | undefined;
   const context: string[] = [], incoming:string[]=[];
   const secrets = bodyStartupSecrets(input.env, {fetch:input.fetch,clock:input.clock});
@@ -31,6 +33,8 @@ export async function bodyProgram(input: {
   const stopBeats=async()=>{cancel?.();cancel=undefined;await pending;};
   const nativeAbort = new AbortController(), signal = AbortSignal.any([input.signal,nativeAbort.signal]);
   const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; incoming.length=0; };
+  let retirement:Promise<void>|undefined;
+  const retire=()=>retirement??=(async()=>{nativeAbort.abort();programTools?.close();secrets.close();erase();await tools?.close();await stopBeats();})();
   input.signal.addEventListener('abort', erase, { once: true });
   try {
     if (input.args.length !== 1 || input.signal.aborted) throw new Error();
@@ -45,9 +49,9 @@ export async function bodyProgram(input: {
     if (job.harness !== 'claude' || !job.conversation || (!bridge&&!job.thread) || (job.venue&&job.venue!=='loom'&&!bridge) || input.signal.aborted) throw new Error();
     client = bodyConversationClient({ url: bootstrap.origin, token: parsed.bootstrap.token,
       job: job.id, conversation: job.conversation, signal: input.signal, fetch: input.fetch, clock: input.clock });
-    let work='Preparing startup inputs',state:'working'|'waiting'='working';
+    let work='Preparing startup inputs',state:'working'|'waiting'='working',secretWaiting=false;
     let reporting:ReturnType<NonNullable<typeof client>['status']>|undefined;
-    const report=()=>reporting??(reporting=client!.status({state,work}).finally(()=>{reporting=undefined;}));
+    const report=()=>reporting??(reporting=client!.status(secretWaiting&&state!=='waiting'?{state:'waiting',work:'Waiting for a Secret decision'}:{state,work}).finally(()=>{reporting=undefined;}));
     const observe=(value:{stopRequested:boolean})=>{if(value.stopRequested){stopped=true;erase();nativeAbort.abort();}};
     observe(await report());
     if(stopped){await client.status({state:'idle',work:'',seenStop:true});return 0;}
@@ -69,37 +73,42 @@ export async function bodyProgram(input: {
       }
       const words=bodyMailContext(item);if(words!==null)context.push(words);
     });
-    if (batch.stopRequested) { await stopBeats(); erase(); nativeAbort.abort(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
+    if (batch.stopRequested) { await retire(); await client.status({ state: 'idle', work: '', seenStop: true }); return 0; }
     if(signal.aborted)throw new Error();
     if (!context.length) {await stopBeats();if(signal.aborted)throw new Error();await client.status({state:'idle',work:''});return 0;}
     await pending;
     if(signal.aborted)throw new Error();
     const started = await report();
-    if (started.stopRequested) { await stopBeats(); erase(); nativeAbort.abort(); await client.status({state:'idle',work:'',seenStop:true}); return 0; }
+    if (started.stopRequested) { await retire(); await client.status({state:'idle',work:'',seenStop:true}); return 0; }
     if(bridge&&!incoming.length)throw new Error();
-    if(!input.native)tools=await bodySecretTools({url:bootstrap.origin,token:parsed.bootstrap.token,job:job.id,conversation:job.conversation,signal,clock:input.clock,fetch:input.fetch,waiting:value=>{state=value?'waiting':'working';work=value?'Waiting for a Secret decision':'Working on accepted mail';}});
+    const replyTo=incoming.at(-1);
+    if(!input.native){
+      const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch};
+      programTools=bodyProgramTools({...rootAccess,
+        onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;}});
+      tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});
+    }
     if(signal.aborted)throw new Error();
     const native = input.native ?? claudeBody({ ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });
     tools?.config.fill(0);
     let answer: Awaited<ReturnType<typeof native>> | undefined;
     try { answer = await native(job, context.join('\n\n'), signal);if(tools&&!tools.allowsReply(answer.text))throw new Error(); }
     catch { if(!stopped) throw new Error(); }
-    finally { nativeAbort.abort(); await tools?.close(); await stopBeats(); }
+    finally { await retire(); }
     if(stopped && !input.signal.aborted) { await client.status({state:'idle',work:'',seenStop:true}); return 0; }
     if(unavailable || !answer) throw new Error();
     if (input.signal.aborted) throw new Error();
     for (const action of answer.actions) await client.turn({ kind: 'action', model: action.model, outcome: 'progressed' });
-    if(bridge)await client.bridgeReply({incoming:incoming.at(-1)!,text:answer.text,model:answer.model,outcome:'progressed'});
+    if(bridge)await client.bridgeReply({incoming:replyTo!,text:answer.text,model:answer.model,outcome:'progressed'});
     else await client.reply({ clientId: randomUUID(), words: answer.text, model: answer.model, outcome: 'progressed' });
     await client.status({ state: 'idle', work: '' });
     return 0;
   } catch {
-    nativeAbort.abort(); secrets.close(); erase();
-    await stopBeats();
+    await retire();
     if(stopped&&!unavailable&&!input.signal.aborted&&client){
       try{await client.status({state:'idle',work:'',seenStop:true});return 0;}catch{}
     }
     input.error('Body stopped: invalid input or unavailable execution\n'); return 1;
   }
-  finally { nativeAbort.abort(); secrets.close(); erase(); await stopBeats(); await tools?.close(); client?.close(); input.signal.removeEventListener('abort', erase); }
+  finally { await retire(); client?.close(); input.signal.removeEventListener('abort', erase); }
 }
