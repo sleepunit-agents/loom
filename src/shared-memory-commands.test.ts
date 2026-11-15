@@ -16,6 +16,7 @@ import {bodyCommandClient} from './runtime/body-command-client.js';
 import {bodyMemoryIdentity,bodyIdentityQuery} from './runtime/body-memory-identity.js';
 import {bodyProgram} from './runtime/body-program.js';
 import type {WorkerAssignment} from './runtime/worker.js';
+import {propose} from './backends/proposals.js';
 const owned=vi.hoisted(()=>({connections:[] as Connection[],failLoad:false}));
 vi.mock('better-sqlite3',async importOriginal=>{
  const original=await importOriginal<{default:typeof Database}>();
@@ -60,6 +61,65 @@ async function fixture(options:{unprepared?:boolean}={}){
 }
 async function next(ws:WebSocket,action:()=>unknown){const pending=once(ws,'message');await action();return JSON.parse(String((await pending)[0]));}
 function hold(){let entered!:()=>void,release!:()=>void;const began=new Promise<void>(resolve=>entered=resolve),blocked=new Promise<void>(resolve=>release=resolve);embed.gate=async()=>{entered();await blocked;};releases.push(release);return {began,release};}
+it('browses retained private archive and proposal words through the actual canonical HTTP door without source or shared copies',async()=>{
+ const f=await fixture(),made=await f.call('remember',{...input,ttl:'1h'},'retained-make'),id=made.result.value.ids[0];expect((await f.call('archive',{id,note:'PRIVATE_ARCHIVE_REASON'},'retained-archive')).status).toBe(200);
+ const proposal=propose(dirname(f.path),{category:'rough capture',title:'PRIVATE_PROPOSAL_TITLE',content:'PRIVATE_PROPOSAL_WORDS',source:'fictional capture'},null);
+ const later=f.clock.now()+7200000;vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);const before=f.source.serialize();
+ const query='{memoryArchive(agent:"art",first:1){entries{id title content note expiresAt} nextBefore} memoryProposals(agent:"art"){entries{id title content source} nextBefore}}';
+ const rows=await f.query(query);expect(rows.memoryArchive).toEqual({entries:[{id,title,content:words,note:'PRIVATE_ARCHIVE_REASON',expiresAt:'2026-11-14T19:00:00.000Z'}],nextBefore:null});expect(rows.memoryProposals).toEqual({entries:[{id:'art:proposal:'+proposal.uuid,title:'PRIVATE_PROPOSAL_TITLE',content:'PRIVATE_PROPOSAL_WORDS',source:'fictional capture'}],nextBefore:null});
+ expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();expect(f.source.serialize()).toEqual(before);
+ expect(await f.query('{memoryArchive(agent:"mark"){entries{content}} memoryProposals(agent:"mark"){entries{content}}}')).toEqual({memoryArchive:null,memoryProposals:null});
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await f.query(query,raw.member)).toEqual({memoryArchive:null,memoryProposals:null});
+ for(const value of [words,title,'PRIVATE_ARCHIVE_REASON','PRIVATE_PROPOSAL_TITLE','PRIVATE_PROPOSAL_WORDS',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+});
+it('edits and restores bounded private revisions through actual native commands and authorized GraphQL',async()=>{
+ const f=await fixture(),id=(await f.call('remember',{...input,ttl:'1h'},'history-make')).result.value.ids[0];
+ const history=async(token=raw.body)=>(await f.query(`{memoryHistory(id:"${id}"){id op replacedAt content}}`,token)).memoryHistory as {id:number;op:string;replacedAt:string;content:string}[];
+ for(let i=0;i<12;i++)expect((await f.call('update',{id,content:`alpha PRIVATE_EDIT_${i}`},'edit-'+i)).status).toBe(200);
+ const revisions=await history();expect(revisions).toHaveLength(10);expect(revisions[0]).toMatchObject({op:'update',content:'alpha PRIVATE_EDIT_10'});expect(revisions.at(-1)?.content).toBe('alpha PRIVATE_EDIT_1');
+ expect(await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).toEqual({memoryProjectMemory:{content:'alpha PRIVATE_EDIT_11'}});
+ const restored=await f.call('restoreRevision',{id,revision_id:revisions[0].id},'restore-version');expect(restored.status).toBe(200);expect(restored.result.value).toEqual({ids:[id]});
+ expect(await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).toEqual({memoryProjectMemory:{content:'alpha PRIVATE_EDIT_10'}});
+ const after=await history();expect(after).toHaveLength(10);expect(after[0]).toMatchObject({op:'revision-restore',content:'alpha PRIVATE_EDIT_11'});
+ expect(await f.call('restoreRevision',{id,revision_id:revisions[0].id},'restore-version')).toEqual(restored);expect(await history()).toEqual(after);
+ const before=f.source.serialize();expect(await history()).toEqual(after);expect(f.source.serialize()).toEqual(before);
+ const later=f.clock.now()+7200000;vi.setSystemTime(later);vi.spyOn(f.clock,'now').mockReturnValue(later);
+ expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();expect(await history()).toEqual(after);
+ expect((await f.call('archive',{id},'history-archive')).status).toBe(200);expect(await history()).toEqual(after);
+ const lifecycle=()=>f.source.prepare('SELECT archived,ttl,expires_at FROM memories WHERE uuid=?').get(id.slice(4));const archived=lifecycle();
+ expect((await f.call('restoreRevision',{id,revision_id:after[0].id},'archived-revision')).status).toBe(200);expect(lifecycle()).toEqual(archived);
+ expect(archived).toEqual({archived:1,ttl:'1h',expires_at:'2026-11-14T19:00:00.000Z'});expect((await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).memoryProjectMemory).toBeNull();
+ const retained=await history();expect(retained[0]).toMatchObject({op:'revision-restore',content:'alpha PRIVATE_EDIT_10'});expect(await history(raw.member)).toEqual(retained);
+ f.root.writes.run(()=>f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run());expect(await history(raw.member)).toEqual([]);
+ for(const value of [words,title,'PRIVATE_EDIT_',f.path])expect(Buffer.from(f.db.$client.serialize()).includes(Buffer.from(value))).toBe(false);
+});
+it('keeps edit and revision-restore authority own-body scoped, and rejects a revision belonging to another memory',async()=>{
+ const f=await fixture(),id=(await f.call('remember',input,'target-make')).result.value.ids[0],other=(await f.call('remember',{...input,title:'Other target',content:'beta PRIVATE_OTHER'},'other-make')).result.value.ids[0];
+ expect((await f.call('update',{id:other,content:'beta PRIVATE_OTHER_EDIT'},'other-edit')).status).toBe(200);
+ const revisions=(await f.query(`{memoryHistory(id:"${other}"){id content}}`)).memoryHistory;
+ expect((await f.call('restoreRevision',{id,revision_id:revisions[0].id},'wrong-version')).status).toBe(404);
+ for(const [verb,value] of [['update',{id,content:'new words'}],['restoreRevision',{id,revision_id:revisions[0].id}]] as const){
+  expect((await f.call(verb,{...value,id:id.replace('art:','mark:')},'foreign-'+verb)).status).toBe(403);
+  for(const [index,token] of [raw.agent,raw.member,raw.runner].entries())expect((await f.call(verb,value,'weaker-'+verb+'-'+index,token)).status).toBe(403);
+  expect((await f.call(verb,{...value,path:f.other},'path-'+verb)).status).toBe(400);
+ }
+ expect((await f.call('update',{id},'empty-edit')).status).toBe(400);expect((await f.call('update',{id,content:'  '},'blank-edit')).status).toBe(400);
+ expect((await f.query(`{memoryHistory(id:"${id.replace('art:','mark:')}"){content}}`)).memoryHistory).toEqual([]);
+ expect(await f.query(`{memoryProjectMemory(id:"${id}"){content}}`)).toEqual({memoryProjectMemory:{content:words}});
+});
+it('rolls back revisions with failed source receipts and recovers committed revision restores without repeating them',async()=>{
+ const f=await fixture(),id=(await f.call('remember',input,'atomic-history-make')).result.value.ids[0];
+ const current=()=>f.query(`{memoryProjectMemory(id:"${id}"){content} memoryHistory(id:"${id}"){id op content}}`);
+ f.source.exec("CREATE TRIGGER fail_edit_receipt BEFORE INSERT ON memory_command_receipts WHEN NEW.name='memory.update' BEGIN SELECT RAISE(ABORT,'injected'); END");
+ expect((await f.call('update',{id,content:'beta PRIVATE_ROLLBACK'},'atomic-edit')).status).toBe(503);expect(await current()).toEqual({memoryProjectMemory:{content:words},memoryHistory:[]});
+ f.source.exec('DROP TRIGGER fail_edit_receipt');expect((await f.call('update',{id,content:'beta PRIVATE_ROLLBACK'},'atomic-edit')).status).toBe(200);
+ const revision=(await current()).memoryHistory[0].id;
+ f.db.$client.exec("CREATE TRIGGER fail_restore_core BEFORE INSERT ON operation_results BEGIN SELECT RAISE(ABORT,'injected'); END");
+ expect((await f.call('restoreRevision',{id,revision_id:revision},'atomic-restore')).status).toBe(503);const after=await current();expect(after.memoryProjectMemory.content).toBe(words);expect(after.memoryHistory).toHaveLength(2);const calls=embed.calls;
+ f.db.$client.exec('DROP TRIGGER fail_restore_core');expect((await f.call('restoreRevision',{id,revision_id:revision},'atomic-restore')).status).toBe(200);expect(await current()).toEqual(after);expect(embed.calls).toBe(calls);
+ const gate=hold(),pending=f.call('update',{id,content:'gamma REVOKED_EDIT'},'revoked-edit');await gate.began;f.root.writes.run(()=>f.db.update(s.jobs).set({state:'done'}).where(eq(s.jobs.id,'job')).run());gate.release();expect((await pending).status).toBe(403);
+ expect(f.source.prepare('SELECT content FROM memories').get()).toEqual({content:words});expect(f.source.prepare('SELECT count(*) AS n FROM memory_revisions').get()).toEqual({n:2});
+});
 it('binds commands to the actual body, publishes committed content, and reads opaque results through current GraphQL authority',async()=>{
  const f=await fixture(),ws=new WebSocket(f.url.replace('http:','ws:')+'/graphql','graphql-transport-ws',{headers:{authorization:'Bearer '+raw.body}});clean.push(()=>ws.terminate());await once(ws,'open');
  expect((await next(ws,()=>ws.send(JSON.stringify({type:'connection_init'})))).type).toBe('connection_ack');
@@ -118,7 +178,8 @@ it('forwards TTL, metadata, category and project filters and truncates eligible 
 it('leaves an existing unprepared source byte-for-byte unchanged through startup and refused commands',async()=>{
  const f=await fixture({unprepared:true});expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect(await f.query('{memoryProject(id:"art:pond"){name}}')).toEqual({memoryProject:{name:'Fictional pond'}});
- expect((await f.call('remember',input,'unprepared-start')).status).toBe(503);expect((await f.call('recall',{query:'alpha'},'unprepared-recall')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
+ expect((await f.call('remember',input,'unprepared-start')).status).toBe(503);expect((await f.call('recall',{query:'alpha'},'unprepared-recall')).status).toBe(503);
+ const id='art:00000000-0000-0000-0000-000000000000';expect((await f.call('update',{id,content:'A valid edit'},'unprepared-edit')).status).toBe(503);expect((await f.call('restoreRevision',{id,revision_id:1},'unprepared-version')).status).toBe(503);expect(f.source.serialize()).toEqual(f.sourceBefore);
  expect(f.source.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'memory_command_%'").all()).toEqual([]);
 });
 it('recovers recall after shared receipt failure without adding heat again',async()=>{

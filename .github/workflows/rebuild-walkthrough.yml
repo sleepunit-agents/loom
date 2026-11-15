@@ -14,6 +14,10 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24.x
+      - name: Check that page evidence survives regeneration
+        run: |
+          nice -n 19 python3 scripts/rebuild-checklists.test.py
+          nice -n 19 python3 scripts/rebuild-checklists.py --check
       - name: Build the actual program
         env:
           ONNXRUNTIME_NODE_INSTALL_CUDA: skip
@@ -22,6 +26,8 @@ jobs:
           nice -n 19 npm run build
           npx playwright-core install --with-deps chromium
       - name: Sign in and visit every launcher app
+        env:
+          TZ: America/Chicago
         run: |
           set -euo pipefail
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
