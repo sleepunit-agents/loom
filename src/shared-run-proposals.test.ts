@@ -15,6 +15,7 @@ async function fixture(){
 it('files complete trusted before/after for an unconfigured agent and applies only on Allow',async()=>{
  const f=await fixture(),before=f.read();expect((await f.propose()).status).toBe(200);const card=f.db.select().from(s.approvals).get()!;
  expect(card).toMatchObject({operation:'runtime.agentRunSettings',project:'pond',member:'alice',actingFor:'alice',conversation:f.thread.conversation,askedFrom:f.thread.conversation,state:'pending'});expect(JSON.parse(card.details)).toEqual({agent:'art',before:null,after:f.value});expect(f.read()).toEqual(before);
+ expect(card.what).toContain('Before: not configured.');expect(card.what).toContain('After: house https://example.invalid/house.git at next (Housefile)');expect(card.what).toContain('preferred machines: box');expect(card.what).toContain('containers allowed; GPU allowed');expect(card.what).toContain('ports: 127.0.0.1:8080');expect(card.changeSummary).toBe(card.what);
  expect((await f.propose()).status).toBe(200);expect(f.db.select().from(s.approvals).all()).toHaveLength(1);expect((await f.answer(card.id)).status).toBe(200);
  expect(f.read()).toMatchObject({settings:{houseRepository:f.value.houseRepository,nestedContainers:true,gpu:true},boxes:[{agent:'art',box:'box',position:0}],ports:[{address:'127.0.0.1',port:8080}]});
  f.db.update(s.agentRunSettings).set({houseBranch:'later'}).run();expect((await f.answer(card.id)).status).toBe(200);expect(f.read().settings?.houseBranch).toBe('later');
@@ -41,7 +42,7 @@ it.each(['deny','settings','ownership','revoked','lent','tamper']as const)('refu
 it('preserves the repository secret reference and excludes it from the proposed edit',async()=>{
  const f=await fixture();f.db.insert(s.secrets).values({name:'fixture-repository-secret',description:'Metadata only',changedAt:new Date(f.clock.now()).toISOString(),changedBy:'alice'}).run();
  const {boxes,ports,...settings}=f.value;f.db.insert(s.agentRunSettings).values({...settings,repositorySecret:'fixture-repository-secret'}).run();
- expect((await f.propose('changed',{...f.value,houseBranch:'new'})).status).toBe(200);const card=f.db.select().from(s.approvals).get()!;expect(card.details).not.toContain('fixture-repository-secret');expect((await f.answer(card.id)).status).toBe(200);expect(f.read().settings).toMatchObject({houseBranch:'new',repositorySecret:'fixture-repository-secret'});
+ expect((await f.propose('changed',{...f.value,houseBranch:'new'})).status).toBe(200);const card=f.db.select().from(s.approvals).get()!;expect(card.details).not.toContain('fixture-repository-secret');expect(card.what).toContain('Before: house https://example.invalid/house.git at next (Housefile)');expect(card.what).toContain('After: house https://example.invalid/house.git at new (Housefile)');expect((await f.answer(card.id)).status).toBe(200);expect(f.read().settings).toMatchObject({houseBranch:'new',repositorySecret:'fixture-repository-secret'});
 });
 it('rolls back settings and receipts without a false post-commit capacity notification',async()=>{
  const f=await fixture(),observed:boolean[]=[];const changed=vi.spyOn(f.root.services.tempo,'capacityChanged').mockImplementation(()=>{observed.push(f.db.$client.inTransaction);});
@@ -69,7 +70,7 @@ it('rejects public or withdrawn body assignment without filing cards',async()=>{
  const f=await fixture();f.db.delete(s.memberAgents).where(eq(s.memberAgents.member,'alice')).run();expect((await f.propose('withdrawn')).status).toBe(403);
  f.db.insert(s.memberAgents).values({member:'alice',agent:'art'}).run();f.db.update(s.conversations).set({member:null,project:null}).run();f.db.update(s.jobs).set({member:null,project:null}).run();expect((await f.propose('public')).status).toBe(403);expect(f.db.select().from(s.approvals).all()).toEqual([]);
 });
-it.each([{what:'Keep everything'},{changeSummary:'Another change'},{actingFor:'bob'},{member:null},{details:'{}'}])('rejects inconsistent run card %j',async extra=>{
+it.each([{agent:'mark'},{askedFrom:'other'},{project:null},{conversation:null},{why:'Another reason'},{what:'Keep everything'},{changeSummary:'Another change'},{actingFor:'bob'},{member:null},{details:'{}'}])('rejects inconsistent run card %j',async extra=>{
  const f=await fixture();await f.propose();const card=f.db.select().from(s.approvals).get()!;f.db.update(s.approvals).set(extra).run();const before=f.read();expect((await f.answer(card.id)).status).toBe('details'in extra?409:403);expect(f.read()).toEqual(before);expect(f.db.select().from(s.approvals).get()?.state).toBe('pending');
 });
 it('refuses to create an impossible typed approval from invalid existing configuration',async()=>{
@@ -83,4 +84,12 @@ it('refuses an ordinary member Allow even when that member owns the target agent
 });
 it('refuses an impossible card when old stored settings would normalize differently on Allow',async()=>{
  const f=await fixture();const {boxes,ports,...settings}=f.value;f.db.insert(s.agentRunSettings).values({...settings,houseBranch:' next '}).run();expect((await f.propose()).status).toBe(409);expect(f.db.select().from(s.approvals).all()).toEqual([]);
+});
+
+it('requires selected machines to be visible or lent and available when filing the proposal',async()=>{
+ const f=await fixture();f.db.update(s.members).set({role:'member'}).where(eq(s.members.id,'alice')).run();f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'bob')).run();
+ f.db.insert(s.boxes).values({id:'candidate',name:'Other member machine',owner:'bob',sameMachineAsLoom:false,hostsAny:false,reportOnly:false,alwaysOn:false,enrolledAt:new Date(f.clock.now()).toISOString()}).run();
+ const input={...f.value,boxes:['candidate']};expect((await f.propose('unlent',input)).status).toBe(400);
+ f.db.insert(s.boxAgents).values({box:'candidate',agent:'art',lent:true}).run();expect((await f.propose('lent',input)).status).toBe(200);
+ f.db.update(s.boxes).set({revokedAt:new Date(f.clock.now()).toISOString()}).where(eq(s.boxes.id,'candidate')).run();expect((await f.propose('revoked',input)).status).toBe(400);expect(f.db.select().from(s.approvals).all()).toHaveLength(1);
 });
