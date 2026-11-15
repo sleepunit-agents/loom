@@ -57,6 +57,18 @@ it('aborts acceptance when included history expires and retries the independentl
  expect(f.db.select().from(s.inbox).all().find(row=>row.source==='thread'&&row.messageSeq===3)?.state).toBe('taken');
  await f.client.takeAndAccept(async item=>{expect(item.words).toBe('Do that again');expect(item.history.map(line=>line.words)).toEqual(['PRIOR AGENT REPLY']);});
 });
+it('refuses history that expires while registering its acceptance deadline',async()=>{
+ const f=await fixture(),deadline=f.clock.now()+1000;
+ f.root.writes.run(()=>f.db.update(s.messages).set({keepUntil:new Date(deadline).toISOString()}).where(and(eq(s.messages.thread,f.thread.id),eq(s.messages.seq,1))).run());
+ let crossed=false;
+ const client=bodyConversationClient({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:new AbortController().signal,clock:{now:()=>f.clock.now(),at:(when,callback)=>{
+  if(when===deadline&&!crossed){crossed=true;f.clock.advance(1000);}
+  return f.clock.at(when,callback);
+ }},fetch:async(url,init)=>f.root.http.request(new Request(url,init))});clean.push(()=>client.close());
+ const accept=vi.fn();
+ await expect(client.takeAndAccept(accept)).rejects.toThrow();expect(crossed).toBe(true);expect(accept).not.toHaveBeenCalled();
+ await f.client.takeAndAccept(async item=>{expect(item.words).toBe('Do that again');expect(item.history.map(line=>line.words)).toEqual(['PRIOR AGENT REPLY']);});
+});
 it.each(['count','bytes'] as const)('bounds retained dialogue by %s and keeps its newest chronological suffix',async mode=>{
  const f=await bodyFixture(clean),client=sdk(f),count=mode==='count'?105:12,words=mode==='count'?'Small prior reply':'🙂'.repeat(25000);
  for(let i=0;i<count;i++)await f.root.services.comms!.send({thread:f.thread.id,sender:'art',kind:'reply',words});

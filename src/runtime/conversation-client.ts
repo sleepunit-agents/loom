@@ -82,10 +82,10 @@ export function bodyConversationClient(options:{url:string;token:string;job:stri
      const deadline=Math.min(questionCurrent?Math.min(answerDeadline,questionDeadline):answerDeadline,...history.map(line=>Date.parse(line.keepUntil)));
      const sinkAbort=new AbortController(),sinkSignal=AbortSignal.any([lifetime,sinkAbort.signal]);
      const cancelExpiry=privateWords&&Number.isFinite(deadline)?clock.at(deadline,()=>sinkAbort.abort()):undefined;
+     if(sinkSignal.aborted||privateWords&&clock.now()>=deadline){cancelExpiry?.();sinkAbort.abort();throw unavailable();}
      let rejectStopped!:()=>void;
      const stopped=new Promise<never>((_resolve,reject)=>{rejectStopped=()=>reject(unavailable());sinkSignal.addEventListener('abort',rejectStopped,{once:true});});
      try {
-      if(sinkSignal.aborted)throw unavailable();
       await Promise.race([accept(Object.freeze({...row,history:Object.freeze(history.map(line=>Object.freeze({...line}))),refs:Object.freeze([...row.refs]),words:privateWords?row.words:null,question:questionCurrent&&row.question?Object.freeze({...row.question}):null,questionKeepUntil:questionCurrent?row.questionKeepUntil:null}),sinkSignal),stopped]);
       if(!current()||privateWords&&clock.now()>=deadline){sinkAbort.abort();throw unavailable();}
      }catch{sinkAbort.abort();throw unavailable();}
