@@ -154,8 +154,8 @@ export async function loadIdentity(
         return tape ? '# Last 24h across bodies\n\n' +
           '_Episodes other sleeves of you left (short-term, 48h TTL), and the digests of their ' +
           'conversations. This is the tape, oldest first — what just happened, not what is ' +
-          'important. Write your own before you end: in a conversation (identity was given ' +
-          'conversation and run), a `conversation_digest`; otherwise an episode (category ' +
+          'important. Write your own before you end: in a conversation, write its digest through ' +
+          'your current body tools; otherwise an episode (category ' +
           '`episode`, metadata.where = your surface). The harness writes a fallback if you forget._\n\n' + tape : null;
       } catch (error) {
         console.error('[loom:identity] tape read failed:', error);
