@@ -1,3 +1,4 @@
+import {responseForAction} from './rebuild-response-capture.mjs';
 /** Fictitious source facts travel through the actual Changes sync/cache and UI.
  * There is no network call to GitHub and no merge of an external pull request. */
 import {join} from 'node:path';
@@ -44,10 +45,11 @@ export async function changeInline({page,tile,app,example,out}){
  const screenshot='action-changeInline.png';
  try{
   const words=`Review this fictitious pull request: ${example.change}.`;
-  await tile.getByRole('textbox',{name:'Message fern',exact:true}).fill(words);
-  const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/comms/send'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
-  const send=tile.getByRole('button',{name:'Send',exact:true}).and(page.locator(':enabled'));await send.waitFor({state:'visible'});await send.focus();await send.press('Enter');
-  const response=await pending,body=await response.json();if(!response.ok()||body.ok!==true)throw Error('Reference message refused');
+  const editor=tile.getByRole('textbox',{name:'Message fern',exact:true});await editor.fill(words);
+  const send=tile.getByRole('button',{name:'Send',exact:true}).and(page.locator(':enabled'));await send.waitFor({state:'visible'});await send.focus();
+  if(await editor.inputValue()!==words)throw Error('Reference draft changed before Send');
+  const response=await responseForAction(page,r=>new URL(r.url()).pathname==='/api/comms/send'&&r.method()==='POST',()=>send.press('Enter'));
+  const body=await response.json();if(!response.ok()||body.ok!==true)throw Error('Reference message refused');
   const title=app.services.changes.get(example.change).title;
   const card=tile.getByRole('article').filter({has:page.getByRole('heading',{name:title,exact:true})});
   await card.getByRole('heading',{name:title,exact:true}).waitFor({timeout:4000});
