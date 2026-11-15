@@ -29,10 +29,15 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
   try {
     const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});
     const a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});
-    const diagnostics:string[]=[];
+    const diagnostics:string[]=[];let phase='initial';
+    const diagnostic=(value:string)=>{if(diagnostics.length<100)diagnostics.push(value);};
     for(const [name,page] of [['desktop',a],['phone',b]] as const){
       page.on('pageerror',error=>diagnostics.push(`${name}: ${error.message}`));
       page.on('websocket',socket=>{
+        const queries=new Map<string,string>();
+        diagnostic(`${name}/${phase}: socket ${new URL(socket.url()).pathname==='/graphql'?'graphql':'other'}`);
+        socket.on('framesent',({payload})=>{try{const frame=JSON.parse(String(payload)),doc=frame.payload?.variables?.query;const query=typeof doc==='string'?/\bquery\s+(MemoryPeopleAccess|MemoryPeople|MemoryPerson)\b/.exec(doc)?.[1]:undefined;if(query){queries.set(frame.id,query);diagnostic(`${name}/${phase}: sent ${query}`);}}catch{}});
+        socket.on('framereceived',({payload})=>{try{const frame=JSON.parse(String(payload)),query=queries.get(frame.id);if(query){const delta=frame.payload?.data?.observe;diagnostic(`${name}/${phase}: ${query} ${frame.type} errors=${frame.payload?.errors?.length??0} revision=${delta?.revision??0} patches=${delta?.patches?.length??0}`);}}catch{}});
         socket.on('close',()=>diagnostics.push(`${name}: websocket closed`));
         socket.on('framereceived',({payload})=>{
           try{const frame=JSON.parse(String(payload));if(frame.ok===false)diagnostics.push(`${name}: ${frame.code}: ${frame.message}`);}catch{/* not JSON */}
@@ -63,7 +68,8 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
     }
     relationship.write({slug:'jonathan',summary:'Updated from outside the app'});
     await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
-    await b.reload();await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
+    expect(app.memory.people.read('art:jonathan',{kind:'member',id:'owner'})?.card.summary).toBe('Updated from outside the app');
+    phase='reload';await b.reload();await expect.poll(()=>b.getByText('Updated from outside the app',{exact:true}).count()).toBe(1);
     // Bounded fixture trace: distinguish a missed press from a rejected route.
     // No text, HTML, input values, sign-in URLs or history payloads are retained.
     await b.evaluate(()=>{
@@ -119,6 +125,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
             tile:!!tile,hidden:tile?.hasAttribute('hidden'),inert:!!tile?.closest('[inert]'),focused:tile?.hasAttribute('data-focused'),
             mode:split?.getAttribute('data-mode'),open:split?.hasAttribute('data-open'),
             rows:tile?.querySelectorAll('[data-split-row]').length??0,
+            states:['Opening People','Opening people','Connection lost','don’t have access','Something went wrong','No people yet'].filter(label=>tile?.textContent?.includes(label)),
             backButtons:tile?.querySelectorAll('.loom-split__back').length??0};
         }).catch(()=>({unavailable:true}));
         diagnostics.push(`${name} People view: ${JSON.stringify(state)}`);
