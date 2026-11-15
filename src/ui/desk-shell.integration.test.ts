@@ -111,6 +111,29 @@ it.runIf(enabled)('shared desk applies live appearance, renders owned cards and 
     expect(await b.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);await b.screenshot({path:join(shots,`new-agent-${look}-${width}.png`),animations:'disabled'});
    }
   }
+  // Shell behavior uses actual registered apps on the same shared program.
+  // Paths survive reload; minimizing and Home retain the existing tile state.
+  await b.setViewportSize({width:1440,height:900});await b.goto(app.url+'/p/agents-preview/agent/art');
+  await expect.poll(()=>b.locator('[data-tile=agents]').count()).toBe(1);
+  await b.getByRole('button',{name:'Open Tasks',exact:true}).click();
+  await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  const paths=JSON.parse(new URL(b.url()).searchParams.get('paths')??'{}');expect(paths.agents).toBe('/p/agents-preview/agent/art');
+  await b.reload();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  await expect.poll(()=>b.getByText('Keeps the shared desk readable.',{exact:true}).count()).toBe(1);
+  await b.locator('.next-preferences summary').click();
+  const oneWindow=b.getByRole('checkbox',{name:'One window at a time',exact:true});
+  await oneWindow.check();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
+  await b.getByRole('button',{name:'Open Agents',exact:true}).click();
+  await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/agents-preview/agent/art');
+  await oneWindow.uncheck();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  await b.locator('.next-preferences summary').click();
+  await b.getByRole('button',{name:'Minimize Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(1);
+  await b.getByRole('button',{name:'Open Tasks',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
+  const makeBig=b.getByRole('button',{name:'Make Tasks big',exact:true});await makeBig.focus();
+  await expect.poll(()=>makeBig.evaluate(button=>document.activeElement===button&&button.closest('[data-tile]')?.hasAttribute('data-focused')===true)).toBe(true);
+  await b.keyboard.press('Alt+Shift+Enter');await expect.poll(()=>b.locator('[data-tile]').first().getAttribute('data-tile')).toBe('tasks');
+  await b.keyboard.press('Alt+h');await expect.poll(()=>b.locator('[data-tile]').count()).toBe(0);
+  await b.getByRole('button',{name:'Home',exact:true}).click();await expect.poll(()=>b.locator('[data-tile]').count()).toBe(2);
   // Changing ownership must remove cards even though an owner's directory and
   // status rows remain visible. This is an actual same-root write + socket read.
   await b.goto(app.url);app.writes.run(()=>db.delete(memberAgents).run());
