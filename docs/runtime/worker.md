@@ -269,3 +269,33 @@ Other venues need their own receiving/output adapter and remain unfinished.
 The in-child bodyProgram.startup extension point precedes mail/model input;
 startup Secret alias retrieval is a separate integration. Codex, additional
 Comms tools and multi-turn question/wait handling remain unfinished.
+
+## Outside tiers and tool denials
+
+`POST /api/runtime/agentBodyPolicySet` uses the ordinary `{id,input}` envelope:
+
+```json
+{"agent":"art","people":[{"platform":"discord","workspace":"server-id","user":"user-id","tier":2}],"deniedTools":[{"pattern":"Bash","guestsOnly":true},{"pattern":"Write","guestsOnly":false}]}
+```
+
+Current agent owners, including co-owners, replace these two lists atomically
+with their receipt. Current ownership is rechecked on cached replay; runner,
+agent and service principals cannot edit them, and a household owner role alone
+is insufficient. Each list has at most 128 distinct entries. Outside-person keys
+include platform, workspace and user, with tiers 1, 2 or 3. These keys configure
+how the agent treats outside people; they never establish household identity.
+Workers derive each job's senders from its actual stored bridge receipts rather
+than trusting message words. A claim receives only its current senders' tiers.
+
+Tool patterns have 1–512 characters, cannot begin an option dash or contain NUL or
+line breaks, and can apply to all work or only guests. The same pattern may have
+both rules. The native receiving adapter applies the current denial rules; a
+claimed assignment keeps its snapshot across later settings edits. Failed writes
+preserve both lists, and replay never reinstates an earlier configuration.
+Configuration neither runs a model/provider nor changes the household policy.
+
+Outside workspace and user identifiers are preserved exactly, without trimming.
+Workspace/user identifiers must be nonblank and control-free. Tool patterns keep
+literal spaces; leading/trailing control characters and whitespace padding do not
+bypass their raw character or length checks. Option dashes after leading whitespace
+are rejected too.
