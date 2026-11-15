@@ -1,3 +1,4 @@
+import { sha256 } from '@noble/hashes/sha2.js';
 import { useMemo } from 'react';
 import type { TaskCommand } from '../pieces/tasks/shared-form';
 
@@ -12,7 +13,7 @@ export function taskCommandSubmitter(request: typeof fetch = fetch, makeId = () 
   removeItem: key => sessionStorage.removeItem(key),
 }) {
   return async (input: TaskCommand): Promise<void> => {
-    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(input)));
+    const digest = sha256(new TextEncoder().encode(JSON.stringify(input)));
     const key = 'loom:pending-task:' + Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
     let id: string;
     try {
