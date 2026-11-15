@@ -23,7 +23,8 @@ export function whatOf(e: { place?: string; title: string; line?: string; tasks?
   return 'conversation';
 }
 
-export const isoDay = (ms: number, tz: string) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(ms));
+const dayFormatter = (tz:string) => new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+export const isoDay = (ms: number, tz: string) => dayFormatter(tz).format(new Date(ms));
 export const hourOf = (ms: number, tz: string) => Number(new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: 'numeric', hourCycle: 'h23' }).format(new Date(ms))) % 24;
 /** The day `n` days before YYYY-MM-DD (calendar arithmetic, zone-free). */
 export function dayBefore(day: string, n = 1): string {
@@ -58,8 +59,9 @@ export function refsIn(text: string, github?: string): { tasks: string[]; prs: A
 export function splitTitle(t:string):{title:string;line?:string}{const m=/^(.{6,90}?):\s+(.{4,})$/.exec(t);return m&&!/^t-\d+$/.test(m[1])?{title:m[1],line:m[2]}:{title:t};}
 /** Find the first instant of a local day, including half-hour zones and DST. */
 export function startOf(day:string,tz:string):number {
+ const format=dayFormatter(tz);
  let lo=Date.parse(`${day}T00:00:00Z`)-36*3600000,hi=lo+72*3600000;
- while(hi-lo>1){const mid=Math.floor((lo+hi)/2);if(isoDay(mid,tz)<day)lo=mid;else hi=mid;}
+ while(hi-lo>1){const mid=Math.floor((lo+hi)/2);if(format.format(new Date(mid))<day)lo=mid;else hi=mid;}
  return hi;
 }
 export function windowDays(to:string,today:string):string[]{return Array.from({length:3},(_,i)=>dayBefore(to,i)).filter(d=>d>=dayBefore(today,MAX_BACK));}

@@ -1,3 +1,6 @@
+import {Empty} from '../../kit';
+import {ConversationActivity} from './conversation';
+import CommsCompanion from '../attention/comms-companion';
 import { useReadingVisible } from '../../data/visibility';
 import { useDeadline } from './use-deadline';
 import { useEffect, useMemo, useState } from 'react';
@@ -10,7 +13,7 @@ import { CommsView } from '../comms-view';
 import type { CommsActions } from '../comms-view/model';
 import { commsSelection, commsThreadPath, retainedCommsMessage } from './shared-query';
 const base = '/p/comms-preview';
-export default function CommsApp({ path: shellPath, go, visible = true }: { path?: string; go?(path: string): void; visible?: boolean } = {}) {
+function SharedCommsApp({ path: shellPath, go, visible = true }: { path?: string; go?(path: string): void; visible?: boolean } = {}) {
   const readingVisible = useReadingVisible(visible);
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
   const [archived, setArchived] = useState(false), [search, setSearch] = useState(''), [offset, setOffset] = useState(0);
@@ -44,7 +47,21 @@ export default function CommsApp({ path: shellPath, go, visible = true }: { path
     navigation={{ archived, search, offset, hasNext: (data?.threads.length ?? 0) > 50,
       folder(value) { setArchived(value); setOffset(0); }, query(value) { setSearch(value); setOffset(0); },
       previous() { setOffset(value => Math.max(0,value-50)); }, next() { setOffset(value => value+50); } }}
-    cards={{ question: id => <InlineQuestion key={id} id={id} go={navigate} readVisible={readingVisible} writable={data?.thread?.member === data?.home?.member} />, work: (refs, conversation) => <div key={conversation}><SharedWork refs={refs} conversation={conversation} go={navigate} />{data?.thread?.member === data?.home?.member && <ConversationQuestions conversation={conversation} go={navigate} readVisible={readingVisible} />}</div> }}
+    cards={{ screen: live&&data.thread?<CommsCompanion agent={data.thread.agent} working={data.thread.working} visible={readingVisible} go={navigate}/>:undefined, question: id => <InlineQuestion key={id} id={id} go={navigate} readVisible={readingVisible} writable={data?.thread?.member === data?.home?.member} />, work: (refs, conversation) => <div key={conversation}><SharedWork refs={refs} conversation={conversation} go={navigate} />{data?.thread?.member === data?.home?.member && <ConversationQuestions conversation={conversation} go={navigate} readVisible={readingVisible} />}</div> }}
     messageNavigation={{ earlier: () => setBefore(messages[0]?.seq), latest: () => setBefore(undefined), hasEarlier: (data?.messages.length ?? 0) > 50, before }} />;
 }
 export { CommsView } from '../comms-view';
+
+/** Route Memory links to wordless history before mounting the thread view. */
+export default function CommsApp(props:{path?:string;go?:(path:string)=>void;visible?:boolean}={}){
+ const [localPath,setLocalPath]=useState(()=>typeof location==='undefined'?'/p/comms-preview':location.pathname);
+ useEffect(()=>{if(props.go)return;const pop=()=>setLocalPath(location.pathname);window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);},[props.go]);
+ const path=props.path??localPath;
+ const visit=(next:string)=>{if(props.go)props.go(next);else{history.pushState(null,'',next);setLocalPath(next);}};
+ const prefix='/p/comms-preview/conversation/';
+ if(path.startsWith(prefix)){
+  let conversation:string;try{conversation=decodeURIComponent(path.slice(prefix.length));}catch{return <Empty title="Conversation unavailable"/>;}
+  return <ConversationActivity key={conversation} conversation={conversation}/>;
+ }
+ return <SharedCommsApp {...props} path={path} go={visit}/>;
+}

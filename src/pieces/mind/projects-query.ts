@@ -1,3 +1,4 @@
+import {keepReadUntil} from '../../core/data/read-lease.js';
 /** Typed fields over the installed Projects reader; no second store or endpoint. */
 import { GraphQLBoolean, GraphQLError, GraphQLFloat, GraphQLInt, GraphQLList, GraphQLNonNull, GraphQLObjectType, GraphQLString, type GraphQLFieldConfigMap } from 'graphql/index.js';
 import type { Viewer } from '../../core/index.js';
@@ -44,6 +45,9 @@ const project = new GraphQLObjectType({ name: 'MemoryProject', fields: {
  sections: { type: list(section) }, waiting: { type: list(item) }, unknown: { type: GraphQLBoolean }, lately: { type: list(item) },
  people: strings, spark: { type: new GraphQLList(new GraphQLNonNull(GraphQLInt)) }, changes: { type: changes }, fields: { type: list(field) },
 } });
+// A quiet index omits hub roles. Distinct projection identity prevents a
+// normalized list refresh from overwriting the selected hub's richer fields.
+const projectDetail = new GraphQLObjectType({...project.toConfig(),name:'MemoryProjectDetail'});
 const memory = new GraphQLObjectType({ name: 'MemoryProjectMemory', fields: {
  id: requiredText, agent: requiredText, ref: requiredText, title: requiredText, content: requiredText,
  category: requiredText, created: requiredText, updated: requiredText, expires: { type: GraphQLFloat },
@@ -55,14 +59,17 @@ export function projectsQueryFields(source: Mind|ProjectQueryReader, deadlines?:
   if (!context?.viewer) return absent;
   try {
    if(verb!=='projectsList'&&(typeof input.id!=='string'||input.id.length<3||input.id.length>(verb==='projectMemoryRead'?300:200)))return absent;
+   const readAt=now();
    const result = 'call' in source?source.call(context.viewer, verb, input):{ok:true as const,value:verb==='projectsList'?source.list(context.viewer):verb==='projectRead'?source.read(input.id as string,context.viewer):source.memoryRead(input.id as string,context.viewer)};
    if (result.ok) {
     if(result.value===undefined||result.value===null)return absent;
-    if(deadlines){
+    {
      const key=JSON.stringify([context.viewer.kind,context.viewer.id,verb,input]);
      const rows=verb==='projectsList'?result.value as ProjectRecord[]:[result.value as ProjectRecord|ProjectMemory];
-     const times=rows.map(row=>verb==='projectMemoryRead'?(row as ProjectMemory).expires:projectDeadline(row as ProjectRecord,now())).filter((at):at is number=>at!==undefined);
-     deadlines.set(key,times.length?Math.min(...times):undefined);
+     const times=rows.map(row=>verb==='projectMemoryRead'?(row as ProjectMemory).expires:projectDeadline(row as ProjectRecord,readAt)).filter((at):at is number=>at!==undefined);
+     const until=times.length?Math.min(...times):undefined;
+     if(until!==undefined)keepReadUntil(context,until);
+     deadlines?.set(key,until);
     }
     return result.value;
    }
@@ -74,7 +81,7 @@ export function projectsQueryFields(source: Mind|ProjectQueryReader, deadlines?:
  return {
   memoryProjectsAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?(capabilities??('access' in source?source.access:undefined))?.(context.viewer)??null:null},
   memoryProjects: { type: new GraphQLList(new GraphQLNonNull(project)), resolve: (_source, _args, context) => read(context, 'projectsList', {}, []) },
-  memoryProject: { type: project, args: { id }, resolve: (_source, args, context) => read(context, 'projectRead', { id: args.id }, null) },
+  memoryProject: { type: projectDetail, args: { id }, resolve: (_source, args, context) => read(context, 'projectRead', { id: args.id }, null) },
   memoryProjectMemory: { type: memory, args: { id }, resolve: (_source, args, context) => read(context, 'projectMemoryRead', { id: args.id }, null) },
  };
 }

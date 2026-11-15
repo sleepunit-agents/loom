@@ -457,4 +457,3 @@ describe('createLoomServer — person cards over MCP', () => {
     }
   });
 });
-

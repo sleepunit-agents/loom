@@ -54,7 +54,7 @@ export class BridgeSettings {
      const row=this.db.select().from(bridgeSends).where(eq(bridgeSends.id,input.id)).get();
      if(!row)throw Error('Unknown send');
      const state=input.decision==='release'?'pending':'dismissed';
-     
+
      if(row.state!=='held'&&(input.decision!=='dismiss'||row.state!=='uncertain'))throw Error('Reply is not awaiting this review');
      if(!this.db.update(bridgeSends).set({state}).where(and(eq(bridgeSends.id,input.id),eq(bridgeSends.state,row.state))).run().changes)throw Error('Reply state changed');
     }

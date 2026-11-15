@@ -10,7 +10,7 @@ import { fixture } from '../fixture.js';
 import { PeopleStore } from '../backends/people.js';
 const root = resolve(import.meta.dirname, '../../dist/web');
 const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
-it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live across windows and fit both looks at three widths', async () => {
+it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live across windows and fit three widths', async () => {
   const home = mkdtempSync(join(tmpdir(), 'loom-setup-browser-')); fixture(home);
   // Membership fixtures do not create the People directory required by setMember.
   mkdirSync(join(home, 'commons'), { recursive: true });
@@ -107,14 +107,13 @@ it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live 
     await memberLink.getByRole('button', { name: 'Hide sign-in link', exact: true }).click();
     expect(await memberLink.locator('[data-signin-link]').count()).toBe(0);
     const shots = resolve('artifacts/household-setup'); mkdirSync(shots, { recursive: true });
-    for (const look of ['neon', 'daylight']) for (const width of [390, 1280, 1920]) {
-      expect(loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'household.setPreferences', { look }, `look-${look}-${width}`).ok).toBe(true);
+    // Shared desk evidence owns appearance; this fixture owns Setup behavior.
+    for (const width of [390, 1280, 1920]) {
       await b.setViewportSize({ width, height: 1000 }); await b.reload();
       await expect.poll(() => b.getByRole('form', { name: 'Save accounts for art', exact: true }).getByRole('textbox').inputValue()).toBe('art-bot');
-      await expect.poll(() => b.locator('html').getAttribute('data-look')).toBe(look);
       expect(await b.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       await b.getByRole('region', { name: 'Sign-in link for jonathan', exact: true }).scrollIntoViewIfNeeded();
-      await b.screenshot({ path: join(shots, `setup-${look}-${width}.png`), fullPage: true, animations: 'disabled' });
+      await b.screenshot({ path: join(shots, `setup-${width}.png`), fullPage: true, animations: 'disabled' });
     }
     await revokeToken.getByRole('button').click();
     expect(await revokeToken.evaluate(form => !(form as HTMLFormElement).checkValidity())).toBe(true);

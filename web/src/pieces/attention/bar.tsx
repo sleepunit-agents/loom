@@ -1,8 +1,10 @@
+import { useDeskWaitingCounts } from './waiting';
+import { useDeskAgentDirectory } from './agent-directory';
+import { useDeskAgentStatuses } from './agent-status';
+import { useDeskRoster } from './roster';
 import type { ReactNode } from 'react';
-import { useRecords } from '../../data';
 import { Ticker, type TickPart } from '../../ticker';
-import { agentPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus, type OwnedAgent } from './home-model';
-import type { Ask } from './model';
+import { agentPath, latestStatus, namedAgents, orderedAgents } from './home-model';
 import './bar.css';
 import { BarClock, BarStatus } from './bar-system';
 import { useDeskStats } from './bar-stats';
@@ -11,12 +13,12 @@ export interface BarProps { title: string; go(path: string): void; actions: Reac
 /** The bar reads the same policy-filtered facts as Home. No legacy shell or saved copy. */
 export default function AttentionBar({ title, go, actions }: BarProps) {
   const stats = useDeskStats();
-  const roster = useRecords<OwnedAgent>('attention.ownedAgent');
-  const people = useRecords<AgentPerson>('person');
-  const statuses = useRecords<AgentStatus>('attention.agent');
-  const asks = useRecords<Ask>('attention.ask');
+  const roster = useDeskRoster();
+  const people = useDeskAgentDirectory();
+  const statuses = useDeskAgentStatuses();
+  const waiting = useDeskWaitingCounts();
   const agents = orderedAgents(namedAgents(roster.status === 'live' ? roster.records : [], people.status === 'live' ? people.records : []));
-  const live = [roster, statuses, asks].every(s => s.status === 'live');
+  const live = [roster, statuses, waiting].every(s => s.status === 'live');
   const parts: TickPart[] = roster.status !== 'live' ? [{text:'Your agents are unavailable'}] : [
     {text:`${agents.length} agent${agents.length===1?'':'s'}`,href:'/'},
     ...agents.map(agent => {
@@ -25,7 +27,7 @@ export default function AttentionBar({ title, go, actions }: BarProps) {
     }),
   ];
   parts.push(...stats.parts);
-  const count = asks.status === 'live' ? openAsks(asks.records).length : undefined;
+  const count = waiting.status === 'live' ? waiting.total : undefined;
   return <header className="next-status-bar">
     <div className="next-status-line loom-pbar">
       <div className="next-status-start"><BarClock /><span className="next-system-separator" aria-hidden="true">·</span><div className="loom-pbar__name"><h1>{title}</h1></div></div>

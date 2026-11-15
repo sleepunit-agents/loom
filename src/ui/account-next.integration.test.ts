@@ -12,7 +12,7 @@ import { deviceRef } from '../core/signin/notifications.js';
 import { signin } from '../core/signin/index.js';
 const root=resolve(import.meta.dirname,'../../dist/web');
 const chrome=[process.env.LOOM_TEST_CHROME,'/usr/bin/google-chrome','/usr/bin/chromium',chromium.executablePath()].find(p=>p&&existsSync(p));
-it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account registers/removes a passkey, signs out a browser and fits both looks across windows',async()=>{
+it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account registers/removes a passkey, signs out a browser and fits three widths across windows',async()=>{
   const home=mkdtempSync(join(tmpdir(),'account-browser-'));fixture(home);
   const clock=new FakeClock(Date.parse('2026-11-12T12:00:00Z'));
   const send=vi.fn<PushTransport>(async()=>{});
@@ -101,12 +101,12 @@ it.runIf(process.env.CI&&chrome&&existsSync(join(root,'next.html')))('Account re
     const payload=JSON.parse(send.mock.calls[0][1]);expect(payload).toEqual({title:'loom',body:'',tag:'loom-test',url:'/p/account-preview'});expect(send.mock.calls[0][0]).toEqual({endpoint:extraEndpoint,keys:{p256dh:'p'.repeat(87),auth:'a'.repeat(22)}});
     await extra.getByRole('checkbox').check();await extra.getByRole('button',{name:'Remove notification device',exact:true}).click();await expect.poll(()=>extra.count()).toBe(0);
     const shots=resolve('artifacts/household-account');mkdirSync(shots,{recursive:true});
-    for(const look of ['neon','daylight'])for(const width of [390,1280,1920]){
-      expect(loom.operations.call('direct',{kind:'member',id:'jonathan'},'household.setPreferences',{look},`account-look-${look}-${width}`).ok).toBe(true);
-      await b.setViewportSize({width,height:1000});await b.reload();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(1);await expect.poll(()=>b.locator('html').getAttribute('data-look')).toBe(look);
+    // Shared desk evidence owns appearance; this fixture owns Account behavior.
+    for(const width of [390,1280,1920]){
+      await b.setViewportSize({width,height:1000});await b.reload();await expect.poll(()=>b.getByRole('form',{name:'Remove passkey Browser passkey',exact:true}).count()).toBe(1);
       await expect.poll(()=>b.getByRole('region',{name:'Test notification attempts',exact:true}).textContent()).toContain('Accepted by the push service. Device delivery is not confirmed.');
       await expect.poll(()=>remote.getByRole('button',{name:'Send test notification',exact:true}).isEnabled()).toBe(true);
-      await b.getByRole('region',{name:'Notifications',exact:true}).scrollIntoViewIfNeeded();expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${look}-${width}.png`),fullPage:false,animations:'disabled'});
+      await b.getByRole('region',{name:'Notifications',exact:true}).scrollIntoViewIfNeeded();expect(await b.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);await b.screenshot({path:join(shots,`account-${width}.png`),fullPage:false,animations:'disabled'});
     }
     await remote.getByRole('button',{name:'Remove notification device',exact:true}).click();expect(s.sessions.read().push?.subs?.['https://fcm.googleapis.com/account-browser-proof']).toBeDefined();
     await remote.getByRole('checkbox').check();await remote.getByRole('button',{name:'Remove notification device',exact:true}).click();await expect.poll(()=>a.getByRole('form',{name:`Remove notification device ${device.ref}`,exact:true}).count()).toBe(0);
