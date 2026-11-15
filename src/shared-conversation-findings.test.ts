@@ -4,14 +4,15 @@ import {bodyFixture,bodyCredentials as raw,credentialHash as hash} from '../test
 import {bodyConversationClient} from './runtime/conversation-client.js';
 import * as s from './core/data/schema.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
-const finding={turnSeq:1,measure:'useful',score:4,text:'Useful fictitious reply'};
+const finding={turnSeq:1,measure:'DISTINCTIVE_REVIEW_MEASURE',score:4,text:'Useful fictitious reply'};
+function sdk(f:Awaited<ReturnType<typeof bodyFixture>>){const client=bodyConversationClient({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(url,init))});clean.push(()=>client.close());return client;}
 async function fixture(){const f=await bodyFixture(clean);expect((await f.call('turn',{kind:'reply',model:'actual',outcome:'answered'},'reply')).status).toBe(200);return f;}
 it('reports a score on the actual agent turn through the body SDK, deriving conversation/day and upserting only its natural key',async()=>{
- const f=await fixture(),client=bodyConversationClient({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(url,init))});clean.push(()=>client.close());
+ const f=await fixture(),client=sdk(f);
  expect(await client.finding(finding,'score-1')).toEqual({saved:true,day:'2026-11-14'});expect(await client.finding({...finding,score:5,text:'Revised fictitious review'},'score-2')).toEqual({saved:true,day:'2026-11-14'});
  expect(f.db.select().from(s.findings).all()).toEqual([{...finding,score:5,text:'Revised fictitious review',conversation:f.thread.conversation,day:'2026-11-14'}]);expect(f.db.select().from(s.turns).all()).toHaveLength(1);
  const read=await f.root.http.request('/graphql',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({query:'{findings{conversation day turnSeq measure score text}}'})});expect(await read.json()).toEqual({data:{findings:[{...finding,score:5,text:'Revised fictitious review',conversation:f.thread.conversation,day:'2026-11-14'}]}});
- const receipts=JSON.stringify(f.db.select().from(s.operationResults).all());for(const text of [finding.text,'Revised fictitious review'])expect(receipts).not.toContain(text);
+ const receipts=JSON.stringify(f.db.select().from(s.operationResults).all());for(const text of [finding.text,'Revised fictitious review',finding.measure])expect(receipts).not.toContain(text);
 });
 it('uses the actual review day and preserves an uncertain operation receipt across midnight',async()=>{
  const f=await bodyFixture(clean,{initialTime:Date.parse('2026-11-14T23:59:30Z')});await f.call('turn',{kind:'note'},'note');
@@ -41,6 +42,6 @@ it('lets the newly enrolled current body review its own conversation agent turn 
  expect((await runtime('started',{job:'reviewer-job',build:'fixture-reviewer'})).status).toBe(200);expect((await f.call('finding',finding,'earlier-run',token)).status).toBe(200);expect(f.db.select().from(s.turns).get()?.run).toBe('job');expect(f.db.select().from(s.conversations).get()?.job).toBe('reviewer-job');expect(f.db.select().from(s.findings).get()).toMatchObject({conversation:f.thread.conversation,turnSeq:1,score:4});expect((await f.call('finding',finding,'old-body')).status).toBe(401);
 });
 it.each(['measure','text'] as const)('counts Unicode characters in the complete 200-character %s boundary through the SDK',async field=>{
- const f=await fixture(),client=bodyConversationClient({url:'https://loom.invalid',token:raw.body,job:'job',conversation:f.thread.conversation,signal:new AbortController().signal,clock:f.clock,fetch:async(url,init)=>f.root.http.request(new Request(url,init))});clean.push(()=>client.close());
+ const f=await fixture(),client=sdk(f);
  expect(await client.finding({...finding,[field]:'🙂'.repeat(200)},'unicode-200')).toEqual({saved:true,day:'2026-11-14'});expect(f.db.select().from(s.findings).get()?.[field]).toBe('🙂'.repeat(200));await expect(client.finding({...finding,[field]:'🙂'.repeat(201)},'unicode-201')).rejects.toThrow();expect(f.db.select().from(s.findings).all()).toHaveLength(1);
 });
