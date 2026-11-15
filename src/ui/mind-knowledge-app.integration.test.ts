@@ -1,5 +1,5 @@
 /** One two-window proof; CI alone runs Chrome and retains six look/width images. */
-import {memorySharedFixture} from './memory-shared-fixture.js';
+import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
 import { expect, it } from 'vitest';
 import { existsSync, mkdtempSync, mkdirSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -40,10 +40,7 @@ it.runIf(chrome&&existsSync(join(root,'next.html')))('Knowledge reads and checks
     // Exercise the real signed-in window resolver: a synthetic member cannot
     // subscribe to browser-only shell records.
     const signIn=async()=>{
-      await a.goto(app.url+await fixture.signInPath());
-      const signedIn=a.waitForResponse(response=>response.request().method()==='POST');
-      await a.getByRole('button',{name:'Sign in',exact:true}).click();
-      expect((await signedIn).status()).toBe(303);
+      await signInMemory(a,fixture);
       await Promise.all([a.goto(`${app.url}/p/knowledge-preview`),b.goto(`${app.url}/p/knowledge-preview`,{waitUntil:'domcontentloaded'})]);
     };
     await signIn();

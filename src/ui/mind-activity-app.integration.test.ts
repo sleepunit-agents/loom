@@ -1,6 +1,6 @@
 /** One opt-in hosted browser test, two windows, six screenshots. */
 import {touched} from '../core/touched/index.js';
-import {memorySharedFixture} from './memory-shared-fixture.js';
+import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
 import {expect,it} from 'vitest';
 import BetterSqlite3 from 'better-sqlite3';
 import {existsSync,mkdtempSync,mkdirSync,rmSync} from 'node:fs';
@@ -33,8 +33,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Activity filters,
  try{
   const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}}),a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});
   const errors:string[]=[];a.on('pageerror',e=>errors.push(e.message));b.on('pageerror',e=>errors.push(e.message));
-  await a.goto(app.url+await fixture.signInPath());
-  const signed=a.waitForResponse(r=>r.request().method()==='POST');await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signed).status()).toBe(303);
+  await signInMemory(a,fixture);
   await Promise.all([a.goto(`${app.url}/p/activity-preview`),b.goto(`${app.url}/p/activity-preview`)]);
   const row=(p:typeof a,title:string)=>p.locator('[data-split-row]').filter({has:p.getByText(title,{exact:true})});
   await expect.poll(()=>row(b,'Build the household desk').count()).toBe(1);expect(await row(a,'Other member private thread').count()).toBe(1);

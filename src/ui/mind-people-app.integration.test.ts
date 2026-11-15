@@ -1,5 +1,5 @@
 /** One CI-only browser test, two windows and six responsive look screenshots. */
-import {memorySharedFixture} from './memory-shared-fixture.js';
+import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
 import { expect,it } from 'vitest';
 import { existsSync,mkdtempSync,mkdirSync,rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -40,8 +40,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('People filters, a
       });
     }
     try {
-    await a.goto(app.url+await fixture.signInPath());const signedIn=a.waitForResponse(r=>r.request().method()==='POST');
-    await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signedIn).status()).toBe(303);
+    await signInMemory(a,fixture);
     await Promise.all([a.goto(`${app.url}/p/people-preview`),b.goto(`${app.url}/p/people-preview`)]);
     const row=(p:typeof a,name:string)=>p.locator('[data-split-row]').filter({hasText:name});
     await expect.poll(()=>row(b,'Jonathan Barket').count()).toBe(1);

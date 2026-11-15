@@ -1,4 +1,5 @@
 /** Fictional shared program for hosted Memory browser evidence. */
+import type {Page} from 'playwright-core';
 import Database,{type Database as NativeDatabase} from 'better-sqlite3';
 import {createHash} from 'node:crypto';
 import {join} from 'node:path';
@@ -21,4 +22,17 @@ export async function memorySharedFixture(options:{home:string;clock:Clock;webRo
   let closing:Promise<void>|undefined;
   return {app,db,client,sources,async signInPath(){const response=await app.http.request(app.url+'/api/signin/link',{method:'POST',headers:{authorization:'Bearer '+bearer,'content-type':'application/json'},body:JSON.stringify({input:{}})});if(response.status!==200)throw Error('Fictional sign-in link failed');return (await response.json()).value.path as string;},close(){return closing??=(async()=>{try{await app.close();}finally{client.close();}})();}};
  }catch(error){client.close();throw error;}
+}
+
+/** Exercise the real browser form. A refusal reports only public transport
+ * metadata, never a link, cookie, body or page contents. */
+export async function signInMemory(page:Page,fixture:MemoryFixture){
+ await page.goto(fixture.app.url+await fixture.signInPath());
+ const pending=page.waitForResponse(response=>response.request().method()==='POST'&&new URL(response.url()).pathname.startsWith('/login/'));
+ await page.getByRole('button',{name:'Sign in',exact:true}).click();
+ const response=await pending;
+ if(response.status()!==303){
+  const headers=await response.request().allHeaders();
+  throw new Error('Memory browser sign-in refused '+JSON.stringify({status:response.status(),origin:headers.origin??null,fetchSite:headers['sec-fetch-site']??null}));
+ }
 }

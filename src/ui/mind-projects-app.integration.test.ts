@@ -1,5 +1,5 @@
 /** One hosted CI test, two windows, six screenshots; never launches on loom's machine. */
-import {memorySharedFixture} from './memory-shared-fixture.js';
+import {memorySharedFixture,signInMemory} from './memory-shared-fixture.js';
 import {expect,it} from 'vitest';
 import {existsSync,mkdtempSync,mkdirSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -32,8 +32,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Projects tasks-fi
  const browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
  try{
   const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}}),a=await context.newPage(),b=await context.newPage();await b.setViewportSize({width:390,height:900});
-  await a.goto(app.url+await fixture.signInPath());
-  const signed=a.waitForResponse(r=>r.request().method()==='POST');await a.getByRole('button',{name:'Sign in',exact:true}).click();expect((await signed).status()).toBe(303);
+  await signInMemory(a,fixture);
   await Promise.all([a.goto(`${app.url}/p/projects-preview`),b.goto(`${app.url}/p/projects-preview`)]);
   const row=(p:typeof a,name:string)=>p.locator('[data-split-row]').filter({has:p.getByText(name,{exact:true})});
   // Each window establishes its own live list; the phone arriving does not ready the desktop.
