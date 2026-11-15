@@ -73,3 +73,22 @@ it('supplies redirect refusal and rejects every unsafe URL or missing/empty toke
  for(const LOOM_TOKEN_FILE of [undefined,join(f.home,'missing'),join(f.home,'empty')]){if(LOOM_TOKEN_FILE?.endsWith('empty'))writeFileSync(LOOM_TOKEN_FILE,'');expect((await f.invoke('token',['list','{}'],'owner',f.transport,{...settings,LOOM_TOKEN_FILE})).calls).toBe(0);}
  expect((await f.invoke('token',['list','{"unexpected":true}'],'owner',f.transport,{})).code).toBe(2);
 });
+
+it('preserves raw JSON numerals verbatim rather than changing overflow into null',async()=>{
+ const f=fixture(),text='{"kind":"owner","member":"sam","label":"Raw","overflow":1e999}';
+ const mint=await f.invoke('token',['create',text]);expect(mint.bodies).toEqual([text]);expect(mint.code).toBe(1);
+ const revokeText='{"ref":"'+ 'e'.repeat(64) +'","overflow":1e999}',revoke=await f.invoke('sessions',['revoke',revokeText]);expect(revoke.bodies[0]).toContain('"input":'+revokeText);expect(revoke.bodies[0]).not.toContain('null');
+});
+it('refuses extra private fields on otherwise valid metadata and malformed successful issuance without retries',async()=>{
+ const f=fixture(),valid=JSON.parse((await f.invoke('token',['list'])).out)[0];
+ const bad=await f.invoke('token',['list'],'owner',async()=>Response.json({data:{householdSetup:{tokens:[{...valid,privateKey:'PRIVATE_EXTRA'}]}}}));expect(bad).toMatchObject({code:1,out:''});expect(bad.err).not.toContain('PRIVATE_EXTRA');
+ const malformed=await f.invoke('token',['create','{}'],'owner',async()=>Response.json({ok:true,value:{token:'PRIVATE_MALFORMED'}}));expect(malformed).toMatchObject({code:1,calls:1,out:''});expect(malformed.err).toContain('outcome unknown');expect(malformed.err).not.toContain('PRIVATE_MALFORMED');
+});
+it('refuses a redirect response and does not print its private body',async()=>{
+ const f=fixture(),result=await f.invoke('token',['list'],'owner',async()=>new Response('PRIVATE_REDIRECT',{status:302,headers:{location:'https://other.example/private'}}));expect(result).toMatchObject({code:1,calls:1,out:''});expect(result.err).not.toContain('PRIVATE_REDIRECT');
+});
+it('reports an ordinary 5xx arriving after the deadline as unavailable rather than a definite refusal',async()=>{
+ const f=fixture();let now=0,out='',err='',calls=0;
+ const code=await runAccessClient('sessions',['revoke',JSON.stringify({ref:'e'.repeat(64)})],{stdin:Readable.from([]),stdinIsTTY:false,env:{LOOM_URL:'http://loom',LOOM_TOKEN_FILE:join(f.home,'owner')},stdout:value=>out+=value,stderr:value=>err+=value},{now:()=>now,retry:async ms=>{now+=ms;},request:async()=>{calls++;now=5000;return new Response('PRIVATE LATE FAILURE',{status:503});}});
+ expect({code,calls,out}).toEqual({code:1,calls:1,out:''});expect(err).toContain('unavailable');expect(err).not.toContain('PRIVATE LATE FAILURE');
+});
