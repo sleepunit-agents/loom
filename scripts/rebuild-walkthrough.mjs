@@ -1,12 +1,13 @@
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {createServer} from 'node:http';
 import {WebSocketServer} from 'ws';
+import {secretValueAction} from './rebuild-secret-value-actions.mjs';
 import {taskActions} from './rebuild-task-actions.mjs';
 import {conversationActions} from './rebuild-conversation-actions.mjs';
 import {knowledgeActions} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
 import {chromium} from 'playwright-core';
-import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {mkdirSync,writeFileSync,readFileSync,mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {exampleHome} from '../dist/example-home.js';
@@ -43,6 +44,12 @@ export async function* walkthroughSteps(output) {
  const save=()=>writeFileSync(join(out,'walkthrough.json'),JSON.stringify(safeReport(report),null,2)+'\n');
  try {
   report.example=await exampleHome(home);
+  // Only this disposable acceptance home gets this adapter, never exampleHome
+  // or installed configuration. The ordinary startup loads its existing port.
+  const adapter=join(home,'walkthrough-adapter.mjs'),programPath=join(home,'program.json');
+  writeFileSync(adapter,"export {default} from "+JSON.stringify(new URL('./rebuild-secret-holder.mjs',import.meta.url).href)+";\n",{mode:0o600,flag:'wx'});
+  const program=JSON.parse(readFileSync(programPath,'utf8'));program.adapters=adapter;
+  writeFileSync(programPath,JSON.stringify(program),{mode:0o600});
   let link='';app=await startSharedHome({home,port:0,stdout:text=>{link=text.trim();},reportError:error=>report.errors.push(String(error))});
   browser=await chromium.launch({headless:true,...(process.env.LOOM_TEST_CHROME?{executablePath:process.env.LOOM_TEST_CHROME}:{})});
   const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:'block'});
@@ -96,6 +103,7 @@ export async function* walkthroughSteps(output) {
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
+    if(title==='Settings'){row.valueAction=await secretValueAction({page,tile,out,home});report.actions={...report.actions,secretValues:row.valueAction};}
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
     await page.screenshot({path:join(out,row.screenshot),fullPage:true});
    }catch(error){row.error=String(error);row.text=await page.locator('.next-tile[data-focused] .next-page').innerText().catch(()=>page.locator('body').innerText());await page.screenshot({path:join(out,row.screenshot),fullPage:true}).catch(()=>{});}
