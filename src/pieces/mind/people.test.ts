@@ -13,13 +13,14 @@ import { PeopleStore } from '../../backends/people.js';
 import { createPersonHalf } from '../../backends/people-creation.js';
 import { installMindPeople, type PersonRecord } from './people.js';
 import { installMindPeopleActions } from './people-actions.js';
+import {migrateMindReceipts} from './receipt-schema.js';
 const homes:string[]=[],closes:Array<()=>void|Promise<void>>=[];
 const dir=()=>{const h=mkdtempSync(join(tmpdir(),'mind-people-'));homes.push(h);return h;};
 afterEach(async()=>{for(const close of closes.splice(0).reverse())await close();for(const h of homes.splice(0))rmSync(h,{recursive:true,force:true});});
 const owner:Viewer={kind:'member',id:'owner'},partial:Viewer={kind:'member',id:'partial'};
 const sharing:Sharing={members:{owner:{owner:true,agents:['art','other']},partial:{owner:false,agents:['art']}},projects:{public:{members:['partial'],agents:[]}},services:{}};
 const clock=()=>new FakeClock(Date.parse('2026-11-13T12:00:00Z'));
-function source(path=join(dir(),'people.db')) {const store=new PeopleStore({dbPath:path,now:()=>Date.parse('2026-11-12T12:00:00Z')});closes.push(()=>store.close());return store;}
+function source(path=join(dir(),'people.db')) {const store=new PeopleStore({dbPath:path,now:()=>Date.parse('2026-11-12T12:00:00Z')});migrateMindReceipts(store.database);closes.push(()=>store.close());return store;}
 async function fixture(directory:string,art:string,other?:string,create=createPersonHalf) {
   const app=await startLoom({home:dir(),clock:clock(),authenticate:req=>({viewer:req.url?.includes('partial')?partial:owner,valid:()=>true}),install(app){
     const reader=installMindPeople(app.operations,app.live,{directory,projectHref:(agent,slug)=>`/p/projects-preview/project/${encodeURIComponent(`${agent}:${slug}`)}`,agents:[{agent:'art',memories:art},...(other?[{agent:'other',memories:other}]:[])],sharing:()=>sharing,

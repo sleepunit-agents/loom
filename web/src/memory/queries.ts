@@ -1,5 +1,5 @@
 /** Browser selections for the generated /graphql door. These documents and
- * decoders are also usable by observe(); this module owns no connection/cache. */
+ * decoders feed the canonical client; this module owns no connection/cache. */
 import type { KnowledgeOpen, KnowledgeRow } from '../../../src/pieces/mind/knowledge';
 import type { PersonRecord, PersonCard, CardValue } from '../../../src/pieces/mind/people-model';
 import type { ProjectRecord, ProjectMemory } from '../../../src/pieces/mind/projects-model';
@@ -87,27 +87,3 @@ export const memoryQueries = {
   activity: (to = 'recent') => selection<ActivityWindow | null>('memoryActivity', `query MemoryActivity($to:String!) { memoryActivity(to:$to) { id to days earlier entries { ${entryFields} } conversations episodes truncated expires } }`, {to}, nullable(portable<ActivityWindow>)),
   activityEntry: (id:string) => selection<ActivityOpen | null>('memoryActivityEntry', `query MemoryActivityEntry($id:String!) { memoryActivityEntry(id:$id) { ${activityOpen} } }`, {id}, nullable(portable<ActivityOpen>)),
 };
-
-export class MemoryReadError extends Error {
-  constructor(readonly code: 'denied' | 'unavailable') { super(code === 'denied' ? 'Memory access ended' : 'Memory could not load'); }
-}
-export type MemoryFetch = (url: string, init: RequestInit) => Promise<Response>;
-/** One read, no replay or retained words. A partial GraphQL result is an error,
- * never a successful empty list. Identity belongs to the existing browser door. */
-export function memoryClient(fetcher: MemoryFetch = fetch) {
-  return { async read<T>(selection: MemorySelection<T>, signal?: AbortSignal): Promise<T> {
-    try {
-      const response = await fetcher('/graphql', { method:'POST', credentials:'same-origin', cache:'no-store',
-        headers:{'content-type':'application/json'}, body:JSON.stringify({query:selection.query,variables:selection.variables}), signal });
-      if (response.status === 401 || response.status === 403) throw new MemoryReadError('denied');
-      if (!response.ok) throw new MemoryReadError('unavailable');
-      const body = await response.json();
-      if (signal?.aborted) throw signal.reason;
-      if (body.errors?.length || !body.data || typeof body.data !== 'object') throw new MemoryReadError('unavailable');
-      return selection.decode(body.data);
-    } catch (error) {
-      if (signal?.aborted) throw signal.reason;
-      throw error instanceof MemoryReadError ? error : new MemoryReadError('unavailable');
-    }
-  } };
-}

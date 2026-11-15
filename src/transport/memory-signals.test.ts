@@ -16,3 +16,10 @@ it('unregisters the metadata observer if initial deadline discovery fails',()=>{
  expect(()=>installMemorySignals(new FakeClock(),{observeDeadlines:()=>stop,nextDeadline(){throw Error('Fictional metadata failure');}},()=>{})).toThrow('Fictional metadata failure');
  expect(stop).toHaveBeenCalledTimes(1);
 });
+it('rearms after an already-published shared write without publishing it twice',()=>{
+ const clock=new FakeClock(0),changed=vi.fn();let at:number|undefined=1000;
+ const signals=installMemorySignals(clock,{nextDeadline:()=>at,observeDeadlines:()=>()=>{}},changed);
+ at=500;signals.rearm();expect(changed).not.toHaveBeenCalled();
+ clock.advance(499);expect(changed).not.toHaveBeenCalled();at=undefined;clock.advance(1);expect(changed).toHaveBeenCalledOnce();
+ signals.close();at=600;signals.rearm();clock.advance(1000);expect(changed).toHaveBeenCalledOnce();
+});

@@ -1,3 +1,5 @@
+import {Empty} from '../../kit';
+import {ConversationActivity} from './conversation';
 import CommsCompanion from '../attention/comms-companion';
 import { useReadingVisible } from '../../data/visibility';
 import { useDeadline } from './use-deadline';
@@ -11,7 +13,7 @@ import { CommsView } from '../comms-view';
 import type { CommsActions } from '../comms-view/model';
 import { commsSelection, commsThreadPath, retainedCommsMessage } from './shared-query';
 const base = '/p/comms-preview';
-export default function CommsApp({ path: shellPath, go, visible = true }: { path?: string; go?(path: string): void; visible?: boolean } = {}) {
+function SharedCommsApp({ path: shellPath, go, visible = true }: { path?: string; go?(path: string): void; visible?: boolean } = {}) {
   const readingVisible = useReadingVisible(visible);
   const [localPath, setLocalPath] = useState(() => typeof location === 'undefined' ? base : location.pathname);
   const [archived, setArchived] = useState(false), [search, setSearch] = useState(''), [offset, setOffset] = useState(0);
@@ -49,3 +51,17 @@ export default function CommsApp({ path: shellPath, go, visible = true }: { path
     messageNavigation={{ earlier: () => setBefore(messages[0]?.seq), latest: () => setBefore(undefined), hasEarlier: (data?.messages.length ?? 0) > 50, before }} />;
 }
 export { CommsView } from '../comms-view';
+
+/** Route Memory links to wordless history before mounting the thread view. */
+export default function CommsApp(props:{path?:string;go?:(path:string)=>void;visible?:boolean}={}){
+ const [localPath,setLocalPath]=useState(()=>typeof location==='undefined'?'/p/comms-preview':location.pathname);
+ useEffect(()=>{if(props.go)return;const pop=()=>setLocalPath(location.pathname);window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);},[props.go]);
+ const path=props.path??localPath;
+ const visit=(next:string)=>{if(props.go)props.go(next);else{history.pushState(null,'',next);setLocalPath(next);}};
+ const prefix='/p/comms-preview/conversation/';
+ if(path.startsWith(prefix)){
+  let conversation:string;try{conversation=decodeURIComponent(path.slice(prefix.length));}catch{return <Empty title="Conversation unavailable"/>;}
+  return <ConversationActivity key={conversation} conversation={conversation}/>;
+ }
+ return <SharedCommsApp {...props} path={path} go={visit}/>;
+}
