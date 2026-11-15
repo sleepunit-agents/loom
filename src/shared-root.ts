@@ -1,3 +1,4 @@
+import { registerSharedCommandCatalog } from './shared-command-catalog.js';
 import { registerAgentBodyPolicy } from './shared-agent-body-policy.js';
 
 import { registerAgentRunSettings } from './shared-agent-run-settings.js';
@@ -126,6 +127,7 @@ export function sharedRoot(options: {
     reportError: () => options.reportError(new Error('Shared operation notification failed')),
   });
   registerSharedPreferences(operations, db);
+  registerSharedCommandCatalog(operations,viewer=>!!bodyScope(viewer));
   registerAgentBodyPolicy(operations, db);
   const accountReports = registerSharedAccountReports(operations, db, now, credentials.runner);
   registerModelAccountAdmin(operations, db, roles);
