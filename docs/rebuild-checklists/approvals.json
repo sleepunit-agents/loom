@@ -17,7 +17,11 @@
     {
       "id": "approvals-003",
       "promise": "Lets a person allow or deny, with the exact change in front of them.",
-      "source": "docs/how-it-works/site/approvals.html"
+      "source": "docs/how-it-works/site/approvals.html",
+      "probe": {
+        "kind": "action",
+        "action": "approvalAnswers"
+      }
     },
     {
       "id": "approvals-004",
@@ -42,7 +46,11 @@
     {
       "id": "approvals-008",
       "promise": "An approval records the conversation it was asked in.",
-      "source": "docs/how-it-works/site/approvals.html#con-h"
+      "source": "docs/how-it-works/site/approvals.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "approvalOrigins"
+      }
     },
     {
       "id": "approvals-009",
