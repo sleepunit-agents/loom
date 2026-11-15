@@ -5,7 +5,6 @@ import { memoryQueries, type MemorySelection } from './queries';
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { createFoundation } from '../../../src/core/app.js';
 import { createDataSchema } from '../../../src/core/data/database.js';
 import { dataHttp } from '../../../src/core/data/http.js';
 import { agents, members, tasks, conversationPeople } from '../../../src/core/data/schema.js';
@@ -14,14 +13,13 @@ import { Conversations } from '../../../src/core/conversations/index.js';
 import { SqliteKnowledgeBackend } from '../../../src/backends/sqlite-knowledge.js';
 import { PeopleStore } from '../../../src/backends/people.js';
 import { ProjectsStore } from '../../../src/backends/projects.js';
-import { installMindProjects } from '../../../src/pieces/mind/projects.js';
-import { mindRole } from '../../../src/pieces/mind/role.js';
-import { installMindActivity } from '../../../src/pieces/mind/activity.js';
+import { createProjectsReader } from '../../../src/pieces/mind/projects.js';
+import { createActivityReader } from '../../../src/pieces/mind/activity.js';
 import { sharedActivityConversations } from '../../../src/pieces/mind/activity-conversations.js';
 import { memoryQueryFields } from '../../../src/transport/memory-queries.js';
 async function memoryHttpFixture(cleanup: Array<() => unknown>) {
   const home = mkdtempSync(join(tmpdir(), 'memory-door-')); cleanup.push(() => rmSync(home, {recursive: true, force: true}));
-  const now = Date.parse('2026-11-14T18:00:00Z'), clock = new FakeClock(now), app = createFoundation({home, clock}); cleanup.push(() => app.close());
+  const now = Date.parse('2026-11-14T18:00:00Z'), clock = new FakeClock(now);
   const client = new Database(':memory:'); cleanup.push(() => client.close()); const db = createDataSchema(client);
   db.insert(members).values(['owner','peer'].map(id => ({id, role: id === 'owner' ? 'owner' as const : 'member' as const, joinedAt: new Date(now).toISOString()}))).run();
   db.insert(agents).values({id:'fiction',about:'',markBg:'',markFg:'',faceShape:'pebble',faceEyes:'dot'}).run();
@@ -34,13 +32,13 @@ async function memoryHttpFixture(cleanup: Array<() => unknown>) {
   projects.write({slug:'pond',name:'Fictional pond'});
   const sharing: Sharing = {members:{owner:{owner:true,agents:[]},peer:{owner:false,agents:[]}},projects:{team:{members:['peer'],agents:['fiction']}},services:{}};
   const source = {agent:'fiction',directory:home,memories:join(home,'memories.db')};
-  const projectReader = installMindProjects(app.operations,app.live,{agents:[source],sharing:()=>sharing}); cleanup.push(projectReader.close);
+  const projectReader = createProjectsReader(clock,{agents:[source],sharing:()=>sharing}); cleanup.push(projectReader.close);
   const conversationHref = (id:string) => `/p/comms-preview/conversation/${encodeURIComponent(id)}`;
   const conversations = new Conversations(db, () => new Date(clock.now()).toISOString());
   const thread = conversations.open({agent:'fiction',venue:'loom',place:'Fictional terminal',label:'Fictional conversation'});
   db.insert(conversationPeople).values({conversation:thread.id,whoKind:'person',who:'friend'}).run();
-  const activity = installMindActivity(app.operations,app.live,{agents:[source],sharing:()=>sharing,conversations:sharedActivityConversations(db,{sharing:()=>sharing,conversationHref})}); cleanup.push(activity.close);
-  const queries = memoryQueryFields(db,{sources:{commons:{directory:home,knowledge:join(home,'knowledge.db'),people:join(home,'absent.db')},agents:[source]},sharing:()=>sharing,now:()=>clock.now(),mind:mindRole(app.operations),activity,projectAccess:projectReader.access,conversationHref,projectHref:(_agent,slug)=>`/project/${slug}`}); cleanup.push(queries.close);
+  const activity = createActivityReader(clock,{agents:[source],sharing:()=>sharing,conversations:sharedActivityConversations(db,{sharing:()=>sharing,conversationHref})}); cleanup.push(activity.close);
+  const queries = memoryQueryFields(db,{sources:{commons:{directory:home,knowledge:join(home,'knowledge.db'),people:join(home,'absent.db')},agents:[source]},sharing:()=>sharing,now:()=>clock.now(),projects:projectReader,activity,conversationHref,projectHref:(_agent,slug)=>`/project/${slug}`}); cleanup.push(queries.close);
   let valid = true, admitted = false;
   const http = dataHttp(db, request => {
     admitted = true;
