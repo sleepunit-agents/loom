@@ -198,3 +198,34 @@ it.each(['set', 'remove', 'reconcile'] as const)('close during %s prevents datab
   if (kind === 'reconcile') await expect(pending).resolves.toBeUndefined();
   else await expect(pending).rejects.toThrow(/^Secret write awaits reconciliation$/);
 });
+it.each([new Uint8Array(31), new Uint8Array(33), 'not bytes', null])('rejects invalid daemon retry key before database or holder access (%s)', key => {
+  const f = fixture(), commit = vi.fn(), prepare = vi.spyOn(f.client, 'prepare');
+  expect(() => new SecretValues(f.db, f.now, f.holder, key as Uint8Array, commit)).toThrow(/^Invalid secret retry key$/);
+  expect(prepare).not.toHaveBeenCalled(); expect(commit).not.toHaveBeenCalled();
+  expect(f.holder.hasReceipt).not.toHaveBeenCalled(); expect(f.holder.set).not.toHaveBeenCalled();
+});
+it('deduplicates concurrent exact retries while receipt lookup is deferred', async () => {
+  const f = fixture(); let release!: () => void, entered!: () => void;
+  const blocked = new Promise<void>(resolve => { release = resolve; }), started = new Promise<void>(resolve => { entered = resolve; });
+  vi.mocked(f.holder.hasReceipt).mockImplementation(async () => { entered(); await blocked; return false; });
+  const first = f.service.set(f.input); await started;
+  const second = f.service.set(f.input); release();
+  expect(await Promise.all([first, second])).toEqual([{ saved: true }, { saved: true }]);
+  expect(f.holder.hasReceipt).toHaveBeenCalledTimes(1); expect(f.holder.set).toHaveBeenCalledTimes(1);
+  expect(f.db.select().from(secretChanges).all()).toHaveLength(1);
+});
+it('a negative receipt cannot release a lost-ack reservation whose holder commit arrives later', async () => {
+  const f = fixture(); let lateCommit!: () => void;
+  vi.mocked(f.holder.set).mockImplementation(async (who, name, bytes) => {
+    const copiedValue = Buffer.from(bytes).toString();
+    lateCommit = () => { f.values.set(name, copiedValue); f.receipts.add(JSON.stringify(who)); };
+    throw Error('Transport lost before the holder finished');
+  });
+  await expect(f.service.set(f.input)).rejects.toThrow('reconciliation');
+  await f.service.reconcilePending();
+  expect(f.db.select().from(secretWriteJournal).get()?.state).toBe('prepared');
+  await expect(f.service.set({ ...f.input, id: randomUUID(), name: 'OTHER' })).rejects.toThrow('reconciliation');
+  lateCommit(); await f.service.reconcilePending(); await f.service.reconcilePending();
+  expect(f.values.get('API')).toBe(f.input.value);
+  expect(f.db.select().from(secretChanges).all()).toHaveLength(1); expect(f.holder.set).toHaveBeenCalledTimes(1);
+});
