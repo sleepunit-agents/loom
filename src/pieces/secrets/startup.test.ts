@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { eq } from 'drizzle-orm';
 import { createDataSchema } from '../../core/data/database.js';
 import { agents, members, secrets, secretChanges, secretGrants, secretRules, secretRequests, secretUses, household, inbox, jobs, agentHouseSecrets } from '../../core/data/schema.js';
-import { SecretRequests } from './requests.js';
+import { SecretRequests, startupRequestId } from './requests.js';
 const clients: Database.Database[] = [];
 afterEach(() => { for (const client of clients.splice(0)) client.close(); });
 function fixture() {
@@ -24,17 +24,49 @@ function fixture() {
   return { db, client, service, job, rule, now, advance: (ms: number) => { time += ms; } };
 }
 describe('shared startup secret grants', () => {
-  it.each(['ask', 'auto'] as const)('grants explicit startup permission under %s without a request or a value handoff', answer => {
-    const f = fixture(); f.rule(answer);
+  it('records automatic startup permission without a value handoff', () => {
+    const f = fixture(); f.rule('auto');
     const [grant] = f.service.grantAtStart('job-art');
-    expect(grant).toMatchObject({ secret: 'github-token', agent: 'art', job: 'job-art', request: null, grantedBy: 'rule', grantedAt: f.now(), expiresAt: '2026-11-14T12:05:00.000Z' });
+    expect(grant).toMatchObject({ secret: 'github-token', agent: 'art', job: 'job-art', request: startupRequestId('job-art', 'github-token'), grantedBy: 'rule', grantedAt: f.now(), expiresAt: '2026-11-14T12:05:00.000Z' });
     expect(f.service.grantFor('github-token', 'art', 'job-art')).toEqual(grant);
     expect(f.service.grantFor('github-token', 'art')).toBeUndefined();
     expect(f.service.grantFor('github-token', 'art', 'job-mark')).toBeUndefined();
     expect(f.service.grantAtStart('job-mark')).toEqual([]);
-    expect(f.db.select().from(secretRequests).all()).toEqual([]);
+    expect(f.db.select().from(secretRequests).all()).toMatchObject([{ state: 'allowed', answeredBy: 'rule' }]);
     expect(f.db.select().from(inbox).all()).toEqual([]);
     expect(f.db.select().from(secretUses).all()).toEqual([]);
+  });
+  it('asks once at startup and preserves the owner answer across retries', () => {
+    const f = fixture(); f.rule('ask');
+    expect(f.service.grantAtStart('job-art')).toEqual([]);
+    const request = f.db.select().from(secretRequests).get()!;
+    expect(request.state).toBe('pending');
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+    expect(new SecretRequests(f.db, f.now).grantAtStart('job-art')).toEqual([]);
+    f.service.answer(request.id, 'jonathan', true);
+    expect(f.service.grantAtStart('job-art')).toHaveLength(1);
+    f.service.revoke(request.id);
+    f.rule('auto');
+    expect(new SecretRequests(f.db, f.now).grantAtStart('job-art')).toEqual([]);
+    expect(f.db.select().from(secretRequests).get()?.state).toBe('revoked');
+    expect(f.db.select().from(secretGrants).all()).toEqual([]);
+  });
+  it.each(['denied', 'cancelled'] as const)('never recreates a %s startup request', state => {
+    const f = fixture(); f.rule('ask'); f.service.grantAtStart('job-art');
+    const request = f.db.select().from(secretRequests).get()!;
+    if (state === 'denied') f.service.answer(request.id, 'jonathan', false);
+    else f.service.cancel(request.id);
+    f.rule('auto');
+    expect(new SecretRequests(f.db, f.now).grantAtStart('job-art')).toEqual([]);
+    expect(f.db.select().from(secretRequests).get()?.state).toBe(state);
+  });
+  it.each([true, false])('Always preserves startup timing for future jobs (allow=%s)', allow => {
+    const f = fixture(); f.rule('ask'); f.service.grantAtStart('job-art');
+    f.service.answer(startupRequestId('job-art', 'github-token'), 'jonathan', allow, true);
+    f.job('job-next');
+    expect(f.service.grantAtStart('job-next')).toHaveLength(allow ? 1 : 0);
+    expect(f.db.select().from(secretRequests).where(eq(secretRequests.id, startupRequestId('job-next', 'github-token'))).get()).toMatchObject({ state: allow ? 'allowed' : 'denied', answeredBy: 'rule' });
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
   });
   it('never grants from a household default or an on-request entry', () => {
     const f = fixture(); f.db.insert(household).values({ secretsDefault: 'auto' }).run();
@@ -75,7 +107,7 @@ describe('shared startup secret grants', () => {
     const [first] = f.service.grantAtStart('job-art');
     f.rule('never'); f.job('job-next');
     expect(f.service.grantAtStart('job-next')).toEqual([]);
-    expect(f.service.grantAtStart('job-art')).toEqual([]);
+    expect(f.service.grantAtStart('job-art')).toEqual([first]);
     expect(f.service.grantFor('github-token', 'art', 'job-art')).toEqual(first);
   });
   it('returns no grant before its original start after a clock reversal', () => {

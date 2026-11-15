@@ -1,9 +1,6 @@
-import { sameRequestOrigin } from './core/data/origin.js';
-import { takeBodyInput } from './core/conversations/body-input.js';
-import { conversationBodyScope } from './core/conversations/body-scope.js';
-import { mayRunPrivateWork } from './policy.js';
-import { sharedSharing } from './shared-sharing.js';
-import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
+import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
+import type { SecretValueSource } from './pieces/secrets/role.js';
+import { sharedSecretInputRoutes } from './shared-secret-inputs.js';
 import { recordActionResult } from './shared-action-results.js';
 import { settledNotices } from './core/tempo/notices.js';
 import { sql } from 'drizzle-orm';
@@ -37,6 +34,12 @@ import { registerSharedHouseholdMembers } from './shared-household-members.js';
 import { taskService } from './apps/tasks.js';
 import { approvalService, type ApprovedOperations } from './apps/approvals.js';
 import { sharedConversations } from './shared-conversations.js';
+import { sameRequestOrigin } from './core/data/origin.js';
+import { takeBodyInput } from './core/conversations/body-input.js';
+import { conversationBodyScope } from './core/conversations/body-scope.js';
+import { mayRunPrivateWork } from './policy.js';
+import { sharedSharing } from './shared-sharing.js';
+import { registerConversationBodyOperations } from './core/conversations/body-operations.js';
 import { conversationLifetime } from './core/conversations/lifetime.js';
 import type { WordsKey } from './core/conversations/words.js';
 import { Conversations } from './core/conversations/index.js';
@@ -68,6 +71,7 @@ export function sharedRoot(options: {
   commsKey?: WordsKey;
   /** Authenticated private holder-to-worker sink; values never enter this root. */
   secretDelivery?: SecretDeliveryHolder;
+  secretInputs?: {source:SecretValueSource};
   changed?(changes: Change[]): void;
   reportError(error: unknown): void;
   bridges?: Omit<SharedBridgeOptions,'db'|'clock'|'writes'|'changed'|'reportError'>;
@@ -128,6 +132,7 @@ export function sharedRoot(options: {
   };
   const values = options.secretWrites && new SecretValues(db, now, options.secretWrites.holder,
     options.secretWrites.fingerprintKey, secretCommit);
+  const privateInputs=new SecretPrivateInputs(db,clock,options.secretInputs?.source,secretCommit);
   const delivery = options.secretDelivery && new SecretDelivery(db, now, options.secretDelivery, secretCommit);
   const startup = delivery && new SecretStartup(db, requests, delivery, secretCommit);
   registerSharedSecretAgentCommands(operations, db, requests, delivery, viewer => credentials.body(viewer));
@@ -166,7 +171,7 @@ export function sharedRoot(options: {
     conversations: comms?.service.threads.conversations ?? new Conversations(db, now),
     comms: comms?.service,
     runtime,
-    secrets: {requests,values,delivery,startup,reconcile:recoverSecrets},
+    secrets: {requests,values,delivery,startup,inputs:privateInputs,reconcile:recoverSecrets},
   };
   registerSharedHouseholdMembers(operations, db, services.household);
   registerSharedTaskCommands(operations, db, services.tasks);
@@ -178,7 +183,7 @@ export function sharedRoot(options: {
     ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
     settingsAuthorized: options.tempo?.settings ? options.tempo.settingsAuthorized : settingsBinding.allowed,
   }); }
-  catch (error) { unobserveBridges?.(); void bridgeDaemon?.close(); cancelSecretRecovery?.(); values?.close(); operations.close(); void data.close(); throw error; }
+  catch (error) { unobserveBridges?.(); void bridgeDaemon?.close(); cancelSecretRecovery?.(); values?.close(); void privateInputs.close(); operations.close(); void data.close(); throw error; }
   measuringReady = installMeasuring({ operations, live: { changed: () => data.timingsChanged() },
     onClose(stop) { if (closing) stop(); else stops.push(stop); },
   }, db).then(value => { meter = value; return value; });
@@ -215,6 +220,7 @@ export function sharedRoot(options: {
   http.all('/graphql', c => data.http.fetch(bodyRequest(c.req.raw, c.get('shutdown'))));
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
+  http.route('/api/secrets/private',sharedSecretInputRoutes({db,inputs:privateInputs,credentials,available:()=>!closing,readJson:(request,abort)=>bodyRequest(request,abort,true).json()}));
   http.post('/api/:piece/:operation', async c => {
     const request = c.req.raw;
     if (!sameRequestOrigin(request,options.publicOrigin))
@@ -262,12 +268,13 @@ export function sharedRoot(options: {
       notices.close();
       cancelSecretRecovery?.(); values?.close(); startup?.close();
       const deliveryStopped = delivery?.close();
+      const inputsStopped = privateInputs.close();
       const stopped = data.close();
       for (const stop of stops.splice(0).reverse()) stop();
       const measured = measuringReady.then(value => value.close());
       const pending = [...active];
       for (const entry of pending) entry.abort.abort();
-      void Promise.allSettled([stopped, bridgesStopped, deliveryStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
+      void Promise.allSettled([stopped, bridgesStopped, inputsStopped, deliveryStopped, measured, secretRecovery, ...pending.map(entry => entry.done)]).then(results => {
         try { operations.close(); } catch (error) { reject(error); return; }
         const failed = results.find(result => result.status === 'rejected');
         if (failed) reject(failed.reason); else resolve();
