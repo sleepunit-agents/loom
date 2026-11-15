@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { callOnce } from '../../data';
+import { memberOperation } from '../../data/operation';
 import { Button, Textarea } from '../../kit';
 import { readDraft, writeDraft, editDraft, clearDraft, type Draft } from '../comms/drafts';
 import { bindComposerViewport } from '../comms/viewport';
@@ -23,13 +23,11 @@ export function HomeMessageComposer({member,agent,onOpened}:{member:string;agent
     const sent=current.current,thread=`th:${sent.id}`;
     locked.current=true;setPending(true);setMessage('');
     try {
-      const opened=await callOnce<{thread:string}>('comms.open',{thread,agent,title:'New conversation'}).result;
+      const opened=await memberOperation<{thread:string}>('comms.open',{thread,agent,title:'New conversation'});
       if(!mounted.current)return;
-      if(!opened.ok){setMessage(opened.message);return;}
-      if(opened.value.thread!==thread)throw Error('Could not confirm the conversation. Draft kept.');
-      const posted=await callOnce<{thread:string;seq:number}>('comms.send',{thread,clientId:sent.id,words:sent.text}).result;
-      if(!posted.ok){if(mounted.current)setMessage(posted.message);return;}
-      if(posted.value.thread!==thread)throw Error('Could not confirm the message. Draft kept.');
+      if(opened?.thread!==thread)throw Error('Could not confirm the conversation. Draft kept.');
+      const posted=await memberOperation<{thread:string;seq:number}>('comms.send',{thread,clientId:sent.id,words:sent.text});
+      if(posted?.thread!==thread)throw Error('Could not confirm the message. Draft kept.');
       clearDraft(member,key,sent);
       if(mounted.current){
         if(current.current===sent){const empty={id:'',text:''};current.current=empty;setDraft(empty);}
