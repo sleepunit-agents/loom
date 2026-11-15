@@ -5,8 +5,7 @@ import { act, create } from 'react-test-renderer';
 import type { CallState, Result, Snapshot } from '../data';
 import type { Prefs } from '../look';
 const f = vi.hoisted(() => ({ snapshot: { records: [], status: 'loading' } as Snapshot, listeners: new Set<() => void>(), call: vi.fn(), look: vi.fn(), keep: vi.fn(), motion: vi.fn(), contrast: vi.fn(), zoom: vi.fn() }));
-vi.mock('../data', () => ({ call: f.call }));
-vi.mock('./member-preferences', () => ({ useMemberPreferences: () => useSyncExternalStore(fn => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.snapshot) }));
+vi.mock('../data', () => ({ useRecords: (type: string) => { expect(type).toBe('household.preferences'); return useSyncExternalStore(fn => { f.listeners.add(fn); return () => { f.listeners.delete(fn); }; }, () => f.snapshot); }, call: f.call }));
 vi.mock('../look', async original => ({ ...await original<typeof import('../look')>(), wearLook: f.look, keep: f.keep }));
 vi.mock('../access', () => ({ wearMotion: f.motion, wearContrast: f.contrast }));
 vi.mock('../immersion', () => ({ allowZoom: f.zoom }));
@@ -54,7 +53,7 @@ it('saves a ground choice through the existing member operation and waits for th
 it('disables edits while loading or disconnected and resets displayed choices when access ends', async () => {
   await draw(); expect(tree.root.findByProps({ 'aria-label': 'Look' }).props.disabled).toBe(true); expect(f.look).not.toHaveBeenCalled();
   await publish(live({ look: 'daylight' })); await publish({ status: 'offline', records: [{ id: 'jonathan', prefs: { look: 'daylight' } }] });
-  expect(tree.root.findByProps({ 'aria-label': 'Look' }).props.disabled).toBe(true); expect(tree.root.findByProps({ 'aria-label': 'Look' }).props.value).toBe('neon');
+  expect(tree.root.findByProps({ 'aria-label': 'Look' }).props.disabled).toBe(true); expect(f.look).toHaveBeenLastCalledWith('daylight');
   await publish({ status: 'denied', records: [] }); expect(f.look).toHaveBeenLastCalledWith('neon'); expect(JSON.stringify(tree.toJSON())).toContain('Sign in again'); expect(f.call).not.toHaveBeenCalled();
 });
 it('surfaces a failed save and retries the original handle without inventing another operation', async () => {

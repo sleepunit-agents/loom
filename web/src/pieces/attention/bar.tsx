@@ -1,10 +1,7 @@
-import { useDeskAgentDirectory } from './agent-directory';
-import { useDeskAgentStatuses } from './agent-status';
-import { useDeskRoster } from './roster';
 import type { ReactNode } from 'react';
 import { useRecords } from '../../data';
 import { Ticker, type TickPart } from '../../ticker';
-import { agentPath, latestStatus, namedAgents, openAsks, orderedAgents } from './home-model';
+import { agentPath, latestStatus, namedAgents, openAsks, orderedAgents, type AgentPerson, type AgentStatus, type OwnedAgent } from './home-model';
 import type { Ask } from './model';
 import './bar.css';
 import { BarClock, BarStatus } from './bar-system';
@@ -14,9 +11,9 @@ export interface BarProps { title: string; go(path: string): void; actions: Reac
 /** The bar reads the same policy-filtered facts as Home. No legacy shell or saved copy. */
 export default function AttentionBar({ title, go, actions }: BarProps) {
   const stats = useDeskStats();
-  const roster = useDeskRoster();
-  const people = useDeskAgentDirectory();
-  const statuses = useDeskAgentStatuses();
+  const roster = useRecords<OwnedAgent>('attention.ownedAgent');
+  const people = useRecords<AgentPerson>('person');
+  const statuses = useRecords<AgentStatus>('attention.agent');
   const asks = useRecords<Ask>('attention.ask');
   const agents = orderedAgents(namedAgents(roster.status === 'live' ? roster.records : [], people.status === 'live' ? people.records : []));
   const live = [roster, statuses, asks].every(s => s.status === 'live');

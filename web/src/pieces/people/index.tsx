@@ -1,8 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import type {Call} from '../../data/store';
-import {memoryCall as call} from '../../memory/commands';
-import {useMemoryRecord,useMemoryList} from '../../memory/query';
-import {memoryQueries} from '../../memory/queries';
+import { call, useRecords, type Call } from '../../data';
 import { Split, List, Row, Empty, Loading, Error, Button, Input, Textarea } from '../../kit';
 import { contacts, contactLink, type Person } from './model';
 const idle={pending:false,status:'done' as const};
@@ -10,6 +7,7 @@ const noop=()=>()=>{};
 const blank={name:'',summary:'',channel:'',handle:''};
 /** One People tile per window; keep drafts/calls when the shell docks its reader. */
 export const peopleSession={draft:blank,request:undefined as Call|undefined,adding:false};
+interface Access {[key:string]:unknown;id:string;allowed:boolean;directory:boolean;agents:string[];canAdd:boolean}
 function Reader({person,relationships,conversations,conversationStatus,go}:{person:Person;relationships:Person[];conversations:{available:boolean;rows:{id:string;title:string;href:string}[]}|undefined;conversationStatus:string;go?:(path:string)=>void}) {
   const internal=(event:React.MouseEvent<HTMLAnchorElement>,href:string)=>{if(go&&!event.metaKey&&!event.ctrlKey&&!event.shiftKey&&!event.altKey){event.preventDefault();go(href);}};
   const fields=(p:Person)=><dl className="grid gap-3">{p.fields.map(f=><div key={f.key}><dt>{f.key}</dt><dd>{f.label&&<>{f.label} · </>}{contactLink(f.key,p.card.where[f.key]?.value) ? <a className="underline" href={contactLink(f.key,p.card.where[f.key]?.value)}>{f.value}</a>:f.value} · {f.state}{f.verifiedAt && ` · verified ${f.verifiedAt.slice(0,10)}`}{f.source && <p>Source: {f.source}</p>}</dd></div>)}</dl>;
@@ -34,7 +32,7 @@ export default function PeopleApp({path:shellPath,go}:{path?:string;go?:(path:st
   try {selected=path.startsWith(`${base}/person/`)?decodeURIComponent(path.slice(`${base}/person/`.length)):undefined;}catch{/* malformed link */}
   const navigate=(slug?:string)=>{const next=slug?`${base}/person/${encodeURIComponent(slug)}`:base;if(go)go(next);else{history.pushState(null,'',next);setLocal(next);}};
   useEffect(()=>{if(go)return;const pop=()=>setLocal(location.pathname);window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);},[go]);
-  const access=useMemoryRecord(memoryQueries.peopleAccess()), feed=useMemoryList(memoryQueries.people());
+  const access=useRecords<Access>('people.access'), feed=useRecords<Person>('person');
   const permission=access.status==='live'?access.records[0]:undefined;
   const [folder,setFolder]=useState('all'),[query,setQuery]=useState(''),[agent,setAgent]=useState('');
   const [adding,setAddingState]=useState(peopleSession.adding),[draft,setDraftState]=useState(peopleSession.draft),[request,setRequestState]=useState(peopleSession.request);
@@ -43,11 +41,10 @@ export default function PeopleApp({path:shellPath,go}:{path?:string;go?:(path:st
   const setRequest=(value:Call|undefined)=>{peopleSession.request=value;setRequestState(value);};
   const answer=useSyncExternalStore(request?.subscribe??noop,request?.getSnapshot??(()=>idle));
   const all=contacts(feed.records,'all','',''), shown=contacts(feed.records,folder,query,agent);
-  const target=selected?(all.find(g=>g.person.slug===selected)?.person.id??`commons:${selected}`):undefined;
-  const detail=useMemoryRecord(target?memoryQueries.person(target):undefined);
+  const detail=useRecords<Person>('person',selected?`commons:${selected}`:'');
   const direct=detail.status==='live'?detail.records[0]:undefined;
-  const group=all.find(g=>g.person.slug===(direct?.slug??selected)), person=direct;
-  const conversations={status:detail.status,records:detail.records.map(p=>p.conversations)};
+  const group=all.find(g=>g.person.slug===(direct?.slug??selected)), person=direct??group?.person;
+  const conversations=useRecords<{id:string;available:boolean;rows:{id:string;title:string;href:string}[]}>('people.conversations',person?.id??'');
   const unavailable=(status:string)=><Error text={status==='denied'?'You don’t have access to People.':'Connection lost. People will return when connected.'}/>;
   if(access.status==='loading')return <Loading label="Opening people…"/>;
   if(access.status!=='live')return unavailable(access.status);
@@ -64,6 +61,6 @@ export default function PeopleApp({path:shellPath,go}:{path?:string;go?:(path:st
     search={<div className="grid gap-2"><label>Search people<Input type="search" value={query} onChange={e=>setQuery(e.target.value)}/></label><label>Known to agent<select value={agent} onChange={e=>setAgent(e.target.value)}><option value="">All authorized agents</option>{permission.agents.map(a=><option key={a}>{a}</option>)}</select></label></div>}
     listTop={<div className="p-3"><Button disabled={!permission.canAdd} onClick={()=>setAdding(true)}>Add a person</Button></div>} listTitle="Contacts" listMeta={`${shown.length} contacts`}
     list={feed.status==='loading'?<Loading label="Opening contacts…"/>:feed.status!=='live'?unavailable(feed.status):<><List label="Contacts">{shown.map(g=><Row key={g.person.id} title={g.person.name} meta={g.relationships.length?`Known to ${g.relationships.map(p=>p.agent).join(', ')}`:'No relationship cards available'} status={g.person.fields.some(f=>f.state==='stale')?'Stale contact details':g.person.kind} selected={selected===g.person.slug} onClick={()=>{setAdding(false);navigate(g.person.slug);}}/>)}</List>{!shown.length&&<Empty title={query.trim()?`Nothing matches “${query.trim()}”`:all.length?'No contacts here':'No people yet'} text="People your agents meet appear here."/>}</>}
-    reader={adding?form:feed.status==='loading'||(!!selected&&!person&&permission.directory&&detail.status==='loading')?<Loading label="Opening contact…"/>:feed.status!=='live'?unavailable(feed.status):detail.status!=='live'?unavailable(detail.status):person?<Reader person={person} relationships={group?.relationships??[]} conversations={conversations.status==='live'?conversations.records[0]:undefined} conversationStatus={conversations.status} go={go}/>:selected?<Empty title="This contact is no longer available" text="It may have been archived or merged."/>:null}
+    reader={adding?form:feed.status==='loading'||(!!selected&&!person&&permission.directory&&detail.status==='loading')?<Loading label="Opening contact…"/>:feed.status!=='live'?unavailable(feed.status):person?<Reader person={person} relationships={group?.relationships??[]} conversations={conversations.status==='live'?conversations.records[0]:undefined} conversationStatus={conversations.status} go={go}/>:selected?<Empty title="This contact is no longer available" text="It may have been archived or merged."/>:null}
     open={!!selected||adding} onBack={()=>{setAdding(false);navigate();}} backLabel="Contacts" blank={<Empty title="Open a contact" text="Choose someone to see their contact details and your agents’ relationships."/>}/>;
 }

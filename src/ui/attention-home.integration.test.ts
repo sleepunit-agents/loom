@@ -155,10 +155,9 @@ it.runIf(chrome && existsSync(join(root,'next.html')))('Home keeps idle owned ca
     await expect.poll(()=>b.getByText('Answer this in its private conversation. Private replies stay there.').count()).toBe(1);
     expect(await cards(b).count()).toBe(2);
     await expect.poll(()=>b.getByRole('region',{name:'Art E Fish last answer'}).count()).toBe(1);
-    // Human approval receipts belong in Inbox, never in the agent reply summary.
-    expect(await b.getByText(/yes · jonathan/).count()).toBe(0);
-    // The shipped Inbox reads shared rows; this fixture seeds legacy attention.
-
+    expect(await b.getByText(/yes · jonathan/).count()).toBe(1);
+    // Inbox now reads the shared store, not these legacy attention fixture rows.
+    // Its shipped multi-window answer proof lives in attention-inbox.integration.test.ts.
     await b.getByRole('button',{name:'Finish the shared Home',exact:true}).click();
     await expect.poll(()=>new URL(b.url()).pathname).toBe('/p/tasks-preview/task/t-2205');
     await b.goto(`${loom.url}/p/home-preview`);

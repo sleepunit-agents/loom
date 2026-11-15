@@ -1,10 +1,10 @@
 import {useState,useEffect} from 'react';
-import {useMemoryRecord,useMemoryList} from '../../memory/query';
-import {memoryQueries} from '../../memory/queries';
+import {useRecords} from '../../data';
 import {Split,List,Empty,Loading,Error,Input} from '../../kit';
 import {Avatar,AvatarFallback} from '../../components/ui/avatar';
 import Face from '../../face';
-import {projects,whatOf,safeHref,age,type ProjectRecord,type ProjectItem,type ProjectSection} from './model';
+import {projects,whatOf,safeHref,age,type ProjectRecord,type ProjectItem,type ProjectSection,type ProjectMemory} from './model';
+interface Access {[key:string]:unknown;id:string;allowed:boolean;agents:string[]}
 export const projectsSession={folder:'active',query:'',agent:''};
 function Person({name,agent}:{name:string;agent?:boolean}){return agent?<Face bg="" size={24} label={name}/>:<Avatar size="sm" aria-label={name}><AvatarFallback>{name.trim().split(/\s+/).map(n=>n[0]).slice(0,2).join('')}</AvatarFallback></Avatar>;}
 function Link({item,go,now,person}:{item:ProjectItem;now?:number;person?:boolean;go?:(path:string)=>void}){
@@ -33,8 +33,8 @@ export default function ProjectsApp({path:shellPath,go}:{path?:string;go?:(path:
  const navigate=(id?:string)=>{const next=id?`${base}/project/${encodeURIComponent(id)}`:base;if(go)go(next);else{history.pushState(null,'',next);setLocal(next);}};
  useEffect(()=>{if(go)return;const pop=()=>setLocal(location.pathname);window.addEventListener('popstate',pop);return()=>window.removeEventListener('popstate',pop);},[go]);
  let memoryRef:string|undefined;try{memoryRef=path.includes('/memory/')?decodeURIComponent(path.split('/memory/')[1]):undefined;}catch{/* malformed memory route */}
- const memory=useMemoryRecord(memoryRef&&selected?memoryQueries.projectMemory(`${selected.split(':')[0]}:${memoryRef}`):undefined);
- const access=useMemoryRecord(memoryQueries.projectsAccess()),feed=useMemoryList(memoryQueries.projects()),detail=useMemoryRecord(selected?memoryQueries.project(selected):undefined);
+ const memory=useRecords<ProjectMemory>('project.memory',memoryRef&&selected?`${selected.split(':')[0]}:${memoryRef}`:'');
+ const access=useRecords<Access>('projects.access'),feed=useRecords<ProjectRecord>('project'),detail=useRecords<ProjectRecord>('project.hub',selected??'');
  const permission=access.status==='live'?access.records[0]:undefined;
  const [folder,setFolder]=useState(projectsSession.folder),[query,setQuery]=useState(projectsSession.query),[agent,setAgent]=useState(projectsSession.agent);
  const active=feed.records.filter(p=>!p.archived&&p.card.status==='active').length,quiet=feed.records.filter(p=>!p.archived&&p.card.status!=='active').length;

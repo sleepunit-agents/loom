@@ -3,12 +3,7 @@ import { createElement as h } from '../../../node_modules/react/index.js';
 import { act,create } from '../../../node_modules/react-test-renderer/index.js';
 import type { CallState,Snapshot } from '../../data/store';
 const f=vi.hoisted(()=>({feed:{records:[],status:'live'} as Snapshot,access:{records:[{id:'people',allowed:true,canAdd:true,agents:['art']}],status:'live'} as Snapshot,conversations:{records:[],status:'live'} as Snapshot,call:vi.fn()}));
-vi.mock('../../memory/commands',()=>({memoryCall:f.call}));
-vi.mock('../../memory/query',()=>({useMemoryList:()=>f.feed,useMemoryRecord:(s:any)=>{
- if(s?.query.includes('MemoryPeopleAccess'))return f.access;
- const person=f.feed.records.find(p=>p.id===s?.variables.id);
- return {status:f.conversations.status==='live'?f.feed.status:f.conversations.status,records:person?[{...person,conversations:f.conversations.records[0]}]:[]};
-}}));
+vi.mock('../../data',()=>({useRecords:(type:string,scope?:string)=>type==='people.access'?f.access:type==='people.conversations'?f.conversations:type==='person'&&!scope?f.feed:{records:[],status:f.feed.status},call:f.call}));
 vi.mock('../../kit',()=>({Split:(p:{list:unknown;reader:unknown;listTop:unknown;search:unknown})=>h('div',null,p.search,p.listTop,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;onClick:()=>void})=>h('button',{onClick:p.onClick},p.title),Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Input:'input',Textarea:'textarea',Button:'button'}));
 import People, {peopleSession} from './index';
 import { contacts,contactLink } from './model';

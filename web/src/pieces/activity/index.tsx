@@ -1,26 +1,27 @@
 import {Suspense,useEffect,useRef,useState} from 'react';
-import {useMemoryRecord} from '../../memory/query';
-import {memoryQueries} from '../../memory/queries';
+import {useRecords} from '../../data';
 import {Split,List,Row,Empty,Loading,Error,Button,Markdown,type SplitFolder} from '../../kit';
 import Face from '../../face';
 import {folded,groupLabel,isPlan,stepOf} from '../../steps';
 import {reducedMotion} from '../../access';
-import {VENUES,address,filtersOf,passes,safeHref,type Filters,type ActivityEntry,type ActivityOpen} from './model';
+import {VENUES,address,filtersOf,passes,safeHref,type Filters,type ActivityWindow,type ActivityEntry,type ActivityOpen} from './model';
+interface Failure {[key:string]:unknown;id:string;state:'error'|'unavailable';message:string}
+interface Access {[key:string]:unknown;id:string;allowed:boolean;agents:string[];owner:string;timezone:string;today:string;windows:string[]}
 // Session state contains only navigation preferences. Records remain in the
-// canonical client: each Earlier click adds one three-day subscription.
+// shared live store: each Earlier click adds one three-day subscription.
 export const activitySession={windows:1};
 function useWindows(dates:string[],count:number){
- const w0=useMemoryRecord(count>0&&dates[0]?memoryQueries.activity(dates[0]):undefined);
- const w1=useMemoryRecord(count>1&&dates[1]?memoryQueries.activity(dates[1]):undefined);
- const w2=useMemoryRecord(count>2&&dates[2]?memoryQueries.activity(dates[2]):undefined);
- const w3=useMemoryRecord(count>3&&dates[3]?memoryQueries.activity(dates[3]):undefined);
- const w4=useMemoryRecord(count>4&&dates[4]?memoryQueries.activity(dates[4]):undefined);
- const w5=useMemoryRecord(count>5&&dates[5]?memoryQueries.activity(dates[5]):undefined);
- const w6=useMemoryRecord(count>6&&dates[6]?memoryQueries.activity(dates[6]):undefined);
- const w7=useMemoryRecord(count>7&&dates[7]?memoryQueries.activity(dates[7]):undefined);
- const w8=useMemoryRecord(count>8&&dates[8]?memoryQueries.activity(dates[8]):undefined);
- const w9=useMemoryRecord(count>9&&dates[9]?memoryQueries.activity(dates[9]):undefined);
- const w10=useMemoryRecord(count>10&&dates[10]?memoryQueries.activity(dates[10]):undefined);
+ const w0=useRecords<ActivityWindow>('activity.window',count>0?(dates[0]??''):'');
+ const w1=useRecords<ActivityWindow>('activity.window',count>1?(dates[1]??''):'');
+ const w2=useRecords<ActivityWindow>('activity.window',count>2?(dates[2]??''):'');
+ const w3=useRecords<ActivityWindow>('activity.window',count>3?(dates[3]??''):'');
+ const w4=useRecords<ActivityWindow>('activity.window',count>4?(dates[4]??''):'');
+ const w5=useRecords<ActivityWindow>('activity.window',count>5?(dates[5]??''):'');
+ const w6=useRecords<ActivityWindow>('activity.window',count>6?(dates[6]??''):'');
+ const w7=useRecords<ActivityWindow>('activity.window',count>7?(dates[7]??''):'');
+ const w8=useRecords<ActivityWindow>('activity.window',count>8?(dates[8]??''):'');
+ const w9=useRecords<ActivityWindow>('activity.window',count>9?(dates[9]??''):'');
+ const w10=useRecords<ActivityWindow>('activity.window',count>10?(dates[10]??''):'');
  return [w0,w1,w2,w3,w4,w5,w6,w7,w8,w9,w10].slice(0,count);
 }
 function Link({label,href,go}:{label:string;href?:string;go?:(p:string)=>void}){const safe=safeHref(href);return safe?<a className="underline" href={safe} onClick={e=>{if(go&&safe.startsWith('/')&&!e.metaKey&&!e.ctrlKey&&!e.shiftKey&&!e.altKey){e.preventDefault();go(safe);}}} {...(safe.startsWith('https:')?{target:'_blank',rel:'noopener noreferrer'}:{})}>{label}</a>:<span>{label}</span>;}
@@ -47,8 +48,8 @@ export default function ActivityApp({path:shellPath,go}:{path?:string;go?:(p:str
  let memoryId:string|undefined;
  if(url.pathname.startsWith('/p/activity-preview/memory/'))try{const raw=decodeURIComponent(url.pathname.slice('/p/activity-preview/memory/'.length)),colon=raw.indexOf(':');memoryId=colon>0?`e~${raw.slice(0,colon)}~${raw.slice(colon+1)}`:'invalid';}catch{memoryId='invalid';}
  const selected=memoryId??q.get('e')??undefined;
- const access=useMemoryRecord(memoryQueries.activityAccess()),permission=access.status==='live'?access.records[0]:undefined;
- const [count,setCount]=useState(activitySession.windows),windows=useWindows(permission?.windows??[],count),detail=useMemoryRecord(selected?memoryQueries.activityEntry(selected):undefined);
+ const access=useRecords<Access>('activity.access'),permission=access.status==='live'?access.records[0]:undefined;
+ const [count,setCount]=useState(activitySession.windows),windows=useWindows(permission?.windows??[],count),detail=useRecords<ActivityOpen|Failure>('activity.entry',selected??'');
  const records=windows.flatMap(w=>w.status==='live'?w.records:[]),entries=[...new Map(records.flatMap(w=>w.entries).map(e=>[e.id,e])).values()].sort((a,b)=>Date.parse(b.at)-Date.parse(a.at)||a.id.localeCompare(b.id));
  const days=[...new Set(records.flatMap(w=>w.days))].sort().reverse(),day=q.get('day')??permission?.today??days[0],tz=permission?.timezone??'America/Chicago';
  const navigate=(nf:Filters=f,id:string|null=selected??null,d=day)=>{const next=address(nf,id??undefined,d);if(go)go(next);else{history.pushState(null,'',next);setLocal(next);}};
@@ -81,6 +82,6 @@ export default function ActivityApp({path:shellPath,go}:{path?:string;go?:(p:str
  {days.map(d=>{const rows=shown.filter(e=>e.day===d);return rows.length?<section key={d} aria-label={d}><h2 className="px-4 py-2 font-medium">{d}</h2><List label={`Activity on ${d}`}>{rows.map(e=><Row key={e.id} data-day={e.day} data-hour={e.hour} title={e.title} meta={`${new Date(e.at).toLocaleTimeString([],{timeZone:tz,hour:'numeric',minute:'2-digit'})} · ${e.agent} · ${e.where}${e.line?' · '+e.line:''}`} icon={<Face bg="" size={28} label={e.agent}/>} status={e.what==='work'?'Work done':e.what==='system'?'System':undefined} selected={e.id===selected} onClick={()=>pick(e.id)} style={{contentVisibility:'auto',containIntrinsicSize:'auto 100px'}}/>)}</List></section>:null;})}
  {loading?<Loading label="Opening activity…"/>:!shown.length&&<Empty title={f.who.length+f.where.length+f.what.length?'Nothing matches these filters':'Quiet'} text="Try fewer filters or earlier days."/>}
  {count<11&&<Button disabled={loading} onClick={()=>{activitySession.windows=count+1;setCount(count+1);}}>Earlier</Button>}</>}</div>}
- reader={detail.status==='loading'?<Loading label="Opening entry…"/>:detail.status!=='live'?unavailable(detail.status):detail.records[0]?<Reader entry={detail.records[0]} tz={tz} go={go} pick={pick}/>:<Empty title="This entry is no longer available" text="It may have expired or you may no longer have access."/>}
+ reader={detail.status==='loading'?<Loading label="Opening entry…"/>:detail.status!=='live'?unavailable(detail.status):detail.records[0]?('state' in detail.records[0]?<Error text={String(detail.records[0].message)}/>:<Reader entry={detail.records[0] as ActivityOpen} tz={tz} go={go} pick={pick}/>):<Empty title="This entry is no longer available" text="It may have expired or you may no longer have access."/>}
  open={!!selected} onBack={()=>navigate(f,null)} backLabel="Activity" blank={<Empty title="Open an entry" text="Read what happened, what was asked and what was decided."/>}/>;
 }

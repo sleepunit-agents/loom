@@ -1,11 +1,11 @@
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { call, type Call, type CallState } from '../data';
+import { call, useRecords, type Call, type CallState, type LiveRecord } from '../data';
 import { LOOKS, keep, lookOf, wearLook, type Prefs } from '../look';
 import { wearContrast, wearMotion } from '../access';
 import { allowZoom } from '../immersion';
 import { Button } from '../kit';
 
-import { useMemberPreferences } from './member-preferences';
+interface PreferenceRecord extends LiveRecord { prefs: Prefs }
 const idle: CallState<Prefs> = { pending: false, status: 'done' };
 const noop = () => () => {};
 
@@ -20,8 +20,8 @@ export function wearPreferences(prefs: Prefs): void {
 }
 
 export default function Preferences() {
-  const snapshot = useMemberPreferences();
-  const prefs = snapshot.status === 'live' ? snapshot.records[0]?.prefs : undefined;
+  const snapshot = useRecords<PreferenceRecord>('household.preferences');
+  const prefs = snapshot.records[0]?.prefs;
   const [request, setRequest] = useState<Call<Prefs>>();
   const state = useSyncExternalStore(request?.subscribe ?? noop, request?.getSnapshot ?? (() => idle));
   useEffect(() => {

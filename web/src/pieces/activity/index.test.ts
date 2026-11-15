@@ -3,11 +3,7 @@ import {createElement as h} from '../../../node_modules/react/index.js';
 import {act,create} from '../../../node_modules/react-test-renderer/index.js';
 import type {Snapshot} from '../../data/store';
 const f=vi.hoisted(()=>({access:{records:[{id:'activity',allowed:true,agents:['art','other'],owner:'Jonathan',today:'2026-11-13',timezone:'America/Chicago',windows:['2026-11-13','2026-11-10']}],status:'live'} as Snapshot,window:{records:[],status:'live'} as Snapshot,detail:{records:[],status:'live'} as Snapshot,call:vi.fn(),scopes:[] as string[]}));
-vi.mock('../../memory/query',()=>({useMemoryRecord:(s:any)=>{
- const type=s?.query.includes('MemoryActivityAccess')?'activity.access':s?.query.includes('MemoryActivityEntry(')?'activity.entry':'activity.window';
- const scope=s?.variables?.to??s?.variables?.id??'';f.scopes.push(`${type}:${scope}`);
- return type==='activity.access'?f.access:type==='activity.entry'?f.detail:scope?f.window:{records:[],status:'live'};
-}}));
+vi.mock('../../data',()=>({useRecords:(type:string,scope:string)=>{f.scopes.push(`${type}:${scope}`);return type==='activity.access'?f.access:type==='activity.entry'?f.detail:scope?f.window:{records:[],status:'live'};},call:f.call}));
 vi.mock('../../kit',()=>({Split:(p:{list:unknown;reader:unknown;listTop:unknown;narrow:unknown;onBack:()=>void})=>h('div',null,h('button',{onClick:p.onBack},'Back'),p.narrow,p.listTop,p.list,p.reader),List:(p:{children:unknown})=>h('div',null,p.children),Row:(p:{title:string;meta:string;onClick:()=>void})=>h('button',{'data-split-row':true,onClick:p.onClick},p.title,p.meta),Empty:(p:{title:string})=>h('p',null,p.title),Loading:(p:{label:string})=>h('p',null,p.label),Error:(p:{text:string})=>h('p',null,p.text),Button:'button',Markdown:(p:{text:string})=>h('p',null,p.text)}));
 vi.mock('../../face',()=>({default:()=>h('svg')}));
 vi.mock('../../access',()=>({reducedMotion:()=>true}));
@@ -48,7 +44,7 @@ it('renders the full reader and original internal destinations; hides reader dat
 it('changes day-specific counts and distinguishes reader service errors from missing entries',async()=>{
  f.window=feed();await act(async()=>{tree=create(h(Activity,{...props,path:'/p/activity-preview/?day=2026-11-12&e=d~art~dg-one'}));});expect(text()).toContain('0 entries');expect(text()).toContain('This entry is no longer available');
  const day=tree!.root.findByType('select');await act(async()=>day.props.onChange({target:{value:'2026-11-13'}}));expect(props.go.mock.lastCall?.[0]).toContain('day=2026-11-13');
- f.detail={records:[],status:'offline'};await act(async()=>tree!.update(h(Activity,{...props,path:'/p/activity-preview/?e=d~art~dg-one'})));expect(text()).toContain('Connection lost');expect(text()).not.toContain('This entry is no longer available');
+ f.detail={records:[{id:'d~art~dg-one',state:'error',message:'The conversation service couldn’t open this entry.'}],status:'live'};await act(async()=>tree!.update(h(Activity,{...props,path:'/p/activity-preview/?e=d~art~dg-one'})));expect(text()).toContain('couldn’t open this entry');expect(text()).not.toContain('This entry is no longer available');
 });
 
 it('separates the latest plan and folds repeated completed steps while leaving errors visible',async()=>{

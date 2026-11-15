@@ -4,7 +4,7 @@ import { call, callOnce, type Call, type CallState, type Snapshot } from '../../
 import { Error, Loading, Button, Textarea } from '../../kit';
 import { commsThreadPath, isNotice, decisionLink, safeHref, type Ask, type Answer } from './model';
 import type { ReplyDraft } from './drafts';
-import { useDataQuery } from '../../data/graphql';
+import { useQuery } from '../../data/query';
 import { InboxView, type InboxActions } from '../inbox-view';
 import { inboxSelection, inboxPageSize, inboxSourcePath, retainedInboxItem } from './inbox-query';
 const idle: CallState<unknown> = { pending:false, status:'done' };
@@ -109,12 +109,7 @@ export default function InboxApp({ path: shellPath, go }: { path?: string; go?: 
   let selected: string | undefined;
   try { selected = path.includes('/ask/') ? decodeURIComponent(path.slice(path.indexOf('/ask/') + 5)) : undefined; } catch { /* Invalid routes select nothing. */ }
   const selection = useMemo(() => inboxSelection(folder, search, offset, selected), [folder, search, offset, selected]);
-  const raw = useDataQuery<Record<string,unknown>>(selection.query,selection.variables);
-  const reading = useMemo(()=>{
-    if(raw.status!=='live')return {status:raw.status};
-    try{return {status:'live' as const,data:selection.decode(raw.data??{})};}
-    catch{return {status:'error' as const};}
-  },[raw,selection]), live = reading.status === 'live';
+  const reading = useQuery(selection), live = reading.status === 'live';
   const status = reading.status === 'error' ? 'offline' : reading.status;
   const data = live ? reading.data : undefined;
   const navigate = (next: string) => {

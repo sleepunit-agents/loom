@@ -44,9 +44,6 @@ const project = new GraphQLObjectType({ name: 'MemoryProject', fields: {
  sections: { type: list(section) }, waiting: { type: list(item) }, unknown: { type: GraphQLBoolean }, lately: { type: list(item) },
  people: strings, spark: { type: new GraphQLList(new GraphQLNonNull(GraphQLInt)) }, changes: { type: changes }, fields: { type: list(field) },
 } });
-// A quiet index omits hub roles. Distinct projection identity prevents a
-// normalized list refresh from overwriting the selected hub's richer fields.
-const projectDetail = new GraphQLObjectType({...project.toConfig(),name:'MemoryProjectDetail'});
 const memory = new GraphQLObjectType({ name: 'MemoryProjectMemory', fields: {
  id: requiredText, agent: requiredText, ref: requiredText, title: requiredText, content: requiredText,
  category: requiredText, created: requiredText, updated: requiredText, expires: { type: GraphQLFloat },
@@ -77,7 +74,7 @@ export function projectsQueryFields(source: Mind|ProjectQueryReader, deadlines?:
  return {
   memoryProjectsAccess:{type:access,resolve:(_source,_args,context)=>context?.viewer?(capabilities??('access' in source?source.access:undefined))?.(context.viewer)??null:null},
   memoryProjects: { type: new GraphQLList(new GraphQLNonNull(project)), resolve: (_source, _args, context) => read(context, 'projectsList', {}, []) },
-  memoryProject: { type: projectDetail, args: { id }, resolve: (_source, args, context) => read(context, 'projectRead', { id: args.id }, null) },
+  memoryProject: { type: project, args: { id }, resolve: (_source, args, context) => read(context, 'projectRead', { id: args.id }, null) },
   memoryProjectMemory: { type: memory, args: { id }, resolve: (_source, args, context) => read(context, 'projectMemoryRead', { id: args.id }, null) },
  };
 }
