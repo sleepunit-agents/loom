@@ -181,3 +181,17 @@ it('withdraws a selected private Memory card when sharing changes during a sibli
   expect(body).not.toContain('PRIVATE selected Memory card');expect(response.status).toBe(503);
  }finally{release();}
 });
+it('withdraws a selected private episode when its deadline passes during a sibling await without a SQL write',async()=>{
+ const f=fixture(),memory={sources:f.sources,checkingAgent:'fiction'};await prepareSharedMemorySources(memory);
+ const source=new Database(f.sources.agents[0].memories);
+ try{source.exec('CREATE TABLE memories(ref TEXT,title TEXT,content TEXT,created TEXT,project TEXT,metadata TEXT,expires_at TEXT,category TEXT,archived INTEGER)');source.prepare("INSERT INTO memories VALUES('expiry','PRIVATE expiring episode','Fictional private words',?,NULL,'{}',?,'episode',0)").run(new Date(f.clock.now()).toISOString(),new Date(f.clock.now()+1000).toISOString());}finally{source.close();}
+ let began!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{began=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
+ const app=await serveShared({db:f.db,clock:f.clock,memory,originAllowed:()=>true,reportError:()=>{},fields:{held:{type:GraphQLString,async resolve(){began();await held;return 'public sibling';}}}});cleanup.push(()=>app.close());
+ const committed=vi.fn(),stop=app.writes.observe(committed);cleanup.push(stop);
+ try{
+  const pending=fetch(app.url+'/graphql',{method:'POST',headers:{authorization:'Bearer '+raw,'content-type':'application/json'},body:JSON.stringify({query:'{ memoryActivityEntry(id:"e~fiction~expiry") { title } held }'})});
+  await started;f.clock.advance(1000);expect(committed).not.toHaveBeenCalled();release();
+  const response=await pending,body=await response.text();
+  expect(body).not.toContain('PRIVATE expiring episode');expect(response.status).toBe(503);
+ }finally{release();}
+});
