@@ -24,11 +24,12 @@ export function bridgeChannelApi(input: {
       if (!valid) return undefined;
       let expired = false, reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       const abort = new AbortController();
-      const current = () => !expired && input.current();
+      const deadlineAt = clock.now() + 15_000;
+      const current = () => !expired && clock.now() < deadlineAt && input.current();
       const cancelBody = () => { try { void reader?.cancel().catch(() => {}); } catch { /* no upstream diagnostics */ } };
       let cancel!: () => void;
       const deadline = new Promise<undefined>(resolve => {
-        cancel = clock.at(clock.now() + 15_000, () => {
+        cancel = clock.at(deadlineAt, () => {
           expired = true; abort.abort(); cancelBody(); resolve(undefined);
         });
       });

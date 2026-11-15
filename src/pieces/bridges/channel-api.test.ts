@@ -117,3 +117,35 @@ it('shares the deadline across slow token acquisition, headers and streaming', a
   f.clock.advance(5000); headers.resolve(new Response(new ReadableStream())); await Promise.resolve(); await Promise.resolve();
   f.clock.advance(5000); expect(await pending).toBeUndefined();
 });
+
+it.each(['holder', 'headers', 'body'] as const)('checks absolute expiry at %s even before the timer callback runs', async phase => {
+  let now = 0;
+  const acquired = deferred<void>(), headers = deferred<Response>(), body = deferred<ReadableStreamReadResult<Uint8Array>>();
+  const request = vi.fn<typeof fetch>(async () => {
+    if (phase === 'headers') return headers.promise;
+    return { ok: true, redirected: false, headers: new Headers(), body: { getReader: () => ({
+      read: () => body.promise, cancel: async () => {},
+    }) } } as unknown as Response;
+  });
+  const secrets: SecretUse = { withValue: async (_name, use) => {
+    if (phase === 'holder') await acquired.promise;
+    return use('synthetic-token');
+  } };
+  // Time advances while dispatch of the scheduled timer is delayed.
+  const clock = { now: () => now, at: () => () => {} };
+  const api = bridgeChannelApi({ platform: 'discord', workspace: '456', tokenSecret: 'bot', clock, secrets, request, current: () => true });
+  const pending = api.channel('123');
+  await Promise.resolve(); await Promise.resolve();
+  now = 15_000;
+  acquired.resolve(); headers.resolve(Response.json({ id: '123' })); body.resolve({ done: true, value: undefined });
+  expect(await pending).toBeUndefined();
+  if (phase === 'holder') expect(request).not.toHaveBeenCalled();
+});
+
+it.each(['discord', 'slack'] as const)('leaves %s kind and workspace validation to the bound cache', async platform => {
+  const f = fixture(platform);
+  for (const raw of [{ id: f.id }, { id: f.id, guild_id: 'other', context_team_id: 'TOTHER', type: 999 }]) {
+    f.request.mockResolvedValue(Response.json(platform === 'discord' ? raw : { ok: true, channel: raw }));
+    expect(await f.api.channel(f.id)).toEqual(raw);
+  }
+});
