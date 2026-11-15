@@ -143,8 +143,9 @@ export function sharedRoot(options: {
 
     // Execution and its final await can yield. A committed receipt remains
     // durable, but its response must not outlive the admitted credential.
-    if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
-    recordActionResult({db,writes:data.writes,operations,viewer:auth.viewer,window:auth.window===true,name:`${c.req.param('piece')}.${c.req.param('operation')}`,input:parsed.data.input,id:parsed.data.id,result:answer,now:()=>clock.now(),reportError:options.reportError});
+    // The admitted member receives server-owned outcome metadata even when
+    // preparation was refused after credential expiry. Never write after stop.
+    if (!closing) recordActionResult({db,writes:data.writes,operations,viewer:auth.viewer,window:auth.window===true,name:`${c.req.param('piece')}.${c.req.param('operation')}`,input:parsed.data.input,id:parsed.data.id,result:answer,now:()=>clock.now(),reportError:options.reportError});
     if (closing || !auth.valid()) return c.json(failure('denied', 'Authentication ended'), 403);
     return c.json(answer, answer.ok ? 200 : ({ denied: 403, 'not-found': 404, invalid: 400, conflict: 409, unavailable: 503 } as const)[answer.code]);
   });
