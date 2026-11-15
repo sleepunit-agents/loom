@@ -230,8 +230,38 @@ enrollment is not retried.
 Credential-bearing body output is drained without keeping a job log tail in
 both process and container adapters. The outer worker also sends an empty tail,
 including for an injected adapter. Body replies and tool cards use their private
-current-body producers instead. This parent transport does not implement a native
-child consumer: the configured command must implement the envelope and use the
-canonical body/Secrets clients. The full enrollment-to-child integration remains
-part of the machines/models task until the canonical server and consumer are
-connected and tested together.
+current-body producers instead. The parent transport alone does not execute a native model: its configured
+child must implement the envelope and use the canonical body/Secrets clients.
+The fixed Claude receiver below connects this envelope to native execution and
+the body client; other native harnesses and the full body lifecycle remain part
+of the machines/models task.
+
+### Fixed Claude child
+
+loom-body <configuration-file> implements that private envelope as a separate
+worker child. Opt the exact account/harness runner into bodyBootstrap:true;
+its command is the fixed loom-body entry, with its configuration filename as
+the only argument. Its configuration is {"command":"/path/to/claude","cwd":"/house"}.
+The worker's explicitly configured account environment reaches the child and
+native CLI; no ambient worker environment is added.
+
+The child takes mail through the canonical body client into its own context,
+confirms acceptance, then invokes Claude with the assignment's exact model.
+Always-denied tool patterns and applicable outside/unknown guest-only patterns
+go into native --disallowedTools. A household person's missing outside tier
+does not make that person a guest. The CLI uses dontAsk permission mode,
+an empty settings-source list, no unrelated MCP servers, and no persisted native
+session. Calls needing interactive native approval are refused.
+
+The child publishes a reply only with the observed main assistant response model,
+and records observed tool-action models separately. Requested, initialization,
+usage-map, synthetic, aborted and subagent model values never stand in for that
+response. Native diagnostics stay private. Serialized status beats keep work reported;
+a Stop cancels native execution and suppresses its reply. A failed status beat
+also stops the body. The parent still owns and reaps the
+whole process group.
+
+This initial Claude entry handles one accepted mail batch and its response.
+The in-child bodyProgram.startup extension point precedes mail/model input;
+startup Secret alias retrieval is a separate integration. Codex, additional
+Comms tools and multi-turn question/wait handling remain unfinished.
