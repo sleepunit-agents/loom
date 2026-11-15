@@ -59,7 +59,8 @@ export class SecretRequests {
         const answer = allow ? 'auto' : 'never';
         const old = this.db.select().from(secretRules).where(eq(secretRules.secret, row.secret)).get();
         const agents = old?.answer === answer ? this.db.select().from(secretRuleAgents).where(eq(secretRuleAgents.secret, row.secret)).all().map(a => ({ agent: a.agent, when: a.when })) : [];
-        if (!agents.some(a => a.agent === row.agent && a.when === 'on_request')) agents.push({ agent: row.agent, when: 'on_request' });
+        const when = row.job && row.id === startupRequestId(row.job, row.secret) ? 'at_start' : 'on_request';
+        if (!agents.some(a => a.agent === row.agent && a.when === when)) agents.push({ agent: row.agent, when });
         this.setRule({ secret: row.secret, answer, minutes: row.minutes, agents });
       }
       return this.settle(row, by, allow, always, row.minutes);

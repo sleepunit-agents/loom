@@ -60,6 +60,14 @@ describe('shared startup secret grants', () => {
     expect(new SecretRequests(f.db, f.now).grantAtStart('job-art')).toEqual([]);
     expect(f.db.select().from(secretRequests).get()?.state).toBe(state);
   });
+  it.each([true, false])('Always preserves startup timing for future jobs (allow=%s)', allow => {
+    const f = fixture(); f.rule('ask'); f.service.grantAtStart('job-art');
+    f.service.answer(startupRequestId('job-art', 'github-token'), 'jonathan', allow, true);
+    f.job('job-next');
+    expect(f.service.grantAtStart('job-next')).toHaveLength(allow ? 1 : 0);
+    expect(f.db.select().from(secretRequests).where(eq(secretRequests.id, startupRequestId('job-next', 'github-token'))).get()).toMatchObject({ state: allow ? 'allowed' : 'denied', answeredBy: 'rule' });
+    expect(f.db.select().from(inbox).all()).toHaveLength(1);
+  });
   it('never grants from a household default or an on-request entry', () => {
     const f = fixture(); f.db.insert(household).values({ secretsDefault: 'auto' }).run();
     expect(f.service.grantAtStart('job-art')).toEqual([]);
