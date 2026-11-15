@@ -1,126 +1,38 @@
-/** Setup's one browser test: fixture next home, two windows, condition waits. CI only. */
-import { it, expect } from 'vitest';
-import { existsSync, mkdtempSync, rmSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { chromium } from 'playwright-core';
-import { startLoom } from '../foundation.js';
-import { FakeClock } from '../core/clock.js';
-import { fixture } from '../fixture.js';
-import { PeopleStore } from '../backends/people.js';
-const root = resolve(import.meta.dirname, '../../dist/web');
-const chrome = [process.env.LOOM_TEST_CHROME, '/usr/bin/google-chrome', '/usr/bin/chromium', chromium.executablePath()].find(p => p && existsSync(p));
-it.runIf(chrome && existsSync(join(root, 'next.html')))('Setup changes are live across windows and fit three widths', async () => {
-  const home = mkdtempSync(join(tmpdir(), 'loom-setup-browser-')); fixture(home);
-  // Membership fixtures do not create the People directory required by setMember.
-  mkdirSync(join(home, 'commons'), { recursive: true });
-  const people = new PeopleStore({ dbPath: join(home, 'commons', 'people.db') });
-  try { people.write({ slug: 'pollock', name: 'Pollock' }); } finally { people.close(); }
-  const loom = await startLoom({ home, next: true, staging: true, clock: new FakeClock(Date.parse('2026-11-12T12:00:00Z')), webRoot: root });
-  const browser = await chromium.launch({ executablePath: chrome, args: ['--no-sandbox'] });
-  try {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 1000 }, serviceWorkers: 'block' });
-    const a = await context.newPage(), b = await context.newPage();
-    const errors: string[] = []; a.on('pageerror', e => errors.push(e.message)); b.on('pageerror', e => errors.push(e.message));
-    const link = loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'signin.link', { member: 'jonathan' });
-    if (!link.ok) throw new Error('Fixture sign-in failed');
-    await a.goto(loom.url + (link.value as { path: string }).path);
-    const signedIn = a.waitForResponse(r => r.request().method() === 'POST');
-    await a.getByRole('button', { name: 'Sign in', exact: true }).click(); expect((await signedIn).status()).toBe(303);
-    await a.goto(loom.url + '/p/setup-preview'); await b.goto(loom.url + '/p/setup-preview');
-    const accounts = a.getByRole('form', { name: 'Save accounts for art', exact: true });
-    const otherAccounts = b.getByRole('form', { name: 'Save accounts for art', exact: true });
-    await expect.poll(() => accounts.getByRole('textbox').isEnabled()).toBe(true);
-    await accounts.getByRole('textbox').fill('art-bot'); await accounts.getByRole('button').click();
-    await expect.poll(() => otherAccounts.getByRole('textbox').inputValue()).toBe('art-bot');
-    const description = a.getByRole('form', { name: 'Save description for art', exact: true });
-    const otherDescription = b.getByRole('form', { name: 'Save description for art', exact: true });
-    await expect.poll(() => description.getByRole('textbox').isEnabled()).toBe(true);
-    await description.getByRole('textbox').fill('Art keeps the household running.'); await description.getByRole('button').click();
-    await expect.poll(() => otherDescription.getByRole('textbox').inputValue()).toBe('Art keeps the household running.');
-    await a.getByRole('form', { name: 'Ask art for a description', exact: true }).getByRole('button').click();
-    await expect.poll(() => b.getByText('A description has been requested.', { exact: false }).count()).toBe(1);
-    const reply = loom.operations.call('direct', { kind: 'agent', id: 'art' }, 'household.describeSelf', { text: 'I help Jonathan keep the household running.' }, 'browser-profile-reply');
-    expect(reply.ok).toBe(true);
-    await expect.poll(() => otherDescription.getByRole('textbox').inputValue()).toBe('I help Jonathan keep the household running.');
-    await expect.poll(() => b.getByText('A description has been requested.', { exact: false }).count()).toBe(0);
-    const ownership = a.getByRole('form', { name: 'Save ownership for pollock', exact: true });
-    await ownership.getByRole('checkbox', { name: 'mark', exact: true }).check();
-    await ownership.getByRole('checkbox', { name: 'I confirm this ownership change', exact: true }).check();
-    await ownership.getByRole('button').click();
-    await expect.poll(() => b.getByText('member · mark, pond-bot', { exact: true }).count()).toBe(1);
-    const projects = a.getByRole('form', { name: 'Save projects for pollock', exact: true });
-    await projects.getByRole('checkbox', { name: 'other', exact: true }).check(); await projects.getByRole('button').click();
-    await expect.poll(() => b.getByRole('form', { name: 'Save projects for pollock', exact: true }).getByRole('checkbox', { name: 'other', exact: true }).isChecked()).toBe(true);
-    // The daemon rejects removal of the last household owner; the page surfaces it.
-    const remove = a.getByRole('form', { name: 'Remove jonathan', exact: true });
-    await remove.getByRole('checkbox').check(); await remove.getByRole('button').click();
-    await expect.poll(() => a.getByText('invalid: A household owner must remain', { exact: true }).count()).toBe(1);
-    const create = a.getByRole('form', { name: 'Create agent', exact: true });
-    await create.getByRole('textbox', { name: 'Short name', exact: true }).fill('gabe');
-    await create.getByRole('textbox', { name: 'Name', exact: true }).fill('Gabe');
-    await create.getByRole('textbox', { name: 'What it’s for', exact: true }).fill('Help with the garden.');
-    await create.getByRole('textbox', { name: 'How it talks', exact: true }).fill('Warm and direct.');
-    await create.getByRole('textbox', { name: 'Rules', exact: true }).fill('Keep private things private.');
-    await create.getByRole('textbox', { name: 'When to ask first', exact: true }).fill('Before spending money.');
-    await create.getByRole('checkbox').check(); await create.getByRole('button').click();
-    await expect.poll(() => a.getByLabel('Harness configuration', { exact: true }).textContent()).toContain('--next');
-    await expect.poll(() => b.getByRole('form', { name: 'Save accounts for gabe', exact: true }).count()).toBe(1);
-    const mint = a.getByRole('form', { name: 'Create token', exact: true });
-    await expect.poll(() => mint.locator('select[name=role]').inputValue()).toBe('agent');
-    expect(await mint.locator('select[name=agent]').inputValue()).toBe('gabe');
-    expect(await mint.getByRole('textbox', { name: 'Token label', exact: true }).inputValue()).toBe('gabe · first token');
-    await mint.getByRole('textbox', { name: 'Token label', exact: true }).fill('setup-browser-token');
-    await mint.getByRole('button', { name: 'Create token', exact: true }).click();
-    await expect.poll(() => a.getByLabel('Token value', { exact: true }).textContent()).toMatch(/^loom_/);
-    // Only the initiating window sees the bearer; both see authoritative safe metadata.
-    const revokeToken = b.getByRole('form', { name: 'Revoke token setup-browser-token', exact: true });
-    await expect.poll(() => revokeToken.count()).toBe(1);
-    expect(await b.getByLabel('Token value', { exact: true }).count()).toBe(0);
-    await a.getByRole('button', { name: 'Home', exact: true }).click();
-    await expect.poll(() => a.locator('[data-tile]').count()).toBe(0);
-    await a.getByRole('button', { name: 'Open Household setup', exact: true }).click();
-    expect(await a.getByLabel('Token value', { exact: true }).count()).toBe(0);
-    // A separately seeded browser session is revoked through the real screen.
-    const session = loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'sessions.list', {});
-    if (!session.ok) throw new Error('Fixture session list failed');
-    const active = (session.value as { ref: string }[])[0].ref;
-    const { signin, hash } = await import('../core/signin/index.js');
-    const auth = signin(loom);
-    const temporary = auth.createSession(auth.sessions.read().sessions[Object.keys(auth.sessions.read().sessions)[0]].secret, { label: 'temporary-browser' });
-    loom.live.changed([{ type: 'signin.admin', id: 'household' }]);
-    const revokeSession = a.getByRole('form', { name: `Revoke session ${hash(temporary).slice(0, 16)}`, exact: true });
-    await expect.poll(() => revokeSession.count()).toBe(1);
-    await revokeSession.getByRole('button').click();
-    expect(await revokeSession.evaluate(form => !(form as HTMLFormElement).checkValidity())).toBe(true);
-    expect(auth.session(temporary)).toBeDefined();
-    await revokeSession.getByRole('checkbox').check(); await revokeSession.getByRole('button').click();
-    await expect.poll(() => b.getByRole('form', { name: `Revoke session ${hash(temporary).slice(0, 16)}`, exact: true }).count()).toBe(0);
-    expect(auth.session(temporary)).toBeUndefined();
-    expect((loom.operations.call('direct', { kind: 'member', id: 'jonathan' }, 'sessions.list', {}) as { value: { ref: string }[] }).value.some(x => x.ref === active)).toBe(true);
-    const memberLink = a.getByRole('region', { name: 'Sign-in link for pollock', exact: true });
-    await memberLink.getByRole('button', { name: 'Make sign-in link', exact: true }).click();
-    await expect.poll(() => memberLink.locator('[data-signin-link]').count()).toBe(1);
-    const path = new URL((await memberLink.locator('[data-signin-link]').textContent())!).pathname;
-    const linked = auth.sessions.get('links', hash(path.split('/').pop()!));
-    expect(auth.token(linked!.secret)?.viewer).toEqual({kind:'member',id:'pollock'});
-    await memberLink.getByRole('button', { name: 'Hide sign-in link', exact: true }).click();
-    expect(await memberLink.locator('[data-signin-link]').count()).toBe(0);
-    const shots = resolve('artifacts/household-setup'); mkdirSync(shots, { recursive: true });
-    // Shared desk evidence owns appearance; this fixture owns Setup behavior.
-    for (const width of [390, 1280, 1920]) {
-      await b.setViewportSize({ width, height: 1000 }); await b.reload();
-      await expect.poll(() => b.getByRole('form', { name: 'Save accounts for art', exact: true }).getByRole('textbox').inputValue()).toBe('art-bot');
-      expect(await b.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await b.getByRole('region', { name: 'Sign-in link for jonathan', exact: true }).scrollIntoViewIfNeeded();
-      await b.screenshot({ path: join(shots, `setup-${width}.png`), fullPage: true, animations: 'disabled' });
-    }
-    await revokeToken.getByRole('button').click();
-    expect(await revokeToken.evaluate(form => !(form as HTMLFormElement).checkValidity())).toBe(true);
-    expect(auth.tokens.list().find(t => t.label === 'setup-browser-token')?.revoked).toBeUndefined();
-    await revokeToken.getByRole('checkbox', { name: 'I confirm revoking setup-browser-token', exact: true }).check();
-    await revokeToken.getByRole('button').click();
-    await expect.poll(() => a.getByRole('form', { name: 'Revoke token setup-browser-token', exact: true }).count()).toBe(0);
-    expect(errors).toEqual([]); await context.close();
-  } finally { await browser.close(); await loom.close(); rmSync(home, { recursive: true, force: true }); }
-}, 90_000);
+/** One Household setup browser proof through the running shared program. */
+import {it,expect} from 'vitest';
+import Database from 'better-sqlite3';
+import {createHash} from 'node:crypto';
+import {existsSync,mkdirSync} from 'node:fs';
+import {join,resolve} from 'node:path';
+import {chromium} from 'playwright-core';
+import {FakeClock} from '../core/clock.js';
+import {createDataSchema} from '../core/data/database.js';
+import {members,agents,tokens,sessions,agentAccounts} from '../core/data/schema.js';
+import {serveShared} from '../shared-serve.js';
+import {deskMemoryFixture} from './desk-memory.fixture.js';
+const enabled=process.env.LOOM_DESK_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
+if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))))throw Error('Setup evidence needs Chrome and the built app');
+it.runIf(enabled)('Household owners edit canonical members and accounts, mint a one-time token and end another browser across shared windows',async()=>{
+ const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now),hash=(value:string)=>createHash('sha256').update(value).digest('hex'),cookie='c'.repeat(64);
+ db.insert(members).values([{id:'owner',role:'owner',joinedAt:now()},{id:'sam',role:'member',joinedAt:now()}]).run();db.insert(agents).values({id:'art',about:'Fixture agent',markBg:'#000000',markFg:'#ffffff',faceShape:'pebble',faceEyes:'dot'}).run();
+ for(const [member,raw]of [['owner','a'.repeat(64)],['sam','b'.repeat(64)]])db.insert(tokens).values({fingerprint:hash(raw),kind:'owner',member,label:member,createdAt:now()}).run();
+ db.insert(sessions).values([{id:hash(cookie),token:hash('a'.repeat(64)),device:'Current owner browser',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()},{id:hash('d'.repeat(64)),token:hash('b'.repeat(64)),device:'Kitchen tablet',via:'link',isAgent:false,issuedAt:now(),seenAt:now(),provedAt:now()}]).run();
+ const memory=deskMemoryFixture(['art']),app=await serveShared({db,clock,webRoot,memory:{sources:memory.sources,checkingAgent:'art'},originAllowed:()=>true,reportError:error=>{throw error;}}),browser=await chromium.launch({executablePath:chrome,args:['--no-sandbox']});
+ try{
+  const context=await browser.newContext({serviceWorkers:'block',viewport:{width:1280,height:900}});await context.addCookies([{name:'loom_ui',value:cookie,url:app.url}]);const a=await context.newPage(),b=await context.newPage(),errors:string[]=[];let legacy=0;
+  for(const page of [a,b]){page.on('pageerror',error=>errors.push(error.message));page.on('websocket',socket=>{if(new URL(socket.url()).pathname==='/live')legacy++;});await page.goto(app.url+'/p/setup-preview');}
+  const add=a.getByRole('form',{name:'Add member',exact:true});await add.getByRole('textbox',{name:'Member name',exact:true}).fill('pat');await add.getByRole('checkbox',{name:'art',exact:true}).check();await add.getByRole('button',{name:'Add member',exact:true}).click();
+  await expect.poll(()=>b.getByRole('form',{name:'Save member pat',exact:true}).count()).toBe(1);
+  const ownership=a.getByRole('form',{name:'Save member pat',exact:true});await ownership.getByRole('combobox',{name:'Role',exact:true}).selectOption('owner');await ownership.getByRole('checkbox',{name:'Own every agent',exact:false}).check();await ownership.getByRole('button',{name:'Save member',exact:true}).click();
+  await expect.poll(()=>b.getByRole('form',{name:'Save member pat',exact:true}).getByRole('checkbox',{name:'Own every agent',exact:false}).isChecked()).toBe(true);expect(db.select().from(members).all().find(member=>member.id==='pat')).toMatchObject({role:'owner',fullOwner:true});
+  const appearance=a.getByRole('form',{name:'Save appearance for art',exact:true});await appearance.getByRole('textbox',{name:'Description',exact:true}).fill('Updated fixture description');await appearance.getByRole('combobox',{name:'Face shape',exact:true}).selectOption('drop');await appearance.getByRole('combobox',{name:'Eyes',exact:true}).selectOption('oval');await appearance.getByRole('button',{name:'Save appearance',exact:true}).click();
+  await expect.poll(()=>b.getByRole('form',{name:'Save appearance for art',exact:true}).getByRole('textbox',{name:'Description',exact:true}).inputValue()).toBe('Updated fixture description');expect(db.select().from(agents).get()).toMatchObject({about:'Updated fixture description',markBg:'#000000',markFg:'#ffffff',faceShape:'drop',faceEyes:'oval'});
+  const accounts=a.getByRole('form',{name:'Save accounts for art',exact:true});await accounts.getByRole('textbox',{name:'GitHub accounts',exact:true}).fill('ART-BOT');await accounts.getByRole('button',{name:'Save accounts',exact:true}).click();
+  await expect.poll(()=>b.getByRole('form',{name:'Save accounts for art',exact:true}).getByRole('textbox').inputValue()).toBe('art-bot');expect(db.select().from(agentAccounts).all()).toEqual([{agent:'art',service:'github',login:'art-bot'}]);
+  const mint=a.getByRole('form',{name:'Create token',exact:true});await mint.getByRole('textbox',{name:'Token label',exact:true}).fill('Fictional owner token');await mint.getByRole('button',{name:'Create token',exact:true}).click();
+  await expect.poll(()=>a.getByLabel('Token value',{exact:true}).count()).toBe(1);const raw=await a.getByLabel('Token value',{exact:true}).textContent();expect(app.credentials.authenticate(new Request(app.url,{headers:{authorization:'Bearer '+raw}}))?.viewer).toEqual({kind:'member',id:'owner'});
+  await a.getByRole('button',{name:'Hide token',exact:true}).click();expect(await a.getByLabel('Token value',{exact:true}).count()).toBe(0);await expect.poll(()=>b.getByRole('heading',{name:'Fictional owner token',exact:true}).count()).toBe(1);
+  await a.getByRole('heading',{name:'Kitchen tablet',exact:true}).locator('..').getByRole('button',{name:'Sign out browser',exact:true}).click();await expect.poll(()=>b.getByRole('heading',{name:'Kitchen tablet',exact:true}).count()).toBe(0);
+  const shots=resolve('artifacts/household-setup');mkdirSync(shots,{recursive:true});await a.screenshot({path:join(shots,'setup-shared.png'),animations:'disabled'});expect(errors).toEqual([]);expect(legacy).toBe(0);
+ }finally{await browser.close();await app.close();memory.close();client.close();}
+});
