@@ -13,4 +13,3 @@ export function secretHasValue(db: DataDatabase, name: string): boolean {
   if (balance !== 0 && balance !== 1) throw Error('Invalid secret presence history');
   return balance === 1;
 }
-

@@ -284,8 +284,19 @@ it('retained removed-name history cannot create requests, startup grants or hand
   expect(() => requests.request({ id: 'after-remove', secret: 'API', agent: 'art', why: 'Use it', minutes: 5 })).toThrow('Unknown secret');
   requests.setRule({ secret: 'API', answer: 'auto', minutes: 5, agents: [{ agent: 'art', when: 'at_start' }] });
   expect(requests.grantAtStart('job')).toEqual([]);
+  f.db.insert(secretGrants).values({ id: 'stale-grant', secret: 'API', agent: 'art', job: 'job', grantedBy: 'owner', grantedAt: f.now(), expiresAt: '2026-11-14T12:05:00.000Z' }).run();
   expect(requests.grantFor('API', 'art', 'job')).toBeUndefined();
+  f.db.delete(secretGrants).where(eq(secretGrants.id, 'stale-grant')).run();
   await f.service.set({ ...f.input, id: randomUUID() });
   expect(requests.grantAtStart('job')).toHaveLength(1);
   expect(requests.grantFor('API', 'art', 'job')).toBeDefined();
+});
+it.each(['extra-add', 'extra-removes'] as const)('rejects inconsistent %s audit history before reserving another holder mutation', async corrupt => {
+  const f = fixture(); await f.service.set(f.input);
+  for (let index = 0; index < (corrupt === 'extra-add' ? 1 : 2); index++) f.db.insert(secretChanges).values({
+    id: `corrupt-${index}`, secret: 'API', action: corrupt === 'extra-add' ? 'add' : 'removed', by: 'owner', at: f.now(),
+  }).run();
+  const before = f.db.select().from(secretWriteJournal).all();
+  await expect(f.service.set({ ...f.input, id: randomUUID(), mode: 'replace' })).rejects.toThrow('Invalid secret presence history');
+  expect(f.db.select().from(secretWriteJournal).all()).toEqual(before); expect(f.holder.set).toHaveBeenCalledTimes(1);
 });
