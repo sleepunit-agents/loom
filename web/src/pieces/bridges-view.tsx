@@ -38,7 +38,7 @@ const labels: Record<BridgeFolder, string> = {
 const awaitingReview = (send: BridgeSendRow) => ['pending', 'held', 'sending', 'uncertain'].includes(send.state);
 
 /** Presentation only. Authenticated generated queries supply rows; the root
- * supplies approval-backed editors and send review. No token, API call, or
+ * supplies owner controls and send review. No token, API call, or
  * mutation lives here. A non-live snapshot never displays retained rows. */
 export function BridgesView({ snapshot, member, folder, selected, select, changeFolder, cards }: {
   snapshot: BridgesSnapshot;
@@ -47,7 +47,7 @@ export function BridgesView({ snapshot, member, folder, selected, select, change
   selected?: BridgeSelection;
   select: (selection: BridgeSelection | undefined) => void;
   changeFolder: (folder: BridgeFolder) => void;
-  cards?: { connection?: (id: string) => ReactNode; send?: (id: string) => ReactNode };
+  cards?: { create?: ReactNode; channel?: (row: BridgeChannelRow) => ReactNode; person?: (row: BridgePersonRow) => ReactNode; connection?: (id: string) => ReactNode; send?: (id: string) => ReactNode };
 }) {
   if (snapshot.member !== member || snapshot.status === 'loading') return <Loading label="Opening Bridges…" />;
   if (snapshot.status !== 'live') return <Error text="Bridges is unavailable. Reconnect to continue." />;
@@ -76,8 +76,8 @@ export function BridgesView({ snapshot, member, folder, selected, select, change
       <section><h2>Stored secret names</h2><p>Bot token: {connection.tokenSecret}</p>{connection.appSecret && <p>App token: {connection.appSecret}</p>}</section>
       {cards?.connection?.(connection.id)}
     </article>;
-  } else if (channel) reader = <article className="grid gap-4 p-5"><h1>{channel.channel}</h1><p>{channel.platform} · {channel.workspace}</p><p>Answers when nobody is addressed: {channel.answers}</p><p>Bots may talk: {channel.botsMayTalk ? 'Yes' : 'No'}</p></article>;
-  else if (person) reader = <article className="grid gap-4 p-5"><h1>{person.member}</h1><p>{person.platform} · {person.workspace}</p><p>Outside user: {person.user}</p></article>;
+  } else if (channel) reader = <article className="grid gap-4 p-5"><h1>{channel.channel}</h1><p>{channel.platform} · {channel.workspace}</p><p>Answers when nobody is addressed: {channel.answers}</p><p>Bots may talk: {channel.botsMayTalk ? 'Yes' : 'No'}</p>{cards?.channel?.(channel)}</article>;
+  else if (person) reader = <article className="grid gap-4 p-5"><h1>{person.member}</h1><p>{person.platform} · {person.workspace}</p><p>Outside user: {person.user}</p>{cards?.person?.(person)}</article>;
   else if (send) reader = <article className="grid gap-4 p-5"><h1>Reply to {send.channel}</h1><p>{send.state}</p><p>{send.text}</p>
     {send.thread && <p>Thread: {send.thread}</p>}
     {send.state === 'uncertain' && <p>Delivery could not be confirmed. Review before sending again.</p>}
@@ -89,7 +89,7 @@ export function BridgesView({ snapshot, member, folder, selected, select, change
     : folder === 'people' ? snapshot.people.map(value => row(bridgePersonKey(value), value.member, `${value.platform} · ${value.workspace} · ${value.user}`))
     : sends.map(value => row(value.id, value.channel, value.text, value.state));
   return <Split label="Bridges" folders={(Object.keys(labels) as BridgeFolder[]).map(id => ({ id, label: labels[id], count: counts[id] }))}
-    folder={folder} onFolder={id => { select(undefined); changeFolder(id as BridgeFolder); }} listTitle={labels[folder]}
+    folder={folder} onFolder={id => { select(undefined); changeFolder(id as BridgeFolder); }} listTop={cards?.create} listTitle={labels[folder]}
     list={rows.length ? <List label={labels[folder]}>{rows}</List> : <Empty title={`No ${labels[folder].toLowerCase()}`} />}
     reader={reader} open={reader !== null} onBack={() => select(undefined)} backLabel={`Back to ${labels[folder].toLowerCase()}`}
     blank={<Empty title={active ? 'This item is no longer available' : 'Choose an item'} />} />;
