@@ -463,3 +463,11 @@ that call, while body close cancels every current and future call.
 Native model tools report only working/waiting while a turn is live. Idle/offline
 reports and Stop acknowledgement belong to the receiving runtime after execution
 ends, so a model cannot clear the working flag or remove the live Stop control.
+
+runtime.proposeAgentRunSettings lets a current private chat body request its
+member's agent run configuration. The existing inline approval carries the
+previous house, machine order, ports and capabilities alongside the proposed
+ones. Allow rechecks the requesting member's agent ownership and current
+machine availability or lending. A stale card needs a fresh request. Direct
+owner edits and approved changes share validation/application. This path never
+changes repository-secret references or executes a house.
