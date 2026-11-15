@@ -59,7 +59,7 @@ export default function CommsApp(props:{path?:string;go?:(path:string)=>void;vis
  const prefix='/p/comms-preview/conversation/';
  if(path.startsWith(prefix)){
   let conversation:string;try{conversation=decodeURIComponent(path.slice(prefix.length));}catch{return <Empty title="Conversation unavailable"/>;}
-  return <ConversationActivity key={conversation} conversation={conversation} onBack={()=>{if(history.length>1)history.back();else visit('/p/activity-preview');}}/>;
+  return <ConversationActivity key={conversation} conversation={conversation}/>;
  }
  return <SharedCommsApp {...props} path={path} go={visit}/>;
 }

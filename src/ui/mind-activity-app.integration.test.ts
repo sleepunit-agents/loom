@@ -47,7 +47,7 @@ it.runIf(enabled&&chrome&&existsSync(join(root,'next.html')))('Activity filters,
   await expect.poll(()=>conversationTile.getByRole('heading',{name:'Conversation activity',exact:true}).count()).toBe(1);
   await expect.poll(()=>conversationTile.getByText('Build the household desk',{exact:true}).count()).toBe(1);
   await expect.poll(()=>conversationTile.getByText('reply · art',{exact:true}).count()).toBe(1);
-  await b.goBack();await expect.poll(()=>b.getByRole('heading',{name:'What happened',exact:true}).count()).toBe(1);
+  await b.getByRole('button',{name:'Open Activity',exact:true}).click();await expect.poll(()=>b.locator('[data-tile=activity]').getByRole('heading',{name:'What happened',exact:true}).count()).toBe(1);
   await a.setViewportSize({width:800,height:900});await expect.poll(()=>a.locator('.loom-split').getAttribute('data-mode')).toBe('two');await a.setViewportSize({width:1280,height:900});
   await expect.poll(()=>b.getByText('Shipped the household desk. The live timeline brings the work together.',{exact:true}).count()).toBe(1);
   const shots=resolve('artifacts/activity-app');mkdirSync(shots,{recursive:true});
