@@ -42,7 +42,11 @@
     {
       "id": "tempo-008",
       "promise": "Waiting on an approval is a once-only trigger on that answer.",
-      "source": "docs/how-it-works/site/tempo.html#con-h"
+      "source": "docs/how-it-works/site/tempo.html#con-h",
+      "probe": {
+        "kind": "action",
+        "action": "tempoResumed"
+      }
     },
     {
       "id": "tempo-009",
