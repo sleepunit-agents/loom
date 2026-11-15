@@ -37,7 +37,7 @@ export async function startSharedLoom(options: {home:string; host?:string[]; por
     }
     client = new Database(join(home,'loom.db'));
     const fresh = !client.prepare('SELECT name FROM sqlite_schema LIMIT 1').get();
-    if (fresh && entries.some(name=>name!=='loom.db')) throw new Error('A nonempty home needs the separate data move');
+    if (fresh && entries.length) throw new Error('A nonempty home needs the separate data move');
     const db = fresh ? createDataSchema(client,()=>new Date(clock.now()).toISOString()) : dataDatabase(client,()=>new Date(clock.now()).toISOString());
     if (!fresh && !client.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='migrations'").get())
       throw new Error('This home needs the separate data move before starting the shared program');
@@ -55,9 +55,16 @@ export async function startSharedLoom(options: {home:string; host?:string[]; por
       db.insert(tokens).values({fingerprint,label:'First sign-in',kind:'owner',member,createdAt:at}).run();
     });
     // A failed listen or a lost first print must not strand a new home. The
-    // local owner can restart until the first browser has redeemed a link.
-    if (!db.select().from(sessions).get()) {
-      const first = db.select().from(tokens).all().find(t=>t.label==='First sign-in' && !t.revokedAt);
+    // local owner can restart when no owner browser has usable access.
+    const credentials = db.select().from(tokens).all();
+    const owners = new Set(db.select().from(members).all().filter(member=>member.role==='owner').map(member=>member.id));
+    const usable = (token:typeof credentials[number]) => !token.revokedAt && (!token.expiresAt || Date.parse(token.expiresAt)>clock.now()) && token.kind==='owner' && !!token.member && owners.has(token.member);
+    const signedIn = db.select().from(sessions).all().some(session=>{
+      const token=credentials.find(token=>token.fingerprint===session.token);
+      return token && usable(token) && Date.parse(session.issuedAt)+(session.isAgent?6*3600000:30*86400000)>clock.now();
+    });
+    if (!signedIn) {
+      const first = credentials.find(token=>token.label==='First sign-in' && usable(token));
       if (first) link=db.transaction(()=>sharedSigninLinks(db,clock).makeLink(first.fingerprint).path);
     }
     const hosts = options.host ?? ['127.0.0.1'];

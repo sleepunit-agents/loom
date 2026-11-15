@@ -33,7 +33,7 @@ it.runIf(process.env.CI==='true'&&chrome&&existsSync(join(root,'next.html')))('f
   await expect.poll(()=>frames.some(frame=>frame.includes('"next"')&&frame.includes('"revision":1'))).toBe(true);
   expect(paths).toEqual(['/graphql']);
   await page.goto(url+'/p/tasks-preview');
-  await expect.poll(()=>frames.filter(frame=>frame.includes('"next"')).length).toBeGreaterThan(1);
+  await expect.poll(()=>frames.some(frame=>frame.includes('"tasks":[]'))).toBe(true);
   // Commit after the real tile has subscribed; it must draw the change without
   // navigation, a second read or a legacy feed waking it.
   const owner=app.db.select().from(members).get()!.id,at=new Date(clock.now()).toISOString();

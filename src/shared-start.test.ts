@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync, statSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
+import { createServer } from 'node:http';
 import { WebSocket } from 'ws';
 import { startSharedLoom } from './shared-start.js';
 import { tasks, sessions, members } from './core/data/schema.js';
@@ -35,7 +36,7 @@ it('admits the actual empty-home first-run cookie on GraphQL and publishes later
  expect((await fetch(app.url+'/graphql',{method:'POST',headers:{cookie,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id } }'})})).status).toBe(401);
 });
 
-it('can restart after a failed first listen without losing first-run access; a signed-in home does not print another link',async()=>{
+it('can restart after failed web startup without losing first-run access; a signed-in home does not print another link',async()=>{
  const home=mkdtempSync(join(tmpdir(),'first-restart-')),webRoot=mkdtempSync(join(tmpdir(),'restart-web-'));
  clean.push(()=>{rmSync(home,{recursive:true,force:true});rmSync(webRoot,{recursive:true,force:true});});
  await expect(startSharedLoom({home,port:0,webRoot,stdout:()=>{throw Error('must not print');}})).rejects.toThrow();
@@ -78,4 +79,28 @@ it('keeps the home exclusive and credentials private until in-flight HTTP shutdo
  await entered;const stopped=app.close();
  try{await expect(startSharedLoom(options)).rejects.toThrow('already running');}finally{release();await stopped;await request;}
  const restarted=await startSharedLoom(options);clean.push(()=>restarted.close());expect(restarted.db.select().from(members).all()).toHaveLength(1);
+});
+
+it('refuses a preexisting empty database without initializing it',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'empty-db-refused-'));clean.push(()=>rmSync(home,{recursive:true,force:true}));writeFileSync(join(home,'loom.db'),'');
+ await expect(startSharedLoom({home,port:0,webRoot:home,stdout:()=>{}})).rejects.toThrow('separate data move');
+ expect(readdirSync(home)).toEqual(['loom.db']);expect(statSync(join(home,'loom.db')).size).toBe(0);
+});
+it('prints usable local-owner access after the only signed-in browser expires',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'expired-start-')),webRoot=mkdtempSync(join(tmpdir(),'expired-web-')),clock=new FakeClock();
+ clean.push(()=>{rmSync(home,{recursive:true,force:true});rmSync(webRoot,{recursive:true,force:true});});writeFileSync(join(webRoot,'next.html'),'Shared app');
+ let link='';const options={home,port:0,webRoot,clock,stdout:(text:string)=>{link=text.trim();}};
+ const first=await startSharedLoom(options);try{expect((await fetch(link,{method:'POST',redirect:'manual',headers:{'user-agent':'HeadlessChrome/1'}})).status).toBe(303);}finally{await first.close();}
+ clock.advance(6*3600000);link='';const recovered=await startSharedLoom(options);clean.push(()=>recovered.close());
+ expect(link).toMatch(/\/login\/[0-9a-f]{64}$/);
+ const response=await fetch(link,{method:'POST',redirect:'manual'});expect(response.status).toBe(303);
+ expect((await fetch(recovered.url+'/auth/session',{headers:{cookie:response.headers.get('set-cookie')!.split(';')[0]}})).status).toBe(200);
+});
+
+it('releases home ownership after a real bind failure and recovers the first-run link',async()=>{
+ const home=mkdtempSync(join(tmpdir(),'bind-failed-')),webRoot=mkdtempSync(join(tmpdir(),'bind-web-'));clean.push(()=>{rmSync(home,{recursive:true,force:true});rmSync(webRoot,{recursive:true,force:true});});writeFileSync(join(webRoot,'next.html'),'Shared app');
+ const blocker=createServer();blocker.listen(0,'127.0.0.1');await once(blocker,'listening');const address=blocker.address();if(!address||typeof address==='string')throw Error('No bind address');
+ try{await expect(startSharedLoom({home,port:address.port,webRoot,stdout:()=>{throw Error('must not print');}})).rejects.toThrow('EADDRINUSE');}finally{await new Promise<void>(ok=>blocker.close(()=>ok()));}
+ let link='';const app=await startSharedLoom({home,port:address.port,webRoot,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());
+ expect((await fetch(link,{method:'POST',redirect:'manual'})).status).toBe(303);
 });
