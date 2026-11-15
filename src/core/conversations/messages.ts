@@ -1,6 +1,6 @@
 /** Trusted private-message service. External doors authenticate and authorize;
  * encrypted words never enter operation receipts or the plaintext Inbox. */
-import { and, eq, inArray, isNotNull, lte, max, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, max, or, sql } from 'drizzle-orm';
 import type { DataDatabase } from '../data/database.js';
 import { conversations, deletedThreads, household, inbox, inboxRefs, messages, threadRefs, threads, turns } from '../data/schema.js';
 import type { WordsKey } from './words.js';
@@ -149,7 +149,7 @@ export class CommsMessages {
     const keepDays = () => this.db.select({ days: household.commsDays }).from(household).get()?.days ?? 14;
     const retained = (message: Message | undefined, days: number) => !!message?.words && !!message.keepUntil
       && Number.isInteger(days) && days >= 1 && days <= 14
-      && message.keepUntil > this.now() && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
+      && Date.parse(message.keepUntil) > Date.parse(this.now()) && Date.parse(message.at) + days * 86400000 > Date.parse(this.now());
     const days = keepDays();
     if (!retained(row, days) || !row?.words) return null;
     const words = await this.key.open(row.words);
@@ -163,7 +163,7 @@ export class CommsMessages {
     if (!Number.isInteger(days) || days < 1 || days > 14) throw new Error('Invalid Comms keep time');
     const at = this.now(), cutoff = new Date(Date.parse(at) - days * 86400000).toISOString();
     return this.db.update(messages).set({ words: null }).where(and(isNotNull(messages.words),
-      or(lte(messages.keepUntil, at), lte(messages.at, cutoff)))).returning({ seq: messages.seq }).all().length;
+      or(sql`julianday(${messages.keepUntil}) <= julianday(${at})`, sql`julianday(${messages.at}) <= julianday(${cutoff})`))).returning({ seq: messages.seq }).all().length;
   }
 
   /** Remove private words and references; retain Inbox outcome metadata and a

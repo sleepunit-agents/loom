@@ -219,3 +219,12 @@ it('rolls wordless turns and speaker/count updates back with failed message deli
   expect(db.select().from(conversationPeople).all()).toEqual([]);
   expect(db.select().from(conversations).where(eq(conversations.id, thread.conversation)).get()?.turnCount).toBe(0);
 });
+
+it('uses actual stored expiry instants for private word reads and ciphertext sweeps', async () => {
+  const { db, service, thread } = await fixture();
+  const message = await service.send({ thread: thread.id, sender: 'jonathan', kind: 'message', words: 'Expired by stored deadline' });
+  db.update(messages).set({ keepUntil: '2026-11-14T18:00:00Z' }).run();
+  expect(await service.words(thread.id, message.seq)).toBeNull();
+  expect(service.expire()).toBe(1);
+  expect(db.select().from(messages).get()?.words).toBeNull();
+});
