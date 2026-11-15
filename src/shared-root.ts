@@ -1,3 +1,4 @@
+import {registerSharedBodyEnrollment} from './shared-body-enrollment.js';
 import { registerTempoSettingsAnswer } from './shared-tempo-settings-answer.js';
 import { SecretPrivateInputs } from './pieces/secrets/private-inputs.js';
 import type { SecretValueSource } from './pieces/secrets/role.js';
@@ -121,6 +122,7 @@ export function sharedRoot(options: {
   });
   const runtime = createRuntime(db, jobClock('runtime.tick'), { roles, changed: () => { tempo?.capacityChanged(); data.changed(); }, jobEnded, error: options.reportError });
   registerSharedRuntime(operations, db, { now, roles, jobEnded, runner: credentials.runner });
+  registerSharedBodyEnrollment(operations, db, {now,runnerEnrollment:credentials.runnerEnrollment});
 
   const requests = new SecretRequests(db, now);
   const secretCommit = <T>(write: () => T): T => {

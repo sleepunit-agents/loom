@@ -73,6 +73,12 @@ export function sharedCredentials(db: DataDatabase, clock: Clock, admitted: () =
       return found?.bearer && viewer.kind === 'runner' && found.token.kind === 'runner' && found.token.box
         ? Object.freeze({ box: found.token.box }) : undefined;
     },
+    runnerEnrollment(viewer: Viewer): Readonly<{ box: string; fingerprint: string }> | undefined {
+      const found = proof(viewer);
+      return found?.bearer && viewer.kind === 'runner' && found.token.kind === 'runner' && found.token.box === viewer.id
+        && !found.token.member && !found.token.agent && !found.token.job
+        ? Object.freeze({ box: viewer.id, fingerprint: found.token.fingerprint }) : undefined;
+    },
     body(viewer: Viewer): Readonly<{ job: string; agent: string; box: string }> | undefined {
       const found = proof(viewer);
       return found?.bearer && viewer.kind === 'agent' && found.token.kind === 'agent' && found.token.job && found.box
