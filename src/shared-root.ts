@@ -47,7 +47,7 @@ export function sharedRoot(options: {
   try{
   let memorySignals:ReturnType<typeof installMemorySignals>|undefined;
   const data = nextData(db, clock, request => !closing && options.originAllowed(request), options.publicOrigin, {...memory.fields,...options.fields}, () => !closing);
-  startupCleanups.push(()=>{void data.close().catch(options.reportError);});
+  startupCleanups.push(()=>{void data.close().catch(error=>{try{options.reportError(error);}catch{/* Preserve the startup failure. */}});});
   const operations = new Operations(db.$client, clock, changes => {memorySignals?.changed();options.changed?.(changes);}, {
     receipts: new OperationResults(db), writes: data.writes, reportError: options.reportError,
   });
