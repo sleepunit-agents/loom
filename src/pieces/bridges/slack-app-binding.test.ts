@@ -13,13 +13,13 @@ class Socket extends EventEmitter {
 async function settled() { for (let i = 0; i < 40; i++) await Promise.resolve(); }
 const close: (() => Promise<void>)[] = [];
 afterEach(async () => { for (const stop of close.splice(0)) await stop(); });
-function fixture(app = 'AEXPECTED') {
+function fixture(app = 'AEXPECTED', effects = {secret:vi.fn(),http:vi.fn(),dial:vi.fn()}) {
   const clock = new FakeClock(), sockets: Socket[] = [];
   const receive = vi.fn(async () => {}), withValue = vi.fn();
-  const secrets: SecretUse = {withValue:async (name,use)=>{withValue(name);return use('PRIVATE');}};
-  const request = vi.fn<typeof fetch>(async () => Response.json({ok:true,url:'wss://wss.slack.com/link?ticket=PRIVATE'}));
+  const secrets: SecretUse = {withValue:async (name,use)=>{effects.secret();withValue(name);return use('PRIVATE');}};
+  const request = vi.fn<typeof fetch>(async () => {effects.http();return Response.json({ok:true,url:'wss://wss.slack.com/link?ticket=PRIVATE'});});
   const input = {app,appSecret:'app-secret',clock,secrets,request,beforeConnect:()=>true,receive,
-    socket:()=>{const s = new Socket();sockets.push(s);return s as unknown as ReturnType<NonNullable<SlackSocketOptions['socket']>>;}};
+    socket:()=>{effects.dial();const s = new Socket();sockets.push(s);return s as unknown as ReturnType<NonNullable<SlackSocketOptions['socket']>>;}};
   const transport = bridgeSlackSocket(input); close.push(transport.close);
   return {clock,sockets,receive,withValue,request,transport,input};
 }
@@ -46,7 +46,9 @@ it('rechecks app evidence on reconnect rather than retaining prior hello', async
   expect(f.withValue).toHaveBeenCalledTimes(2);
 });
 it.each(['','../token','A?bad','not-an-app'])('rejects invalid expected app before credentials: %s', app => {
-  expect(()=>fixture(app)).toThrow('Invalid Slack app binding');
+  const effects = {secret:vi.fn(),http:vi.fn(),dial:vi.fn()};
+  expect(()=>fixture(app,effects)).toThrow('Invalid Slack app binding');
+  for (const effect of Object.values(effects)) expect(effect).not.toHaveBeenCalled();
 });
 it('never accepts an event before hello even when the envelope claims the expected app', async () => {
   const f = fixture(); await settled(); const s = f.sockets[0];
