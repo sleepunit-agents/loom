@@ -241,7 +241,8 @@ export function sharedRoot(options: {
 
   startupCleanups.push(()=>commsLifetime?.close());
   if(options.commsKey)boxProposals.register(operations,bodyScope,services.approvals,value=>options.commsKey!.hash(value));
-  startupCleanups.push(data.writes.observe(()=>boxProposals.committed(()=>tempo?.capacityChanged())));
+  const stopBoxProposals=data.writes.observe(()=>boxProposals.committed(()=>tempo?.capacityChanged()));
+  startupCleanups.push(stopBoxProposals);
   const settingsBinding = sharedTempoSettings(db, clock, bodyScope, services.approvals);
   try { tempo = installSharedTempo(db, jobClock('tempo.tick'), data.writes, operations, services.conversations, data.changed, {
     ...options.tempo, notify: options.tempo?.notify ?? notices.publish, chatMember: options.tempo?.chatMember ?? settingsBinding.chatMember, settings: options.tempo?.settings ?? settingsBinding.request,
@@ -337,7 +338,7 @@ export function sharedRoot(options: {
       if (closing) return closing;
       let resolve!: () => void, reject!: (error: unknown) => void;
       closing = new Promise<void>((done, failed) => { resolve = done; reject = failed; });
-      stopMemoryWrites();memorySignals?.close();
+      stopMemoryWrites();stopBoxProposals();memorySignals?.close();
       accountReports.close();
       commsLifetime?.close();workLife.close();
       runtime.close();
