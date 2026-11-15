@@ -1,0 +1,20 @@
+import {createElement as h} from 'react';
+import {act,create,type ReactTestRenderer} from 'react-test-renderer';
+import {afterEach,expect,it,vi} from 'vitest';
+import type {DataQuerySnapshot} from '../../data/graphql';
+const state=vi.hoisted(()=>({feed:{status:'loading'} as DataQuerySnapshot<{settledInboxNotice:{id:string;count:number}|null}>}));
+vi.mock('../../data/graphql',()=>({useDataQuery:()=>state.feed}));
+vi.mock('../attention/registration',()=>({inboxApp:{path:'/registered-inbox'}}));
+import InboxNotice from './notice';
+let tree:ReactTestRenderer|undefined;afterEach(async()=>{await act(async()=>tree?.unmount());tree=undefined;});
+it('shows only live settled metadata, uses the registered Inbox destination and dismisses one occurrence',async()=>{
+ state.feed={status:'live',data:{settledInboxNotice:null}};await act(async()=>{tree=create(h(InboxNotice));});expect(tree!.toJSON()).toBeNull();
+ const update=async(feed:typeof state.feed)=>{state.feed=feed;await act(async()=>tree!.update(h(InboxNotice)));};
+ await update({status:'live',data:{settledInboxNotice:{id:'one',count:2}}});
+ expect(JSON.stringify(tree!.toJSON())).toContain('2 items are');expect(tree!.root.findByType('a').props.href).toBe('/registered-inbox');
+ await act(async()=>tree!.root.findByType('button').props.onClick());expect(tree!.toJSON()).toBeNull();
+ await update({status:'live',data:{settledInboxNotice:{id:'one',count:1}}});expect(tree!.toJSON()).toBeNull();
+ await update({status:'live',data:{settledInboxNotice:{id:'two',count:1}}});expect(JSON.stringify(tree!.toJSON())).toContain('1 item is');
+ await update({status:'offline',data:{settledInboxNotice:{id:'two',count:1}}});expect(tree!.toJSON()).toBeNull();
+ await update({status:'live',data:{settledInboxNotice:null}});expect(tree!.toJSON()).toBeNull();
+});
