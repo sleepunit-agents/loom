@@ -33,7 +33,8 @@ export async function bodyProgram(input: {
   const stopBeats=async()=>{cancel?.();cancel=undefined;await pending;};
   const nativeAbort = new AbortController(), signal = AbortSignal.any([input.signal,nativeAbort.signal]);
   const erase = () => { bytes?.fill(0); eraseBootstrap(bootstrap); context.length = 0; incoming.length=0; };
-  const retire=async()=>{nativeAbort.abort();programTools?.close();secrets.close();erase();await tools?.close();await stopBeats();};
+  let retirement:Promise<void>|undefined;
+  const retire=()=>retirement??=(async()=>{nativeAbort.abort();programTools?.close();secrets.close();erase();await tools?.close();await stopBeats();})();
   input.signal.addEventListener('abort', erase, { once: true });
   try {
     if (input.args.length !== 1 || input.signal.aborted) throw new Error();
@@ -82,10 +83,10 @@ export async function bodyProgram(input: {
     if(bridge&&!incoming.length)throw new Error();
     const replyTo=incoming.at(-1);
     if(!input.native){
-      const privateRoot={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch};
-      programTools=bodyProgramTools({...privateRoot,
+      const rootAccess={url:bootstrap.origin,token:parsed.bootstrap.token,signal,clock:input.clock,fetch:input.fetch};
+      programTools=bodyProgramTools({...rootAccess,
         onStop:()=>observe({stopRequested:true}),onStatus:value=>{state=value.state==='waiting'?'waiting':'working';work=value.work;}});
-      tools=await bodySecretTools({...privateRoot,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});
+      tools=await bodySecretTools({...rootAccess,job:job.id,conversation:job.conversation,extraTools:programTools.extensions,waiting:value=>{secretWaiting=value;}});
     }
     if(signal.aborted)throw new Error();
     const native = input.native ?? claudeBody({ ...plan, env: input.env, mcpConfig:tools?.config,mcpTools:tools?.allowedTools });

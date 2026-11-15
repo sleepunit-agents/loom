@@ -38,6 +38,7 @@ async function prepare(){
 function runDefault(fixture:Awaited<ReturnType<typeof prepare>>,io:Pick<Parameters<typeof bodyProgram>[0],'fetch'|'schedule'|'error'|'env'>){
  return bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),stdin:async()=>fixture.bytes,signal:new AbortController().signal,clock:fixture.clock,...io});
 }
+// The outcomes share one real credential/command protocol; flags select lifetime events.
 it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-waits'] as const)('runs canonical tools in the actual default body: %s',async mode=>{
  const held=mode.endsWith('-held'),stop=mode==='stop'||mode==='stop-held',failed=mode==='error-held';
  const fixture=await prepare(),errors=vi.fn(),cancel=vi.fn(),pipeBuffers:Buffer[]=[],statusInputs:unknown[]=[];
@@ -46,8 +47,10 @@ it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-wai
  const actorFinished=new Promise<void>(resolve=>{actorEnded=resolve;});
  let holdHeartbeat=false,holdQuery=false,releaseHeartbeat=()=>{},notifyBeat!:()=>void,notifyQuery!:()=>void,notifyAbort!:()=>void;
  const beatEntered=new Promise<void>(resolve=>{notifyBeat=resolve;}),queryEntered=new Promise<void>(resolve=>{notifyQuery=resolve;}),queryAborted=new Promise<void>(resolve=>{notifyAbort=resolve;});
- let notifySecretWait!:()=>void;const secretWaiting=new Promise<void>(resolve=>{notifySecretWait=resolve;}),at=fixture.clock.at.bind(fixture.clock);
- vi.spyOn(fixture.clock,'at').mockImplementation((time,work)=>{if(time===fixture.clock.now()+1000)notifySecretWait();return at(time,work);});
+ let notifySecretWait!:()=>void,waitingReported=false,pollDeadline:number|undefined;
+ const secretWaiting=new Promise<void>(resolve=>{notifySecretWait=resolve;}),at=fixture.clock.at.bind(fixture.clock),createListener=listener.bodySecretTools;
+ vi.spyOn(listener,'bodySecretTools').mockImplementation(input=>createListener({...input,waiting:value=>{input.waiting?.(value);if(value){waitingReported=true;notifySecretWait();}}}));
+ vi.spyOn(fixture.clock,'at').mockImplementation((time,work)=>{if(waitingReported&&pollDeadline===undefined)pollDeadline=time;return at(time,work);});
  vi.mocked(spawn).mockImplementation((_command,args,options)=>{
   const names=args.slice(args.indexOf('--allowedTools')+1),nextFlag=names.findIndex(name=>name.startsWith('--'));
   expect(names.slice(0,nextFlag<0?undefined:nextFlag)).toEqual(['request_secret','use_secret','loom_commands','loom_command','loom_query'].map(name=>'mcp__loom_secrets__'+name));
@@ -78,10 +81,11 @@ it.each(['finish','stop','finish-held','error-held','stop-held','overlapping-wai
       fixture.root.writes.run(()=>fixture.root.services.secrets.requests.setRule({secret:'TOKEN',answer:'ask',minutes:5,agents:[{agent:'art',when:'on_request'}]}));
       pendingRequest=randomUUID();
       expect(decoded(await model.callTool({name:'request_secret',arguments:{id:pendingRequest,secret:'TOKEN',why:'Second private use',minutes:5}})).state).toBe('pending');
-      pendingSecret=model.callTool({name:'use_secret',arguments:{id:randomUUID(),secret:'TOKEN',request:pendingRequest}});await secretWaiting;
+      pendingSecret=model.callTool({name:'use_secret',arguments:{id:randomUUID(),secret:'TOKEN',request:pendingRequest}});void pendingSecret.catch(()=>{});await secretWaiting;
+      heartbeat();expect(statusInputs.at(-1)).toEqual({state:'waiting',work:'Waiting for a Secret decision'});
      }
      expect(decoded(await model.callTool({name:'loom_command',arguments:{operation:'conversation.status',input:{state:'waiting',work:'Canonical waiting'},id:randomUUID()}}))).toMatchObject({ok:true});
-     if(pendingSecret){fixture.root.writes.run(()=>fixture.root.services.secrets.requests.answer(pendingRequest!,'bob',true));fixture.clock.advance(1000);expect(decoded(await pendingSecret).encoding).toBe('base64');}
+     if(pendingSecret){fixture.root.writes.run(()=>fixture.root.services.secrets.requests.answer(pendingRequest!,'bob',true));expect(pollDeadline).toBeDefined();fixture.clock.advance(pollDeadline!-fixture.clock.now());expect(decoded(await pendingSecret).encoding).toBe('base64');}
      let pendingQuery:Promise<unknown>|undefined;
      if(held){
       holdHeartbeat=true;heartbeat();await beatEntered;holdQuery=true;
