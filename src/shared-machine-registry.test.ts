@@ -37,7 +37,7 @@ it('does not change the revocation timestamp or notify for a fresh repeated revo
  const f=await fixture(),changed=vi.spyOn(f.root.services.tempo,'capacityChanged');expect((await f.call('boxRevoke',{box:'box'},'first')).status).toBe(200);const at=f.db.select().from(s.boxes).get()!.revokedAt;f.clock.advance(1234);expect((await f.call('boxRevoke',{box:'box'},'new-id')).status).toBe(200);expect(f.db.select().from(s.boxes).get()!.revokedAt).toBe(at);expect(changed).toHaveBeenCalledOnce();
 });
 it('rechecks create policy on a retained receipt after membership disappears',async()=>{
- const f=await fixture(),viewer={kind:'member' as const,id:'alice'},input={name:'Removedmember',sameMachineAsLoom:false};expect(f.root.operations.call('http',viewer,'runtime.boxCreate',input,'retained')).toMatchObject({ok:true});
+ const f=await fixture(),viewer=f.root.credentials.authenticate(new Request('http://loom',{headers:{authorization:'Bearer '+raw.member}}))!.viewer,input={name:'Removedmember',sameMachineAsLoom:false};expect(f.root.operations.call('http',viewer,'runtime.boxCreate',input,'retained')).toMatchObject({ok:true});
  // Simulate a stale admitted viewer after membership withdrawal, independently
  // of HTTP credential authentication. Only this fictitious in-memory fixture.
  f.db.$client.pragma('foreign_keys=OFF');f.db.delete(s.members).where(eq(s.members.id,'alice')).run();f.db.$client.pragma('foreign_keys=ON');expect(f.root.operations.call('http',viewer,'runtime.boxCreate',input,'retained')).toMatchObject({ok:false,code:'denied'});expect(f.db.select().from(s.boxes).all()).toHaveLength(2);

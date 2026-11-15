@@ -2,6 +2,8 @@ import Database from 'better-sqlite3';
 import { eq, sql, type SQL } from 'drizzle-orm';
 import { afterEach, expect, it } from 'vitest';
 import { graphql, GraphQLObjectType, GraphQLSchema } from 'graphql/index.js';
+import { withQueryFields } from '../data/query-fields.js';
+import { conversationWorkFields } from '../../shared-conversation-work.js';
 import { createDataSchema } from '../data/database.js';
 import { agents, conversations, household, memberAgents, members, messages, threads } from '../data/schema.js';
 import { CommsMessages } from './messages.js';
@@ -234,9 +236,9 @@ it('executes the shipped Work queries against the generated current-policy task 
   for (const [id, owner, sourceId] of [['t-10','alice',f.thread.conversation], ['t-11','bob',f.thread.conversation], ['t-12','alice','elsewhere']]) {
     f.db.insert(tasks).values({ id, title: id, ownerKind: 'member', owner, createdByKind: 'member', createdBy: owner, createdAt: '2026-11-14T18:00:00Z', changedAt: '2026-11-14T18:00:00Z', sourceKind: 'conversation', sourceId }).run();
   }
-  const schema = dataQueries(f.db.$client, { tables: ['tasks'], visibility: { tasks: fields => eq(fields.owner, 'alice') } });
-  const source = await graphql({ schema, source: sourceQuery, variableValues: { conversation: f.thread.conversation, offset: 0 } });
-  expect(source.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(source.data))).toEqual({ tasks: [{ id:'t-10', title:'t-10', status:'open' }] });
+  const schema = withQueryFields(dataQueries(f.db.$client, { tables: ['tasks'], visibility: { tasks: fields => eq(fields.owner, 'alice') } }), conversationWorkFields(f.db));
+  const source = await graphql({ schema, source: sourceQuery, variableValues: { conversation: f.thread.conversation, offset: 0 }, contextValue: {viewer:alice} });
+  expect(source.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(source.data))).toEqual({ tasks: [{ id:'t-10', title:'t-10', status:'open' }], conversationMadeChanges:[] });
   const mentioned = await graphql({ schema, source: taskQuery, variableValues: { id: 't-11' } });
   expect(mentioned.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(mentioned.data))).toEqual({ tasks: [] });
 });
@@ -322,11 +324,11 @@ it('pages the actual source-work query past fifty rows after current visibility 
   const { dataQueries } = await import('../data/queries.js');
   const { sourceQuery } = await import('../../../web/src/pieces/comms/work-query.js');
   for (let n=0;n<51;n++) f.db.insert(tasks).values({id:`t-${String(n).padStart(3,'0')}`,title:`Task ${n}`,ownerKind:'member',owner:'alice',createdByKind:'member',createdBy:'alice',createdAt:'2026-11-14T18:00:00Z',changedAt:'2026-11-14T18:00:00Z',sourceKind:'conversation',sourceId:f.thread.conversation}).run();
-  const schema=dataQueries(f.db.$client,{tables:['tasks'],visibility:{tasks:fields=>eq(fields.owner,'alice')}});
-  const first=await graphql({schema,source:sourceQuery,variableValues:{conversation:f.thread.conversation,offset:0}});
+  const schema=withQueryFields(dataQueries(f.db.$client,{tables:['tasks'],visibility:{tasks:fields=>eq(fields.owner,'alice')}}),conversationWorkFields(f.db));
+  const first=await graphql({schema,source:sourceQuery,variableValues:{conversation:f.thread.conversation,offset:0},contextValue:{viewer:alice}});
   expect(first.errors).toBeUndefined(); expect((first.data?.tasks as unknown[]).length).toBe(51);
-  const next=await graphql({schema,source:sourceQuery,variableValues:{conversation:f.thread.conversation,offset:50}});
-  expect(next.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(next.data))).toEqual({tasks:[{id:'t-050',title:'Task 50',status:'open'}]});
+  const next=await graphql({schema,source:sourceQuery,variableValues:{conversation:f.thread.conversation,offset:50},contextValue:{viewer:alice}});
+  expect(next.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(next.data))).toEqual({tasks:[{id:'t-050',title:'Task 50',status:'open'}],conversationMadeChanges:[]});
 });
 it('loads the mentioned pull-request card through current generated Changes visibility', async () => {
   const f=await fixture(), { changes, memberAgents }=await import('../data/schema.js');
@@ -335,8 +337,8 @@ it('loads the mentioned pull-request card through current generated Changes visi
   const id='github:house/loom#7';
   f.db.insert(memberAgents).values({member:'alice',agent:'art'}).run();
   f.db.insert(changes).values({id,repository:'house/loom',number:7,title:'Current PR',body:'',url:'https://github.com/house/loom/pull/7',state:'open',draft:false,authorLogin:'art',agent:'art',branch:'fix',headCommit:'a'.repeat(40),baseBranch:'next',checks:'running',review:'required',mergeable:'unknown',waitingOn:'ci',openedAt:'2026-11-14T18:00:00Z',updatedAt:'2026-11-14T18:00:00Z'}).run();
-  const schema=dataQueries(f.db.$client,{tables:['changes'],visibility:workVisibility(alice)});
-  const read=()=>graphql({schema,source:changeQuery,variableValues:{id}});
-  const first=await read(); expect(first.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(first.data))).toEqual({changes:[{id,title:'Current PR',state:'open',draft:false,checks:'running',review:'required',waitingOn:'ci'}]});
-  f.db.delete(memberAgents).run(); const revoked=await read(); expect(revoked.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(revoked.data))).toEqual({changes:[]});
+  const schema=withQueryFields(dataQueries(f.db.$client,{tables:['changes'],visibility:workVisibility(alice)}),conversationWorkFields(f.db));
+  const read=()=>graphql({schema,source:changeQuery,variableValues:{id,conversation:f.thread.conversation},contextValue:{viewer:alice}});
+  const first=await read(); expect(first.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(first.data))).toEqual({changes:[{id,title:'Current PR',state:'open',draft:false,checks:'running',review:'required',waitingOn:'ci'}],conversationMadeChanges:[]});
+  f.db.delete(memberAgents).run(); const revoked=await read(); expect(revoked.errors).toBeUndefined(); expect(JSON.parse(JSON.stringify(revoked.data))).toEqual({changes:[],conversationMadeChanges:[]});
 });
