@@ -1,3 +1,5 @@
+import {conversationLinks} from './rebuild-conversation-links.mjs';
+import {modelAccountActions} from './rebuild-model-actions.mjs';
 /** Real built startup and first-run sign-in. No seeded session or mock transport. */
 import {taskQuestions,taskInlineQuestion} from './rebuild-task-questions.mjs';
 import {prepareAcceptanceHome} from './rebuild-acceptance-adapter.mjs';
@@ -19,7 +21,11 @@ import {knowledgeActions} from './rebuild-memory-actions.mjs';
 import {rebuildReport} from './rebuild-report.mjs';
 import {inboxActions} from './rebuild-inbox-actions.mjs';
 import {chromium} from 'playwright-core';
+import {homeActions} from './rebuild-home-actions.mjs';
 import {mkdirSync,writeFileSync,mkdtempSync,rmSync} from 'node:fs';
+import {approvalInbox} from './rebuild-approval-inbox.mjs';
+
+
 import {tmpdir} from 'node:os';
 import {conversationVisibilityActions} from './rebuild-conversation-visibility.mjs';
 import {join,resolve} from 'node:path';
@@ -84,6 +90,7 @@ export async function* walkthroughSteps(output) {
   page.on('request',request=>{if(request.isNavigationRequest()&&request.frame()===page.mainFrame()&&new URL(request.url()).origin===app.url)connections.clear();});
   page.on('framenavigated',frame=>{if(frame===page.mainFrame())navigation++;});
   page.on('websocket',socket=>{const row={path:new URL(socket.url()).pathname,phase,navigation,closeObserved:false,errorObserved:false};sockets.push(row);socket.on('socketerror',()=>{row.errorObserved=true;});connections.add(socket);socket.on('close',()=>{row.closeObserved=true;connections.delete(socket);});});
+
   page.on('console',event=>{if(event.type()==='error')consoleErrors.push(event.text());});
   page.on('pageerror',error=>pageErrors.push(error.message));
   page.on('requestfailed',request=>{const url=new URL(request.url());networkErrors.push({path:url.pathname.startsWith('/login/')?'/login/[redacted]':url.pathname,error:request.failure()?.errorText});});
@@ -129,6 +136,7 @@ export async function* walkthroughSteps(output) {
     await page.waitForFunction(ready,`${title} tile`);
     row.opened=true;row.text=await tile.innerText();row.path=new URL(page.url()).pathname;
     row.unavailable=/unavailable|couldn.t load/i.test(row.text);
+    if(title==='Comms'&&row.opened)Object.assign(report.actions,await conversationLinks({page,example:report.example}));
     if(title==='Comms'&&row.opened){report.actions={...report.actions,conversationRecords:await conversationRecords({page,app,example:report.example,out})};}
     if(selections[title]){
      row.selection=selections[title];
@@ -140,8 +148,16 @@ export async function* walkthroughSteps(output) {
      }catch(error){row.selectionError=String(error);}
      row.detailText=await tile.innerText();
     }
+    if(title==='Home'){
+     const runtimeRows=tile.locator('[aria-label$="current runtime jobs"] > li');
+     const expected=runtimeRows.filter({hasText:report.example.runtime.job.title}).first();
+     await expected.waitFor({state:'visible'});await expected.scrollIntoViewIfNeeded();
+     row.runtimeJobs=await runtimeRows.evaluateAll(rows=>rows.map(row=>({title:row.querySelector('h4')?.textContent?.trim()??'',status:row.querySelector('p')?.textContent?.trim()??''})));
+     row.text=await tile.innerText();
+    }
     if(title==='Bridges'){row.action=await bridgeSettingsAction({page,tile,out});report.actions={...report.actions,bridgeSettings:row.action};}
     if(['Your account','Household setup','Project sharing'].includes(title))row.action=await accessAction({page,tile,title,app,out});
+    if(title==='Your account')Object.assign(report.actions,await modelAccountActions({page,tile,example:report.example,subscriptions,out}));
     if(title==='Knowledge')row.action=await knowledgeActions({page,tile,out,connections});
     if(title==='Settings'){
      const savedDefault=await secretDefaultAction({page,tile,out,deferReload:true});
@@ -171,7 +187,8 @@ export async function* walkthroughSteps(output) {
    if(title==='Comms'&&row.opened)report.actions={...report.actions,...await changeInline({page,tile:page.getByRole('region',{name:'Comms tile',exact:true}),app,example:report.example,out})};
    if(title==='Changes'&&row.opened)report.actions={...report.actions,...await workVisibility({page,app,example:report.example,out})};
    if(title==='Tasks'&&row.opened){report.actions={...report.actions,...await taskActions({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out}),...await taskStructure({page,tile:page.getByRole('region',{name:'Tasks tile',exact:true}),app,example:report.example,out})};}
-   if(title==='Inbox'&&row.opened){report.actions={...report.actions,...await inboxActions({page,tile:page.getByRole('region',{name:'Inbox tile',exact:true}),app,example:report.example,out})};}
+   if(title==='Home'&&row.opened){report.actions={...report.actions,homeMessage:await homeActions({page,tile:page.getByRole('region',{name:'Home tile',exact:true}),app,out})};}
+
    report.apps.push(row);
    row.consoleErrors=consoleErrors.slice(start.console);row.pageErrors=pageErrors.slice(start.page);row.networkErrors=networkErrors.slice(start.network);
    const visitFrames=frames.slice(start.frames);
@@ -179,6 +196,8 @@ export async function* walkthroughSteps(output) {
    save();yield {phase:'app',row:safeReport(row),report:safeReport(report)};
 
   }
+  Object.assign(report.actions,await inboxActions({page,tile:await openApp('Inbox'),app,example:report.example,out}));
+  save();yield {phase:'inbox-details',actions:safeReport(report.actions)};
   phase='conversation actions';
   report.actions={...report.actions,...await conversationActions({page,app,example:report.example,out,open:openApp,actions:['inboxAnswer','commsAnswer'],previous:report.actions})};
   save();yield {phase:'actions',actions:safeReport(report.actions)};
@@ -191,6 +210,8 @@ export async function* walkthroughSteps(output) {
   save();yield {phase:'data',actions:safeReport(report.actions)};
   Object.assign(report.actions,await conversationVisibilityActions({page,browser,app,home,out,verifyIsolation}));
   save();yield {phase:'visibility',actions:safeReport(report.actions)};
+  report.actions.approvalInbox=await approvalInbox({page,tile:await openApp('Inbox'),app,example:report.example,out});
+  save();yield {phase:'approval-source',actions:safeReport(report.actions)};
 
 
  }catch(error){report.fatal=String(error);}

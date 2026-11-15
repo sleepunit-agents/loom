@@ -8,7 +8,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   assert.equal(response.status(),200);const result=await response.json();assert.equal(result.errors,undefined);return result.data;
  };
  const trigger=async id=>{
-  const result=await query('query Trigger($id:String!){triggers(where:{id:{eq:$id}},limit:1){id state enabled lastFiredAt} triggerLog(where:{trigger:{eq:$id}},limit:100){event}}',{id});
+  const result=await query('query Trigger($id:String!){triggers(where:{id:{eq:$id}},limit:1){id state enabled lastFiredAt sourceKind watches lifespan} triggerLog(where:{trigger:{eq:$id}},limit:100){event}}',{id});
   assert.equal(result.triggers.length,1);return {row:result.triggers[0],events:result.triggerLog.map(row=>row.event)};
  };
  const inbox=async()=> (await query('{inboxItems(limit:100){id toKind to source sourceId refs state volume body{words}}}')).inboxItems;
@@ -29,7 +29,8 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   await tile.getByRole('button',{name:'Resume agent',exact:true}).click();
   await tile.getByText(/answer · once · fired/).waitFor();
   const current=await trigger(example.trigger);assert.equal(current.row.state,'fired');assert.equal(current.events.filter(event=>event==='fired').length,1);
-  return {state:current.row.state,firedEvents:1};
+  assert.equal(current.row.sourceKind,'answer');assert.equal(current.row.watches,'approval:'+example.approval);assert.equal(current.row.lifespan,'once');assert.equal(current.row.enabled,false);
+  return {state:current.row.state,firedEvents:1,sourceKind:current.row.sourceKind,watches:current.row.watches,lifespan:current.row.lifespan,enabled:current.row.enabled};
  });
  const create=async(label,words)=>{
   const back=tile.getByRole('region',{name:'Tempo: the open item',exact:true}).getByRole('button',{name:'Tempo',exact:true});if(await back.isVisible())await back.click();
@@ -63,6 +64,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   clock.advance(60_001);const current=await trigger(id);assert.equal(current.row.state,'stopped');assert.equal(current.row.enabled,false);assert.equal(current.row.lastFiredAt,null);
   const delivered=await inbox();assert.equal(delivered.filter(item=>item.refs.includes(id)).length,0);
   assert.equal(delivered.filter(item=>item.refs.includes(runNowId)).length,1);
+  const once=await trigger(example.trigger);assert.equal(once.row.enabled,false);assert.equal(once.events.filter(event=>event==='fired').length,1);checks.resumed.facts.stillOnceAfterLaterDeadline=true;
   return {state:current.row.state,afterDeadline:true,delivered:0};
  });
 }
