@@ -41,8 +41,10 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   await tile.getByRole('button',{name:new RegExp(label)}).click();
   const result=await query('query Created($note:String!){triggers(where:{note:{eq:$note}},limit:2){id state enabled}}',{note:label});assert.equal(result.triggers.length,1);return result.triggers[0].id;
  };
+ let runNowId;
  await observe('settled',async()=>{
   const words='Walkthrough one-off notice',id=await create('Walkthrough Run now',words);
+  runNowId=id;
   assert.equal((await inbox()).filter(item=>item.refs.includes(id)).length,0);assert.equal(await notice(),null);
   clock.advance(2000);
   await tile.getByRole('button',{name:'Run now',exact:true}).click();await tile.getByText(/time · once · fired/).waitFor();
@@ -58,7 +60,8 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   const id=await create('Walkthrough cancel future work','This cancelled notice must not arrive');
   await tile.getByRole('button',{name:'Cancel',exact:true}).click();await tile.getByText(/time · once · stopped/).waitFor();
   clock.advance(60_001);const current=await trigger(id);assert.equal(current.row.state,'stopped');assert.equal(current.row.enabled,false);assert.equal(current.row.lastFiredAt,null);
-  assert.equal((await inbox()).filter(item=>item.refs.includes(id)).length,0);
+  const delivered=await inbox();assert.equal(delivered.filter(item=>item.refs.includes(id)).length,0);
+  assert.equal(delivered.filter(item=>item.refs.includes(runNowId)).length,1);
   return {state:current.row.state,afterDeadline:true,delivered:0};
  });
 }
