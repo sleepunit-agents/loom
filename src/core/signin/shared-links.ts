@@ -9,7 +9,7 @@ import { Hono, type MiddlewareHandler } from 'hono';
 import type { Clock } from '../clock.js';
 import type { DataDatabase } from '../data/database.js';
 import { sessions, signinLinks, tokens } from '../data/schema.js';
-import { dataAuthentication } from '../data/authentication.js';
+import type { Authentication } from '../live/index.js';
 import { sharedTokens, sharedTokenInput, sharedTokenOwner, activeMemberToken } from './shared-tokens.js';
 import { OperationError } from '../operations/index.js';
 import type { DataWrites } from '../data/writes.js';
@@ -52,9 +52,9 @@ export function sharedSigninLinks(db: DataDatabase, clock: Clock) {
 
 /** Public identity door, using the same connection and committed notifications
  * as queries/commands. No session cookie or raw link enters retry receipts. */
-export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock; writes: DataWrites; publicOrigin?: string; admitted(): boolean; reportError(error: unknown): void }) {
+export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock; writes: DataWrites; publicOrigin?: string; admitted(): boolean; reportError(error: unknown): void; authenticate(request:Request):Authentication|undefined }) {
   const signin = sharedSigninLinks(options.db, options.clock);
-  const authenticate = dataAuthentication(options.db, () => options.clock.now());
+  const authenticate = options.authenticate;
   const routes = new Hono();
   const rp=options.publicOrigin?new URL(options.publicOrigin):undefined;
   const passkeys=rp&&(rp.protocol==='https:'||rp.hostname==='localhost')?sharedPasskeys(options.db,options.clock,{origin:rp.origin,rpId:rp.hostname}):undefined;
@@ -134,6 +134,8 @@ export function sharedSigninLinkRoutes(options: { db: DataDatabase; clock: Clock
       const value=write(()=>passkeys.login(body,c.req.header('user-agent')??'Browser'));
       c.header('set-cookie',cookieHeader(value.cookie,value.maxAge,c.req.url));return c.json({ok:true});
     }
+    const auth=authenticate(c.req.raw);
+    if(!auth?.valid()||auth.viewer.kind!=='member')return c.json({error:'Member authentication required'},403);
     const cookie=c.req.header('cookie')?.split(';').map(value=>value.trim()).find(value=>value.startsWith('loom_ui='))?.slice(8);
     if(!cookie)return c.json({error:'Sign in again before adding a passkey'},403);
     if(path==='/passkeys/options')return c.json(passkeys.registrationOptions(cookie));
