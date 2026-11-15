@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import { useDeadline } from './use-deadline';
 import { conversationOperation as mutate } from './operations';
 import { useSelection, type QuerySelection } from '../../data/graphql/selection';
 import { InboxQuestionCard } from '../inbox-view';
@@ -12,21 +13,14 @@ export function inlineQuestionSelection(id: string): QuerySelection<InboxItem | 
 /** Inline questions use the same Inbox item and authenticated operations. */
 export function InlineQuestion({ id, go, writable }: { id: string; go(path: string): void; writable: boolean }) {
   const reading = useSelection(useMemo(() => inlineQuestionSelection(id), [id]));
-  const [now, setNow] = useState(Date.now);
   const item = reading.status === 'live' ? reading.data : null;
-  useEffect(() => {
-    if (!item) return;
-    const deadlines = [item.bodyKeepUntil, item.answerKeepUntil].map(at => Date.parse(at ?? '')).filter(at => Number.isFinite(at) && at > now);
-    if (!deadlines.length) return;
-    const timer = setTimeout(() => setNow(Date.now()), Math.min(2147483647, Math.max(1, Math.min(...deadlines) - Date.now())));
-    return () => clearTimeout(timer);
-  }, [item, now]);
+  const now = useDeadline(item ? [item.bodyKeepUntil, item.answerKeepUntil] : []);
 
   const actions: InboxActions | undefined = item && writable ? {
-    read: item => mutate('inbox.read', { item }, true),
+    read: item => mutate('inbox.read', { item }),
     answer: (item, answer, words) => mutate('inbox.answer', { item, answer, ...(words ? { words } : {}) }),
     openSource: inboxSourcePath(item) ? item => { const path = inboxSourcePath(item); if (path) go(path); } : undefined,
   } : undefined;
   return <InboxQuestionCard id={id} inline actions={actions} snapshot={{ status: reading.status,
-    items: item ? [retainedInboxItem(item, Math.max(now, Date.now()))] : [] }} />;
+    items: item ? [retainedInboxItem(item, now)] : [] }} />;
 }
