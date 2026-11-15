@@ -14,7 +14,7 @@ import {members,tokens,sessions,passkeys,signinLinks} from '../core/data/schema.
 import {serveShared} from '../shared-serve.js';
 const enabled=process.env.LOOM_DESK_EVIDENCE==='1',chrome=process.env.LOOM_TEST_CHROME,webRoot=resolve('dist/web');
 if(enabled&&(!chrome||!existsSync(chrome)||!existsSync(join(webRoot,'next.html'))))throw Error('Account evidence needs Chrome and the built app');
-it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live and signs another browser out over the one door',async()=>{
+it.runIf(enabled)('Account shows personal shared metadata, removes passkeys live and signs other and current browsers out over the one door',async()=>{
  const client=new Database(':memory:'),clock=new FakeClock(),now=()=>new Date(clock.now()).toISOString(),db=createDataSchema(client,now),hash=(value:string)=>createHash('sha256').update(value).digest('hex'),cookie='c'.repeat(64);
  db.insert(members).values({id:'sam',role:'member',joinedAt:now()}).run();
  db.insert(tokens).values({fingerprint:hash('a'.repeat(64)),kind:'owner',member:'sam',label:'Sam',createdAt:now()}).run();
