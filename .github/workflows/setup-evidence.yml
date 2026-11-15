@@ -37,7 +37,7 @@ jobs:
           nice -n 19 npm ci --no-audit --no-fund
           nice -n 19 npm run build
           npx playwright-core install --with-deps chromium
-      - name: Verify account and capture the actual shared listener
+      - name: Verify Household setup on the shared listener
         run: |
           export LOOM_TEST_CHROME="$(node --input-type=module -e 'import {chromium} from "playwright-core"; console.log(chromium.executablePath())')"
           export LOOM_DESK_EVIDENCE=1
