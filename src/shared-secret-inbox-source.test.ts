@@ -30,6 +30,7 @@ it('publishes a native Secret request in the owner mailbox and removes access on
  const answer=await f.root.http.request('/api/secrets/command',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{action:'answer',id,allow:true,always:false}})});expect(answer.status).toBe(200);
  expect(f.db.select().from(s.inbox).where(eq(s.inbox.id,item.id)).get()?.state).toBe('resolved');expect(await(await read()).json()).toEqual({data:{inboxItems:[],inboxFolders:{needs:0}}});
  expect(f.db.select().from(s.secretRequests).where(eq(s.secretRequests.id,id)).get()?.state).toBe('allowed');
+ const resumed=await f.root.http.request('/api/secrets/requestStatus',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({input:{id}})});expect(await resumed.json()).toEqual({ok:true,value:{id,state:'allowed'}});
  const pending=randomUUID();expect((await f.root.http.request('/api/secrets/request',{method:'POST',headers:{authorization:'Bearer '+raw.body,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id:pending,secret:'TOKEN',why:'Another fictitious read',minutes:7}})})).status).toBe(200);
  expect((await(await read()).json()).data.inboxItems).toHaveLength(1);
  f.root.writes.run(()=>f.db.delete(s.secretRequests).where(eq(s.secretRequests.id,pending)).run());
