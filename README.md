@@ -746,38 +746,37 @@ loom tasks ready       # → loom-tasks ready
 The rules, the dispatch details and how pieces compose:
 [`docs/extensions.md`](docs/extensions.md).
 
-### The household — several agents on one loom
+### Household, credentials and your account
 
-One loom can serve several agents, with a shared commons
-([`docs/specs/household.md`](docs/specs/household.md)). A household is a
-directory (`$LOOM_HOME`, default `~/.config/loom`) with a `household.json`,
-a `tokens.json`, and one context dir per agent under `agents/`. A plain
-context dir with no household around it is a household of one and works
-exactly as before.
+Members, agents and projects live in the shared household database. The browser,
+primary CLI and dedicated clients call the same API with a token; these commands
+never open a local household or use `LOOM_HOME`. Configure the program's root
+address in `LOOM_URL` and the caller's token file in `LOOM_TOKEN_FILE`.
 
 ```bash
-loom household init art             # ~/.config/loom/art → agents/art (a symlink stays)
-loom household add mark             # an agent whose dir already exists under agents/
-loom household commons              # once, daemons stopped: knowledge.db → commons/ (shared by every agent)
-loom token create --agent art --label "Art · house on wunder"   # printed once
-loom token create --owner --label "Jonathan · page"
+loom household read
+loom household setMember '{"id":"robin","role":"member","agents":["fern"]}'
+loom household setProject '{"id":"garden","name":"Garden","members":["robin"],"agents":["fern"],"repositories":["github:example-house/garden"]}'
+loom token create '{"kind":"agent","agent":"fern","label":"Fern terminal"}'
 loom token list
-loom token revoke "Art · house on wunder"
-loom token link --agent --label "screenshots t-1871"   # an agent's one-time page sign-in, its session named
-loom sessions list                  # every browser signed in to the page, by ref
-loom sessions revoke 3f9a0c1d2e4b5a69   # sign that one browser out; every other stays
-loom sessions revoke --label "screenshots t-1871"   # an agent ends its own sessions when done
+loom token link                       # one-time link for the current member
+loom sessions list
+loom account read                     # your own browsers, passkeys and devices
 ```
 
-Every token has a role. **`agent:<name>`** is MCP and `/cli` as that agent:
-its own stack only. **`owner`** gets the default agent, or another at
-`/agents/<name>/` on the daemon, and the page. **`peer:<name>`** gets
-knowledge tools only. The daemon resolves the role on every request; no tool
-takes an agent argument, so a body can only be the agent its token names.
-`LOOM_BEARER_TOKEN`, when set, is an owner token too. A daemon whose context
-dir is `<home>/agents/<name>` next to a `household.json` serves the whole
-household. A process with `LOOM_HOME` set and no context dir uses
-`LOOM_AGENT`, or the household's default.
+Creation prints the new bearer once. Token revocation takes the full fingerprint
+from `token list`; browser revocation takes its full `ref` from `sessions list`.
+For example, `loom token revoke '{"fingerprint":"<fingerprint>"}'` and
+`loom sessions revoke '{"ref":"<ref>"}'` use the actual values returned by those
+lists. `loom account revokeSession` and `removePasskey` accept a personal `ref`.
+Owners administer the roster, project lists and household credentials. A person's
+session stands for one member token; an agent and a runner each have their own
+token. The caller's current labels and outside permissions apply to every call.
+
+The dedicated `loom-household`, `loom-token`, `loom-sessions` and `loom-account`
+clients use the same JSON commands. The old local-file token/session syntax and
+old envelope household command names are retired. Fresh-agent context creation
+belongs to the Agents page; these roster commands do not move or import data.
 
 ### The bundle — the household on a USB stick
 
