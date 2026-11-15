@@ -73,6 +73,8 @@ for f in sorted((ROOT/'docs/how-it-works/site').glob('*.html')):
    if n.tag=='p' and any(n.within(c) for c in ('stages','hub','out','inbox-flow')):add(n.text(),'')
  if f.stem=='conversations':
   for row in rows:
+   if row['promise'].startswith('A task names the conversation it came from.'):row['probe']={'kind':'action','action':'conversationTaskSource'}
+   if row['promise'].startswith('An approval records the conversation it was asked in.'):row['probe']={'kind':'action','action':'conversationApprovalSource'}
    if row['promise'].startswith(('A conversation is one agent talking in one place.', 'One table Every conversation', 'One per place An agent')):row['probe']={'kind':'action','action':'conversationRecords'}
  for app,text,contains in ui.get(f.stem,[]):
   probe={'kind':'ui','app':app,'contains':contains}
