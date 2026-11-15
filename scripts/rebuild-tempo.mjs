@@ -11,7 +11,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   const result=await query('query Trigger($id:String!){triggers(where:{id:{eq:$id}},limit:1){id state enabled lastFiredAt} triggerLog(where:{trigger:{eq:$id}},limit:100){event}}',{id});
   assert.equal(result.triggers.length,1);return {row:result.triggers[0],events:result.triggerLog.map(row=>row.event)};
  };
- const inbox=async()=> (await query('{inboxItems(limit:100){id toKind to source sourceId state volume body{words}}}')).inboxItems;
+ const inbox=async()=> (await query('{inboxItems(limit:100){id toKind to source sourceId refs state volume body{words}}}')).inboxItems;
  const notice=async()=> (await query('{settledInboxNotice{id count}}')).settledInboxNotice;
  const observe=async(name,work)=>{
   try{const facts=await work(),evidence=await capture(name);checks[name]={ok:true,facts,evidence};}
@@ -43,10 +43,10 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
  };
  await observe('settled',async()=>{
   const words='Walkthrough one-off notice',id=await create('Walkthrough Run now',words);
-  assert.equal((await inbox()).filter(item=>item.sourceId===id).length,0);assert.equal(await notice(),null);
+  assert.equal((await inbox()).filter(item=>item.refs.includes(id)).length,0);assert.equal(await notice(),null);
   await tile.getByRole('button',{name:'Run now',exact:true}).click();await tile.getByText(/time · once · fired/).waitFor();
-  const items=await inbox(),delivered=items.filter(item=>item.sourceId===id);
-  assert.equal(delivered.length,1);assert.equal(delivered[0].source,'trigger');assert.equal(delivered[0].toKind,'person');assert.equal(delivered[0].to,example.members[0]);assert.equal(delivered[0].body.words,words);
+  const items=await inbox(),delivered=items.filter(item=>item.refs.includes(id));
+  assert.equal(delivered.length,1);assert.equal(delivered[0].source,'trigger');assert.ok(delivered[0].sourceId.startsWith(id+':'));assert.equal(delivered[0].toKind,'person');assert.equal(delivered[0].to,example.members[0]);assert.equal(delivered[0].body.words,words);
   clock.advance(4999);assert.equal(await notice(),null);
   clock.advance(1);const settled=await notice(),waiting=items.filter(item=>item.state==='waiting'&&item.volume==='full').length;
   assert.equal(settled.count,waiting);assert.ok(waiting>0);
@@ -57,7 +57,7 @@ export async function tempoWalkthrough({page,tile,url,clock,example,checks,captu
   const id=await create('Walkthrough cancel future work','This cancelled notice must not arrive');
   await tile.getByRole('button',{name:'Cancel',exact:true}).click();await tile.getByText(/time · once · stopped/).waitFor();
   clock.advance(60_000);const current=await trigger(id);assert.equal(current.row.state,'stopped');assert.equal(current.row.enabled,false);assert.equal(current.row.lastFiredAt,null);
-  assert.equal((await inbox()).filter(item=>item.sourceId===id).length,0);
+  assert.equal((await inbox()).filter(item=>item.refs.includes(id)).length,0);
   return {state:current.row.state,afterDeadline:true,delivered:0};
  });
 }

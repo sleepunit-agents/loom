@@ -38,6 +38,15 @@ it('builds fictitious data through services, then normal startup signs in and qu
   expect((await trigger()).triggers).toEqual([{state:'held',lastFiredAt:null}]);
   await command('tempo.resume',{agent:manifest.agents[0]},'resume-example');
   const fired=await trigger();expect(fired.triggers[0].state).toBe('fired');expect(fired.triggerLog.filter((row:{event:string})=>row.event==='fired')).toHaveLength(1);
+  const read=async(query:string)=>{const response=await fetch(app!.url+'/graphql',{method:'POST',headers:{cookie,origin:app!.url,'content-type':'application/json'},body:JSON.stringify({query})});const result=await response.json();expect(result.errors).toBeUndefined();return result.data;};
+  const timeTrigger=(id:string)=>({id,ownerKind:'household',sourceKind:'time',times:new Date(clock.now()+60_000).toISOString(),lifespan:'once',targetKind:'inbox',toKind:'person',to:'alex',instructions:'Example manual notice',note:id});
+  await command('tempo.set',timeTrigger('manual-notice'),'set-notice');await command('tempo.runNow',{id:'manual-notice'},'run-notice');
+  const selection='{inboxItems(source:"trigger"){id sourceId refs body{words}} settledInboxNotice{id count}}';
+  const delivered=await read(selection);expect(delivered.inboxItems).toEqual([expect.objectContaining({sourceId:expect.stringMatching(/^manual-notice:/),refs:['manual-notice'],body:{words:'Example manual notice'}})]);
+  clock.advance(4999);expect((await read(selection)).settledInboxNotice).toBeNull();clock.advance(1);expect((await read(selection)).settledInboxNotice.count).toBe(2);
+  await command('tempo.set',timeTrigger('cancel-notice'),'set-cancel');await command('tempo.stop',{id:'cancel-notice'},'cancel-notice');clock.advance(60_000);
+  expect((await read(selection)).inboxItems).toHaveLength(1);
+
 
  }finally{await app?.close();rmSync(parent,{recursive:true,force:true});}
 });
