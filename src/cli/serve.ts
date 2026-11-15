@@ -1,9 +1,6 @@
 /**
- * loom serve — MCP startup. Default is stdio; `--http` starts the mesh-reachable
- * HTTP daemon (c-loom-transport) bound to a loopback/mesh interface with an
- * optional bearer token. Host/port/token come from flags or env:
- *   --http  --host <h>  --port <n>   (LOOM_HTTP_HOST, LOOM_HTTP_PORT, LOOM_BEARER_TOKEN)
- * Bind-safety refuses a public/0.0.0.0 host; Tailscale is the access control.
+ * loom serve — stdio tools or the shared household HTTP app. The web app uses
+ * current shared credentials, one query door and explicit prepared sources.
  *
  * `--scope knowledge` (t-677) starts the standalone knowledge-only service
  * instead of the full server — same transport, tailscale-bind-safety, and
@@ -37,17 +34,14 @@ async function startHttpServer(opts: HttpServeOptions) {
 const USAGE = `Usage: loom serve [options]
 
 Start the MCP server. Default transport is stdio; --http starts the
-mesh-reachable HTTP daemon instead.
+shared household app instead. The knowledge-only service remains explicit.
 
 Options:
-  --next                 Run only the new app and in-repo pieces
-  --secret-writes <file> Explicit private mutation transport and daemon retry key ring (next mode)
-  --secret-authority <file> Explicit private holder authorization socket config (next mode)
-  --secret-holder <file> Explicit private local holder config for next mode
-  --staging              Hold outside effects in next mode
-  --home <dir>           Next mode home (env LOOM_HOME)
+  --next                 Alias for the shared HTTP app
+  --home <dir>           Prepared shared household (env LOOM_HOME)
+  --program <file>       Private explicit startup inventory (default <home>/program.json)
   --http                 Serve over HTTP instead of stdio
-  --scope <full|knowledge>  Tool surface for --http (default full);
+  --scope <full|knowledge>  Shared app or standalone knowledge service (default full)
                          knowledge without --http is rejected
   --host <h>             HTTP bind host, repeatable (env LOOM_HTTP_HOST comma-separated, default 127.0.0.1)
   --port <n>             HTTP port (env LOOM_HTTP_PORT, or LOOM_KNOWLEDGE_HTTP_PORT
@@ -105,6 +99,7 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
         'secret-holder': { type: 'string' },
         'secret-writes': { type: 'string' },
         home: { type: 'string' },
+        program: { type: 'string' },
         http: { type: 'boolean', default: false },
         scope: { type: 'string', default: 'full' },
         host: { type: 'string', multiple: true },
@@ -137,51 +132,30 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
     return 2;
   }
 
-  if (values.next) {
+  if (values.next || (values.http && values.scope === 'full')) {
     if (values.scope !== 'full') { io.stderr('--next cannot use --scope\n'); return 2; }
-    const { startLoom } = await import('../foundation.js');
-    const { resolve } = await import('node:path');
-    const { homedir } = await import('node:os');
-    const home = resolve(values.home ?? process.env.LOOM_HOME ?? `${homedir()}/.config/loom-next`);
-    const hosts = values.host ?? (process.env.LOOM_HTTP_HOST ?? '127.0.0.1').split(',');
-    const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) { io.stderr('Invalid --port\n'); return 2; }
-    let changes;
-    let secretWrites;
-    let secretAuthority;
-    if (values['secret-authority']) {
-      try {
-        const { privateBytes } = await import('../pieces/secrets/local-holder.js');
-        const { authorityServerConfig } = await import('../pieces/secrets/holder-authority.js');
-        const bytes=privateBytes(values['secret-authority']);
-        try {secretAuthority=authorityServerConfig.parse(JSON.parse(bytes.toString('utf8')));} finally {bytes.fill(0);}
-      } catch {io.stderr('Invalid secret holder authority configuration\n');return 2;}
+    if (values.staging || values['secret-authority'] || values['secret-holder'] || values['secret-writes']) {
+      io.stderr('Configure shared service adapters in the prepared household program; legacy startup options are retired\n'); return 2;
     }
-    if (values['secret-holder']) {
-      try {
-        const { configuredSecretHolder } = await import('../pieces/secrets/holder-config.js');
-        changes = configuredSecretHolder(values['secret-holder']);
-      } catch { io.stderr('Invalid local secret holder configuration\n'); return 2; }
-    }
-    if (values['secret-writes']) {
-      if (!secretAuthority) {io.stderr('--secret-writes requires --secret-authority\n');return 2;}
-      try {
-        const { configuredSecretWrites } = await import('../pieces/secrets/holder-config.js');
-        secretWrites = configuredSecretWrites(values['secret-writes']);
-      } catch {io.stderr('Invalid secret mutation configuration\n');return 2;}
-    }
-    const handle = await startLoom({ home, next: true, staging: values.staging, host: hosts, port, stdout: io.stdout, changes, bridges:changes ? {source:changes.source} : undefined, secretAuthority, secretWrites });
-    io.stderr(`loom: next app on ${handle.url}${values.staging ? ' (staging)' : ''}\n`);
-    await new Promise<void>(done => {
-      const stop = () => { process.off('SIGTERM', stop); process.off('SIGINT', stop); void handle.close().then(done); };
-      process.on('SIGTERM', stop); process.on('SIGINT', stop);
+    if (process.env.LOOM_WORKER_SOCKET) { io.stderr('The legacy HTTP worker configuration needs the separate service cutover\n'); return 2; }
+    const {startSharedHome}=await import('../shared-startup.js');
+    const {resolve}=await import('node:path');
+    const {homedir}=await import('node:os');
+    const home=resolve(values.home??process.env.LOOM_HOME??`${homedir()}/.config/loom`);
+    const hosts=values.host??(process.env.LOOM_HTTP_HOST??'127.0.0.1').split(',');
+    const port=Number(values.port??process.env.LOOM_HTTP_PORT??8787);
+    if(hosts.length!==1||!Number.isInteger(port)||port<0||port>65535){io.stderr('Choose one --host and a valid --port\n');return 2;}
+    let handle:Awaited<ReturnType<typeof startSharedHome>>;
+    try{handle=await startSharedHome({home,program:values.program,host:hosts[0],port,stdout:io.stdout,reportError:()=>io.stderr('loom: shared service error\n')});}
+    catch{io.stderr('Shared startup refused. Supply a private program.json for an initialized shared household; existing homes require the separate move.\n');return 2;}
+    io.stderr(`loom: shared app on ${handle.url}\n`);
+    await new Promise<void>(done=>{
+      const stop=()=>{process.off('SIGTERM',stop);process.off('SIGINT',stop);process.off('disconnect',stop);void handle.close().then(done,()=>{io.stderr('loom: shared cleanup failed\n');done();});};
+      process.on('SIGTERM',stop);process.on('SIGINT',stop);if(process.connected)process.on('disconnect',stop);
     });
     return 0;
   }
-  if (values['secret-writes']) { io.stderr('--secret-writes requires --next\n'); return 2; }
-  if (values['secret-authority']) { io.stderr('--secret-authority requires --next\n'); return 2; }
-  if (values['secret-holder']) { io.stderr('--secret-holder requires --next\n'); return 2; }
-  if (values.staging || values.home) { io.stderr('--staging and --home require --next\n'); return 2; }
+  if(values.program||values.staging||values.home||values['secret-authority']||values['secret-holder']||values['secret-writes']){io.stderr('Shared program options require --http\n');return 2;}
   const contextDir = resolveContextDir();
   // Optional: gaps directory for recall-miss logging (LOOM_GAPS_DIR env var).
   // When set, knowledge_recall misses are appended to ${gapsDir}/recall-miss.jsonl
@@ -214,49 +188,6 @@ export async function run(argv: string[], io: IOStreams): Promise<number> {
         `(per-identity bearer: ${Object.keys(tokens).join(', ')})\n`,
     );
     await new Promise<void>(() => {});
-    return 0;
-  }
-
-  if (values.http) {
-    const port = Number(values.port ?? process.env.LOOM_HTTP_PORT ?? 8787);
-    const token = process.env.LOOM_BEARER_TOKEN || undefined;
-    // A context dir at <home>/agents/<name> next to a household.json serves
-    // the whole household (docs/specs/household.md); anything else is a
-    // household of one, exactly as before.
-    const found = householdOf(contextDir);
-    const handle = await startHttpServer({ contextDir, host, port, token, gapsDir, household: found?.household });
-    io.stderr(
-      `loom: HTTP MCP daemon on http://${handle.hosts.join(',')}:${handle.port} ` +
-        (found
-          ? `(household of ${found.household.agents.join(', ')}; tokens in ${found.household.home}/tokens.json)\n`
-          : `(${token ? 'bearer-gated' : 'open — network is the boundary'})\n`),
-    );
-    // The stable listener only sends traffic after this worker is ready.
-    if (process.connected && process.env.LOOM_WORKER_SOCKET) {
-      process.on('message', (message) => {
-        if (!message || typeof message !== 'object' || !('type' in message)) return;
-        if (message.type === 'loom-retire') handle.setBackgroundActive(false);
-        if (message.type === 'loom-activate') handle.setBackgroundActive(true);
-      });
-      process.send?.({ type: 'loom-ready' }, () => undefined);
-    }
-    // A drained worker must close piece process groups and watchers before
-    // exiting; the stable listener no longer restarts their whole systemd unit.
-    await new Promise<void>((resolve) => {
-
-      let closing = false;
-      const shutdown = () => {
-        if (closing) return;
-        closing = true;
-        void handle.close().then(resolve, (error: unknown) => {
-          io.stderr(`loom: worker cleanup failed: ${(error as Error).message}\n`);
-          resolve();
-        });
-      };
-      process.on('SIGTERM', shutdown);
-      process.on('SIGINT', shutdown);
-      if (process.connected) process.on('disconnect', shutdown);
-    });
     return 0;
   }
 
