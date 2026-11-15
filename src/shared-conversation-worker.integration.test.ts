@@ -18,12 +18,18 @@ import {commandWorkerExecutor,type ProcessRuntime} from './runtime/worker-proces
 import {workOnce} from './runtime/worker.js';
 import * as s from './core/data/schema.js';
 vi.mock('node:child_process',()=>({spawn:vi.fn()}));
-const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.restoreAllMocks();vi.clearAllMocks();});
+const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();vi.mocked(spawn).mockReset();vi.restoreAllMocks();vi.clearAllMocks();});
+function nativeReply(child:ChildProcessWithoutNullStreams,args:readonly string[],actions:readonly {name:string;input:Record<string,unknown>}[]=[]){
+ const session=args[args.indexOf('--session-id')+1];
+ const assistant=(content:unknown[])=>({type:'assistant',parent_tool_use_id:null,session_id:session,message:{model:'fixture-actual-model',content}});
+ const rows=[...actions.map(action=>assistant([{type:'tool_use',id:randomUUID(),name:'mcp__loom_secrets__'+action.name,input:action.input}])),assistant([{type:'text',text:'PRIVATE WORKER REPLY'}]),{type:'result',subtype:'success',is_error:false,session_id:session,result:'PRIVATE WORKER REPLY'}];
+ child.stdout.emit('data',Buffer.from(rows.map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0,null);
+}
 it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s private Comms recipient through production worker enrollment, running ACK and stdin bootstrap',async proof=>{
  const harness=proof==='tempo'?'claude':proof;
  const f=await bodyFixture(clean,{initialTime:Date.now(),modelRoles:()=>[{model:'requested-model',provider:'provider',harness,series:'series'}]});
  f.root.writes.run(()=>{
-  if(proof==='tempo')f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();
+  if(proof==='tempo'){f.db.update(s.members).set({role:'owner'}).where(eq(s.members.id,'alice')).run();f.db.insert(s.tempoSettings).values({whoKind:'person',who:'alice',settleSeconds:5,dimDays:3,muteDays:9}).run();}
   f.db.delete(s.tokens).where(eq(s.tokens.job,'job')).run();f.db.update(s.conversations).set({job:null}).run();f.db.delete(s.jobs).run();
   f.db.insert(s.boxAgents).values({box:'box',agent:'art',lent:false}).run();f.db.insert(s.agentBoxes).values({agent:'art',box:'box',position:0}).run();f.db.insert(s.agentModels).values({agent:'art',model:'requested-model',position:0}).run();
   f.db.insert(s.agentRunSettings).values({agent:'art',houseRepository:'fixture',houseFile:'Housefile',houseBranch:'next',nestedContainers:false,gpu:false}).run();
@@ -44,40 +50,51 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
  const ended=new WeakSet<ChildProcessWithoutNullStreams>(),aborts=new WeakMap<ChildProcessWithoutNullStreams,AbortController>();
  const native=claudeBody({command:'/fake/claude',cwd:'/work',env:{},spawn:(_command,args)=>{
   const events=new EventEmitter();let words='';const child=Object.assign(events,{stdout:new PassThrough(),stderr:new PassThrough(),kill:vi.fn(()=>true),stdin:new Writable({write(chunk,_encoding,done){words+=chunk.toString();done();},final(done){done();queueMicrotask(()=>{
-   expect(words).toBe('PRIVATE WORKER INPUT');expect(args[args.indexOf('--model')+1]).toBe('requested-model');const session=args[args.indexOf('--session-id')+1];child.stderr.emit('data',Buffer.from('PRIVATE NATIVE DIAGNOSTIC'));
-   const rows=[{type:'assistant',parent_tool_use_id:null,session_id:session,message:{model:'fixture-actual-model',content:[{type:'text',text:'PRIVATE WORKER REPLY'}]}},{type:'result',subtype:'success',is_error:false,session_id:session,result:'PRIVATE WORKER REPLY'}];child.stdout.emit('data',Buffer.from(rows.map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0,null);
+   expect(words).toBe('PRIVATE WORKER INPUT');expect(args[args.indexOf('--model')+1]).toBe('requested-model');child.stderr.emit('data',Buffer.from('PRIVATE NATIVE DIAGNOSTIC'));nativeReply(child,args);
   });}})})as unknown as ChildProcessWithoutNullStreams;return child;
  }});
- const exerciseTempo=async(command:(operation:string,input:unknown,id:string)=>Promise<unknown>)=>{
-  const who={kind:'person' as const,id:'alice'},timing=()=>f.root.services.tempo.volume.timings(who).settleSeconds;
+ const exerciseTempo=async(command:(operation:string,input:unknown,id:string)=>Promise<unknown>,query:(input:Record<string,unknown>)=>Promise<unknown>)=>{
+  const who={kind:'person' as const,id:'alice'},timing=()=>f.root.services.tempo.volume.timings(who);
   const answer=async(id:string,allow:boolean)=>{
    const result=await fetch(url+'/api/approvals/answer',{method:'POST',headers:{cookie:'loom_ui='+raw.memberCookie,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id,answer:allow?'allow':'deny'}})});
    expect(result.status).toBe(200);expect(await result.json()).toEqual({ok:true,value:{id}});
   };
-  expect(timing()).toBe(5);
+  const readCard=async(id:string)=>{const result=await query({query:'query Card($id:String!){approvals(where:{id:{eq:$id}},limit:1){id state details changeSummary}}',variables:{id}}) as {errors?:unknown;data?:{approvals:unknown[]}};expect(result.errors).toBeUndefined();expect(result.data).toBeDefined();return result.data!.approvals;};
+  expect(timing()).toEqual({settleSeconds:5,dimDays:3,muteDays:9});
   for(const [seconds,allow]of [[60,true],[120,false]]as const){
-   const before=timing(),result=await command('tempo.proposeSettings',{who,patch:{settleSeconds:seconds}},randomUUID());
+   const before=timing(),after={...before,settleSeconds:seconds},result=await command('tempo.proposeSettings',{who,patch:{settleSeconds:seconds}},randomUUID());
    expect(result).toEqual({ok:true,value:{id:expect.any(String)}});
    const id=(result as {value:{id:string}}).value.id,card=f.db.select().from(s.approvals).where(eq(s.approvals.id,id)).get()!;
-   expect(card).toMatchObject({kind:'setting',operation:'tempo.settings',state:'pending',conversation:f.thread.conversation,actingFor:'alice',member:'alice'});
-   expect(JSON.parse(card.details!)).toMatchObject({who,before:{settleSeconds:before},after:{settleSeconds:seconds}});
-   expect(timing()).toBe(before);
-   expect(f.db.select().from(s.inbox).all()).toEqual(expect.arrayContaining([expect.objectContaining({toKind:'person',to:'alice',source:'approval',conversation:f.thread.conversation,waitsOnId:id})]));
-   await answer(id,allow);expect(timing()).toBe(60);
-   expect(f.db.select().from(s.approvals).where(eq(s.approvals.id,id)).get()?.state).toBe(allow?'used':'denied');
+   expect(card).toMatchObject({kind:'setting',operation:'tempo.settings',state:'pending',conversation:f.thread.conversation,actingFor:'alice',member:'alice',ask:'Change Tempo timings for person alice?'});
+   expect(JSON.parse(card.details!)).toEqual({who,before,after});
+   expect(card.changeSummary).toBe(`Tempo for person alice: settle ${before.settleSeconds} → ${seconds} seconds; dim 3 → 3 days; mute 9 → 9 days`);
+   expect(timing()).toEqual(before);
+   expect(await readCard(id)).toEqual([{id,state:'pending',details:card.details,changeSummary:card.changeSummary}]);
+   const question=f.db.select().from(s.inbox).all().find(item=>item.toKind==='person'&&item.to==='alice'&&item.source==='approval'&&item.waitsOnId===id)!;
+   expect(question).toMatchObject({conversation:f.thread.conversation});
+   await answer(id,allow);expect(timing()).toEqual({settleSeconds:60,dimDays:3,muteDays:9});
+   expect(await readCard(id)).toEqual([{id,state:allow?'used':'denied',details:card.details,changeSummary:card.changeSummary}]);
+   const returned=f.db.select().from(s.inbox).all().filter(item=>item.source==='answer'&&item.sourceId===question.id);
+   expect(returned).toEqual([expect.objectContaining({toKind:'agent',to:'art',conversation:f.thread.conversation,fromKind:'person',fromId:'alice',words:expect.stringContaining(allow?'Allow':'Deny')})]);
   }
   expect(await command('tempo.proposeSettings',{who:{kind:'person',id:'bob'},patch:{settleSeconds:120}},randomUUID())).toMatchObject({ok:false,code:'denied'});
   expect(f.db.select().from(s.approvals).all()).toHaveLength(2);
  };
  // The Tempo variant retains bodyProgram's default factory and Claude adapter.
  // Only its provider process is mocked; MCP and Root remain real loopback HTTP.
- let nativeFailure:unknown;
- if(proof==='tempo')vi.mocked(spawn).mockImplementation((_command,args)=>{
+ let nativeFailure:unknown,nativeActions=0;
+ if(proof==='tempo')vi.mocked(spawn).mockImplementation((command,args,options)=>{
+  let allowed:readonly string[];
+  try{
+   expect(command).toBe('/bin/bash');expect(args[args.indexOf('--mcp-config')+1]).toBe('/dev/fd/3');expect(args[args.indexOf('--permission-mode')+1]).toBe('dontAsk');expect(options.stdio).toEqual(['pipe','pipe','pipe','pipe']);
+   const start=args.indexOf('--allowedTools');expect(start).toBeGreaterThan(-1);const end=args.findIndex((value,index)=>index>start&&value.startsWith('--'));allowed=args.slice(start+1,end<0?undefined:end);
+   expect(allowed).toEqual(expect.arrayContaining(['mcp__loom_secrets__loom_commands','mcp__loom_secrets__loom_command','mcp__loom_secrets__loom_query']));
+  }catch(error){nativeFailure=error;throw error;}
+  const actions:{name:string;input:Record<string,unknown>}[]=[];
   let words='',connection:{url:string;headers:Record<string,string>}|undefined,started=false,inputEnded=false;
   const execute=()=>{if(started||!inputEnded||!connection)return;started=true;void(async()=>{
    const protocol=new Client({name:'tempo-native-fixture',version:'1'},{capabilities:{}});
    try{
-    expect(args).toContain('mcp__loom_secrets__loom_command');
     expect(words).toBe('PRIVATE WORKER INPUT');expect(acknowledged).toBe(true);
     expect(f.db.select().from(s.inbox).where(eq(s.inbox.source,'thread')).get()?.state).toBe('done');
     await protocol.connect(new StreamableHTTPClientTransport(new URL(connection!.url),{requestInit:{headers:connection!.headers}}));
@@ -85,17 +102,13 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
     expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['request_secret','use_secret']));
     expect(tools.map(tool=>tool.name)).toEqual(expect.arrayContaining(['loom_commands','loom_command','loom_query']));
     const decoded=(value:unknown)=>JSON.parse((value as {content:{text:string}[]}).content[0].text);
-    const catalogue=decoded(await protocol.callTool({name:'loom_commands',arguments:{}}));
+    const call=async(name:string,input:Record<string,unknown>)=>{expect(allowed).toContain('mcp__loom_secrets__'+name);actions.push({name,input});return decoded(await protocol.callTool({name,arguments:input}));};
+    const catalogue=await call('loom_commands',{});
     expect(catalogue.ok).toBe(true);
     expect(catalogue.value.commands.map((entry:{name:string})=>entry.name)).toEqual(expect.arrayContaining(['tempo.set','tempo.stop','tempo.runNow','tempo.pause','tempo.resume','tempo.proposeSettings','inbox.volume']));
-    await exerciseTempo(async(operation,input,id)=>decoded(await protocol.callTool({name:'loom_command',arguments:{operation,input:input as Record<string,unknown>,id}})));
-    const visible=decoded(await protocol.callTool({name:'loom_query',arguments:{query:'{ agents { id } }'}}));
-    expect(visible).toMatchObject({data:{agents:expect.arrayContaining([{id:'art'}])}});
+    await exerciseTempo((operation,input,id)=>call('loom_command',{operation,input,id}),input=>call('loom_query',input));
    }finally{await protocol.close();}
-  })().then(()=>{
-   const list=args as string[],session=list[list.indexOf('--session-id')+1];
-   const rows=[{type:'assistant',parent_tool_use_id:null,session_id:session,message:{model:'fixture-actual-model',content:[{type:'text',text:'PRIVATE WORKER REPLY'}]}},{type:'result',subtype:'success',is_error:false,session_id:session,result:'PRIVATE WORKER REPLY'}];
-   child.stdout.emit('data',Buffer.from(rows.map(row=>JSON.stringify(row)).join('\n')));child.emit('close',0,null);
+  })().then(()=>{nativeActions=actions.length;nativeReply(child,args,actions);
   },error=>{nativeFailure=error;child.emit('close',1,null);});};
   const controlPipe=new Writable({write(bytes,_encoding,done){connection=Object.values(JSON.parse(bytes.toString()).mcpServers)[0] as typeof connection;done();},final(done){done();execute();}});
   const stdin=new Writable({write(bytes,_encoding,done){words+=bytes.toString();done();},final(done){done();inputEnded=true;execute();}});
@@ -127,7 +140,7 @@ it.each(['fixture','claude','tempo'] as const)('builds and runs an in-process %s
  expect(job).toMatchObject({state:'done',brief:'',logTail:null,exitCode:0,build:'fixture-image'});expect(finish).toHaveBeenCalledExactlyOnceWith(job.id,0,'');expect(owned?.every(byte=>byte===0)).toBe(true);
  // The callback pause before confirmation is independently asserted by the receiving-program proof.
  expect(f.db.select().from(s.inbox).get()).toMatchObject({state:'done',toKind:'agent',to:'art',job:job.id});expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['delivered',null]);
-expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({job:null,turnCount:2});
+expect(f.db.select().from(s.turns).all()).toMatchObject([{kind:'message',fromKind:'person'},...Array.from({length:nativeActions},()=>({kind:'action',run:job.id,model:'fixture-actual-model',outcome:'progressed'})),{kind:'reply',run:job.id,model:'fixture-actual-model',outcome:harness==='fixture'?'answered':'progressed',...(harness==='fixture'?{latencyMs:23}:{})}]);expect(f.db.select().from(s.conversations).get()).toMatchObject({job:null,turnCount:2+nativeActions});
  if(harness==='fixture')expect(f.db.select().from(s.digests).get()).toMatchObject({run:job.id,revision:1,summary:'Completed fictitious worker input'});
  else expect(f.db.select().from(s.digests).all()).toEqual([]);
  expect(f.db.select().from(s.agentStatus).get()).toMatchObject({state:'idle',work:harness==='fixture'?'Fictitious work complete':''});
