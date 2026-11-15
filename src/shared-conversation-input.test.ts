@@ -52,3 +52,15 @@ it('drains a held input callback at shutdown and releases no late words or claim
  const f=await fixture();await f.send('PRIVATE SHUTDOWN','one');let entered!:()=>void,release!:()=>void;const started=new Promise<void>(r=>{entered=r;});f.openGate(()=>{entered();return new Promise<void>(r=>{release=r;});});
  const pending=take(f);await started;let closed=false;const closing=f.root.close().then(()=>{closed=true;});await Promise.resolve();expect(closed).toBe(false);release();const response=await pending;expect([403,503]).toContain(response.status);expect(await response.text()).not.toContain('PRIVATE SHUTDOWN');await closing;expect(f.db.select().from(s.inbox).get()?.state).toBe('waiting');
 });
+it.each(['member','project','agent'] as const)('refuses confirmation with mismatched %s mail scope',async field=>{
+ const f=await fixture();await f.send('PRIVATE SCOPE','one');const batch=await(await take(f)).json() as Batch,id=batch.value.items[0].id;
+ const before=f.db.select().from(s.inbox).get()!;f.root.writes.run(()=>f.db.update(s.inbox).set({[field]:field==='member'?'bob':field==='project'?'other':'mark'}).where(eq(s.inbox.id,id)).run());
+ expect((await f.call('confirm',{items:[id]},'scope')).status).toBe(403);expect(f.db.select().from(s.inbox).get()?.state).toBe('taken');expect(f.db.select().from(s.messages).get()?.delivery).toBe('sending');
+ f.root.writes.run(()=>f.db.update(s.inbox).set({[field]:before[field]}).where(eq(s.inbox.id,id)).run());expect((await f.call('confirm',{items:[id]},'scope')).status).toBe(200);
+});
+it('rolls back the entire HTTP confirmation batch when its second delivery update fails, then retries',async()=>{
+ const f=await fixture();await f.send('PRIVATE ONE','one');await f.send('PRIVATE TWO','two');const ids=(await(await take(f)).json() as Batch).value.items.map(item=>item.id);
+ f.db.$client.exec("CREATE TRIGGER fail_second_confirmation BEFORE UPDATE OF delivery ON messages WHEN new.seq=2 AND new.delivery='delivered' BEGIN SELECT RAISE(ABORT,'fictitious second confirmation failure'); END");
+ expect((await f.call('confirm',{items:ids},'atomic')).status).toBe(503);expect(f.db.select().from(s.inbox).all().map(row=>row.state)).toEqual(['taken','taken']);expect(f.db.select().from(s.messages).all().map(row=>row.delivery)).toEqual(['sending','sending']);expect(f.db.select().from(s.operationResults).all().some(row=>row.operation==='conversation.confirm')).toBe(false);
+ f.db.$client.exec('DROP TRIGGER fail_second_confirmation');expect((await f.call('confirm',{items:ids},'atomic')).status).toBe(200);expect(f.db.select().from(s.inbox).all().map(row=>row.state)).toEqual(['done','done']);
+});

@@ -1,3 +1,4 @@
+import { sameRequestOrigin } from './core/data/origin.js';
 import { takeBodyInput } from './core/conversations/body-input.js';
 import { conversationBodyScope } from './core/conversations/body-scope.js';
 import { mayRunPrivateWork } from './policy.js';
@@ -166,8 +167,8 @@ export function sharedRoot(options: {
   http.onError(() => Response.json(failure('unavailable', 'Request could not complete'), { status: 503, headers: { 'cache-control': 'no-store' } }));
   http.post('/api/conversation/take', async c => comms ? takeBodyInput({request:bodyRequest(c.req.raw,c.get('shutdown'),true),service:comms.service,scope:bodyScope,authenticate,admitted:()=>!closing,version:data.readVersion,writes:data.writes,now:()=>clock.now(),publicOrigin:options.publicOrigin,reportError:options.reportError}) : c.json(failure('unavailable','Conversation input unavailable'),503));
   http.post('/api/:piece/:operation', async c => {
-    const request = c.req.raw, origin = request.headers.get('origin'), url = new URL(request.url);
-    if (request.headers.get('sec-fetch-site') === 'cross-site' || (origin && origin !== url.origin && !(origin === options.publicOrigin && new URL(origin).host === url.host)))
+    const request = c.req.raw;
+    if (!sameRequestOrigin(request,options.publicOrigin))
       return c.json(failure('denied', 'Cross-origin request refused'), 403);
     if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '')) return c.json(failure('invalid', 'Use application/json'), 415);
     const auth = authenticate(request);

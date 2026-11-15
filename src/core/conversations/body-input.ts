@@ -1,5 +1,6 @@
 /** Body-only ephemeral mail. No operation receipt, job brief or shared cache ever
  * carries words. Confirming acceptance is a separate acknowledgement write. */
+import { sameRequestOrigin } from '../data/origin.js';
 import { z } from 'zod';
 import { and,eq,inArray } from 'drizzle-orm';
 import type { Authentication } from '../live/index.js';
@@ -18,8 +19,8 @@ export function sameMailScope(item:{agent:string|null;member:string|null;project
 export async function takeBodyInput(options:{request:Request;service:CommsMessages;scope:ReturnType<typeof conversationBodyScope>;authenticate(request:Request):Authentication|undefined;admitted():boolean;version():number;writes:DataWrites;now():number;publicOrigin?:string;reportError(error:unknown):void}):Promise<Response>{
  const refuse=(status:number,message:string)=>Response.json(failure(status===400?'invalid':status===403?'denied':'unavailable',message),{status,headers:{'cache-control':'no-store'}});
  if(!options.admitted())return refuse(503,'Loom is closing');
- const request=options.request,url=new URL(request.url),origin=request.headers.get('origin');
- if(request.headers.get('sec-fetch-site')==='cross-site'||origin&&origin!==url.origin&&!(origin===options.publicOrigin&&new URL(origin).host===url.host))return refuse(403,'Cross-origin request refused');
+ const request=options.request;
+ if(!sameRequestOrigin(request,options.publicOrigin))return refuse(403,'Cross-origin request refused');
  if(!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type')??''))return refuse(400,'Use application/json');
  const auth=options.authenticate(request);if(!auth||!auth.valid()||!options.admitted())return refuse(403,'Current body required');
  let parsed:z.infer<typeof input>;try{parsed=input.parse(await request.json());}catch{return refuse(400,'Expected ephemeral input without an operation id');}
