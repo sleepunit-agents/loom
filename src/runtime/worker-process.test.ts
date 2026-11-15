@@ -40,7 +40,7 @@ describe('worker command adapter (no child processes in tests)', () => {
     child.emit('close', 0, null); expect(await result).toBe('image:é');
   });
   it('holds body input until release and preserves model/account/harness independently', async () => {
-    const configured = { ...job, run: { nestedContainers: true, gpu: true, ports: [{ address: '127.0.0.1', port: 8080 }] } };
+    const configured: WorkerAssignment = { ...job, run: { nestedContainers: true, gpu: true, ports: [{ address: '127.0.0.1', port: 8080 }], policy: { deniedTools: [{ pattern: 'tool-*', guestsOnly: true }], people: [{ kind: 'outside', person: 'outside-key', tier: 1 }] } } };
     const f = fixture(), body = f.executor.start(configured, 'image@sha', new AbortController().signal);
     const child = f.children[0]; child.child.emit('spawn'); await body.spawned;
     expect(child.input()).toBe(''); await body.release();

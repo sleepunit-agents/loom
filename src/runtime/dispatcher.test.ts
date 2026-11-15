@@ -34,7 +34,7 @@ function fixture() {
 it('claims only on the selected worker and delivers an execution-ready snapshot once', () => {
   const f = fixture();
   expect(f.runtime.next('second')).toBeUndefined();
-  expect(f.runtime.next('first')).toEqual({ run: { nestedContainers: false, gpu: false, ports: [] }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
+  expect(f.runtime.next('first')).toEqual({ run: { nestedContainers: false, gpu: false, ports: [], policy: { deniedTools: [], people: [] } }, id: f.job.id, box: 'first', agent: 'art', conversation: f.conversation.id,
     model: 'primary', account: 'account', harness: 'codex', brief: 'Private brief', house: { repository: 'repo', file: 'Housefile', branch: 'main' } });
   expect(f.runtime.next('first')).toBeUndefined();
   expect(f.runtime.next('second')).toBeUndefined();
@@ -175,7 +175,7 @@ it('projects current agent capabilities and only its configured ports at claim',
   ]).run();
   const assignment = f.runtime.next('first')!;
   expect(assignment.run).toEqual({ nestedContainers: true, gpu: true,
-    ports: [{ address: '127.0.0.1', port: 8000 }, { address: '127.0.0.1', port: 9000 }] });
+    ports: [{ address: '127.0.0.1', port: 8000 }, { address: '127.0.0.1', port: 9000 }], policy: { deniedTools: [], people: [] } });
   f.db.update(agentRunSettings).set({ nestedContainers: false }).run();
   expect(assignment.run.nestedContainers).toBe(true);
 });
