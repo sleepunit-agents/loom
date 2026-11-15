@@ -5,6 +5,7 @@ import {constants,openSync,closeSync,writeFileSync,fsyncSync,lstatSync,mkdirSync
 import {dirname,basename,join,isAbsolute} from 'node:path';
 import {assertPrivateDirectory} from './pieces/secrets/local-holder.js';
 import {openHolderStore} from './pieces/secrets/holder-store.js';
+function syncDirectory(path:string){const fd=openSync(path,constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);try{fsyncSync(fd);}finally{closeSync(fd);}}
 export async function openSharedHolderStorage(directory:string){
  if(!isAbsolute(directory)||realpathSync(dirname(directory))!==dirname(directory))throw Error('Secret holder storage unavailable');
  assertPrivateDirectory(dirname(directory));
@@ -18,7 +19,9 @@ export async function openSharedHolderStorage(directory:string){
   publish('identity',Buffer.from(await generateX25519Identity()));publish('fingerprint.key',randomBytes(32));publish('daemon-fingerprint.key',randomBytes(32));
   // Existing nonempty directories cannot be replaced. No key is regenerated
   // when a database or partial key set is already present.
-  renameSync(stage,directory);
+  syncDirectory(stage);renameSync(stage,directory);
  }
+ // Also finish a previously interrupted publication before any new DB write.
+ syncDirectory(dirname(directory));
  return openHolderStore(directory,join(directory,'identity'),join(directory,'fingerprint.key'));
 }

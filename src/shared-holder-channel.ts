@@ -6,6 +6,7 @@ import type {RecoverableSecretMutations} from './pieces/secrets/shared-values.js
 import {secretName} from './pieces/secrets/input.js';
 export interface HolderChannel {
  readonly connected:boolean;
+ /** Node advanced IPC snapshots synchronously; callback reports later IO. */
  send(value:unknown,callback:(error:Error|null)=>void):boolean;
  on(event:'message'|'disconnect'|'error',fn:(value?:unknown)=>void):unknown;
  off(event:'message'|'disconnect'|'error',fn:(value?:unknown)=>void):unknown;
@@ -67,8 +68,11 @@ export function serveSharedHolderChannel(channel:HolderChannel,start:()=>Promise
   const work=Promise.resolve().then(async()=>{
    let value:unknown=null,ok=false;
    try{value=await execute(command);ok=!stopped;}catch{/* Keep storage diagnostics off the channel. */}
-   try{if(!stopped)await send(channel,{op:'result',seq:command.seq,ok,value:ok?value:null});}
-   catch{void close();}finally{erase(command);if(value instanceof Uint8Array)value.fill(0);}
+   // Capacity belongs to storage work, not a later IPC write callback. Node's
+   // advanced serializer snapshots in send(), before the peer can refill it.
+   active.delete(work);
+   try{if(!stopped)void send(channel,{op:'result',seq:command.seq,ok,value:ok?value:null}).catch(()=>{void close();});}
+   finally{erase(command);if(value instanceof Uint8Array)value.fill(0);}
   });
   active.add(work);void work.finally(()=>active.delete(work)).catch(()=>{});
  };
@@ -83,10 +87,10 @@ export function serveSharedHolderChannel(channel:HolderChannel,start:()=>Promise
 /** A lost/timed-out/malformed exchange retires this original channel. It is
  * never reconnected or retried; the durable writer reconciles a later startup. */
 export function sharedHolderClient(channel:HolderChannel,clock:Clock){
- let seq=0,stopped=false,retiring=false;const sending=new Set<Uint8Array>();let resolve!:(key:Uint8Array)=>void,reject!:(error:Error)=>void;
+ let seq=0,stopped=false,retiring=false;let resolve!:(key:Uint8Array)=>void,reject!:(error:Error)=>void;
  const ready=new Promise<Uint8Array>((yes,no)=>{resolve=yes;reject=no;});void ready.catch(()=>{});
  const pending=new Map<number,{op:Command['op'];yes:(value:any)=>void;no:(error:Error)=>void;cancel:()=>void}>();
- const stop=()=>{if(stopped)return;stopped=true;for(const bytes of sending)bytes.fill(0);sending.clear();cancelReady();reject(failed());for(const item of pending.values()){item.cancel();item.no(failed());}pending.clear();detach();try{if(channel.connected)channel.disconnect();}catch{}};
+ const stop=()=>{if(stopped)return;stopped=true;cancelReady();reject(failed());for(const item of pending.values()){item.cancel();item.no(failed());}pending.clear();detach();try{if(channel.connected)channel.disconnect();}catch{}};
  const detach=()=>{channel.off('message',message);channel.off('disconnect',stop);channel.off('error',stop);};
  let welcomed=false;
  const message=(raw:unknown)=>{
@@ -110,8 +114,7 @@ export function sharedHolderClient(channel:HolderChannel,clock:Clock){
   if(stopped||!welcomed||retiring&&input.op!=='close'||pending.size>=64){erase(input);return Promise.reject(failed());}
   const id=++seq;return new Promise((yes,no)=>{
    pending.set(id,{op:input.op,yes,no,cancel:clock.at(clock.now()+5000,stop)});
-   const value='value' in input&&input.value instanceof Uint8Array?input.value:undefined;if(value)sending.add(value);
-   void send(channel,{...input,seq:id}).catch(stop).finally(()=>{erase(input);if(value)sending.delete(value);});
+   void send(channel,{...input,seq:id}).catch(stop);erase(input);
   });
  };
  const holder:RecoverableSecretMutations={

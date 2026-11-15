@@ -5,9 +5,9 @@ import { notificationKey } from './core/signin/notification-key.js';
 import Database from 'better-sqlite3';
 import {initializeSharedHome} from './shared-initialize.js';
 import {createHash,randomBytes,randomUUID} from 'node:crypto';
-import {isAbsolute,join,resolve,relative,sep} from 'node:path';
+import {dirname,isAbsolute,join,resolve,relative,sep} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {realpathSync} from 'node:fs';
+import {constants,openSync,closeSync,fsyncSync,realpathSync} from 'node:fs';
 import {eq} from 'drizzle-orm';
 import {z} from 'zod';
 import {clock as systemClock,type Clock} from './core/clock.js';
@@ -52,7 +52,7 @@ export async function startSharedHome(options:{home:string;program?:string;host?
  const webRoot=resolve(options.webRoot??program.webRoot??resolve(import.meta.dirname,'../dist/web'));
  const canonical=(path:string):string=>{try{return realpathSync(path);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;const parent=resolve(path,'..');if(parent===path)throw error;return resolve(canonical(parent),relative(parent,path));}};
  const inside=(parent:string,child:string)=>{const part=relative(canonical(resolve(parent)),canonical(resolve(child)));return !part||part!=='..'&&!part.startsWith('..'+sep)&&!isAbsolute(part);};
- const directories=[program.memory.sources.commons.directory,...program.memory.sources.agents.map(source=>source.directory)];
+ const directories=[...(program.secretHolder?[join(home,'secret-holder')]:[]),program.memory.sources.commons.directory,...program.memory.sources.agents.map(source=>source.directory)];
  const files=[config,program.database,program.commsKey,program.adapters,...[program.memory.sources.commons.knowledge,program.memory.sources.commons.people,...program.memory.sources.agents.map(source=>source.memories)]];
  if(directories.some(directory=>inside(webRoot,directory)||inside(directory,webRoot))||files.some(file=>file&&inside(webRoot,file)))throw Error('Public assets overlap private household files');
  checkDatabase(program.database);
@@ -65,6 +65,9 @@ export async function startSharedHome(options:{home:string;program?:string;host?
  let closing:Promise<void>|undefined,adapters:SharedStartupAdapters={};
  const close=()=>closing??=(async()=>{try{await operator?.close();}finally{try{const pending=app?.close();try{await holder?.close();}finally{await pending;}}finally{try{await adapters.close?.();}finally{try{client?.close();}finally{await release();}}}}})();
  try{
+  // First-install publication must be durable before the holder writes values.
+  const parent=openSync(dirname(realpathSync(home)),constants.O_RDONLY|constants.O_DIRECTORY|constants.O_NOFOLLOW);
+  try{fsyncSync(parent);}finally{closeSync(parent);}
   client=new Database(program.database,{fileMustExist:true});client.pragma('foreign_keys = ON');
   const db=dataDatabase(client,()=>new Date(clock.now()).toISOString());
   if(db.select().from(members).where(eq(members.id,program.signinMember)).get()?.role!=='owner')throw Error('Configure an existing household owner for local sign-in');

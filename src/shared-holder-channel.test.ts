@@ -7,8 +7,14 @@ import {FakeClock} from './core/clock.js';
 import {holderChannelPair,inProcessSharedHolder} from '../test/fixtures/shared-holder.js';
 import {openSharedHolderStorage} from './shared-holder-storage.js';
 import {serveSharedHolderChannel,sharedHolderClient} from './shared-holder-channel.js';
-const sqlite=vi.hoisted(()=>({opened:[]as string[]}));
-vi.mock('better-sqlite3',async original=>{const real=await original<typeof import('better-sqlite3')>();return {...real,default:new Proxy(real.default,{construct(target,args,newTarget){sqlite.opened.push(String(args[0]));return Reflect.construct(target,args,newTarget);}})};});
+const sqlite=vi.hoisted(()=>({opened:[]as string[],events:[]as Array<{kind:string;path:string}>,paths:new Map<number,string>()}));
+vi.mock('better-sqlite3',async original=>{const real=await original<{default:typeof import('better-sqlite3')}>();return {...real,default:new Proxy(real.default,{construct(target,args,newTarget){sqlite.opened.push(String(args[0]));sqlite.events.push({kind:'database',path:String(args[0])});return Reflect.construct(target,args,newTarget);}})};});
+vi.mock('node:fs',async original=>{const real=await original<typeof import('node:fs')>();return {...real,
+ openSync:new Proxy(real.openSync,{apply(target,thisArg,args){const fd=Reflect.apply(target,thisArg,args);sqlite.paths.set(fd,String(args[0]));return fd;}}),
+ fsyncSync(fd:number){sqlite.events.push({kind:'sync',path:sqlite.paths.get(fd)??''});real.fsyncSync(fd);},
+ closeSync(fd:number){try{real.closeSync(fd);}finally{sqlite.paths.delete(fd);}},
+ renameSync:new Proxy(real.renameSync,{apply(target,thisArg,args){sqlite.events.push({kind:'rename',path:String(args[0])});return Reflect.apply(target,thisArg,args);}}),
+};});
 const clean:Array<()=>void|Promise<void>>=[];
 afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 function home(){const root=mkdtempSync(join(tmpdir(),'shared-holder-channel-'));clean.push(()=>rmSync(root,{recursive:true,force:true}));return join(root,'holder');}
@@ -84,4 +90,19 @@ it('erases nested cyclic malformed reply buffers before retiring the original ch
  const {parent,child}=holderChannelPair(),client=sharedHolderClient(parent,new FakeClock());child.send({op:'ready',key:Buffer.alloc(32,1)},()=>{});(await client.ready).fill(0);
  const pending=client.source.read('TOKEN'),failure=expect(pending).rejects.toThrow('unavailable'),bytes=Buffer.from('unexpected nested bytes');const nested:{x:Uint8Array;again?:unknown}={x:bytes};nested.again=nested;
  parent.emit('message',{op:'result',seq:1,ok:true,value:nested});await failure;expect(bytes.every(byte=>byte===0)).toBe(true);
+});
+
+it('accepts a legal refilled client window before prior IPC write callbacks arrive',async()=>{
+ const {parent,child}=holderChannelPair(),directory=home(),store=await openSharedHolderStorage(directory);await store.set({member:'owner',writeId:randomUUID()},'TOKEN',Buffer.from('example'),'add');
+ const callbacks:Array<()=>void>=[],original=child.send.bind(child);child.send=(raw:any,callback)=>original(raw,error=>{if(raw.op==='result'&&raw.value instanceof Uint8Array)callbacks.push(()=>callback(error));else callback(error);});
+ const server=serveSharedHolderChannel(child,async()=>({key:Buffer.alloc(32,1),store})),client=sharedHolderClient(parent,new FakeClock());(await client.ready).fill(0);
+ try{const first=await Promise.all(Array.from({length:64},()=>client.source.read('TOKEN')));expect(callbacks).toHaveLength(64);const next=await client.source.read('TOKEN');expect(Buffer.from(next).toString()).toBe('example');for(const value of [...first,next])value.fill(0);}
+ finally{for(const callback of callbacks)callback();await client.close();await server.done;}
+});
+it('durably publishes its complete private key directory before opening ciphertext storage',async()=>{
+ const directory=home();sqlite.events.length=0;const app=await inProcessSharedHolder(directory,new FakeClock());await app.close();
+ const events=sqlite.events,rename=events.findIndex(row=>row.kind==='rename'),stage=events[rename].path;
+ expect(rename).toBeGreaterThan(-1);expect(events.slice(0,rename)).toContainEqual({kind:'sync',path:stage});
+ const homePath=join(directory,'..'),parent=events.findIndex((row,index)=>index>rename&&row.kind==='sync'&&row.path===homePath);
+ expect(parent).toBeGreaterThan(rename);expect(events.findIndex(row=>row.kind==='database')).toBeGreaterThan(parent);
 });

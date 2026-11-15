@@ -8,7 +8,7 @@ import {privateSecretClient} from './pieces/secrets/private-client.js';
 import {ownHome} from './core/daemon-home.js';
 import {mkdtempSync,rmSync,writeFileSync,readFileSync,readdirSync,statSync,mkdirSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname,join} from 'node:path';
 import {once} from 'node:events';
 import {WebSocket} from 'ws';
 import * as schema from './core/data/database.js';
@@ -19,9 +19,9 @@ import {startSharedHome} from './shared-startup.js';
 import {startSharedHolder} from './shared-holder-process.js';
 import {inProcessSharedHolder} from '../test/fixtures/shared-holder.js';
 const sqlite=vi.hoisted(()=>({opened:[]as Array<{name:string;open:boolean}>}));
-vi.mock('better-sqlite3',async original=>{const real=await original<typeof import('better-sqlite3')>();return {...real,default:new Proxy(real.default,{construct(target,args,newTarget){const db=Reflect.construct(target,args,newTarget);sqlite.opened.push(db);return db;}})};});
+vi.mock('better-sqlite3',async original=>{const real=await original<{default:typeof import('better-sqlite3')}>();return {...real,default:new Proxy(real.default,{construct(target,args,newTarget){const db=Reflect.construct(target,args,newTarget);sqlite.opened.push(db);return db;}})};});
 vi.mock('./shared-holder-process.js',async()=>({startSharedHolder:vi.fn((await import('../test/fixtures/shared-holder.js')).inProcessSharedHolder)}));
-vi.mock('node:fs',async original=>{const real=await original<typeof import('node:fs')>();return {...real,renameSync:vi.fn(real.renameSync)};});
+vi.mock('node:fs',async original=>{const real=await original<typeof import('node:fs')>();return {...real,openSync:vi.fn(real.openSync),fsyncSync:vi.fn(real.fsyncSync),renameSync:vi.fn(real.renameSync)};});
 vi.mock('age-encryption',async original=>{const real=await original<typeof import('age-encryption')>();return {...real,generateX25519Identity:vi.fn(real.generateX25519Identity)};});
 beforeEach(()=>{vi.stubEnv('LOOM_PUBLIC_URL',undefined);vi.stubEnv('LOOM_WORKER_SOCKET',undefined);});
 const clean:Array<()=>void|Promise<void>>=[];
@@ -37,6 +37,9 @@ it('first install publishes a private prepared inventory and the ordinary startu
  const response=await fetch(link,{method:'POST',redirect:'manual'});expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
  const secretValue='fictional-normal-startup-value-172';
  const secretPost=async(url:string,path:string,input:unknown)=>{const response=await fetch(url+'/api/secrets/'+path,{method:'POST',headers:{cookie,origin:url,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input})});expect(response.status).toBe(200);return response.json();};
+ const openIndex=vi.mocked(fs.openSync).mock.calls.findIndex(([path,flags])=>path===dirname(home)&&typeof flags==='number'&&!!(flags&fs.constants.O_DIRECTORY));expect(openIndex).toBeGreaterThan(-1);
+ const opened=vi.mocked(fs.openSync).mock.results[openIndex].value,openAt=vi.mocked(fs.openSync).mock.invocationCallOrder[openIndex],holderAt=vi.mocked(startSharedHolder).mock.invocationCallOrder.at(-1)!;
+ expect(vi.mocked(fs.fsyncSync).mock.calls.some(([fd],index)=>fd===opened&&vi.mocked(fs.fsyncSync).mock.invocationCallOrder[index]>openAt&&vi.mocked(fs.fsyncSync).mock.invocationCallOrder[index]<holderAt)).toBe(true);
  expect(program.secretHolder).toBe(true);
  expect(await secretPost(app.url,'set',{id:randomUUID(),name:'EXAMPLE',mode:'add',value:secretValue})).toEqual({ok:true,value:{saved:true}});
  const holderDb=new Database(join(home,'secret-holder/holder.db'),{readonly:true});try{const row=holderDb.prepare('SELECT ciphertext FROM holder_values WHERE name=?').get('EXAMPLE') as {ciphertext:Buffer};expect(row.ciphertext.includes(Buffer.from(secretValue))).toBe(false);}finally{holderDb.close();}
@@ -140,4 +143,9 @@ it.each([false,true])('keeps explicit adapter Secret ports and refuses a competi
  let link='';const app=await startSharedHome({home,webRoot,port:0,clock,stdout:text=>{link=text.trim();}});clean.push(()=>app.close());const admitted=await fetch(link,{method:'POST',redirect:'manual'}),cookie=admitted.headers.get('set-cookie')!.split(';')[0];
  const value='fictional-explicit-adapter-value';const saved=await fetch(app.url+'/api/secrets/set',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:randomUUID(),input:{id:randomUUID(),name:'EXAMPLE',mode:'add',value}})});expect(saved.status).toBe(200);await receiveGrantedValue(app,program,clock,cookie,value);
  await app.close();expect(selected.fingerprintKey.every(byte=>byte===0)).toBe(true);
+});
+
+it('refuses public assets overlapping the default private holder before starting it',async()=>{
+ const home=fixture(),before=vi.mocked(startSharedHolder).mock.calls.length;
+ await expect(startSharedHome({home,webRoot:join(home,'secret-holder'),port:0,clock:new FakeClock(),stdout:()=>{}})).rejects.toThrow('overlap');expect(vi.mocked(startSharedHolder).mock.calls).toHaveLength(before);
 });
