@@ -172,7 +172,12 @@ it('removal revokes grants and requests, resolves pending Inbox mail, clears sta
   f.db.insert(secretUses).values({ id: 'use', secret: 'API', agent: 'art', job: 'job', at: f.now(), state: 'released' }).run();
   expect(f.db.select().from(secretGrants).all()).toHaveLength(1);
   expect(f.db.select().from(inbox).all().filter(row => row.state === 'waiting')).toHaveLength(2);
+  const pending=f.db.select().from(inbox).all().filter(row=>row.state==='waiting');
+  const quiet=new Date(Date.parse(f.now())+86400000).toISOString();
+  pending.forEach((row,n)=>f.db.update(inbox).set({volume:n?'mute':'dim',quietUntil:quiet}).where(eq(inbox.id,row.id)).run());
   await f.service.remove({ id: randomUUID(), member: 'owner', name: 'API' });
+  expect(f.db.select().from(inbox).where(eq(inbox.id,pending[0].id)).get()).toMatchObject({volume:'full',quietUntil:null});
+  expect(f.db.select().from(inbox).where(eq(inbox.id,pending[1].id)).get()).toMatchObject({volume:'mute',quietUntil:quiet});
   expect(f.db.select().from(secretGrants).all()).toEqual([]);
   expect(f.db.select().from(secretRequests).all().map(row => [row.id, row.state])).toEqual([['pending', 'cancelled'], ['allowed', 'revoked'], ['denied', 'denied']]);
   expect(f.db.select().from(inbox).all().filter(row => row.state === 'waiting')).toEqual([]);

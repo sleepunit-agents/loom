@@ -1,4 +1,10 @@
 import Database from 'better-sqlite3';
+import { EventEmitter } from 'node:events';
+import { PassThrough, Writable } from 'node:stream';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { bodyProgram } from './runtime/body-program.js';
+import { claudeBody, type ClaudeSpawn } from './runtime/claude-body.js';
+import { bodyInput } from './runtime/body-bootstrap.js';
 import { createHash } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { eq } from 'drizzle-orm';
@@ -374,10 +380,73 @@ it('enrolls through the canonical Root then uses the private child credential fo
   expect(requests.map(request => request.path)).toContain('/api/conversation/take'); expect(requests.map(request => request.path)).toContain('/api/conversation/confirm');
 });
 
+it('runs the fixed private body entry against Root with a fake native Claude process', async () => {
+  const key = wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR');
+  const f = fixture(undefined, key);
+  f.setRoles([{ model: 'model', provider: 'provider', harness: 'claude', series: 'series' }]);
+  const thread = f.root.services.comms!.threads.open({ member: 'owner', agent: 'art', title: 'Native test' });
+  const sent = await f.root.services.comms!.send({ thread: thread.id, sender: 'owner', kind: 'message', words: 'Private work instructions' });
+  expect(f.root.services.runtime.admit({kind:'agent',id:'art'}, [f.db.select().from(inbox).where(eq(inbox.id,sent.inboxItem!)).get()!])).toBe(true);
+  const queued = f.db.select().from(jobs).where(eq(jobs.conversation,thread.conversation)).get()!;
+  const trace: {path:string;status:number}[] = [];
+  const remote: typeof fetch = async (url, init) => { const response = await f.root.http.fetch(new Request(url, init)); trace.push({path:String(url).split('/').at(-1)!,status:response.status}); return response; };
+  let privateDiagnostic = '';
+  const launch = vi.fn<ClaudeSpawn>((_command, args) => {
+    const session = args[args.indexOf('--session-id') + 1];
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new Writable({ write(chunk, _encoding, done) { expect(chunk.toString()).toBe('Private work instructions'); done(); },
+        final(done) { done(); queueMicrotask(() => {
+          (child.stderr as PassThrough).write(privateDiagnostic);
+          (child.stdout as PassThrough).write(JSON.stringify({ type: 'assistant', parent_tool_use_id: null, session_id: session, message: { model: 'actual-provider-model', content: [{ type: 'text', text: 'Native answer' }] } })+'\n');
+          (child.stdout as PassThrough).write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, session_id: session, result: 'Native answer' })+'\n');
+          child.emit('close', 0);
+        }); } }),
+      stdout: new PassThrough(), stderr: new PassThrough(), kill: () => true,
+    }) as unknown as ChildProcessWithoutNullStreams;
+    return child;
+  });
+  let finish!: (value: {exitCode:number;logTail:string}) => void;
+  const exited = new Promise<{exitCode:number;logTail:string}>(resolve => { finish = resolve; });
+  const error = vi.fn();
+  expect(await workOnce({ box: 'worker', signal: new AbortController().signal, schedule: { every: () => () => {} },
+    control: httpWorkerControl({ url: 'https://loom.example', token: credential, signal: new AbortController().signal, fetch: remote }),
+    executor: { build: async () => 'image', start: assigned => ({
+      acceptsBootstrap: true, spawned: Promise.resolve(), exited, stop: async () => {},
+      release: async bootstrap => {
+        expect(assigned.thread).toBe(thread.id);
+        privateDiagnostic = Buffer.from(bootstrap!.token).toString();
+        const bytes = Buffer.from(JSON.stringify(bodyInput(assigned, 'image', bootstrap, true)));
+        const exitCode = await bodyProgram({ args: ['config'], read: async () => JSON.stringify({ command: '/fake/claude', cwd: '/house' }),
+          stdin: async () => bytes, env: {}, signal: new AbortController().signal, fetch: remote, clock: f.clock,
+          native: claudeBody({ command: '/fake/claude', cwd: '/house', env: {}, spawn: launch }), error });
+        finish({ exitCode, logTail: '' });
+      },
+    }) },
+  })).toBe('finished');
+  expect(error.mock.calls, JSON.stringify(trace)).toEqual([]); expect(launch).toHaveBeenCalledOnce();
+  expect(f.db.select().from(jobs).where(eq(jobs.id, queued.id)).get()).toMatchObject({ state: 'done', logTail: null, model: 'model' });
+  expect(f.db.select().from(turns).where(eq(turns.run, queued.id)).get()).toMatchObject({ model: 'actual-provider-model' });
+  expect(f.db.select().from(inbox).get()?.state).toBe('done');
+  expect(JSON.stringify(f.db.select().from(operationResults).all())).not.toContain(privateDiagnostic);
+  expect(JSON.stringify(launch.mock.calls)).not.toContain(privateDiagnostic);
+});
+
 it('rejects ambiguous current model configuration without claiming a job or keeping a receipt',async()=>{
  const f=fixture(),queued=f.send(),roles=[{model:'model',provider:'provider',harness:'codex',series:'series'},{model:'model',provider:'other-provider',harness:'other-runner',series:'other-series'}];
  f.setRoles(roles);const before=f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get();
  await expect(f.control.next()).rejects.toThrow('Worker next failed');
  expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()).toEqual(before);expect(f.db.select().from(operationResults).all()).toEqual([]);
  f.setRoles([roles[0]]);expect((await f.control.next())?.id).toBe(queued.id);
+});
+
+it('refuses a conversation without a Comms reply surface before any native execution',async()=>{
+ const key=wordsKey('AGE-SECRET-KEY-10SC5M7Q03WKNXKZHXZKY6JWHDV8MP7DS8USNSE64C674RN6TDGDSEKQNMR'),f=fixture(undefined,key);
+ f.setRoles([{model:'model',provider:'provider',harness:'claude',series:'series'}]);
+ const queued=f.send('handoff'),signal=new AbortController().signal;
+ const assigned=(await f.control.next())!;expect(assigned.thread).toBeNull();const bootstrap=await f.control.enrollBody!(queued.id,signal);await f.control.started(queued.id,'image');
+ const native=vi.fn(async()=>({text:'should not run',model:'observed',actions:[]})),fetcher=vi.fn<typeof fetch>(async(url,init)=>f.root.http.fetch(new Request(url,init))),error=vi.fn();
+ expect(await bodyProgram({args:['config'],read:async()=>JSON.stringify({command:'/fake/claude',cwd:'/house'}),
+  stdin:async()=>Buffer.from(JSON.stringify(bodyInput(assigned,'image',bootstrap,true))),env:{},signal,fetch:fetcher,clock:f.clock,native,error})).toBe(1);
+ expect(native).not.toHaveBeenCalled();expect(fetcher).not.toHaveBeenCalled();bootstrap.token.fill(0);bootstrap.erase?.();
+ await f.control.finish(queued.id,1,'');expect(f.db.select().from(jobs).where(eq(jobs.id,queued.id)).get()?.state).toBe('failed');
 });
