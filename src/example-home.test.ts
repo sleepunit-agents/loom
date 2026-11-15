@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import {FakeClock} from './core/clock.js';
 import * as roots from './shared-root.js';
 import {Operations} from './core/operations/index.js';
 import {it,expect,vi,afterEach} from 'vitest';
@@ -31,13 +32,19 @@ it('builds fictitious data through services, then normal startup signs in and qu
   const before=readFileSync(join(home,'app.db'));
   await expect(exampleHome(home)).rejects.toThrow();expect(readFileSync(join(home,'app.db'))).toEqual(before);
   mkdirSync(join(parent,'public'));writeFileSync(join(parent,'public','next.html'),'<main>Example entry</main>');
-  let link='';app=await startSharedHome({home,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
+  const clock=new FakeClock(Date.now());let link='';app=await startSharedHome({home,clock,webRoot:join(parent,'public'),port:0,stdout:text=>{link=text.trim();}});
   const response=await fetch(link,{method:'POST',redirect:'manual',headers:{origin:app.url}});
   expect(response.status).toBe(303);const cookie=response.headers.get('set-cookie')!.split(';')[0];
   const query=await fetch(app.url+'/graphql',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({query:'{ tasks { id title status } approvals { id state } changes { id project agent } triggers { id } modelAccounts { ... on RuntimeAccountDetail { id label } } }'})});
   const result=await query.json();expect(result.errors).toBeUndefined();
   expect(result.data.tasks).toHaveLength(4);expect(result.data.tasks.map((t:{status:string})=>t.status)).toContain('in_progress');
   expect(result.data.approvals).toEqual([expect.objectContaining({state:'pending'})]);
+  const watched=app.writes.run(()=>app!.services.approvals.request({kind:'command',target:'example:watched',agent:'fern',askedFrom:'example-proof',actingFor:'alex',what:'Watched example',why:'Prove answer delivery.',ask:'Proceed?',ifYes:'Continue.',ifNo:'Wait.',minutes:1})).value;
+  const trigger=app.writes.run(()=>app!.services.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:`approval:${watched.id}`,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue fictitious work.',note:'Watched example'})).value;
+  const allowed=await fetch(app.url+'/api/approvals/answer',{method:'POST',headers:{cookie,origin:app.url,'content-type':'application/json'},body:JSON.stringify({id:'watched-example',input:{id:watched.id,answer:'allow'}})});expect(allowed.status).toBe(200);clock.advance(0);
+  const deliveries=()=>app!.services.comms!.db.$client.prepare("SELECT count(*) AS n FROM inbox JOIN inbox_refs ON inbox_refs.item=inbox.id WHERE inbox.source='trigger' AND inbox_refs.ref=?").get(trigger.id);
+  expect(deliveries()).toEqual({n:1});clock.advance(60_001);
+  expect(app.services.approvals.get(watched.id).state).toBe('expired');expect(app.writes.run(()=>app!.services.approvals.use(watched.id,'fern','command',watched.target)).value.ok).toBe(false);expect(deliveries()).toEqual({n:1});
   const draft=app.writes.run(()=>app!.services.tasks.create({title:'Fictitious dangerous draft',goal:'Discard only on approval.',why:'Prove installed prepared actions.',owner:{kind:'household'}},{kind:'member',id:'alex'})).value;
   const card=app.writes.run(()=>app!.services.approvals.request({kind:'dangerous',target:`example:discard-draft:${draft.id}`,operation:'example.discardDraft',changeSummary:`Draft ${draft.id}: open → cancelled`,agent:'fern',askedFrom:manifest.conversation,actingFor:'alex',conversation:manifest.conversation,member:'alex',what:'Discard fictitious draft',why:'Prove the exact before/after.',ask:'Discard it?',ifYes:'Cancel draft.',ifNo:'Keep draft.'})).value;
   expect(app.services.tasks.get(draft.id).status).toBe('open');

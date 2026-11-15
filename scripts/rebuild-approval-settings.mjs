@@ -1,5 +1,6 @@
 /** Standing rules, expiry and prepared operations in the actual example home. */
 import {join} from 'node:path';
+import {requestApprovalWithRules} from '../dist/apps/approval-request.js';
 import {tempoSettingsProposals} from '../dist/core/tempo/proposal.js';
 export async function approvalRulesAndExpiry({page,tile,app,example,out,clock}){
  const screenshot='action-approvalRulesAndExpiry.png',s=app.services,write=fn=>app.writes.run(fn).value;
@@ -10,11 +11,13 @@ export async function approvalRulesAndExpiry({page,tile,app,example,out,clock}){
   clock.advance(60_001);
   check(s.approvals.get(expired.id).state==='expired'&&!write(()=>s.approvals.use(expired.id,'fern','command',base.target)).ok,'Expired allowance remained usable');
   const watched=write(()=>s.approvals.request({...base,target:'fictitious:watched-answer',what:'Fictitious watched approval'}));
-  const trigger=write(()=>s.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:watched.id,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue after the fictitious answer.',note:'Fictitious approval continuation'}));
+  const trigger=write(()=>s.tempo.triggers.set({ownerKind:'agent',owner:'fern',sourceKind:'answer',watches:`approval:${watched.id}`,lifespan:'once',targetKind:'inbox',toKind:'agent',to:'fern',instructions:'Continue after the fictitious answer.',note:'Fictitious approval continuation'}));
   write(()=>s.approvals.allow(watched.id,'alex'));clock.advance(0);
   const deliveries=()=>s.comms.db.$client.prepare("SELECT count(*) AS n FROM inbox JOIN inbox_refs ON inbox_refs.item=inbox.id WHERE inbox.source='trigger' AND inbox_refs.ref=?").get(trigger.id).n;
   check(deliveries()===1,'Approval answer did not fire its once-only trigger');
-  check(write(()=>s.approvals.use(watched.id,'fern','command',watched.target)).ok,'Allowance was not consumed');check(!write(()=>s.approvals.use(watched.id,'fern','command',watched.target)).ok,'Allowance was consumed twice');clock.advance(0);check(deliveries()===1,'Approval trigger fired twice');
+  clock.advance(1);write(()=>s.approvals.deny(watched.id,'alex'));check(deliveries()===1,'Once-only trigger fired again on later denial');
+  const consumed=write(()=>{const card=s.approvals.request({...base,target:'fictitious:consumed'});s.approvals.allow(card.id,'alex');return card;});
+  check(write(()=>s.approvals.use(consumed.id,'fern','command',consumed.target)).ok&&!write(()=>s.approvals.use(consumed.id,'fern','command',consumed.target)).ok,'Allowance was not exactly single-use');
   const deniedAllowance=write(()=>s.approvals.request({...base,target:'fictitious:revoked-allowance'}));write(()=>{s.approvals.allow(deniedAllowance.id,'alex');s.approvals.deny(deniedAllowance.id,'alex');});check(s.approvals.get(deniedAllowance.id).state==='denied'&&!write(()=>s.approvals.use(deniedAllowance.id,'fern','command',deniedAllowance.target)).ok,'A denied allowance remained usable');
   const withdrawn=write(()=>s.approvals.request({...base,target:'fictitious:withdrawn-allowance'}));write(()=>{s.approvals.allow(withdrawn.id,'alex');s.approvals.withdraw(withdrawn.id,'fern');});check(s.approvals.get(withdrawn.id).state==='withdrawn'&&!write(()=>s.approvals.use(withdrawn.id,'fern','command',withdrawn.target)).ok,'A withdrawn allowance remained usable');
   check(s.approvals.get(example.approval).conversation===example.conversation,'Approval lost its source conversation');
@@ -26,17 +29,19 @@ export async function approvalRulesAndExpiry({page,tile,app,example,out,clock}){
    const pending=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/approvals/setRule'&&r.request().method()==='POST',{timeout:4000});void pending.catch(()=>{});
    await form.getByRole('button',{name:'Save rule',exact:true}).click();const response=await pending,body=await response.json();check(response.ok()&&body.ok===true,'Standing rule was refused');
    check(s.approvalRules.resolve({kind:'command',target:base.target,actingFor:'alex'})?.tier===tier,'Standing answer did not match its scope');
+   const applied=write(()=>requestApprovalWithRules(s.comms.db,s.approvals,s.approvalRules,{...base,target:`fictitious:rule-${tier}`}));
+   check(applied.state===(tier==='ask'?'pending':'allowed'),'The rule-consuming request service did not apply the standing answer');
    check(s.approvalRules.resolve({kind:'command',target:'outside:inspection',actingFor:'alex'})===undefined&&s.approvalRules.resolve({kind:'command',target:base.target,actingFor:'robin'})===undefined,'Standing rule escaped its target or person scope');
   }
   let denied=false;try{write(()=>s.approvalRules.set({kind:'command',scope:'fictitious:*',tier:'tell'},'robin'));}catch{denied=true;}check(denied,'A nonowner edited standing rules');
   write(()=>{s.approvalRules.set({kind:'command',scope:'fictitious:*',tier:'tell'},'alex');s.approvalRules.set({kind:'command',scope:'fictitious:named',person:'robin',tier:'do'},'alex');});
   check(s.approvalRules.resolve({kind:'command',target:'fictitious:named',actingFor:'robin'})?.person==='robin','Named-person rule was not scoped to that person');
   check(s.approvalRules.resolve({kind:'command',target:'fictitious:named',actingFor:'alex'})?.tier==='tell'&&s.approvalRules.resolve({kind:'command',target:'fictitious:named',actingFor:'unknown'})===undefined,'A named-person grant widened to someone else');
-  const reported=write(()=>{const card=s.approvals.request({...base,what:'Fictitious reported inspection'});s.approvals.allow(card.id,'alex','Standing tell rule fictitious:* for alex, set by alex');s.approvals.use(card.id,'fern','command',card.target);s.approvals.reportUsed(card.id,'fern','Fern performed the fictitious inspection.');return card;});
-  await tile.locator('button:visible').filter({hasText:/^Reported steps(?:\d+)?$/}).first().click();
+  const reported=write(()=>{const card=requestApprovalWithRules(s.comms.db,s.approvals,s.approvalRules,{...base,what:'Fictitious reported inspection'});check(card.state==='allowed','Tell rule did not allow work');s.approvals.use(card.id,'fern','command',card.target);s.approvals.reportUsed(card.id,'fern','Fern performed the fictitious inspection.');return card;});
+  await tile.locator('button:visible').filter({hasText:/^Reported steps/}).first().click();
   await tile.getByText('Fern performed the fictitious inspection.',{exact:true}).waitFor();
   check(s.approvals.record(reported.id).map(row=>row.event).join(',')==='request,allow,use,use','Reported step lost its permanent request/answer/use history');
-  await tile.locator('button:visible').filter({hasText:/^History(?:\d+)?$/}).first().click();
+  await tile.locator('button:visible').filter({hasText:/^History/}).first().click();
   await tile.locator('.loom-split__rows [data-split-row]').filter({has:page.getByText('Fictitious reported inspection',{exact:true})}).click();
   const history=tile.locator('section').filter({has:page.getByRole('heading',{name:'Permanent record',exact:true})}).last();
   const words=await history.innerText();check(/\brequest\b/.test(words)&&/\ballow\b/.test(words)&&/\buse\b/.test(words)&&words.includes('Fern performed the fictitious inspection.'),'Browser permanent history omitted request/answer/use/report');
@@ -61,6 +66,8 @@ export async function approvalPreparedChanges({page,tile,app,example,out,clock})
   await tile.getByRole('button',{name:'Send',exact:true}).click();const ordinaryResponse=await ordinaryReply;check(ordinaryResponse.ok()&&(await ordinaryResponse.json()).ok===true&&s.approvals.list().length===beforeCards,'Ordinary conversation work required an approval');
   await tile.getByText(ordinary,{exact:true}).waitFor();
   const before=s.tempo.volume.timings(who).settleSeconds;clock.advance(1);
+  const deniedSetting=write(()=>tempoSettingsProposals(s.comms.db,clock).request(s.approvals,who,{settleSeconds:before+1},context));
+  await answer(deniedSetting,'Deny');check(s.tempo.volume.timings(who).settleSeconds===before,'Deny applied a proposed setting');clock.advance(1);
   const setting=write(()=>tempoSettingsProposals(s.comms.db,clock).request(s.approvals,who,{settleSeconds:before+1},context));
   const change=tile.getByRole('region',{name:'Tempo settings change',exact:true}).last();
   await change.getByRole('region',{name:'Before',exact:true}).getByText(`${before} seconds`,{exact:true}).waitFor({timeout:4000});
