@@ -2,6 +2,7 @@ import {afterEach,expect,it,vi} from 'vitest';
 import {asc,eq} from 'drizzle-orm';
 import {bodyFixture,bodyCredentials} from '../test/fixtures/conversation-body.js';
 import * as s from './core/data/schema.js';
+import {sharedRoot} from './shared-root.js';
 const clean:(()=>void|Promise<void>)[]=[];afterEach(async()=>{for(const close of clean.splice(0).reverse())await close();});
 async function fixture(){
  let roles=['first','second'].map(model=>({model,provider:'provider',harness:'codex',series:'series'}));
@@ -51,3 +52,11 @@ it('rolls back proposal and Allow with failed receipts, and notifies capacity on
  expect((await f.answer(card.id)).status).toBe(200);expect(observed).toEqual([false]);changed.mockRestore();
 });
 it.each([{models:[]},{models:['first','first']},{models:['unknown']}])('refuses invalid model choices $models',async({models})=>{const f=await fixture();expect((await f.propose('invalid',{agent:'art',models})).status).toBe(400);expect(f.db.select().from(s.approvals).all()).toEqual([]);});
+
+it('retains a pending typed card across Root restart and applies after the requesting body has ended',async()=>{
+ const f=await fixture();expect((await f.propose()).status).toBe(200);const card=f.db.select().from(s.approvals).get()!;
+ await f.root.close();f.db.update(s.jobs).set({state:'done'}).run();
+ const root=sharedRoot({db:f.db,clock:f.clock,originAllowed:()=>true,commsKey:f.key,reportError:error=>{throw error;},modelRoles:()=>['first','second'].map(model=>({model,provider:'provider',harness:'codex',series:'series'}))});clean.push(()=>root.close());
+ const response=await root.http.request('/api/approvals/answer',{method:'POST',headers:{authorization:'Bearer '+bodyCredentials.member,'content-type':'application/json'},body:JSON.stringify({input:{id:card.id,answer:'allow'},id:'after-restart'})});
+ expect(response.status).toBe(200);expect(f.read()).toEqual(['second','first']);expect(f.db.select().from(s.approvals).get()?.state).toBe('used');
+});
